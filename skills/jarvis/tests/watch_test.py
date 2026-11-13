@@ -1960,6 +1960,30 @@ with open(sys.argv[1], "ab") as out:
         self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
                          [block.split("\n")[0]])
 
+    def test_forward_cadence_and_answer_event_restart(self):
+        self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
+        class Submitted:
+            def submit(self, work, *args):
+                return Future()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            for states, interval in (([], 60), (["queued"], 60), (["delivered"], 5),
+                                     (["read", "queued"], 5)):
+                watch = self.watch()
+                status = json.dumps({"requests": [{"state": state} for state in states]})
+                with patch.object(self.module, "checked", side_effect=["", status]):
+                    result = watch.forward()
+                self.assertEqual(result, ("", interval))
+                watch.next_relay = 1000
+                watch.next_forward = 1000
+                watch.forward_pending = Future()
+                watch.forward_pending.set_result(result)
+                watch._poll(Submitted(), Future(), 100)
+                self.assertEqual(watch.next_forward, 100 + interval)
+            block = "EVENT forward-answer request=vgs-audit:r key=forward-k answer=answer-id\n"
+            watch.accept_forward(block)
+            self.watch().accept_forward(block)
+            self.assertEqual(watch.log.read_text().count(block), 1)
+
     def test_remote_identity_restart(self):
         # Both independent machine views expose the same path and initial
         # bytes. The transport shim shares fixture storage, never identity.

@@ -1079,8 +1079,18 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
 
     def forward(self):
         try:
-            return checked([self.bash, LIB.parent / "jarvis-session", "forward-drain", "--home", self.home],
-                           self.home, operation="forward-drain")
+            command = [self.bash, LIB.parent / "jarvis-session"]
+            output = checked([*command, "forward-drain", "--home", self.home],
+                             self.home, operation="forward-drain")
+            # Status shares the forwarding owners state location and lifecycle.
+            # This local read starts no remote call or independent polling task.
+            status = json.loads(checked([*command, "status", "--main", "--home", self.home],
+                                        self.home, operation="forward-status"))
+            requests = status.get("requests")
+            if not isinstance(requests, list) or not all(isinstance(row, dict) for row in requests):
+                raise Failure("forward-status", "protocol", "status-unread", "requests")
+            interval = 5 if any(row.get("state") in ("delivered", "read") for row in requests) else FORWARD_EVERY_SECS
+            return output, interval
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("forward-drain", error)
 
@@ -1189,7 +1199,13 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             # it drains its forward outbox on the same executor instead.
             work = self.forward_pending
             if work is not None and work.done():
-                self.accept_forward(work.result())
+                result = work.result()
+                if isinstance(result, Failure):
+                    self.accept_forward(result)
+                else:
+                    output, interval = result
+                    self.accept_forward(output)
+                    self.next_forward = min(self.next_forward, now + interval)
                 self.forward_pending = None
             if self.forward_pending is None and now >= self.next_forward:
                 self.next_forward = now + FORWARD_EVERY_SECS
