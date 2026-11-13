@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use agent_runtime::controller::views::MarkKind;
+use agent_runtime::settings::Succession;
 use agent_runtime::trust;
 use serde_json::Value;
 
@@ -23,7 +24,7 @@ use crate::ops::store::handoff_standing;
 use crate::settings::Settings;
 use crate::watch::context::ContextRecord;
 use crate::watch::mail::overseer_dir;
-use crate::watch::overseer::marks_verb;
+use crate::watch::overseer::{MarkKey, controller_marks};
 
 /// The overseer mailbox's told cache: `<session>\t<first keyed line>` of
 /// the tool-call notice told last.
@@ -240,7 +241,7 @@ fn overseer_marks(turn: &mut Turn, judge: &Judge, controller: &Controller, read:
         Read::Unbound(_) => Some(marks::harness_word(turn.harness)).filter(|word| !word.is_empty()),
         Read::Measured { .. } | Read::Unmeasured(_) | Read::Compacted => None,
     };
-    let reply = match marks_verb(
+    let judged = match controller_marks(
         &judge.settings,
         &controller.fleet,
         context.as_deref(),
@@ -248,39 +249,24 @@ fn overseer_marks(turn: &mut Turn, judge: &Judge, controller: &Controller, read:
         None,
         marks::epoch_now(),
     ) {
-        Ok(reply) => reply,
+        Ok(judged) => judged,
         Err(e) => {
             turn.note(&Said::Marks("unjudged"), &e.to_string());
             return Ok(());
         }
     };
-    let line = reply.to_string();
-    match reply["key"].as_str() {
-        Some("mark-reached") => {}
-        Some("mark-unmeasured") => {
-            turn.note(&Said::Marks("unmeasured"), &line);
+    let kind = match judged.key {
+        MarkKey::Reached(kind) => kind,
+        MarkKey::Unmeasured(_) => {
+            turn.note(&Said::Marks("unmeasured"), &judged.reply().to_string());
             return Ok(());
         }
-        Some("below-mark") => return Ok(()),
-        _ => {
-            turn.note(&Said::Marks("unjudged"), &line);
-            return Ok(());
-        }
-    }
-    let field = |name: &str| reply[name].as_str().unwrap_or_default().to_owned();
-    let (value, mark) = (field("value"), field("mark"));
-    let kind = reply["kind"].as_str().and_then(MarkKind::parse);
-    let Some(kind) = kind.filter(|_| !value.is_empty() && !mark.is_empty()) else {
-        turn.note(&Said::Marks("unjudged"), &line);
-        return Ok(());
+        MarkKey::Below => return Ok(()),
     };
-    if reply["succession"].as_str() == Some("off") && kind != MarkKind::Context {
+    if judged.succession == Succession::Off && kind != MarkKind::Context {
         return Ok(());
     }
-    let decision = reply
-        .get("context_decision")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let decision = judged.decision.unwrap_or(Value::Null);
     let cap = marks::decision_cap(&decision);
     let instruction = judge.instruction(turn, decision, Some(kind.word()))?;
     let window = match read {
@@ -295,8 +281,8 @@ fn overseer_marks(turn: &mut Turn, judge: &Judge, controller: &Controller, read:
     };
     let said = Said::ControllerMark(Box::new(Reached {
         kind,
-        value,
-        mark,
+        value: judged.value,
+        mark: judged.mark,
         window,
         cap,
         instruction,

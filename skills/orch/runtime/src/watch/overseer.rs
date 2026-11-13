@@ -19,8 +19,8 @@
 //! succession, whose terminal proof runs inside that transfer. The
 //! controller's own marks are judged here
 //! ([`judge_marks`]): the watch asks in-process every pass with the
-//! overseer's own context reading, and the turn-end hook asks through the
-//! `marks` verb; the successor of a walled succession is the overseer
+//! overseer's own context reading, and the turn end asks in process through
+//! [`controller_marks`]; the successor of a walled succession is the overseer
 //! walk's choice (`ops::walk`).
 //!
 //! The overseer's context record (`watch::context`) is judged beside a
@@ -237,7 +237,7 @@ impl Marks {
         self.key == MarkKey::Reached(MarkKind::Headroom) && !self.reserve_only
     }
 
-    /// The reply the `marks` verb prints, which the turn-end hook reads.
+    /// The reply the `marks` verb prints, for its callers outside the process.
     pub fn reply(&self) -> Value {
         let (key, kind) = match self.key {
             MarkKey::Reached(kind) => ("mark-reached", Some(kind.word())),
@@ -418,7 +418,7 @@ pub struct MarksAsk<'a> {
     pub fleet_path: &'a Path,
     pub host: &'a crate::ops::Host<'a>,
     pub caller: &'a Caller,
-    /// `TOKENS:WINDOW` as the turn-end hook took it; none judges the
+    /// `TOKENS:WINDOW`, the reading the native turn end took; none judges the
     /// account marks alone.
     pub context: Option<&'a str>,
     /// The memory of the caller's harness process, read only where the
@@ -2011,13 +2011,7 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
         .push(set("overseer-mark", key, format!("{kind}|{passes}")));
 }
 
-/// The `marks` verb: the recorded controller's own marks for the caller
-/// its fleet record names, the harness and account the request names
-/// standing in where the record names none; the reply is [`Marks::reply`].
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verb's one read of the fleet state, a snapshot the judge reads; the kernel host for the judge's occupancy read, which acts on nothing"
-)]
+/// The `marks` verb: [`controller_marks`]' answer as [`Marks::reply`].
 pub fn marks_verb(
     settings: &Settings,
     path: &Path,
@@ -2026,6 +2020,24 @@ pub fn marks_verb(
     account: Option<&str>,
     now: u64,
 ) -> crate::error::Result<Value> {
+    Ok(controller_marks(settings, path, context, harness, account, now)?.reply())
+}
+
+/// The recorded controller's own marks for the caller its fleet record
+/// names, the harness and account the request names standing in where the
+/// record names none, as the judge made them.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the verb's one read of the fleet state, a snapshot the judge reads; the kernel host for the judge's occupancy read, which acts on nothing"
+)]
+pub fn controller_marks(
+    settings: &Settings,
+    path: &Path,
+    context: Option<&str>,
+    harness: Option<&str>,
+    account: Option<&str>,
+    now: u64,
+) -> crate::error::Result<Marks> {
     let harness = harness.map(Harness::named).transpose()?;
     let record = crate::state::load(path)?
         .map(|snapshot| {
@@ -2051,7 +2063,7 @@ pub fn marks_verb(
             identity.pid,
         )
     };
-    let marks = judge_marks(&MarksAsk {
+    judge_marks(&MarksAsk {
         settings,
         fleet_path: path,
         host: &host,
@@ -2059,8 +2071,7 @@ pub fn marks_verb(
         context,
         memory: &memory,
         now,
-    })?;
-    Ok(marks.reply())
+    })
 }
 
 /// The transfer as the `op` command runs it: its successor's posture the
