@@ -620,7 +620,7 @@ pub struct Judges<'a> {
 }
 
 pub type MarksRead<'a> = &'a dyn Fn(&Caller, Option<&str>) -> Result<Marks, String>;
-pub type WalkRead<'a> = &'a dyn Fn(&WalkRequest) -> Result<walk::Walked, String>;
+pub type WalkRead<'a> = &'a dyn Fn(&WalkRequest) -> crate::error::Result<walk::Walked>;
 /// The walk's pick for a harness and model, the spent account excluded.
 pub type WallPickRead<'a> = &'a dyn Fn(&Path, Harness, &str, &str) -> Pick;
 /// The relaunch started as a detached job; `Err` the launcher's refusal.
@@ -1617,9 +1617,17 @@ fn transfer(
                     match (pass.judges.walk)(&request) {
                         Ok(walked) => match &walked.answer {
                             walk::WalkAnswer::Lane(chosen) => Some(caller.successor_of(chosen)),
-                            walk::WalkAnswer::None | walk::WalkAnswer::Held { .. } => None,
+                            walk::WalkAnswer::None | walk::WalkAnswer::Held { .. } => {
+                                if let Some(line) = unread_hosts(&walked) {
+                                    out.events.push(Event::Tail(line));
+                                }
+                                None
+                            }
                         },
-                        Err(_) => None,
+                        Err(refusal) => {
+                            out.events.push(Event::Tail(keyed(&refusal)));
+                            None
+                        }
                     }
                 }
                 (None, _) | (_, None) => None,
@@ -1667,6 +1675,41 @@ fn transfer(
                 .get_or_insert(format!("transfer-refused cause={cause}"));
         }
     }
+}
+
+/// The walk's refusal as the one keyed line the hand-over prints under the
+/// overseer's line: `<key> <field>=<value> ...`.
+fn keyed(refusal: &crate::error::Error) -> String {
+    refusal
+        .fields()
+        .into_iter()
+        .fold(refusal.key().to_owned(), |line, (field, value)| {
+            format!("{line} {field}={value}")
+        })
+}
+
+/// The line a walk that chose no successor prints where it passed an
+/// unread provider's entries over, in the walk's own refusal form: each
+/// unread host once, with the cause of its first entry.
+fn unread_hosts(walked: &walk::Walked) -> Option<String> {
+    let mut hosts: Vec<(&str, &str)> = Vec::new();
+    for row in &walked.skipped {
+        let field = |name: &str| row.get(name).and_then(Value::as_str);
+        let (Some("host-unread"), Some(host), Some(cause)) =
+            (field("reason"), field("host"), field("cause"))
+        else {
+            continue;
+        };
+        if !hosts.iter().any(|(h, _)| *h == host) {
+            hosts.push((host, cause));
+        }
+    }
+    (!hosts.is_empty()).then(|| {
+        hosts.iter().fold(
+            "account-unjudged step=host".to_owned(),
+            |line, (host, cause)| format!("{line} host={host} cause={cause}"),
+        )
+    })
 }
 
 /// One relaunch marker as the lanes pass wrote it (`ops::wall`,
@@ -2146,7 +2189,6 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 request,
                 tick.wall,
             )
-            .map_err(|e| e.to_string())
         };
         let wall_pick = |_: &Path, harness: Harness, model: &str, spent: &str| {
             picked_by_judge(accounts::pick_fleet(

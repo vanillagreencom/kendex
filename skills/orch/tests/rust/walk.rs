@@ -131,6 +131,27 @@ impl World {
         std::fs::write(path, map.to_string()).unwrap();
     }
 
+    /// The host fixture's answer to `key` (`<host> <argv>`, `#N` appended
+    /// for the Nth call) refused at `exit`.
+    fn refuse(&self, key: &str, exit: i64) {
+        let path = self.path().join("lane-host.json");
+        let mut map: Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_else(|| json!({}));
+        map[key] = json!({"exit": exit, "stderr": format!("lane-host-fixture: {key} refused\n")});
+        std::fs::write(path, map.to_string()).unwrap();
+    }
+
+    /// Every call the host fixture answered, `ORCH_LANE_HOST=<host> <argv>`.
+    fn host_log(&self) -> Vec<String> {
+        std::fs::read_to_string(self.path().join("lane-host.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
     fn write_fleet(&self, overseer_account: Option<&str>) {
         let mut fleet = json!({
             "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []
@@ -167,6 +188,26 @@ impl World {
         let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(reply["ok"], json!(true), "{reply}");
         reply["result"].clone()
+    }
+
+    /// The refusal of a walk that refused: its key and fields.
+    fn refused(&self, args: &[&str]) -> (String, Vec<(String, String)>) {
+        let out = self.walk(args);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["ok"], json!(false), "{reply}");
+        let fields = reply["refusal"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|pair| {
+                (
+                    pair[0].as_str().unwrap().to_owned(),
+                    pair[1].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        (reply["refusal"]["key"].as_str().unwrap().to_owned(), fields)
     }
 }
 
@@ -296,4 +337,261 @@ fn a_cloud_session_entry_is_skipped_for_a_relaunch_and_a_cloud_task_host_always(
         "claude@cloudy:claude-opus-5-5:high cloud-repo-unset /home/me/.aclaude"
     );
     assert_eq!(strings(&result["unread"]), ["pi@local:openai/gpt-5:high"]);
+}
+
+/// The two entries of `vm` before this machine's, over a local Claude home
+/// and the provider's Claude and Codex rows.
+const VM_FIRST: &str =
+    "claude@vm:claude-opus-5-5:high,codex@vm:gpt-6.1-sol:high,claude@local:claude-opus-5-5:high";
+
+/// The world of [`VM_FIRST`]: the preference, a local Claude home with room
+/// and the provider `vm`'s rows, its line an SSH host's.
+fn vm_first_world() -> World {
+    let mut world = World::new(&[("ORCH_LANE_PREFERENCE", VM_FIRST)]);
+    world.plant_host_listing(
+        "vm",
+        &[
+            measured("aclaude", 10, 5),
+            through_host(measured("vclaude", 20, 5)),
+            through_host(codex("vcodex", 20)),
+        ],
+    );
+    world
+}
+
+/// Each skipped row passed over for its provider: `entry host cause`.
+fn passed_over(result: &Value) -> Vec<(String, String, String)> {
+    result["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["reason"] == json!("host-unread"))
+        .map(|s| {
+            (
+                s["entry"].as_str().unwrap().to_owned(),
+                s["host"].as_str().unwrap().to_owned(),
+                s["cause"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// An unread capability line passes over its host's entries only, its cause
+/// printed on each, and the walk goes on to this machine's entry: the line
+/// is asked once for the walk, never again for the host's second entry,
+/// and again by the next walk, where it answers and the host's entry is
+/// chosen. A walk whose every entry's line went unread judged none and
+/// refuses, naming the host and the cause.
+#[test]
+fn an_unread_capability_line_passes_over_its_hosts_entries_once_per_walk() {
+    let args = ["--source-harness", "claude", "--source-flags", BYPASS];
+    let world = vm_first_world();
+    world.refuse("vm capabilities#1", 1);
+    let result = world.answered(&args);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("claude@local:claude-opus-5-5:high"),
+        "{result}"
+    );
+    let passed = passed_over(&result);
+    assert_eq!(
+        passed
+            .iter()
+            .map(|(e, h, _)| format!("{e} {h}"))
+            .collect::<Vec<_>>(),
+        [
+            "claude@vm:claude-opus-5-5:high vm",
+            "codex@vm:gpt-6.1-sol:high vm"
+        ],
+        "{result}"
+    );
+    for (_, _, cause) in &passed {
+        assert!(
+            cause.starts_with("host-capabilities-unread host=vm cause=exit=1 "),
+            "{cause}"
+        );
+    }
+    assert_eq!(
+        strings(&result["unread"]),
+        [
+            "claude@vm:claude-opus-5-5:high",
+            "codex@vm:gpt-6.1-sol:high"
+        ]
+    );
+    assert_eq!(world.host_log(), ["ORCH_LANE_HOST=vm capabilities"]);
+    let result = world.answered(&args);
+    assert_eq!(
+        (&result["chosen"]["entry"], &result["chosen"]["host"]),
+        (&json!("claude@vm:claude-opus-5-5:high"), &json!("vm")),
+        "{result}"
+    );
+    assert_eq!(
+        world.host_log()[1..],
+        [
+            "ORCH_LANE_HOST=vm capabilities",
+            "ORCH_LANE_HOST=vm accounts"
+        ]
+    );
+    let mut hosted = World::new(&[(
+        "ORCH_LANE_PREFERENCE",
+        "claude@vm:claude-opus-5-5:high,codex@vm:gpt-6.1-sol:high",
+    )]);
+    hosted.plant_host_listing("vm", &[through_host(measured("vclaude", 20, 5))]);
+    hosted.refuse("vm capabilities", 1);
+    let (key, fields) = hosted.refused(&args);
+    assert_eq!(key, "account-unjudged");
+    assert_eq!(
+        fields[..2],
+        [
+            ("step".to_owned(), "host".to_owned()),
+            ("host".to_owned(), "vm".to_owned())
+        ],
+        "{fields:?}"
+    );
+    assert_eq!(fields.len(), 3, "one host, one cause: {fields:?}");
+    assert!(
+        fields[2].0 == "cause"
+            && fields[2]
+                .1
+                .starts_with("host-capabilities-unread host=vm cause=exit=1 "),
+        "{fields:?}"
+    );
+}
+
+/// A provider whose `accounts` answer failed is unread for the walk, its
+/// entries passed over and never judged on this machine's listing, its
+/// slot refusal (exit 69) told apart from a verb that failed by the cause:
+/// the answer is asked once per walk and again by each next walk, which
+/// chooses the host's entry once the provider answers.
+#[test]
+fn a_failed_accounts_answer_passes_over_its_hosts_entries_once_per_walk() {
+    let args = ["--source-harness", "claude", "--source-flags", BYPASS];
+    let world = vm_first_world();
+    world.refuse("vm accounts#1", 69);
+    world.refuse("vm accounts#2", 1);
+    for (walk, cause) in [
+        (1, "lane-host-busy step=accounts "),
+        (2, "host-accounts-unreadable host=vm exit=1 "),
+    ] {
+        let result = world.answered(&args);
+        assert_eq!(
+            result["chosen"]["entry"],
+            json!("claude@local:claude-opus-5-5:high"),
+            "walk {walk}: {result}"
+        );
+        let passed = passed_over(&result);
+        assert_eq!(passed.len(), 2, "walk {walk}: {result}");
+        for (_, host, said) in &passed {
+            assert!(
+                host == "vm" && said.starts_with(cause),
+                "walk {walk}: {said}"
+            );
+        }
+        assert_eq!(
+            world.host_log()[2 * (walk - 1)..],
+            [
+                "ORCH_LANE_HOST=vm capabilities",
+                "ORCH_LANE_HOST=vm accounts"
+            ],
+            "walk {walk}"
+        );
+    }
+    let result = world.answered(&args);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("claude@vm:claude-opus-5-5:high"),
+        "{result}"
+    );
+    assert!(passed_over(&result).is_empty(), "{result}");
+}
+
+/// A line naming no launch and a line naming no pool are unread lines: each
+/// host's entry is passed over with its cause, neither provider's
+/// `accounts` is asked, and the walk goes on to this machine's entry.
+#[test]
+fn a_line_naming_no_launch_or_no_pool_passes_over_its_hosts_entries() {
+    let args = ["--source-harness", "claude", "--source-flags", BYPASS];
+    let mut world = World::new(&[(
+        "ORCH_LANE_PREFERENCE",
+        "claude@vm:claude-opus-5-5:high,claude@vm2:claude-opus-5-5:high,claude@local:claude-opus-5-5:high",
+    )]);
+    world.plant_host_listing("vm", &[measured("aclaude", 10, 5)]);
+    world.plant_capabilities(&[
+        (
+            "vm",
+            "kind=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n",
+        ),
+        (
+            "vm2",
+            "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\n",
+        ),
+    ]);
+    let result = world.answered(&args);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("claude@local:claude-opus-5-5:high"),
+        "{result}"
+    );
+    let row = |entry: &str, host: &str, cause: &str| {
+        (entry.to_owned(), host.to_owned(), cause.to_owned())
+    };
+    assert_eq!(
+        passed_over(&result),
+        [
+            row(
+                "claude@vm:claude-opus-5-5:high",
+                "vm",
+                "host-capabilities-unread host=vm cause=launch-missing"
+            ),
+            row(
+                "claude@vm2:claude-opus-5-5:high",
+                "vm2",
+                "host-capabilities-unread host=vm2 cause=no pool= field"
+            )
+        ],
+        "{result}"
+    );
+    assert_eq!(
+        world.host_log(),
+        [
+            "ORCH_LANE_HOST=vm capabilities",
+            "ORCH_LANE_HOST=vm2 capabilities"
+        ]
+    );
+}
+
+/// A cloud-session host's line is asked once for the walk: by the host
+/// step, the provider's reading and the cloud-repository rule alike, its
+/// `accounts` once beside it.
+#[test]
+fn a_cloud_session_hosts_line_is_asked_once_for_its_walk() {
+    let mut world = World::new(&[
+        (
+            "ORCH_LANE_PREFERENCE",
+            "claude@cloudy:claude-opus-5-5:high,codex@local:gpt-6.1-sol:high",
+        ),
+        ("ORCH_LANE_HOST", "cloudy"),
+    ]);
+    world.plant_capabilities(&[("cloudy", CLOUD_LINE)]);
+    world.plant_host_listing(
+        "cloudy",
+        &[through_host(measured("aclaude", 10, 5)), codex("codex", 20)],
+    );
+    let result = world.answered(&["--source-harness", "claude", "--source-flags", BYPASS]);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("codex@local:gpt-6.1-sol:high"),
+        "{result}"
+    );
+    assert_eq!(
+        skipped(&result),
+        ["claude@cloudy:claude-opus-5-5:high cloud-repo-unset /home/me/.aclaude"]
+    );
+    assert_eq!(
+        world.host_log(),
+        [
+            "ORCH_LANE_HOST=cloudy capabilities",
+            "ORCH_LANE_HOST=cloudy accounts"
+        ]
+    );
 }

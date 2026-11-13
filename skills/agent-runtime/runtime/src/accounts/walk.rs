@@ -611,7 +611,9 @@ fn unjudged(entry: &str, step: &str, cause: &str) -> Error {
 
 /// Where an entry is judged: under `host` (`None` this machine), with the
 /// launch kind that host declares where a lane's host was read; or the
-/// entry passed over, its host's launch kind taking no lane of it.
+/// entry passed over, its host's launch kind taking no lane of it, or its
+/// provider unread with the cause, since an entry a provider bills is never
+/// judged from this machine's listing alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hosted {
     Judge {
@@ -621,6 +623,10 @@ pub enum Hosted {
     Skip {
         host: String,
         launch: &'static str,
+    },
+    Unread {
+        host: String,
+        cause: String,
     },
 }
 
@@ -642,7 +648,9 @@ pub type PickUnder<'a> = dyn FnMut(&PickRequest, Option<&str>) -> PickAnswer + '
 
 /// The walk over the preference, the caller's entry last where one is
 /// named. Each entry's account is the judge's answer under the entry's
-/// host; an answer the judge could not give ends the walk as a refusal.
+/// host; an answer the judge could not give ends the walk as a refusal, and
+/// so does a walk that judged no entry because every provider it asked
+/// went unread: that is no answer of room, and `none` would read as one.
 pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Result<Walked> {
     let accounts = settings.accounts.get()?;
     let text = req.preference.clone().unwrap_or_else(|| match req.scope {
@@ -692,6 +700,8 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         deprecated: Vec::new(),
     };
     let mut room: Option<String> = None;
+    let mut judged = false;
+    let mut unread_hosts: Vec<(String, String)> = Vec::new();
     let last = preference.entries.len().saturating_sub(1);
     let caller = req.caller.iter().map(|c| Step::Caller(c.clone()));
     let steps = preference
@@ -797,19 +807,11 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             walked.skipped.push(row);
             continue;
         }
-        // The host the entry is judged under, as the caller reads it.
-        let (judge_host, launch) = match hosted(req.scope, host.as_deref(), harness)? {
-            Hosted::Judge { host, launch } => (host, launch),
-            Hosted::Skip { host, launch } => {
-                let mut row = skip(&text, "host-launch", None);
-                row["host"] = json!(host);
-                row["launch"] = json!(launch);
-                walked.skipped.push(row);
-                continue;
-            }
-        };
         let billed = harness.billed(&pick_model);
-        let chosen = |account: Option<String>, record: Option<Value>, kept_unmeasured: bool| {
+        let chosen = |launch: Option<&'static str>,
+                      account: Option<String>,
+                      record: Option<Value>,
+                      kept_unmeasured: bool| {
             WalkAnswer::Lane(Box::new(Chosen {
                 entry: text.clone(),
                 harness,
@@ -825,6 +827,35 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 kept: false,
                 kept_unmeasured,
             }))
+        };
+        if req.scope == Scope::Overseer && billed.is_none() {
+            // An entry spending no account the judge measures: nothing to
+            // pick or refuse and no provider to read for it, its first turn
+            // the one reading of its room.
+            walked.answer = chosen(None, None, None, false);
+            return Ok(walked);
+        }
+        // The host the entry is judged under, as the caller reads it.
+        let (judge_host, launch) = match hosted(req.scope, host.as_deref(), harness)? {
+            Hosted::Judge { host, launch } => (host, launch),
+            Hosted::Skip { host, launch } => {
+                let mut row = skip(&text, "host-launch", None);
+                row["host"] = json!(host);
+                row["launch"] = json!(launch);
+                walked.skipped.push(row);
+                continue;
+            }
+            Hosted::Unread { host, cause } => {
+                let mut row = skip(&text, "host-unread", None);
+                row["host"] = json!(host);
+                row["cause"] = json!(cause);
+                walked.skipped.push(row);
+                walked.unread.push(text.clone());
+                if !unread_hosts.iter().any(|(h, _)| *h == host) {
+                    unread_hosts.push((host, cause));
+                }
+                continue;
+            }
         };
         let request = |max_pct: Option<u32>, lane: Option<String>, exclude: Vec<String>| {
             let overseer = req.scope == Scope::Overseer;
@@ -856,12 +887,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         };
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
         let mut pick = |pr: &PickRequest| judge(pr, Some(&judge_host));
-        if req.scope == Scope::Overseer && billed.is_none() {
-            // An entry spending no account the judge measures: nothing to
-            // pick or refuse, its first turn the one reading of its room.
-            walked.answer = chosen(None, None, false);
-            return Ok(walked);
-        }
+        judged = true;
         let answer = pick(&request(None, named.clone(), req.exclude.clone()));
         // An entry the judge could not judge (no record, unmeasured, no
         // repository access): a lane's walk carries it as unread and moves
@@ -969,8 +995,15 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             }
             continue;
         };
-        walked.answer = chosen(Some(account), Some(record), kept_unmeasured);
+        walked.answer = chosen(launch, Some(account), Some(record), kept_unmeasured);
         return Ok(walked);
+    }
+    if !judged && !unread_hosts.is_empty() {
+        let mut fields = vec![("step", "host")];
+        for (host, cause) in &unread_hosts {
+            fields.extend([("host", host.as_str()), ("cause", cause.as_str())]);
+        }
+        return Err(refused("account-unjudged", &fields));
     }
     Ok(walked)
 }

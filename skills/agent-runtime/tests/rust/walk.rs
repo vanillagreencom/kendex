@@ -2,8 +2,8 @@
 //! through the `kendex-launch` fixture (the one `kendex` on the rows'
 //! `PATH`) and judged over accounts planted as the listing reads them
 //! (`plant_listing`: local directories with their credentials and usage
-//! records). No orch stands in a world, so no lane is counted and no entry
-//! names a host.
+//! records). No orch stands in a world, so no lane is counted and no
+//! provider is read for an entry naming a host.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows write the listings and the record they plant and read the fixtures' logs"
@@ -994,6 +994,70 @@ fn a_named_lane_walk_skips_the_entries_the_judge_refuses_by_word() {
     let (key, fields) = open.refused(&["--source-harness", "claude", "--account", "/nowhere/.x"]);
     assert_eq!(key, "lane-unknown");
     assert_eq!(fields[0], ("lane".to_owned(), "/nowhere/.x".to_owned()));
+}
+
+/// An entry whose provider nobody here can read is passed over with its host
+/// and cause and the walk goes on to this machine's entry; a walk whose every
+/// entry went unread judged none and refuses, naming each host and cause,
+/// where `none` would read as no room; a walk that judged an entry and found
+/// no room answers `none` with the unread rows beside it.
+#[test]
+fn an_unread_hosts_entries_are_passed_over_and_a_walk_judging_none_refuses() {
+    let args = ["--source-harness", "claude", "--source-flags", BYPASS];
+    let mut world = World::new(&[(
+        PREFERENCE,
+        "claude@vm:fable:high,codex@vm:gpt-6.1-sol:high,codex:gpt-6.1-sol:high",
+    )]);
+    world.plant_listing(&[measured("aclaude", 10, 5), codex("codex", 20)]);
+    let result = world.answered(&args);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("codex:gpt-6.1-sol:high"),
+        "{result}"
+    );
+    assert_eq!(
+        skipped(&result),
+        [
+            "claude@vm:fable:high host-unread none",
+            "codex@vm:gpt-6.1-sol:high host-unread none"
+        ]
+    );
+    for row in result["skipped"].as_array().unwrap() {
+        assert_eq!(
+            (&row["host"], &row["cause"]),
+            (&json!("vm"), &json!("no-provider"))
+        );
+    }
+    let mut hosted = World::new(&[(
+        PREFERENCE,
+        "claude@vm:fable:high,codex@vm2:gpt-6.1-sol:high",
+    )]);
+    hosted.plant_listing(&[measured("aclaude", 10, 5), codex("codex", 20)]);
+    let (key, fields) = hosted.refused(&args);
+    assert_eq!(key, "account-unjudged");
+    let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+    assert_eq!(
+        fields,
+        [
+            pair("step", "host"),
+            pair("host", "vm"),
+            pair("cause", "no-provider"),
+            pair("host", "vm2"),
+            pair("cause", "no-provider")
+        ]
+    );
+    let mut walled = World::new(&[(PREFERENCE, "claude@vm:fable:high,claude:fable:high")]);
+    walled.plant_listing(&[measured("aclaude", 96, 5)]);
+    let result = walled.answered(&args);
+    assert_eq!(result["answer"], json!("none"), "{result}");
+    assert_eq!(
+        skipped(&result),
+        [
+            "claude@vm:fable:high host-unread none".to_owned(),
+            format!("claude:fable:high walled {}", walled.dir("aclaude"))
+        ]
+    );
+    assert_eq!(strings(&result["unread"]), ["claude@vm:fable:high"]);
 }
 
 /// The pick replies `tests/overseer-walk.sh` plants for the walk it runs,

@@ -399,6 +399,59 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
     assert_eq!(fleet.lane("KEN-3")["account"], "/home/me/.other");
 }
 
+/// A launch that asks for its account's room under a provider whose
+/// `accounts` read fails or answers busy is refused `account-unjudged`,
+/// naming the host and the provider's cause, and writes nothing; the same
+/// world answered admits it.
+#[test]
+fn a_launch_under_a_failed_or_busy_accounts_read_is_refused_and_writes_nothing() {
+    let refused = "lane-host-fixture: accounts-refused";
+    let cases = [
+        (None, None),
+        (
+            Some(1),
+            Some(format!(
+                "account-unjudged step=host host=fleet-vm cause=host-accounts-unreadable host=fleet-vm exit=1 {refused}"
+            )),
+        ),
+        (
+            Some(69),
+            Some(format!(
+                "account-unjudged step=host host=fleet-vm cause=lane-host-busy step=accounts {refused}"
+            )),
+        ),
+    ];
+    for (exit, cause) in cases {
+        let mut fleet = Fleet::new(4);
+        fleet.init_fleet();
+        fleet.plant_listing(&[listing_row(10, epoch_now())]);
+        if let Some(exit) = exit {
+            let path = fleet.state_dir().join("lane-host.json");
+            let mut map: Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            map["fleet-vm accounts"] = json!({"exit": exit, "stderr": format!("{refused}\n")});
+            std::fs::write(path, map.to_string()).unwrap();
+        }
+        let out = fleet.op(&launch_on("KEN-3", fleet.state_dir()));
+        let answer = reply(&out);
+        let lanes = fleet.fleet()["lanes"].as_array().map_or(0, Vec::len);
+        match cause {
+            None => {
+                assert_eq!(answer["ok"], true, "{}", stderr(&out));
+                assert_eq!(lanes, 1);
+            }
+            Some(cause) => {
+                assert_eq!(
+                    answer["refusal"]["key"], "account-unjudged",
+                    "{exit:?}: {answer}"
+                );
+                assert_eq!(refusal_fields(&answer)["cause"], cause, "{exit:?}");
+                assert_eq!(lanes, 0, "{exit:?}: a refused launch writes no record");
+            }
+        }
+    }
+}
+
 /// An account its word refuses, reserved or retired from its day, may have
 /// room, so the refusal is the word's own key, never `account-walled` with
 /// the wall's figures: its line naming the word, or the day and who stated
@@ -3180,6 +3233,61 @@ fn a_stale_wall_over_an_account_with_room_closes_the_lane() {
                 assert!(live(identity.pid), "{case}: the harness untouched");
             }
         }
+    }
+}
+
+/// A hosted lane's wall is weighed against its account read under the
+/// record's host. A Claude lane on the fixture provider whose captured pane
+/// shows a usage banner naming no reset ahead, its item ended by its
+/// tracker, its account at room on this machine's listing, while the
+/// provider's `accounts` read fails or answers busy: the read is unjudged,
+/// the wall kept, refused `lane-live state=walled account=read-failed`, the
+/// record running, the provider asked for its accounts and for no stop and
+/// no close.
+#[test]
+fn a_stale_wall_under_a_failed_or_busy_accounts_read_keeps_the_lane_and_stops_nothing() {
+    for status in ["1", "69"] {
+        let mut fleet = Fleet::verb_pane(&format!(
+            "⏺ Working through the queue.\n{CLOCK_WALL}\nRun /usage-credits to raise it\n❯\u{a0}\n"
+        ));
+        fleet.answer("ACCOUNTS_STATUS", status);
+        let state = fleet.state_dir().to_path_buf();
+        let now = epoch_now();
+        let env = plant_accounts(&state, &state, None, &[listing_row(20, now)], now);
+        fleet.env.extend(env);
+        let mut lane = without("cycle");
+        lane["account"] = json!(state.join("home/.aclaude").display().to_string());
+        fleet.write_lanes(vec![lane]);
+        fleet.plant_tracker("KEN-1", "completed");
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        let fields = [
+            ("item", "KEN-1"),
+            ("state", "walled"),
+            ("window", "fleet:KEN-1"),
+            ("account", "read-failed"),
+        ];
+        assert_eq!(
+            answer,
+            json!({
+                "protocol": "orch-runtime-v1",
+                "ok": false,
+                "refusal": {
+                    "key": "lane-live",
+                    "fields": fields,
+                    "text": format!("refused lane-live: {fields:?}"),
+                },
+            }),
+            "{status}"
+        );
+        assert_eq!(fleet.lane("KEN-1")["status"], "running", "{status}");
+        let calls = fleet.provider_calls();
+        assert!(calls.iter().any(|c| c == "accounts"), "{status}: {calls:?}");
+        assert!(
+            !calls
+                .iter()
+                .any(|c| c.starts_with("stop ") || c.starts_with("close ")),
+            "{status}: {calls:?}"
+        );
     }
 }
 

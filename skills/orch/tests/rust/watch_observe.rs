@@ -1589,7 +1589,7 @@ fn reached(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
 }
 
 /// The overseer walk choosing the Claude account `bclaude`.
-fn walk_b(_: &WalkRequest) -> Result<Walked, String> {
+fn walk_b(_: &WalkRequest) -> orch_runtime::error::Result<Walked> {
     Ok(Walked {
         answer: WalkAnswer::Lane(Box::new(Chosen {
             entry: "claude:opus:high".to_owned(),
@@ -1624,7 +1624,7 @@ fn hand_over(cwd: &Path, pane: &str, kind: &str, walks: &str) -> String {
     )
 }
 
-fn no_walk(_: &WalkRequest) -> Result<Walked, String> {
+fn no_walk(_: &WalkRequest) -> orch_runtime::error::Result<Walked> {
     panic!("the overseer walk is asked only for a walled succession")
 }
 
@@ -5704,6 +5704,111 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
         Some(agent_runtime::launch::Permission::Bypass)
     );
     assert!(successor.extra_args.is_empty());
+}
+
+/// A walled overseer's hand-over that finds no successor names, on the
+/// line the watch prints at that pass, each provider whose entries the walk
+/// passed over and why: from the walk's `host-unread` rows where it judged
+/// another entry and found no room, from its refusal where it judged none.
+/// The row stays `reported`, so the line is said once.
+#[test]
+fn a_walled_controller_with_no_successor_names_each_unread_host_and_its_cause() {
+    let busy = "lane-host-busy step=accounts lane-host: lane-host-busy count=4 cap=4";
+    let failed = "host-accounts-unreadable host=vm2 exit=1 down";
+    let skip = |entry: &str, host: &str, cause: &str| json!({"entry": entry, "reason": "host-unread", "lane": null, "host": host, "cause": cause});
+    let judged_none = Walked {
+        answer: WalkAnswer::None,
+        walk: "claude@vm:opus:high,codex@vm:gpt:high,claude@vm2:opus:high,claude:opus:high"
+            .to_owned(),
+        entries: 4,
+        skipped: vec![
+            skip("claude@vm:opus:high", "vm", busy),
+            skip("codex@vm:gpt:high", "vm", busy),
+            skip("claude@vm2:opus:high", "vm2", failed),
+            json!({"entry": "claude:opus:high", "reason": "walled", "lane": null}),
+        ],
+        walled: 1,
+        unmeasured: 0,
+        unread: vec![
+            "claude@vm:opus:high".to_owned(),
+            "codex@vm:gpt:high".to_owned(),
+            "claude@vm2:opus:high".to_owned(),
+        ],
+        deprecated: Vec::new(),
+    };
+    let cases: [(&str, orch_runtime::error::Result<Walked>, String); 2] = [
+        (
+            "judged and no room",
+            Ok(judged_none),
+            format!("account-unjudged step=host host=vm cause={busy} host=vm2 cause={failed}"),
+        ),
+        (
+            "none judged",
+            Err(agent_runtime::Error::refused(
+                "account-unjudged",
+                &[("step", "host"), ("host", "vm2"), ("cause", failed)],
+            )
+            .into()),
+            format!("account-unjudged step=host host=vm2 cause={failed}"),
+        ),
+    ];
+    for (case, answer, line) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, window) = walled_overseer(dir.path(), &server, &fleet);
+        let state = fleet.read();
+        let answer = RefCell::new(Some(answer));
+        let walk = |_: &WalkRequest| answer.borrow_mut().take().expect("one walk per wall");
+        overseer_driver!(server, fleet, reached, walk, readers, transfers, driver);
+        let key = format!("{} {pane}", server.pid);
+        let first = driver.pass(&state);
+        assert!(
+            lines(&first)[0].starts_with(&format!("EVENT overseer-walled {pane} window={window}")),
+            "{case}: {:?}",
+            lines(&first)
+        );
+        let handed_over = driver.pass(&state);
+        assert_eq!(lines(&handed_over), vec![line], "{case}");
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some("reported"),
+            "{case}"
+        );
+        assert!(
+            transfers.borrow().is_empty(),
+            "{case}: nothing is asked for"
+        );
+        let after = driver.pass(&state);
+        assert!(lines(&after).is_empty(), "{case}: {:?}", lines(&after));
+    }
+}
+
+/// A Claude overseer walled by its weekly limit, its pane and window.
+fn walled_overseer(dir: &Path, server: &Server, fleet: &Fleet) -> (String, String) {
+    let claude = named_sleep(dir, "claude");
+    let pane = server.open_window(
+        "overseer",
+        dir,
+        &format!(
+            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(server, &pane, "claude");
+    let window = window_of(server, &pane);
+    let rows_file = dir.join("session-rows.jsonl");
+    std::fs::write(
+        &rows_file,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"rate_limit\",\"message\":\"You've hit your weekly limit · resets Oct 4\"}\n",
+    )
+    .unwrap();
+    let mut record = overseer_at(server, &pane, &window, dir);
+    record["session_rows"] = json!(rows_file.display().to_string());
+    record["harness_pid"] = json!(identity.pid.to_string());
+    record["harness_start"] = json!(identity.start);
+    fleet.set_overseer(record);
+    (pane, window)
 }
 
 #[test]

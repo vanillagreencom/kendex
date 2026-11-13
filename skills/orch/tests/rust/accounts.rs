@@ -1482,9 +1482,8 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
 /// form judges it; a named excluded root is refused by its word,
 /// `excluded`, exit 3; the provider's `harness=pi` row with a reading
 /// replaces the statement, one without a reading leaves it standing; a
-/// failed provider read with nothing stated is `copilot-pool-unread`, and
-/// nothing stated and nothing read is `unmeasured`, exit 5, a read to
-/// repair.
+/// failed provider read is unjudged; and nothing stated and nothing read
+/// is `unmeasured`, exit 5, a read to repair.
 #[test]
 fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() {
     let root = "/home/me/.pi1".to_owned();
@@ -1581,24 +1580,20 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
         "{standing}"
     );
     assert_eq!(standing["record"]["headroom_pct"], json!(90));
-    // A failed read is answered by the statement; with none it is unread.
-    world.refuse_accounts("fleet-vm", 1);
-    assert_eq!(
-        world.pick(&copilot)["record"]["measured_through"],
-        json!("stated")
-    );
+    // A failed read is unjudged, the statement standing beside it or not
+    // (`a_failed_or_busy_accounts_read_refuses_a_single_pick`).
+    let failed = World::new(&[
+        ("ORCH_LANE_HOST", "fleet-vm"),
+        ("AGENT_RUNTIME_COPILOT_POOL", &pool),
+    ]);
+    failed.write_fleet(Vec::new(), None);
+    failed.plant_capabilities("fleet-vm", SSH_LINE);
+    failed.refuse_accounts("fleet-vm", 1);
+    let refused = failed.pick(&copilot);
+    assert_eq!(refused["answer"], json!("unjudged"), "{refused}");
     let bare = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
     bare.write_fleet(Vec::new(), None);
     bare.plant_capabilities("fleet-vm", SSH_LINE);
-    bare.refuse_accounts("fleet-vm", 1);
-    let unread = bare.pick(&copilot);
-    assert_eq!(unread["answer"], json!("unjudged"), "{unread}");
-    assert!(
-        unread["record"]["cause"].as_str().unwrap().starts_with(
-            "copilot-pool-unread host=fleet-vm host-accounts-unreadable host=fleet-vm exit=1"
-        ),
-        "{unread}"
-    );
     bare.refuse_accounts("fleet-vm", 2);
     let unstated = bare.pick(&copilot);
     assert_eq!(unstated["answer"], json!("unmeasured"), "{unstated}");
@@ -1607,6 +1602,52 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
         unstated["record"]["refusal"]["cause"],
         json!("provider-unmeasured")
     );
+}
+
+/// A single pick is never judged on this machine's listing alone: where
+/// the provider's `accounts` read fails or answers busy (exit 69), the
+/// pick is unjudged with the walk's key, the host and the provider's
+/// cause, the busy answer under its own; the same world answered picks
+/// this machine's account.
+#[test]
+fn a_failed_or_busy_accounts_read_refuses_a_single_pick() {
+    let refused = "lane-host-fixture: accounts-refused";
+    let cases = [
+        (
+            1,
+            format!(
+                "account-unjudged step=host host=fleet-vm cause=host-accounts-unreadable host=fleet-vm exit=1 {refused}"
+            ),
+        ),
+        (
+            69,
+            format!(
+                "account-unjudged step=host host=fleet-vm cause=lane-host-busy step=accounts {refused}"
+            ),
+        ),
+    ];
+    let world = || {
+        let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+        world.write_fleet(Vec::new(), None);
+        world.plant_capabilities("fleet-vm", SSH_LINE);
+        world.plant_host_listing("fleet-vm", &[measured("aclaude", 10, 5)]);
+        world
+    };
+    let answered_world = world();
+    let answered = answered_world.pick(&PickRequest::new(Harness::Claude));
+    assert_eq!(
+        chosen(&answered),
+        Some(answered_world.dir("aclaude")),
+        "{answered}"
+    );
+    for (exit, cause) in cases {
+        let world = world();
+        world.refuse_accounts("fleet-vm", exit);
+        let reply = world.pick(&PickRequest::new(Harness::Claude));
+        assert_eq!(reply["answer"], json!("unjudged"), "{exit}: {reply}");
+        assert_eq!(reply["exit"], json!(1), "{exit}: {reply}");
+        assert_eq!(reply["record"]["cause"], json!(cause), "{exit}: {reply}");
+    }
 }
 
 /// `lanes --help` § pick's cloud-session rule, and the boundary's

@@ -7967,6 +7967,40 @@ fn measured_account(alias: &str, used: u64) -> Value {
     })
 }
 
+/// The overseer's own-account mark under a provider whose `accounts` read
+/// fails or answers busy reads the account unreadable, never judged on this
+/// machine's reading of it alone; the same world answered reads its room.
+#[test]
+fn an_overseers_own_account_under_a_failed_or_busy_accounts_read_is_unreadable() {
+    let unreadable = (
+        Value::Null,
+        json!("mark-unmeasured"),
+        json!("headroom-unreadable"),
+    );
+    let cases = [
+        (None, (json!("90"), json!("below-mark"), Value::Null)),
+        (Some(1), unreadable.clone()),
+        (Some(69), unreadable),
+    ];
+    for (exit, (headroom, key, reason)) in cases {
+        let mut world = MarksWorld::new();
+        world.plant(Some("vm"), &[measured_account("eclaude", 10)]);
+        world.write_fleet(&world.dir("eclaude"));
+        if let Some(exit) = exit {
+            let answers = world.path().join("lane-host.json");
+            let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
+            map["vm accounts"] = json!({"exit": exit, "stderr": "lane-host-fixture: refused\n"});
+            std::fs::write(&answers, map.to_string()).unwrap();
+        }
+        let marks = world.marks(&["--context", "100000:1000000"], &[]);
+        assert_eq!(
+            (&marks["headroom"], &marks["key"], &marks["reason"]),
+            (&headroom, &key, &reason),
+            "{exit:?}: {marks}"
+        );
+    }
+}
+
 /// A reading past the token cap is `mark-reached kind=context` before any
 /// account is read, with the decision the handoff record carries; a reading
 /// below both marks with the account above the trigger is `below-mark`
@@ -10344,6 +10378,215 @@ fn a_providers_reservation_keeps_an_account_from_an_overseer_whose_figures_it_do
         planted(&runner, "bcodex"),
         "{result}"
     );
+}
+
+/// An overseer's every entry spends an account the provider `vm` bills, so
+/// a provider nobody can read leaves no entry to judge: the real
+/// `successor` verb refuses `account-unjudged` naming the host and the
+/// cause, whether the capability line or the `accounts` answer went
+/// unread, the provider's slot refusal told apart by its cause, and judges
+/// no entry on this machine's homes, which have room; the provider is asked
+/// once for the walk.
+#[test]
+fn an_overseers_walk_under_an_unread_provider_refuses_naming_the_host_and_the_cause() {
+    for (key, exit, calls, cause) in [
+        (
+            "vm accounts",
+            69,
+            &[
+                "ORCH_LANE_HOST=vm capabilities",
+                "ORCH_LANE_HOST=vm accounts",
+            ][..],
+            "lane-host-busy step=accounts ",
+        ),
+        (
+            "vm capabilities",
+            1,
+            &["ORCH_LANE_HOST=vm capabilities"][..],
+            "host-capabilities-unread host=vm cause=exit=1 ",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let (_, bin, env, work) = walk_world_on(
+            &runner,
+            Some("vm"),
+            &[
+                measured_account("aclaude", 10),
+                measured_codex("xcodex", 20),
+            ],
+        );
+        let planted = runner.state_dir().join("accounts");
+        let answers = planted.join("lane-host.json");
+        let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
+        map[key] = json!({"exit": exit, "stderr": "lane-host-fixture: refused\n"});
+        std::fs::write(&answers, map.to_string()).unwrap();
+        runner.tools = Some(bin);
+        runner.env.extend(env);
+        runner.env.push((
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
+            "claude:fable:high,codex:gpt-6.1-sol:high".to_owned(),
+        ));
+        let out = runner.run(&["successor", "--fleet", "--cwd", &work.display().to_string()]);
+        let answer = reply(&out);
+        assert_eq!(answer["ok"], false, "{key}: {answer}");
+        assert_eq!(
+            answer["refusal"]["key"], "account-unjudged",
+            "{key}: {answer}"
+        );
+        let fields = answer["refusal"]["fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 3, "{key}: one host and its cause: {answer}");
+        assert_eq!(
+            (&fields[0], &fields[1], &fields[2][0]),
+            (
+                &json!(["step", "host"]),
+                &json!(["host", "vm"]),
+                &json!("cause")
+            ),
+            "{key}: {answer}"
+        );
+        assert!(
+            fields[2][1].as_str().unwrap().starts_with(cause),
+            "{key}: {answer}"
+        );
+        let log: Vec<String> = std::fs::read_to_string(planted.join("lane-host.log"))
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(log, calls, "{key}");
+    }
+}
+
+/// A provider line that answers with no `files=` is an unread line: the
+/// real `successor` verb refuses `account-unjudged` naming the host and the
+/// cause for an overseer's Claude entry and its Codex entry alike, its
+/// `accounts` answer and this machine's homes, which have room, never
+/// judging either, whichever entry the preference names first; the line
+/// is asked once for the walk.
+#[test]
+fn an_overseers_walk_under_an_unparsed_line_refuses_naming_the_host_and_the_cause() {
+    for preference in [
+        "claude:fable:high,codex:gpt-6.1-sol:high",
+        "codex:gpt-6.1-sol:high,claude:fable:high",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let (_, bin, env, work) = walk_world_on(
+            &runner,
+            Some("vm"),
+            &[
+                measured_account("aclaude", 10),
+                measured_codex("xcodex", 20),
+            ],
+        );
+        let planted = runner.state_dir().join("accounts");
+        let answers = planted.join("lane-host.json");
+        let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
+        map["vm capabilities"] = json!({
+            "stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tstatus=verb\tstop=verb\tpool=plan\n"
+        });
+        std::fs::write(&answers, map.to_string()).unwrap();
+        runner.tools = Some(bin);
+        runner.env.extend(env);
+        runner.env.push((
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
+            preference.to_owned(),
+        ));
+        let out = runner.run(&["successor", "--fleet", "--cwd", &work.display().to_string()]);
+        let answer = reply(&out);
+        assert_eq!(answer["ok"], false, "{preference}: {answer}");
+        assert_eq!(
+            answer["refusal"]["fields"],
+            json!([
+                ["step", "host"],
+                ["host", "vm"],
+                [
+                    "cause",
+                    "host-capabilities-unread host=vm cause=capability-invalid key=files value=missing"
+                ]
+            ]),
+            "{preference}: {answer}"
+        );
+        assert_eq!(answer["refusal"]["key"], "account-unjudged", "{answer}");
+        let log = std::fs::read_to_string(planted.join("lane-host.log")).unwrap();
+        assert_eq!(log, "ORCH_LANE_HOST=vm capabilities\n", "{preference}");
+    }
+}
+
+/// An overseer's entry spending no account the judge measures is chosen
+/// before any provider is asked for it: under a provider nobody can read,
+/// the Pi entry billed to the API before it is passed over with the host
+/// and the cause, and the unbilled Pi entry is the walk's choice.
+#[test]
+fn an_overseers_unbilled_entry_is_chosen_past_an_unread_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_, bin, env, work) = walk_world_on(&runner, Some("vm"), &[]);
+    let planted = runner.state_dir().join("accounts");
+    let answers = planted.join("lane-host.json");
+    let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
+    map["vm capabilities"] = json!({"exit": 1, "stderr": "lane-host-fixture: refused\n"});
+    std::fs::write(&answers, map.to_string()).unwrap();
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let root = work.join("custom-pi-root");
+    pi_root_marked(&root);
+    runner.env.push((
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
+        "pi:anthropic/claude-fable-5-1:high,pi:openrouter/anthropic/claude-fable-5-1:high"
+            .to_owned(),
+    ));
+    let _predecessor = walled_on(&runner, &server, "pi", &work.join("unused"), &root);
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
+    fleet["overseer"].as_object_mut().unwrap().remove("account");
+    runner.write_fleet(&fleet);
+    let pane = fleet["overseer"]["pane"].as_str().unwrap().to_owned();
+    let out = runner.run(&[
+        "successor",
+        "--fleet",
+        "--cwd",
+        &work.display().to_string(),
+        "--predecessor",
+        &pane,
+    ]);
+    let answer = reply(&out);
+    let walk = &answer["result"]["walk"];
+    assert_eq!(
+        walk["chosen"]["entry"], "pi:openrouter/anthropic/claude-fable-5-1:high",
+        "{answer}"
+    );
+    let skipped = walk["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 1, "{answer}");
+    assert_eq!(
+        (
+            &skipped[0]["entry"],
+            &skipped[0]["reason"],
+            &skipped[0]["host"]
+        ),
+        (
+            &json!("pi:anthropic/claude-fable-5-1:high"),
+            &json!("host-unread"),
+            &json!("vm")
+        ),
+        "{answer}"
+    );
+    assert!(
+        skipped[0]["cause"]
+            .as_str()
+            .unwrap()
+            .starts_with("host-capabilities-unread host=vm cause=exit=1 "),
+        "{answer}"
+    );
+    let log = std::fs::read_to_string(planted.join("lane-host.log")).unwrap();
+    assert_eq!(log, "ORCH_LANE_HOST=vm capabilities\n");
 }
 
 #[test]

@@ -7,8 +7,11 @@
 //! never a claim count, a relaunch naming the lane it replaces, whose
 //! charge is left out; a `cloud-session` host admits an account only where
 //! `ORCH_LANE_CLOUD_REPOS` gives it this checkout's repository; and a walk
-//! over the lane preference reads each entry's host's capability line.
+//! reads each provider it asks once, its capability line and its accounts,
+//! and reports a provider it cannot read to the walk, which passes that
+//! provider's entries over.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
@@ -28,7 +31,7 @@ use serde_json::{Value, json};
 use super::occupancy::{self, ChargeSource, Host};
 use crate::settings::{ProviderSettings, Settings};
 use crate::state::{FleetState, Record};
-use crate::watch::hosted::{self, Capabilities, Launch};
+use crate::watch::hosted::{Capabilities, Launch};
 use crate::watch::overseer::scripts_dir;
 
 /// A request's own bound; the runner's covers the start.
@@ -55,7 +58,39 @@ pub fn roster(
     host: Option<&str>,
     now: u64,
 ) -> std::result::Result<Roster, String> {
-    roster_naming(settings, host, None, false, now)
+    roster_naming(settings, host, None, false, now, &mut Reads::default())
+}
+
+/// What one reading asked of each provider, its capability line and its
+/// `accounts` answer, a failure kept with its cause: a walk asks each
+/// provider once, and nothing here outlives the reading, so a provider that
+/// answers a minute later is asked again by the next.
+#[derive(Default)]
+struct Reads {
+    lines: BTreeMap<String, Result<String, String>>,
+    answers: BTreeMap<String, Result<(u64, String), String>>,
+}
+
+impl Reads {
+    fn line(&mut self, scripts: &Path, host: &str) -> Result<String, String> {
+        self.lines
+            .entry(host.to_owned())
+            .or_insert_with(|| capability_line(scripts, host))
+            .clone()
+    }
+
+    fn answer(
+        &mut self,
+        ctx: &mut Ctx,
+        provider: &ProviderSettings,
+        scripts: &Path,
+        host: &str,
+    ) -> Result<(u64, String), String> {
+        self.answers
+            .entry(host.to_owned())
+            .or_insert_with(|| accounts_answer(ctx, provider, scripts, host))
+            .clone()
+    }
 }
 
 /// The parse of a provider's `accounts` answer a listing reads it through:
@@ -72,6 +107,7 @@ fn roster_naming(
     named: Option<(Harness, &str)>,
     overseer: bool,
     now: u64,
+    reads: &mut Reads,
 ) -> std::result::Result<Roster, String> {
     let env = env(settings);
     let provider = settings.provider.get().map_err(|e| e.to_string())?;
@@ -93,6 +129,7 @@ fn roster_naming(
                 host,
                 parse,
                 now,
+                reads,
             )
             .map_err(|cause| format!("host={host} {cause}"))?,
         ),
@@ -111,11 +148,13 @@ fn provider_reading(
     host: &str,
     parse: Parse,
     now: u64,
+    reads: &mut Reads,
 ) -> std::result::Result<Provider, String> {
     let read = env.accounts.get().map_err(|e| e.to_string())?;
-    let pool = host_pool(scripts, host)?;
+    let pool = host_pool(&reads.line(scripts, host)?, host)?;
     let mut ctx = Ctx::new(env, &read, now)?;
-    let (rows, failure) = provider_rows(&mut ctx, provider, scripts, host, &pool, parse);
+    let answer = reads.answer(&mut ctx, provider, scripts, host);
+    let (rows, failure) = provider_rows(&mut ctx, answer, host, &pool, parse);
     Ok(Provider {
         host: host.to_owned(),
         pool,
@@ -124,14 +163,22 @@ fn provider_reading(
         notes: ctx.notes,
     })
 }
-/// The pool the configured host's kind declares (`pool=` on its
-/// capability line). A declaration that cannot be read refuses: no pool is
-/// guessed for a host.
+
+/// The pool the host's kind declares (`pool=` on its capability line). A
+/// declaration that cannot be read refuses: no pool is guessed for a host.
+fn host_pool(line: &str, host: &str) -> Result<String, String> {
+    line.split('\t')
+        .find_map(|field| field.strip_prefix("pool="))
+        .map(str::to_owned)
+        .ok_or_else(|| format!("host-capabilities-unread host={host} cause=no pool= field"))
+}
+
+/// The host's capability line, `lane-host capabilities` under its name.
 #[allow(
     clippy::disallowed_methods,
     reason = "the listing's read of the provider's capability line, `lane-host capabilities`, through the one runner under its tag; it acts on nothing"
 )]
-fn host_pool(scripts: &Path, host: &str) -> Result<String, String> {
+fn capability_line(scripts: &Path, host: &str) -> Result<String, String> {
     let unread = |cause: String| format!("host-capabilities-unread host={host} cause={cause}");
     let out = host::run_tagged_in(
         TAG,
@@ -153,35 +200,30 @@ fn host_pool(scripts: &Path, host: &str) -> Result<String, String> {
             host::stderr_text(&out)
         )));
     }
-    let line = host::stdout_text(&out);
-    let pool = line
-        .split('\t')
-        .find_map(|field| field.strip_prefix("pool="))
-        .ok_or_else(|| unread("no pool= field".to_owned()))?;
-    Ok(pool.to_owned())
+    Ok(host::stdout_text(&out))
 }
 
 // --- the provider's rows ----------------------------------------------------------------------
 
-/// The provider's `accounts` answer, one tab-separated `key=value` line per
-/// account it holds a credential for, read through `lane-host` under the
-/// host and cached under the same window every figure here is; an absent
-/// verb (exit 2) is cached as well, a failed one never, since the failure
-/// is the transient answer and must not be replayed for the rest of the
-/// window. The read is bounded by `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S`,
-/// the dispatcher's own slot wait held under it.
+/// The provider's `accounts` answer, its exit and one tab-separated
+/// `key=value` line per account it holds a credential for, read through
+/// `lane-host` under the host and cached under the same window every
+/// figure here is; an absent verb (exit 2) is cached as well, a failed one
+/// never, since the failure is the transient answer and must not be
+/// replayed for the rest of the window. The read is bounded by
+/// `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S`, the dispatcher's own slot wait held
+/// under it. A slot refusal (exit 69, `lane-host-busy`) is the provider
+/// speaking, told apart from a verb that failed (`host-accounts-unreadable`).
 #[allow(
     clippy::disallowed_methods,
     reason = "the listing's read of the provider's accounts, `lane-host accounts`, through the one runner under its tag, bounded; it acts on nothing"
 )]
-fn provider_rows(
+fn accounts_answer(
     ctx: &mut Ctx,
     provider: &ProviderSettings,
     scripts: &Path,
     host: &str,
-    host_pool: &str,
-    parse: Parse,
-) -> (Vec<Value>, Option<String>) {
+) -> Result<(u64, String), String> {
     let path = cache::record_path(&ctx.usage_dir, "lane-host", host);
     let cached = |ctx: &mut Ctx| -> Option<(u64, String)> {
         let record = cache::read(&path, "lane-host", host)?;
@@ -200,7 +242,7 @@ fn provider_rows(
         }
         Some((status, rows))
     };
-    let answer = match cached(ctx) {
+    match cached(ctx) {
         Some(answer) => Ok(answer),
         None => {
             let usage_dir = ctx.usage_dir.clone();
@@ -278,7 +320,18 @@ fn provider_rows(
             }
             answer
         }
-    };
+    }
+}
+
+/// The provider's rows from its `accounts` answer, read by `parse`, or none
+/// with the cause the answer failed with.
+fn provider_rows(
+    ctx: &mut Ctx,
+    answer: Result<(u64, String), String>,
+    host: &str,
+    host_pool: &str,
+    parse: Parse,
+) -> (Vec<Value>, Option<String>) {
     match answer {
         // The provider's exit 2: it holds no accounts, said beside the
         // rows so an empty listing is never read as an unread one.
@@ -294,23 +347,44 @@ fn provider_rows(
     }
 }
 
+/// The walk's view of the providers its entries are judged under, read
+/// through the walk's one [`Reads`], shared with its picks.
 struct Hosts<'a> {
+    settings: &'a Settings,
+    provider: &'a ProviderSettings,
     scripts: &'a Path,
-    lines: BTreeMap<String, Capabilities>,
+    reads: &'a RefCell<Reads>,
+    now: u64,
 }
 
 impl Hosts<'_> {
-    fn read(&mut self, host: &str) -> agent_runtime::Result<&Capabilities> {
-        if !self.lines.contains_key(host) {
-            let line = hosted::capabilities(self.scripts, host).map_err(|cause| {
-                agent_runtime::Error::refused(
-                    "host-capabilities-unread",
-                    &[("host", host), ("cause", &cause)],
-                )
-            })?;
-            self.lines.insert(host.to_owned(), line);
+    fn capabilities(&self, host: &str) -> Result<Capabilities, String> {
+        let line = self.reads.borrow_mut().line(self.scripts, host)?;
+        Capabilities::parse(&line)
+            .map_err(|cause| format!("host-capabilities-unread host={host} cause={cause}"))
+    }
+
+    /// The cause `host`'s provider cannot be read with for a pick, where it
+    /// cannot: its line whole with the pool it declares, then its
+    /// `accounts` answer, the slot refusal included.
+    fn unread(&self, host: &str) -> agent_runtime::Result<Option<String>> {
+        if let Err(cause) = self.capabilities(host) {
+            return Ok(Some(cause));
         }
-        Ok(&self.lines[host])
+        let env = env(self.settings);
+        let read = env.accounts.get()?;
+        let mut ctx = Ctx::new(&env, &read, self.now).map_err(|cause| {
+            agent_runtime::Error::refused(
+                "account-unjudged",
+                &[("step", "host"), ("cause", &cause)],
+            )
+        })?;
+        let mut reads = self.reads.borrow_mut();
+        let answered = reads
+            .line(self.scripts, host)
+            .and_then(|line| host_pool(&line, host))
+            .and_then(|_| reads.answer(&mut ctx, self.provider, self.scripts, host));
+        Ok(answered.err())
     }
 
     /// Where a walk's entry is judged: a lane's own host, else the fleet's,
@@ -318,26 +392,37 @@ impl Hosts<'_> {
     /// cloud session for any harness but Claude, or for a relaunch, which
     /// the cloud cannot resume); an overseer runs here, so only a provider
     /// sharing the Claude plan's pool over ssh reads its figures for it (its
-    /// words are read for every overseer's pick, [`pick_fleet`]).
+    /// words are read for every overseer's pick, [`pick_fleet`]). An entry
+    /// whose provider cannot be read is unread with the cause, never judged
+    /// on this machine's listing alone: every entry of an overseer's walk
+    /// under a remote provider, whose words each pick reads.
     fn hosted(
-        &mut self,
+        &self,
         fleet_host: Option<&str>,
         replaces: bool,
         scope: Scope,
         entry_host: Option<&str>,
         harness: Harness,
     ) -> agent_runtime::Result<Hosted> {
+        let unread = |host: &str, cause: String| Hosted::Unread {
+            host: host.to_owned(),
+            cause,
+        };
         match scope {
             Scope::Lane => {
                 let host = entry_host.or(fleet_host).filter(|h| *h != LOCAL);
                 let launch = match host {
-                    Some(h) => self.read(h)?.launch,
+                    Some(h) => match self.capabilities(h) {
+                        Ok(line) => line.launch,
+                        Err(cause) => return Ok(unread(h, cause)),
+                    },
                     None => Capabilities::LOCAL.launch,
                 };
                 let Some(launch) = launch else {
-                    return Err(agent_runtime::Error::refused(
-                        "host-capabilities-unread",
-                        &[("host", host.unwrap_or(LOCAL)), ("cause", "launch-missing")],
+                    let h = host.unwrap_or(LOCAL);
+                    return Ok(unread(
+                        h,
+                        format!("host-capabilities-unread host={h} cause=launch-missing"),
                     ));
                 };
                 let word = match launch {
@@ -351,27 +436,40 @@ impl Hosts<'_> {
                     Launch::CloudSession => harness != Harness::Claude || replaces,
                     Launch::CloudTask => true,
                 };
-                Ok(if skipped {
-                    Hosted::Skip {
+                if skipped {
+                    return Ok(Hosted::Skip {
                         host: host.unwrap_or(LOCAL).to_owned(),
                         launch: word,
-                    }
-                } else {
-                    Hosted::Judge {
-                        host: host.map(str::to_owned),
-                        launch: Some(word),
-                    }
+                    });
+                }
+                if let Some(h) = host
+                    && let Some(cause) = self.unread(h)?
+                {
+                    return Ok(unread(h, cause));
+                }
+                Ok(Hosted::Judge {
+                    host: host.map(str::to_owned),
+                    launch: Some(word),
                 })
             }
             Scope::Overseer => {
-                let mut host = None;
-                if harness == Harness::Claude
-                    && let Some(h) = fleet_host.filter(|h| *h != LOCAL)
-                    && self.read(h)?.launch == Some(Launch::Ssh)
-                {
-                    host = Some(h.to_owned());
+                let Some(h) = fleet_host.filter(|h| *h != LOCAL && !h.is_empty()) else {
+                    return Ok(Hosted::Judge {
+                        host: None,
+                        launch: None,
+                    });
+                };
+                if let Some(cause) = self.unread(h)? {
+                    return Ok(unread(h, cause));
                 }
-                Ok(Hosted::Judge { host, launch: None })
+                let ssh = harness == Harness::Claude
+                    && self
+                        .capabilities(h)
+                        .is_ok_and(|line| line.launch == Some(Launch::Ssh));
+                Ok(Hosted::Judge {
+                    host: ssh.then(|| h.to_owned()),
+                    launch: None,
+                })
             }
         }
     }
@@ -379,8 +477,8 @@ impl Hosts<'_> {
 
 /// The walk under the fleet's provider: the lane preference where the
 /// request names none, each entry's host read through its capability line,
-/// and every pick judged with the fleet's seats and live charges, the lane
-/// `replaces` names left out.
+/// each provider asked once for the walk, and every pick judged with the
+/// fleet's seats and live charges, the lane `replaces` names left out.
 pub fn walk(
     settings: &Settings,
     fleet_path: &Path,
@@ -391,18 +489,27 @@ pub fn walk(
 ) -> crate::error::Result<Walked> {
     let provider = settings.provider.get()?;
     let scripts = scripts_dir(&settings.roots.project);
-    let mut hosts = Hosts {
+    let reads = RefCell::new(Reads::default());
+    let hosts = Hosts {
+        settings,
+        provider: &provider,
         scripts: &scripts,
-        lines: BTreeMap::new(),
+        reads: &reads,
+        now,
     };
     let fleet_host = provider.host.as_deref();
     let mut host = |scope: Scope, entry_host: Option<&str>, harness: Harness| {
         hosts.hosted(fleet_host, replaces.is_some(), scope, entry_host, harness)
     };
+    let fleet = Fleet {
+        settings,
+        path: fleet_path,
+        host: kernel,
+        replaces,
+        now,
+    };
     let mut pick = |request: &PickRequest, judge_host: Option<&str>| {
-        pick_fleet(
-            settings, fleet_path, kernel, judge_host, replaces, request, now,
-        )
+        pick_read(&fleet, judge_host, request, &mut reads.borrow_mut())
     };
     let req = WalkRequest {
         preference: req.preference.clone().or_else(|| match req.scope {
@@ -500,9 +607,13 @@ fn cloud_repo(
     provider: &ProviderSettings,
     host: &str,
     rows: &[AccountRow],
+    reads: &mut Reads,
 ) -> std::result::Result<Option<Vec<String>>, String> {
-    let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
-    if hosted::capabilities(&scripts, host)?.launch != Some(Launch::CloudSession) {
+    let line = reads.line(&scripts_dir(&settings.roots.project), host)?;
+    let launch = Capabilities::parse(&line)
+        .map_err(|cause| format!("host-capabilities-unread host={host} cause={cause}"))?
+        .launch;
+    if launch != Some(Launch::CloudSession) {
         return Ok(None);
     }
     let project = &settings.roots.project;
@@ -530,9 +641,10 @@ fn cloud_repo(
 /// read from its state with the lane `replaces` names left out, the host's
 /// repository rule where one applies, and the judgement over them. An
 /// unread listing, fleet or capability line is unjudged, never a verdict;
-/// so is a Pi launch on a grant pool only the provider measures where the
-/// provider's read failed, since a failed read is never cached and asking
-/// again can answer it, where a missing row is a read to repair.
+/// so is a pick whose provider's `accounts` read failed or answered busy,
+/// refused with the walk's key, the host and the cause: no pick is judged
+/// on this machine's listing alone, and a failed read is never cached, so
+/// the caller's next pass asks again.
 pub fn pick_fleet(
     settings: &Settings,
     fleet_path: &Path,
@@ -542,6 +654,51 @@ pub fn pick_fleet(
     req: &PickRequest,
     now: u64,
 ) -> PickAnswer {
+    let fleet = Fleet {
+        settings,
+        path: fleet_path,
+        host,
+        replaces,
+        now,
+    };
+    let mut reads = Reads::default();
+    let answer = pick_read(&fleet, lane_host, req, &mut reads);
+    match reads
+        .answers
+        .iter()
+        .find_map(|(host, read)| Some((host, read.as_ref().err()?)))
+    {
+        Some((host, cause)) => PickAnswer::Unjudged {
+            cause: format!("account-unjudged step=host host={host} cause={cause}"),
+        },
+        None => answer,
+    }
+}
+
+/// The fleet a pick is judged for: its settings, its record, the
+/// occupancy reader, the lane a relaunch replaces, and the instant.
+struct Fleet<'a> {
+    settings: &'a Settings,
+    path: &'a Path,
+    host: &'a Host<'a>,
+    replaces: Option<&'a str>,
+    now: u64,
+}
+
+/// [`pick_fleet`] over the providers `reads` holds, a walk's own.
+fn pick_read(
+    fleet: &Fleet,
+    lane_host: Option<&str>,
+    req: &PickRequest,
+    reads: &mut Reads,
+) -> PickAnswer {
+    let &Fleet {
+        settings,
+        path: fleet_path,
+        host,
+        replaces,
+        now,
+    } = fleet;
     if let Some(answer) = accounts::unbilled(req) {
         return answer;
     }
@@ -557,7 +714,7 @@ pub fn pick_fleet(
     let lane_host = asked.filter(|h| *h != LOCAL && !h.is_empty());
     let model = req.model.as_deref().unwrap_or("");
     let named = req.harness.billed(model).zip(req.lane.as_deref());
-    let roster = match roster_naming(settings, asked, named, req.for_overseer, now) {
+    let roster = match roster_naming(settings, asked, named, req.for_overseer, now, reads) {
         Ok(roster) => roster,
         Err(cause) => {
             return PickAnswer::Unjudged {
@@ -565,28 +722,6 @@ pub fn pick_fleet(
             };
         }
     };
-    let pool = req.harness.pool(model);
-    // A pool only the provider's figures measure; a read of its words alone
-    // measures nothing.
-    if req.harness == Harness::Pi
-        && lane_host.is_some()
-        && let Some(cause) = &roster.provider_failure
-    {
-        let stated = roster
-            .rows
-            .iter()
-            .any(|r| r.harness == Harness::Pi && r.measured_through == "stated");
-        if pool == "api-credit" || (pool == "copilot" && !stated) {
-            let word = if pool == "api-credit" {
-                "api-grant-unread"
-            } else {
-                "copilot-pool-unread"
-            };
-            return PickAnswer::Unjudged {
-                cause: format!("{word} host={} {cause}", lane_host.unwrap_or(LOCAL)),
-            };
-        }
-    }
     let rows = roster.rows;
     let mut facts = match fleet_facts(fleet_path, &rows, replaces, host, now) {
         Ok(facts) => facts,
@@ -597,7 +732,7 @@ pub fn pick_fleet(
         }
     };
     if let Some(lane_host) = lane_host {
-        facts.cloud_repo = match cloud_repo(settings, &provider, lane_host, &rows) {
+        facts.cloud_repo = match cloud_repo(settings, &provider, lane_host, &rows, reads) {
             Ok(admitted) => admitted,
             Err(cause) => return PickAnswer::Unjudged { cause },
         };

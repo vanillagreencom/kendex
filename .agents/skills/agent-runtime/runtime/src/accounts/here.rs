@@ -197,7 +197,7 @@ pub fn pick(
 }
 
 /// The walk here: every entry judged on this machine, an entry naming a
-/// host refused, since no provider is read without orch.
+/// host passed over unread, since no provider is read without orch.
 pub fn walk(
     settings: &Env,
     project: &Path,
@@ -207,10 +207,10 @@ pub fn walk(
 ) -> Result<Walked> {
     let ground = Beside::read(project, record)?;
     let mut host = |_: Scope, entry_host: Option<&str>, _: Harness| match entry_host {
-        Some(h) if h != LOCAL => Err(Error::refused(
-            "host-capabilities-unread",
-            &[("host", h), ("cause", "no-provider")],
-        )),
+        Some(h) if h != LOCAL => Ok(Hosted::Unread {
+            host: h.to_owned(),
+            cause: "no-provider".to_owned(),
+        }),
         Some(_) | None => Ok(Hosted::Judge {
             host: None,
             launch: None,
