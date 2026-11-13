@@ -624,9 +624,25 @@ def complete_blocks(data, offset):
     return blocks, end
 
 
+def forward_ready(settings, key, at):
+    """Notify the existing log reader of an external forward's successful delivery.
+
+    A scheduler cursor carries identity and time only. It creates no event
+    block, mailbox send or independent watcher.
+    """
+    directory = Path(os.path.expanduser(settings["JARVIS_LOG_DIR"]))
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "events.log").open("ab") as out:
+        fcntl.flock(out, fcntl.LOCK_EX)
+        out.write(pass_output("forward-ready", {"key": key, "at": at}, []).encode())
+        out.flush()
+        os.fsync(out.fileno())
+
+
 class Watch:
     def __init__(self, home, bash, settings, initial_passes=None):
         self.home, self.bash, self.settings = home, bash, settings
+        self.forward_ready_due = None
         self.directory = Path(os.path.expanduser(settings["JARVIS_LOG_DIR"]))
         self.directory.mkdir(parents=True, exist_ok=True)
         self.log = self.directory / "events.log"
@@ -744,6 +760,9 @@ class Watch:
         for at, record in records:
             if at > checkpoint:
                 self.cursors[self.destination_key(record["side"])] = record["roots"]
+                if record["side"] == "forward-ready":
+                    due = record["roots"]["at"] + 5
+                    self.forward_ready_due = due if self.forward_ready_due is None else min(self.forward_ready_due, due)
                 self.state["cursor_offset"] = at
         self.state["cursor_offset"] = max(self.state.get("cursor_offset", 0), end)
 
@@ -1200,14 +1219,21 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             work = self.forward_pending
             if work is not None and work.done():
                 result = work.result()
+                interval = FORWARD_EVERY_SECS
                 if isinstance(result, Failure):
                     self.accept_forward(result)
                 else:
                     output, interval = result
                     self.accept_forward(output)
-                    self.next_forward = min(self.next_forward, now + interval)
+                self.next_forward = now + interval
                 self.forward_pending = None
+            if self.forward_pending is None:
+                if self.forward_ready_due is not None:
+                    self.next_forward = min(self.next_forward, self.forward_ready_due)
             if self.forward_pending is None and now >= self.next_forward:
+                # This pass covers already-ingested deliveries. Later cursors
+                # retain their earliest deadline while the worker runs.
+                self.forward_ready_due = None
                 self.next_forward = now + FORWARD_EVERY_SECS
                 self.forward_pending = passes.submit(self.forward)
             sides = ()

@@ -358,9 +358,7 @@ class Forwarder:
             return
         fresh = {entry["key"] for entry in queued if entry.get("after") is None}
         stopped = self.take_cursor(fresh) if fresh else None
-        if stopped is not None:
-            self.record(queued, *stopped)
-            return
+        unreachable = False
         for entry in queued:
             if entry.get("session") and not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"]):
                 with self.outbox.locked() as state:
@@ -368,12 +366,20 @@ class Forwarder:
                     if current is not None and entry_state(current) == "queued":
                         close(current, watch.epoch(), "stop")
                 continue
+            # Cursor failure and an earlier unreachable send must not bypass
+            # revocation of any later entry. Each lease is checked once, here
+            # at its own send boundary, after any blocking cursor read.
+            if stopped is not None:
+                self.record([entry], *stopped)
+                continue
+            if unreachable:
+                continue
             outcome, result = self.host(owner_note.HOST_SEND, ["--delivery-id", entry["key"]], entry["text"])
             self.probe(outcome)
             if outcome != "ok":
                 self.record([entry], outcome, result)
                 if outcome == UNREACHABLE:
-                    return
+                    unreachable = True
                 continue
             receipt = watch.send_receipt(result, entry["key"])
             if receipt:
@@ -558,6 +564,8 @@ class Forwarder:
         if entry_state(entry) == "closed":
             raise Refusal(entry.get("cause") or "answered-already", request["ref"])
         delivered = entry_state(entry) != "queued"
+        if delivered:
+            watch.forward_ready(self.settings, key, entry["delivered_at"])
         return {"v": 1, "request": request["ref"], "key": key, "state": "delivered" if delivered else "queued",
                 "forwarded": entry.get("forwarded"), "cause": None if delivered else entry.get("cause")}
 

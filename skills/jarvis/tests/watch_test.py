@@ -1974,15 +1974,51 @@ with open(sys.argv[1], "ab") as out:
                     result = watch.forward()
                 self.assertEqual(result, ("", interval))
                 watch.next_relay = 1000
-                watch.next_forward = 1000
+                # Completion can be delayed beyond submission; queued retries
+                # get their full minute rather than a stale submission deadline.
+                watch.next_forward = 60
                 watch.forward_pending = Future()
                 watch.forward_pending.set_result(result)
                 watch._poll(Submitted(), Future(), 100)
                 self.assertEqual(watch.next_forward, 100 + interval)
+                self.assertIsNone(watch.forward_pending)
             block = "EVENT forward-answer request=vgs-audit:r key=forward-k answer=answer-id\n"
             watch.accept_forward(block)
             self.watch().accept_forward(block)
             self.assertEqual(watch.log.read_text().count(block), 1)
+
+    def test_external_delivery_during_idle_worker_completion(self):
+        self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
+        class Submitted:
+            def submit(self, work, *args):
+                return Future()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            watch.next_relay = 1000
+            watch.next_forward = 60
+            work = watch.forward_pending = Future()
+            self.module.forward_ready(self.settings, "forward-k", 2)
+            self.module.forward_ready(self.settings, "forward-later", 3)
+            watch._poll(Submitted(), Future(), 3)
+            work.set_result(("", 60))
+            watch._poll(Submitted(), Future(), 4)
+            self.assertEqual(watch.next_forward, 7)
+
+    def test_delayed_completion_control(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "watch.py"
+            source = (SCRIPTS / "lib/watch.py").read_text()
+            old = "self.next_forward = now + interval"
+            self.assertEqual(source.count(old), 1)
+            path.write_text(source.replace(old, "self.next_forward = min(self.next_forward, now + interval)"))
+            case = Producer(methodName="test_forward_cadence_and_answer_event_restart")
+            case.setUp()
+            case.module = load(path)
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_forward_cadence_and_answer_event_restart()
+            finally:
+                case.doCleanups()
 
     def test_remote_identity_restart(self):
         # Both independent machine views expose the same path and initial

@@ -1,5 +1,6 @@
 """A satellite's forward, outbox drain and main status against a real main mailbox over an ssh shim."""
 import hashlib
+from concurrent.futures import Future
 import importlib.util
 import json
 import os
@@ -730,6 +731,62 @@ class Forward(MailWorld):
         self.jarvis("forward-drain")
         self.assertEqual(len(self.directives()), 1)
 
+    def test_external_delivery_advances_completed_idle_pass(self):
+        self.env["JARVIS_LOG_DIR"] = str(self.root / "log")
+        spec = importlib.util.spec_from_file_location("forward_watch", self.scripts / "lib/watch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        class Submitted:
+            def __init__(self):
+                self.names = []
+            def submit(self, work, *args):
+                self.names.append(work.__name__)
+                return Future()
+        settings = {"JARVIS_LOG_DIR": self.env["JARVIS_LOG_DIR"], "JARVIS_MAIN_HOST": self.env["JARVIS_MAIN_HOST"]}
+        with patch.dict(os.environ, self.env, clear=True):
+            watch = module.Watch(self.satellite, BASH, settings)
+            watch.next_relay = 10 ** 12
+            watch.forward_pending = Future()
+            watch.forward_pending.set_result(("", 60))
+            before = int(time.time())
+            passes = Submitted()
+            watch._poll(passes, Future(), before)
+            self.assertEqual(watch.next_forward, before + 60)
+            self.delivered(self.record())
+            at = self.outbox()["entries"][0]["delivered_at"]
+            self.assertNotIn("EVENT ", watch.log.read_text())
+            # Existing batch ingestion reads the scheduler cursor, including
+            # while a previously launched pass is completing.
+            watch._poll(passes, Future(), at + 1)
+            watch._poll(passes, Future(), at + 2)
+            self.assertLessEqual(watch.next_forward, at + 5)
+            self.assertEqual(passes.names, [])
+            watch._poll(passes, Future(), at + 5)
+            self.assertEqual(passes.names, ["forward"])
+
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "session grants require /proc")
+    def test_offline_queue_stops_every_revoked_grant(self):
+        for initial_mode in ("down", "drop-receipt"):
+            with self.subTest(initial_mode=initial_mode):
+                if initial_mode == "drop-receipt":
+                    self.mode.write_text("up")
+                    self.jarvis("forward-drain")
+                live = self.session_record()
+                self.write_lease(live)
+                stopped = self.session_record()
+                path, _ = self.write_lease(stopped)
+                self.mode.write_text(initial_mode)
+                for record in (live, stopped):
+                    self.assertEqual(self.forward(record).returncode, 75)
+                self.mode.write_text("down")
+                path.unlink()
+                self.retry_due()
+                self.jarvis("forward-drain")
+                entries = {entry["key"]: entry for entry in self.outbox()["entries"]}
+                self.assertIsNone(entries[self.key(live)]["closed_at"])
+                self.assertEqual(entries[self.key(stopped)]["cause"], "stop")
+                self.assertIsNotNone(entries[self.key(stopped)]["closed_at"])
+
     def test_role_refusals(self):
         record = self.write(self.record())
         main = dict(self.env, JARVIS_MAIN_HOST="")
@@ -774,6 +831,11 @@ class Forward(MailWorld):
     def test_instrument_control(self):
         # Each planted defect, in a disposable copy, turns its row red.
         rows = (
+            ("test_external_delivery_advances_completed_idle_pass", "lib/forward.py",
+             'watch.forward_ready(self.settings, key, entry["delivered_at"])', 'pass'),
+            ("test_offline_queue_stops_every_revoked_grant", "lib/forward.py",
+             'unreachable = False\n        for entry in queued:',
+             'unreachable = False\n        if stopped is not None:\n            self.record(queued, *stopped)\n            return\n        for entry in queued:'),
             ("test_retained_answers", "lib/forward.py", 'entry["answer"] = retained', 'entry["answer"] = dict(retained, text="")'),
             ("test_session_grant_and_stop_isolation", "lib/forward.py",
              'not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"])', 'False'),
@@ -786,7 +848,7 @@ class Forward(MailWorld):
             ("test_reused_reference_failures_report_once", "lib/forward.py",
              '"key": entry["key"], "cause": entry["cause"]', '"cause": entry["cause"]'))
         for name, relative, old, new in rows:
-            if name == "test_session_grant_and_stop_isolation" and not Path("/proc/self/stat").exists():
+            if getattr(getattr(Forward, name), "__unittest_skip__", False):
                 continue
             with self.subTest(row=name), tempfile.TemporaryDirectory() as folder:
                 copy = Path(folder) / "jarvis/scripts"
