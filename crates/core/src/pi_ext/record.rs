@@ -107,15 +107,28 @@ pub fn resolve_declared(
 /// fetch.
 #[derive(Debug, Default)]
 pub struct Freshness {
-    /// The fetch failure per cache key and selector; `None` is current.
-    attempts: std::collections::BTreeMap<(String, Option<String>), Option<String>>,
+    /// What syncing each cache key at each selector answered.
+    attempts: std::collections::BTreeMap<(String, Option<String>), Attempt>,
+}
+
+/// One `remote::sync` answer, as the packages that read it are judged.
+#[derive(Debug)]
+enum Attempt {
+    Current,
+    /// The fetch failed and the cache answered: `reason` is the fetch
+    /// failure.
+    Cached {
+        reason: String,
+    },
+    /// `sync` answered nothing.
+    Refused(std::sync::Arc<CoreError>),
 }
 
 impl Freshness {
     /// Fetch the catalogs `manifest`'s Pi declarations read, at the
     /// selector [`resolve_declared`] reads each at: the item's `rev`, which
     /// outranks its source's. Returns the refusal for each declared package
-    /// whose catalog could not be brought current.
+    /// whose catalog could not be brought current, naming why.
     pub fn refresh(
         &mut self,
         env: &Env,
@@ -131,22 +144,28 @@ impl Freshness {
             };
             let rev = decl.rev.as_deref().or(source.rev.as_deref());
             let key = (crate::remote::cache_key(env, repo), rev.map(str::to_owned));
-            let failed = self.attempts.entry(key).or_insert_with(|| {
+            let attempt = self.attempts.entry(key).or_insert_with(|| {
                 match crate::remote::sync(env, repo, rev) {
-                    Ok(resolution) => resolution.fetch_failed,
-                    Err(error) => Some(error.to_string()),
+                    Ok(resolution) => match resolution.fetch_failed {
+                        None => Attempt::Current,
+                        Some(reason) => Attempt::Cached { reason },
+                    },
+                    Err(error) => Attempt::Refused(std::sync::Arc::new(error)),
                 }
             });
-            if let Some(reason) = failed {
-                unrefreshed.insert(
-                    name.clone(),
-                    CoreError::SourceUnrefreshed {
-                        name: decl.source.clone(),
-                        repo: repo.to_owned(),
-                        reason: reason.clone(),
-                    },
-                );
-            }
+            let refusal = match attempt {
+                Attempt::Current => continue,
+                Attempt::Cached { reason } => CoreError::SourceUnrefreshed {
+                    name: decl.source.clone(),
+                    repo: repo.to_owned(),
+                    reason: reason.clone(),
+                },
+                Attempt::Refused(cause) => CoreError::SourceSyncRefused {
+                    name: decl.source.clone(),
+                    cause: std::sync::Arc::clone(cause),
+                },
+            };
+            unrefreshed.insert(name.clone(), refusal);
         }
         unrefreshed
     }

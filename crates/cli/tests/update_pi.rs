@@ -880,18 +880,37 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
     assert_eq!(recorded.source_commit.as_deref(), Some(pinned.as_str()));
 }
 
-/// A global package installed from a tracking remote catalog whose cache
-/// is one release behind upstream. One `update-pi` either installs the
-/// release upstream names now, or, with the catalog out of reach, names
-/// the package not evaluated and leaves the copy and its record as they
-/// were: the cached release is never installed or reported current.
+/// What upstream does to the catalog after the first install.
+#[derive(Clone, Copy, Debug)]
+enum Upstream {
+    /// Publishes release 2 on the branch the source tracks.
+    Advances,
+    /// Publishes release 2, then goes out of reach.
+    Unreachable,
+    /// Publishes release 2 and deletes the tag the source names.
+    DropsTag,
+}
+
+/// A global package installed from a remote catalog whose cache is one
+/// release behind upstream. One `update-pi` either installs the release
+/// upstream names now, or names the package not evaluated, with the cause
+/// `pi_ext::Freshness` holds for it, and leaves the copy and its record as
+/// they were: the cached release is never installed or reported current.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_stale_remote_catalog_is_refreshed_or_refused_before_the_update() {
-    for reachable in [true, false] {
+    use kendex_core::error::CoreError;
+    for upstream_does in [
+        Upstream::Advances,
+        Upstream::Unreachable,
+        Upstream::DropsTag,
+    ] {
         let tmp = tempfile::tempdir().unwrap();
         let root = rooted(&tmp);
-        let env = kendex_core::env::Env::host_rooted(&root);
+        let env = kendex_core::env::Env::host_rooted(&root).with_var(
+            "KENDEX_GIT_BASE",
+            &format!("file://{}", root.join("git").display()),
+        );
         let upstream = root.join("git/owner/catalog");
         let release = |version: u32| {
             write(
@@ -906,13 +925,20 @@ fn a_stale_remote_catalog_is_refreshed_or_refused_before_the_update() {
         release(1);
         git(&upstream, &["init", "--quiet", "-b", "main"]);
         let first = commit(&upstream, "one");
+        git(&upstream, &["tag", "v1"]);
+        let rev = match upstream_does {
+            Upstream::Advances | Upstream::Unreachable => "",
+            Upstream::DropsTag => "rev = \"v1\"\n",
+        };
         write(
             &env.global_manifest_file(),
-            "schema = 7\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+            &format!(
+                "schema = 7\n\n[sources.cat]\nrepo = \"owner/catalog\"\n{rev}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n"
+            ),
         );
         fs::create_dir_all(root.join(".pi/agent")).unwrap();
         let refresh = kendex(&root, &root, &["refresh", "--scope", "global", "--yes"]);
-        assert!(refresh.status.success(), "{refresh:?}");
+        assert!(refresh.status.success(), "{upstream_does:?}: {refresh:?}");
         let installed = root.join(".pi/agent/packages/pi-widgets/index.js");
         assert_eq!(
             fs::read_to_string(&installed).unwrap(),
@@ -920,12 +946,13 @@ fn a_stale_remote_catalog_is_refreshed_or_refused_before_the_update() {
         );
         release(2);
         let second = commit(&upstream, "two");
-        if !reachable {
-            fs::rename(&upstream, root.join("git/owner/gone")).unwrap();
+        match upstream_does {
+            Upstream::Advances => {}
+            Upstream::Unreachable => fs::rename(&upstream, root.join("git/owner/gone")).unwrap(),
+            Upstream::DropsTag => git(&upstream, &["tag", "-d", "v1"]),
         }
         let lock_path = kendex_core::lock::lock_path(&env, &kendex_core::model::Scope::Global);
         let recorded = fs::read(&lock_path).unwrap();
-        let not_evaluated = "not-evaluated=pi-widgets scope=global";
 
         let check = kendex(&root, &root, &["update-pi", "--check", "--scope", "global"]);
         let update = kendex(&root, &root, &["update-pi", "--scope", "global"]);
@@ -938,34 +965,64 @@ fn a_stale_remote_catalog_is_refreshed_or_refused_before_the_update() {
                 .find(|entry| entry.name == "pi-widgets")
                 .and_then(|entry| entry.source_commit.clone())
         };
-        if reachable {
-            assert!(check.status.success(), "{check:?}");
-            assert!(update.status.success(), "{update:?}");
-            assert_eq!(
-                fs::read_to_string(&installed).unwrap(),
-                "export const version = 2;\n"
-            );
-            assert_eq!(source_commit().as_deref(), Some(second.as_str()));
-        } else {
-            for (run, output) in [("check", &check), ("update", &update)] {
-                assert_eq!(output.status.code(), Some(1), "{run}: {output:?}");
-                let notes = String::from_utf8_lossy(&output.stderr);
-                assert_eq!(notes.matches(not_evaluated).count(), 1, "{run}: {notes}");
-                // The not-evaluated note is the package's only line: no
-                // plan row, unsourced or otherwise, names it.
-                let rows = String::from_utf8_lossy(&output.stdout);
-                assert!(
-                    !rows.split_whitespace().any(|word| word == "pi-widgets"),
-                    "{run}: {rows}"
+        let kendex_core::manifest::ManifestFile::Current(manifest) =
+            kendex_core::manifest::load(&env.global_manifest_file()).unwrap()
+        else {
+            panic!("{upstream_does:?}: the fixture manifest is absent");
+        };
+        let refusal = kendex_core::pi_ext::Freshness::default()
+            .refresh(&env, &manifest)
+            .remove("pi-widgets");
+        match (upstream_does, &refusal) {
+            (Upstream::Advances, None) => {
+                assert!(check.status.success(), "{check:?}");
+                assert!(update.status.success(), "{update:?}");
+                assert_eq!(
+                    fs::read_to_string(&installed).unwrap(),
+                    "export const version = 2;\n"
                 );
+                assert_eq!(source_commit().as_deref(), Some(second.as_str()));
+                continue;
             }
-            assert_eq!(
-                fs::read_to_string(&installed).unwrap(),
-                "export const version = 1;\n"
-            );
-            assert_eq!(fs::read(&lock_path).unwrap(), recorded);
-            assert_eq!(source_commit().as_deref(), Some(first.as_str()));
+            (Upstream::Unreachable, Some(CoreError::SourceUnrefreshed { .. })) => {}
+            (Upstream::DropsTag, Some(CoreError::SourceSyncRefused { cause, .. })) if matches!(&**cause, CoreError::PinUnavailable { pin, .. } if pin == "v1") =>
+                {}
+            (upstream_does, refusal) => panic!("{upstream_does:?}: {refusal:?}"),
         }
+        // The note leads with the refusal; the plain line escapes the line
+        // breaks a git failure carries after its first line.
+        let refusal = refusal.unwrap().to_string();
+        let note = format!(
+            "not-evaluated=pi-widgets scope=global : {}",
+            refusal.lines().next().unwrap()
+        );
+        for (run, output) in [("check", &check), ("update", &update)] {
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{upstream_does:?} {run}: {output:?}"
+            );
+            let notes = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                notes.matches("not-evaluated=pi-widgets").count(),
+                1,
+                "{upstream_does:?} {run}: {notes}"
+            );
+            assert!(notes.contains(&note), "{upstream_does:?} {run}: {notes}");
+            // The not-evaluated note is the package's only line: no plan
+            // row, unsourced or otherwise, names it.
+            let rows = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                !rows.split_whitespace().any(|word| word == "pi-widgets"),
+                "{upstream_does:?} {run}: {rows}"
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(&installed).unwrap(),
+            "export const version = 1;\n"
+        );
+        assert_eq!(fs::read(&lock_path).unwrap(), recorded, "{upstream_does:?}");
+        assert_eq!(source_commit().as_deref(), Some(first.as_str()));
     }
 }
 

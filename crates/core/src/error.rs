@@ -318,6 +318,8 @@ pub enum CoreError {
     #[error("source '{name}' has not been downloaded yet — refresh it first")]
     SourcePending { name: String },
 
+    /// A tracking fetch that failed while the cache still answered, for a
+    /// reader that must not use that answer.
     #[error(
         "source '{name}' ({repo}) could not be brought current, so its cached copy was not used: {reason}"
     )]
@@ -325,6 +327,17 @@ pub enum CoreError {
         name: String,
         repo: String,
         reason: String,
+    },
+
+    /// `remote::sync`'s own refusal for a source, kept whole so the cause
+    /// it names reaches the reader: a branch or tag gone upstream, or a pin
+    /// the cache lacks and the network could not supply. Shared because one
+    /// refusal answers every package that reads the repository at that
+    /// selector, and a `CoreError` cannot be cloned.
+    #[error("source '{name}': {cause}")]
+    SourceSyncRefused {
+        name: String,
+        cause: std::sync::Arc<CoreError>,
     },
 
     #[error("source '{name}' is disabled")]
