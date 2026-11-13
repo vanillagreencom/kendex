@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 5.0.5
+
+- Bundle the Agent SDK through its supported core entry so tool validation uses the patched package-owned Zod and URI dependencies. Update the installed HTTP server dependency to @hono/node-server 2.1.8.
+
 ### 5.0.4
 
 - Update the bridge's MCP dependency graph to @hono/node-server 2.1.5, which includes the fix for GHSA-rmxm-3fg6-px4f.
