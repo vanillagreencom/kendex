@@ -2214,7 +2214,9 @@ impl Producer {
 /// A fleet record whose controller member reads while another member does
 /// not is refused by orch's own read before the hand-over's choice reads
 /// that member alone: a succession `record-shape`, a recovery
-/// `record-missing`, each exit 1 with the record's bytes as they stood.
+/// `record-missing`, each exit 1 with the record's bytes as they stood. A
+/// recovery over no record at all is the hand-over's own `record-missing`,
+/// naming the path, with nothing written.
 #[test]
 fn a_succession_over_a_fleet_record_orch_cannot_read_whole_is_refused() {
     let producer = Producer::new();
@@ -2252,6 +2254,20 @@ fn a_succession_over_a_fleet_record_orch_cannot_read_whole_is_refused() {
         );
         assert_eq!(std::fs::read(&path).unwrap(), before, "{form:?}: unwritten");
     }
+    std::fs::remove_file(&path).unwrap();
+    let out = producer
+        .command(&env)
+        .args(["successor", "--fleet", "--predecessor", "%9", "--cwd"])
+        .arg(producer.path().join("project"))
+        .arg("--recover")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "no record: {}", stderr(&out));
+    let refusal = &reply(&out)["refusal"];
+    assert_eq!(refusal["key"], "record-missing", "no record: {refusal}");
+    let named = refusal["fields"][0][1].as_str().unwrap_or_default();
+    assert!(named.ends_with(FLEET_FILE_NAME), "no record: {refusal}");
+    assert!(!path.exists(), "no record: nothing written");
 }
 
 /// A Claude usage body as the endpoint answers it: the 5-hour window it

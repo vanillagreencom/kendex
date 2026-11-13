@@ -809,19 +809,47 @@ fn opener_env(harness: Harness, model: Option<&str>) -> OpenerEnv {
     opener
 }
 
+/// orch's settings as the hand-over reads them.
+fn controller_settings(settings: &Settings) -> controller::Settings<'_> {
+    controller::Settings {
+        engine: &settings.engine,
+        launch: &settings.launch,
+        controller: &settings.controller,
+        inherited: settings.inherited(),
+        opener: opener_env,
+        opener_session: lanes_session,
+    }
+}
+
+/// The session the fleet's lanes open in, the record's `tmux.session`: the
+/// one a controller opens in where neither its request nor the setting
+/// names one.
+fn lanes_session(path: &Path) -> agent_runtime::Result<Option<String>> {
+    fleet_tmux_session(path).map_err(agent_runtime::Error::from)
+}
+
+/// The keys a controller request's effect reads, judged by the hand-over's
+/// own list over orch's settings; a lane's or an item's request is none of
+/// its.
+pub fn judge_controller_settings(request: &Request, settings: &Settings) -> Result<()> {
+    let Some(hand_over) = hand_over_request(request) else {
+        return Ok(());
+    };
+    agent_runtime::controller::run::judge_settings(
+        &controller_settings(settings),
+        &settings.close_grace,
+        &hand_over,
+    )
+    .map_err(Error::from)
+}
+
 /// `act` run over the hand-over's run on the same record: orch's settings
 /// as the hand-over reads them, and the fleet watch as a start's companion.
 fn with_controller<T>(
     run: &Run,
     act: impl FnOnce(&controller::Run) -> agent_runtime::Result<T>,
 ) -> Result<T> {
-    let settings = controller::Settings {
-        engine: &run.settings.engine,
-        launch: &run.settings.launch,
-        controller: &run.settings.controller,
-        inherited: run.settings.inherited(),
-        opener: opener_env,
-    };
+    let settings = controller_settings(run.settings);
     let ctl = controller::Run {
         engine: engine_run(
             run.engine.path,

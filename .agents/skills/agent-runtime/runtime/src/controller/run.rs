@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::effect::{self, Run};
+use super::effect::{self, Run, Settings};
 use super::transition::{OutcomeRecorded, Report, Request, admit, apply};
 use crate::clock::Clock;
 use crate::effects::job::{self, JobStarted, NoticeUnmarked};
@@ -22,7 +22,7 @@ use crate::intent::{EffectOp, Intent, OWNER_LIVE, OWNER_UNREAD};
 use crate::journal::Effect;
 use crate::protocol::{Outcome, Refusal};
 use crate::record;
-use crate::settings::EngineSettings;
+use crate::settings::{EngineSettings, Judged};
 
 /// agent-runtime's own `controller job` command for an intent's detached
 /// job, after the executable: the job reaches the mailbox and the server
@@ -80,8 +80,13 @@ pub struct Answered {
 /// again by its job before the claim, so no intent stands under a value its
 /// effect would refuse: the bounds, the posture and the harness programs of
 /// every live effect, a controller launch's question dialog, a job's claim
-/// bound.
-pub fn judge_settings(run: &Run, request: &Request) -> Result<()> {
+/// bound. The one list for every caller of a controller request, the
+/// opener's own admission too.
+pub fn judge_settings(
+    settings: &Settings,
+    close_grace: &Judged<Duration>,
+    request: &Request,
+) -> Result<()> {
     let (launch, job) = match request {
         Request::RequestTransfer(_) => (true, true),
         Request::StartController(_) => (true, false),
@@ -90,9 +95,8 @@ pub fn judge_settings(run: &Run, request: &Request) -> Result<()> {
             return Ok(());
         }
     };
-    let settings = run.settings;
     settings.engine.verify.get()?;
-    run.engine.close_grace.get()?;
+    close_grace.get()?;
     settings.launch.permission.get()?;
     settings.engine.harness_binaries.get()?;
     if launch {
@@ -119,7 +123,7 @@ fn persisted(intent: &str, error: Error) -> Error {
 /// Judge, admit and commit `request`, then run, hand off or reconcile the
 /// live effect its intent names.
 pub fn request(run: &Run, request: &Request) -> Result<Answered> {
-    judge_settings(run, request)?;
+    judge_settings(run.settings, &run.engine.close_grace, request)?;
     admit(request, run.settings.controller)?;
     let live = matches!(
         request,
@@ -257,7 +261,7 @@ pub fn run_job(run: &Run, intent_id: &str) -> Result<OutcomeRecorded> {
     };
     // The job's own settings may differ from its caller's: a value its
     // effect would refuse leaves the intent unclaimed.
-    judge_settings(run, &request)?;
+    judge_settings(run.settings, &run.engine.close_grace, &request)?;
     job::claim(&run.engine, intent_id)?;
     let outcome = match transfer {
         Some(r) => effect::transfer_effect(run, intent_id, r)?,

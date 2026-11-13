@@ -50,6 +50,11 @@ pub struct Settings<'a> {
     pub controller: &'a ControllerSettings,
     pub inherited: Inherited<'a>,
     pub opener: fn(Harness, Option<&str>) -> crate::effects::prepare::OpenerEnv,
+    /// The session the opener's own windows open in beside the record at
+    /// the path, where neither the request nor the setting names one: read
+    /// before the session the predecessor's pane stands in, `None` for an
+    /// opener with no such session.
+    pub opener_session: fn(&Path) -> Result<Option<String>>,
 }
 
 impl Settings<'_> {
@@ -872,16 +877,26 @@ fn succeed(
     let intent = read_intent(run.engine.path, intent_id)?;
     let mut operation = open(run, &intent)?;
     let overseer = read_overseer(run.engine.path)?;
-    // The session the predecessor's recorded pane stands in, read only where
-    // neither the request nor the setting names one.
-    let predecessor_session = match (named_session, run.engine.settings.tmux_session.as_deref()) {
-        (None, None) => overseer
+    // The opener's own session, else the one the predecessor's recorded pane
+    // stands in, read only where neither the request nor the setting names
+    // one.
+    let unnamed = named_session.is_none() && run.engine.settings.tmux_session.is_none();
+    let opener_session = if unnamed {
+        match (run.settings.opener_session)(run.engine.path) {
+            Ok(session) => session,
+            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+        }
+    } else {
+        None
+    };
+    let fallback_session = opener_session.or_else(|| {
+        overseer
             .extra
             .get("pane")
             .and_then(Value::as_str)
-            .and_then(|pane| operation.pane_session(pane)),
-        _ => None,
-    };
+            .filter(|_| unnamed)
+            .and_then(|pane| operation.pane_session(pane))
+    });
 
     // --- Preconditions, all before retirement. A failure here is `failed`,
     // the predecessor in control, no waiting runner opened. ---
@@ -901,11 +916,11 @@ fn succeed(
     // The successor's window opens on the fleet server, so the home a pane
     // there inherits is read before the successor's home is resolved; an
     // environment that cannot be read refuses, never a guess.
-    let (server, session) =
-        match operation.fleet_server(named_session, predecessor_session.as_deref()) {
-            Ok(resolved) => resolved,
-            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
-        };
+    let (server, session) = match operation.fleet_server(named_session, fallback_session.as_deref())
+    {
+        Ok(resolved) => resolved,
+        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+    };
     let served = match pending.harness.as_deref().and_then(Harness::parse) {
         Some(harness @ (Harness::Claude | Harness::Codex)) if pending.account.is_none() => {
             match crate::effects::server_home(&server, &session, harness) {

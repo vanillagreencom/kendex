@@ -80,8 +80,9 @@ pub struct RequestTransfer {
     /// field: the effect carries it to the launch.
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
-    /// The tmux session the successor opens in: the opener's, over
-    /// `AGENT_RUNTIME_TMUX_SESSION`, over the session the predecessor's pane
+    /// The tmux session the successor opens in: this one, over
+    /// `AGENT_RUNTIME_TMUX_SESSION`, over the opener's own session
+    /// (`Settings.opener_session`), over the session the predecessor's pane
     /// stands in. It must stand: kendex creates no session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
@@ -219,8 +220,9 @@ pub struct StartController {
     pub controller: Pending,
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
-    /// The tmux session the controller opens in: the opener's, over
-    /// `AGENT_RUNTIME_TMUX_SESSION`, over the session a recorded
+    /// The tmux session the controller opens in: this one, over
+    /// `AGENT_RUNTIME_TMUX_SESSION`, over the opener's own session
+    /// (`Settings.opener_session`), over the session a recorded
     /// predecessor's pane stands in. It must stand: kendex creates no
     /// session.
     #[serde(default, skip_serializing_if = "Option::is_none")]

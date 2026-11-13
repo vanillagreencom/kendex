@@ -2076,6 +2076,7 @@ impl HandOverSettings {
                 setups: &[],
             },
             opener: |_, _| agent_runtime::effects::prepare::OpenerEnv::default(),
+            opener_session: |_| Ok(None),
         }
     }
 }

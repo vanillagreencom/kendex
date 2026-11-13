@@ -43,37 +43,17 @@ pub fn brief(harness: Harness, handoff: &str) -> String {
 /// request's intent stands, so a refusal writes nothing. The hand-over holds
 /// no default of its own and refuses `brief-missing`; these are the
 /// overseer's. A harness outside the four is refused by its name first,
-/// since no brief is spelled for it. Where neither the request nor
-/// `AGENT_RUNTIME_TMUX_SESSION` names a session, the session the fleet's
-/// lanes open in (the record's `tmux.session`) is the request's.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the request's one read of the fleet state, the session its lanes open in"
-)]
+/// since no brief is spelled for it.
 pub fn overseer_defaults(
     request: &mut crate::ops::Request,
     path: &Path,
-    settings: &Settings,
+    _settings: &Settings,
 ) -> Result<Option<HeldBrief>> {
-    let (pending, brief_file, session) = match request {
-        crate::ops::Request::RequestTransfer(r) => {
-            (&mut r.successor, &mut r.brief_file, &mut r.session)
-        }
-        crate::ops::Request::StartController(r) => {
-            (&mut r.controller, &mut r.brief_file, &mut r.session)
-        }
+    let (pending, brief_file) = match request {
+        crate::ops::Request::RequestTransfer(r) => (&mut r.successor, &mut r.brief_file),
+        crate::ops::Request::StartController(r) => (&mut r.controller, &mut r.brief_file),
         _ => return Ok(None),
     };
-    if session.is_none() && settings.engine.tmux_session.is_none() {
-        *session = crate::state::load(path)?.and_then(|snapshot| {
-            snapshot
-                .doc
-                .get("tmux")
-                .and_then(|t| t.get("session"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    }
     let handoff = pending
         .handoff
         .get_or_insert_with(|| HANDOFF.to_owned())
@@ -216,9 +196,11 @@ pub fn successor(
 
 /// The successor a model recovery opens for the recorded controller whose
 /// pane `predecessor` names, the hand-over's own launch replayed, under the
-/// overseer's default handoff where the record names none.
+/// overseer's default handoff where the record names none. A record orch
+/// cannot read whole refuses `record-missing` here; no record at all is the
+/// hand-over's own refusal.
 pub fn recovery(settings: &Settings, path: &Path, predecessor: &str) -> Result<Value> {
-    if !matches!(read_whole(path)?, Some(Ok(_))) {
+    if let Some(Err(_)) = read_whole(path)? {
         return Err(refused(
             "record-missing",
             &[("path", &path.display().to_string())],

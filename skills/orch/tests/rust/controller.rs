@@ -9491,6 +9491,39 @@ fn a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened() {
     );
 }
 
+/// Where neither the request nor `AGENT_RUNTIME_TMUX_SESSION` names a
+/// session, a controller opens in the session the fleet's lanes open in,
+/// the record's `tmux.session`.
+#[test]
+fn a_start_naming_no_session_opens_in_the_session_the_fleets_lanes_open_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let lanes = tmux(&server.socket, &["new-session", "-d", "-s", "lanes"]);
+    assert!(lanes.status.success(), "new-session: {}", stderr(&lanes));
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let mut fleet = runner.fleet();
+    fleet["tmux"] = json!({"session": "lanes"});
+    runner.write_fleet(&fleet);
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({"op": "start-controller", "controller": pending(runner.state_dir())}),
+        &[("AGENT_RUNTIME_TMUX_SESSION", "")],
+    ));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let pane = runner.fleet()["overseer"]["pane"].clone();
+    let opened = tmux(
+        &server.socket,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            pane.as_str().unwrap(),
+            "#{session_name}",
+        ],
+    );
+    assert_eq!(String::from_utf8_lossy(&opened.stdout).trim(), "lanes");
+}
+
 // ---------------------------------------------------------------------------
 // The successor's launch prerequisites: the home and trust the launch's own
 // preparation makes, and the brief a controller opens on, for every

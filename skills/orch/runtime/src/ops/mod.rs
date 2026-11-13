@@ -544,44 +544,38 @@ pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-/// The keys a request's effect reads, judged before its intent persists and
-/// again by its job before the claim, so no intent stands under a value its
-/// effect would refuse: every live effect's bounds, posture and harness
-/// programs; a controller launch's question dialog; a lane launch's output
-/// mode; a job's claim bound; a lane close's grace. A request with no effect
+/// The keys a request's effect reads, judged before its intent persists, so
+/// no intent stands under a value its effect would refuse: a lane effect's
+/// bounds, posture and harness programs; a lane launch's output mode; a lane
+/// close's grace. A controller request's keys are the hand-over's own list,
+/// which its job judges again before the claim. A request with no effect
 /// reads none of them.
 pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<()> {
-    let effect = |controller_launch: bool, job: bool| -> Result<()> {
+    let effect = || -> Result<()> {
         settings.engine.verify.get()?;
         settings.close_grace.get()?;
         settings.launch.permission.get()?;
         settings.engine.harness_binaries.get()?;
-        if controller_launch {
-            settings.controller.question_tool.get()?;
-        }
-        if job {
-            settings.engine.claim.get()?;
-        }
         Ok(())
     };
     match request {
         Request::LaunchLane(_) => {
-            effect(false, false)?;
+            effect()?;
             settings.lane_output.get()?;
             Ok(())
         }
-        Request::CloseOwnedResources(_) => effect(false, false),
+        Request::CloseOwnedResources(_) => effect(),
         // The claim is spent where the replacement's launch could not run:
         // every key that launch reads. The limit is judged where the claim
         // reads it, before it is taken.
         Request::RecoverLaneModel(_) => {
-            effect(false, false)?;
+            effect()?;
             settings.lane_output.get()?;
             Ok(())
         }
-        Request::RequestTransfer(_) => effect(true, true),
-        Request::StartController(_) => effect(true, false),
-        Request::StopController(_) => effect(false, true),
+        Request::RequestTransfer(_) | Request::StartController(_) | Request::StopController(_) => {
+            crate::effects::judge_controller_settings(request, settings)
+        }
         Request::CloseLane(_) | Request::StopModelPredecessor(_) => {
             settings.close_grace.get()?;
             Ok(())
