@@ -7,7 +7,7 @@
 set -u
 case "${1:-}" in
   capabilities)
-    printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n'
+    printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\trelaunch=resume\tpark=none\taccounts=none\tland=lane\tpane=local\n'
     ;;
   accounts)
     [ -p "${LANE_HOST_HOLD_FIFO:-}" ] || { echo "lane-host-hold: hold-not-fifo path=${LANE_HOST_HOLD_FIFO:-}" >&2; exit 2; }

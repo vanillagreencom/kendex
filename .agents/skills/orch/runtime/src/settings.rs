@@ -235,9 +235,6 @@ pub const COPILOT_HOME_KEY: &str = "COPILOT_HOME";
 pub const PI_ROOT_KEY: &str = "PI_CODING_AGENT_DIR";
 /// Seconds the provider's `accounts` verb may take; 0 asks for no bound.
 pub const HOST_ACCOUNTS_TIMEOUT_KEY: &str = "ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S";
-/// The dispatcher's slot wait on that verb, passed on as it stands and
-/// held under the bound.
-pub const HOST_BUSY_WAIT_KEY: &str = "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS";
 const DEFAULT_HOST_ACCOUNTS_TIMEOUT: u64 = 30;
 
 const DEFAULT_STATE_DIR: &str = "tmp";
@@ -350,7 +347,10 @@ const READ_KEYS: &[&str] = &[
     COPILOT_HOME_KEY,
     PI_ROOT_KEY,
     HOST_ACCOUNTS_TIMEOUT_KEY,
-    HOST_BUSY_WAIT_KEY,
+    crate::provider::MAX_CALLS_KEY,
+    crate::provider::BUSY_WAIT_KEY,
+    crate::provider::SHORT_MAX_CALLS_KEY,
+    crate::provider::SHORT_BUSY_WAIT_KEY,
 ];
 
 /// The keys every verb needs, so the load itself judges them and a private
@@ -503,7 +503,6 @@ pub struct ProviderSettings {
     pub host: Option<String>,
     pub cloud_repos: Vec<CloudRepo>,
     pub accounts_timeout: u64,
-    pub host_busy_wait: Option<String>,
 }
 
 /// One `ORCH_LANE_CLOUD_REPOS` entry, `<name>=<owner>/<repo>`: the
@@ -570,6 +569,8 @@ pub struct Settings {
     pub home: Option<String>,
     pub copilot_home: Option<String>,
     pub pi_root: Option<String>,
+    /// The provider calls' host and bound, judged at each call.
+    pub dispatch: crate::provider::Dispatch,
     pub store: StoreSettings,
     pub review: ReviewSettings,
     /// `ORCH_ROUND_PRUNE_DISK_PCT` as written.
@@ -948,7 +949,6 @@ pub fn load(
                 cloud_repos,
                 accounts_timeout: whole(HOST_ACCOUNTS_TIMEOUT_KEY, DEFAULT_HOST_ACCOUNTS_TIMEOUT)
                     .read?,
-                host_busy_wait: get(HOST_BUSY_WAIT_KEY).map(str::to_owned),
             })
         })(),
     };
@@ -1086,6 +1086,7 @@ pub fn load(
         home: get(shared::HOME_KEY).map(str::to_owned),
         copilot_home: get(COPILOT_HOME_KEY).map(str::to_owned),
         pi_root: get(PI_ROOT_KEY).map(str::to_owned),
+        dispatch: crate::provider::Dispatch::read(|key| get(key).map(str::to_owned)),
         lane_output: Judged::word(
             LANE_OUTPUT_KEY,
             get(LANE_OUTPUT_KEY),

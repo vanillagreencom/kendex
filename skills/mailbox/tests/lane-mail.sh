@@ -1242,18 +1242,19 @@ host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=KEN-2 state=unknown" \
   "a host that cannot be reached is refused, and the refusal names the state it could not act on"
 
-# A call lane-host refused at its per-home cap ran no provider, so it is
-# neither an empty mailbox nor a host out of reach: the read refuses with
-# lane-host's own status. One held call fills a cap of 1.
+# A call the runtime refused at its per-home bound ran no provider, so it is
+# neither an empty mailbox nor a host out of reach: the read refuses
+# `host-busy`, exit 69. This suite's own shell holds the one slot of a cap of
+# 1, under the start the runtime reads for it.
 BUSY_HOME="$TMP_ROOT/busy-home"
-mkdir -p "$BUSY_HOME/.cache/orch/lane-host-slots/short"
-: > "$BUSY_HOME/.cache/orch/lane-host-slots/short/slot.$$"
+mkdir -p "$BUSY_HOME/.cache/orch/host-slots/short"
+printf 'lstart:%s' "$(LC_ALL=C TZ=UTC ps -o lstart= -p $$)" > "$BUSY_HOME/.cache/orch/host-slots/short/slot.$$.held"
 HOST_ENV=(HOME="$BUSY_HOME" ORCH_LANE_HOST_SHORT_MAX_CALLS=1 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS=0)
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
-rm -f -- "$BUSY_HOME/.cache/orch/lane-host-slots/short/slot.$$"
-assert_eq "$RC=$ERR=$(grep -c '^lane-host: lane-host-busy count=1 cap=1 verb=cat item=KEN-1$' "$TMP_ROOT/err")" \
-  "69=lane-mail: lane-host-busy=KEN-1=1" \
-  "a hosted read lane-host refused at its cap exits with its status, naming lane-host's line"
+rm -f -- "$BUSY_HOME/.cache/orch/host-slots/short/slot.$$.held"
+assert_eq "$RC=$ERR=$(grep -c '^orch-runtime: host-busy count=1 cap=1 verb=cat item=KEN-1$' "$TMP_ROOT/err")" \
+  "69=lane-mail: host-busy=KEN-1=1" \
+  "a hosted read the runtime refused at its bound exits 69, naming the runtime's line"
 
 
 # A hosted mailbox directory that is a symlink is refused by the provider behind

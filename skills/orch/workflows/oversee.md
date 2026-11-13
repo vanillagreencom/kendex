@@ -308,7 +308,7 @@ For a fresh status-file read, use `cp` locally or `lane-host cat` after a succes
 
 ```bash
 cp -- [STATUS_FILE] tmp/oversee-lane-status-source
-.agents/skills/orch/scripts/lane-host cat --item [ISSUE_ID] [STATUS_FILE] > tmp/oversee-lane-status-source
+.agents/skills/orch/scripts/orch-runtime host cat --item [ISSUE_ID] [STATUS_FILE] > tmp/oversee-lane-status-source
 awk 'NF {line[++count]=$0} END {first=count-39; if (first < 1) first=1; for (i=first; i<=count; i++) print line[i]}' tmp/oversee-lane-status-source
 ```
 

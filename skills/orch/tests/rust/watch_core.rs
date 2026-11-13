@@ -1557,7 +1557,7 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
     link_fixture("runtime-close/orch-runtime", &scripts.join("orch-runtime"));
     std::fs::write(
         scripts.join("lane-host.json"),
-        json!({"capabilities": {"stdout": "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none"}})
+        json!({"capabilities": {"stdout": "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\tpane=local"}})
             .to_string(),
     )
     .unwrap();

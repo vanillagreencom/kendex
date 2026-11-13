@@ -817,7 +817,7 @@ fn apply_lane_store(run: &Run, request: &Request) -> Result<Applied> {
 /// first envelope of kind `ask`. A hosted lane's mailbox is read under its
 /// record's host, never the caller's. `Err` is a read that did not answer,
 /// or a lane with no recorded root; a host's per-home cap refusal leads
-/// with `lane-host-busy`, the word the close refuses by.
+/// with `host-busy`, the word the close refuses by.
 pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option<String>, String> {
     let Some(root) = lane.mail_root.as_deref() else {
         return Err("mail-root-unrecorded".to_owned());
@@ -827,9 +827,9 @@ pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option
         .pending(&lane.item, Path::new(root), hosted)
         .map_err(|refusal| match refusal {
             Refusal::Exit {
-                status: Some(crate::watch::hosted::LANE_HOST_BUSY_EXIT),
+                status: Some(crate::mailbox::HOST_BUSY_EXIT),
                 ..
-            } => format!("lane-host-busy step=mail-read {refusal}"),
+            } => format!("{} step=mail-read {refusal}", crate::watch::hosted::BUSY),
             Refusal::NotStarted { .. }
             | Refusal::Unanswered { .. }
             | Refusal::Exit { .. }

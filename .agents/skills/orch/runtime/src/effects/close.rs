@@ -241,7 +241,7 @@ pub fn close_lane(
     let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
     let host = hosted::host_of(&lane).to_owned();
     let caps = if host == "local" {
-        Capabilities::LOCAL
+        Capabilities::local()
     } else {
         hosted::capabilities(&scripts, &host).map_err(|cause| {
             refused(
@@ -922,8 +922,8 @@ impl Close<'_> {
             HostAnswer::Gone => Ok(true),
             HostAnswer::Live(()) => Ok(false),
             HostAnswer::Unreadable { cause } => Err(refused(
-                if cause.contains(&format!("exit={}", hosted::LANE_HOST_BUSY_EXIT)) {
-                    "lane-host-busy"
+                if cause.split_whitespace().nth(1) == Some(hosted::BUSY) {
+                    hosted::BUSY
                 } else {
                     "worktree-read-failed"
                 },
@@ -942,8 +942,8 @@ impl Close<'_> {
                 "ask-unanswered",
                 &[("item", self.item()), ("ask", &ask)],
             )),
-            Err(cause) if cause.starts_with("lane-host-busy") => Err(refused(
-                "lane-host-busy",
+            Err(cause) if cause.starts_with(hosted::BUSY) => Err(refused(
+                hosted::BUSY,
                 &[("item", self.item()), ("step", "mail-read")],
             )),
             Err(cause) => Err(refused(
@@ -962,8 +962,8 @@ impl Close<'_> {
         }
         match hosted::lists_item(self.scripts, self.host, self.item()) {
             Ok(listed) => Ok(listed.is_none()),
-            Err(cause) if cause.starts_with("lane-host-busy") => Err(refused(
-                "lane-host-busy",
+            Err(cause) if cause.starts_with(hosted::BUSY) => Err(refused(
+                hosted::BUSY,
                 &[("item", self.item()), ("step", "list")],
             )),
             Err(_) => Ok(false),
@@ -1107,10 +1107,8 @@ impl Close<'_> {
                     ("status", "4"),
                 ],
             )),
-            Ok(HostStopped::Refused {
-                status: hosted::LANE_HOST_BUSY_EXIT,
-            }) => Err(refused(
-                "lane-host-busy",
+            Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => Err(refused(
+                hosted::BUSY,
                 &[
                     ("item", self.item()),
                     ("harness", harness),
@@ -1256,8 +1254,8 @@ impl Close<'_> {
         }
         match hosted::stop_sandbox(self.scripts, self.host, self.item(), true) {
             Ok(()) => Ok(()),
-            Err(Asked::Failed(cause)) if cause.starts_with("lane-host-busy") => Err(refused(
-                "lane-host-busy",
+            Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => Err(refused(
+                hosted::BUSY,
                 &[("item", self.item()), ("step", "stop-sandbox-check")],
             )),
             Err(Asked::Failed(cause) | Asked::Unknown(cause)) => Err(refused(
@@ -1580,9 +1578,9 @@ impl Close<'_> {
     fn park_sandbox(&self, park: &ParkLane, notes: Vec<String>) -> Result<Closed> {
         match hosted::stop_sandbox(self.scripts, self.host, self.item(), false) {
             Ok(()) => {}
-            Err(Asked::Failed(cause)) if cause.starts_with("lane-host-busy") => {
+            Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
                 return Err(refused(
-                    "lane-host-busy",
+                    hosted::BUSY,
                     &[("item", self.item()), ("step", "stop-sandbox")],
                 ));
             }

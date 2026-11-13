@@ -5632,17 +5632,20 @@ fn a_lane_with_no_local_worktree_acquires_no_worktree_obligation() {
         for (key, value) in fields.as_object().unwrap() {
             row[key] = value.clone();
         }
+        // The hosted lane's sandbox is its provider's to close: the planted
+        // provider its record names.
+        let scripts = runner.state_dir().join("provider-world");
+        if fields.get("host").is_some() {
+            row["host"] = json!(scripts.join("provider").display().to_string());
+        }
         let mut fleet = runner.fleet();
         fleet["lanes"] = json!([row]);
         runner.write_fleet(&fleet);
         if fields.get("host").is_some() {
-            // The hosted lane's sandbox is its provider's to close, through
-            // the `lane-host` the project's scripts directory holds.
-            let scripts = runner.state_dir().join(".agents/skills/orch/scripts");
             std::fs::create_dir_all(&scripts).unwrap();
             std::os::unix::fs::symlink(
                 fixtures().join("lane-host/lane-host"),
-                scripts.join("lane-host"),
+                scripts.join("provider"),
             )
             .unwrap();
             std::fs::write(
@@ -6029,7 +6032,9 @@ struct HostedLaunch {
     host_path: PathBuf,
 }
 
-const PROVIDER_PATH: &str = "/w/provider";
+/// The name the planted provider runs under in a world's scripts
+/// directory, which its log names as the host.
+const PROVIDER: &str = "provider";
 
 impl HostedLaunch {
     fn new(server: &Server, dir: &Path, record: Value) -> HostedLaunch {
@@ -6045,7 +6050,7 @@ impl HostedLaunch {
         std::fs::create_dir_all(&scripts).unwrap();
         std::os::unix::fs::symlink(
             fixtures().join("lane-host").join("lane-host"),
-            scripts.join("lane-host"),
+            scripts.join(PROVIDER),
         )
         .unwrap();
         let tools = dir.join("tools");
@@ -6067,6 +6072,11 @@ impl HostedLaunch {
 
     fn host(&self) -> String {
         self.host_path.display().to_string()
+    }
+
+    /// The host a hosted record names: the planted provider.
+    fn provider(&self) -> String {
+        self.scripts.join(PROVIDER).display().to_string()
     }
 
     /// The provider's answers for one launch of `KEN-H`: the static ssh
@@ -6114,7 +6124,7 @@ impl HostedLaunch {
             "effort": "high",
             "class": CLASS,
             "class_reason": CLASS_REASON,
-            "host": PROVIDER_PATH,
+            "host": self.provider(),
             "repo": "o/r",
         })
     }
@@ -6131,7 +6141,7 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     let lane = &report["lane"];
     assert_eq!(lane["status"], "running", "{lane}");
-    assert_eq!(lane["host"], PROVIDER_PATH);
+    assert_eq!(lane["host"], world.provider());
     assert_eq!(lane["kind"], "ssh");
     assert_eq!(
         lane["mail_root"],
@@ -6152,23 +6162,17 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     assert_eq!(
         world.calls(),
         vec![
-            format!("ORCH_LANE_HOST={PROVIDER_PATH} capabilities"),
+            format!("ORCH_LANE_HOST={PROVIDER} capabilities"),
             format!(
-                "ORCH_LANE_HOST={PROVIDER_PATH} create --item KEN-H --repo o/r --harness claude --account {account}"
+                "ORCH_LANE_HOST={PROVIDER} create --item KEN-H --repo o/r --harness claude --account {account}"
             ),
-            format!("ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H {host}/.git"),
+            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {host}/.git"),
+            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"),
+            format!("ORCH_LANE_HOST={PROVIDER} touch --item KEN-H"),
+            format!("ORCH_LANE_HOST={PROVIDER} put --item KEN-H /srv/clone/.git/lane-mail/ken-h"),
+            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"),
             format!(
-                "ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"
-            ),
-            format!("ORCH_LANE_HOST={PROVIDER_PATH} touch --item KEN-H"),
-            format!(
-                "ORCH_LANE_HOST={PROVIDER_PATH} put --item KEN-H /srv/clone/.git/lane-mail/ken-h"
-            ),
-            format!(
-                "ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"
-            ),
-            format!(
-                "ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json"
+                "ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json"
             ),
         ],
         "the provider's verbs in order, each under the record's host: the marker the host lacked is put and read back before the record is read"
@@ -6258,37 +6262,15 @@ fn a_hosted_create_whose_answer_is_lost_holds_its_launch_until_a_close_confirms_
     let server = Server::start(dir.path(), "fleet");
     let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
     let world = HostedLaunch::new(&server, dir.path(), record);
-    // The shipped dispatcher in the fixture's place, its libraries beside
-    // it as an install lays them out; the fixture is the provider it runs.
-    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
-    let provider = dir.path().join("provider");
-    std::fs::create_dir_all(&provider).unwrap();
-    std::fs::rename(
-        world.scripts.join("lane-host.json"),
-        provider.join("lane-host.json"),
-    )
-    .unwrap();
-    std::fs::remove_file(world.scripts.join("lane-host")).unwrap();
-    std::os::unix::fs::symlink(shipped.join("lane-host"), world.scripts.join("lane-host")).unwrap();
-    std::os::unix::fs::symlink(shipped.join("lib"), world.scripts.join("lib")).unwrap();
-    std::os::unix::fs::symlink(
-        shipped.join("../../mailbox"),
-        world.scripts.join("../../mailbox"),
-    )
-    .unwrap();
-    std::os::unix::fs::symlink(
-        fixtures().join("lane-host/lane-host"),
-        provider.join("lane-host"),
-    )
-    .unwrap();
-    let host = provider.join("lane-host").display().to_string();
+    let provider = world.scripts.clone();
+    let host = world.provider();
     let account = world.runner.state_dir().display().to_string();
     let first = format!("create --item KEN-H --repo o/r --harness claude --account {account}");
     let create = format!("{first} --relaunch");
     let answers_path = provider.join("lane-host.json");
     let mut answers: Value =
         serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-    answers[first.as_str()] = json!({"kill_ancestor": 2});
+    answers[first.as_str()] = json!({"kill_ancestor": 1});
     answers["close --item KEN-H"] = json!({"stdout": "kept=none\n"});
     answers["list"] = json!({"stdout": ""});
     // The shipped ssh provider's lock, held by the item's own earlier
@@ -6307,7 +6289,7 @@ fn a_hosted_create_whose_answer_is_lost_holds_its_launch_until_a_close_confirms_
             .unwrap_or_default()
             .lines()
             .map(|l| {
-                l.trim_start_matches(&format!("ORCH_LANE_HOST={host} "))
+                l.trim_start_matches(&format!("ORCH_LANE_HOST={PROVIDER} "))
                     .to_owned()
             })
             .collect()
@@ -6542,7 +6524,7 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
     let world = HostedLaunch::new(&server, dir.path(), record);
     let mut fleet = world.runner.fleet();
     let mut prior = lane("KEN-H", "stopped", &world.runner, Value::Null);
-    prior["host"] = json!(PROVIDER_PATH);
+    prior["host"] = json!(world.provider());
     prior["kind"] = json!("ssh");
     prior["launched_at"] = json!("2026-01-29T15:20:00Z");
     fleet["lanes"] = json!([prior]);
@@ -6595,7 +6577,7 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
         let world = HostedLaunch::new(&server, dir.path(), record);
         let mut fleet = world.runner.fleet();
         let mut prior = lane("KEN-H", "parked", &world.runner, Value::Null);
-        prior["host"] = json!(PROVIDER_PATH);
+        prior["host"] = json!(world.provider());
         prior["kind"] = json!("ssh");
         prior["launched_at"] = json!("2026-01-29T15:20:00Z");
         prior["parked"] =
@@ -6658,7 +6640,7 @@ fn a_part_way_hosted_relaunch_keeps_its_slot_until_a_close_confirms_its_sandbox_
         let world = HostedLaunch::new(&server, dir.path(), record);
         let mut fleet = world.runner.fleet();
         let mut prior = lane("KEN-H", "parked", &world.runner, Value::Null);
-        prior["host"] = json!(PROVIDER_PATH);
+        prior["host"] = json!(world.provider());
         prior["kind"] = json!("ssh");
         prior["launched_at"] = json!("2026-01-29T15:20:00Z");
         prior["parked"] =
@@ -7288,7 +7270,10 @@ fn a_hosted_lane_is_gated_before_create_and_a_hosted_pi_lane_on_its_host_s_files
         (
             "pi",
             Some("pi-claude/fable"),
-            format!("host-pi-claude-seat host={PROVIDER_PATH} model=pi-claude/fable"),
+            format!(
+                "host-pi-claude-seat host={} model=pi-claude/fable",
+                world.provider()
+            ),
             false,
         ),
         (
@@ -8816,28 +8801,7 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
             "runtime": "/cache/bin/orch-runtime-k"
         }),
     );
-    // The real dispatcher in front of the fixture provider, and the
-    // recording harness on the host.
-    let provider = dir.path().join("provider");
-    std::fs::create_dir_all(&provider).unwrap();
-    std::fs::rename(
-        world.scripts.join("lane-host.json"),
-        provider.join("lane-host.json"),
-    )
-    .unwrap();
-    std::fs::remove_file(world.scripts.join("lane-host")).unwrap();
-    std::os::unix::fs::symlink(shipped.join("lane-host"), world.scripts.join("lane-host")).unwrap();
-    std::os::unix::fs::symlink(shipped.join("lib"), world.scripts.join("lib")).unwrap();
-    std::os::unix::fs::symlink(
-        shipped.join("../../mailbox"),
-        world.scripts.join("../../mailbox"),
-    )
-    .unwrap();
-    std::os::unix::fs::symlink(
-        fixtures().join("lane-host/lane-host"),
-        provider.join("lane-host"),
-    )
-    .unwrap();
+    // The recording harness on the host.
     std::fs::remove_file(world.tools.join("claude")).unwrap();
     std::os::unix::fs::symlink(
         fixtures().join("stub-record/claude"),
@@ -8847,7 +8811,6 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
     let brief = dir.path().join("hosted-brief.md");
     std::fs::write(&brief, "Review the hosted change.\n").unwrap();
     let mut request = world.request();
-    request["host"] = json!(provider.join("lane-host").display().to_string());
     request["brief_file"] = json!(brief.display().to_string());
     let report = effect_report(
         &world

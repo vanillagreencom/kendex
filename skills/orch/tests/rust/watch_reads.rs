@@ -3648,7 +3648,8 @@ fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
 /// the provider's answer is the process proof for both pane kinds and the
 /// local pane is judged with it: a shell drawing Codex's idle screen reads
 /// `idle`, with one status call and no capture; a provider line naming no
-/// `pane` is the same kind.
+/// `pane` is refused by that key and the lane read unjudged, asking no
+/// status.
 #[test]
 fn lane_status_keeps_a_providers_running_answer_over_a_local_transport_shell() {
     let dir = tempfile::tempdir().unwrap();
@@ -3685,16 +3686,24 @@ fn lane_status_keeps_a_providers_running_answer_over_a_local_transport_shell() {
         let out = runner.run_env(&["lane", "status", "--item", "issue-2"], &env);
         let answer = reply(&out);
         assert_eq!(out.status.code(), Some(0), "{answer}");
-        assert_eq!(answer["result"]["state"], "idle", "{caps}: {answer}");
         let calls = std::fs::read_to_string(&log).unwrap_or_default();
-        assert_eq!(
-            calls
-                .lines()
-                .filter(|l| l.starts_with("status --item issue-2 --harness codex"))
-                .count(),
-            1,
-            "{calls}"
-        );
+        let probes = calls
+            .lines()
+            .filter(|l| l.starts_with("status --item issue-2 --harness codex"))
+            .count();
+        if caps == explicit {
+            assert_eq!(answer["result"]["state"], "idle", "{caps}: {answer}");
+            assert_eq!(probes, 1, "{calls}");
+        } else {
+            assert_eq!(answer["result"]["state"], "unjudged", "{caps}: {answer}");
+            assert!(
+                answer["result"]["cause"]
+                    .as_str()
+                    .is_some_and(|c| c.ends_with("cause=capability-invalid key=pane value=")),
+                "{answer}"
+            );
+            assert_eq!(probes, 0, "{calls}");
+        }
         assert!(!calls.contains("capture"), "{calls}");
     }
 }
@@ -3849,7 +3858,7 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
     ]);
     runner.write_fleet(&fleet);
     let log = dir.path().join("host.log");
-    let caps = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane";
+    let caps = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local";
     let status = |item: &str| {
         let env = [
             ("LANE_HOST_STUB_CAPABILITIES", caps),

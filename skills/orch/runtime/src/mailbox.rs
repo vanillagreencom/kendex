@@ -35,6 +35,9 @@ pub const BOUND: Duration = Duration::from_secs(60);
 
 /// The name a failure reports and the start counter's key.
 const PROGRAM: &str = "lane-mail";
+/// `lane-mail`'s own status for a hosted read or write refused at the
+/// provider-call bound: nothing was read or written.
+pub const HOST_BUSY_EXIT: i32 = 69;
 
 /// The duty every start is counted under.
 const TAG: &str = "mail";
@@ -534,13 +537,9 @@ impl Mailbox {
         self.call_on(verb, args, None, None)
     }
 
-    /// [`Self::call`] with `lane-host`'s host named: a hosted lane's reads
-    /// go to the provider its record names, never the one the settings name;
-    /// and in `cwd` where the verb is rooted at the checkout it runs in.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the mailbox client's every `lane-mail` call, through agent-runtime's one runner under the `mail` tag and one bound; the duty writes nothing of the fleet through it"
-    )]
+    /// [`Self::call`] with the host named: a hosted lane's reads go to the
+    /// provider its record names, never the one the settings name; and in
+    /// `cwd` where the verb is rooted at the checkout it runs in.
     fn call_on(
         &self,
         verb: &'static str,
@@ -548,14 +547,28 @@ impl Mailbox {
         lane_host: Option<&str>,
         cwd: Option<&Path>,
     ) -> Result<Answer, Refusal> {
-        let mut argv = Vec::with_capacity(args.len() + 1);
-        argv.push(verb);
-        argv.extend_from_slice(args);
         let env: Vec<(&str, &std::ffi::OsStr)> = lane_host
             .map(|h| ("ORCH_LANE_HOST", std::ffi::OsStr::new(h)))
             .into_iter()
             .collect();
-        let place = Place { cwd, env: &env };
+        self.call_in(verb, args, &env, cwd)
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the mailbox client's every `lane-mail` call, through agent-runtime's one runner under the `mail` tag and one bound; the duty writes nothing of the fleet through it"
+    )]
+    fn call_in(
+        &self,
+        verb: &'static str,
+        args: &[&str],
+        env: &[(&str, &std::ffi::OsStr)],
+        cwd: Option<&Path>,
+    ) -> Result<Answer, Refusal> {
+        let mut argv = Vec::with_capacity(args.len() + 1);
+        argv.push(verb);
+        argv.extend_from_slice(args);
+        let place = Place { cwd, env };
         let output = host::run_tagged_in(TAG, PROGRAM, &self.cli, verb, &argv, place, self.bound)
             .map_err(|e| {
             let cause = e.to_string();
@@ -649,9 +662,16 @@ impl Mailbox {
         Batch { read, refused }
     }
 
-    /// `drain --receipts` for one lane; a hosted lane's through `lane-host`
-    /// under `host`, its record's host.
-    pub fn drain(&self, lane: &Drain, host: Option<&str>) -> Result<Drained, Refusal> {
+    /// `drain --receipts` for one lane; a hosted lane's under `host`, its
+    /// record's host, read from the pass's snapshot of that host
+    /// (`LANE_HOST_READ_DIR`, [`crate::provider::snapshot`]) where one is
+    /// given.
+    pub fn drain(
+        &self,
+        lane: &Drain,
+        host: Option<&str>,
+        snapshot: Option<&Path>,
+    ) -> Result<Drained, Refusal> {
         const VERB: &str = "drain";
         let after = lane.after.to_string();
         let root = lane.root.display().to_string();
@@ -664,10 +684,15 @@ impl Mailbox {
             &after,
             "--receipts",
         ];
-        if host.is_some() {
+        let mut env: Vec<(&str, &std::ffi::OsStr)> = Vec::new();
+        if let Some(host) = host {
             args.push("--host");
+            env.push(("ORCH_LANE_HOST", std::ffi::OsStr::new(host)));
         }
-        let stdout = self.call_on(VERB, &args, host, None)?.ok(VERB)?;
+        if let Some(dir) = snapshot {
+            env.push(("LANE_HOST_READ_DIR", dir.as_os_str()));
+        }
+        let stdout = self.call_in(VERB, &args, &env, None)?.ok(VERB)?;
         let mut lines = stdout.lines().peekable();
         let drained = Drained::parse(VERB, &mut lines)?;
         if let Some(extra) = lines.next() {
@@ -722,7 +747,7 @@ impl Mailbox {
 
     /// `pending --item ITEM --root ROOT`: the lane's open asks and the
     /// directives it has not read, moving no cursor; a hosted lane's
-    /// through `lane-host` under `host`, its record's host.
+    /// under `host`, its record's host.
     pub fn pending(
         &self,
         item: &str,

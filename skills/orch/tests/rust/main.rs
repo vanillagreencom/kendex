@@ -517,3 +517,392 @@ fn op_records_a_verification_verdict_and_refuses_a_word_that_is_none() {
     assert_eq!(reply(&out)["refusal"]["key"], "verdict-invalid");
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
 }
+
+// --- the host verb ---
+
+/// The static ssh kind's whole line, as a provider declares it.
+const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local";
+
+/// A planted provider at `dir/provider`: each call logged to
+/// `provider.log` beside it as `ORCH_LANE_HOST=<value> <argv>`;
+/// `capabilities` prints `PROVIDER_LINE`, or exits `PROVIDER_CAPS_STATUS`
+/// with the absent-verb line; any other verb waits for `PROVIDER_HOLD` to
+/// exist where it is named, then prints its argv and its stdin, names its
+/// verb on stderr and exits 7.
+fn plant_provider(dir: &Path) -> String {
+    let path = dir.join("provider");
+    support::write_executable(
+        &path,
+        format!(
+            r#"#!/bin/sh
+printf 'ORCH_LANE_HOST=%s %s\n' "${{ORCH_LANE_HOST-unset}}" "$*" >> '{log}'
+case "$1" in
+  capabilities)
+    if [ -n "${{PROVIDER_CAPS_STATUS:-}}" ]; then
+      echo 'provider: verb-unsupported verb=capabilities' >&2
+      exit "$PROVIDER_CAPS_STATUS"
+    fi
+    printf '%s\n' "$PROVIDER_LINE"
+    exit 0 ;;
+esac
+if [ -n "${{PROVIDER_HOLD:-}}" ]; then
+  n=0
+  while [ ! -e "$PROVIDER_HOLD" ] && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done
+fi
+printf 'out:%s\n' "$*"
+cat
+printf 'err:%s\n' "$1" >&2
+exit 7
+"#,
+            log = dir.join("provider.log").display()
+        ),
+    );
+    path.display().to_string()
+}
+
+/// `orch-runtime host ARGS` from `cwd` under `home`, `env` beside the
+/// isolation, `stdin` fed.
+fn host_verb(
+    cwd: &Path,
+    home: &Path,
+    env: &[(String, String)],
+    args: &[&str],
+    stdin: &[u8],
+) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut command = support::isolated();
+    command
+        .current_dir(cwd)
+        .env("HOME", home)
+        .arg("host")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn owned(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
+/// One input of the verb and its answer: the case, the host setting, the
+/// arguments, the provider's settings, and the status, stdout and stderr.
+type HostCase<'a> = (
+    &'a str,
+    Option<&'a str>,
+    Vec<&'a str>,
+    Vec<(&'a str, &'a str)>,
+    i32,
+    String,
+    String,
+);
+
+/// The verb answers each input as the shell dispatcher released it did,
+/// but for the named departures: `resolve` prints the host (the flag over
+/// the setting over `local`); a verb outside the contract refuses
+/// `verb-invalid`, exit 2; the `local` and `claude-cloud` lines come from
+/// the runtime itself, and each refuses a provider verb, exit 2; a host
+/// that is no executable file refuses `host-unavailable`, exit 1; a
+/// provider's line is printed only whole (`pane` among its keys), and a
+/// provider with no line passes its own failure, no line guessed; any
+/// other verb is the provider's own call, its arguments, stdin, output and
+/// status unchanged and `ORCH_LANE_HOST` naming it.
+#[test]
+fn host_verb_answers_as_the_dispatcher() {
+    const LOCAL: &str = "kind=local\tlaunch=window\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=window\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local";
+    const CLOUD: &str = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\tpane=local";
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let provider = plant_provider(dir.path());
+    let absent = dir.path().join("absent").display().to_string();
+    let no_pane = SSH_LINE.trim_end_matches("\tpane=local");
+    let cases: Vec<HostCase> = vec![
+        (
+            "resolve unset",
+            None,
+            vec!["resolve"],
+            vec![],
+            0,
+            "local\n".into(),
+            String::new(),
+        ),
+        (
+            "resolve set",
+            Some(&provider),
+            vec!["resolve"],
+            vec![],
+            0,
+            format!("{provider}\n"),
+            String::new(),
+        ),
+        (
+            "resolve flag",
+            Some(&provider),
+            vec!["--host", "claude-cloud", "resolve"],
+            vec![],
+            0,
+            "claude-cloud\n".into(),
+            String::new(),
+        ),
+        (
+            "verb outside",
+            None,
+            vec!["teleport"],
+            vec![],
+            2,
+            String::new(),
+            "orch-runtime: verb-invalid verb=teleport\n".into(),
+        ),
+        (
+            "local line",
+            None,
+            vec!["capabilities"],
+            vec![],
+            0,
+            format!("{LOCAL}\n"),
+            String::new(),
+        ),
+        (
+            "cloud line",
+            Some("claude-cloud"),
+            vec!["capabilities"],
+            vec![],
+            0,
+            format!("{CLOUD}\n"),
+            String::new(),
+        ),
+        (
+            "local verb",
+            Some("local"),
+            vec!["cat", "--item", "K-1", "/p"],
+            vec![],
+            2,
+            String::new(),
+            "orch-runtime: host-local verb=cat\n".into(),
+        ),
+        (
+            "cloud verb",
+            Some("claude-cloud"),
+            vec!["cat", "--item", "K-1", "/p"],
+            vec![],
+            2,
+            String::new(),
+            "orch-runtime: host-kind-verb kind=claude-cloud verb=cat\n".into(),
+        ),
+        (
+            "unavailable",
+            Some(&absent),
+            vec!["cat", "--item", "K-1", "/p"],
+            vec![],
+            1,
+            String::new(),
+            format!("orch-runtime: host-unavailable path={absent}\n"),
+        ),
+        (
+            "provider line",
+            Some(&provider),
+            vec!["capabilities"],
+            vec![("PROVIDER_LINE", SSH_LINE)],
+            0,
+            format!("{SSH_LINE}\n"),
+            String::new(),
+        ),
+        (
+            "line without pane",
+            Some(&provider),
+            vec!["capabilities"],
+            vec![("PROVIDER_LINE", no_pane)],
+            1,
+            String::new(),
+            "orch-runtime: capability-invalid key=pane value=\n".into(),
+        ),
+        (
+            "no line",
+            Some(&provider),
+            vec!["capabilities"],
+            vec![("PROVIDER_CAPS_STATUS", "64")],
+            64,
+            String::new(),
+            "provider: verb-unsupported verb=capabilities\n".into(),
+        ),
+        (
+            "provider call",
+            Some(&provider),
+            vec!["cat", "--item", "K-1", "/p"],
+            vec![],
+            7,
+            "out:cat --item K-1 /p\nfed\n".into(),
+            "err:cat\n".into(),
+        ),
+    ];
+    for (name, host, args, extra, status, stdout, stderr) in cases {
+        let mut env = owned(&extra);
+        if let Some(host) = host {
+            env.push(("ORCH_LANE_HOST".to_owned(), host.to_owned()));
+        }
+        let out = host_verb(dir.path(), &home, &env, &args, b"fed\n");
+        assert_eq!(
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                String::from_utf8_lossy(&out.stderr).into_owned()
+            ),
+            (Some(status), stdout, stderr),
+            "{name}"
+        );
+    }
+    let log = fs::read_to_string(dir.path().join("provider.log")).unwrap();
+    assert!(
+        log.lines()
+            .any(|l| l == format!("ORCH_LANE_HOST={provider} cat --item K-1 /p")),
+        "{log}"
+    );
+}
+
+/// With every slot of the short pool held under the home, a provider call
+/// waits out the pool's wait and refuses `host-busy` with the count, the
+/// cap, the verb and the item, exit 1, and starts no provider; the kind's
+/// line is answered all the same, since `capabilities` takes no slot.
+#[test]
+fn host_verb_busy_is_its_own_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let provider = plant_provider(dir.path());
+    let mut env = support::hold_host_slots(&home);
+    env.push(("ORCH_LANE_HOST".to_owned(), provider));
+    env.push(("PROVIDER_LINE".to_owned(), SSH_LINE.to_owned()));
+    let out = host_verb(
+        dir.path(),
+        &home,
+        &env,
+        &["cat", "--item", "K-1", "/p"],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", support::stderr(&out));
+    assert_eq!(
+        first_stderr_line(&out),
+        "orch-runtime: host-busy count=1 cap=1 verb=cat item=K-1"
+    );
+    let log = fs::read_to_string(dir.path().join("provider.log")).unwrap_or_default();
+    assert_eq!(log, "", "no provider started");
+    let out = host_verb(dir.path(), &home, &env, &["capabilities"], b"");
+    assert_eq!(out.status.code(), Some(0), "{}", support::stderr(&out));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{SSH_LINE}\n")
+    );
+}
+
+/// A slot whose owner is gone, or whose pid now names a process of
+/// another start, holds nothing: under a cap of one, both are reclaimed
+/// and the call runs.
+#[test]
+fn a_dead_or_reused_slot_owner_holds_no_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let provider = plant_provider(dir.path());
+    let slots = home.join(".cache/orch/host-slots/short");
+    fs::create_dir_all(&slots).unwrap();
+    // A child this row started and ended, held unreaped: its pid names no
+    // live process and no other process can take it while it is held.
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let dead = child.id();
+    let dead_start = match agent_runtime::process::identity(dead) {
+        agent_runtime::reading::Reading::Live(id) => id.start,
+        other => panic!("{other:?}"),
+    };
+    child.kill().unwrap();
+    for _ in 0..500 {
+        if matches!(
+            agent_runtime::process::identity(dead),
+            agent_runtime::reading::Reading::Gone
+        ) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    fs::write(slots.join(format!("slot.{dead}.0")), &dead_start).unwrap();
+    // This process under a start that is not its own: a reused pid.
+    fs::write(
+        slots.join(format!("slot.{}.0", std::process::id())),
+        "ticks:1",
+    )
+    .unwrap();
+    let mut env = support::host_slot_bound(&home);
+    env.push(("ORCH_LANE_HOST".to_owned(), provider));
+    let out = host_verb(
+        dir.path(),
+        &home,
+        &env,
+        &["cat", "--item", "K-1", "/p"],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(7), "{}", support::stderr(&out));
+    child.wait().unwrap();
+}
+
+/// The bound is the home's, whichever checkout asks: a call held open
+/// from one project's root fills a pool of one, and a call from another
+/// project's root under the same home refuses `host-busy`; once the first
+/// ends, the second runs.
+#[test]
+fn two_checkouts_share_one_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let provider = plant_provider(dir.path());
+    let release = dir.path().join("release");
+    let (one, two) = (dir.path().join("one"), dir.path().join("two"));
+    for root in [&one, &two] {
+        fs::create_dir_all(root).unwrap();
+    }
+    let mut env = support::host_slot_bound(&home);
+    env.push(("ORCH_LANE_HOST".to_owned(), provider));
+    let mut held = support::isolated();
+    held.current_dir(&one)
+        .env("HOME", &home)
+        .env("PROVIDER_HOLD", &release)
+        .args(["host", "cat", "--item", "K-1", "/p"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    for (key, value) in &env {
+        held.env(key, value);
+    }
+    let mut held = held.spawn().unwrap();
+    // The provider started is a call past its slot, which it holds until
+    // it is released.
+    let started = || {
+        fs::read_to_string(dir.path().join("provider.log"))
+            .is_ok_and(|log| log.contains("cat --item K-1 /p"))
+    };
+    for _ in 0..300 {
+        if started() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(started(), "the first call runs its provider");
+    let out = host_verb(&two, &home, &env, &["cat", "--item", "K-2", "/q"], b"");
+    fs::write(&release, "").unwrap();
+    assert_eq!(held.wait().unwrap().code(), Some(7));
+    assert_eq!(
+        first_stderr_line(&out),
+        "orch-runtime: host-busy count=1 cap=1 verb=cat item=K-2"
+    );
+    let out = host_verb(&two, &home, &env, &["cat", "--item", "K-2", "/q"], b"");
+    assert_eq!(out.status.code(), Some(7), "{}", support::stderr(&out));
+}

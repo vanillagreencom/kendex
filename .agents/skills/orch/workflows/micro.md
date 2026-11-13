@@ -33,7 +33,7 @@ In a lane whose brief names a status file, `tmp/lane-status-[ISSUE_ID].md`, writ
 **Main checkout only.** Read the lane host before anything else:
 
 ```bash
-.agents/skills/orch/scripts/lane-host resolve
+.agents/skills/orch/scripts/orch-runtime host resolve
 ```
 
 Any answer but `local` refuses the run here, with nothing read, activated or changed; [SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes, holds the rule. The refusal is a tracker item's: a directed change continues on any answer, since § Items admits it on any host. The report's first line is `micro-control-host host=[HOST]`, and its next line is the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch micro [ISSUE_ID]` brief.

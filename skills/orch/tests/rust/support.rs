@@ -1719,6 +1719,54 @@ pub fn install_lane_host(project: &Path, planted: &Path) {
     }
 }
 
+/// The host a row names as `name`, as the dispatch reaches it: the planted
+/// provider (`fixtures/lane-host/lane-host`) linked as `dir/<name>`, which
+/// answers from and logs to the files beside it under that name, its path
+/// the host. `local`, `claude-cloud` and a path stand as given.
+pub fn named_host(dir: &Path, name: &str) -> String {
+    if matches!(name, "" | "local" | "claude-cloud") || name.starts_with('/') {
+        return name.to_owned();
+    }
+    let link = dir.join(name);
+    if std::fs::symlink_metadata(&link).is_err() {
+        std::os::unix::fs::symlink(fixtures().join("lane-host/lane-host"), &link).unwrap();
+    }
+    link.display().to_string()
+}
+
+/// Every slot of both provider-call pools under `home` taken by this test
+/// process, which outlives the binary a row starts, so each call that
+/// binary makes on a host is refused `host-busy`; the settings
+/// [`host_slot_bound`] gives.
+pub fn hold_host_slots(home: &Path) -> Vec<(String, String)> {
+    let own = match agent_runtime::process::identity(std::process::id()) {
+        agent_runtime::reading::Reading::Live(own) => own,
+        other => panic!("this process's identity: {other:?}"),
+    };
+    for pool in ["long", "short"] {
+        let dir = home.join(".cache/orch/host-slots").join(pool);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("slot.{}.held", own.pid)), &own.start).unwrap();
+    }
+    host_slot_bound(home)
+}
+
+/// The settings that put the provider-call slots under `home` and bound
+/// both pools to one call with no wait. `home` is the row's own: the
+/// isolated home is every row's.
+pub fn host_slot_bound(home: &Path) -> Vec<(String, String)> {
+    [
+        ("HOME", home.display().to_string()),
+        ("ORCH_LANE_HOST_MAX_CALLS", "1".to_owned()),
+        ("ORCH_LANE_HOST_BUSY_WAIT_SECS", "0".to_owned()),
+        ("ORCH_LANE_HOST_SHORT_MAX_CALLS", "1".to_owned()),
+        ("ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS", "0".to_owned()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v))
+    .collect()
+}
+
 /// The accounts a listing lists ([`plant_listing`]), and under `host` the
 /// provider's rows as its `accounts` answer in `root/lane-host.json`, the
 /// host fixture linked into `root` and its capability line an SSH host's
@@ -1748,7 +1796,7 @@ pub fn plant_accounts(
         state.display().to_string(),
     ));
     if let Some(host) = host {
-        env.push(("ORCH_LANE_HOST".to_owned(), host.to_owned()));
+        env.push(("ORCH_LANE_HOST".to_owned(), named_host(root, host)));
         let path = root.join("lane-host.json");
         let mut map: Value = std::fs::read_to_string(&path)
             .ok()
@@ -1756,7 +1804,7 @@ pub fn plant_accounts(
             .unwrap_or_else(|| json!({}));
         map[format!("{host} accounts")] = json!({"stdout": provider_lines.join("")});
         if map[format!("{host} capabilities")].is_null() {
-            map[format!("{host} capabilities")] = json!({"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n"});
+            map[format!("{host} capabilities")] = json!({"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=verb\tpool=plan\tland=lane\tpane=local\n"});
         }
         std::fs::write(&path, map.to_string()).unwrap();
     }

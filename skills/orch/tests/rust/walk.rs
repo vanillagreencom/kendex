@@ -36,9 +36,9 @@ fn stamp(at: u64) -> String {
 }
 
 /// A cloud-session host's line and a cloud-task host's.
-const CLOUD_LINE: &str = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\tpool=cloud-credit\n";
+const CLOUD_LINE: &str = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\tpool=cloud-credit\trelaunch=fresh\tpark=none\taccounts=none\tland=handoff\tpane=local\n";
 
-const TASK_LINE: &str = "kind=claude-cloud\tlaunch=cloud-task\tchannel=session\tfiles=none\tstatus=task\tstop=none\tpool=cloud-credit\n";
+const TASK_LINE: &str = "kind=claude-cloud\tlaunch=cloud-task\tchannel=session\tfiles=none\tstatus=task\tstop=none\tpool=cloud-credit\trelaunch=fresh\tpark=none\taccounts=none\tland=handoff\tpane=local\n";
 
 /// One world: the accounts planted under `home` as the listing reads them
 /// (`plant_accounts`), the host fixture as `lane-host`, the usage fixture
@@ -126,6 +126,8 @@ impl World {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_else(|| json!({}));
         for (host, line) in lines {
+            // The walk names its host relative to the checkout it runs in.
+            named_host(self.path(), host);
             map[format!("{host} capabilities")] = json!({"stdout": line});
         }
         std::fs::write(path, map.to_string()).unwrap();
@@ -407,7 +409,7 @@ fn an_unread_capability_line_passes_over_its_hosts_entries_once_per_walk() {
     );
     for (_, _, cause) in &passed {
         assert!(
-            cause.starts_with("host-capabilities-unread host=vm cause=exit=1 "),
+            cause.starts_with("host-capabilities-unread host=vm cause=capabilities exit=1 "),
             "{cause}"
         );
     }
@@ -453,26 +455,44 @@ fn an_unread_capability_line_passes_over_its_hosts_entries_once_per_walk() {
         fields[2].0 == "cause"
             && fields[2]
                 .1
-                .starts_with("host-capabilities-unread host=vm cause=exit=1 "),
+                .starts_with("host-capabilities-unread host=vm cause=capabilities exit=1 "),
         "{fields:?}"
     );
 }
 
 /// A provider whose `accounts` answer failed is unread for the walk, its
-/// entries passed over and never judged on this machine's listing, its
-/// slot refusal (exit 69) told apart from a verb that failed by the cause:
-/// the answer is asked once per walk and again by each next walk, which
+/// entries passed over and never judged on this machine's listing, a read
+/// refused at the provider-call bound with every slot held told apart from
+/// a verb that failed by the cause and asking the provider nothing: the
+/// answer is asked once per walk and again by each next walk, which
 /// chooses the host's entry once the provider answers.
 #[test]
 fn a_failed_accounts_answer_passes_over_its_hosts_entries_once_per_walk() {
     let args = ["--source-harness", "claude", "--source-flags", BYPASS];
-    let world = vm_first_world();
-    world.refuse("vm accounts#1", 69);
-    world.refuse("vm accounts#2", 1);
-    for (walk, cause) in [
-        (1, "lane-host-busy step=accounts "),
-        (2, "host-accounts-unreadable host=vm exit=1 "),
+    let mut world = vm_first_world();
+    let held = hold_host_slots(&world.path().join("home"));
+    world.refuse("vm accounts#1", 1);
+    for (walk, cause, asked) in [
+        (
+            1,
+            "host-busy count=1 cap=1 verb=accounts item=- step=accounts",
+            &["ORCH_LANE_HOST=vm capabilities"][..],
+        ),
+        (
+            2,
+            "host-accounts-unreadable host=vm exit=1 ",
+            &[
+                "ORCH_LANE_HOST=vm capabilities",
+                "ORCH_LANE_HOST=vm accounts",
+            ][..],
+        ),
     ] {
+        if walk == 1 {
+            world.env.extend(held.clone());
+        } else {
+            world.env.retain(|setting| !held.contains(setting));
+        }
+        let before = world.host_log().len();
         let result = world.answered(&args);
         assert_eq!(
             result["chosen"]["entry"],
@@ -487,14 +507,7 @@ fn a_failed_accounts_answer_passes_over_its_hosts_entries_once_per_walk() {
                 "walk {walk}: {said}"
             );
         }
-        assert_eq!(
-            world.host_log()[2 * (walk - 1)..],
-            [
-                "ORCH_LANE_HOST=vm capabilities",
-                "ORCH_LANE_HOST=vm accounts"
-            ],
-            "walk {walk}"
-        );
+        assert_eq!(world.host_log()[before..], *asked, "walk {walk}");
     }
     let result = world.answered(&args);
     assert_eq!(
@@ -523,7 +536,7 @@ fn a_line_naming_no_launch_or_no_pool_passes_over_its_hosts_entries() {
         ),
         (
             "vm2",
-            "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\n",
+            "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tland=lane\tpane=local\n",
         ),
     ]);
     let result = world.answered(&args);
@@ -541,12 +554,12 @@ fn a_line_naming_no_launch_or_no_pool_passes_over_its_hosts_entries() {
             row(
                 "claude@vm:claude-opus-5-5:high",
                 "vm",
-                "host-capabilities-unread host=vm cause=launch-missing"
+                "host-capabilities-unread host=vm cause=capability-invalid key=launch value="
             ),
             row(
                 "claude@vm2:claude-opus-5-5:high",
                 "vm2",
-                "host-capabilities-unread host=vm2 cause=no pool= field"
+                "host-capabilities-unread host=vm2 cause=capability-invalid key=pool value="
             )
         ],
         "{result}"

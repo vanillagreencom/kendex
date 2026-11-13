@@ -21,11 +21,21 @@ if [[ "${1:-}" == capabilities ]]; then
     [ -z "${LANE_HOST_STUB_CAPABILITIES_WORDS:-}" ] || printf '%s\n' "$LANE_HOST_STUB_CAPABILITIES_WORDS" >&2
     exit "$LANE_HOST_STUB_NO_CAPABILITIES"
   fi
-  printf '%s\n' "${LANE_HOST_STUB_CAPABILITIES:-$(printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane')}"
+  printf '%s\n' "${LANE_HOST_STUB_CAPABILITIES:-$(printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local')}"
   exit 0
 fi
 printf '%q ' "$@" >> "$LANE_HOST_STUB_LOG"
 printf '\n' >> "$LANE_HOST_STUB_LOG"
+# LANE_HOST_STUB_HOLD_AFTER names a verb whose call leaves a slot of each
+# provider-call pool under the caller's home held by the caller itself, so
+# under a cap of one the caller's next call is refused at the bound.
+if [[ -n "${LANE_HOST_STUB_HOLD_AFTER:-}" && "$1" == "$LANE_HOST_STUB_HOLD_AFTER" ]]; then
+  held_start="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$PPID")"
+  for pool in long short; do
+    mkdir -p -- "$HOME/.cache/orch/host-slots/$pool"
+    printf 'lstart:%s' "$held_start" > "$HOME/.cache/orch/host-slots/$pool/slot.$PPID.held"
+  done
+fi
 if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
   exit "$LANE_HOST_STUB_STATUS"
 fi

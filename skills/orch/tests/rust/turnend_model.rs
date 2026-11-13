@@ -1027,19 +1027,18 @@ fn a_lanes_account_mark_judges_the_account_and_model_its_session_names() {
 fn an_account_read_past_its_ceiling_is_told_and_passed() {
     let world = TurnWorld::new();
     let lane = lane_in(&world);
-    let scripts = lane.join(".agents/skills/orch/scripts");
-    fs::create_dir_all(&scripts).unwrap();
-    std::os::unix::fs::symlink(
-        fixtures().join("lane-host-hold/lane-host"),
-        scripts.join("lane-host"),
-    )
-    .unwrap();
     let fifo = world.root.join("accounts.fifo");
     mkfifo(&fifo);
     let now = now_ms() / 1000;
     let mut env = plant_listing(&world.root, &world.account_state(), &[], now).env;
     for (name, value) in [
-        ("ORCH_LANE_HOST", "fleet-vm".to_owned()),
+        (
+            "ORCH_LANE_HOST",
+            fixtures()
+                .join("lane-host-hold/lane-host")
+                .display()
+                .to_string(),
+        ),
         ("LANE_HOST_HOLD_FIFO", fifo.display().to_string()),
         ("HOLD_BOUND_SECS", "25".to_owned()),
         (

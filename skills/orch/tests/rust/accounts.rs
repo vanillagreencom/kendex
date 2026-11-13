@@ -59,12 +59,11 @@ fn stamp(at: u64) -> String {
 }
 
 /// A provider's capability line for an SSH host: no repository rule.
-const SSH_LINE: &str =
-    "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n";
+const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\trelaunch=resume\tpark=none\taccounts=none\tland=lane\tpane=local\n";
 
 /// A cloud-session host's line: the judge admits an account on it only with
 /// repository access.
-const CLOUD_LINE: &str = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\tpool=cloud-credit\n";
+const CLOUD_LINE: &str = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\tpool=cloud-credit\trelaunch=fresh\tpark=none\taccounts=none\tland=handoff\tpane=local\n";
 
 /// One world: a state directory holding the host fixture as `lane-host`
 /// and the usage fixture as `bin/curl`, the accounts planted under its
@@ -121,11 +120,14 @@ impl World {
             .iter()
             .map(|(k, v)| ((*k).to_owned(), v.clone()))
             .collect();
-        env.extend(
-            extra
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
-        );
+        env.extend(extra.iter().map(|(k, v)| {
+            let value = if *k == "ORCH_LANE_HOST" {
+                named_host(dir.path(), v)
+            } else {
+                (*v).to_owned()
+            };
+            ((*k).to_owned(), value)
+        }));
         let environment: Vec<(OsString, OsString)> = env
             .iter()
             .map(|(k, v)| (OsString::from(k), OsString::from(v)))
@@ -1605,27 +1607,13 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
 }
 
 /// A single pick is never judged on this machine's listing alone: where
-/// the provider's `accounts` read fails or answers busy (exit 69), the
-/// pick is unjudged with the walk's key, the host and the provider's
-/// cause, the busy answer under its own; the same world answered picks
-/// this machine's account.
+/// the provider's `accounts` read fails, or is refused at the provider-call
+/// bound with every slot held, the pick is unjudged with the walk's key,
+/// the host and the cause, the bound's refusal under its own; the same
+/// world answered picks this machine's account.
 #[test]
 fn a_failed_or_busy_accounts_read_refuses_a_single_pick() {
     let refused = "lane-host-fixture: accounts-refused";
-    let cases = [
-        (
-            1,
-            format!(
-                "account-unjudged step=host host=fleet-vm cause=host-accounts-unreadable host=fleet-vm exit=1 {refused}"
-            ),
-        ),
-        (
-            69,
-            format!(
-                "account-unjudged step=host host=fleet-vm cause=lane-host-busy step=accounts {refused}"
-            ),
-        ),
-    ];
     let world = || {
         let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
         world.write_fleet(Vec::new(), None);
@@ -1640,13 +1628,27 @@ fn a_failed_or_busy_accounts_read_refuses_a_single_pick() {
         Some(answered_world.dir("aclaude")),
         "{answered}"
     );
-    for (exit, cause) in cases {
-        let world = world();
-        world.refuse_accounts("fleet-vm", exit);
+    for busy in [false, true] {
+        let mut world = world();
+        let host = named_host(world.dir.path(), "fleet-vm");
+        let cause = if busy {
+            let held = hold_host_slots(&world.dir.path().join("home"));
+            world.env.extend(held);
+            "host-busy count=1 cap=1 verb=accounts item=- step=accounts".to_owned()
+        } else {
+            world.refuse_accounts("fleet-vm", 1);
+            format!("host-accounts-unreadable host={host} exit=1 {refused}")
+        };
         let reply = world.pick(&PickRequest::new(Harness::Claude));
-        assert_eq!(reply["answer"], json!("unjudged"), "{exit}: {reply}");
-        assert_eq!(reply["exit"], json!(1), "{exit}: {reply}");
-        assert_eq!(reply["record"]["cause"], json!(cause), "{exit}: {reply}");
+        assert_eq!(reply["answer"], json!("unjudged"), "{busy}: {reply}");
+        assert_eq!(reply["exit"], json!(1), "{busy}: {reply}");
+        assert_eq!(
+            reply["record"]["cause"],
+            json!(format!(
+                "account-unjudged step=host host={host} cause={cause}"
+            )),
+            "{busy}: {reply}"
+        );
     }
 }
 
@@ -2124,11 +2126,14 @@ impl Producer {
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v))
         .collect();
-        env.extend(
-            extra
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
-        );
+        env.extend(extra.iter().map(|(k, v)| {
+            let value = if *k == "ORCH_LANE_HOST" {
+                named_host(root, v)
+            } else {
+                (*v).to_owned()
+            };
+            ((*k).to_owned(), value)
+        }));
         env
     }
 

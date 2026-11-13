@@ -4,16 +4,13 @@
 //! duty's pass (`watch::lanes`); the finished close of a merged lane, local
 //! or hosted; and the provider calls a hosted launch makes.
 //!
-//! Every provider read is one `lane-host` call through the one runner under
-//! `ORCH_LANE_HOST=<the record's host>`, from the scripts directory the pass
-//! carries, three-valued: a `cat` that exits 2 is a
-//! missing file only once a `touch` of the host answers, and every other
-//! status, the dispatcher's own refusals among them (`host-kind-verb`,
-//! `host-local`, `lane-host-busy`, a verb it does not know), is unreadable
-//! with its cause and never "no file". The capability line a host declares
-//! is read once per host per pass through `lane-host capabilities`; a record
-//! naming no host is the `local` kind, whose line the dispatcher answers for
-//! it, and asks nothing.
+//! Every provider read is one `provider::call` on the record's host,
+//! three-valued: a `cat` that exits 2 is a missing file only once a `touch`
+//! of the host answers, and every other status, and every call the dispatch
+//! refused (`host-kind-verb`, `host-local`, `host-busy`), is unreadable with
+//! its cause and never "no file". The capability line a host declares is
+//! read once per host per pass; a record naming no host is the `local`
+//! kind, whose line the dispatch answers in process.
 //!
 //! The one close: the close verb (`orch-runtime --state-dir DIR op --fleet`
 //! over a `close-lane` request, from the scripts directory the pass
@@ -33,13 +30,12 @@
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::clock;
-use agent_runtime::host::{self, Place};
+use agent_runtime::host;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -61,8 +57,8 @@ use agent_runtime::accounts::Roster;
 
 /// The tag the lane duty's provider calls are counted under.
 const TAG: &str = "lanes";
-/// The bound on one provider read: an ssh round trip behind the
-/// dispatcher's own busy wait (`ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS`, 30 s).
+/// The bound on one provider read: an ssh round trip behind the slot wait
+/// (`ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS`, 30 s).
 /// The close's fetch of the landed base takes it too: one network read.
 pub(crate) const READ_BOUND: Duration = Duration::from_secs(120);
 /// The bound on the provider's close: a host close archives the lane's
@@ -72,10 +68,8 @@ const CLOSE_BOUND: Duration = Duration::from_secs(900);
 /// [`READ_BOUND`], the tracker's verdict and the mailbox, then the
 /// provider's close under [`CLOSE_BOUND`].
 const CLOSE_VERB_BOUND: Duration = Duration::from_secs(1800);
-/// The programs, under the scripts directory the pass carries: the
-/// provider dispatcher and the runtime's own entry, which the close verb
-/// runs through as its own process.
-pub const LANE_HOST: &str = "lane-host";
+/// The runtime's own entry under the scripts directory the pass carries,
+/// which the close verb runs through as its own process.
 pub const ORCH_RUNTIME: &str = "orch-runtime";
 /// The rows this module keeps.
 pub const STALLED_ROW: &str = "lane-stalled";
@@ -162,7 +156,43 @@ pub struct Capabilities {
     /// How a kind's lane is stopped (`stop=`); `None` where the line names
     /// none, which no close has an arm for.
     pub stop: Option<StopKind>,
+    /// The credit a kind's lane spends (`pool=`).
+    pub pool: CreditPool,
 }
+
+/// The credit a kind's lane spends (`pool=`): an account's plan, or the
+/// cloud's credit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditPool {
+    Plan,
+    CloudCredit,
+}
+
+impl CreditPool {
+    pub fn word(self) -> &'static str {
+        match self {
+            CreditPool::Plan => "plan",
+            CreditPool::CloudCredit => "cloud-credit",
+        }
+    }
+}
+
+/// The closed set of values each key of a capability line takes; a key
+/// outside it is no capability (`schemas/lane-host.md` § Host kinds).
+const CAPABILITY_SETS: [(&str, &[&str]); 12] = [
+    ("kind", &["local", "ssh", "claude-cloud", "codex-cloud"]),
+    ("launch", &["window", "ssh", "cloud-session", "cloud-task"]),
+    ("channel", &["mailbox", "session", "task"]),
+    ("files", &["local", "verb", "none"]),
+    ("status", &["pane", "verb", "task", "none"]),
+    ("stop", &["window", "verb", "none"]),
+    ("relaunch", &["resume", "fresh"]),
+    ("park", &["verb", "none"]),
+    ("accounts", &["verb", "none"]),
+    ("pool", &["plan", "cloud-credit"]),
+    ("land", &["lane", "handoff"]),
+    ("pane", &["local", "verb"]),
+];
 
 /// How a kind's lane is stopped (`stop=`): its window's harness through this
 /// host's process table, the provider's `stop` verb, or nothing this machine
@@ -184,87 +214,70 @@ pub enum Launch {
 }
 
 impl Capabilities {
-    /// The `local` kind's line, the dispatcher's own answer for a record
-    /// naming no other host.
-    pub const LOCAL: Capabilities = Capabilities {
-        files: Files::Local,
-        status: Status::Pane,
-        pane: PaneKind::Local,
-        launch: Some(Launch::Window),
-        stop: Some(StopKind::Window),
-    };
+    /// The `local` kind's line, the one a record naming no other host runs
+    /// under.
+    pub fn local() -> Capabilities {
+        Capabilities::parse(crate::provider::LOCAL_LINE)
+            .expect("the local kind's line is a whole line")
+    }
 
-    /// One tab-separated `key=value` line; `pane` absent reads `local`, an
-    /// older provider line. A value outside its key's set is refused as the
-    /// dispatcher refuses it (`capability-invalid`), so a line that reaches a
-    /// caller is one both validated; a key this duty does not act on passes.
+    /// One tab-separated `key=value` line holding every key of
+    /// [`CAPABILITY_SETS`] once, each with a value from its set: a line
+    /// with a key missing, repeated or outside the sets, or a value outside
+    /// its key's set, is refused `capability-invalid key=KEY value=VALUE`,
+    /// so no line is half read and no key guessed.
     pub fn parse(line: &str) -> Result<Capabilities, String> {
-        let mut files = None;
-        let mut status = None;
-        let mut pane = PaneKind::Local;
-        let mut launch = None;
-        let mut stop = None;
-        for field in line.trim_end_matches('\n').split('\t') {
-            let Some((key, value)) = field.split_once('=') else {
-                return Err(format!("capability-invalid field={field}"));
-            };
-            let invalid = || format!("capability-invalid key={key} value={value}");
-            match key {
-                "files" => {
-                    files = Some(match value {
-                        "local" => Files::Local,
-                        "verb" => Files::Verb,
-                        "none" => Files::None,
-                        _ => return Err(invalid()),
-                    });
-                }
-                "status" => {
-                    status = Some(match value {
-                        "pane" => Status::Pane,
-                        "verb" => Status::Verb,
-                        "task" => Status::Task,
-                        "none" => Status::None,
-                        _ => return Err(invalid()),
-                    });
-                }
-                "pane" => {
-                    pane = match value {
-                        "local" => PaneKind::Local,
-                        "verb" => PaneKind::Verb,
-                        _ => return Err(invalid()),
-                    };
-                }
-                "launch" => {
-                    launch = Some(match value {
-                        "window" => Launch::Window,
-                        "ssh" => Launch::Ssh,
-                        "cloud-session" => Launch::CloudSession,
-                        "cloud-task" => Launch::CloudTask,
-                        _ => return Err(invalid()),
-                    });
-                }
-                "stop" => {
-                    stop = Some(match value {
-                        "window" => StopKind::Window,
-                        "verb" => StopKind::Verb,
-                        "none" => StopKind::None,
-                        _ => return Err(invalid()),
-                    });
-                }
-                _ => {}
+        let line = line.strip_suffix('\n').unwrap_or(line);
+        if line.contains('\n') {
+            return Err("capability-invalid key=line value=lines".to_owned());
+        }
+        let mut given: BTreeMap<&str, &str> = BTreeMap::new();
+        for field in line.split('\t') {
+            let (key, value) = field.split_once('=').unwrap_or((field, ""));
+            let allowed = CAPABILITY_SETS
+                .iter()
+                .find(|(k, _)| *k == key)
+                .is_some_and(|(_, set)| set.contains(&value));
+            if !allowed || given.insert(key, value).is_some() {
+                return Err(format!("capability-invalid key={key} value={value}"));
             }
         }
-        match (files, status) {
-            (Some(files), Some(status)) => Ok(Capabilities {
-                files,
-                status,
-                pane,
-                launch,
-                stop,
-            }),
-            (None, _) => Err("capability-invalid key=files value=missing".to_owned()),
-            (_, None) => Err("capability-invalid key=status value=missing".to_owned()),
+        if let Some((key, _)) = CAPABILITY_SETS.iter().find(|(k, _)| !given.contains_key(k)) {
+            return Err(format!("capability-invalid key={key} value="));
         }
+        let of = |key: &str| given.get(key).copied().unwrap_or("");
+        Ok(Capabilities {
+            files: match of("files") {
+                "local" => Files::Local,
+                "verb" => Files::Verb,
+                _ => Files::None,
+            },
+            status: match of("status") {
+                "pane" => Status::Pane,
+                "verb" => Status::Verb,
+                "task" => Status::Task,
+                _ => Status::None,
+            },
+            pane: match of("pane") {
+                "verb" => PaneKind::Verb,
+                _ => PaneKind::Local,
+            },
+            launch: Some(match of("launch") {
+                "window" => Launch::Window,
+                "ssh" => Launch::Ssh,
+                "cloud-session" => Launch::CloudSession,
+                _ => Launch::CloudTask,
+            }),
+            stop: Some(match of("stop") {
+                "window" => StopKind::Window,
+                "verb" => StopKind::Verb,
+                _ => StopKind::None,
+            }),
+            pool: match of("pool") {
+                "plan" => CreditPool::Plan,
+                _ => CreditPool::CloudCredit,
+            },
+        })
     }
 }
 
@@ -285,9 +298,8 @@ pub fn host_of(lane: &Lane) -> &str {
 }
 
 /// The capability line of every host the lanes given name, read once each
-/// per pass: the
-/// `local` kind answers in-process; any other host through `lane-host
-/// capabilities` under its name. A line that could not be read or parsed
+/// per pass: the `local` kind answers in-process; any other host through
+/// [`capabilities`]. A line that could not be read or parsed
 /// keeps its cause, and every read of a lane on that host is then
 /// unreadable with it, never judged off the local kind. The caller hands
 /// the lanes the pass judges, the in-flight ones alone: a `parked`, `done`
@@ -315,7 +327,7 @@ impl Hosts {
     pub fn of(&self, lane: &Lane) -> Result<Capabilities, String> {
         let host = host_of(lane);
         if host == "local" {
-            return Ok(Capabilities::LOCAL);
+            return Ok(Capabilities::local());
         }
         self.lines.get(host).cloned().unwrap_or_else(|| {
             Err(format!(
@@ -343,33 +355,12 @@ fn first_line(text: &str) -> &str {
     text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")
 }
 
-/// `lane-host VERB ARGS` under `ORCH_LANE_HOST=<host>` from the scripts
-/// directory, through the one runner; `Err` is a call that could not run or
-/// answer within the bound.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the lane duty's provider reads: `lane-host` from the scripts directory the pass carries through the one runner under the duty's tag, `ORCH_LANE_HOST` naming the record's host"
-)]
-fn lane_host(
-    scripts: &Path,
-    host: &str,
-    operation: &'static str,
-    args: &[&str],
-) -> Result<std::process::Output, String> {
-    let env: [(&str, &OsStr); 1] = [("ORCH_LANE_HOST", OsStr::new(host))];
-    host::run_tagged_in(
-        TAG,
-        LANE_HOST,
-        &scripts.join(LANE_HOST),
-        operation,
-        args,
-        Place {
-            cwd: None,
-            env: &env,
-        },
-        READ_BOUND,
-    )
-    .map_err(|e| e.to_string())
+/// One provider read on `host` under [`READ_BOUND`]; `Err` is a call the
+/// dispatch refused (`host-busy` among them), or one that could not run or
+/// answer within the bound. The scripts directory the hosted readings carry
+/// names the runtime's own entry, never the provider.
+fn lane_host(_scripts: &Path, host: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    crate::provider::call(host, args, None, READ_BOUND, TAG).map_err(|f| f.to_string())
 }
 
 /// The cause word of a call that answered non-zero: the verb, the status
@@ -384,23 +375,18 @@ fn cause_of(verb: &str, out: &std::process::Output) -> String {
     .to_owned()
 }
 
-/// `lane-host capabilities` under `host`: the line, or the cause.
-pub fn capabilities(scripts: &Path, host: &str) -> Result<Capabilities, String> {
-    let unread = |cause: String| format!("host-capabilities-unread host={host} cause={cause}");
-    let out = lane_host(scripts, host, "capabilities", &["capabilities"]).map_err(&unread)?;
-    if !out.status.success() {
-        return Err(unread(cause_of("capabilities", &out)));
-    }
-    Capabilities::parse(&host::stdout_text(&out)).map_err(unread)
+/// The capability line `host` declares, parsed, or the cause.
+pub fn capabilities(_scripts: &Path, host: &str) -> Result<Capabilities, String> {
+    crate::provider::capabilities(host, READ_BOUND, TAG)
+        .map_err(|cause| format!("host-capabilities-unread host={host} cause={cause}"))
 }
 
-/// `lane-host cat --item ITEM PATH`; a `2` is a missing file only once
-/// `touch --item ITEM` answers,
-/// since the dispatcher's own refusals exit `2` as well; a `touch` that
-/// fails, the busy refusal (69) and any other status are unreadable with
-/// their cause.
+/// `cat --item ITEM PATH`; a `2` is a missing file only once
+/// `touch --item ITEM` answers, since a provider's own refusals exit `2`
+/// as well; a `touch` that fails, a call the dispatch refused and any other
+/// status are unreadable with their cause.
 pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<String> {
-    let out = match lane_host(scripts, host, "cat", &["cat", "--item", item, path]) {
+    let out = match lane_host(scripts, host, &["cat", "--item", item, path]) {
         Ok(out) => out,
         Err(cause) => {
             return Answer::Unreadable {
@@ -410,7 +396,7 @@ pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<Strin
     };
     match out.status.code() {
         Some(0) => Answer::Live(String::from_utf8_lossy(&out.stdout).into_owned()),
-        Some(2) => match lane_host(scripts, host, "touch", &["touch", "--item", item]) {
+        Some(2) => match lane_host(scripts, host, &["touch", "--item", item]) {
             Ok(touched) if touched.status.success() => Answer::Gone,
             Ok(touched) => Answer::Unreadable {
                 cause: cause_of("touch", &touched),
@@ -432,7 +418,7 @@ pub enum HostStatus {
     Exited,
 }
 
-/// `lane-host status --item ITEM --harness H`: `running` or `exited` on
+/// `status --item ITEM --harness H`: `running` or `exited` on
 /// exit 0; any other
 /// answer is a failed read, never an exit (`schemas/lane-host.md` § `status`).
 pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<HostStatus, String> {
@@ -440,7 +426,6 @@ pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<H
     let out = lane_host(
         scripts,
         host,
-        "status",
         &["status", "--item", item, "--harness", harness],
     )
     .map_err(&unread)?;
@@ -454,11 +439,11 @@ pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<H
     }
 }
 
-/// `lane-host capture --item ITEM`: the
+/// `capture --item ITEM`: the
 /// provider's own pane for a `pane=verb` kind, the screen on exit 0; any
 /// other answer is a failed read, never a screen.
 pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String> {
-    let out = lane_host(scripts, host, "capture", &["capture", "--item", item])
+    let out = lane_host(scripts, host, &["capture", "--item", item])
         .map_err(|cause| format!("capture-failed item={item} {cause}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -469,7 +454,7 @@ pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String>
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// `lane-host stop --item ITEM --harness H` before a hosted `pane=local`
+/// `stop --item ITEM --harness H` before a hosted `pane=local`
 /// relaunch, confirmed by exit 0 and the one line `stopped item=ITEM
 /// processes=N`, read by `call`'s three values: `Failed` a refusal or an
 /// unconfirmed answer (`stop-failed exit=N`), `Unknown` a stop that may
@@ -489,9 +474,7 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
 /// worktree gone (status 4 beside `stop-worktree-removed item=ITEM` on its
 /// stderr), which only a provider finding the harness by that directory
 /// answers, a status 4 without the line being the provider's own 4; any
-/// other non-zero status, the dispatcher's cap refusal
-/// ([`LANE_HOST_BUSY_EXIT`]) among them; or exit 0 without the confirming
-/// line.
+/// other non-zero status; or exit 0 without the confirming line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostStopped {
     Stopped { processes: u32 },
@@ -504,13 +487,13 @@ pub enum HostStopped {
 /// its own close-out removed.
 const WORKTREE_REMOVED: i32 = 4;
 
-/// The dispatcher's refusal at its per-home cap on provider calls
-/// (`lib/lane-host-slots.sh`): nothing ran.
-pub const LANE_HOST_BUSY_EXIT: i32 = 69;
+/// The word every cause of a call refused at the provider-call bound
+/// leads with: nothing ran.
+pub const BUSY: &str = "host-busy";
 
-/// `lane-host stop --item ITEM --harness H`, its answer read as a
-/// [`HostStopped`]; a stop that never started or gave no answer is `call`'s
-/// `Asked`.
+/// `stop --item ITEM --harness H`, its answer read as a [`HostStopped`]; a
+/// stop that never started, gave no answer or was refused at the bound is
+/// `call`'s `Asked`.
 pub fn stop_answer(
     scripts: &Path,
     host: &str,
@@ -559,7 +542,7 @@ pub enum Input<'a> {
     File(&'a Path),
 }
 
-/// `lane-host send --item ITEM --key KEY | --file FILE`: the provider's own
+/// `send --item ITEM --key KEY | --file FILE`: the provider's own
 /// input to its pane, confirmed by exit 0; any other answer is its cause.
 pub fn send(scripts: &Path, host: &str, item: &str, input: Input<'_>) -> Result<(), String> {
     let file;
@@ -570,12 +553,7 @@ pub fn send(scripts: &Path, host: &str, item: &str, input: Input<'_>) -> Result<
             ("--file", file.as_str())
         }
     };
-    let out = lane_host(
-        scripts,
-        host,
-        "send",
-        &["send", "--item", item, flag, value],
-    )?;
+    let out = lane_host(scripts, host, &["send", "--item", item, flag, value])?;
     if out.status.success() {
         Ok(())
     } else {
@@ -593,9 +571,9 @@ pub enum HostClosed {
     Refused { path: String },
 }
 
-/// `lane-host close --item ITEM [--merged]` under the close's bound, read by
+/// `close --item ITEM [--merged]` under the close's bound, read by
 /// `call`'s three values: a close that never started or answered a status is
-/// `Asked::Failed` with the cause (`lane-host-busy step=close` at the cap),
+/// `Asked::Failed` with the cause (leading with [`BUSY`] at the bound),
 /// one with no answer `Asked::Unknown`, which its caller never asks again.
 pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<HostClosed, Asked> {
     let mut args = vec!["close", "--item", item];
@@ -624,9 +602,6 @@ pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<Hos
                 })
                 .unwrap_or_else(|| "unknown".to_owned()),
         }),
-        code if code == LANE_HOST_BUSY_EXIT => {
-            Err(Asked::Failed("lane-host-busy step=close".to_owned()))
-        }
         _ => Err(Asked::Failed(format!(
             "host-close-failed {}",
             cause_of("close", &out)
@@ -634,11 +609,10 @@ pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<Hos
     }
 }
 
-/// `lane-host stop-sandbox [--check] --item ITEM`: the check confirmed by
+/// `stop-sandbox [--check] --item ITEM`: the check confirmed by
 /// `sandbox-stoppable item=ITEM`, the stop by `sandbox-stopped item=ITEM`.
 /// A refusal is `Asked::Failed` with `exit=N` (2 the absent-verb status of a
-/// provider without the pair), `cause=answer-unparsed` or
-/// `lane-host-busy step=`.
+/// provider without the pair), `cause=answer-unparsed` or [`BUSY`].
 pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Result<(), Asked> {
     let mut args = vec!["stop-sandbox"];
     if check {
@@ -653,9 +627,6 @@ pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Resu
     let out = call(scripts, host, "stop-sandbox", &args, READ_BOUND, step)?;
     match exit_code(&out) {
         0 => {}
-        code if code == LANE_HOST_BUSY_EXIT => {
-            return Err(Asked::Failed(format!("lane-host-busy step={step}")));
-        }
         code => return Err(Asked::Failed(format!("exit={code}"))),
     }
     if host::stdout_text(&out) == format!("{word} item={item}") {
@@ -665,10 +636,10 @@ pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Resu
     }
 }
 
-/// `lane-host start --item ITEM`, confirmed by `sandbox-started item=ITEM`,
+/// `start --item ITEM`, confirmed by `sandbox-started item=ITEM`,
 /// which a provider answers for a sandbox already up as for a stopped one.
 /// A refusal is `Asked::Failed` with `exit=N`, `cause=answer-unparsed` or
-/// `lane-host-busy step=start`.
+/// [`BUSY`].
 pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
     let out = call(
         scripts,
@@ -680,9 +651,6 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
     )?;
     match exit_code(&out) {
         0 => {}
-        code if code == LANE_HOST_BUSY_EXIT => {
-            return Err(Asked::Failed("lane-host-busy step=start".to_owned()));
-        }
         code => return Err(Asked::Failed(format!("exit={code}"))),
     }
     if host::stdout_text(&out) == format!("sandbox-started item={item}") {
@@ -696,18 +664,14 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
 /// second field of a row whose first ends in `/ITEM`, in any case, outside
 /// an `available` row; `None` where no such row stands, the sandbox gone.
 /// `list` is the protocol's one presence read. `Err` is a list that failed
-/// or was capped (`lane-host-busy step=list`).
+/// or was refused at the bound ([`BUSY`]).
 pub fn lists_item(
     scripts: &Path,
     host: &str,
     item: &str,
 ) -> std::result::Result<Option<String>, String> {
-    let out = lane_host(scripts, host, "list", &["list"])?;
-    let code = exit_code(&out);
-    if code == LANE_HOST_BUSY_EXIT {
-        return Err("lane-host-busy step=list".to_owned());
-    }
-    if code != 0 {
+    let out = lane_host(scripts, host, &["list"])?;
+    if exit_code(&out) != 0 {
         return Err(cause_of("list", &out));
     }
     let suffix = format!("/{}", item.to_ascii_lowercase());
@@ -728,8 +692,8 @@ const PREPARE_BOUND: Duration = Duration::from_secs(1800);
 /// Why a provider's `create`, `wait` or `stop` gave no ready answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Asked {
-    /// The provider answered a refusal or an unusable line, or `lane-host`
-    /// never started.
+    /// The provider answered a refusal or an unusable line, never started,
+    /// or the dispatch refused the call.
     Failed(String),
     /// The call started and gave no answer within its bound, or ended with
     /// a status of 128 and above (a signal, or the shipped ssh provider's
@@ -853,26 +817,21 @@ pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
 }
 
 /// `bytes` written to the host's `path`, or the cause.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the launch's provider write through the one runner under the record's host, the bytes on the provider's stdin"
-)]
-pub fn put(scripts: &Path, host: &str, item: &str, path: &str, bytes: &[u8]) -> Result<(), String> {
-    let env: [(&str, &OsStr); 1] = [("ORCH_LANE_HOST", OsStr::new(host))];
-    let out = host::run_tagged_fed(
-        TAG,
-        LANE_HOST,
-        &scripts.join(LANE_HOST),
-        "put",
+pub fn put(
+    _scripts: &Path,
+    host: &str,
+    item: &str,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let out = crate::provider::call(
+        host,
         &["put", "--item", item, path],
-        Place {
-            cwd: None,
-            env: &env,
-        },
-        bytes,
+        Some(bytes),
         READ_BOUND,
+        TAG,
     )
-    .map_err(|e| format!("put {e}"))?;
+    .map_err(|f| format!("put {f}"))?;
     if out.status.success() {
         Ok(())
     } else {
@@ -881,47 +840,33 @@ pub fn put(scripts: &Path, host: &str, item: &str, path: &str, bytes: &[u8]) -> 
 }
 
 /// One provider call under `bound`, for the launch's long verbs, its
-/// answer read by the runner's three values: a `lane-host` that never
-/// started made nothing (`<key>-failed`); one whose bound passed, or that a
-/// signal ended, may have acted (`<key>-unanswered`). `lane-host` exits
-/// with the provider's own status, so 128 and above is a provider a signal
-/// ended, or one that passed such a status up: the shipped ssh provider
-/// exits with ssh's 255 for a failed ssh, a connection lost mid-call or one
-/// never opened alike. Either may have acted, and none is held on: the
-/// launch fails and the next create asks again, the wall route asks its
-/// stop again on its next pass.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the launch's provider calls, `lane-host` through the one runner under the record's host, each verb's bound its own"
-)]
+/// answer read by the runner's three values: a provider that never
+/// started, or a call the dispatch refused, made nothing (`<key>-failed`,
+/// or the [`BUSY`] cause at the bound); one whose bound passed, or that a
+/// signal ended, may have acted (`<key>-unanswered`). A status of 128 and
+/// above is a provider a signal ended, or one that passed such a status
+/// up: the shipped ssh provider exits with ssh's 255 for a failed ssh, a
+/// connection lost mid-call or one never opened alike. Either may have
+/// acted, and none is held on: the launch fails and the next create asks
+/// again, the wall route asks its stop again on its next pass.
 fn call(
-    scripts: &Path,
+    _scripts: &Path,
     host: &str,
     operation: &'static str,
     args: &[&str],
     bound: Duration,
     key: &str,
 ) -> Result<std::process::Output, Asked> {
-    let env: [(&str, &OsStr); 1] = [("ORCH_LANE_HOST", OsStr::new(host))];
-    let out = host::run_tagged_in(
-        TAG,
-        LANE_HOST,
-        &scripts.join(LANE_HOST),
-        operation,
-        args,
-        Place {
-            cwd: None,
-            env: &env,
-        },
-        bound,
-    )
-    .map_err(|e| {
-        if let agent_runtime::Error::NotStarted { .. } = e {
-            Asked::Failed(format!("{key}-failed cause={e}"))
-        } else {
-            Asked::Unknown(format!("{key}-unanswered cause={e}"))
-        }
-    })?;
+    use crate::provider::Failure;
+    let out =
+        crate::provider::call(host, args, None, bound, TAG).map_err(|failure| match failure {
+            Failure::Busy { .. } => Asked::Failed(failure.to_string()),
+            Failure::Unanswered(cause) => Asked::Unknown(format!("{key}-unanswered cause={cause}")),
+            Failure::Refused { .. }
+            | Failure::Invalid(_)
+            | Failure::Exit { .. }
+            | Failure::NotStarted(_) => Asked::Failed(format!("{key}-failed cause={failure}")),
+        })?;
     if out.status.code().is_none_or(|code| code >= 128) {
         return Err(Asked::Unknown(format!(
             "{key}-unanswered {}",
@@ -2364,72 +2309,87 @@ pub fn retry_pending_closes(lanes: &[&Lane], pass: &Pass, hosts: &Hosts, out: &m
 mod tests {
     use super::*;
 
-    /// A provider's long verb read by the runner's three values: a
-    /// `lane-host` that never started made nothing (`host-create-failed`);
-    /// one whose bound passed, or that a signal ended, may hold the item
+    /// A provider call read by the runner's three values: a provider that
+    /// is not there made nothing (`host-create-failed`); one whose bound
+    /// passed, or that a signal ended, may hold the item
     /// (`host-create-unanswered`): a create or wait past its bound read as
     /// failed would settle the launch while the provider holds the item.
     #[test]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the row links the shell into its own directory as the provider"
-    )]
     fn a_provider_call_that_never_started_fails_and_one_with_no_answer_is_unknown() {
         let dir = tempfile::tempdir().unwrap();
-        let ask = |script: &str, bound: Duration| {
+        let ask = |name: &str, body: Option<&str>, bound: Duration| {
+            let path = dir.path().join(name);
+            if let Some(body) = body {
+                crate::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
+            }
             call(
                 dir.path(),
-                "h",
-                "create",
-                &["-c", script],
+                path.to_str().unwrap(),
+                "capabilities",
+                &["capabilities"],
                 bound,
                 "host-create",
             )
         };
         assert!(matches!(
-            ask("exit 0", Duration::from_secs(10)),
-            Err(Asked::Failed(cause)) if cause.starts_with("host-create-failed cause=")
+            ask("absent", None, Duration::from_secs(10)),
+            Err(Asked::Failed(cause)) if cause.starts_with("host-create-failed cause=host-unavailable")
         ));
-        // `lane-host` is the shell, so each row's script is its argument.
-        std::os::unix::fs::symlink("/bin/sh", dir.path().join(LANE_HOST)).unwrap();
         assert!(matches!(
-            ask("exec sleep 5", Duration::from_millis(300)),
+            ask("slow", Some("exec sleep 5"), Duration::from_millis(300)),
             Err(Asked::Unknown(cause)) if cause.starts_with("host-create-unanswered cause=")
         ));
         assert!(matches!(
-            ask("kill -KILL $$", Duration::from_secs(10)),
-            Err(Asked::Unknown(cause)) if cause.starts_with("host-create-unanswered create exit=-1")
+            ask("killed", Some("kill -KILL $$"), Duration::from_secs(10)),
+            Err(Asked::Unknown(cause)) if cause.starts_with("host-create-unanswered capabilities exit=-1")
         ));
-        assert!(ask("exit 0", Duration::from_secs(10)).is_ok());
+        assert!(ask("answers", Some("exit 0"), Duration::from_secs(10)).is_ok());
     }
 
-    /// The capability line as the dispatcher validates it: the three keys
-    /// this duty acts on, `pane` absent reading `local`, a value outside
-    /// its set refused, a key outside the set passed.
+    /// The capability line read whole: every key once, each value in its
+    /// set; a line short of any key (`pane` among them), with a key outside
+    /// the sets, a key twice, a value outside its key's set or a second
+    /// line is refused by the key it fails on.
     #[test]
-    fn the_capability_line_is_read_by_its_keys() {
-        let ssh = Capabilities::parse(
-            "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n",
-        )
-        .unwrap();
+    fn the_capability_line_is_read_whole() {
+        const SSH: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local";
         assert_eq!(
-            ssh,
-            Capabilities {
+            Capabilities::parse(&format!("{SSH}\n")),
+            Ok(Capabilities {
                 files: Files::Verb,
                 status: Status::Verb,
                 pane: PaneKind::Local,
                 launch: Some(Launch::Ssh),
                 stop: Some(StopKind::Verb),
-            }
+                pool: CreditPool::Plan,
+            })
         );
-        let cloud =
-            Capabilities::parse("kind=claude-cloud\tfiles=none\tstatus=none\tpane=verb").unwrap();
-        assert_eq!(cloud.files, Files::None);
-        assert_eq!(cloud.status, Status::None);
-        assert_eq!(cloud.pane, PaneKind::Verb);
-        assert!(Capabilities::parse("kind=ssh\tfiles=verb").is_err());
-        assert!(Capabilities::parse("files=verb\tstatus=elsewhere").is_err());
-        assert!(Capabilities::parse("files=verb\tstatus=verb\tbroken").is_err());
+        let refused = |line: String| Capabilities::parse(&line).unwrap_err();
+        for (line, key) in [
+            (
+                SSH.replace("\tpane=local", ""),
+                "capability-invalid key=pane value=",
+            ),
+            (
+                SSH.replace("pool=plan", "pool=free"),
+                "capability-invalid key=pool value=free",
+            ),
+            (
+                format!("{SSH}\tcolour=red"),
+                "capability-invalid key=colour value=red",
+            ),
+            (
+                format!("{SSH}\tkind=ssh"),
+                "capability-invalid key=kind value=ssh",
+            ),
+            (
+                format!("{SSH}\nkind=ssh"),
+                "capability-invalid key=line value=lines",
+            ),
+            (String::new(), "capability-invalid key= value="),
+        ] {
+            assert_eq!(refused(line.clone()), key, "{line:?}");
+        }
     }
 
     /// The stamps a record carries, with and without a fractional second.

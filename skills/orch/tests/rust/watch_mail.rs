@@ -1190,8 +1190,9 @@ fn a_standing_refused_lane_is_said_on_the_mark_repeat_rule_across_polls() {
 /// A lane launched on another provider than the fleet's settings name (an
 /// `@host` preference entry) has its mail on that host. Two providers, the
 /// fleet's (`p1`, holding nothing for the lane) as the client's default and
-/// the record's (`p2`, holding the lane's mailbox): the lane's notice is
-/// delivered, and every read went to `p2`.
+/// the record's (`p2`, holding the mailboxes of two lanes): each lane's
+/// notice is delivered, every read went to `p2`, and the pass read `p2`
+/// once, one `read-many` for both lanes' files and no read per file.
 #[test]
 fn a_hosted_lanes_mail_is_drained_under_the_host_its_record_names() {
     let side = tempfile::tempdir().unwrap();
@@ -1203,8 +1204,28 @@ fn a_hosted_lanes_mail_is_drained_under_the_host_its_record_names() {
         } else {
             ("exit 2", "echo \"$0: no-sandbox item=$3\" >&2; exit 1")
         };
+        // `read-many` as the protocol answers it: each requested file's
+        // bytes, base64, or status 2 where the host has none; each
+        // requested path logged.
+        let read_many = format!(
+            r#"exec python3 -c 'import base64, json, sys
+rows = json.load(sys.stdin)
+with open(sys.argv[1], "a") as log:
+    log.writelines("requested " + r["path"] + "\n" for r in rows)
+def read(r):
+    try:
+        if not {holds}:
+            raise FileNotFoundError
+        with open(r["path"], "rb") as f:
+            return dict(r, status=0, data=base64.b64encode(f.read()).decode(), error="")
+    except FileNotFoundError:
+        return dict(r, status=2, data="", error="")
+print(json.dumps([read(r) for r in rows]))' '{log}'"#,
+            holds = if holds { "True" } else { "False" },
+            log = log.display(),
+        );
         let text = format!(
-            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$1\" in\n  capabilities) printf 'kind=ssh\\tlaunch=ssh\\tchannel=mailbox\\tfiles=verb\\tstatus=verb\\tstop=verb\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane\\tpane=local\\n' ;;\n  cat) {cat} ;;\n  touch) {touch} ;;\n  list) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$1\" in\n  capabilities) printf 'kind=ssh\\tlaunch=ssh\\tchannel=mailbox\\tfiles=verb\\tstatus=verb\\tstop=verb\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane\\tpane=local\\n' ;;\n  cat) {cat} ;;\n  touch) {touch} ;;\n  read-many) {read_many} ;;\n  list) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
             log.display()
         );
         let path = side.join(name);
@@ -1223,20 +1244,22 @@ fn a_hosted_lanes_mail_is_drained_under_the_host_its_record_names() {
             hold().display()
         ),
     );
-    let w = world(&client, 20);
-    let remote = w.root.join("remote").join(ITEM);
-    let dir = remote.join("tmp").join("lane-mail").join(ITEM);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("to-overseer.jsonl"),
-        format!("{}\n", notice("n-1", ITEM, "Rebased.")),
-    )
-    .unwrap();
+    let w = world_of(&client, 20, &[ITEM, "KEN-2"]);
     let state = w.root.join(FLEET_FILE_NAME);
     let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
-    fleet["lanes"][0]["host"] = json!(record_host.display().to_string());
-    fleet["lanes"][0]["kind"] = json!("ssh");
-    fleet["lanes"][0]["mail_root"] = json!(remote.display().to_string());
+    for (n, (item, id)) in [(ITEM, "n-1"), ("KEN-2", "n-2")].into_iter().enumerate() {
+        let remote = w.root.join("remote").join(item);
+        let dir = remote.join("tmp").join("lane-mail").join(item);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("to-overseer.jsonl"),
+            format!("{}\n", notice(id, item, "Rebased.")),
+        )
+        .unwrap();
+        fleet["lanes"][n]["host"] = json!(record_host.display().to_string());
+        fleet["lanes"][n]["kind"] = json!("ssh");
+        fleet["lanes"][n]["mail_root"] = json!(remote.display().to_string());
+    }
     std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
     let clock = FakeClock::new();
     let mut duty = w.duty();
@@ -1256,10 +1279,26 @@ fn a_hosted_lanes_mail_is_drained_under_the_host_its_record_names() {
             .iter()
             .map(Event::render)
             .collect::<Vec<_>>(),
-        ["EVENT lane-notice KEN-1 n-1", "  Rebased."]
+        [
+            "EVENT lane-notice KEN-1 n-1",
+            "  Rebased.",
+            "EVENT lane-notice KEN-2 n-2",
+            "  Rebased."
+        ]
     );
     let log =
         |name: &str| std::fs::read_to_string(side.join(format!("{name}.log"))).unwrap_or_default();
     assert_eq!(log("p1"), "", "no read under the fleet's provider");
-    assert!(log("p2").contains("to-overseer.jsonl"), "{}", log("p2"));
+    let p2 = log("p2");
+    let starts: Vec<&str> = p2
+        .lines()
+        .filter(|l| !l.starts_with("requested "))
+        .collect();
+    assert_eq!(starts, ["read-many"], "{p2}");
+    for item in [ITEM, "KEN-2"] {
+        assert!(
+            p2.contains(&format!("/{item}/tmp/lane-mail/{item}/to-overseer.jsonl")),
+            "{p2}"
+        );
+    }
 }

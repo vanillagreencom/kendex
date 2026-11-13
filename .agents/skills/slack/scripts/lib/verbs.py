@@ -79,12 +79,12 @@ def repo_name(root: Path) -> str:
 def lane_side(root: Path) -> str:
     """`vm` where the root's orch lane host is a hosted fleet, whose overseer
     runs on a control host; `local` where it resolves local or orch is absent."""
-    script = root / ".agents" / "skills" / "orch" / "scripts" / "lane-host"
+    script = root / ".agents" / "skills" / "orch" / "scripts" / "orch-runtime"
     if not script.is_file():
         return "local"
-    host = answer(root, str(script), "resolve")
+    host = answer(root, str(script), "host", "resolve")
     if host is None:
-        raise Refusal("setting-invalid", f"root={root} lane-host=unanswered")
+        raise Refusal("setting-invalid", f"root={root} orch-runtime=unanswered")
     return "local" if host == "local" else "vm"
 
 

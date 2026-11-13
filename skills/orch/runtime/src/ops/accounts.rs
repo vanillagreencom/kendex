@@ -13,7 +13,6 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
@@ -25,14 +24,13 @@ use agent_runtime::accounts::{
 use agent_runtime::accounts::{batch, cache};
 use agent_runtime::clock;
 use agent_runtime::harness::Harness;
-use agent_runtime::host::{self, Place};
+use agent_runtime::host;
 use serde_json::{Value, json};
 
 use super::occupancy::{self, ChargeSource, Host};
 use crate::settings::{ProviderSettings, Settings};
 use crate::state::{FleetState, Record};
 use crate::watch::hosted::{Capabilities, Launch};
-use crate::watch::overseer::scripts_dir;
 
 /// A request's own bound; the runner's covers the start.
 const REQUEST_BOUND: Duration = Duration::from_secs(15);
@@ -67,15 +65,18 @@ pub fn roster(
 /// answers a minute later is asked again by the next.
 #[derive(Default)]
 struct Reads {
-    lines: BTreeMap<String, Result<String, String>>,
+    lines: BTreeMap<String, Result<Capabilities, String>>,
     answers: BTreeMap<String, Result<(u64, String), String>>,
 }
 
 impl Reads {
-    fn line(&mut self, scripts: &Path, host: &str) -> Result<String, String> {
+    fn line(&mut self, host: &str) -> Result<Capabilities, String> {
         self.lines
             .entry(host.to_owned())
-            .or_insert_with(|| capability_line(scripts, host))
+            .or_insert_with(|| {
+                crate::provider::capabilities(host, REQUEST_BOUND, TAG)
+                    .map_err(|cause| format!("host-capabilities-unread host={host} cause={cause}"))
+            })
             .clone()
     }
 
@@ -83,12 +84,11 @@ impl Reads {
         &mut self,
         ctx: &mut Ctx,
         provider: &ProviderSettings,
-        scripts: &Path,
         host: &str,
     ) -> Result<(u64, String), String> {
         self.answers
             .entry(host.to_owned())
-            .or_insert_with(|| accounts_answer(ctx, provider, scripts, host))
+            .or_insert_with(|| accounts_answer(ctx, provider, host))
             .clone()
     }
 }
@@ -122,16 +122,8 @@ fn roster_naming(
     };
     let reading = match read {
         Some((host, parse)) => Some(
-            provider_reading(
-                &env,
-                &provider,
-                &scripts_dir(&settings.roots.project),
-                host,
-                parse,
-                now,
-                reads,
-            )
-            .map_err(|cause| format!("host={host} {cause}"))?,
+            provider_reading(&env, &provider, host, parse, now, reads)
+                .map_err(|cause| format!("host={host} {cause}"))?,
         ),
         None => None,
     };
@@ -144,16 +136,15 @@ fn roster_naming(
 fn provider_reading(
     env: &Env,
     provider: &ProviderSettings,
-    scripts: &Path,
     host: &str,
     parse: Parse,
     now: u64,
     reads: &mut Reads,
 ) -> std::result::Result<Provider, String> {
     let read = env.accounts.get().map_err(|e| e.to_string())?;
-    let pool = host_pool(&reads.line(scripts, host)?, host)?;
+    let pool = reads.line(host)?.pool.word().to_owned();
     let mut ctx = Ctx::new(env, &read, now)?;
-    let answer = reads.answer(&mut ctx, provider, scripts, host);
+    let answer = reads.answer(&mut ctx, provider, host);
     let (rows, failure) = provider_rows(&mut ctx, answer, host, &pool, parse);
     Ok(Provider {
         host: host.to_owned(),
@@ -164,64 +155,24 @@ fn provider_reading(
     })
 }
 
-/// The pool the host's kind declares (`pool=` on its capability line). A
-/// declaration that cannot be read refuses: no pool is guessed for a host.
-fn host_pool(line: &str, host: &str) -> Result<String, String> {
-    line.split('\t')
-        .find_map(|field| field.strip_prefix("pool="))
-        .map(str::to_owned)
-        .ok_or_else(|| format!("host-capabilities-unread host={host} cause=no pool= field"))
-}
-
-/// The host's capability line, `lane-host capabilities` under its name.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the listing's read of the provider's capability line, `lane-host capabilities`, through the one runner under its tag; it acts on nothing"
-)]
-fn capability_line(scripts: &Path, host: &str) -> Result<String, String> {
-    let unread = |cause: String| format!("host-capabilities-unread host={host} cause={cause}");
-    let out = host::run_tagged_in(
-        TAG,
-        "lane-host",
-        &scripts.join("lane-host"),
-        "capabilities",
-        &["capabilities"],
-        Place {
-            cwd: None,
-            env: &[("ORCH_LANE_HOST", OsStr::new(host))],
-        },
-        REQUEST_BOUND,
-    )
-    .map_err(|e| unread(e.to_string()))?;
-    if !out.status.success() {
-        return Err(unread(format!(
-            "exit={} {}",
-            out.status.code().unwrap_or(-1),
-            host::stderr_text(&out)
-        )));
-    }
-    Ok(host::stdout_text(&out))
-}
-
 // --- the provider's rows ----------------------------------------------------------------------
 
 /// The provider's `accounts` answer, its exit and one tab-separated
 /// `key=value` line per account it holds a credential for, read through
-/// `lane-host` under the host and cached under the same window every
+/// the dispatch under the host and cached under the same window every
 /// figure here is; an absent verb (exit 2) is cached as well, a failed one
 /// never, since the failure is the transient answer and must not be
 /// replayed for the rest of the window. The read is bounded by
-/// `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S`, the dispatcher's own slot wait held
-/// under it. A slot refusal (exit 69, `lane-host-busy`) is the provider
-/// speaking, told apart from a verb that failed (`host-accounts-unreadable`).
+/// `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S`, the slot wait held under it. A call
+/// refused at the bound (`host-busy`) is told apart from a verb that failed
+/// (`host-accounts-unreadable`).
 #[allow(
     clippy::disallowed_methods,
-    reason = "the listing's read of the provider's accounts, `lane-host accounts`, through the one runner under its tag, bounded; it acts on nothing"
+    reason = "the listing's read of the provider's accounts through the dispatch, bounded, and its cached figure; it acts on nothing"
 )]
 fn accounts_answer(
     ctx: &mut Ctx,
     provider: &ProviderSettings,
-    scripts: &Path,
     host: &str,
 ) -> Result<(u64, String), String> {
     let path = cache::record_path(&ctx.usage_dir, "lane-host", host);
@@ -250,38 +201,11 @@ fn accounts_answer(
                 if let Some(answer) = cached(ctx) {
                     return Ok(answer);
                 }
-                let timeout = provider.accounts_timeout;
-                let bound = match timeout {
+                let bound = match provider.accounts_timeout {
                     0 => Duration::from_secs(u64::from(u32::MAX)),
                     secs => Duration::from_secs(secs),
                 };
-                let busy_wait = provider
-                    .host_busy_wait
-                    .clone()
-                    .unwrap_or_else(|| "30".to_owned());
-                let busy_wait = match busy_wait.parse::<u64>() {
-                    Ok(wait) if timeout != 0 && wait >= timeout => (timeout - 1).to_string(),
-                    Ok(_) | Err(_) => busy_wait,
-                };
-                let out = host::run_tagged_in(
-                    TAG,
-                    "lane-host",
-                    &scripts.join("lane-host"),
-                    "accounts",
-                    &["accounts"],
-                    Place {
-                        cwd: None,
-                        env: &[
-                            ("ORCH_LANE_HOST", OsStr::new(host)),
-                            (
-                                "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS",
-                                OsStr::new(&busy_wait),
-                            ),
-                        ],
-                    },
-                    bound,
-                );
-                match out {
+                match crate::provider::call(host, &["accounts"], None, bound, TAG) {
                     Ok(out) if out.status.success() => {
                         let rows = String::from_utf8_lossy(&out.stdout).into_owned();
                         cache::write_figure(
@@ -303,15 +227,14 @@ fn accounts_answer(
                         );
                         Ok((2, String::new()))
                     }
-                    Ok(out) if out.status.code() == Some(69) => Err(format!(
-                        "lane-host-busy step=accounts {}",
-                        host::stderr_text(&out)
-                    )),
                     Ok(out) => Err(format!(
                         "host-accounts-unreadable host={host} exit={} {}",
                         out.status.code().unwrap_or(-1),
                         host::stderr_text(&out)
                     )),
+                    Err(busy @ crate::provider::Failure::Busy { .. }) => {
+                        Err(format!("{busy} step=accounts"))
+                    }
                     Err(e) => Err(format!("host-accounts-unreadable host={host} cause={e}")),
                 }
             });
@@ -352,16 +275,13 @@ fn provider_rows(
 struct Hosts<'a> {
     settings: &'a Settings,
     provider: &'a ProviderSettings,
-    scripts: &'a Path,
     reads: &'a RefCell<Reads>,
     now: u64,
 }
 
 impl Hosts<'_> {
     fn capabilities(&self, host: &str) -> Result<Capabilities, String> {
-        let line = self.reads.borrow_mut().line(self.scripts, host)?;
-        Capabilities::parse(&line)
-            .map_err(|cause| format!("host-capabilities-unread host={host} cause={cause}"))
+        self.reads.borrow_mut().line(host)
     }
 
     /// The cause `host`'s provider cannot be read with for a pick, where it
@@ -381,9 +301,8 @@ impl Hosts<'_> {
         })?;
         let mut reads = self.reads.borrow_mut();
         let answered = reads
-            .line(self.scripts, host)
-            .and_then(|line| host_pool(&line, host))
-            .and_then(|_| reads.answer(&mut ctx, self.provider, self.scripts, host));
+            .line(host)
+            .and_then(|_| reads.answer(&mut ctx, self.provider, host));
         Ok(answered.err())
     }
 
@@ -416,7 +335,7 @@ impl Hosts<'_> {
                         Ok(line) => line.launch,
                         Err(cause) => return Ok(unread(h, cause)),
                     },
-                    None => Capabilities::LOCAL.launch,
+                    None => Capabilities::local().launch,
                 };
                 let Some(launch) = launch else {
                     let h = host.unwrap_or(LOCAL);
@@ -488,12 +407,10 @@ pub fn walk(
     now: u64,
 ) -> crate::error::Result<Walked> {
     let provider = settings.provider.get()?;
-    let scripts = scripts_dir(&settings.roots.project);
     let reads = RefCell::new(Reads::default());
     let hosts = Hosts {
         settings,
         provider: &provider,
-        scripts: &scripts,
         reads: &reads,
         now,
     };
@@ -609,10 +526,7 @@ fn cloud_repo(
     rows: &[AccountRow],
     reads: &mut Reads,
 ) -> std::result::Result<Option<Vec<String>>, String> {
-    let line = reads.line(&scripts_dir(&settings.roots.project), host)?;
-    let launch = Capabilities::parse(&line)
-        .map_err(|cause| format!("host-capabilities-unread host={host} cause={cause}"))?
-        .launch;
+    let launch = reads.line(host)?.launch;
     if launch != Some(Launch::CloudSession) {
         return Ok(None);
     }

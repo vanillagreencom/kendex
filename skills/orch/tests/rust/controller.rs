@@ -10535,26 +10535,33 @@ fn a_providers_reservation_keeps_an_account_from_an_overseer_whose_figures_it_do
 /// a provider nobody can read leaves no entry to judge: the real
 /// `successor` verb refuses `account-unjudged` naming the host and the
 /// cause, whether the capability line or the `accounts` answer went
-/// unread, the provider's slot refusal told apart by its cause, and judges
-/// no entry on this machine's homes, which have room; the provider is asked
-/// once for the walk.
+/// unread or refused at the provider-call bound with every slot held, the
+/// bound's refusal told apart by its cause, and judges no entry on this
+/// machine's homes, which have room; the provider is asked once for the
+/// walk, and never for `accounts` at the bound.
 #[test]
 fn an_overseers_walk_under_an_unread_provider_refuses_naming_the_host_and_the_cause() {
     for (key, exit, calls, cause) in [
         (
             "vm accounts",
-            69,
+            None,
+            &["ORCH_LANE_HOST=vm capabilities"][..],
+            "host-busy count=1 cap=1 verb=accounts item=- step=accounts",
+        ),
+        (
+            "vm accounts",
+            Some(1),
             &[
                 "ORCH_LANE_HOST=vm capabilities",
                 "ORCH_LANE_HOST=vm accounts",
             ][..],
-            "lane-host-busy step=accounts ",
+            "host-accounts-unreadable host={host} exit=1 ",
         ),
         (
             "vm capabilities",
-            1,
+            Some(1),
             &["ORCH_LANE_HOST=vm capabilities"][..],
-            "host-capabilities-unread host=vm cause=exit=1 ",
+            "host-capabilities-unread host={host} cause=capabilities exit=1 ",
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -10570,12 +10577,20 @@ fn an_overseers_walk_under_an_unread_provider_refuses_naming_the_host_and_the_ca
             ],
         );
         let planted = runner.state_dir().join("accounts");
-        let answers = planted.join("lane-host.json");
-        let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
-        map[key] = json!({"exit": exit, "stderr": "lane-host-fixture: refused\n"});
-        std::fs::write(&answers, map.to_string()).unwrap();
+        let host = planted.join("vm").display().to_string();
+        let cause = cause.replace("{host}", &host);
         runner.tools = Some(bin);
         runner.env.extend(env);
+        match exit {
+            Some(exit) => {
+                let answers = planted.join("lane-host.json");
+                let mut map: Value =
+                    serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
+                map[key] = json!({"exit": exit, "stderr": "lane-host-fixture: refused\n"});
+                std::fs::write(&answers, map.to_string()).unwrap();
+            }
+            None => runner.env.extend(hold_host_slots(&dir.path().join("home"))),
+        }
         runner.env.push((
             "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
             "claude:fable:high,codex:gpt-6.1-sol:high".to_owned(),
@@ -10593,13 +10608,13 @@ fn an_overseers_walk_under_an_unread_provider_refuses_naming_the_host_and_the_ca
             (&fields[0], &fields[1], &fields[2][0]),
             (
                 &json!(["step", "host"]),
-                &json!(["host", "vm"]),
+                &json!(["host", host]),
                 &json!("cause")
             ),
             "{key}: {answer}"
         );
         assert!(
-            fields[2][1].as_str().unwrap().starts_with(cause),
+            fields[2][1].as_str().unwrap().starts_with(&cause),
             "{key}: {answer}"
         );
         let log: Vec<String> = std::fs::read_to_string(planted.join("lane-host.log"))
@@ -10636,6 +10651,7 @@ fn an_overseers_walk_under_an_unparsed_line_refuses_naming_the_host_and_the_caus
             ],
         );
         let planted = runner.state_dir().join("accounts");
+        let host = planted.join("vm").display().to_string();
         let answers = planted.join("lane-host.json");
         let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
         map["vm capabilities"] = json!({
@@ -10655,10 +10671,12 @@ fn an_overseers_walk_under_an_unparsed_line_refuses_naming_the_host_and_the_caus
             answer["refusal"]["fields"],
             json!([
                 ["step", "host"],
-                ["host", "vm"],
+                ["host", host],
                 [
                     "cause",
-                    "host-capabilities-unread host=vm cause=capability-invalid key=files value=missing"
+                    format!(
+                        "host-capabilities-unread host={host} cause=capability-invalid key=files value="
+                    )
                 ]
             ]),
             "{preference}: {answer}"

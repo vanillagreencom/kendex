@@ -57,6 +57,27 @@ enum Verb {
         #[arg(long = "duty")]
         duties: Vec<String>,
     },
+    /// One provider call on a lane host, for a program outside the runtime:
+    /// `resolve` prints the host (`ORCH_LANE_HOST`, else `local`),
+    /// `capabilities` the host kind's line, and every other provider verb
+    /// runs the provider with its arguments, stdin, output and status
+    /// unchanged once a slot of its pool is free: `create`, `wait`,
+    /// `start`, `close`, `stop` and `stop-sandbox` take the long pool
+    /// (`ORCH_LANE_HOST_MAX_CALLS`, `ORCH_LANE_HOST_BUSY_WAIT_SECS`), every
+    /// other verb the short one (`ORCH_LANE_HOST_SHORT_MAX_CALLS`,
+    /// `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS`), each 4 calls and 30 seconds
+    /// by default, the count shared by every checkout and overseer of this
+    /// home. A pool still full past its wait refuses `host-busy`, exit 1,
+    /// and runs nothing; a local host refuses provider verbs `host-local`
+    /// and `claude-cloud` refuses them `host-kind-verb`, exit 2.
+    Host {
+        /// The host to call, over `ORCH_LANE_HOST`.
+        #[arg(long)]
+        host: Option<String>,
+        /// The verb and its arguments.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     DevReturn {
         #[arg(long)]
         text: bool,
@@ -1327,7 +1348,9 @@ fn resolve_settings(flags: &Flags) -> Result<Settings> {
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e)))?;
     let roots = agent_runtime::settings::roots(&cwd)?;
     let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-    settings::load(&roots, &environment, flags)
+    let settings = settings::load(&roots, &environment, flags)?;
+    orch_runtime::provider::install(settings.dispatch.clone());
+    Ok(settings)
 }
 
 #[allow(
@@ -1491,6 +1514,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
         }),
         Verb::Ready { duties } => ready_verb(&duties, &flags)?,
+        Verb::Host { host, args } => {
+            resolve_settings(&flags)?;
+            std::process::exit(orch_runtime::provider::verb(host.as_deref(), &args))
+        }
         Verb::State { op } => state_verb(op, &flags, locking)?,
         Verb::Archive { op } => orch_runtime::archive::verb(op, &resolve_settings(&flags)?)?,
         Verb::Report {

@@ -165,7 +165,10 @@ impl World {
         let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = env
             .iter()
             .chain(extra.iter())
-            .map(|(k, v)| (k.into(), v.into()))
+            .map(|(k, v)| match k.as_str() {
+                "ORCH_LANE_HOST" => (k.into(), named_host(dir, v).into()),
+                _ => (k.into(), v.into()),
+            })
             .collect();
         settings::load(
             &roots,
@@ -879,7 +882,7 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
                     OwedState::InProgress,
                     "2",
                     "stopped",
-                    "provider-x",
+                    named_host(world.path(), "provider-x").as_str(),
                     "codex",
                     "-",
                     None,
@@ -1758,13 +1761,14 @@ fn an_owed_local_item_is_judged_on_the_local_listing_while_the_fleet_provider_ca
     );
 }
 
-/// An owed item on a provider whose `accounts` read fails or answers busy
-/// is never judged on this machine's listing: its local account at room,
-/// the pick under the item's host is unjudged and the owed line says so,
-/// the provider's accounts asked by the listing and again by the pick.
+/// An owed item on a provider whose `accounts` read fails is never judged
+/// on this machine's listing: its local account at room, the pick under
+/// the item's host is unjudged and the owed line says so, the provider's
+/// accounts asked by the listing and again by the pick.
 #[test]
-fn an_owed_hosted_item_under_a_failed_or_busy_accounts_read_is_unjudged() {
-    for exit in [1, 69] {
+fn an_owed_hosted_item_under_a_failed_accounts_read_is_unjudged() {
+    let exit = 1;
+    {
         let world = World::new();
         let clock = FakeClock::new();
         let wall = clock.wall_secs();
@@ -1792,7 +1796,7 @@ fn an_owed_hosted_item_under_a_failed_or_busy_accounts_read_is_unjudged() {
                 OwedState::InProgress,
                 "2",
                 "stopped",
-                "provider-x",
+                named_host(world.path(), "provider-x").as_str(),
                 "claude",
                 "-",
                 None,

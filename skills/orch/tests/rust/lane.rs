@@ -172,7 +172,7 @@ impl Fleet {
         map["fleet-vm capabilities"] = if refused {
             json!({"exit": 1, "stderr": "lane-host-fixture: capabilities-refused\n"})
         } else {
-            json!({"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n"})
+            json!({"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\trelaunch=resume\tpark=none\taccounts=none\tland=lane\tpane=local\n"})
         };
         std::fs::write(path, map.to_string()).unwrap();
     }
@@ -400,9 +400,9 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
 }
 
 /// A launch that asks for its account's room under a provider whose
-/// `accounts` read fails or answers busy is refused `account-unjudged`,
-/// naming the host and the provider's cause, and writes nothing; the same
-/// world answered admits it.
+/// `accounts` read fails, or is refused at the provider-call bound with
+/// every slot held, is refused `account-unjudged`, naming the host and the
+/// cause, and writes nothing; the same world answered admits it.
 #[test]
 fn a_launch_under_a_failed_or_busy_accounts_read_is_refused_and_writes_nothing() {
     let refused = "lane-host-fixture: accounts-refused";
@@ -411,26 +411,36 @@ fn a_launch_under_a_failed_or_busy_accounts_read_is_refused_and_writes_nothing()
         (
             Some(1),
             Some(format!(
-                "account-unjudged step=host host=fleet-vm cause=host-accounts-unreadable host=fleet-vm exit=1 {refused}"
+                "account-unjudged step=host host={{host}} cause=host-accounts-unreadable host={{host}} exit=1 {refused}"
             )),
         ),
         (
-            Some(69),
-            Some(format!(
-                "account-unjudged step=host host=fleet-vm cause=lane-host-busy step=accounts {refused}"
-            )),
+            Some(0),
+            Some(
+                "account-unjudged step=host host={host} cause=host-busy count=1 cap=1 verb=accounts item=- step=accounts"
+                    .to_owned(),
+            ),
         ),
     ];
     for (exit, cause) in cases {
         let mut fleet = Fleet::new(4);
         fleet.init_fleet();
         fleet.plant_listing(&[listing_row(10, epoch_now())]);
-        if let Some(exit) = exit {
-            let path = fleet.state_dir().join("lane-host.json");
-            let mut map: Value =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            map["fleet-vm accounts"] = json!({"exit": exit, "stderr": format!("{refused}\n")});
-            std::fs::write(path, map.to_string()).unwrap();
+        let host = fleet.state_dir().join("fleet-vm").display().to_string();
+        let cause = cause.map(|c| c.replace("{host}", &host));
+        match exit {
+            Some(0) => {
+                let held = hold_host_slots(&fleet.state_dir().join("home"));
+                fleet.env.extend(held);
+            }
+            Some(exit) => {
+                let path = fleet.state_dir().join("lane-host.json");
+                let mut map: Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                map["fleet-vm accounts"] = json!({"exit": exit, "stderr": format!("{refused}\n")});
+                std::fs::write(path, map.to_string()).unwrap();
+            }
+            None => {}
         }
         let out = fleet.op(&launch_on("KEN-3", fleet.state_dir()));
         let answer = reply(&out);
@@ -2860,12 +2870,13 @@ fn a_hosted_lane_whose_merge_landed_and_worktree_left_ends_with_its_items_files_
 
 /// A merged hosted lane whose worktree stands is done once its item's
 /// close-out removed the item's live record from the clone the worktree's
-/// `.git` names, both read on the provider's disk through the real
-/// dispatcher: with the record standing the close refuses `pane-missing`
-/// and stops nothing; with it removed the lane ends on the merge, its
-/// harness stopped and the provider's close asked; a record the host cannot
-/// read refuses by the close's unreadable or busy key with the provider's
-/// cause.
+/// `.git` names, both read on the provider's disk: with the record
+/// standing the close refuses `pane-missing` and stops nothing; with it
+/// removed the lane ends on the merge, its harness stopped and the
+/// provider's close asked; a record the host cannot read refuses
+/// `worktree-read-failed` with the provider's cause, and a read refused at
+/// the provider-call bound with every slot held refuses `host-busy`,
+/// asking the provider nothing.
 #[test]
 fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left_the_clone() {
     const RECORD: &str = "/w/clone/tmp/workflow-state-KEN-1.json";
@@ -2880,8 +2891,11 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
         (
             "record read capped",
             true,
-            Some("69"),
-            Some(("lane-host-busy", Some("cat exit=69"))),
+            Some("held"),
+            Some((
+                "host-busy",
+                Some("cat host-busy count=1 cap=1 verb=cat item=KEN-1"),
+            )),
         ),
         ("record removed", false, None, None),
     ] {
@@ -2899,18 +2913,29 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
             std::fs::create_dir_all(record.parent().unwrap()).unwrap();
             std::fs::write(&record, "{}").unwrap();
         }
-        if let Some(status) = cat_status {
-            fleet.answer("CAT_STATUS", status);
-            fleet.answer("CAT_PATH", RECORD);
+        match cat_status {
+            Some("held") => {
+                let held = hold_host_slots(&fleet.state_dir().join("home"));
+                fleet.env.extend(held);
+            }
+            Some(status) => {
+                fleet.answer("CAT_STATUS", status);
+                fleet.answer("CAT_PATH", RECORD);
+            }
+            None => {}
         }
         fleet.write_lanes(vec![hosted_lane("KEN-1")]);
         fleet.plant_tracker("KEN-1", "started");
         let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
         let calls = fleet.provider_calls();
-        assert!(
-            calls.contains(&format!("cat --item KEN-1 {RECORD}")),
-            "{case}: the record is read in the clone: {calls:?}"
-        );
+        if cat_status == Some("held") {
+            assert!(calls.is_empty(), "{case}: nothing ran: {calls:?}");
+        } else {
+            assert!(
+                calls.contains(&format!("cat --item KEN-1 {RECORD}")),
+                "{case}: the record is read in the clone: {calls:?}"
+            );
+        }
         match refused {
             Some((key, cause)) => {
                 assert_eq!(answer["refusal"]["key"], key, "{case}: {answer}");
@@ -3293,7 +3318,10 @@ fn a_stale_wall_under_a_failed_or_busy_accounts_read_keeps_the_lane_and_stops_no
 
 /// One close-lane case over a hosted world: the records, the provider's
 /// answers, the world's environment, the tracker's state type (`None`
-/// plants no answer), and the request.
+/// plants no answer), the request, and the provider-call slots under the
+/// world's own home bound to one call: every slot held from the start
+/// (`Held`), or held by the close itself once the provider answered the
+/// verb named (`After`).
 struct CloseCase2 {
     name: &'static str,
     lanes: Vec<Value>,
@@ -3301,6 +3329,13 @@ struct CloseCase2 {
     env: Vec<(&'static str, &'static str)>,
     tracker: Option<&'static str>,
     request: Value,
+    slots: Option<Slots>,
+}
+
+#[derive(Clone, Copy)]
+enum Slots {
+    Held,
+    After(&'static str),
 }
 
 impl CloseCase2 {
@@ -3312,6 +3347,7 @@ impl CloseCase2 {
             env: Vec::new(),
             tracker: Some("completed"),
             request: json!({"op": "close-lane", "item": "KEN-1"}),
+            slots: None,
         }
     }
 
@@ -3319,6 +3355,15 @@ impl CloseCase2 {
         let mut fleet = Fleet::hosted(4);
         for (name, value) in &self.answers {
             fleet.answer(name, value);
+        }
+        let home = fleet.state_dir().join("home");
+        match self.slots {
+            Some(Slots::Held) => fleet.env.extend(hold_host_slots(&home)),
+            Some(Slots::After(verb)) => {
+                fleet.env.extend(host_slot_bound(&home));
+                fleet.answer("HOLD_AFTER", verb);
+            }
+            None => {}
         }
         for (name, value) in &self.env {
             fleet.env.push(((*name).to_owned(), (*value).to_owned()));
@@ -3373,7 +3418,7 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
         ),
         (
             CloseCase2::new("mailbox capped", vec![hosted_lane("KEN-1")]),
-            "lane-host-busy",
+            "host-busy",
             vec![("step", "mail-read")],
         ),
         (
@@ -3401,7 +3446,7 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
         ),
         (
             CloseCase2::new("worktree read capped", vec![hosted_lane("KEN-1")]),
-            "lane-host-busy",
+            "host-busy",
             vec![],
         ),
         (
@@ -3416,12 +3461,12 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
         ),
         (
             CloseCase2::new("provider stop capped", vec![hosted_lane("KEN-1")]),
-            "lane-host-busy",
+            "host-busy",
             vec![("step", "stop")],
         ),
         (
             CloseCase2::new("list capped", vec![hosted_lane("KEN-1")]),
-            "lane-host-busy",
+            "host-busy",
             vec![("step", "list")],
         ),
         (
@@ -3486,15 +3531,15 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
                 case.tracker = Some("started");
             }
             "worktree read capped" => {
-                case.answers.push(("CAT_STATUS", "69"));
+                case.slots = Some(Slots::Held);
                 case.tracker = Some("started");
             }
             "provider stop refused" => case.answers.push(("STOP_STATUS", "1")),
             "provider stop unparsed" => case.answers.push(("STOP_LINE", "stopped")),
-            "provider stop capped" => case.answers.push(("STOP_STATUS", "69")),
+            "provider stop capped" => case.slots = Some(Slots::After("status")),
             "list capped" => {
                 case.env.push(("LANE_MAIL_STATUS", "2"));
-                case.answers.push(("LIST_STATUS", "69"));
+                case.slots = Some(Slots::After("status"));
             }
             "provider status unread" => case.answers.push(("PROBE_STATUS", "1")),
             "if-terminal on an open item" => {

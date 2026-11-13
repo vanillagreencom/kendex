@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# A provider standing for a remote host behind the real `lane-host`
-# dispatcher: the hosted rows name this file as a record's host. Its world
-# is the directory `LANE_HOST_WORLD` names, which the rows' dispatcher
-# wrapper sets. `cat --item I PATH` serves `disk/PATH` there, exit 2 for a
+# A provider standing for a remote host: the hosted rows name a link to it
+# as a record's host. Its world is the directory `LANE_HOST_WORLD` names,
+# which the rows' link wrapper sets. `cat --item I PATH` serves `disk/PATH` there, exit 2 for a
 # file the host has not; `touch` answers 0; `status` reads the harness
 # running; `capabilities` the SSH kind with a local pane. Every other verb, and any argv that answers otherwise, is
 # answered from the JSON map `provider.json` there, keyed by the argv joined

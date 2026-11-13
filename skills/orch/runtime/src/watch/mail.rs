@@ -61,6 +61,20 @@ const OVERSEER: &str = "overseer";
 /// How often the overseer box's size is read between full turns.
 const POLL: Duration = Duration::from_secs(1);
 
+/// The files of a lane's box a hosted drain reads, under
+/// `<root>/tmp/lane-mail/<item>/`: the snapshot holds each, present or
+/// absent, so the drain never reconnects for one.
+const SNAPSHOT_FILES: [&str; 6] = [
+    "to-overseer.jsonl",
+    "to-overseer.jsonl.numbering",
+    "to-lane.jsonl",
+    "to-lane.jsonl.numbering",
+    "to-lane.cursor",
+    "to-lane.cursor.lock",
+];
+/// The tag the mail pass's provider reads are counted under.
+const SNAPSHOT_TAG: &str = "mail";
+
 /// What the duty runs with.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -70,6 +84,8 @@ pub struct Config {
     pub common_root: PathBuf,
     /// The request file of the batched read, beside the watch's records.
     pub request: PathBuf,
+    /// The pass's provider snapshots, one directory per host, beside it.
+    pub snapshots: PathBuf,
     pub interval: Duration,
     pub mark_repeat: u32,
     pub unread: Duration,
@@ -83,6 +99,7 @@ impl Config {
             fleet: paths.state.clone(),
             common_root: crate::effects::fleet_reach(settings)?.mail_root,
             request: paths.dir.join("oversee-watch.mail-request"),
+            snapshots: paths.dir.join("oversee-watch.mail-snapshots"),
             interval: watch.mail_interval,
             mark_repeat: watch.mark_repeat,
             unread: watch.directive_unread,
@@ -554,8 +571,16 @@ impl MailDuty {
             .into_iter()
             .map(|(lane, drained)| (lane, drained, None))
             .collect();
+        let snapshots = self.snapshots(&hosted, turn);
+        let hosted: Vec<(Drain, String)> = hosted
+            .into_iter()
+            .filter(|(_, host)| snapshots.contains_key(host))
+            .collect();
         for (lane, host) in &hosted {
-            match self.mailbox.drain(lane, Some(host)) {
+            match self
+                .mailbox
+                .drain(lane, Some(host), snapshots.get(host).map(PathBuf::as_path))
+            {
                 Ok(drained) => read.push((lane.clone(), drained, Some(host.clone()))),
                 Err(refusal) => turn.refuse(&lane.item, refusal),
             }
@@ -592,7 +617,10 @@ impl MailDuty {
             .map(|(lane, drained)| (lane.item, drained))
             .collect();
         for (lane, host) in &again_hosted {
-            match self.mailbox.drain(lane, Some(host)) {
+            match self
+                .mailbox
+                .drain(lane, Some(host), snapshots.get(host).map(PathBuf::as_path))
+            {
                 Ok(drained) => {
                     reread.insert(lane.item.clone(), drained);
                 }
@@ -616,6 +644,43 @@ impl MailDuty {
             self.lane_turn(tick, turn, &lane.item, prior, was_replaced, drained);
         }
         Ok(())
+    }
+
+    /// One provider snapshot per host the hosted lanes name, the files each
+    /// lane's drain reads, made once per pass: the directory of each host
+    /// whose snapshot was written, a failed batch among them, which the
+    /// drain refuses by its own reading. A host whose directory could not
+    /// be written has its lanes named and left for the next turn.
+    fn snapshots(&self, hosted: &[(Drain, String)], turn: &mut Turn) -> BTreeMap<String, PathBuf> {
+        let mut files: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
+        for (lane, host) in hosted {
+            let rows = files.entry(host.as_str()).or_default();
+            for name in SNAPSHOT_FILES {
+                let path = format!("{}/tmp/lane-mail/{}/{name}", lane.root.display(), lane.item);
+                rows.push((lane.item.clone(), path));
+            }
+        }
+        let mut dirs = BTreeMap::new();
+        for (n, (host, rows)) in files.into_iter().enumerate() {
+            let dir = self.config.snapshots.join(n.to_string());
+            match crate::provider::snapshot(host, &rows, &dir, SNAPSHOT_TAG) {
+                Ok(()) => {
+                    dirs.insert(host.to_owned(), dir);
+                }
+                Err(e) => {
+                    for (lane, _) in hosted.iter().filter(|(_, h)| h == host) {
+                        turn.refuse(
+                            &lane.item,
+                            format!(
+                                "snapshot-unwritten host={host} path={} cause={e}",
+                                dir.display()
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        dirs
     }
 
     /// One lane's drain rendered.

@@ -530,9 +530,9 @@ A session send always checks repository ownership from the recorded mail_root,
 which can be inside its checkout.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
-outside the alphabet, a lock, a write or a host that failed; 69
-`lane-host-busy`, lane-host's own status for a call it refused at its per-home
-cap, passed through; 124 `wait` reached --timeout with no answer. Refusal
+outside the alphabet, a lock, a write or a host that failed; 69 `host-busy`, a
+call `orch-runtime host` refused at the per-home bound on provider calls; 124
+`wait` reached --timeout with no answer. Refusal
 keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid, box-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress-needs-ref,
@@ -542,7 +542,7 @@ ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-rep
 overseer-only,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
-write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
+write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
 state-unreadable, lane-unrecorded, host-capabilities-unread, host-root-required, host-root-mismatch, channel-session,
 session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
@@ -563,19 +563,21 @@ caller's own record.
 A hosted read that fails is never read as an empty mailbox. The watch reads
 the cached `read-many` reply. A missing-file row means absence; any other
 failed row is `mail-read-failed`. Cached reads do not probe the host.
-Other single reads use `lane-host cat`. It exits 2 for a file that is not
-there, and the dispatcher exits 2 for a host it refuses, so a failed single
-read confirms the host with `lane-host touch` first. A
+Other single reads use `orch-runtime host cat`. It exits 2 for a file that
+is not there, and for a host it refuses, so a failed single read confirms the
+host with `orch-runtime host touch` first. A
 successful read or probe proves later absent files in the same invocation;
 every other failed read still probes. A
 failed probe is `host-unreachable`, carrying the host's `state=` from
-`lane-host list` because a stopped host is started and a gone one relaunched.
+`orch-runtime host list` because a stopped host is started and a gone one
+relaunched.
 A probe that answers reads 2 as a mailbox the lane has not opened and every
-other status as `mail-read-failed`, never as silence. A call lane-host refused
-at its per-home cap ran no provider: it is `lane-host-busy` with lane-host's
-exit 69, never probed and never read as a host out of reach.
+other status as `mail-read-failed`, never as silence. A call the runtime
+refused at the per-home bound ran no provider: it is `host-busy`, exit 69,
+never probed and never read as a host out of reach.
 
-A hosted write adds its line through `lane-host append`, which takes its lock
+A hosted write adds its line through `orch-runtime host append`, which takes
+its lock
 on the host holding the file. That is the same lock a local write takes on the
 target file itself, so a mailbox with many writers keeps every line however
 many machines they sit on: the owner and every peer writing one hosted
@@ -630,10 +632,10 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     archive-failed) text='Expired mailbox rows could not be archived, so nothing was removed.' ;;
     archived) text='Expired mailbox rows are kept in this archive.' ;;
     orch-missing) text="The orch package is not installed beside mailbox, so this operation cannot read its lane, host or archive helpers. Nothing was written." ;;
-    host-append) text='The hosted mailbox could not be appended through lane-host append. The host answered the probe, so the provider declined the write and the line below is what it reported; a provider with no append verb fails here too. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
+    host-append) text='The hosted mailbox could not be appended through orch-runtime host append. The host answered the probe, so the provider declined the write and the line below is what it reported; a provider with no append verb fails here too. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read, so the read is refused rather than reported as empty.' ;;
-    lane-host-busy) text='lane-host refused the call at its per-home cap on provider calls, so the mailbox was neither read nor written and the host was not judged. Run the verb again; the line below is the one lane-host printed.' ;;
+    host-busy) text='orch-runtime host refused the call at the per-home bound on provider calls, so the mailbox was neither read nor written and the host was not judged. Run the verb again; the line below is the one the runtime printed.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
     mail) text='Overseer mail landed in this lane mailbox. Run the command below and act on every envelope it prints, answers and directives alike, as its text directs.' ;;
     mailbox-missing) text='The mailbox directory is not there, so no watch of it can wake the lane. Run the watch from the lane worktree, or with --root naming it, for the item its launch created.' ;;
@@ -944,9 +946,7 @@ lm_require_orch() { # FILE...
   done
 }
 if [ "$HOST" -eq 1 ] || [ -n "$STATE_DIR" ]; then
-  lm_require_orch lane-host lib/lane-host-read.sh lib/lane-host-slots.sh
-  # shellcheck source=../../orch/scripts/lib/lane-host-slots.sh
-  . "$ORCH_SCRIPTS/lib/lane-host-slots.sh"
+  lm_require_orch orch-runtime lib/lane-host-read.sh
   # shellcheck source=../../orch/scripts/lib/lane-host-read.sh
   . "$ORCH_SCRIPTS/lib/lane-host-read.sh"
 fi
@@ -1094,7 +1094,7 @@ lm_send_channel() {
   host="$(jq -r '.host // "local"' <<<"$record")" || refuse state-unreadable "$ITEM"
   # lane-host validates the kind's line against each key's closed set, so the
   # two keys a send acts on are read from it as they stand.
-  caps="$(ORCH_LANE_HOST="$host" "$ORCH_SCRIPTS/lane-host" capabilities 2>"$WORK_DIR/caps.err")" ||
+  caps="$("$ORCH_SCRIPTS/orch-runtime" host --host "$host" capabilities 2>"$WORK_DIR/caps.err")" ||
     refuse host-capabilities-unread "$host" "$(cat -- "$WORK_DIR/caps.err")"
   channel="" files=""
   IFS=$'\t' read -r -a fields <<<"$caps"
@@ -1153,7 +1153,7 @@ lm_send_channel() {
   exit 0
 }
 if [ "$VERB" = send ] && [ "$ITEM" != overseer ]; then
-  lm_require_orch lane-host orch-runtime
+  lm_require_orch orch-runtime
 fi
 
 # The caller's own repository: the main checkout behind this shell, whatever
@@ -1416,18 +1416,22 @@ lm_one_spelling() {
 LM_HOST_ANSWERED=0
 lm_host_answers() {
   local probe_rc=0
-  "$ORCH_SCRIPTS/lane-host" touch --item "$ITEM" >/dev/null 2>"$WORK_DIR/probe.err" || probe_rc=$?
+  "$ORCH_SCRIPTS/orch-runtime" host touch --item "$ITEM" >/dev/null 2>"$WORK_DIR/probe.err" || probe_rc=$?
   [ "$probe_rc" -ne 0 ] || { LM_HOST_ANSWERED=1; return 0; }
   lm_host_busy "$probe_rc" "$WORK_DIR/probe.err"
   REFUSE_EXTRA="state=$(lm_host_state)"
   refuse host-unreachable "$ITEM" "$(cat -- "$WORK_DIR/probe.err")"
 }
 
-# A call lane-host refused at its per-home cap ran no provider, so it says
+# A call the runtime refused at its per-home bound ran no provider, so it says
 # nothing about the host and is never probed: the probe would wait for a slot
-# in turn. It exits with lane-host's own status, which a caller reads as busy.
+# in turn. The runtime names it by its first line's key; this script exits 69
+# for it, which its callers read as busy.
 lm_host_busy() { # STATUS ERR_FILE
-  [ "$1" -ne "$LANE_HOST_BUSY_EXIT" ] || refuse lane-host-busy "$ITEM" "$(cat -- "$2")" "$LANE_HOST_BUSY_EXIT"
+  [ "$1" -ne 0 ] || return 0
+  case "$(head -n 1 -- "$2" 2>/dev/null)" in
+    'orch-runtime: host-busy '*) refuse host-busy "$ITEM" "$(cat -- "$2")" 69 ;;
+  esac
 }
 
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
@@ -1461,7 +1465,7 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
       *) refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")" ;;
     esac
   else
-    "$ORCH_SCRIPTS/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
+    "$ORCH_SCRIPTS/orch-runtime" host cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
     LM_HOST_ANSWERED=1
@@ -1488,7 +1492,7 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
 # start the host or relaunch it. `unknown` when the listing has no row for it.
 lm_host_state() {
   local listing=""
-  listing="$("$ORCH_SCRIPTS/lane-host" list 2>"$WORK_DIR/list.err")" || listing=""
+  listing="$("$ORCH_SCRIPTS/orch-runtime" host list 2>"$WORK_DIR/list.err")" || listing=""
   awk -F'\t' -v item="/$ITEM" 'NF >= 2 && substr($1, length($1) - length(item) + 1) == item { print $2; found = 1; exit }
     END { if (!found) print "unknown" }' <<<"$listing"
 }
@@ -2025,7 +2029,7 @@ lm_draft() {
 lm_append_host() { # FILE LINE
   local rc=0 report=""
   printf '%s\n' "$2" >"$WORK_DIR/send.line" || refuse write-failed "$WORK_DIR/send.line"
-  "$ORCH_SCRIPTS/lane-host" append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
+  "$ORCH_SCRIPTS/orch-runtime" host append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
     >/dev/null 2>"$WORK_DIR/append.err" || rc=$?
   [ "$rc" -ne 0 ] || return 0
   if [ "$rc" -eq 4 ]; then
