@@ -584,7 +584,7 @@ pub(crate) fn lane_verdict(
             };
             match node.state.kind.as_str() {
                 "" => Err("no-state-type".to_owned()),
-                "canceled" => Ok(TerminalState::Canceled),
+                kind if dropped(kind) => Ok(TerminalState::Canceled),
                 "completed" if boxes => {
                     let description = match node.description {
                         Nullable::Present(d) => d,
@@ -655,6 +655,17 @@ fn pull_waits(record: &serde_json::Value) -> std::result::Result<Vec<(String, u6
         return Err(invalid());
     }
     Ok(waits)
+}
+
+/// Whether a tracker state type ends the item's work unshipped: Linear's
+/// `canceled` and `duplicate` (an item marked Duplicate is done as another).
+pub(crate) fn dropped(state_type: &str) -> bool {
+    matches!(state_type, "canceled" | "duplicate")
+}
+
+/// Whether a tracker state type ends the item's work, shipped or not.
+pub(crate) fn finished(state_type: &str) -> bool {
+    state_type == "completed" || dropped(state_type)
 }
 
 impl TerminalState {
@@ -883,13 +894,11 @@ fn completed_containers<'a>(
         }
     }
     candidates
-        .filter(|(_, kind, bundle)| !bundle && !matches!(*kind, "completed" | "canceled"))
+        .filter(|(_, kind, bundle)| !bundle && !finished(kind))
         .filter(|(id, _, _)| {
-            by_parent.get(id).is_some_and(|kinds| {
-                kinds
-                    .iter()
-                    .all(|kind| matches!(*kind, "completed" | "canceled"))
-            })
+            by_parent
+                .get(id)
+                .is_some_and(|kinds| kinds.iter().all(|kind| finished(kind)))
         })
         .map(|(id, _, _)| id.to_owned())
         .collect()
@@ -952,7 +961,7 @@ fn read_tracker(
                 return Err(refused("tracker-item-unread", &[("item", item)]));
             };
             let state = match node.state.kind.as_str() {
-                "canceled" => TerminalState::Canceled,
+                kind if dropped(kind) => TerminalState::Canceled,
                 "completed" => {
                     // Done at merge before the lane's close-out ticked its
                     // boxes is not ended: an open box keeps it open.
@@ -1055,7 +1064,7 @@ fn read_list(
     }
     let open_states: Vec<&str> = statuses
         .iter()
-        .filter(|s| s.kind != "completed" && s.kind != "canceled")
+        .filter(|s| !finished(&s.kind))
         .map(|s| s.name.as_str())
         .collect();
     let mut items: Vec<OpenItem> = Vec::new();

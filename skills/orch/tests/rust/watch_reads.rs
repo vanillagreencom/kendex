@@ -1636,6 +1636,66 @@ fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
     }
 }
 
+/// Linear's state type `duplicate` (every team holds a state Duplicate of
+/// that type) is finished work as `canceled` is: the owed read asks for no
+/// Duplicate item, and a hosted parked lane whose item reads `duplicate`
+/// gets the terminal verdict and closes as one whose item reads `canceled`.
+#[test]
+fn a_parked_lane_whose_item_reads_duplicate_closes_as_a_canceled_one() {
+    if !isolated_row("a_parked_lane_whose_item_reads_duplicate_closes_as_a_canceled_one") {
+        return;
+    }
+    for kind in ["canceled", "duplicate"] {
+        let mut world = World::new();
+        world.write_fleet(
+            &json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+            "lanes": [cycle_lane(&world, true)]}),
+        );
+        let mut team = statuses();
+        team["body"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name": "Duplicate", "type": "duplicate"}));
+        world.linear("statuses list", team);
+        world.linear("issues list", json!({"body": []}));
+        world.linear("issues bulk-get", json!({"body": {"issues": {"nodes": [
+            {"identifier": "KEN-1", "state": {"type": kind}, "description": null, "children": {"nodes": []}}
+        ]}}}));
+        quiet_github(&mut world);
+        world.gh(
+            "repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1",
+            json!({ "body": [merged_pull(7, "ken-1")] }),
+        );
+        world.gh(
+            "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+            json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
+        );
+        world.gh("graphql number=7 cursor=", timeline_seven());
+        installed_cycle_recorder(&world);
+        let clock = FakeClock::new();
+        let mut body = tracker::body(world.context(world.settings(&[]), None));
+        let mut baseline = Baseline::default();
+        let said = rendered(&pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap());
+        assert_eq!(said.len(), 2, "{kind}: {said:?}");
+        assert!(
+            said[0].starts_with("cycle item=KEN-1 pr=7 "),
+            "{kind}: {said:?}"
+        );
+        assert_eq!(said[1], "EVENT lane-closed KEN-1", "{kind}: {said:?}");
+        let lane = world.fleet()["lanes"][0].clone();
+        assert_eq!(lane["status"], "done", "{kind}: {lane}");
+        let calls = world.linear_calls();
+        let owed = calls
+            .iter()
+            .find(|c| c.starts_with("issues list"))
+            .unwrap_or_else(|| panic!("{kind}: {calls:?}"));
+        assert!(
+            owed.contains(" --state In Progress,In Review,Verifying,Todo,Backlog,Triage --select "),
+            "{kind}: {owed}"
+        );
+    }
+}
+
 /// A terminal close whose landing the recorder cannot write is held, never
 /// made without its cycle: through the real tracker duty and `pr-timeline`
 /// over the `gh` fixture, a hosted parked lane whose item ended at its

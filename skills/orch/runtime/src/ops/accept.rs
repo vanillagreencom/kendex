@@ -40,6 +40,7 @@ use crate::settings::Settings;
 use crate::state::{self, Attachment, StageOutcome, SummaryComment};
 use crate::verify::wire::{Issue as WireIssue, IssueComment, Nullable};
 use crate::verify::{Answer as GhAnswer, Gh};
+use crate::watch::tracker::{dropped, finished};
 use agent_runtime::journal::Env;
 
 /// How long one tracker call may take.
@@ -799,7 +800,7 @@ fn flatten_children(nodes: Vec<ChildNode>, into: &mut Vec<ChildRead>) {
 
 impl ChildRead {
     fn pending(&self) -> bool {
-        self.state_type != "completed" && self.state_type != "canceled"
+        !finished(&self.state_type)
     }
 }
 
@@ -854,15 +855,15 @@ fn decide(
         return Decision::Refuse("child-not-ok");
     }
     let state = parent.state_type.as_str();
-    if children.iter().all(|c| c.state_type == "canceled") {
+    if children.iter().all(|c| dropped(&c.state_type)) {
         return match state {
-            "completed" | "canceled" => Decision::Noop {
-                canceled: state == "canceled",
+            ended if finished(ended) => Decision::Noop {
+                canceled: dropped(ended),
             },
             _ => Decision::CloseCanceled,
         };
     }
-    if state == "canceled" {
+    if dropped(state) {
         return Decision::Refuse("parent-canceled");
     }
     let summarized = own.is_some_and(|r| r["has_summary"] == true);
@@ -1195,14 +1196,14 @@ fn close_held(tracker_cli: &Path, root: &Path, id: &str) -> Closing<ContainerClo
     if let Decision::CloseDone { summary: true } = decision {
         let rows: String = children
             .iter()
-            .filter(|c| c.state_type != "canceled")
+            .filter(|c| !dropped(&c.state_type))
             .map(|c| format!("{}\t{}\t{}\n", c.id, c.title, c.state_type))
             .collect();
         let summary = match held.summary_for(&rows) {
             Some(summary) => summary,
             None => {
                 let mut summary = "## Bundle Complete\n\n".to_owned();
-                for child in children.iter().filter(|c| c.state_type != "canceled") {
+                for child in children.iter().filter(|c| !dropped(&c.state_type)) {
                     if child.state_type != "completed" {
                         return Err(ContainerRefused::new(
                             "summary-state",
@@ -1243,7 +1244,7 @@ fn close_held(tracker_cli: &Path, root: &Path, id: &str) -> Closing<ContainerClo
         let states: Vec<String> = children
             .iter()
             .map(|c| {
-                let word = if c.state_type == "canceled" {
+                let word = if dropped(&c.state_type) {
                     "Canceled"
                 } else {
                     "Done"

@@ -3833,6 +3833,33 @@ fn a_close_answers_a_record_by_what_it_already_is() {
     }
 }
 
+/// close-lane reads Linear's state type `duplicate` as it reads `canceled`:
+/// on a parked record `terminal-state` answers `canceled`, and `if-terminal`
+/// closes the lane with the same provider calls a canceled item's close makes.
+#[test]
+fn close_lane_reads_a_duplicate_item_as_a_canceled_one() {
+    let mut parked = with("status", json!("parked"));
+    parked["parked"] =
+        json!({"repo": "o/r", "head": "h2", "at": "2026-01-29T16:00:00Z", "ask": "a1"});
+    let mut closes = Vec::new();
+    for kind in ["canceled", "duplicate"] {
+        let mut state = CloseCase2::new("terminal state", vec![parked.clone()]);
+        state.tracker = Some(kind);
+        state.request = json!({"op": "close-lane", "item": "KEN-1", "mode": "terminal-state"});
+        let (_, answer) = state.run();
+        assert_eq!(answer["result"]["word"], "state", "{kind}: {answer}");
+        assert_eq!(answer["result"]["state"], "canceled", "{kind}: {answer}");
+        let mut close = CloseCase2::new("if terminal", vec![parked.clone()]);
+        close.tracker = Some(kind);
+        close.request = json!({"op": "close-lane", "item": "KEN-1", "mode": "if-terminal"});
+        let (fleet, answer) = close.run();
+        assert_eq!(answer["result"]["word"], "closed", "{kind}: {answer}");
+        assert_eq!(fleet.lane("KEN-1")["status"], "done", "{kind}");
+        closes.push(fleet.provider_calls());
+    }
+    assert_eq!(closes[0], closes[1], "the same close for both");
+}
+
 /// The lane's one open ask, as the mailbox's `pending` lists it.
 const ASK_A1: &str = r#"{"kind":"ask","id":"a1"}"#;
 
@@ -4890,6 +4917,128 @@ fn a_container_closes_only_when_its_children_end() {
                         .is_some_and(|r| r.ends_with("then rerun container-close.")),
                     "{case}: {}",
                     stderr(&out)
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A container close reads Linear's state type `duplicate` as it reads
+/// `canceled`, for a child and for the parent: a Duplicate child beside a
+/// canceled one sets the parent Canceled; beside a Done one it is left out
+/// of the bundle summary and its held rows and named Canceled in the child
+/// box's evidence; a Duplicate parent whose children all dropped is left as
+/// it is; one with a Done child refuses as a Canceled parent does.
+#[test]
+fn a_duplicate_reads_as_canceled_in_a_container_close() {
+    let done_and_duplicate = json!([child("KEN-1", "completed"), child("KEN-2", "duplicate")]);
+    let mut held = container_replies("started", done_and_duplicate, false);
+    held["issues complete"] = json!({"exit": 1, "stderr": "{\"code\":\"RATELIMITED\",\"quota\":{\"reset\":\"2026-01-01T02:00:00Z\"}}\n"});
+    let gh = json!({"pr list": {"body": [{"number": 21, "headRefName": "ken-1", "mergedAt": "2026-01-01T00:00:00Z", "isCrossRepository": false}]}});
+    // (case, replies, stdout, the mutation's verb words, a refusal's cause)
+    type Case = (
+        &'static str,
+        Value,
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+    );
+    let rows: [Case; 4] = [
+        (
+            "a duplicate child beside a canceled one",
+            container_replies(
+                "started",
+                json!([child("KEN-1", "canceled"), child("KEN-2", "duplicate")]),
+                false,
+            ),
+            "closed KEN-C\n",
+            Some("issues update"),
+            None,
+        ),
+        (
+            "a done child beside a duplicate one",
+            held,
+            "held KEN-C 2026-01-01T02:00:00Z\n",
+            Some("issues complete"),
+            None,
+        ),
+        (
+            "an already duplicate parent",
+            container_replies("duplicate", json!([child("KEN-1", "duplicate")]), false),
+            "closed KEN-C\n",
+            None,
+            None,
+        ),
+        (
+            "a duplicate parent with a done child",
+            container_replies("duplicate", json!([child("KEN-1", "completed")]), false),
+            "",
+            None,
+            Some("parent-canceled"),
+        ),
+    ];
+    for (case, replies, stdout, mutation, refused) in rows {
+        let container = Container::new(replies, Some(gh.clone()));
+        // The tracker keeps the evidence file the completion names: the
+        // close removes its run directory once the call returns.
+        let state = container.fleet.state_dir();
+        let tracker = state.join("linear.sh");
+        std::fs::remove_file(&tracker).unwrap();
+        write_executable(
+            &tracker,
+            format!(
+                "#!/bin/bash\nprev=\nfor a in \"$@\"; do [ \"$prev\" = --evidence-file ] && cp -- \"$a\" '{dir}/evidence.seen'; prev=$a; done\nLINEAR_FAKE_REPLIES='{dir}/linear.json' LINEAR_FAKE_LOG='{dir}/linear.log' exec '{fixture}' \"$@\"\n",
+                dir = state.display(),
+                fixture = fixtures().join("linear-fixture/linear.sh").display(),
+            ),
+        );
+        let out = container.close("KEN-C");
+        assert_eq!(stdout_of(&out), stdout, "{case}: {}", stderr(&out));
+        let calls = container.calls();
+        let mutated: Vec<&String> = calls
+            .iter()
+            .filter(|c| c.starts_with("issues complete") || c.starts_with("issues update"))
+            .collect();
+        match mutation {
+            Some(verb) => {
+                assert_eq!(mutated.len(), 1, "{case}: {calls:?}");
+                assert!(mutated[0].starts_with(verb), "{case}: {calls:?}");
+            }
+            None => assert!(mutated.is_empty(), "{case}: nothing mutated: {calls:?}"),
+        }
+        if let Some(cause) = refused {
+            assert_eq!(out.status.code(), Some(1), "{case}");
+            assert!(
+                stderr(&out).contains(&format!(
+                    "container-close: completion-refused parent-id=KEN-C cause={cause}"
+                )),
+                "{case}: {}",
+                stderr(&out)
+            );
+        }
+        let held_dir = container.checkout.join("tmp/container-close-held/KEN-C");
+        match case {
+            "a duplicate child beside a canceled one" | "an already duplicate parent" => assert!(
+                stderr(&out).contains("container-close: canceled parent-id=KEN-C"),
+                "{case}: {}",
+                stderr(&out)
+            ),
+            "a done child beside a duplicate one" => {
+                assert_eq!(
+                    std::fs::read_to_string(held_dir.join("children.tsv")).unwrap(),
+                    "KEN-1\twork KEN-1\tcompleted\n",
+                    "{case}"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(held_dir.join("summary.md")).unwrap(),
+                    "## Bundle Complete\n\n- KEN-1 ✓ work KEN-1 — PR #21\n",
+                    "{case}"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(state.join("evidence.seen")).unwrap(),
+                    "3: container-close read every child Done or Canceled: KEN-1 Done, KEN-2 Canceled\n",
+                    "{case}"
                 );
             }
             _ => {}

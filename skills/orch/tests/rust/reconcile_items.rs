@@ -219,6 +219,24 @@ fn lifecycle_findings_distinguish_parked_containers_from_live_items() {
     assert!(!world.dir.path().join("state").exists());
 }
 
+/// Linear's state type `duplicate` is ended work as `canceled` is: a parent
+/// whose children are Done and Duplicate is a parked container, and a
+/// Duplicate parent whose children all ended is none.
+#[test]
+fn a_duplicate_item_is_ended_work_in_the_container_findings() {
+    let world = World::new(vec![
+        issue("T-1", "Todo", "unstarted", "", None),
+        issue("T-2", "Done", "completed", "", Some("T-1")),
+        issue("T-3", "Duplicate", "duplicate", "", Some("T-1")),
+        issue("T-4", "Duplicate", "duplicate", "", None),
+        issue("T-5", "Done", "completed", "", Some("T-4")),
+    ]);
+    let report = world.run();
+    let found = kinds(&report);
+    assert!(found.contains(&("container-parked", "T-1")), "{found:?}");
+    assert!(!found.contains(&("container-parked", "T-4")), "{found:?}");
+}
+
 #[test]
 fn an_unread_or_invalid_inventory_never_becomes_clean() {
     let world = World::new(vec![]);
