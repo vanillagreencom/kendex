@@ -54,7 +54,7 @@ own-team=<KEY> route=peer-mail`. Reads and relations, like comments, reach
 every team. With LINEAR_TEAM unset they run and print
 `linear: cross-team-guard=inactive action=<verb> cause=no-team`.
 
-Output Formats (all query commands):
+Output Formats (list; get and bulk-get take the formats their sections name):
   --format=safe         Flat, null-safe array (DEFAULT)
   --format=compact      Minimal fields for workflow routing (no description/url/timestamps)
   --format=ids          Newline-separated identifiers only
@@ -91,6 +91,7 @@ List Options:
 
 Get:
   issues.sh get <id>    Get by UUID or identifier (PROJ-42)
+  --format <fmt>        safe (default) | raw
 
 Bulk Get:
   issues.sh bulk-get <id1> <id2> ...   Get multiple issues with relations

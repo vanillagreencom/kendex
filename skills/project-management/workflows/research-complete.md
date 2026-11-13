@@ -32,7 +32,7 @@ Issue labels only, validated per [labels.md](../references/labels.md) § Validat
 
 **Skip if** the `.blocks` array is empty (self-initiated spike).
 
-For each blocked issue and, recursively, its children (`issues get [BLOCKED_ISSUE_ID] | jq -r '.children[].id'`): read the current description and add `[FINDINGS_REF]` when absent. Use [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules for the Research header in Filing record, including multiple references and longer evidence. Apply [publish-artifacts.md](publish-artifacts.md) even when the reference already exists. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
+For each blocked issue and, recursively, its children (`issues get [BLOCKED_ISSUE_ID] | jq -r '.children[].id'`): read the current description and add `[FINDINGS_REF]` when absent. Use [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules for the Research header in Filing record, including multiple references and longer evidence. Apply [publish-artifacts.md](publish-artifacts.md) even when the reference already exists. `issues get` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 ## 5. Analyze Impact
 
