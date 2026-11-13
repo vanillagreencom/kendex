@@ -913,16 +913,21 @@ pub enum Closed {
 
 /// The close verb's request for `lane` at `reason`: a lane read exited on
 /// two passes keeps its sandbox; a stopped record's owed park is that park
-/// again; a finished lane's delivery is the merge the GitHub duty read last
-/// for its item (`merged`, `REPO#N ...`).
+/// again, its wait alone, as an operator asks it: the verb takes the judged
+/// head from the record; a finished lane's delivery is the merge the GitHub
+/// duty read last for its item (`merged`, `REPO#N ...`).
 fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
     let mut request = serde_json::json!({"op": "close-lane", "item": lane.item});
     if reason == KEEP_REASON {
         request["mode"] = Value::from("keep-sandbox");
     }
     if reason == PARK_REASON
-        && let Some(wait) = lane.extra.get(state::PARK_OWED)
+        && let Some(owed) = lane.extra.get(state::PARK_OWED)
     {
+        let mut wait = owed.clone();
+        if let Some(mark) = wait.as_object_mut() {
+            mark.remove("head");
+        }
         request["mode"] = serde_json::json!({ "park": wait });
     }
     let merged = pass

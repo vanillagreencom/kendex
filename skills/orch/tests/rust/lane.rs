@@ -1623,7 +1623,7 @@ fn a_launch_whose_model_shows_no_class_is_refused_class_unverified() {
 }
 
 /// A close that retires `item`'s attempt with no landing for `reason`,
-/// interrupting its harness, a park's wait where `park` is set.
+/// interrupting its harness, a judged park where `park` is set.
 fn retire(item: &str, reason: &str, park: bool) -> Value {
     let mut request = json!({
         "op": "close-owned-resources",
@@ -1631,7 +1631,7 @@ fn retire(item: &str, reason: &str, park: bool) -> Value {
         "no_landing": {"reason": reason, "source": "overseer", "interrupt": true},
     });
     if park {
-        request["no_landing"]["park"] = json!({"pr": 12});
+        request["no_landing"]["park"] = json!({"pr": 12, "head": "h12"});
     }
     request
 }
@@ -4206,7 +4206,11 @@ fn a_park_is_judged_before_anything_is_signalled() {
                 let lane = fleet.lane("KEN-1");
                 assert_eq!(lane["status"], "stopped", "{case}");
                 assert_eq!(lane["sandbox"], "standing", "{case}: {lane}");
-                assert_eq!(lane["park_owed"], json!({"pr": 7}), "{case}: {lane}");
+                assert_eq!(
+                    lane["park_owed"],
+                    json!({"pr": 7, "head": "h2"}),
+                    "{case}: {lane}"
+                );
             }
             Some("ask-unanswered") => {
                 assert_eq!(
@@ -4265,7 +4269,7 @@ fn a_park_of_a_kept_sandbox_whose_stop_fails_stays_owed_until_a_park_confirms() 
     let lane = fleet.lane("KEN-1");
     assert_eq!(lane["status"], "stopped", "{lane}");
     assert_eq!(lane["sandbox"], "standing", "{lane}");
-    assert_eq!(lane["park_owed"], json!({"pr": 7}), "{lane}");
+    assert_eq!(lane["park_owed"], json!({"pr": 7, "head": "h2"}), "{lane}");
     fleet
         .env
         .retain(|(name, _)| name != "LANE_HOST_STUB_SANDBOX_STOP_STATUS");
@@ -4275,6 +4279,122 @@ fn a_park_of_a_kept_sandbox_whose_stop_fails_stays_owed_until_a_park_confirms() 
     assert_eq!(lane["status"], "parked", "{lane}");
     assert!(lane.get("park_owed").is_none(), "{lane}");
     assert!(lane.get("sandbox").is_none(), "{lane}");
+}
+
+/// A park a stopped record owes is confirmed by its provider's sandbox stop
+/// alone: over a sandbox already down, whose provider refuses every `cat`,
+/// `touch` and mailbox read, the owed park asks none of them nor the stop's
+/// check. It reads GitHub again, so a pull request merged, or moved to
+/// another head, while the park is owed refuses with nothing stopped; once
+/// the stop confirms, the record parks on the head judged when the park was
+/// first asked; a park owed on the lane's own ask parks the same way. A park
+/// naming another wait is not owed and is judged in full, so it is refused
+/// at its mailbox read.
+#[test]
+fn an_owed_park_over_a_sandbox_already_down_is_confirmed_by_the_providers_stop_alone() {
+    let mut fleet = Fleet::park_world();
+    fleet.write_lanes(vec![with("repo", json!("o/r"))]);
+    fleet.plant_tracker("KEN-1", "started");
+    let park = json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"pr": 7}}});
+    let owed = json!({"pr": 7, "head": "h2"});
+    let sandbox_stops = |fleet: &Fleet| {
+        fleet
+            .provider_calls()
+            .iter()
+            .filter(|c| *c == "stop-sandbox --item KEN-1")
+            .count()
+    };
+    // A running lane's park whose sandbox stop the provider refuses as
+    // still stopping.
+    fleet.answer("SANDBOX_STOP_STATUS", "1");
+    let refused = fleet.close(park.clone());
+    assert_eq!(refused["refusal"]["key"], "park-failed", "{refused}");
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert_eq!(lane["sandbox"], "standing", "{lane}");
+    assert_eq!(lane["park_owed"], owed, "{lane}");
+    let provider_from = fleet.provider_calls().len();
+    let mail_from = fleet.mail_log().len();
+    // The provider's answers over a sandbox already down: each `cat`
+    // refused `lane-stopped` with exit 4, its `touch` probe the same, the
+    // mailbox's host read refused; its check answers.
+    fleet.answer("CAT_STATUS", "4");
+    fleet.answer("CAT_STATE", "stopped");
+    fleet.answer("TOUCH_STATUS", "4");
+    fleet
+        .env
+        .push(("LANE_MAIL_STATUS".to_owned(), "2".to_owned()));
+    let stopping = fleet.close(park.clone());
+    assert_eq!(stopping["refusal"]["key"], "park-failed", "{stopping}");
+    assert_eq!(fleet.lane("KEN-1")["park_owed"], owed);
+    let mail = fleet.mail_log();
+    assert!(
+        !mail[mail_from..].iter().any(|l| l.contains("pending")),
+        "{mail:?}"
+    );
+    let other = fleet.close(json!({"op": "close-lane", "item": "KEN-1",
+        "mode": {"park": {"until_pr": 9, "until_repo": "o/r"}}}));
+    assert_eq!(other["refusal"]["key"], "mail-read-failed", "{other}");
+    assert_eq!(fleet.lane("KEN-1")["park_owed"], owed);
+    let mail_from = fleet.mail_log().len();
+    let stops = sandbox_stops(&fleet);
+    for (field, value, reason) in [
+        ("state", json!("MERGED"), "pr-not-open"),
+        ("headRefOid", json!("h1"), "pr-head-mismatch"),
+    ] {
+        let mut pull = park_pull();
+        pull[field] = value;
+        fleet.plant_pull(7, pull);
+        let answer = fleet.close(park.clone());
+        assert_eq!(
+            answer["refusal"]["key"], "park-refused",
+            "{reason}: {answer}"
+        );
+        let fields = refusal_fields(&answer);
+        assert_eq!(fields["reason"], reason, "{answer}");
+        if reason == "pr-head-mismatch" {
+            assert_eq!(fields["branch-source"], "park-owed", "{answer}");
+        }
+        assert_eq!(fleet.lane("KEN-1")["park_owed"], owed, "{reason}");
+        assert_eq!(sandbox_stops(&fleet), stops, "{reason}: nothing is stopped");
+    }
+    fleet.plant_pull(7, park_pull());
+    fleet
+        .env
+        .retain(|(name, _)| name != "LANE_HOST_STUB_SANDBOX_STOP_STATUS");
+    let parked = fleet.close(park);
+    assert_eq!(parked["result"]["word"], "parked", "{parked}");
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["status"], "parked", "{lane}");
+    assert_eq!(lane["parked"]["head"], "h2", "{lane}");
+    assert!(lane.get("park_owed").is_none(), "{lane}");
+    assert!(lane.get("sandbox").is_none(), "{lane}");
+    // A park owed on the lane's own ask, its mark as its judge wrote it:
+    // the ask was read then, so the down mailbox is not read again.
+    let mut asking = with("repo", json!("o/r"));
+    asking["status"] = json!("stopped");
+    asking["sandbox"] = json!("standing");
+    asking["park_owed"] = json!({"ask": "a1", "head": "h2"});
+    fleet.write_lanes(vec![asking]);
+    let parked =
+        fleet.close(json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"ask": "a1"}}}));
+    assert_eq!(parked["result"]["word"], "parked", "{parked}");
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["parked"]["ask"], "a1", "{lane}");
+    assert_eq!(lane["parked"]["head"], "h2", "{lane}");
+    assert!(lane.get("park_owed").is_none(), "{lane}");
+    let calls = fleet.provider_calls();
+    assert!(
+        !calls[provider_from..].iter().any(|c| c.starts_with("cat ")
+            || c.starts_with("touch ")
+            || c.starts_with("stop-sandbox --check ")),
+        "{calls:?}"
+    );
+    let mail = fleet.mail_log();
+    assert!(
+        !mail[mail_from..].iter().any(|l| l.contains("pending")),
+        "{mail:?}"
+    );
 }
 
 /// A park of a record that names no repository is judged in the fleet's

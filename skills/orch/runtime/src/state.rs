@@ -701,10 +701,10 @@ pub enum CloseGround {
         source: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         interrupt: bool,
-        /// The wait a park asked for, whose sandbox stop follows this
-        /// close: the park stays owed on the lane until that stop confirms.
+        /// The judged park whose sandbox stop follows this close: the park
+        /// stays owed on the lane until that stop confirms.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        park: Option<crate::ops::ParkWait>,
+        park: Option<crate::ops::OwedPark>,
     },
     /// The close judged the lane ended while its item stays open: its merge
     /// cycle stands and its work is over (its worktree gone, or a local

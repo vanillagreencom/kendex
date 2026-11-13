@@ -4471,7 +4471,11 @@ fn a_stopped_record_owing_a_park_is_asked_it_each_pass_and_each_new_result_told_
         lane
     };
     let lanes = vec![
-        owing("KEN-1", "stopped", Some(json!({"until_pr": 1400}))),
+        owing(
+            "KEN-1",
+            "stopped",
+            Some(json!({"until_pr": 1400, "head": "h2"})),
+        ),
         owing("KEN-2", "stopped", None),
         owing("KEN-3", "preparing", Some(json!({"pr": 7}))),
     ];

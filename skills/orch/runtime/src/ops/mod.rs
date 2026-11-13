@@ -77,8 +77,8 @@ pub(crate) use item::job_ended;
 pub use lane::{
     AdoptSession, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, CloseRequested,
     Delivery, Ended, LaneAdopted, LaneLaunched, LaneParked, LaneReleased, LaneReserved, LaunchLane,
-    NoLanding, ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane, Terminal,
-    identity_fills, lane_moved,
+    NoLanding, OwedPark, ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane,
+    Terminal, identity_fills, lane_moved,
 };
 pub use lane::{
     LaneDischarged, LaneObligation, LaneObligationRecord, LaneOutcome, RecordLaneProgress,

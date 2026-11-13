@@ -355,7 +355,7 @@ pub struct Terminal {
 /// An explicit disposition that ends the attempt with no landing while the
 /// item stays open. `interrupt` stops the harness mid-turn, its idle proof
 /// not asked for: the session it runs is unusable, as after a model switch.
-/// `park` is the wait of the park whose sandbox stop follows the close.
+/// `park` is the judged park whose sandbox stop follows the close.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoLanding {
     pub reason: String,
@@ -363,7 +363,7 @@ pub struct NoLanding {
     #[serde(default)]
     pub interrupt: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub park: Option<ParkWait>,
+    pub park: Option<OwedPark>,
 }
 
 /// Ask for a lane's owned processes and window to be closed. Without a
@@ -471,6 +471,32 @@ pub struct ParkWait {
     pub until_repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<String>,
+}
+
+/// A park owed on a stopped lane: the wait it asked and the head its judge
+/// read. A stopped lane runs no session, so nothing moves that head, its
+/// clean status or its mailbox's asks until a relaunch; its completion takes
+/// the head from here and reads its sandbox for nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwedPark {
+    #[serde(flatten)]
+    pub wait: ParkWait,
+    pub head: String,
+}
+
+impl ParkLane {
+    /// The mark this judged park leaves owed until its sandbox stop confirms.
+    pub fn owed_mark(&self) -> OwedPark {
+        OwedPark {
+            wait: ParkWait {
+                pr: self.pr,
+                until_pr: self.until_pr,
+                until_repo: self.until_repo.clone(),
+                ask: self.ask.clone(),
+            },
+            head: self.head.clone(),
+        }
+    }
 }
 
 /// A lane's delivery: its merged pull request, or a direct push's commit.
@@ -1760,15 +1786,9 @@ pub(super) fn park_lane(
             status: lane.status,
         }),
         LaneStatus::Stopped if r.owed => {
-            let wait = ParkWait {
-                pr: r.pr,
-                until_pr: r.until_pr,
-                until_repo: r.until_repo.clone(),
-                ask: r.ask.clone(),
-            };
             let lane = lane_doc_mut(path, doc, index)?;
             record::set(lane, state::SANDBOX, state::STANDING);
-            record::set(lane, state::PARK_OWED, serde_json::to_value(wait)?);
+            record::set(lane, state::PARK_OWED, serde_json::to_value(r.owed_mark())?);
             Ok(LaneParked {
                 lane: lane_at(path, doc, index)?,
                 parked_now: false,

@@ -21,8 +21,8 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::ops::{
-    self, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, Ended, NoLanding, ParkLane,
-    ParkWait, Report, Request, Terminal, boxes,
+    self, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, Ended, NoLanding, OwedPark,
+    ParkLane, ParkWait, Report, Request, Terminal, boxes,
 };
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus};
@@ -386,12 +386,13 @@ fn remove_input(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
-/// The ground the close transition persists.
+/// The ground the close transition persists; a keep carries the judged park
+/// its sandbox stop follows.
 enum Ground {
     Terminal(Terminal),
     Exited,
     Ended(&'static str),
-    Keep,
+    Keep(Option<OwedPark>),
 }
 
 /// What the close records of the lane's landing: the merge cycle, the
@@ -427,7 +428,7 @@ fn boxes_cause(ground: &Ground, gone: bool) -> Option<(boxes::Cause, bool)> {
             verdict: state::TerminalVerdict::Completed,
             ..
         }) => Some((boxes::Cause::LaneEnded, true)),
-        Ground::Terminal(_) | Ground::Exited | Ground::Ended(_) | Ground::Keep => None,
+        Ground::Terminal(_) | Ground::Exited | Ground::Ended(_) | Ground::Keep(_) => None,
     }
 }
 
@@ -503,20 +504,29 @@ impl Close<'_> {
 
     /// A record an earlier keep or a failed park left stopped: no pane, no
     /// harness; the mailbox is read only for an item its tracker holds open.
+    /// A park the record already owes reads its sandbox for nothing: its
+    /// mailbox was read when the mark was written, and no session has run
+    /// since to add an ask.
     fn stopped(self) -> Result<Closed> {
+        if let Some(wait) = self.park() {
+            let owed = self.owed(wait);
+            if owed.is_none() {
+                self.refuse_ask()?;
+            }
+            let judged = self.park_judge(wait, owed.clone())?;
+            if owed.is_none() {
+                self.owe_park(&judged)?;
+            }
+            return self.park_sandbox(&judged, Vec::new());
+        }
         let mut notes = Vec::new();
         let ground = if self.keep() {
-            Ground::Keep
+            Ground::Keep(None)
         } else {
             self.by_verdict(Ground::Exited, &mut notes)?
         };
         if !matches!(ground, Ground::Terminal(_)) {
             self.refuse_ask()?;
-        }
-        if let Some(wait) = self.park() {
-            let judged = self.park_judge(wait)?;
-            self.owe_park(&judged)?;
-            return self.park_sandbox(&judged, Vec::new());
         }
         if self.keep() {
             return Ok(self.word(Word::Stopped, Some(LaneStatus::Stopped)));
@@ -559,7 +569,7 @@ impl Close<'_> {
         }
         let mut notes = Vec::new();
         let ground = if self.keep() {
-            Ground::Keep
+            Ground::Keep(None)
         } else {
             self.by_verdict(Ground::Exited, &mut notes)?
         };
@@ -592,12 +602,12 @@ impl Close<'_> {
         }
         let mut notes = Vec::new();
         if let Some(wait) = self.park() {
-            let park = self.park_judge(wait)?;
+            let park = self.park_judge(wait, None)?;
             if !matches!(judged, LaneState::Exited) {
                 self.refuse_ask()?;
                 self.host_stop(&mut notes)?;
             }
-            let closed = self.close_on(Ground::Keep)?;
+            let closed = self.close_on(Ground::Keep(Some(park.owed_mark())))?;
             if closed.word != Word::Stopped {
                 return Ok(closed);
             }
@@ -639,7 +649,11 @@ impl Close<'_> {
                 ));
             }
         };
-        let ground = if self.keep() { Ground::Keep } else { ground };
+        let ground = if self.keep() {
+            Ground::Keep(None)
+        } else {
+            ground
+        };
         let acts = !matches!(judged, LaneState::Exited) && self.hosted();
         let mut host_absent = false;
         if acts {
@@ -685,7 +699,7 @@ impl Close<'_> {
         let mut landing = Landing::default();
         let (mut record, mut open) = (false, false);
         if let Some(delivery) = &self.r.delivery
-            && !matches!(ground, Ground::Keep)
+            && !matches!(ground, Ground::Keep(_))
         {
             match crate::ops::cycle::recorded(
                 self.settings,
@@ -1202,13 +1216,13 @@ impl Close<'_> {
                     source: source.to_owned(),
                 }),
             ),
-            Ground::Keep => (
+            Ground::Keep(park) => (
                 None,
                 Some(NoLanding {
                     reason: "keep-sandbox".to_owned(),
                     source: "close-lane".to_owned(),
                     interrupt: true,
-                    park: self.park().cloned(),
+                    park,
                 }),
                 None,
             ),
@@ -1316,10 +1330,18 @@ impl Close<'_> {
     /// read from the worktree pushed to its sandbox's `origin`, the lane's
     /// clean-status record bound to that head, and for a queue park the
     /// merge queue holding it, or auto-merge armed with GitHub reading it
-    /// CLEAN, and the github skill's reducer silent on it.
-    fn park_judge(&self, wait: &ParkWait) -> Result<ParkLane> {
-        self.park_check()?;
-        if let Some(ask) = &wait.ask {
+    /// CLEAN, and the github skill's reducer silent on it. A park the record
+    /// owes (`owed`, its judged head) reads its sandbox for nothing: its
+    /// check, ask, head and clean status were judged when its mark was
+    /// written and no session can have moved them since; its sandbox stop is
+    /// the provider's own answer to the check. What GitHub holds can move,
+    /// so every read of it is made again, the head match against the
+    /// judged head among them.
+    fn park_judge(&self, wait: &ParkWait, owed: Option<String>) -> Result<ParkLane> {
+        if owed.is_none() {
+            self.park_check()?;
+        }
+        if let Some(ask) = wait.ask.as_ref().filter(|_| owed.is_none()) {
             let open = self.open_ask()?;
             if open.as_deref() != Some(ask.as_str()) {
                 return Err(self.park_refused(
@@ -1361,42 +1383,21 @@ impl Close<'_> {
         // A queue park's pull request is the lane's own; a dependency park
         // and an ask park read none of its checks.
         let queue = pull.as_ref().filter(|_| wait.until_pr.is_none());
-        // A head read from the worktree is the sandbox's alone until its
-        // remote-tracking ref names it: the park would strand it with the
-        // agent that can push it stopped. The pull request's head, taken
-        // where the worktree is unread, is the remote's.
-        let (head, branch, source) = match (self.lane_head(), queue) {
-            (
-                Ok(LaneHead {
-                    head,
-                    branch,
-                    remote,
-                }),
-                _,
-            ) => {
-                if remote.as_deref() != Some(head.as_str()) {
-                    return Err(self.park_refused(
-                        "unpushed",
-                        &[
-                            ("head", &head),
-                            ("remote", remote.as_deref().unwrap_or("absent")),
-                        ],
-                    ));
-                }
-                (head, branch, "worktree")
+        // An owed park's head, branch and clean status were judged when its
+        // mark was written; a pull request's head branch cannot change, so
+        // only its head is matched again.
+        let (head, branch, source) = match owed {
+            Some(head) => (head, None, "park-owed"),
+            None => {
+                let (head, branch, source) = self.worktree_head(queue)?;
+                (head, Some(branch), source)
             }
-            (Err(()), None) => return Err(self.park_refused("worktree-unread", &[])),
-            (Err(()), Some(pull)) => match self.recorded_branch() {
-                Some(branch) => (pull.head_ref_oid.clone(), branch, "workflow-state"),
-                None => {
-                    return Err(self
-                        .park_refused("worktree-unread", &[("branch-source", "workflow-state")]));
-                }
-            },
         };
         let pr = wait.pr.unwrap_or_default().to_string();
         if let Some(pull) = queue {
-            if pull.head_ref_name != branch {
+            if let Some(branch) = &branch
+                && pull.head_ref_name != *branch
+            {
                 return Err(self.park_refused(
                     "pr-branch-mismatch",
                     &[
@@ -1413,28 +1414,8 @@ impl Close<'_> {
                 ));
             }
         }
-        let root = self.lane.mail_root.as_deref().unwrap_or("");
-        let clean = match hosted::fetch(
-            self.scripts,
-            self.host,
-            self.item(),
-            &format!("{root}/tmp/park-status.json"),
-        ) {
-            HostAnswer::Live(text) => text,
-            HostAnswer::Gone | HostAnswer::Unreadable { .. } => {
-                return Err(self.park_refused("clean-status-unread", &[]));
-            }
-        };
-        let clean: Value = serde_json::from_str(&clean).unwrap_or(Value::Null);
-        let bound = clean.get("head").and_then(Value::as_str) == Some(head.as_str())
-            && clean.get("branch").and_then(Value::as_str) == Some(branch.as_str())
-            && clean.get("porcelain").and_then(Value::as_str) == Some("")
-            && clean
-                .get("at")
-                .and_then(Value::as_str)
-                .is_some_and(|at| !at.is_empty());
-        if !bound {
-            return Err(self.park_refused("clean-status-invalid", &[("branch-source", source)]));
+        if let Some(branch) = &branch {
+            self.clean_status(&head, branch, source)?;
         }
         if let Some(pull) = queue {
             let queued =
@@ -1466,19 +1447,90 @@ impl Close<'_> {
         })
     }
 
-    /// A stopped record's park recorded owed before its sandbox stop, where
-    /// the record does not owe this wait already: a stop that fails then
-    /// leaves the park for the watch to complete, never a kept sandbox.
-    fn owe_park(&self, park: &ParkLane) -> Result<()> {
-        let wait = serde_json::to_value(ParkWait {
-            pr: park.pr,
-            until_pr: park.until_pr,
-            until_repo: park.until_repo.clone(),
-            ask: park.ask.clone(),
-        })?;
-        if self.lane.extra.get(state::PARK_OWED) == Some(&wait) {
-            return Ok(());
+    /// The lane's head and branch for a park judged in full, and where they
+    /// were read: a head read from the worktree is the sandbox's alone until
+    /// its remote-tracking ref names it, since the park would strand it with
+    /// the agent that can push it stopped; the pull request's head, taken
+    /// where the worktree is unread, is the remote's.
+    fn worktree_head(&self, queue: Option<&ParkPull>) -> Result<(String, String, &'static str)> {
+        match (self.lane_head(), queue) {
+            (
+                Ok(LaneHead {
+                    head,
+                    branch,
+                    remote,
+                }),
+                _,
+            ) => {
+                if remote.as_deref() != Some(head.as_str()) {
+                    return Err(self.park_refused(
+                        "unpushed",
+                        &[
+                            ("head", &head),
+                            ("remote", remote.as_deref().unwrap_or("absent")),
+                        ],
+                    ));
+                }
+                Ok((head, branch, "worktree"))
+            }
+            (Err(()), None) => Err(self.park_refused("worktree-unread", &[])),
+            (Err(()), Some(pull)) => {
+                match self.recorded_branch() {
+                    Some(branch) => Ok((pull.head_ref_oid.clone(), branch, "workflow-state")),
+                    None => Err(self
+                        .park_refused("worktree-unread", &[("branch-source", "workflow-state")])),
+                }
+            }
         }
+    }
+
+    /// The lane's clean-status record bound to `head` on `branch`, read
+    /// through the provider's `cat`.
+    fn clean_status(&self, head: &str, branch: &str, source: &str) -> Result<()> {
+        let root = self.lane.mail_root.as_deref().unwrap_or("");
+        let clean = match hosted::fetch(
+            self.scripts,
+            self.host,
+            self.item(),
+            &format!("{root}/tmp/park-status.json"),
+        ) {
+            HostAnswer::Live(text) => text,
+            HostAnswer::Gone | HostAnswer::Unreadable { .. } => {
+                return Err(self.park_refused("clean-status-unread", &[]));
+            }
+        };
+        let clean: Value = serde_json::from_str(&clean).unwrap_or(Value::Null);
+        let bound = clean.get("head").and_then(Value::as_str) == Some(head)
+            && clean.get("branch").and_then(Value::as_str) == Some(branch)
+            && clean.get("porcelain").and_then(Value::as_str) == Some("")
+            && clean
+                .get("at")
+                .and_then(Value::as_str)
+                .is_some_and(|at| !at.is_empty());
+        if !bound {
+            return Err(self.park_refused("clean-status-invalid", &[("branch-source", source)]));
+        }
+        Ok(())
+    }
+
+    /// The judged head of the park this record owes for `wait`, the one
+    /// reading that says a park is owed: the record's mark asks the same
+    /// wait, its dependency repository in the lower case the judge records.
+    /// A mark carrying no head owes nothing, and its park is judged in full.
+    fn owed(&self, wait: &ParkWait) -> Option<String> {
+        let mark = self.lane.extra.get(state::PARK_OWED)?;
+        let mark: OwedPark = serde_json::from_value(mark.clone()).ok()?;
+        let asked = ParkWait {
+            until_repo: wait.until_repo.as_ref().map(|r| r.to_ascii_lowercase()),
+            ..wait.clone()
+        };
+        (mark.wait == asked).then_some(mark.head)
+    }
+
+    /// A stopped record's park, judged in full, recorded owed with its judged
+    /// head before its sandbox stop: a stop that fails then leaves the park
+    /// for the watch to complete, never a kept sandbox.
+    fn owe_park(&self, park: &ParkLane) -> Result<()> {
         let owed = ParkLane {
             owed: true,
             ..park.clone()
