@@ -1042,10 +1042,10 @@ fn every_event_renders_to_its_recorded_bytes() {
             Event::WakeLimit {
                 target: s("KEN-1"),
                 harness: s("codex"),
-                cause: s("process-running"),
+                cause: s("session-unbound"),
                 resume: None,
             },
-            "EVENT wake-limit KEN-1 harness=codex cause=process-running",
+            "EVENT wake-limit KEN-1 harness=codex cause=session-unbound",
         ),
         (
             Event::LaneReady { item: s("KEN-1") },

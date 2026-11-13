@@ -3,9 +3,9 @@
 //! its own bound session file; the mark is in the watch's own record on
 //! disk before the paste and a repeat for the same unread state types
 //! nothing, whatever the fleet record's writers do to the lane meanwhile; a
-//! Codex target, a pane that is gone, unreadable or mid-turn, a lane on
-//! another host or not running, and a lane whose record names a print-mode
-//! turn still running are never typed into. Each row's
+//! session no record binds, a pane that is gone, unreadable or mid-turn, a
+//! lane on another host or not running, and a lane whose record names a
+//! print-mode turn still running are never typed into. Each row's
 //! name carries the defect it catches. The stub harnesses are
 //! `fixtures/stub-turns/{claude,codex}`. The runner runs on the fake clock;
 //! the paste's confirming-turn wait runs in the `deliver` child on the
@@ -528,7 +528,8 @@ fn a_subagent_s_file_never_confirms_the_lead_s_delivery() {
 /// live and one unread event: a Claude controller gets one delivery
 /// confirmed by its own session file, and a test-owned follower on the log
 /// receives the numbered line while the controller's turn still runs; a
-/// Codex controller gets the named limit and nothing typed.
+/// controller whose record binds no session gets the named limit and
+/// nothing typed.
 #[test]
 fn an_idle_controller_gets_one_confirmed_delivery_or_a_named_limit_and_a_follower_reads_the_line() {
     // Claude: confirmed, the follower reading the line mid-turn.
@@ -592,7 +593,7 @@ fn an_idle_controller_gets_one_confirmed_delivery_or_a_named_limit_and_a_followe
         drop(follower);
         drop(fleet);
     }
-    // Codex: the limit, nothing typed.
+    // No session bound: the limit, nothing typed.
     {
         let fleet = Fleet::new();
         let typed = fleet.root.join("typed.lines");
@@ -602,7 +603,8 @@ fn an_idle_controller_gets_one_confirmed_delivery_or_a_named_limit_and_a_followe
             "lead-c",
             &[("STUB_TURNS_LINES", &typed.display().to_string())],
         );
-        fleet.set_overseer(fleet.overseer("codex", &pane));
+        await_codex_composer(&fleet, &pane.id);
+        fleet.set_overseer(unbound(fleet.overseer("codex", &pane)));
         unread(&[(OVERSEER_TARGET, "m-1")])
             .store(&fleet.paths.baseline)
             .unwrap();
@@ -617,19 +619,19 @@ fn an_idle_controller_gets_one_confirmed_delivery_or_a_named_limit_and_a_followe
             fleet.log_lines(),
             vec![
                 "EVENT idle-unread overseer",
-                "EVENT wake-limit overseer harness=codex cause=process-running",
+                "EVENT wake-limit overseer harness=codex cause=session-unbound",
             ]
         );
         assert!(
             !typed.exists(),
-            "typed into the Codex pane: {:?}",
+            "typed into the unbound pane: {:?}",
             std::fs::read_to_string(&typed)
         );
         assert_eq!(
             fleet.mark(OVERSEER_TARGET).and_then(|m| m.outcome),
             Some(WakeOutcome::Limit {
                 harness: "codex".into(),
-                cause: "process-running".into()
+                cause: "session-unbound".into()
             })
         );
     }
@@ -826,34 +828,91 @@ fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
     );
 }
 
-/// The paste route is unproved on Codex, where a paste would run again over
-/// the live history. The lane is read idle, reported `wake-limit`, and
-/// nothing reaches its pane.
+/// An idle Codex lane with unread mail is typed the one inbox line and
+/// confirmed by a user turn in its own rollout file, once per unread state,
+/// with no relaunch; a passed wall on the same lane is one the wake resumes.
 #[test]
-fn a_codex_shaped_lane_reads_wake_limit_and_is_not_typed_into() {
+fn an_idle_codex_lane_is_typed_one_line_confirmed_by_a_user_turn_in_its_own_rollout() {
     let fleet = Fleet::new();
-    let typed = fleet.root.join("typed.lines");
-    let pane = fleet.open(
-        "KEN-3",
-        "codex",
-        "lead-3",
-        &[("STUB_TURNS_LINES", &typed.display().to_string())],
-    );
-    fleet.set_lanes(vec![fleet.lane("KEN-3", "codex", &pane)]);
+    let pane = fleet.open("KEN-3", "codex", "lead-3", &[]);
+    await_codex_composer(&fleet, &pane.id);
+    let lane = fleet.lane("KEN-3", "codex", &pane);
+    fleet.set_lanes(vec![lane.clone()]);
     let clock = FakeClock::new();
     let mut body = fleet.body();
     let baseline = unread(&[("KEN-3", "m-1")]);
     let produced = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(
         rendered(&produced),
-        vec![
-            "EVENT idle-unread KEN-3",
-            "EVENT wake-limit KEN-3 harness=codex cause=process-running",
-        ]
+        vec!["EVENT idle-unread KEN-3", "EVENT wake-delivered KEN-3"]
     );
-    assert!(!typed.exists(), "{:?}", std::fs::read_to_string(&typed));
+    let typed = codex_turns(&fleet.home, "lead-3");
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(
+        typed[0].starts_with("Run .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-3 "),
+        "{typed:?}"
+    );
+    assert_eq!(
+        fleet.mark("KEN-3").and_then(|m| m.outcome),
+        Some(WakeOutcome::Delivered { turns_after: 1 })
+    );
     let again = run_once(&mut body, &baseline, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "reported once");
+    assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
+    assert_eq!(codex_turns(&fleet.home, "lead-3").len(), 1, "typed once");
+    let lane: orch_runtime::state::Lane = serde_json::from_value(lane).unwrap();
+    assert!(wake::resumable(&lane));
+}
+
+/// Wait until the Codex stub in `pane` has drawn its composer line.
+fn await_codex_composer(fleet: &Fleet, pane: &str) {
+    let deadline = Instant::now() + secs(5);
+    loop {
+        let cap = tmux(&fleet.server.socket, &["capture-pane", "-p", "-t", pane]);
+        if String::from_utf8_lossy(&cap.stdout).contains("\u{203a} ") {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the composer was never drawn");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The user turns of the Codex session `session` under `home`, in order:
+/// the text of each `event_msg` row completing a `UserMessage` item in the
+/// rollout file its id names.
+fn codex_turns(home: &Path, session: &str) -> Vec<String> {
+    let suffix = format!("-{session}.jsonl");
+    let mut files = Vec::new();
+    for year in std::fs::read_dir(home.join("sessions")).unwrap() {
+        for month in std::fs::read_dir(year.unwrap().path()).unwrap() {
+            for day in std::fs::read_dir(month.unwrap().path()).unwrap() {
+                for file in std::fs::read_dir(day.unwrap().path()).unwrap() {
+                    let path = file.unwrap().path();
+                    if path.to_string_lossy().ends_with(&suffix) {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(files.len(), 1, "{files:?}");
+    std::fs::read_to_string(&files[0])
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|row| row["type"] == "event_msg" && row["payload"]["item"]["type"] == "UserMessage")
+        .map(|row| {
+            row["payload"]["item"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// `overseer` with its session id removed: a record that binds no session.
+fn unbound(mut overseer: Value) -> Value {
+    overseer.as_object_mut().unwrap().remove("session_id");
+    overseer
 }
 
 /// The account a row of the local listing measures at `weekly` percent of
@@ -1122,8 +1181,9 @@ fn a_print_mode_turn_the_record_names_holds_the_lane_until_it_ends_and_moves_no_
 }
 
 /// The idle overseer is the one reader of the log, so mail no wake reaches
-/// it with goes to the owner. A Codex overseer with unread mail: pass one
-/// says `idle-unread` and `wake-limit`; pass two sends the owner one notice
+/// it with goes to the owner. An overseer whose record binds no session,
+/// with unread mail: pass one says `idle-unread` and `wake-limit` (the
+/// verb's `session-unbound`); pass two sends the owner one notice
 /// through the overseer mailbox naming the unread envelope and the cause;
 /// pass three sends nothing; a restarted runner (a fresh body, holding
 /// nothing in memory) sends nothing for the same state; a later unread
@@ -1139,7 +1199,8 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
         "lead-c",
         &[("STUB_TURNS_LINES", &typed.display().to_string())],
     );
-    fleet.set_overseer(fleet.overseer("codex", &pane));
+    await_codex_composer(&fleet, &pane.id);
+    fleet.set_overseer(unbound(fleet.overseer("codex", &pane)));
     let clock = FakeClock::new();
     let mut body = fleet.body();
     let first = unread(&[(OVERSEER_TARGET, "m-1")]);
@@ -1148,7 +1209,7 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
         rendered(&told),
         vec![
             "EVENT idle-unread overseer",
-            "EVENT wake-limit overseer harness=codex cause=process-running",
+            "EVENT wake-limit overseer harness=codex cause=session-unbound",
         ]
     );
     assert_eq!(
@@ -1162,7 +1223,7 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
     assert_eq!(notices.len(), 1, "{notices:?}");
     assert!(notices[0].starts_with("to=owner "), "{notices:?}");
     assert!(
-        notices[0].contains("wake-limit overseer harness=codex cause=process-running")
+        notices[0].contains("wake-limit overseer harness=codex cause=session-unbound")
             && notices[0].contains("unread=m-1")
             && notices[0].contains(&format!("pane {}", pane.id)),
         "{notices:?}"
@@ -1185,7 +1246,7 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
         rendered(&said),
         vec![
             "EVENT idle-unread overseer",
-            "EVENT wake-limit overseer harness=codex cause=process-running",
+            "EVENT wake-limit overseer harness=codex cause=session-unbound",
         ]
     );
     assert_eq!(fleet.notices().len(), 1);
@@ -1196,7 +1257,7 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
     assert!(notices[1].contains("unread=m-2"), "{notices:?}");
     assert!(
         !typed.exists(),
-        "typed into the Codex pane: {:?}",
+        "typed into the unbound pane: {:?}",
         std::fs::read_to_string(&typed)
     );
 }

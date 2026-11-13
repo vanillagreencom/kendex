@@ -25,11 +25,7 @@
 //! the inbox line into the pane past its usage banner (`deliver
 //! --account-room`), once per row value: the mark keeps the value typed.
 //!
-//! Codex: Codex publishes no idle signal, so no resume of a live Codex
-//! session is ever started beside it, and its paste route is unproved on a
-//! real Codex; the duty reads a Codex lane idle, reports `wake-limit` and
-//! types nothing, and the lane's mail waits for its relaunch. The duty
-//! starts no detached process: nothing new charges the lane cap.
+//! The duty starts no detached process: nothing new charges the lane cap.
 //!
 //! The owner: an overseer the duty leaves idle
 //! with its mail unread, `wake-limit` or `wake-unconfirmed` for the
@@ -121,25 +117,12 @@ impl Resume {
 }
 
 /// Whether the wake resumes `lane` at a passed wall: a lane it types into,
-/// on a harness with a paste route, spending an account the wall's account
-/// reading measures. The lanes duty asks a resume for such a lane alone.
+/// spending an account the wall's account reading measures. The lanes duty
+/// asks a resume for such a lane alone.
 pub fn resumable(lane: &Lane) -> bool {
     // The socket only names where a paste would go.
-    lane_target(lane, Path::new("")).is_some_and(|target| {
-        route_limit(target.harness).is_none()
-            && crate::effects::room_measured(lane, Some(target.harness)).is_some()
-    })
-}
-
-/// The capability limit a harness has for a positively idle paste, where
-/// it has one: no route resumes a live Codex session, which publishes no
-/// idle signal, and its paste route is unproved, so an idle Codex session
-/// is reported and never typed into.
-fn route_limit(harness: Harness) -> Option<&'static str> {
-    match harness {
-        Harness::Codex => Some("process-running"),
-        Harness::Claude | Harness::Copilot | Harness::Pi => None,
-    }
+    lane_target(lane, Path::new(""))
+        .is_some_and(|target| crate::effects::room_measured(lane, Some(target.harness)).is_some())
 }
 
 /// The outcome that left the target's mail unread, as the log said it;
@@ -589,44 +572,37 @@ impl Wake {
         let events = match self.read(target, room)? {
             Read::Refused => return Ok(()),
             Read::Limit { harness, cause } => limit(&mut mark, harness, cause),
-            Read::Idle { turns } => match route_limit(target.harness) {
-                Some(cause) => limit(
-                    &mut mark,
-                    target.harness.name().to_owned(),
-                    cause.to_owned(),
-                ),
-                None => {
-                    mark.turns_before = turns;
-                    // The mark is on disk before anything is typed.
-                    self.write(record, &name, Some(mark.clone()))?;
-                    let line = resume.map_or_else(|| line_for(&name), |r| r.line(&name));
-                    match self.paste(target, &line, turns, room)? {
-                        Paste::Confirmed { turns_after } => {
-                            mark.outcome = Some(WakeOutcome::Delivered { turns_after });
-                            lines(Event::WakeDelivered {
-                                target: name.clone(),
-                                resume: said.clone(),
-                            })
-                        }
-                        Paste::Unconfirmed { cause } => {
-                            mark.outcome = Some(WakeOutcome::Unconfirmed {
-                                cause: cause.clone(),
-                            });
-                            lines(Event::WakeUnconfirmed {
-                                target: name.clone(),
-                                cause,
-                                resume: said.clone(),
-                            })
-                        }
-                        Paste::Refused => {
-                            // Nothing was typed: the mark that stood before
-                            // stands again.
-                            self.write(record, &name, standing)?;
-                            return Ok(());
-                        }
+            Read::Idle { turns } => {
+                mark.turns_before = turns;
+                // The mark is on disk before anything is typed.
+                self.write(record, &name, Some(mark.clone()))?;
+                let line = resume.map_or_else(|| line_for(&name), |r| r.line(&name));
+                match self.paste(target, &line, turns, room)? {
+                    Paste::Confirmed { turns_after } => {
+                        mark.outcome = Some(WakeOutcome::Delivered { turns_after });
+                        lines(Event::WakeDelivered {
+                            target: name.clone(),
+                            resume: said.clone(),
+                        })
+                    }
+                    Paste::Unconfirmed { cause } => {
+                        mark.outcome = Some(WakeOutcome::Unconfirmed {
+                            cause: cause.clone(),
+                        });
+                        lines(Event::WakeUnconfirmed {
+                            target: name.clone(),
+                            cause,
+                            resume: said.clone(),
+                        })
+                    }
+                    Paste::Refused => {
+                        // Nothing was typed: the mark that stood before
+                        // stands again.
+                        self.write(record, &name, standing)?;
+                        return Ok(());
                     }
                 }
-            },
+            }
         };
         mark.owner = owner_word(&name, &mark);
         self.write(record, &name, Some(mark))?;

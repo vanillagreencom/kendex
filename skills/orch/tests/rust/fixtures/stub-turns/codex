@@ -5,9 +5,10 @@
 # rollout file a Codex session records under CODEX_HOME
 # (`sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl`, its first row the
 # `session_meta` of a lead, as agent-runtime's `session` module reads it),
-# named by the `--session-id` it is given, and appends every
-# line it reads to the file STUB_TURNS_LINES names, so a row proves nothing
-# was typed into it. It stands until its stdin closes.
+# named by the `--session-id` it is given, and records each line it reads
+# as one user turn there (an `event_msg` row completing a `UserMessage`
+# item), then draws the composer again. STUB_TURNS_LINES names a file every
+# line read is also appended to. It stands until its stdin closes.
 lines="${STUB_TURNS_LINES:-}"
 session="stub-$$"
 while [ $# -gt 0 ]; do
@@ -16,14 +17,22 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+rollout=""
 if [ -n "${CODEX_HOME:-}" ]; then
   day="$CODEX_HOME/sessions/$(date -u +%Y/%m/%d)"
   mkdir -p "$day"
+  rollout="$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$session.jsonl"
   printf '{"timestamp":"%s","type":"session_meta","payload":{"id":"%s","cwd":"%s","parent_thread_id":null,"source":"cli"}}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" > "$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$session.jsonl"
+    "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" > "$rollout"
 fi
 printf '\xe2\x80\xba Ask Codex to do anything\n'
 while IFS= read -r line; do
   [ -z "$lines" ] || printf '%s\n' "$line" >> "$lines"
+  if [ -n "$rollout" ]; then
+    escaped="${line//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"item_completed","thread_id":"%s","item":{"type":"UserMessage","id":"%s-%s","content":[{"type":"text","text":"%s"}]}}}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$session" "$RANDOM" "$escaped" >> "$rollout"
+  fi
   printf '\xe2\x80\xba Ask Codex to do anything\n'
 done

@@ -910,6 +910,30 @@ mod tests {
         ));
     }
 
+    /// Codex's rate-limit choice list stands in place of the composer, and
+    /// keys typed there go to the list: its selected row is a `› ` line, so
+    /// only the dialog rule read before the composer rule keeps a paste out
+    /// of it. The drawing is the measured one, with its heading on two lines
+    /// and on one.
+    #[test]
+    fn the_codex_rate_limit_list_is_never_idle_so_no_paste_reaches_it() {
+        let list = "› 1. Switch to gpt-6-luna                   Fast and affordable model for easier\n                                            tasks.\n  2. Keep current model\n  3. Keep current model (never show again)  Hide future rate limit reminders\n                                            about switching models\n\n  enter select · esc back";
+        let process = ProcessReading::HarnessUp;
+        for (heading, state) in [
+            (
+                "  Approaching rate limits\n  Switch to gpt-6-luna for lower credit usage?",
+                State::RateLimitSwitch,
+            ),
+            (
+                "  Approaching rate limits. Switch to gpt-6-luna for lower credit usage?",
+                State::Asking,
+            ),
+        ] {
+            let screen = format!("› Continue the task.\n• Done.\n\n{heading}\n\n\n{list}");
+            assert_eq!(judge(&screen, Harness::Codex, &process, None), state);
+        }
+    }
+
     /// A wall first seen before the live process
     /// started is older, one seen at or after it is current, and a start
     /// that cannot be read leaves the wall unjudged, never current.
