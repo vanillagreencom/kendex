@@ -99,6 +99,12 @@ pub fn unsubscribe(
     };
     if keep {
         let resync = detach::resync_kept(env, scope).map_err(|e| e.to_string())?;
+        warnings.extend(
+            resync
+                .warnings
+                .iter()
+                .map(|warning| format!("{}: {}", warning.name, warning.message)),
+        );
         undone.extend(crate::repo_effects::write(env, &resync)?);
     }
     Ok(Unsubscribed { undone, warnings })

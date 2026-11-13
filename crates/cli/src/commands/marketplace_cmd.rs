@@ -189,7 +189,13 @@ fn run_unsubscribe(
             kendex_core::apply::execute(env, &plan)?;
             detach::resync_kept(env, &scope)
                 .map_err(Into::into)
-                .and_then(|resync| apply_report_accounted(env, &resync, None))
+                .and_then(|resync| {
+                    ui::stderr(&super::engine_common::warning_lines(
+                        &style,
+                        &resync.warnings,
+                    ));
+                    apply_report_accounted(env, &resync, None)
+                })
                 .and_then(|wrote| wrote.after.map_err(AfterFailed::into_error))
         }
         (_, false) => {
