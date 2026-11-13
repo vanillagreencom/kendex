@@ -150,6 +150,7 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => {
           );
           if (answer.status === "ok") {
             for (const note of answer.data.notes) toast.message(note);
+            sayWritten(answer.data.warnings);
           }
           return answer;
         }),
@@ -202,6 +203,7 @@ export async function installTemplate(
   );
   if (answer.status === "error") return { ok: false, reason: answer.error };
   for (const note of answer.data.notes) toast.message(note);
+  sayWritten(answer.data.warnings);
   // A run that stopped short landed part of the template and says why it
   // went no further. Both halves, because both are true: the dialog
   // already draws a place that took some of an install and refused the

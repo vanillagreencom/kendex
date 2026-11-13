@@ -3,12 +3,17 @@
 //! Every stored skill tree's links mean what they reach from the one
 //! position its store fixes: a path catalog's item directory, the scope's
 //! shared tree for scope-owned content tagged `links = "shared-tree"`, a
-//! destination catalog's item directory for an import. Untagged scope-owned
-//! content and fetched catalogs carry their bytes as delivered and are never
-//! converted or judged. The renderer and every writer that moves skill bytes
-//! ask [`declared`] or a destination function for the reading, then convert
-//! once, at the move, with [`convert`] or [`agreed`]; none repeats a source
-//! name, fork record or containment match of its own.
+//! destination catalog's item directory for an import. An installed or
+//! unmanaged copy reads them where it stands ([`observed`]). Untagged
+//! scope-owned content carries its bytes as each place it was delivered to
+//! ([`delivered`]) reads them, and a fetched catalog's bytes are the
+//! publisher's; neither is converted where it is stored.
+//!
+//! The renderer and every writer that moves skill bytes ask [`declared`],
+//! [`observed`] or a destination function for the reading, convert once,
+//! at the move, with [`convert`] or [`agreed`], and compare trees in the one
+//! form [`comparable_tree`] gives; none repeats a source name, fork record,
+//! containment match or tree comparison of its own.
 
 use std::path::{Path, PathBuf};
 
@@ -29,11 +34,12 @@ pub(crate) struct Position {
 }
 
 /// What a stored tree's links mean.
-pub(crate) enum Reading<'a> {
+#[derive(Clone)]
+pub(crate) enum Reading {
     /// Links mean what they reach from `position.directory`.
     Fixed {
         position: Position,
-        siblings: Siblings<'a>,
+        siblings: Siblings,
     },
     /// Untagged scope-owned content: each position reads the bytes as it
     /// was delivered them. Never converted or judged.
@@ -44,22 +50,44 @@ pub(crate) enum Reading<'a> {
 
 /// What may stand beside a reading position and move with its own tree, so
 /// a link into it keeps its bytes.
-#[derive(Clone, Copy)]
-pub(crate) enum Siblings<'a> {
+#[derive(Clone)]
+pub(crate) enum Siblings {
     /// A harness skills directory or the shared tree: every subdirectory
     /// is a skill tree.
     SkillsDirectory,
     /// An authored catalog: a directory the catalog gives a `SKILL.md`.
-    Catalog(&'a SealedSource),
+    Catalog(SealedSource),
     /// A hand-made folder: nothing beside it is known to be a skill.
     Unknown,
 }
 
 /// One position a writer holds the tree at, with the bytes it holds there.
-pub(crate) struct Origin<'a> {
+pub(crate) struct Origin {
     pub(crate) directory: PathBuf,
+    /// Its regular files.
     pub(crate) files: Files,
-    pub(crate) siblings: Siblings<'a>,
+    pub(crate) siblings: Siblings,
+    /// Its files that are links, which a move carries as they are.
+    pub(crate) link_files: Vec<LinkFile>,
+}
+
+/// A file inside a tree that is a symbolic link: `target` is what it
+/// holds, never followed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LinkFile {
+    pub(crate) file: PathBuf,
+    pub(crate) target: PathBuf,
+}
+
+/// What a link file reaches from where it stands, resolved without
+/// following anything: a place inside its own tree by its path there, any
+/// other place by its whole path.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Reaches {
+    Inside(PathBuf),
+    Outside(PathBuf),
+    /// A target whose `..` climbs past the root.
+    Nowhere(PathBuf),
 }
 
 /// A link a conversion kept as written because its target does not
@@ -128,24 +156,47 @@ pub(crate) fn catalog(root: &Path, item: &Path) -> Position {
     }
 }
 
-/// The reading a declared skill's stored bytes hold. `item` is where the
-/// source keeps the item and `sealed` the catalog it is read from.
-pub(crate) fn declared<'a>(
+/// The store a skill's bytes are kept in: the source holding them and the
+/// reading its declaration records.
+#[derive(Clone, Copy)]
+pub(crate) struct Store<'a> {
+    pub(crate) source: &'a str,
+    pub(crate) links: Option<SkillLinks>,
+}
+
+impl<'a> From<&'a ItemDecl> for Store<'a> {
+    fn from(decl: &'a ItemDecl) -> Self {
+        Store {
+            source: &decl.source,
+            links: decl.links,
+        }
+    }
+}
+
+/// Whether the store is scope-owned content stored before kendex fixed a
+/// reading for it: [`Reading::AsDelivered`].
+pub(crate) fn as_delivered(store: Store<'_>) -> bool {
+    matches!(store.source, LOCAL_SOURCE_NAME | INPLACE_SOURCE_NAME) && store.links.is_none()
+}
+
+/// The reading a stored skill's bytes hold. `item` is where the source
+/// keeps the item and `sealed` the catalog it is read from.
+pub(crate) fn declared(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
-    decl: &ItemDecl,
+    store: Store<'_>,
     name: &str,
     item: &Path,
-    sealed: &'a SealedSource,
-) -> Reading<'a> {
-    match decl.source.as_str() {
-        LOCAL_SOURCE_NAME | INPLACE_SOURCE_NAME => match decl.links {
-            Some(SkillLinks::SharedTree) => Reading::Fixed {
-                position: shared_tree(env, scope, name),
-                siblings: Siblings::SkillsDirectory,
-            },
-            None => Reading::AsDelivered,
+    sealed: &SealedSource,
+) -> Reading {
+    if as_delivered(store) {
+        return Reading::AsDelivered;
+    }
+    match store.source {
+        LOCAL_SOURCE_NAME | INPLACE_SOURCE_NAME => Reading::Fixed {
+            position: shared_tree(env, scope, name),
+            siblings: Siblings::SkillsDirectory,
         },
         source => match manifest.sources.get(source) {
             Some(declared) if declared.path.is_some() => Reading::Fixed {
@@ -153,16 +204,47 @@ pub(crate) fn declared<'a>(
                     directory: item.to_path_buf(),
                     bound: scope_bound(env, scope),
                 },
-                siblings: Siblings::Catalog(sealed),
+                siblings: Siblings::Catalog(sealed.clone()),
             },
             _ => Reading::Opaque,
         },
     }
 }
 
+/// The reading of an installed, edited or unmanaged copy: the physical
+/// directory it stands in, beside other skill trees.
+pub(crate) fn observed(env: &Env, scope: &Scope, directory: PathBuf) -> Reading {
+    Reading::Fixed {
+        position: Position {
+            directory,
+            bound: scope_bound(env, scope),
+        },
+        siblings: Siblings::SkillsDirectory,
+    }
+}
+
+/// The physical directories the install records of `(kind, name)` name,
+/// links followed: the places its bytes were delivered to, each of which
+/// reads untagged bytes as it was delivered them.
+pub(crate) fn delivered(lock: &crate::lock::Lock, kind: ItemKind, name: &str) -> Vec<PathBuf> {
+    let mut directories: Vec<PathBuf> = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == kind && entry.name == name)
+        .filter_map(|entry| entry.emitted.as_ref())
+        .flat_map(|emitted| emitted.paths.iter())
+        .filter_map(|path| crate::paths::canonical(path).ok())
+        .filter(|path| path.is_dir())
+        .collect();
+    directories.sort();
+    directories.dedup();
+    directories
+}
+
 /// The tree read from `origin` as it reads from `destination`: one
-/// conversion, under the destination's bound.
-pub(crate) fn convert(origin: Origin<'_>, destination: &Position) -> (Files, Vec<KeptLink>) {
+/// conversion of its regular files, under the destination's bound. Its link
+/// files are not written through, so they are not part of the result.
+pub(crate) fn convert(origin: Origin, destination: &Position) -> (Files, Vec<KeptLink>) {
     let mut kept = Vec::new();
     let files = origin
         .files
@@ -171,7 +253,7 @@ pub(crate) fn convert(origin: Origin<'_>, destination: &Position) -> (Files, Vec
             let bytes = match std::str::from_utf8(&bytes) {
                 Ok(text) => {
                     let (text, unrepresentable) =
-                        convert_text(text, &origin.directory, &rel, origin.siblings, destination);
+                        convert_text(text, &origin.directory, &rel, &origin.siblings, destination);
                     kept.extend(unrepresentable.into_iter().map(|target| KeptLink {
                         file: rel.clone(),
                         target,
@@ -187,20 +269,19 @@ pub(crate) fn convert(origin: Origin<'_>, destination: &Position) -> (Files, Vec
 }
 
 /// Every origin position interpreted into `destination`. One write stands
-/// only when each position's content and link meanings agree; raw byte
-/// equality and position order decide nothing.
-pub(crate) fn agreed<'a>(
-    first: Origin<'a>,
-    rest: impl IntoIterator<Item = Origin<'a>>,
+/// only when each position's content and link meanings agree, its link
+/// files included; raw byte equality, position order and the order a
+/// directory lists its entries in decide nothing.
+pub(crate) fn agreed(
+    first: Origin,
+    rest: impl IntoIterator<Item = Origin>,
     destination: &Position,
 ) -> Converted {
     let position = first.directory.clone();
-    let (files, kept) = convert(first, destination);
-    let expected = meanings(&files, &kept, destination);
+    let (expected, files, kept) = meaning(first, destination);
     for origin in rest {
         let other_position = origin.directory.clone();
-        let (other, other_kept) = convert(origin, destination);
-        if meanings(&other, &other_kept, destination) != expected {
+        if meaning(origin, destination).0 != expected {
             return Converted::Disagree {
                 positions: [position, other_position],
             };
@@ -209,25 +290,70 @@ pub(crate) fn agreed<'a>(
     Converted::Agreed { files, kept }
 }
 
-/// What a converted tree means at `destination`: every text file compared
-/// by the targets its links resolve to, every other byte exact, and which
-/// links were kept.
-fn meanings(
-    files: &Files,
-    kept: &[KeptLink],
-    destination: &Position,
-) -> (Files, Vec<(PathBuf, String)>) {
+/// What one position's tree means once interpreted into `destination`,
+/// with its converted files and the links the conversion kept.
+fn meaning(origin: Origin, destination: &Position) -> (Meaning, Files, Vec<KeptLink>) {
+    let mut link_files: Vec<(PathBuf, Reaches)> = origin
+        .link_files
+        .iter()
+        .map(|link| (link.file.clone(), reaches(&origin.directory, link)))
+        .collect();
+    link_files.sort();
+    let (files, kept) = convert(origin, destination);
+    let meaning = Meaning {
+        files: comparable_tree(&files, &destination.directory),
+        kept: kept_meanings(&kept, destination),
+        link_files,
+    };
+    (meaning, files, kept)
+}
+
+/// What a tree means at its destination, in the form two positions
+/// compare in.
+#[derive(PartialEq, Eq)]
+struct Meaning {
+    files: Vec<(PathBuf, Vec<u8>)>,
+    kept: Vec<(PathBuf, String)>,
+    link_files: Vec<(PathBuf, Reaches)>,
+}
+
+/// What `link` reaches from the tree at `directory`. A move carries the
+/// link as it is, so a copy that read it from another place reads
+/// something else once that copy is gone.
+fn reaches(directory: &Path, link: &LinkFile) -> Reaches {
+    match crate::fs::resolved(&directory.join(&link.file), &link.target) {
+        Some(at) => match at.strip_prefix(directory) {
+            Ok(inside) => Reaches::Inside(inside.to_path_buf()),
+            Err(_) => Reaches::Outside(at),
+        },
+        None => Reaches::Nowhere(link.target.clone()),
+    }
+}
+
+/// A tree's regular files in the one form two readings of it at
+/// `directory` compare in: every text file with each link respelled by the
+/// target it resolves to there, every other byte exact, sorted by path.
+pub(crate) fn comparable_tree(
+    files: &[(PathBuf, Vec<u8>)],
+    directory: &Path,
+) -> Vec<(PathBuf, Vec<u8>)> {
     let mut compared: Vec<(PathBuf, Vec<u8>)> = files
         .iter()
         .map(|(rel, bytes)| {
             let bytes = match std::str::from_utf8(bytes) {
-                Ok(text) => comparable(text, &destination.directory.join(rel)).into_bytes(),
+                Ok(text) => comparable(text, &directory.join(rel)).into_bytes(),
                 Err(_) => bytes.clone(),
             };
             (rel.clone(), bytes)
         })
         .collect();
     compared.sort();
+    compared
+}
+
+/// The links a conversion kept, by the file holding each and the target
+/// it resolves to at `destination`.
+fn kept_meanings(kept: &[KeptLink], destination: &Position) -> Vec<(PathBuf, String)> {
     let mut kept: Vec<(PathBuf, String)> = kept
         .iter()
         .map(|link| {
@@ -241,14 +367,14 @@ fn meanings(
         })
         .collect();
     kept.sort();
-    (compared, kept)
+    kept
 }
 
 /// The canonical form two texts at `file` compare in: each link
 /// destination respelled by the target it resolves to. The managed
 /// instructions block stays opaque, so a comparison never discards an edit
 /// to its contents.
-pub(crate) fn comparable(text: &str, file: &Path) -> String {
+fn comparable(text: &str, file: &Path) -> String {
     match super::instructions_block_range(text) {
         Some((start, end)) => format!(
             "{}{}{}",
@@ -264,7 +390,7 @@ fn convert_text(
     text: &str,
     origin: &Path,
     rel: &Path,
-    siblings: Siblings<'_>,
+    siblings: &Siblings,
     destination: &Position,
 ) -> (String, Vec<String>) {
     let convert = |part: &str| {
@@ -294,7 +420,7 @@ fn convert_text(
 
 /// Whether `target` lies in another skill tree beside `origin`, which
 /// moves with its own tree.
-fn sibling(origin: &Path, siblings: Siblings<'_>, target: &Path) -> bool {
+fn sibling(origin: &Path, siblings: &Siblings, target: &Path) -> bool {
     let Some(parent) = origin.parent() else {
         return false;
     };

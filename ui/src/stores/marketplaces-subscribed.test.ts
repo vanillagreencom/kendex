@@ -1,9 +1,15 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { commands, type DirectoryRow, type MarketplaceRow } from "@/bindings";
+import {
+  commands,
+  type DirectoryRow,
+  type ItemWarning,
+  type MarketplaceRow,
+} from "@/bindings";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useMarketplacesStore } from "./marketplaces";
 import { rowSubscribed, subscribedKeys } from "./marketplaces-shared";
+import { useProblemsStore } from "./problems";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -62,6 +68,17 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   mode: null,
   recordsUnreadable: false,
 });
+
+/** A link the keep held as written, with its fix: the keep's own report. */
+const kept: ItemWarning = {
+  kind: "skill",
+  name: "house-style",
+  message: "skill-link-kept: SKILL.md: ../../memory/x.md",
+  remediation: "use an absolute path",
+};
+// The line `sayWritten` gives a warning, which the person reads with its fix
+// beneath it.
+const keptToast = `${kept.name}: ${kept.message}`;
 
 describe("a Community row's Subscribed marker", () => {
   beforeEach(() => {
@@ -192,7 +209,7 @@ describe("a Community row's Subscribed marker", () => {
     useMarketplacesStore.setState({ rows: [], read: READ_LANDED });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "error",
-      error: "an edited package is in the way",
+      error: { phase: "refused", message: "an edited package is in the way" },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -284,11 +301,11 @@ describe("a Community row's Subscribed marker", () => {
         calls: [],
       },
       {
-        name: "detach could not represent a link",
+        name: "the keep kept a link as written",
         keep: true,
-        warnings: ["skills/house-style: link target could not be represented"],
+        warnings: [kept],
         undone: undefined,
-        calls: [["skills/house-style: link target could not be represented"]],
+        calls: [[keptToast, { description: kept.remediation }]],
       },
     ];
     expect(rows.length).toBeGreaterThan(0);
@@ -316,6 +333,46 @@ describe("a Community row's Subscribed marker", () => {
         entry.calls,
       );
     }
+  });
+
+  // The keep landed before the install behind it failed: the subscription is
+  // gone and the packages are the person's own, so the dialog closes, the
+  // failure is said once, what the keep reported still reaches the window,
+  // and the rows are read again.
+  it("treats a recorded keep as landed and says what failed after it", async () => {
+    useProblemsStore.getState().closeError();
+    useMarketplacesStore.setState({
+      rows: [row("Acme/Kit", "acme/kit")],
+      read: READ_LANDED,
+    });
+    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+      status: "error",
+      error: {
+        phase: "recorded",
+        message: "the render of skill gh failed",
+        written: [kept],
+      },
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    const outcome = await useMarketplacesStore
+      .getState()
+      .unsubscribe({ scope: "global" }, "kit", true, false);
+
+    expect(outcome).toEqual({ done: true });
+    expect(useMarketplacesStore.getState().error).toBeNull();
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("the render of skill gh failed");
+    expect(vi.mocked(toast.message).mock.calls).toEqual([
+      [keptToast, { description: kept.remediation }],
+    ]);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(commands.marketplacesOverview).toHaveBeenCalled();
+    expect(useMarketplacesStore.getState().rows).toEqual([]);
   });
 
   it("falls back to the snapshot only before the live list has loaded", () => {

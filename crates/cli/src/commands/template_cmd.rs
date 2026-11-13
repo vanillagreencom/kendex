@@ -820,6 +820,10 @@ pub fn run_install(env: &Env, planned: &Planned) -> CliResult {
     for note_line in &landed.notes {
         note(note_line);
     }
+    crate::ui::stderr(&super::engine_common::warning_lines(
+        &crate::ui::style(),
+        &landed.warnings,
+    ));
     // Unconditional on an answer, the way `add` is and for the same
     // reason: every path that answers here has written. An install with
     // nothing to install refuses above, and a run that stopped short only

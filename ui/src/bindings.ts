@@ -501,7 +501,7 @@ export const commands = {
 	 *  converts them to local forks; otherwise they are uninstalled, and
 	 *  `discard_edits` takes their hand edits along instead of refusing.
 	 */
-	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, string>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
+	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, UnsubscribeError_Serialize>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
 	/**
 	 *  The directory as the tab shows it. `refresh` forces a revalidation;
 	 *  otherwise the cached list is served within its TTL.
@@ -685,7 +685,7 @@ export const commands = {
 	 *  resolves to, the copies it owns, and the members nothing can reach.
 	 */
 	templateResolve: (name: string) => typedError<Resolution_Serialize, string>(__TAURI_INVOKE("template_resolve", { name })),
-	templateInstall: (name: string, destination: Scope, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<TemplateInstall, string>(__TAURI_INVOKE("template_install", { name, destination, harnesses, method })),
+	templateInstall: (name: string, destination: Scope, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<TemplateInstall_Serialize, string>(__TAURI_INVOKE("template_install", { name, destination, harnesses, method })),
 	/**  The files a template owns, for the tree that inspects its copies. */
 	templateFiles: (name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("template_files", { name })),
 	templateFile: (name: string, path: string) => typedError<string, string>(__TAURI_INVOKE("template_file", { name, path })),
@@ -5905,7 +5905,13 @@ export type TemplateFinding = {
  *  What one template install did. Read after the write: the parts are
  *  what landed, not what was asked for.
  */
-export type TemplateInstall = {
+export type TemplateInstall = TemplateInstall_Serialize | TemplateInstall_Deserialize;
+
+/**
+ *  What one template install did. Read after the write: the parts are
+ *  what landed, not what was asked for.
+ */
+export type TemplateInstall_Deserialize = {
 	/**
 	 *  The repositories subscribed to along the way, in the order they
 	 *  were.
@@ -5926,6 +5932,52 @@ export type TemplateInstall = {
 	copied: string[],
 	/**  What a step said while it worked. */
 	notes: string[],
+	/**
+	 *  What the renders of the installed packages warned about, each with
+	 *  its fix: a link a copy keeps that reaches nothing from here, say.
+	 */
+	warnings: ItemWarning_Deserialize[],
+	/**
+	 *  Why the run stopped short of the whole template, or null where it
+	 *  finished. What `subscribed` and `declared` name is on disk either
+	 *  way, and `copied` names bytes that may sit ahead of a render that
+	 *  refused — that is what makes this an account rather than a
+	 *  refusal, and it is why a run that stopped still answers rather
+	 *  than throwing its own record away.
+	 */
+	stopped: string | null,
+};
+
+/**
+ *  What one template install did. Read after the write: the parts are
+ *  what landed, not what was asked for.
+ */
+export type TemplateInstall_Serialize = {
+	/**
+	 *  The repositories subscribed to along the way, in the order they
+	 *  were.
+	 */
+	subscribed: string[],
+	/**
+	 *  Packages installed, by kind and name: each declared in the
+	 *  destination's manifest and rendered by an add that committed.
+	 */
+	declared: string[],
+	/**
+	 *  Copies written into the destination's own local packages, by kind
+	 *  and name: bytes in the local slot, declared from there in the same
+	 *  write. Not a package installed: the add that renders a copy runs
+	 *  after this write and can refuse, so a name here that `declared`
+	 *  lacks is local bytes and a declaration with no render behind them.
+	 */
+	copied: string[],
+	/**  What a step said while it worked. */
+	notes: string[],
+	/**
+	 *  What the renders of the installed packages warned about, each with
+	 *  its fix: a link a copy keeps that reaches nothing from here, say.
+	 */
+	warnings: ItemWarning_Serialize[],
 	/**
 	 *  Why the run stopped short of the whole template, or null where it
 	 *  finished. What `subscribed` and `declared` name is on disk either
@@ -5995,6 +6047,39 @@ export type UnreadableScope = {
 };
 
 /**
+ *  Why unsubscribing did not finish, by phase: a refusal left the scope as
+ *  it was; a keep that landed before the render after it failed has kept
+ *  the packages, and what keeping them reported comes with the cause.
+ */
+export type UnsubscribeError = UnsubscribeError_Serialize | UnsubscribeError_Deserialize;
+
+/**
+ *  Why unsubscribing did not finish, by phase: a refusal left the scope as
+ *  it was; a keep that landed before the render after it failed has kept
+ *  the packages, and what keeping them reported comes with the cause.
+ */
+export type UnsubscribeError_Deserialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the keep that landed reported about the packages it kept,
+ *  as `Unsubscribed::warnings` carries them on one that finished.
+ *  Left off the wire when it reported nothing.
+ */
+written: ItemWarning_Deserialize[] };
+
+/**
+ *  Why unsubscribing did not finish, by phase: a refusal left the scope as
+ *  it was; a keep that landed before the render after it failed has kept
+ *  the packages, and what keeping them reported comes with the cause.
+ */
+export type UnsubscribeError_Serialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the keep that landed reported about the packages it kept,
+ *  as `Unsubscribed::warnings` carries them on one that finished.
+ *  Left off the wire when it reported nothing.
+ */
+written?: ItemWarning_Serialize[] };
+
+/**
  *  What unsubscribing from a marketplace would do: the packages that can be
  *  removed or kept as-is, the ones the user edited (which must be forked or
  *  discarded first), and the curated sets that leave with the source.
@@ -6022,7 +6107,11 @@ export type Unsubscribed = Unsubscribed_Serialize | Unsubscribed_Deserialize;
  *  than a bare list.
  */
 export type Unsubscribed_Deserialize = {
-	warnings: string[],
+	/**
+	 *  What keeping the packages and rendering them again warned about,
+	 *  each with its fix: a link the kept copy holds as written, say.
+	 */
+	warnings: ItemWarning_Deserialize[],
 	undone: string[],
 };
 
@@ -6034,7 +6123,11 @@ export type Unsubscribed_Deserialize = {
  *  than a bare list.
  */
 export type Unsubscribed_Serialize = {
-	warnings: string[],
+	/**
+	 *  What keeping the packages and rendering them again warned about,
+	 *  each with its fix: a link the kept copy holds as written, say.
+	 */
+	warnings: ItemWarning_Serialize[],
 	undone?: string[],
 };
 

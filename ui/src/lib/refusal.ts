@@ -14,8 +14,10 @@
 // reader asks its questions so both land.
 
 /** A refusal the commands answer with through a `kind`: `WriteRefused` and
- *  `AccountCallRefused`. `ForkBesideError` discriminates on `phase` instead
- *  and is outside these two — `ui/src/stores/updates-edits.ts` reads it. */
+ *  `AccountCallRefused`. `ForkBesideError` and `UnsubscribeError`
+ *  discriminate on `phase` instead and are outside these two —
+ *  `ui/src/stores/updates-edits.ts` and `ui/src/stores/marketplaces.ts`
+ *  read them. */
 type Shaped = { kind: string; message?: string };
 
 /** The refusal's own kind, or null where the transport failed and left a

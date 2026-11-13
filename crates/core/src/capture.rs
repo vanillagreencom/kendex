@@ -24,22 +24,24 @@ pub(crate) fn read_tree(root: &Path) -> Result<Tree> {
     read(root, None)
 }
 
-/// The regular files of a tree a move carries whole, and the relative
-/// paths of the links inside it, which the move carries as they are and
-/// no reader follows.
-pub(crate) fn read_tree_beside_links(root: &Path) -> Result<(Tree, Vec<PathBuf>)> {
+/// The regular files of a tree a move carries whole, and the links inside
+/// it as `(relative path, target it holds)`, which the move carries as they
+/// are and no reader follows.
+pub(crate) fn read_tree_beside_links(root: &Path) -> Result<(Tree, Vec<(PathBuf, PathBuf)>)> {
     let mut links = Vec::new();
     let files = read(root, Some(&mut links))?;
     Ok((files, links))
 }
 
-fn read(root: &Path, mut links: Option<&mut Vec<PathBuf>>) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+type Links = Vec<(PathBuf, PathBuf)>;
+
+fn read(root: &Path, mut links: Option<&mut Links>) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     fn walk(
         dir: &Path,
         rel: &Path,
         files: &mut Vec<(PathBuf, Vec<u8>)>,
         bytes: &mut u64,
-        links: &mut Option<&mut Vec<PathBuf>>,
+        links: &mut Option<&mut Links>,
     ) -> Result<()> {
         for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
             // A per-entry read error is not silently skipped: dropping it
@@ -57,7 +59,8 @@ fn read(root: &Path, mut links: Option<&mut Vec<PathBuf>>) -> Result<Vec<(PathBu
             // nothing the user asked to keep is lost without a word.
             if path.is_symlink() {
                 if let Some(links) = links.as_deref_mut() {
-                    links.push(rel);
+                    let target = fs::read_link(&path).map_err(|e| CoreError::io(&path, e))?;
+                    links.push((rel, target));
                     continue;
                 }
                 return Err(CoreError::ForeignSymlink {

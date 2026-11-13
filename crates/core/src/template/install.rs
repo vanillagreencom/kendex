@@ -135,7 +135,7 @@ impl Resolution {
 
 /// What one template install did. Read after the write: the parts are
 /// what landed, not what was asked for.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateInstall {
     /// The repositories subscribed to along the way, in the order they
@@ -152,6 +152,9 @@ pub struct TemplateInstall {
     pub copied: Vec<String>,
     /// What a step said while it worked.
     pub notes: Vec<String>,
+    /// What the renders of the installed packages warned about, each with
+    /// its fix: a link a copy keeps that reaches nothing from here, say.
+    pub warnings: Vec<crate::engine::ItemWarning>,
     /// Why the run stopped short of the whole template, or null where it
     /// finished. What `subscribed` and `declared` name is on disk either
     /// way, and `copied` names bytes that may sit ahead of a render that
@@ -164,12 +167,7 @@ pub struct TemplateInstall {
 impl TemplateInstall {
     fn rendered(&mut self, report: crate::engine::EngineReport) {
         self.notes.extend(report.notes);
-        self.notes.extend(
-            report
-                .warnings
-                .into_iter()
-                .map(|warning| format!("{}: {}", warning.name, warning.message)),
-        );
+        self.warnings.extend(report.warnings);
     }
 }
 

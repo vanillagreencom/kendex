@@ -559,7 +559,7 @@ fn rebase_for_surface(
         ctx.env,
         ctx.scope,
         ctx.manifest,
-        ctx.decl,
+        ctx.decl.into(),
         ctx.name,
         ctx.item_path,
         ctx.sealed,
@@ -575,6 +575,7 @@ fn rebase_for_surface(
                     directory: position.directory,
                     files,
                     siblings,
+                    link_files: Vec::new(),
                 },
                 &rendered,
             );

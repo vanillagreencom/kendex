@@ -167,9 +167,18 @@ pub(super) struct ResolvedSelection {
     /// Where on this machine the bytes were read from, when they were —
     /// what the target-overlap refusal compares against.
     pub read_from: Option<PathBuf>,
-    /// Every place the selected bytes were seen, with where their links
-    /// are read from there.
-    pub(super) readings: Vec<(String, origins::ReadAt)>,
+    /// Every place the selected bytes were seen, with what their links
+    /// mean there.
+    pub(super) readings: Vec<Seen>,
+}
+
+/// One place a selection's bytes were seen.
+pub(super) struct Seen {
+    /// The place, as the inventory lists it.
+    pub(super) location: String,
+    /// The scope whose records say where untagged content was delivered.
+    pub(super) scope: Scope,
+    pub(super) reading: crate::render::skill::links::Reading,
 }
 
 /// Whether a writer reads the person's own untagged content from the places
@@ -180,93 +189,123 @@ pub(crate) enum Untagged {
     Carried,
 }
 
+/// What storing a selection did to a skill's links.
+pub(crate) enum Stored {
+    /// Converted into the destination's reading; `kept` are the links the
+    /// conversion kept as written.
+    Converted {
+        kept: Vec<crate::render::skill::links::KeptLink>,
+    },
+    /// Untagged content nothing records the delivery of, carried as it is;
+    /// `escaping` are its links that leave the tree, which make no claim
+    /// about their targets in the destination.
+    Carried {
+        escaping: Vec<crate::render::skill::links::KeptLink>,
+    },
+    /// Not a skill tree, or bytes whose reading leaves them as they are:
+    /// fetched content, or untagged content a writer carries.
+    Untouched,
+}
+
+impl Stored {
+    /// Every link this store reports on, converted or carried.
+    pub(crate) fn reported(&self) -> &[crate::render::skill::links::KeptLink] {
+        match self {
+            Stored::Converted { kept } => kept,
+            Stored::Carried { escaping } => escaping,
+            Stored::Untouched => &[],
+        }
+    }
+}
+
 impl ResolvedSelection {
     /// A skill's links converted into `destination` from every place the
-    /// selected bytes were seen. `None` where the bytes are carried as they
-    /// are; otherwise what the conversion kept. Places that read the bytes
-    /// as different targets cannot be offered apart, since a selection is
-    /// keyed by its bytes, so they refuse by name.
+    /// selected bytes were seen. Places that read the bytes as different
+    /// targets cannot be offered apart, since a selection is keyed by its
+    /// bytes, so they refuse by name. Untagged content read from where it
+    /// was delivered refuses where the install record saying so cannot be
+    /// read.
     pub(super) fn convert_into(
         &mut self,
+        env: &Env,
         kind: ItemKind,
         name: &str,
         destination: &crate::render::skill::links::Position,
         untagged: Untagged,
-    ) -> Result<Option<Vec<crate::render::skill::links::KeptLink>>> {
-        use crate::render::skill::links;
+    ) -> Result<Stored> {
+        use crate::render::skill::links::{self, Reading};
         let ItemBytes::Tree(files) = &self.bytes else {
-            return Ok(None);
+            return Ok(Stored::Untouched);
         };
         if kind != ItemKind::Skill {
-            return Ok(None);
+            return Ok(Stored::Untouched);
         }
-        let mut positions: Vec<(String, PathBuf, Option<PathBuf>)> = Vec::new();
+        let mut positions: Vec<(String, PathBuf, links::Siblings)> = Vec::new();
         let mut unrecorded = false;
-        for (location, reading) in &self.readings {
-            match reading {
-                origins::ReadAt::Directory { directory, catalog } => {
-                    positions.push((location.clone(), directory.clone(), catalog.clone()));
+        for seen in &self.readings {
+            match &seen.reading {
+                Reading::Fixed { position, siblings } => {
+                    positions.push((
+                        seen.location.clone(),
+                        position.directory.clone(),
+                        siblings.clone(),
+                    ));
                 }
-                origins::ReadAt::Delivered(places) => match untagged {
+                Reading::AsDelivered => match untagged {
                     Untagged::Carried => {}
-                    Untagged::Delivered if places.is_empty() => unrecorded = true,
-                    Untagged::Delivered => positions.extend(
-                        places
-                            .iter()
-                            .map(|place| (location.clone(), place.clone(), None)),
-                    ),
+                    Untagged::Delivered => {
+                        let at = crate::lock::lock_path(env, &seen.scope);
+                        let lock = crate::lock::load(&at)?;
+                        let places = links::delivered(&lock, kind, name);
+                        unrecorded |= places.is_empty();
+                        positions.extend(places.into_iter().map(|place| {
+                            (
+                                seen.location.clone(),
+                                place,
+                                links::Siblings::SkillsDirectory,
+                            )
+                        }));
+                    }
                 },
-                origins::ReadAt::Opaque => {}
+                Reading::Opaque => {}
             }
         }
         if positions.is_empty() {
             if !unrecorded {
-                return Ok(None);
+                return Ok(Stored::Untouched);
             }
             // Nothing says where these bytes were read from: they are
             // carried as they are, and every link that leaves the tree is
             // reported as making no claim about its target.
-            let (_, kept) = links::convert(
+            let (_, escaping) = links::convert(
                 links::Origin {
                     directory: destination.directory.clone(),
                     files: files.clone(),
                     siblings: links::Siblings::Unknown,
+                    link_files: Vec::new(),
                 },
                 &links::Position {
                     directory: destination.directory.clone(),
                     bound: destination.directory.clone(),
                 },
             );
-            return Ok(Some(kept));
+            return Ok(Stored::Carried { escaping });
         }
-        let catalogs: Vec<Option<crate::source_read::SealedSource>> = positions
+        let mut origins = positions
             .iter()
-            .map(|(_, _, catalog)| {
-                catalog
-                    .as_ref()
-                    .and_then(|root| crate::source_read::SealedSource::open(root).ok())
-            })
-            .collect();
-        let mut origins =
-            positions
-                .iter()
-                .zip(&catalogs)
-                .map(|((_, directory, catalog), sealed)| links::Origin {
-                    directory: directory.clone(),
-                    files: files.clone(),
-                    siblings: match (catalog, sealed) {
-                        (Some(_), Some(sealed)) => links::Siblings::Catalog(sealed),
-                        (Some(_), None) => links::Siblings::Unknown,
-                        (None, _) => links::Siblings::SkillsDirectory,
-                    },
-                });
+            .map(|(_, directory, siblings)| links::Origin {
+                directory: directory.clone(),
+                files: files.clone(),
+                siblings: siblings.clone(),
+                link_files: Vec::new(),
+            });
         let Some(first) = origins.next() else {
-            return Ok(None);
+            return Ok(Stored::Untouched);
         };
         match links::agreed(first, origins, destination) {
             links::Converted::Agreed { files, kept } => {
                 self.bytes = ItemBytes::Tree(files);
-                Ok(Some(kept))
+                Ok(Stored::Converted { kept })
             }
             links::Converted::Disagree {
                 positions: [one, other],
@@ -487,9 +526,8 @@ pub struct ResolvedBytes {
     /// at the `NOTICES/<source>/<file>` paths a catalog-shaped tree keeps
     /// them under. Empty for content that is the person's own.
     pub notices: Vec<(PathBuf, Vec<u8>)>,
-    /// What converting a skill's links into the destination kept, or
-    /// `None` where the bytes are carried as they are.
-    pub(crate) kept: Option<Vec<crate::render::skill::links::KeptLink>>,
+    /// What storing the bytes did to a skill's links.
+    pub(crate) stored: Stored,
 }
 
 /// Re-resolve one selection's bytes, past the same gates the import into
@@ -528,7 +566,8 @@ pub(crate) fn resolve(
     license_gate(selection, &answer.group)?;
     // A template keeps the person's own untagged content as it is: its
     // copy installs untagged, read as it was delivered.
-    let kept = answer.convert_into(
+    let stored = answer.convert_into(
+        env,
         selection.kind,
         &selection.name,
         destination,
@@ -560,7 +599,7 @@ pub(crate) fn resolve(
     Ok(ResolvedBytes {
         files,
         notices,
-        kept,
+        stored,
     })
 }
 

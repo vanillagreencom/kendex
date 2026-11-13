@@ -1850,7 +1850,8 @@ fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
 /// A copy whose links were converted is recorded as a shared copy: it
 /// stores the saving project's shared-tree reading, installs tagged, and
 /// reads relative to whichever scope installs it, a project or the
-/// personal scope with its local store anywhere.
+/// personal scope with its local store anywhere. A link that leaves the
+/// installing scope is the install's typed warning, its fix beside it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_shared_copy_reaches_the_installing_scopes_file() {
@@ -1859,7 +1860,11 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("app");
     fs::create_dir_all(project.join(".claude")).unwrap();
-    super::skill(&project.join("skills"), "ship", "[m](../../memory/x.md)");
+    super::skill(
+        &project.join("skills"),
+        "ship",
+        "[m](../../memory/x.md)\n[o](../../../../outside.md)",
+    );
     fs::create_dir_all(project.join("memory")).unwrap();
     fs::write(project.join("memory/x.md"), "Memory.\n").unwrap();
     fs::write(
@@ -1899,7 +1904,21 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
         },
     )
     .unwrap();
-    assert!(saved.warnings.is_empty(), "{:?}", saved.warnings);
+    let keys = |warnings: &[crate::engine::ItemWarning]| -> Vec<(String, bool)> {
+        warnings
+            .iter()
+            .map(|warning| {
+                let key = warning.message.split(':').next().unwrap_or_default();
+                (key.to_owned(), warning.remediation.is_some())
+            })
+            .collect()
+    };
+    assert_eq!(
+        keys(&saved.warnings),
+        [("skill-link-kept".to_owned(), true)],
+        "{:?}",
+        saved.warnings
+    );
     assert!(
         matches!(saved.members[0].source, MemberSource::SharedCopy { .. }),
         "{:?}",
@@ -1907,7 +1926,8 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
     );
     // Each destination holds its own `memory/x.md`.
     let other = home.join("other");
-    for (row, destination, root) in [
+    // (row, destination, its root, whether the outside link leaves it)
+    for (row, destination, root, leaves) in [
         (
             "another project",
             Scope::Project {
@@ -1918,12 +1938,13 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
                 },
             },
             other.canonicalize().unwrap(),
+            true,
         ),
-        ("personal scope", Scope::Global, home.clone()),
+        ("personal scope", Scope::Global, home.clone(), false),
     ] {
         fs::create_dir_all(root.join("memory")).unwrap();
         fs::write(root.join("memory/x.md"), format!("{row}.\n")).unwrap();
-        install(
+        let landed = install(
             &env,
             &saved,
             &destination,
@@ -1931,6 +1952,11 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
             None,
         )
         .unwrap();
+        let expected = match leaves {
+            true => vec![("agent-link-unrepresentable".to_owned(), true)],
+            false => Vec::new(),
+        };
+        assert_eq!(keys(&landed.warnings), expected, "{row}: {landed:?}");
         let manifest =
             match crate::manifest::load(&crate::manifest::manifest_path(&env, &destination))
                 .unwrap()

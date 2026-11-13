@@ -229,9 +229,9 @@ fn kept_warnings(
         .iter()
         .flat_map(|(copy, bytes)| {
             bytes
-                .kept
+                .stored
+                .reported()
                 .iter()
-                .flatten()
                 .map(|link| crate::render::skill::links::kept_warning(&copy.name, link))
         })
         .collect()
@@ -409,7 +409,10 @@ fn bind_notices(members: &mut [Member], taken: &[(&Copying, import::ResolvedByte
         .map(|(copy, bytes)| {
             (
                 store::slot_id(copy.kind, &copy.name),
-                (store::notice_ids(&bytes.notices), bytes.kept.is_some()),
+                (
+                    store::notice_ids(&bytes.notices),
+                    matches!(bytes.stored, import::Stored::Converted { .. }),
+                ),
             )
         })
         .collect();

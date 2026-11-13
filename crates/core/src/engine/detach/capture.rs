@@ -118,40 +118,48 @@ fn stored_links(
     files: SourceFiles,
 ) -> (SourceFiles, Option<SkillLinks>, Vec<ItemWarning>) {
     let destination = links::shared_tree(env, scope, &item.name);
-    let converted =
-        match links::declared(env, scope, manifest, &item.decl, &item.name, path, sealed) {
-            links::Reading::Fixed { position, siblings } => {
-                let (files, kept) = links::convert(
-                    links::Origin {
-                        directory: position.directory,
-                        files,
-                        siblings,
-                    },
-                    &destination,
-                );
-                let warnings = kept
-                    .iter()
-                    .map(|link| links::kept_warning(&item.name, link))
-                    .collect();
-                return (files, Some(SkillLinks::SharedTree), warnings);
+    let converted = match links::declared(
+        env,
+        scope,
+        manifest,
+        (&item.decl).into(),
+        &item.name,
+        path,
+        sealed,
+    ) {
+        links::Reading::Fixed { position, siblings } => {
+            let (files, kept) = links::convert(
+                links::Origin {
+                    directory: position.directory,
+                    files,
+                    siblings,
+                    link_files: Vec::new(),
+                },
+                &destination,
+            );
+            let warnings = kept
+                .iter()
+                .map(|link| links::kept_warning(&item.name, link))
+                .collect();
+            return (files, Some(SkillLinks::SharedTree), warnings);
+        }
+        links::Reading::Opaque => {
+            let mut origins = links::delivered(lock, item.kind, &item.name)
+                .into_iter()
+                .map(|directory| links::Origin {
+                    directory,
+                    files: files.clone(),
+                    siblings: links::Siblings::SkillsDirectory,
+                    link_files: Vec::new(),
+                });
+            match origins.next() {
+                Some(first) => links::agreed(first, origins, &destination),
+                None => return (files, None, Vec::new()),
             }
-            links::Reading::Opaque => {
-                let mut origins =
-                    delivered(lock, item)
-                        .into_iter()
-                        .map(|directory| links::Origin {
-                            directory,
-                            files: files.clone(),
-                            siblings: links::Siblings::SkillsDirectory,
-                        });
-                match origins.next() {
-                    Some(first) => links::agreed(first, origins, &destination),
-                    None => return (files, None, Vec::new()),
-                }
-            }
-            // A catalog subscription is never the local store itself.
-            links::Reading::AsDelivered => return (files, None, Vec::new()),
-        };
+        }
+        // A catalog subscription is never the local store itself.
+        links::Reading::AsDelivered => return (files, None, Vec::new()),
+    };
     match converted {
         links::Converted::Agreed { files, kept } => {
             let warnings = kept
@@ -181,23 +189,6 @@ fn stored_links(
             (files, None, vec![warning])
         }
     }
-}
-
-/// The physical directories the item's install records name, links
-/// followed: the places its bytes were delivered to.
-fn delivered(lock: &crate::lock::Lock, item: &ClosureItem) -> Vec<PathBuf> {
-    let mut directories: Vec<PathBuf> = lock
-        .entries
-        .values()
-        .filter(|entry| entry.kind == item.kind && entry.name == item.name)
-        .filter_map(|entry| entry.emitted.as_ref())
-        .flat_map(|emitted| emitted.paths.iter())
-        .filter_map(|path| crate::paths::canonical(path).ok())
-        .filter(|path| path.is_dir())
-        .collect();
-    directories.sort();
-    directories.dedup();
-    directories
 }
 
 /// The write op for one detached item, after preflighting the local target:

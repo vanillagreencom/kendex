@@ -169,9 +169,10 @@ pub(super) fn relocate_ops(
         if Some(path) == from || path == home {
             continue;
         }
-        // Bound to what `look` proved equal to the copy being kept. `Any`
-        // would trash whatever arrived at that position after the plan was
-        // read — including content nobody compared with anything.
+        // Bound to the tree `interpret` found means what the copy being
+        // kept means, its link files by what they reach. `Any` would trash
+        // whatever arrived at that position after the plan was read —
+        // including content nobody compared with anything.
         ops.push(PlannedOp {
             description: Description::around("trash the second copy at ", ""),
             op: Op::Trash {

@@ -6,11 +6,12 @@ fn files(rel: &str, text: &str) -> Files {
     vec![(PathBuf::from(rel), text.as_bytes().to_vec())]
 }
 
-fn origin<'a>(directory: &Path, files: Files, siblings: Siblings<'a>) -> Origin<'a> {
+fn origin(directory: &Path, files: Files, siblings: Siblings) -> Origin {
     Origin {
         directory: directory.to_path_buf(),
         files,
         siblings,
+        link_files: Vec::new(),
     }
 }
 
@@ -36,7 +37,7 @@ fn each_link_class_converts_or_keeps_its_bytes_by_the_one_rule_set() {
         crate::render::skill::INSTRUCTIONS_END
     );
     // (row, file, origin text, siblings, expected text, kept targets)
-    type Row<'a> = (&'a str, &'a str, String, Siblings<'a>, String, Vec<&'a str>);
+    type Row<'a> = (&'a str, &'a str, String, Siblings, String, Vec<&'a str>);
     let rows: Vec<Row<'_>> = vec![
         (
             "internal",
@@ -58,7 +59,7 @@ fn each_link_class_converts_or_keeps_its_bytes_by_the_one_rule_set() {
             "sibling beside a catalog with a package",
             "SKILL.md",
             "[other](../other/SKILL.md)\n".into(),
-            Siblings::Catalog(&sealed),
+            Siblings::Catalog(sealed.clone()),
             "[other](../other/SKILL.md)\n".into(),
             vec![],
         ),
@@ -66,7 +67,7 @@ fn each_link_class_converts_or_keeps_its_bytes_by_the_one_rule_set() {
             "directory beside a catalog without a package",
             "SKILL.md",
             "[loose](../loose/x.md)\n".into(),
-            Siblings::Catalog(&sealed),
+            Siblings::Catalog(sealed.clone()),
             "[loose](../../../../catalog/skills/loose/x.md)\n".into(),
             vec![],
         ),
@@ -263,6 +264,75 @@ fn positions_agree_by_meaning_not_by_bytes() {
     }
 }
 
+/// A link file is carried, never written through, so positions agree on it
+/// only where it reaches the same place from each: inside its own tree by
+/// its path there, outside by the whole path. The order a directory lists
+/// its entries in decides nothing.
+#[test]
+fn positions_agree_on_link_files_by_what_they_reach() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let destination = Position {
+        directory: home.join(".agents/skills/ship"),
+        bound: home.clone(),
+    };
+    let claude = home.join(".claude/skills/ship");
+    let pi = home.join(".pi/agent/skills/ship");
+    let link = |file: &str, target: &str| LinkFile {
+        file: file.into(),
+        target: target.into(),
+    };
+    // (row, Claude's link files, Pi's link files, agree)
+    let rows = [
+        (
+            "the same files inside the tree, listed in either order",
+            vec![link("alias", "reference.md"), link("entry", "SKILL.md")],
+            vec![link("entry", "SKILL.md"), link("alias", "reference.md")],
+            true,
+        ),
+        (
+            "one spelling at two depths reaches two places",
+            vec![link("assets", "../../../assets")],
+            vec![link("assets", "../../../assets")],
+            false,
+        ),
+        (
+            "each spelled for its own depth reaches one place",
+            vec![link("assets", "../../../assets")],
+            vec![link("assets", "../../../../assets")],
+            true,
+        ),
+        (
+            "the same name at two different targets",
+            vec![link("fixture", "/fixtures/a.md")],
+            vec![link("fixture", "/fixtures/b.md")],
+            false,
+        ),
+        (
+            "a link file at one position only",
+            vec![link("alias", "reference.md")],
+            vec![],
+            false,
+        ),
+    ];
+    for (row, at_claude, at_pi, agree) in rows {
+        let held = |directory: &Path, link_files: Vec<LinkFile>| Origin {
+            link_files,
+            ..origin(
+                directory,
+                files("SKILL.md", "[r](reference.md)\n"),
+                Siblings::SkillsDirectory,
+            )
+        };
+        let outcome = agreed(held(&claude, at_claude), [held(&pi, at_pi)], &destination);
+        match (outcome, agree) {
+            (Converted::Agreed { .. }, true) | (Converted::Disagree { .. }, false) => {}
+            (Converted::Agreed { .. }, false) => panic!("{row}: positions agreed"),
+            (Converted::Disagree { .. }, true) => panic!("{row}: positions disagreed"),
+        }
+    }
+}
+
 #[test]
 fn the_reading_comes_from_the_store_class() {
     let tmp = tempfile::tempdir().unwrap();
@@ -320,7 +390,15 @@ fn the_reading_comes_from_the_store_class() {
         ("fetched catalog", ItemDecl::from_source("fetched"), None),
     ];
     for (row, decl, expected) in rows {
-        let reading = declared(&env, &scope, &manifest, &decl, "ship", &item, &sealed);
+        let reading = declared(
+            &env,
+            &scope,
+            &manifest,
+            (&decl).into(),
+            "ship",
+            &item,
+            &sealed,
+        );
         let directory = match reading {
             Reading::Fixed { position, .. } => {
                 assert_eq!(position.bound, project, "{row}");
@@ -335,7 +413,7 @@ fn the_reading_comes_from_the_store_class() {
             &env,
             &scope,
             &manifest,
-            &ItemDecl::from_source(LOCAL_SOURCE_NAME),
+            (&ItemDecl::from_source(LOCAL_SOURCE_NAME)).into(),
             "ship",
             &item,
             &sealed
@@ -347,7 +425,7 @@ fn the_reading_comes_from_the_store_class() {
             &env,
             &scope,
             &manifest,
-            &ItemDecl::from_source("fetched"),
+            (&ItemDecl::from_source("fetched")).into(),
             "ship",
             &item,
             &sealed

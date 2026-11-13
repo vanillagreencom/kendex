@@ -2,6 +2,7 @@
 //! removes a marketplace or keeps its packages as local forks.
 
 use kendex_core::apply;
+use kendex_core::engine::ItemWarning;
 use kendex_core::env::Env;
 use kendex_core::library::PackageRef;
 use kendex_core::model::{ItemKind, Scope};
@@ -52,9 +53,30 @@ pub fn marketplace_unsubscribe_preview(
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Unsubscribed {
-    pub warnings: Vec<String>,
+    /// What keeping the packages and rendering them again warned about,
+    /// each with its fix: a link the kept copy holds as written, say.
+    pub warnings: Vec<ItemWarning>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub undone: Vec<String>,
+}
+
+/// Why unsubscribing did not finish, by phase: a refusal left the scope as
+/// it was; a keep that landed before the render after it failed has kept
+/// the packages, and what keeping them reported comes with the cause.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "phase", rename_all = "kebab-case")]
+pub enum UnsubscribeError {
+    Refused {
+        message: String,
+    },
+    Recorded {
+        message: String,
+        /// What the keep that landed reported about the packages it kept,
+        /// as `Unsubscribed::warnings` carries them on one that finished.
+        /// Left off the wire when it reported nothing.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        written: Vec<ItemWarning>,
+    },
 }
 
 /// Unsubscribe, removing or keeping the packages that would leave. `keep`
@@ -67,8 +89,9 @@ pub fn marketplace_unsubscribe(
     source: String,
     keep: bool,
     discard_edits: bool,
-) -> Result<Unsubscribed, String> {
-    unsubscribe(&env()?, &scope, &source, keep, discard_edits)
+) -> Result<Unsubscribed, UnsubscribeError> {
+    let env = env().map_err(|message| UnsubscribeError::Refused { message })?;
+    unsubscribe(&env, &scope, &source, keep, discard_edits)
 }
 
 /// The unsubscribe itself, against the environment it is given.
@@ -78,30 +101,43 @@ pub fn unsubscribe(
     source: &str,
     keep: bool,
     discard_edits: bool,
-) -> Result<Unsubscribed, String> {
+) -> Result<Unsubscribed, UnsubscribeError> {
     use kendex_core::engine::detach;
-    let line = |warning: &kendex_core::engine::ItemWarning| {
-        format!("{}: {}", warning.name, warning.message)
-    };
-    let mut warnings = Vec::new();
-    let mut undone = if keep {
-        // The conversion has no report of its own beyond the links it kept.
-        // The resync below supplies the report that repository effects need.
-        let kept = detach::source(env, scope, source).map_err(|e| e.to_string())?;
-        apply::execute(env, &kept).map_err(|e| e.to_string())?;
-        warnings.extend(kept.warnings.iter().map(line));
-        Vec::new()
-    } else {
-        let report =
-            detach::remove(env, scope, source, discard_edits).map_err(|e| e.to_string())?;
-        crate::repo_effects::write(env, &report)?
-    };
-    if keep {
-        let resync = detach::resync_kept(env, scope).map_err(|e| e.to_string())?;
-        warnings.extend(resync.warnings.iter().map(line));
-        undone.extend(crate::repo_effects::write(env, &resync)?);
+    let refused = |message: String| UnsubscribeError::Refused { message };
+    if !keep {
+        // A plan that fails to apply rolls back: nothing left, a refusal.
+        let report = detach::remove(env, scope, source, discard_edits)
+            .map_err(|e| refused(e.to_string()))?;
+        let undone = crate::repo_effects::write(env, &report).map_err(refused)?;
+        return Ok(Unsubscribed {
+            warnings: Vec::new(),
+            undone,
+        });
     }
-    Ok(Unsubscribed { undone, warnings })
+    // The conversion has no report of its own beyond the links it kept.
+    // The resync below supplies the report that repository effects need.
+    let kept = detach::source(env, scope, source).map_err(|e| refused(e.to_string()))?;
+    apply::execute(env, &kept).map_err(|e| refused(e.to_string()))?;
+    // The packages are kept from here on, and what the keep reported is
+    // read nowhere else: a failure after it carries the report with it.
+    let mut warnings = kept.warnings;
+    let resync = match detach::resync_kept(env, scope) {
+        Ok(resync) => resync,
+        Err(error) => {
+            return Err(UnsubscribeError::Recorded {
+                message: error.to_string(),
+                written: warnings,
+            });
+        }
+    };
+    warnings.extend(resync.warnings.iter().cloned());
+    match crate::repo_effects::write(env, &resync) {
+        Ok(undone) => Ok(Unsubscribed { warnings, undone }),
+        Err(message) => Err(UnsubscribeError::Recorded {
+            message,
+            written: warnings,
+        }),
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -157,5 +193,41 @@ mod tests {
             assert!(!manifest.sources.contains_key("cat"));
             assert!(manifest.skills.is_empty());
         }
+    }
+
+    /// Keeping a skill whose link leaves the project answers with that link
+    /// as the keep reported it, its fix beside it, for the window to show.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn unsubscribe_keep_answers_each_kept_link_with_its_fix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let env = Env::host_rooted(&home);
+        let root = home.join("dev/app");
+        let catalog = home.join("catalog");
+        skill(&catalog, "gh", "[m](../../memory/x.md)");
+        std::fs::create_dir_all(catalog.join("memory")).unwrap();
+        std::fs::write(catalog.join("memory/x.md"), "Memory.\n").unwrap();
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::write(
+            root.join("kendex.toml"),
+            format!(
+                "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.gh]\nsource = \"cat\"\n",
+                crate::test_util::source_path(&catalog)
+            ),
+        )
+        .unwrap();
+        let scope = Scope::Project { root };
+        let report = kendex_core::engine::audit(&env, &scope).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        let unsubscribed = unsubscribe(&env, &scope, "cat", true, false).unwrap();
+        let kept: Vec<&ItemWarning> = unsubscribed
+            .warnings
+            .iter()
+            .filter(|warning| warning.message.starts_with("skill-link-kept:"))
+            .collect();
+        assert_eq!(kept.len(), 1, "{:?}", unsubscribed.warnings);
+        assert_eq!(kept[0].name, "gh");
+        assert!(kept[0].remediation.is_some(), "{:?}", kept[0]);
     }
 }

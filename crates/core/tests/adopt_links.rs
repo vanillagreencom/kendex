@@ -179,35 +179,92 @@ fn a_shared_folder_is_read_from_where_it_stands() {
 }
 
 /// A project relocation compares every held copy by what it reads from the
-/// home: the same bytes in the shared tree and in Claude's folder reach two
-/// files, so keeping both is refused before anything moves.
+/// home, and a link file inside the tree by what it reaches from where it
+/// stands. Copies that read different files are refused before anything
+/// moves; copies holding the same link files agree in whatever order the
+/// directory lists them.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_relocation_refuses_copies_that_read_different_files() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let env = Env::fake(&home, FakeOs::Linux);
-    let project = home.join("app");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    put(
-        &project.join("kendex.toml"),
-        "schema = 8\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n",
-    );
-    for dir in [".agents/skills/ship", ".claude/skills/ship"] {
+fn a_relocation_keeps_both_copies_only_where_they_read_the_same_files() {
+    // (row, SKILL.md body, link files per copy as (name, target), keeps)
+    type Links<'a> = [Vec<(&'a str, &'a str)>; 2];
+    type Row<'a> = (&'a str, &'a str, Links<'a>, bool);
+    let rows: Vec<Row<'_>> = vec![
+        (
+            "text links read different files",
+            "[m](../../agents/x.md)",
+            [vec![], vec![]],
+            false,
+        ),
+        (
+            "same-named link files spelled for different files",
+            "[r](reference.md)",
+            [
+                vec![("fixture", "../../fixtures/a.md")],
+                vec![("fixture", "../../fixtures/b.md")],
+            ],
+            false,
+        ),
+        (
+            "one relative link copied to two depths",
+            "[r](reference.md)",
+            [
+                vec![("assets", "../../assets")],
+                vec![("assets", "../../assets")],
+            ],
+            false,
+        ),
+        (
+            "the same links inside each tree, made in either order",
+            "[r](reference.md)",
+            [
+                vec![("alias", "reference.md"), ("entry", "SKILL.md")],
+                vec![("entry", "SKILL.md"), ("alias", "reference.md")],
+            ],
+            true,
+        ),
+    ];
+    for (row, body, links, keeps) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("app");
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
         put(
-            &project.join(dir).join("SKILL.md"),
-            &skill("[m](../../agents/x.md)"),
+            &project.join("kendex.toml"),
+            "schema = 8\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n",
         );
+        for (dir, links) in [".agents/skills/ship", ".claude/skills/ship"]
+            .iter()
+            .zip(&links)
+        {
+            let tree = project.join(dir);
+            put(&tree.join("SKILL.md"), &skill(body));
+            put(&tree.join("reference.md"), "Reference.\n");
+            for (name, target) in links {
+                std::os::unix::fs::symlink(target, tree.join(name)).unwrap();
+            }
+        }
+        let both = [HarnessId::Claude, HarnessId::Codex];
+        assert_eq!(
+            can_keep_all(&env, &scope, ItemKind::Skill, "ship", &both),
+            keeps,
+            "{row}"
+        );
+        match (adopt(&env, &scope, ItemKind::Skill, "ship", &both), keeps) {
+            (Err(CoreError::AdoptedCopiesDiffer { .. }), false) => {
+                assert!(
+                    project.join(".claude/skills/ship/SKILL.md").is_file(),
+                    "{row}"
+                );
+            }
+            (Ok(_), true) => {}
+            (Ok(_), false) => panic!("{row}: copies that read different files were kept as one"),
+            (Err(error), _) => panic!("{row}: {error}"),
+        }
     }
-    let both = [HarnessId::Claude, HarnessId::Codex];
-    assert!(!can_keep_all(&env, &scope, ItemKind::Skill, "ship", &both));
-    assert!(matches!(
-        adopt(&env, &scope, ItemKind::Skill, "ship", &both),
-        Err(CoreError::AdoptedCopiesDiffer { .. })
-    ));
-    assert!(project.join(".claude/skills/ship/SKILL.md").is_file());
 }
 
 /// Relocating a folder linked at the home converts its links where it

@@ -174,6 +174,15 @@ beforeEach(() => {
   });
 });
 
+/** A link a write kept as written, with its fix: what a save or an install
+ *  reports about its copies and nothing read afterwards can say. */
+const kept = {
+  kind: "skill" as const,
+  name: "stray",
+  message: "skill-link-kept: SKILL.md: ../../memory/x.md",
+  remediation: "use an absolute path",
+};
+
 /** Everything on screen, the dialogs included: a dialog renders into a
  *  portal, so its text is on the document rather than under the mount. */
 const said = (): string => document.body.textContent ?? "";
@@ -343,12 +352,6 @@ describe("creating a template from a project", () => {
 
   // Only the save can say which links its copies kept, and the dialog
   // closes on it, so each one must reach the window as a toast.
-  const kept = {
-    kind: "skill" as const,
-    name: "stray",
-    message: "skill-link-kept: SKILL.md: ../../memory/x.md",
-    remediation: "use an absolute path",
-  };
   it.each([
     { name: "a link was kept", warnings: [kept], calls: 1 },
     { name: "every link converted", warnings: undefined, calls: 0 },
@@ -461,6 +464,7 @@ describe("installing a template into a place", () => {
         declared: [],
         copied: [],
         notes: [],
+        warnings: [kept],
         stopped: null,
       },
     });
@@ -486,6 +490,12 @@ describe("installing a template into a place", () => {
       null,
     );
     expect(useInstallFlow.getState().outcome?.places[0]?.wrote).toBe(true);
+    // The guided install closes on the run, so what the renders kept
+    // reaches the window as a toast with its fix.
+    expect(toast.message).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`${kept.name}.*${kept.message}`)),
+      expect.objectContaining({ description: kept.remediation }),
+    );
   });
 
   // A refused install is reported at the place that refused it, not
@@ -588,6 +598,7 @@ describe("a template install that stopped part-way", () => {
         declared: ["skill code-quality"],
         copied: [],
         notes: [],
+        warnings: [],
         stopped: "skill 'house-style' is already here with different bytes",
       },
     });
@@ -905,6 +916,7 @@ describe("a choice made while the refresh behind an open is still out", () => {
         declared: [],
         copied: [],
         notes: [],
+        warnings: [],
         stopped: null,
       },
     });

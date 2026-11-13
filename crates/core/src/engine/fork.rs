@@ -200,10 +200,9 @@ enum Capture {
 /// rendering from outside its own file.
 struct Captured {
     files: Capture,
-    /// What the captured bytes render back to, beside the bytes they were
-    /// captured from. Both kinds a fork admits have such a text: a skill
-    /// tree with no SKILL.md text is refused by the capture itself.
-    rendering: (String, String),
+    /// Whether the captured bytes render back to the bytes they were
+    /// captured from.
+    round_trips: bool,
     carry: Option<crate::engine::agent_carry::AgentCarry>,
     /// The catalog revision the publisher's file was read at, which the
     /// fork records as the commit its edits were made on.
@@ -309,13 +308,14 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                         directory: edited.to_path_buf(),
                         files,
                         siblings: links::Siblings::SkillsDirectory,
+                        link_files: Vec::new(),
                     },
                     position,
                 ),
                 None => (files, Vec::new()),
             };
             Captured {
-                rendering: skill_round_trip(of, &files, &on_disk, edited, stored.as_ref()),
+                round_trips: skill_round_trip(of, &files, &on_disk, edited, stored.as_ref()),
                 files: Capture::Tree(files),
                 carry: None,
                 read_at: published.commit,
@@ -332,7 +332,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
                 read_at: captured.read_at,
-                rendering: (captured.rendering, on_disk),
+                round_trips: captured.rendering == on_disk,
                 links: None,
                 kept: Vec::new(),
             }
@@ -543,8 +543,7 @@ pub(super) fn absorb_ops(
     // leave the two disagreeing for good: the same never-settling state
     // this whole path exists to end. Asked of the renderer's own output,
     // never of a list of the fields that can be lost.
-    let (rendered, on_disk) = &captured.rendering;
-    if rendered != on_disk {
+    if !captured.round_trips {
         return Err(CoreError::ForkWidensAccess {
             name: crate::names::shown(name),
             problem: "the edit changes something its source form cannot hold".into(),
@@ -601,8 +600,8 @@ fn carry_needs_writing(
         || after.agent_frontmatter != manifest.agent_frontmatter
 }
 
-/// A captured skill tree beside what it renders back to at `edited`. A
-/// skill's tree is nearly its own source form, but not quite: the renderer
+/// Whether a captured skill tree renders back to what is on disk at
+/// `edited`. A skill's tree is nearly its own source form, but not quite: the renderer
 /// strips and re-injects the project-instructions block, so bytes written
 /// inside that block are not bytes a source can hold; it cuts the
 /// frontmatter to the installed key set, which the capture put the
@@ -616,7 +615,7 @@ fn skill_round_trip(
     on_disk: &[(PathBuf, Vec<u8>)],
     edited: &std::path::Path,
     stored: Option<&links::Position>,
-) -> (String, String) {
+) -> bool {
     let instructions = crate::render::skill::skill_instructions(of.manifest, of.name);
     let rendered = match stored {
         Some(position) => {
@@ -625,6 +624,7 @@ fn skill_round_trip(
                     directory: position.directory.clone(),
                     files: captured.to_vec(),
                     siblings: links::Siblings::SkillsDirectory,
+                    link_files: Vec::new(),
                 },
                 &links::Position {
                     directory: edited.to_path_buf(),
@@ -641,24 +641,7 @@ fn skill_round_trip(
             instructions.as_deref(),
         ))
     });
-    let compared = |files: &[(PathBuf, Vec<u8>)]| {
-        let mut files: Vec<(PathBuf, String)> = files
-            .iter()
-            .map(|(rel, bytes)| {
-                let text = match std::str::from_utf8(bytes) {
-                    Ok(text) => links::comparable(text, &edited.join(rel)),
-                    Err(_) => format!("{bytes:?}"),
-                };
-                (rel.clone(), text)
-            })
-            .collect();
-        files.sort();
-        files
-            .into_iter()
-            .map(|(rel, text)| format!("{}\0{text}\0", crate::paths::slashed(&rel)))
-            .collect::<String>()
-    };
-    (compared(&rendered), compared(on_disk))
+    links::comparable_tree(&rendered, edited) == links::comparable_tree(on_disk, edited)
 }
 
 /// Where a skill fork keeps its captured links: the shared-tree reading of
@@ -666,6 +649,6 @@ fn skill_round_trip(
 /// nowhere for a fork stored before kendex converted links, whose bytes
 /// stay as delivered.
 fn stored_reading(of: &ForkOf) -> Option<links::Position> {
-    let legacy = of.decl.source == LOCAL_SOURCE_NAME && of.decl.links.is_none();
-    (!legacy).then(|| links::shared_tree(of.env, of.scope, of.installed_as))
+    (!links::as_delivered(of.decl.into()))
+        .then(|| links::shared_tree(of.env, of.scope, of.installed_as))
 }

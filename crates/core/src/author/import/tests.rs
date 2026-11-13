@@ -812,3 +812,90 @@ fn equal_bytes_that_read_different_files_refuse_by_name() {
         }
     }
 }
+
+/// The person's own untagged skill is read from the places its install
+/// records deliver it to. A record that loads and names none carries the
+/// bytes as they are, reporting each link that leaves the tree. A record or
+/// a declaration that cannot be read refuses with its cause rather than
+/// reading as one that names nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_own_untagged_skill_is_read_from_its_recorded_places() {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Spoiled {
+        Nothing,
+        Lock,
+        Manifest,
+    }
+    for (row, spoiled) in [
+        ("a record naming no place", Spoiled::Nothing),
+        ("an unreadable record", Spoiled::Lock),
+        ("an unreadable declaration", Spoiled::Manifest),
+    ] {
+        let (tmp, env, scope) = seeded();
+        let Scope::Project { root: project } = &scope else {
+            unreachable!("seeded is a project");
+        };
+        let text = "---\nname: mine\ndescription: about mine\n---\n[m](../../../memo.md)\n";
+        raw_skill(
+            &project.join(crate::source::LOCAL_SOURCE_DIR).join("skills"),
+            "mine",
+            text,
+        );
+        raw_skill(&project.join(".claude/skills"), "mine", text);
+        let manifest = project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            &manifest,
+            format!("{declared}[skills.mine]\nsource = \"local\"\n"),
+        )
+        .unwrap();
+        let scopes = [scope.clone()];
+        let target = target(&env, &tmp, "mine-own");
+        let candidates = inventory(&env, &scopes).unwrap();
+        match spoiled {
+            Spoiled::Nothing => {}
+            Spoiled::Lock => fs::write(crate::lock::lock_path(&env, &scope), "not a lock").unwrap(),
+            Spoiled::Manifest => fs::write(&manifest, "schema = [\n").unwrap(),
+        }
+        let mine = find(&candidates, "mine");
+        let own = mine
+            .origins
+            .iter()
+            .find(|origin| matches!(origin.group, CandidateGroup::Own))
+            .unwrap_or_else(|| panic!("{row}: no own origin in {:?}", mine.origins));
+        let chosen = ImportSelection {
+            kind: ItemKind::Skill,
+            name: "mine".to_owned(),
+            destination: "mine".to_owned(),
+            hash: own.hash.clone(),
+            license_confirmed: false,
+            license_basis: None,
+        };
+        match (apply(&env, &scopes, &target, &[chosen]), spoiled) {
+            (Ok(outcome), Spoiled::Nothing) => {
+                let reported: Vec<&str> = outcome
+                    .warnings
+                    .iter()
+                    .map(|warning| warning.message.as_str())
+                    .collect();
+                assert_eq!(
+                    reported,
+                    ["skill-link-kept: SKILL.md: ../../../memo.md"],
+                    "{row}"
+                );
+                assert_eq!(
+                    fs::read_to_string(target.join("skills/mine/SKILL.md")).unwrap(),
+                    text,
+                    "{row}"
+                );
+            }
+            (Err(CoreError::LockCorrupt { .. }), Spoiled::Lock)
+            | (Err(CoreError::Authoring { .. }), Spoiled::Manifest) => {
+                assert!(!target.join("skills/mine").exists(), "{row}");
+            }
+            (Ok(_), _) => panic!("{row}: an unreadable input read as one naming nothing"),
+            (Err(error), _) => panic!("{row}: {error:?}"),
+        }
+    }
+}

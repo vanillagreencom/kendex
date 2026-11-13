@@ -132,16 +132,17 @@ impl Conversion {
 }
 
 /// Every position a skill is held at, interpreted into `destination`. The
-/// positions must mean the same targets there, or the tools disagree and
-/// only the reader can say which to keep. `moved` reads a tree a rename
-/// carries whole, links inside it included; a capture refuses those.
+/// positions must mean the same targets there, their link files included,
+/// or the tools disagree and only the reader can say which to keep. `moved`
+/// reads a tree a rename carries whole, links inside it included; a capture
+/// refuses those.
 pub(super) fn interpret(
     name: &str,
     seen: &Seen,
     destination: &links::Position,
     moved: bool,
 ) -> Result<Option<Conversion>> {
-    let positions: Vec<(HarnessId, PathBuf, links::Siblings<'_>)> = match &seen.shared {
+    let positions: Vec<(HarnessId, PathBuf, links::Siblings)> = match &seen.shared {
         // A folder shared by hand stands beside nothing known to move.
         Some((harness, shared)) => {
             vec![(*harness, shared.target.clone(), links::Siblings::Unknown)]
@@ -158,26 +159,20 @@ pub(super) fn interpret(
         return Ok(None);
     }
     let mut origins = Vec::with_capacity(positions.len());
-    let mut linked = Vec::new();
-    for (index, (_, path, siblings)) in positions.iter().enumerate() {
+    for (_, path, siblings) in &positions {
         let directory = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
-        let (files, links) = match moved {
+        let (files, link_files) = match moved {
             true => crate::capture::read_tree_beside_links(path)?,
             false => (crate::capture::read_tree(path)?, Vec::new()),
         };
-        match index {
-            0 => linked = links,
-            // A link file is carried, not read, so its content cannot be
-            // compared: positions holding different ones differ.
-            _ if links != linked => {
-                return Err(copies_differ(name, positions[0].0, positions[index].0));
-            }
-            _ => {}
-        }
         origins.push(links::Origin {
             directory,
             files,
-            siblings: *siblings,
+            siblings: siblings.clone(),
+            link_files: link_files
+                .into_iter()
+                .map(|(file, target)| links::LinkFile { file, target })
+                .collect(),
         });
     }
     let mut origins = origins.into_iter();
@@ -185,6 +180,11 @@ pub(super) fn interpret(
         return Ok(None);
     };
     let origin = first.directory.clone();
+    let linked = first
+        .link_files
+        .iter()
+        .map(|link| link.file.clone())
+        .collect();
     match links::agreed(first, origins, destination) {
         links::Converted::Agreed { files, kept } => Ok(Some(Conversion {
             origin,

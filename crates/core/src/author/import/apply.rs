@@ -50,14 +50,15 @@ pub fn apply(
         let dest = crate::source::local_slot(&target, selection.kind, &selection.destination);
         // The catalog reads a skill's links from its item directory, and
         // nothing outside the catalog is written into it.
-        let kept = answer.convert_into(
+        let stored = answer.convert_into(
+            env,
             selection.kind,
             &selection.name,
             &crate::render::skill::links::catalog(&target, &dest),
             super::Untagged::Delivered,
         )?;
         warnings.extend(
-            kept.iter().flatten().map(|link| {
+            stored.reported().iter().map(|link| {
                 crate::render::skill::links::kept_warning(&selection.destination, link)
             }),
         );

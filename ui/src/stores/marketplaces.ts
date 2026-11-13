@@ -7,14 +7,18 @@ import {
   type Scope,
 } from "@/bindings";
 import {
+  keptNotInstalledTitle,
+  keptRecordedStep,
+} from "@/lib/copy-marketplaces";
+import {
   READ_PENDING,
   type ReadState,
   readOf,
   readOrder,
 } from "@/lib/read-state";
 import { writingRepo } from "@/lib/rescan";
-import { settled } from "@/lib/settled";
-import { saying, sayUndone } from "@/lib/undone";
+import { NO_REASON_GIVEN, settled } from "@/lib/settled";
+import { saying, sayUndone, sayWritten } from "@/lib/undone";
 import { catalogReads } from "./marketplaces-catalog-reads";
 import { type InstallActions, installActions } from "./marketplaces-install";
 import {
@@ -24,6 +28,7 @@ import {
   subscription,
 } from "./marketplaces-shared";
 import { sourceActions } from "./marketplaces-sources";
+import { useProblemsStore } from "./problems";
 
 export {
   bundleKey,
@@ -221,17 +226,47 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
           set({ busy: false });
         }
         if (response.status === "error") {
-          set({ error: response.error });
-          return { error: response.error };
+          // A bare string is the call failing on its way, said where a
+          // refusal is: the dialog stays open on it.
+          const failure =
+            typeof response.error === "string"
+              ? { phase: "refused" as const, message: response.error }
+              : response.error;
+          switch (failure.phase) {
+            case "refused":
+              set({ error: failure.message });
+              return { error: failure.message };
+            case "recorded":
+              // The keep landed and the install behind it did not, so the
+              // subscription is gone and the packages are the person's own:
+              // the dialog closes, the error dialog says what did not
+              // install, and the rows are read again below like any landing.
+              set({ error: null });
+              useProblemsStore.getState().showError({
+                title: keptNotInstalledTitle(source),
+                message:
+                  failure.message === "" ? NO_REASON_GIVEN : failure.message,
+                steps: [keptRecordedStep(source)],
+              });
+              sayWritten(failure.written);
+              break;
+            default: {
+              const unknown: never = failure;
+              throw new Error(
+                `unsubscribe: unknown failure ${JSON.stringify(unknown)}`,
+              );
+            }
+          }
+        } else {
+          set({ error: null });
+          toast.success(
+            keep
+              ? `Unsubscribed from '${source}'. Its packages stay installed as your own copies`
+              : `Unsubscribed from '${source}'`,
+          );
+          saying(response);
+          sayWritten(response.data.warnings);
         }
-        set({ error: null });
-        toast.success(
-          keep
-            ? `Unsubscribed from '${source}'. Its packages stay installed as your own copies`
-            : `Unsubscribed from '${source}'`,
-        );
-        saying(response);
-        for (const warning of response.data.warnings) toast.message(warning);
         // A page carried on as this subscription must stop pointing at it, and
         // every other derived read goes with it.
         dropCatalogCaches(set);

@@ -276,7 +276,7 @@ describe("a write that reaches repo_effects and is refused", () => {
   it("reads the machine again behind an unsubscribe", async () => {
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "error",
-      error: "the scope is busy",
+      error: { phase: "refused", message: "the scope is busy" },
     });
 
     const outcome = await useMarketplacesStore

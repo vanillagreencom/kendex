@@ -276,6 +276,14 @@ export const editedOnDiskLine = (packages: string): string =>
   `Files edited on disk: ${packages}.`;
 export const UNSUBSCRIBE_EDITED_NEXT =
   "Before you unsubscribe, keep each edited package as your own copy or discard its edits. Open it in My Library to choose.";
+// The keep landed and the install of the kept copies behind it did not.
+// One error dialog says both halves, the half that failed as its title and
+// the half that stands as its step, as an install beside does
+// (`besideNotInstalledTitle`).
+export const keptNotInstalledTitle = (source: string): string =>
+  `Your copies of the packages from '${source}' didn't install`;
+export const keptRecordedStep = (source: string): string =>
+  `You are unsubscribed from '${source}', and My Library lists its packages under Your own. The page shows what is on disk now.`;
 
 // The Community tab's two directories.
 export const DIRECTORY_CHECK_AGAIN_LABEL = "Check kendex.ai again";

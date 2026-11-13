@@ -11,9 +11,10 @@ use crate::hash::RenderedIdentity;
 use crate::library::Origin;
 use crate::manifest::{INPLACE_SOURCE_NAME, Manifest, ManifestFile};
 use crate::model::{ItemKind, Scope};
+use crate::render::skill::links::{self, Reading};
 use crate::source_read::{ItemBytes, SealedSource};
 
-use super::{CandidateGroup, ImportSelection, ResolvedSelection, license_recognized};
+use super::{CandidateGroup, ImportSelection, ResolvedSelection, Seen, license_recognized};
 
 mod notices;
 mod offer;
@@ -70,26 +71,9 @@ pub(super) struct OriginRead {
     /// reader takes for a place.
     pub problem: Option<String>,
     pub read_from: Option<PathBuf>,
-    /// Where a skill's links in these bytes are read from.
-    pub reading: ReadAt,
-}
-
-/// Where the links in one origin's skill bytes are read from, decided by
-/// the link owner's store classes ([`crate::render::skill::links`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReadAt {
-    /// The physical directory the bytes sit at: an authored catalog's item
-    /// (`catalog` names its root), the person's own tagged content at its
-    /// shared tree, or an installed, edited or unmanaged copy.
-    Directory {
-        directory: PathBuf,
-        catalog: Option<PathBuf>,
-    },
-    /// The person's own untagged content: the places it was delivered to,
-    /// as its install records name them. Empty where none records it.
-    Delivered(Vec<PathBuf>),
-    /// A fetched catalog's bytes, carried as the publisher wrote them.
-    Opaque,
+    /// What a skill's links in these bytes mean, as the link owner reads
+    /// the store or copy they come from.
+    pub reading: Reading,
 }
 
 /// Every origin one provenance row offers, each judged by [`offered`].
@@ -132,17 +116,26 @@ fn reads(
             } else {
                 crate::source::local_source_root(env, &row.scope)
             };
-            match catalog_bytes(&root, source, row) {
-                Some((bytes, location, read_from)) => vec![OriginRead {
-                    group: CandidateGroup::Own,
-                    bytes: Some(bytes),
-                    location,
-                    problem: None,
-                    read_from: Some(read_from),
-                    reading: own_reading(env, row),
-                }],
-                None => Vec::new(),
-            }
+            let Some((bytes, location, read_from, sealed)) = catalog_bytes(&root, source, row)
+            else {
+                return Vec::new();
+            };
+            // What the store's links mean turns on its declaration, so a
+            // manifest that cannot be read leaves the bytes with no reading
+            // to offer them under.
+            let (bytes, problem, reading) = match own_reading(env, row, source, &read_from, &sealed)
+            {
+                Ok(reading) => (Some(bytes), None, reading),
+                Err(cause) => (None, Some(cause), Reading::Opaque),
+            };
+            vec![OriginRead {
+                group: CandidateGroup::Own,
+                bytes,
+                location,
+                problem,
+                read_from: Some(read_from),
+                reading,
+            }]
         }
         Origin::Marketplace { source, repo } => {
             marketplace_origins(env, row, source, repo, observed)
@@ -164,13 +157,18 @@ fn reads(
             else {
                 return Vec::new();
             };
+            let (bytes, problem, reading) = match observed_reading(env, &row.scope, row.kind, path)
+            {
+                Ok(reading) => (Some(bytes), None, reading),
+                Err(cause) => (None, Some(cause), Reading::Opaque),
+            };
             vec![OriginRead {
                 group: CandidateGroup::Unmanaged,
-                bytes: Some(bytes),
+                bytes,
                 location: crate::paths::slashed(path),
-                problem: None,
+                problem,
                 read_from: Some(path.clone()),
-                reading: observed_reading(path),
+                reading,
             }]
         }
     }
@@ -199,7 +197,7 @@ fn marketplace_origins(
             location: format!("{repo} (not fetched)"),
             problem: None,
             read_from: None,
-            reading: ReadAt::Opaque,
+            reading: Reading::Opaque,
         }]
     };
     let resolved = match crate::source::resolve(env, &row.scope, source, &manifest) {
@@ -227,10 +225,18 @@ fn marketplace_origins(
     let Some(bytes) = read_bytes(&sealed, package.kind, &path) else {
         return unreachable(license);
     };
+    // The install record, read once: what an install rendered and the
+    // keys it cut are both its answers, and one that cannot be read is
+    // that cause on the edited copy rather than a record naming nothing.
+    let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope))
+        .map_err(|error| error.to_string());
     // What an unedited install holds, which for a skill is less than the
     // package: its render leaves out the top-level tests, evaluation sets
     // and maintainer notes. The origin still imports the whole package.
-    let recorded_hash = recorded_render(env, row, observed, &package);
+    let recorded_hash = lock
+        .as_ref()
+        .ok()
+        .and_then(|lock| recorded_render(env, row, lock, observed, &package));
     let has_recorded_hash = recorded_hash.is_some();
     let Some(source_hash) = recorded_hash.or_else(|| installed_hash(&sealed, package.kind, &path))
     else {
@@ -247,7 +253,7 @@ fn marketplace_origins(
         location: format!("{repo}:{}", rel(&sealed, &path)),
         problem: None,
         read_from: Some(path.clone()),
-        reading: marketplace_reading(&manifest, source, &sealed, package.kind, &path),
+        reading: marketplace_reading(env, row, &manifest, source, &sealed, &path),
     }];
     // The installed copy, when it diverged: read at its observed path.
     //
@@ -275,11 +281,15 @@ fn marketplace_origins(
         // the edited copy keeps what the package declares. Where they
         // cannot, the copy is listed with the cause and selecting it
         // refuses: offered as it stands, it would drop them.
-        let (edited, problem) =
-            match with_published_keys(env, row, &manifest, &package, installed, edited) {
-                Ok(edited) => (Some(edited), None),
-                Err(cause) => (None, Some(cause)),
-            };
+        let (edited, problem, reading) = edited_offer(
+            env,
+            row,
+            lock.as_ref(),
+            &manifest,
+            &package,
+            installed,
+            edited,
+        );
         // An agent installs as the file its harness reads, so the edited
         // copy of a marketplace agent under Codex is the TOML rendering —
         // the same bytes a catalog cannot store, reaching `offered` by the
@@ -295,10 +305,31 @@ fn marketplace_origins(
             location: crate::paths::slashed(installed),
             problem,
             read_from: Some(installed.clone()),
-            reading: observed_reading(installed),
+            reading,
         });
     }
     origins
+}
+
+/// An edited copy as the import offers it: its bytes with the keys its
+/// install cut put back, read where it stands, or the cause it cannot be.
+fn edited_offer(
+    env: &Env,
+    row: &crate::library::ProvenanceRow,
+    lock: std::result::Result<&crate::lock::Lock, &String>,
+    manifest: &Manifest,
+    package: &crate::library::PackageRef,
+    installed: &Path,
+    edited: ItemBytes,
+) -> (Option<ItemBytes>, Option<String>, Reading) {
+    let restored = with_published_keys(env, row, lock, manifest, package, installed, edited);
+    match (
+        restored,
+        observed_reading(env, &row.scope, row.kind, installed),
+    ) {
+        (Ok(edited), Ok(reading)) => (Some(edited), None, reading),
+        (Err(cause), _) | (_, Err(cause)) => (None, Some(cause), Reading::Opaque),
+    }
 }
 
 /// The hash the install record that wrote this row's observed copy gives
@@ -306,15 +337,15 @@ fn marketplace_origins(
 fn recorded_render(
     env: &Env,
     row: &crate::library::ProvenanceRow,
+    lock: &crate::lock::Lock,
     observed: &BTreeMap<String, PathBuf>,
     package: &crate::library::PackageRef,
 ) -> Option<String> {
-    let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope)).ok()?;
     let installed = observed_path(observed, row)?;
     crate::library::record_at(
         env,
         &row.scope,
-        &lock,
+        lock,
         (package.kind, &package.name),
         installed,
     )
@@ -322,86 +353,110 @@ fn recorded_render(
     .and_then(|entry| entry.rendered_hash.clone())
 }
 
-/// Where a marketplace's own bytes read their links from: a path catalog's
-/// item directory, or nowhere for a fetched catalog, whose bytes are the
-/// publisher's.
+/// What a marketplace's own bytes' links mean, as the link owner reads the
+/// catalog that holds them ([`links::declared`]).
 fn marketplace_reading(
+    env: &Env,
+    row: &crate::library::ProvenanceRow,
     manifest: &Manifest,
     source: &str,
     sealed: &SealedSource,
+    path: &Path,
+) -> Reading {
+    let package = row.package_ref();
+    match package_path(sealed, package.kind, path) {
+        Some(item) => links::declared(
+            env,
+            &row.scope,
+            manifest,
+            links::Store {
+                source,
+                links: None,
+            },
+            &package.name,
+            &item,
+            sealed,
+        ),
+        None => Reading::Opaque,
+    }
+}
+
+/// What the person's own content's links mean, as the link owner reads its
+/// store and the reading its declaration records ([`links::declared`]).
+/// Content its scope declares nothing for from this source records no
+/// reading. The error is the cause a manifest that does not read gives.
+fn own_reading(
+    env: &Env,
+    row: &crate::library::ProvenanceRow,
+    source: &str,
+    item: &Path,
+    sealed: &SealedSource,
+) -> std::result::Result<Reading, String> {
+    let package = row.package_ref();
+    if package.kind != ItemKind::Skill {
+        return Ok(Reading::Opaque);
+    }
+    let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, &row.scope)) {
+        Ok(ManifestFile::Current(manifest)) => *manifest,
+        Ok(ManifestFile::Absent) => Manifest::default(),
+        Err(error) => return Err(format!("its declaration cannot be read: {error}")),
+    };
+    let recorded = manifest
+        .declared(package.kind)
+        .get(&package.name)
+        .filter(|decl| decl.source == source)
+        .and_then(|decl| decl.links);
+    Ok(links::declared(
+        env,
+        &row.scope,
+        &manifest,
+        links::Store {
+            source,
+            links: recorded,
+        },
+        &package.name,
+        item,
+        sealed,
+    ))
+}
+
+/// An observed skill copy reads its links from where it physically stands:
+/// the skill's directory, which a scan may name by its `SKILL.md`.
+fn observed_reading(
+    env: &Env,
+    scope: &Scope,
     kind: ItemKind,
     path: &Path,
-) -> ReadAt {
-    let authored = manifest
-        .sources
-        .get(source)
-        .is_some_and(|declared| declared.path.is_some());
-    match (authored, package_path(sealed, kind, path)) {
-        (true, Some(directory)) => ReadAt::Directory {
-            directory,
-            catalog: Some(sealed.root().to_path_buf()),
-        },
-        _ => ReadAt::Opaque,
+) -> std::result::Result<Reading, String> {
+    if kind != ItemKind::Skill {
+        return Ok(Reading::Opaque);
     }
-}
-
-/// Where the person's own skill content reads its links from: its scope's
-/// shared tree when the declaration is tagged, the places it was delivered
-/// to when it is not.
-fn own_reading(env: &Env, row: &crate::library::ProvenanceRow) -> ReadAt {
-    let manifest = scope_manifest(env, &row.scope);
-    let package = row.package_ref();
-    let Some(decl) = manifest.declared(package.kind).get(&package.name) else {
-        return ReadAt::Delivered(Vec::new());
+    let at = crate::paths::canonical(path).map_err(|error| {
+        format!(
+            "{} cannot be resolved: {error}",
+            crate::paths::slashed(path)
+        )
+    })?;
+    let directory = match at.is_dir() {
+        true => at,
+        false => match at.parent() {
+            Some(directory) => directory.to_path_buf(),
+            None => {
+                return Err(format!(
+                    "{} sits in no directory",
+                    crate::paths::slashed(&at)
+                ));
+            }
+        },
     };
-    match decl.links {
-        Some(crate::manifest::SkillLinks::SharedTree) => ReadAt::Directory {
-            directory: crate::render::skill::links::shared_tree(env, &row.scope, &package.name)
-                .directory,
-            catalog: None,
-        },
-        None => {
-            let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope)).ok();
-            let mut delivered: Vec<PathBuf> = lock
-                .iter()
-                .flat_map(|lock| lock.entries.values())
-                .filter(|entry| entry.kind == package.kind && entry.name == package.name)
-                .filter_map(|entry| entry.emitted.as_ref())
-                .flat_map(|emitted| emitted.paths.iter())
-                .filter_map(|path| crate::paths::canonical(path).ok())
-                .filter(|path| path.is_dir())
-                .collect();
-            delivered.sort();
-            delivered.dedup();
-            ReadAt::Delivered(delivered)
-        }
-    }
-}
-
-/// An observed copy reads its links from where it physically stands: the
-/// skill's directory, which a scan may name by its `SKILL.md`.
-fn observed_reading(path: &Path) -> ReadAt {
-    match crate::paths::canonical(path) {
-        Ok(directory) if directory.is_dir() => ReadAt::Directory {
-            directory,
-            catalog: None,
-        },
-        Ok(file) => match file.parent() {
-            Some(directory) => ReadAt::Directory {
-                directory: directory.to_path_buf(),
-                catalog: None,
-            },
-            None => ReadAt::Opaque,
-        },
-        Err(_) => ReadAt::Opaque,
-    }
+    Ok(links::observed(env, scope, directory))
 }
 
 fn catalog_bytes(
     root: &Path,
     provenance: &str,
     row: &crate::library::ProvenanceRow,
-) -> Option<(ItemBytes, String, PathBuf)> {
+) -> Option<(ItemBytes, String, PathBuf, SealedSource)> {
     let sealed = SealedSource::open(root).ok()?;
     let config = crate::source::source_config_for(&sealed, provenance).ok()?;
     // A catalog holds this under the name it was declared as.
@@ -409,7 +464,7 @@ fn catalog_bytes(
     let path = crate::source::find_item(&sealed, &config, package.kind, &package.name)?;
     let bytes = read_bytes(&sealed, package.kind, &path)?;
     let location = crate::paths::slashed(&root.join(rel_path(&sealed, &path)));
-    Some((bytes, location, path))
+    Some((bytes, location, path, sealed))
 }
 
 /// The bytes an import of the package at `path` writes: a skill's whole
@@ -457,6 +512,7 @@ fn installed_hash(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<
 fn with_published_keys(
     env: &Env,
     row: &crate::library::ProvenanceRow,
+    lock: std::result::Result<&crate::lock::Lock, &String>,
     manifest: &Manifest,
     package: &crate::library::PackageRef,
     copy: &Path,
@@ -467,10 +523,9 @@ fn with_published_keys(
     };
     let unrestored =
         |cause: String| format!("the keys its install cut cannot be put back: {cause}");
-    let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope))
-        .map_err(|error| unrestored(error.to_string()))?;
+    let lock = lock.map_err(|error| unrestored(error.clone()))?;
     let installed =
-        crate::library::record_at(env, &row.scope, &lock, (package.kind, &package.name), copy)
+        crate::library::record_at(env, &row.scope, lock, (package.kind, &package.name), copy)
             .map(crate::source::header::InstalledFrom::of);
     let published = match crate::source::header::published_text(
         env,
@@ -556,10 +611,15 @@ pub(super) fn resolve_selection(
             if bytes.hash() != selection.hash {
                 continue;
             }
+            let seen = Seen {
+                location: read.location,
+                scope: row.scope.clone(),
+                reading: read.reading,
+            };
             // Every place the selected bytes were seen is a position their
             // links are read from; the first one governs the copy as before.
             if let Some(chosen) = &mut chosen {
-                chosen.readings.push((read.location, read.reading));
+                chosen.readings.push(seen);
                 continue;
             }
             let notices = match read.group.licensed_source() {
@@ -571,7 +631,7 @@ pub(super) fn resolve_selection(
                 group: read.group,
                 notices,
                 read_from: read.read_from,
-                readings: vec![(read.location, read.reading)],
+                readings: vec![seen],
             });
         }
     }
