@@ -20,10 +20,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use account_planters::*;
 use agent_runtime::accounts::{Env, PickRequest, here};
-use agent_runtime::clock;
 use agent_runtime::harness::Harness;
 use agent_runtime::protocol::Reply;
+use agent_runtime::reading::Reading;
 use agent_runtime::settings::{self, AccountSettings, Judged, Keys};
+use agent_runtime::{clock, group, process};
 use isolation::*;
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -168,18 +169,27 @@ impl World {
         }
     }
 
-    fn write_fleet(&self, overseer_account: Option<&str>) {
-        let mut fleet = json!({
+    /// The controller record, its controller seated on `seat` where one is
+    /// named: the seat recorded through the one writer, its harness this
+    /// test's own process, which runs for the whole row.
+    fn write_fleet(&self, seat: Option<&str>) {
+        let fleet = json!({
             "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []
         });
-        if let Some(account) = overseer_account {
-            fleet["overseer"] = json!({"account": account});
+        let record = self.path().join(RECORD);
+        std::fs::write(&record, serde_json::to_string(&fleet).unwrap()).unwrap();
+        if let Some(account) = seat {
+            let Reading::Live(own) = process::identity(std::process::id()) else {
+                panic!("this test's own identity reads");
+            };
+            group::seat(
+                &self.settings().account_state.get().unwrap(),
+                &record,
+                &own,
+                account,
+            )
+            .unwrap();
         }
-        std::fs::write(
-            self.path().join(RECORD),
-            serde_json::to_string(&fleet).unwrap(),
-        )
-        .unwrap();
     }
 
     /// Every argv the `kendex` fixture was handed.

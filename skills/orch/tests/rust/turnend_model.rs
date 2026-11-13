@@ -14,6 +14,8 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use agent_runtime::process;
+use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 use support::*;
 
@@ -792,12 +794,19 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
         let account = world.home.join(dir);
         match beside {
             Beside::Nothing => {}
-            Beside::Seat => fs::write(
-                fleet_path(&lane),
-                json!({ "overseer": { "account": world.home.join(".aclaude") }, "lanes": [] })
-                    .to_string(),
-            )
-            .unwrap(),
+            Beside::Seat => {
+                fs::write(fleet_path(&lane), json!({ "lanes": [] }).to_string()).unwrap();
+                let Reading::Live(own) = process::identity(std::process::id()) else {
+                    panic!("this test's own identity reads");
+                };
+                agent_runtime::group::seat(
+                    &world.account_state(),
+                    &fleet_path(&lane),
+                    &own,
+                    &world.home.join(".aclaude").display().to_string(),
+                )
+                .unwrap();
+            }
             Beside::Hosted => plant_launch_record(&lane, HOSTED_RECORD.as_bytes()),
             Beside::LaunchUnread => plant_launch_record(&lane, b"{"),
             Beside::LaunchNotText => plant_launch_record(&lane, &[0xff, 0xfe]),

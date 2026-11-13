@@ -82,6 +82,7 @@ pub const ENGINE_KEYS: &[&str] = &[
     HARNESS_BINARIES_KEY,
     SUCCESSION_KEY,
     CONTROLLER_PREFERENCE_KEY,
+    ACCOUNT_STATE_DIR_KEY,
 ];
 
 // The account readers' keys.
@@ -247,13 +248,16 @@ impl Succession {
 }
 
 /// The engine's settings: the session a window opens in, the launch's
-/// bounds and binaries, and the detached job's claim bound.
+/// bounds and binaries, the detached job's claim bound, and the account
+/// records' root a published or adopted controller's seat is recorded
+/// under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineSettings {
     pub tmux_session: Option<String>,
     pub verify: Judged<Duration>,
     pub claim: Judged<Duration>,
     pub harness_binaries: Judged<BTreeMap<Harness, PathBuf>>,
+    pub account_state: Judged<PathBuf>,
 }
 
 impl EngineSettings {
@@ -269,6 +273,7 @@ impl EngineSettings {
                     Some(text) => harness_binaries(text).ok_or(text),
                 },
             ),
+            account_state: account_state_dir(values),
         }
     }
 }

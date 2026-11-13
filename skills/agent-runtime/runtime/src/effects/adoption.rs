@@ -2,7 +2,7 @@
 //! controller's adoption writes or heals, on the pane read only this
 //! module's reader mints.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -11,16 +11,20 @@ use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted, MEMBER
 use crate::error::{Error, Result};
 use crate::journal::{self, intents};
 use crate::record::{self, Document, Locking};
+use crate::settings::Judged;
 
 /// Apply an adoption: the one transition of the read-then-record
 /// `adopt-controller`, on the identity the effects read in the pane. The
 /// read travels as the token only the operation module mints from its own
 /// pane read, so no caller supplies
-/// adoption evidence.
+/// adoption evidence. The adopted controller's seat on the account its
+/// record names is recorded under `account_state` before the record is
+/// written, so a seat that cannot be recorded refuses the adoption.
 pub(super) fn apply_adoption(
     path: &Path,
     r: &AdoptController,
     read: &Recorded<AdoptionRead>,
+    account_state: &Judged<PathBuf>,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
     journal::journal_kind(path, "adopt-controller")?;
@@ -29,6 +33,20 @@ pub(super) fn apply_adoption(
     })?;
     let mut doc = read_doc.clone();
     let adopted = adopt_controller(path, &mut doc, r, read.evidence())?;
+    let adopted_record: Option<Overseer> = record::field(path, &doc, MEMBER)?;
+    if let Some(account) = adopted_record
+        .as_ref()
+        .and_then(|o| o.extra.get("account"))
+        .and_then(Value::as_str)
+        .filter(|a| !a.is_empty())
+    {
+        crate::group::seat(
+            &account_state.get()?,
+            path,
+            &read.evidence().identity,
+            account,
+        )?;
+    }
     record::store(path, &read_doc, &doc, locking)?;
     Ok(adopted)
 }
@@ -204,9 +222,22 @@ mod tests {
             1,
         );
         fs::write(&path, &healed_from).unwrap();
-        let a = apply_adoption(&path, &request, &read(true), LOCK).unwrap();
+        let seats = Judged::of("account-state", Ok(dir.path().join("accounts")));
+        let a = apply_adoption(&path, &request, &read(true), &seats, LOCK).unwrap();
         assert!(a.healed);
         assert_eq!(a.generation, 3);
+        // The adopted controller's seat is on the account its record names,
+        // its harness the identity read in the pane.
+        let live = |id: &Identity| match id.pid {
+            5151 => crate::reading::Reading::Live(id.clone()),
+            _ => crate::reading::Reading::Gone,
+        };
+        assert_eq!(
+            crate::group::seats(&dir.path().join("accounts"), Some(&path), &live)
+                .unwrap()
+                .own,
+            Some(("/a/x".to_owned(), true))
+        );
         let after = object(&path)[MEMBER].clone();
         assert_eq!(after["harness"], json!("claude"));
         assert_eq!(after["account"], json!("/a/x"), "the request's");
@@ -231,14 +262,14 @@ mod tests {
             model: None,
             ..request.clone()
         };
-        apply_adoption(&path, &bare, &read(true), LOCK).unwrap();
+        apply_adoption(&path, &bare, &read(true), &seats, LOCK).unwrap();
         let after = object(&path)[MEMBER].clone();
         assert_eq!(after["model"], json!("claude-opus-5-5"), "kept");
         assert_eq!(after["session_id"], Value::Null, "cleared");
         // Replace: another session's record goes, the new one is written
         // at the next generation with the request's identity.
         fs::write(&path, super::super::testing::FLEET).unwrap();
-        let a = apply_adoption(&path, &request, &read(false), LOCK).unwrap();
+        let a = apply_adoption(&path, &request, &read(false), &seats, LOCK).unwrap();
         assert!(!a.healed);
         assert_eq!(a.generation, 4);
         let after = object(&path)[MEMBER].clone();
@@ -272,7 +303,7 @@ mod tests {
             "outcome": "not-started"
         }]);
         fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let err = apply_adoption(&path, &request, &read(false), LOCK).unwrap_err();
+        let err = apply_adoption(&path, &request, &read(false), &seats, LOCK).unwrap_err();
         assert_eq!(err.key(), "intent-open");
     }
 }

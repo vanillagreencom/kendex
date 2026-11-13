@@ -36,6 +36,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use agent_runtime::accounts::{self, PickRequest};
 use agent_runtime::clock;
 use agent_runtime::harness::Harness;
+use agent_runtime::process::{self, Identity};
+use agent_runtime::reading::Reading;
 use agent_runtime::settings::Roots;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use serde_json::{Value, json};
@@ -56,6 +58,14 @@ fn now() -> u64 {
 
 fn stamp(at: u64) -> String {
     clock::iso_utc(at)
+}
+
+/// This test's own process identity, a harness that runs for the whole row.
+fn own_identity() -> Identity {
+    match process::identity(std::process::id()) {
+        Reading::Live(identity) => identity,
+        other => panic!("this test's own identity: {other:?}"),
+    }
 }
 
 /// A provider's capability line for an SSH host: no repository rule.
@@ -204,14 +214,29 @@ impl World {
         std::fs::write(path, map.to_string()).unwrap();
     }
 
-    fn write_fleet(&self, lanes: Vec<Value>, overseer_account: Option<&str>) {
-        let mut fleet = json!({
+    /// The fleet state holding `lanes`, its controller seated on `seat`
+    /// where one is named: the seat recorded through the one writer, its
+    /// harness this test's own process, which runs for the whole row.
+    fn write_fleet(&self, lanes: Vec<Value>, seat: Option<&str>) {
+        let fleet = json!({
             "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": lanes, "fleet_log": []
         });
-        if let Some(account) = overseer_account {
-            fleet["overseer"] = json!({"account": account});
-        }
         std::fs::write(self.fleet_path(), serde_json::to_string(&fleet).unwrap()).unwrap();
+        if let Some(account) = seat {
+            self.sit(&self.fleet_path(), &own_identity(), account);
+        }
+    }
+
+    /// The controller of the record at `record`, its harness `leader`,
+    /// seated on `account` through the one writer.
+    fn sit(&self, record: &Path, leader: &Identity, account: &str) {
+        agent_runtime::group::seat(
+            &self.settings.account_state.get().unwrap(),
+            record,
+            leader,
+            account,
+        )
+        .unwrap();
     }
 
     /// The body the usage fixture answers for `token` at `endpoint`
@@ -688,12 +713,11 @@ fn a_copilot_home_or_a_pi_root_the_overseer_names_is_judged_as_an_ordinary_accou
 
 /// The provider's rows under a host are the judge's own, read from the
 /// roster with the host. Under `ORCH_LANE_HOST=fleet-vm` the listing
-/// carries the provider's rows: the seat with the most room is held to the
-/// headroom and comes last, the reserved row is never the lane, the
-/// ordinary row is; with the ordinary row excluded the seat is the lane
-/// while over its limit and `seat-reserve` under it; the provider is asked
-/// for its capability line and its accounts under the host, and nothing
-/// else.
+/// carries the provider's rows: the seat with the most room after what it
+/// keeps is the lane, carrying its need; with the seat excluded the
+/// reserved row is never the lane and the ordinary row is; the seat is
+/// `seat-reserve` under a tighter headroom; the provider is asked for its
+/// capability line and its accounts under the host, and nothing else.
 #[test]
 fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_its_host() {
     let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
@@ -707,26 +731,28 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
         "fleet-vm",
         &[seat, reserved, through_host(measured("worker", 60, 5))],
     );
-    let chosen_row = world.pick(&claude(None));
+    // The seat at 10 used leaves 72.1 once it keeps its overseer's 8.9; the
+    // worker at 60 leaves 31.1.
+    let seat_first = world.pick(&claude(None));
     assert_eq!(
-        chosen(&chosen_row).as_deref(),
-        Some("/home/me/.worker"),
-        "the provider's ordinary row, not its seat or its reserved row: {chosen_row}"
+        chosen(&seat_first).as_deref(),
+        Some("/home/me/.seat"),
+        "{seat_first}"
     );
-    let seat_last = world.pick(&PickRequest {
-        exclude: vec!["/home/me/.worker".to_owned()],
+    assert_eq!(seat_first["record"]["seat"], json!(true));
+    assert_eq!(
+        seat_first["record"]["need"],
+        json!(seat_need(5)),
+        "the seat keeps the default headroom and its overseer's spend to the reset"
+    );
+    let chosen_row = world.pick(&PickRequest {
+        exclude: vec!["/home/me/.seat".to_owned()],
         ..claude(None)
     });
     assert_eq!(
-        chosen(&seat_last).as_deref(),
-        Some("/home/me/.seat"),
-        "{seat_last}"
-    );
-    assert_eq!(seat_last["record"]["seat"], json!(true));
-    assert_eq!(
-        seat_last["record"]["need"],
-        json!(seat_need(5)),
-        "the seat keeps the default headroom and its overseer's spend to the reset"
+        chosen(&chosen_row).as_deref(),
+        Some("/home/me/.worker"),
+        "the provider's ordinary row, not its reserved row: {chosen_row}"
     );
     assert_eq!(
         left_out(&world.pick(&PickRequest {
@@ -785,6 +811,29 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
         Some("ORCH_LANE_HOST=fleet-vm capabilities"),
         "{log:?}"
     );
+}
+
+/// An account keeps what each controller seated on it spends to the reset:
+/// a seat at 30 used, 60 hours from its reset at the set burn, keeps the
+/// headroom 5 and 8.9 per controller. This fleet's own seat with the
+/// provider's mark on the account is one controller, need 14, since the
+/// mark names no controller and the recorded one is the one it marks;
+/// another record's controller seated there beside it is a second, need 23.
+#[test]
+fn an_account_two_controllers_sit_on_keeps_both_their_spends() {
+    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    world.plant_capabilities("fleet-vm", SSH_LINE);
+    let mut seat = through_host(measured("seat", 30, 5));
+    seat["seat"] = json!(1);
+    world.plant_host_listing("fleet-vm", &[seat]);
+    let dir = "/home/me/.seat";
+    world.write_fleet(Vec::new(), Some(dir));
+    let need = |world: &World| world.pick(&named(dir, claude(None)))["record"]["need"].clone();
+    assert_eq!(need(&world), json!(14), "one controller");
+    let elsewhere = world.path().join("elsewhere.json");
+    std::fs::write(&elsewhere, "{}").unwrap();
+    world.sit(&elsewhere, &own_identity(), dir);
+    assert_eq!(need(&world), json!(23), "two controllers");
 }
 
 /// A provider's reservation is a fact of the account, read apart from its
@@ -2583,16 +2632,17 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                         ("measured_through", json!("host")),
                         ("verdict", json!("seat-reserve")),
                         ("wall", json!(99)),
-                        // The default headroom 5 and the overseer's one hour
-                        // at the setting's burn where no reset is stated,
-                        // rounded up; the retained pick kept 5.
-                        ("need", json!(6)),
+                        // The default headroom 5 and the overseer's spend at
+                        // the setting's burn over the week's whole length
+                        // where no reset is stated, 25; the retained pick
+                        // kept 5.
+                        ("need", json!(30)),
                     ],
                 ),
             ],
         },
         Arm {
-            name: "the provider's seat is an ordinary account to the overseer walk, which judges the shared windows where this machine read no window scoped to the model",
+            name: "the provider's seat is refused to an overseer that sits on no account, `seated` whatever its room, where the retained pick judged it as an ordinary account",
             usage: usage_body((0, now() + 1800), (0, now() + 7 * 86_400), &[]),
             provider: Some(claude_row("\tsession-5h-pct=99\tweekly-pct=99\tseat=1")),
             env: vec![],
@@ -2601,7 +2651,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                 "claude:claude-opus-5-5:high".to_owned(),
                 "none",
                 Some(3),
-                walked(1, 0),
+                [walked(0, 0), vec![("/skipped/0/reason", json!("seated"))]].concat(),
             )],
         },
         Arm {

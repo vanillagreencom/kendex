@@ -59,21 +59,16 @@ struct Worker {
     account: Option<String>,
 }
 
-/// The charges per account of the workers recorded under `dir`, keyed by the
-/// account's one spelling: a record naming an account charges it while its
-/// leader reads live or unreadable (an unread identity protects its account,
-/// never frees it) and nothing once its leader is gone. A record with no
-/// account, or of another shape, charges nothing. Each file is its caller's:
-/// this read removes none. The names a write's temporary files take (a
-/// leading `.`) are not records.
-pub fn charges(
-    dir: &Path,
-    still_runs: &dyn Fn(&Identity) -> Reading<Identity>,
-) -> Result<BTreeMap<String, u32>> {
-    let mut charges = BTreeMap::new();
+/// The records under `dir` that name an account, each with its file's name,
+/// its leader and the account's one spelling. A record with no account, or
+/// of another shape, is none. Each file is its writer's: this read removes
+/// none. The names a write's temporary files take (a leading `.`) are not
+/// records.
+fn accounted(dir: &Path) -> Result<Vec<(String, Identity, String)>> {
+    let mut records = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(charges),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(records),
         Err(e) => return Err(Error::io("read-dir", dir, e)),
     };
     for entry in entries {
@@ -97,14 +92,104 @@ pub fn charges(
         if account.is_empty() {
             continue;
         }
-        match still_runs(&leader) {
-            Reading::Gone => {}
-            Reading::Live(_) | Reading::Unreadable { .. } => {
-                *charges.entry(wall::canon(&account)).or_insert(0) += 1;
-            }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        records.push((name, leader, wall::canon(&account)));
+    }
+    Ok(records)
+}
+
+/// Whether a record's leader holds its account: while it reads live or
+/// unreadable (an unread identity protects its account, never frees it),
+/// and not once it is gone.
+fn leader_holds(leader: &Identity, still_runs: &dyn Fn(&Identity) -> Reading<Identity>) -> bool {
+    match still_runs(leader) {
+        Reading::Gone => false,
+        Reading::Live(_) | Reading::Unreadable { .. } => true,
+    }
+}
+
+/// The charges per account of the workers recorded under `dir`, keyed by the
+/// account's one spelling: a record charges its account while its leader
+/// [`leader_holds`] it.
+pub fn charges(
+    dir: &Path,
+    still_runs: &dyn Fn(&Identity) -> Reading<Identity>,
+) -> Result<BTreeMap<String, u32>> {
+    let mut charges = BTreeMap::new();
+    for (_, leader, account) in accounted(dir)? {
+        if leader_holds(&leader, still_runs) {
+            *charges.entry(account).or_insert(0) += 1;
         }
     }
     Ok(charges)
+}
+
+/// The one folder under the account records' root a controller's seat is
+/// recorded in: one record per controller, in the form of a worker's, so a
+/// seat on an account is a fact of the machine every fleet's pick reads.
+pub fn seats_dir(account_state: &Path) -> PathBuf {
+    account_state.join("seats")
+}
+
+/// The name of the seat of the controller whose record is at `record`: the
+/// checksum of the record's resolved path, so the successor a hand-over
+/// publishes into that record replaces its predecessor's seat, and every
+/// reader names one controller's seat alike.
+fn seat_name(record: &Path) -> std::io::Result<String> {
+    let resolved = std::fs::canonicalize(record)?;
+    Ok(crate::record::cksum(resolved.as_os_str().as_encoded_bytes()).to_string())
+}
+
+/// Record that the controller published into the record at `record`, its
+/// harness `leader`, sits on `account`.
+pub fn seat(account_state: &Path, record: &Path, leader: &Identity, account: &str) -> Result<()> {
+    let name = seat_name(record).map_err(|e| Error::io("resolve", record, e))?;
+    let path = seats_dir(account_state).join(name);
+    let mut value = serde_json::to_value(leader).map_err(|source| Error::Json {
+        path: path.clone(),
+        source,
+    })?;
+    value["account"] = json!(account);
+    crate::record::replace_atomically(&path, &value)
+}
+
+/// This machine's controllers' seats as the controller of one record reads
+/// them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Seats {
+    /// Per account, the seats of the other controllers whose harness
+    /// [`leader_holds`] it.
+    pub others: BTreeMap<String, u32>,
+    /// The account the caller's own seat names, whether or not its harness
+    /// still runs, and whether it holds it.
+    pub own: Option<(String, bool)>,
+}
+
+/// The seats recorded under `account_state`, the seat of the controller
+/// whose record is at `own` told apart; no record at `own` is no own seat.
+pub fn seats(
+    account_state: &Path,
+    own: Option<&Path>,
+    still_runs: &dyn Fn(&Identity) -> Reading<Identity>,
+) -> Result<Seats> {
+    let own = match own {
+        None => None,
+        Some(record) => match seat_name(record) {
+            Ok(name) => Some(name),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(Error::io("resolve", record, e)),
+        },
+    };
+    let mut seats = Seats::default();
+    for (name, leader, account) in accounted(&seats_dir(account_state))? {
+        let held = leader_holds(&leader, still_runs);
+        if own.as_deref() == Some(name.as_str()) {
+            seats.own = Some((account, held));
+        } else if held {
+            *seats.others.entry(account).or_insert(0) += 1;
+        }
+    }
+    Ok(seats)
 }
 
 /// Where the caller stands when it asks to lead: its pid, its process group,

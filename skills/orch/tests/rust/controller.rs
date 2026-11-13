@@ -9099,6 +9099,31 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
     assert_eq!(overseer["model"], "fable", "{overseer}");
     assert_eq!(overseer["permission"], "bypass", "{overseer}");
     assert_eq!(overseer["pane"], runner_pane(&server), "{overseer}");
+    // The publication seats the controller on its account, its harness the
+    // one it published, read as every fleet's pick reads seats.
+    let account_state = env
+        .iter()
+        .find(|(key, _)| key == "AGENT_RUNTIME_ACCOUNT_STATE_DIR")
+        .map(|(_, dir)| std::path::PathBuf::from(dir))
+        .expect("the world names the account records' root");
+    let seats = agent_runtime::group::seats(
+        &account_state,
+        Some(
+            &runner
+                .state_dir()
+                .join(agent_runtime::record::FLEET_FILE_NAME),
+        ),
+        &agent_runtime::process::still_runs,
+    )
+    .unwrap();
+    assert_eq!(
+        seats.own,
+        Some((
+            agent_runtime::accounts::wall::canon(&planted(&runner, "aclaude")),
+            true
+        )),
+        "{overseer}"
+    );
     stop_live_watch(
         &runner,
         &runner

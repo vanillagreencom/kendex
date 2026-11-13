@@ -388,6 +388,10 @@ struct Successor {
     resume: Option<String>,
     /// That session's file, which a Pi launch continues by.
     resume_file: Option<PathBuf>,
+    /// The account the pending names, the one the published controller's
+    /// seat is on, and the account records' root it is recorded under.
+    seat: Option<String>,
+    account_state: crate::settings::Judged<PathBuf>,
 }
 
 impl Successor {
@@ -515,7 +519,18 @@ impl Successor {
             extra_args: pending.extra_args.clone(),
             resume: pending.resume.clone(),
             resume_file: pending.resume_file.as_deref().map(PathBuf::from),
+            seat: pending.account.clone().filter(|a| !a.is_empty()),
+            account_state: settings.engine.account_state.clone(),
         })
+    }
+
+    /// Record the seat of the controller published into the record at
+    /// `record`, its harness `leader`, where its pending names an account.
+    fn sit(&self, record: &Path, leader: &Identity) -> Result<()> {
+        let Some(account) = &self.seat else {
+            return Ok(());
+        };
+        crate::group::seat(&self.account_state.get()?, record, leader, account)
     }
 
     /// The launch the successor runs, built from its typed fields through
@@ -1779,10 +1794,17 @@ fn publish(
         "predecessor_window": window_word,
         "note": "successor-confirmed",
     });
+    let record = operation.record_path().to_path_buf();
     match operation.publish(Published::Successor, opened, &identity, observation)? {
         Ok(mut outcome) => {
             if let Some(cause) = kept {
                 outcome.annotate("pane_kept", json!(cause));
+            }
+            // The controller is published past its predecessor's retirement
+            // either way: a seat that cannot be recorded is said on the
+            // outcome.
+            if let Err(e) = successor.sit(&record, identity.identity()) {
+                outcome.annotate("seat", json!(e.key()));
             }
             Ok(outcome.with_wire(Wire {
                 launch: Some(runner_wire(opened, Some(identity.identity()))),

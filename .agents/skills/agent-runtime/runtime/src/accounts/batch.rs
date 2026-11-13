@@ -432,8 +432,8 @@ fn read_batch(path: &Path) -> Result<String> {
 /// `accounts judge`: each line of the batch at `path` read by the one
 /// parser, finished as the listing finishes a row (`measured_through`
 /// `supplied`), and judged as a named pick judges an account now, no
-/// candidate charged: the seats are the batch's own `seat=1` rows and the
-/// controller member of `record`, and the lanes are charged as every room
+/// candidate charged: the seats are the batch's own `seat=1` rows and this
+/// machine's seat records, and the lanes are charged as every room
 /// reading here counts them. One entry per line, in order; a line nobody
 /// can read is its entry's `unreadable` verdict with the field, never left
 /// out.
@@ -450,7 +450,7 @@ pub fn judge(
     let text = read_batch(path)?;
     let ctx = Ctx::new(settings, &accounts, now).expect("the account state was read above");
     let read = rows(&ctx, &text, "plan", "supplied");
-    let ground = Beside::read(project, record)?;
+    let ground = Beside::read(settings, project, record)?;
     let parsed: Vec<(usize, std::result::Result<AccountRow, Unreadable>)> = read
         .into_iter()
         .map(|(number, read)| {

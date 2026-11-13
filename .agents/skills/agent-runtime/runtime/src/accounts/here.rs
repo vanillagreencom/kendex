@@ -1,6 +1,6 @@
 //! The reading a program outside orch asks at the command line: this
-//! machine's listing, the seat the controller record names, and the lanes'
-//! charges. Every room reading counts the lanes that run on an account
+//! machine's listing, its controllers' seats, and the lanes' charges.
+//! Every room reading counts the lanes that run on an account
 //! wherever orch is installed, so the charges are asked of the one program
 //! that counts them, the project's own `orch-runtime`, once per reading, at
 //! a fixed path no setting names: no orch in the project means no lanes, and
@@ -12,15 +12,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::Value;
 
 use super::walk::{self, Ground, Hosted, Scope, WalkRequest, Walked};
-use super::{AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, TAG, wall};
-use crate::controller::{MEMBER, Overseer};
+use super::{AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, TAG};
 use crate::error::{Error, Result};
+use crate::group::{self, Seats};
 use crate::harness::Harness;
 use crate::host::{self, Place};
-use crate::record;
+use crate::process;
 
 /// Where a project holds orch's entry, the one program that counts its lanes.
 pub const ORCH_ENTRY: &str = ".agents/skills/orch/scripts/orch-runtime";
@@ -31,8 +30,8 @@ const COUNT_BOUND: Duration = Duration::from_secs(60);
 /// lane charges` prints them, and the record they were read from.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct Counted {
-    /// The fleet record orch read; its controller member is the seat where
-    /// the caller named no record.
+    /// The fleet record orch read; its controller's seat is the caller's
+    /// own where the caller named no record.
     pub fleet: Option<PathBuf>,
     pub charges: BTreeMap<String, u32>,
     pub started: BTreeMap<String, Vec<u64>>,
@@ -101,53 +100,33 @@ pub fn count(project: &Path, record: Option<&Path>) -> Result<Counted> {
     }
 }
 
-/// The account the controller member of `path` runs on, where the record
-/// and the member stand and name one.
-fn seat(path: &Path) -> Result<Option<String>> {
-    let Some(doc) = record::read_document(path)? else {
-        return Ok(None);
-    };
-    let controller: Option<Overseer> = record::field(path, &doc, MEMBER)?;
-    Ok(controller
-        .and_then(|c| {
-            c.extra
-                .get("account")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .filter(|a| !a.is_empty()))
-}
-
-/// What a reading here judges beside the rows: the seat of the record the
-/// caller named (else of the fleet orch read) and the charges counted.
+/// What a reading here judges beside the rows: this machine's seats, the
+/// caller's own being that of the record it named (else of the fleet orch
+/// read), and the charges counted.
 pub(super) struct Beside {
-    seat: Option<String>,
+    seats: Seats,
     counted: Counted,
 }
 
 impl Beside {
-    pub(super) fn read(project: &Path, record: Option<&Path>) -> Result<Beside> {
+    pub(super) fn read(settings: &Env, project: &Path, record: Option<&Path>) -> Result<Beside> {
         let counted = count(project, record)?;
-        let seat = match record.or(counted.fleet.as_deref()) {
-            Some(path) => seat(path)?,
-            None => None,
-        };
-        Ok(Beside { seat, counted })
+        let seats = group::seats(
+            &settings.account_state.get()?,
+            record.or(counted.fleet.as_deref()),
+            &process::still_runs,
+        )?;
+        Ok(Beside { seats, counted })
     }
 
     pub(super) fn facts(&self, rows: &[AccountRow]) -> FleetFacts {
-        let mut seats: Vec<String> = rows
-            .iter()
-            .filter(|r| r.seat)
-            .map(|r| r.canon.clone())
-            .collect();
-        seats.extend(self.seat.as_deref().map(wall::canon));
-        FleetFacts {
-            seats,
+        let mut facts = FleetFacts {
             charges: self.counted.charges.clone(),
             started: self.counted.started.clone(),
-            cloud_repo: None,
-        }
+            ..FleetFacts::default()
+        };
+        facts.seat(rows, &self.seats);
+        facts
     }
 }
 
@@ -180,8 +159,9 @@ fn judge(settings: &Env, ground: &Beside, req: &PickRequest, now: u64) -> PickAn
     }
 }
 
-/// The pick here: the judge over this machine's listing, the seat of
-/// `record` and the lanes' charges of the project at `project`.
+/// The pick here: the judge over this machine's listing, its seats with
+/// `record`'s controller's as the caller's own, and the lanes' charges of
+/// the project at `project`.
 pub fn pick(
     settings: &Env,
     project: &Path,
@@ -192,7 +172,7 @@ pub fn pick(
     if let Some(answer) = super::unbilled(req) {
         return Ok(answer);
     }
-    let ground = Beside::read(project, record)?;
+    let ground = Beside::read(settings, project, record)?;
     Ok(judge(settings, &ground, req, now))
 }
 
@@ -205,7 +185,7 @@ pub fn walk(
     req: &WalkRequest,
     now: u64,
 ) -> Result<Walked> {
-    let ground = Beside::read(project, record)?;
+    let ground = Beside::read(settings, project, record)?;
     let mut host = |_: Scope, entry_host: Option<&str>, _: Harness| match entry_host {
         Some(h) if h != LOCAL => Ok(Hosted::Unread {
             host: h.to_owned(),

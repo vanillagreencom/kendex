@@ -34,13 +34,15 @@ use account_planters::*;
 use agent_runtime::accounts::{
     self, AccountRow, EndSource, FleetFacts, PickAnswer, PickRequest, Roster, Word,
 };
-use agent_runtime::clock;
 use agent_runtime::harness::Harness;
+use agent_runtime::reading::Reading;
 use agent_runtime::settings::{self, AccountSettings, Judged, Keys};
+use agent_runtime::{clock, group, process};
 use isolation::*;
 use serde_json::{Value, json};
 
-/// The controller record a world plants: its `overseer` member is a seat.
+/// The controller record a world plants, whose controller's seat is the
+/// caller's own.
 const RECORD: &str = "workflow-state-oversee.json";
 
 fn binary() -> PathBuf {
@@ -154,16 +156,26 @@ impl World {
         self.settings = World::load(self.path(), &self.env);
     }
 
-    /// The controller record: `lanes` beside the member whose account is a
-    /// seat, where one is named.
-    fn write_fleet(&self, lanes: Vec<Value>, overseer_account: Option<&str>) {
-        let mut fleet = json!({
+    /// The controller record holding `lanes`, its controller seated on
+    /// `seat` where one is named: the seat recorded through the one writer,
+    /// its harness this test's own process, which runs for the whole row.
+    fn write_fleet(&self, lanes: Vec<Value>, seat: Option<&str>) {
+        let fleet = json!({
             "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": lanes, "fleet_log": []
         });
-        if let Some(account) = overseer_account {
-            fleet["overseer"] = json!({"account": account});
-        }
         std::fs::write(self.fleet_path(), serde_json::to_string(&fleet).unwrap()).unwrap();
+        if let Some(account) = seat {
+            let Reading::Live(own) = process::identity(std::process::id()) else {
+                panic!("this test's own identity reads");
+            };
+            group::seat(
+                &self.settings.account_state.get().unwrap(),
+                &self.fleet_path(),
+                &own,
+                account,
+            )
+            .unwrap();
+        }
     }
 
     /// The body the usage fixture answers for `token` at `endpoint`
@@ -689,17 +701,21 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
 /// The seat's limit, `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 -
 /// AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT)` over the room left once the overseer's own
 /// spend to the reset is charged, and `pick-seat-omitted` naming `need=`.
-/// The fleet record's `overseer.account` is a seat: returned last, held to
-/// its overseer's need beside the lane limit (`seat-reserve` under it, the
-/// record and the `none` answer's `seats` carrying `need` as the integer
-/// [`seat_need`], the room the seat keeps), and judged as any account when
-/// the overseer asks.
+/// The account the fleet's controller's seat record names is a seat: ranked
+/// by the room it
+/// leaves once it keeps its overseer's need, held to that need beside the
+/// lane limit (`seat-reserve` under it, the record and the `none` answer's
+/// `seats` carrying `need` as the integer [`seat_need`], the room the seat
+/// keeps), and judged as any account when the overseer asks.
 #[test]
-fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_last() {
+fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit() {
     let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "50")]);
     world.plant_listing(&[measured("seat", 10, 5), measured("worker", 60, 5)]);
     let seat_dir = world.dir("seat");
     world.write_fleet(Vec::new(), Some(&seat_dir));
+    // The seat at 10 used keeps 45 below the bound and 8.9 of its
+    // overseer's spend, leaving 27.1 beside the candidate's charge; the
+    // worker at 60 leaves 31.1.
     let worker = world.pick(&claude(None));
     assert_eq!(
         chosen(&worker).as_deref(),
@@ -740,6 +756,221 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
         overseer["record"].get("need"),
         None,
         "no seat, no room kept"
+    );
+}
+
+/// A measured local Claude row at `alias`, `used` percent on its weekly
+/// window, the reader's rate `rate` points a minute measured on it ten
+/// minutes ago, the reset `reset_hours` on or none stated.
+fn rated(alias: &str, used: u64, rate: f64, reset_hours: Option<u64>) -> Value {
+    let mut row = measured(alias, used, 5);
+    let reset = reset_hours.map(|h| stamp(now() + h * 3600));
+    row["binding_resets_at"] = json!(reset);
+    row["resets"]["weekly"] = json!(reset);
+    row["usage_rate_state"] = json!("measured");
+    row["usage_rate_pct_per_min"] = json!(rate);
+    row["usage_age_s"] = json!(600);
+    row
+}
+
+/// The facts of a fleet whose own controller sits on `seat` and whose
+/// `lanes` lanes on `on` began spending a minute ago, after the rows'
+/// sample.
+fn seated_facts(seat: Option<&str>, on: &str, lanes: u32) -> FleetFacts {
+    FleetFacts {
+        seats: seat.map(|s| (s.to_owned(), 1)).into_iter().collect(),
+        charges: [(on.to_owned(), lanes)].into_iter().collect(),
+        started: [(on.to_owned(), vec![now() - 60; lanes as usize])]
+            .into_iter()
+            .collect(),
+        ..FleetFacts::default()
+    }
+}
+
+/// The pick over `listing` for `req` under `facts`.
+fn judged(world: &World, listing: &[Value], req: &PickRequest, facts: &FleetFacts) -> PickAnswer {
+    accounts::pick(
+        &rows(listing, &world.settings),
+        req,
+        facts,
+        &world.settings.accounts.get().unwrap(),
+        now(),
+    )
+}
+
+/// The verdict a named judgement reads.
+fn verdict(answer: &PickAnswer) -> String {
+    match answer {
+        PickAnswer::Lane(j) | PickAnswer::Walled(j) => j.verdict.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A seat is chosen by the room it leaves once it keeps its overseer's
+/// spend to the reset and the headroom its limit holds back, as any
+/// account is by its room: a seat at 1 used whose overseer spends 0.3 a
+/// point an hour keeps 7.2 to a reset a day on and leaves 84.6 beside the
+/// candidate's charge at that rate, so it is the lane over an account at 83
+/// used with 13.4; a seat at 40 used whose overseer spends 0.12 an hour
+/// keeps 12 to a reset a hundred hours on and leaves 33.1, so an account at
+/// 45 used with 40.1 is the lane over it, though the seat's own lanes-only
+/// room, 45.1, is the larger.
+#[test]
+fn a_lane_goes_to_the_account_with_the_most_room_after_its_seats_reserve() {
+    let world = World::new(&[]);
+    let facts = seated_facts(Some("/home/me/.seat"), "/home/me/.none", 0);
+    let first = judged(
+        &world,
+        &[
+            rated("ordinary", 83, 0.0, Some(24)),
+            rated("seat", 1, 0.005, Some(24)),
+        ],
+        &claude(None),
+        &facts,
+    );
+    assert_eq!(
+        picked(&first).as_deref(),
+        Some("/home/me/.seat"),
+        "{first:?}"
+    );
+    let after = judged(
+        &world,
+        &[
+            rated("seat", 40, 0.002, Some(100)),
+            rated("ordinary", 45, 0.0, Some(100)),
+        ],
+        &claude(None),
+        &facts,
+    );
+    assert_eq!(
+        picked(&after).as_deref(),
+        Some("/home/me/.ordinary"),
+        "{after:?}"
+    );
+}
+
+/// A measured rate is a lane's only where a lane was live at its sample:
+/// lanes charged on an account whose sample no lane was live at are
+/// charged no less than the set burn, 5 × 5/168 a point an hour on the
+/// week, and the measured rate where it is higher. Four lanes that began
+/// after the sample of a seat at 1 used whose overseer alone spent 0.03 an
+/// hour put the seat past its reserve; one such lane on an account at 80
+/// used walls it; and a rate of 30 an hour some other spender drew walls an
+/// account at 50 used that the set burn alone would leave room on.
+#[test]
+fn a_measured_rate_with_no_lane_live_at_the_sample_is_no_lanes_rate() {
+    let world = World::new(&[]);
+    let seat = judged(
+        &world,
+        &[rated("seat", 1, 0.0005, Some(144))],
+        &named("/home/me/.seat", claude(None)),
+        &seated_facts(Some("/home/me/.seat"), "/home/me/.seat", 4),
+    );
+    assert_eq!(verdict(&seat), "seat-reserve", "{seat:?}");
+    for (used, rate) in [(80, 0.0005), (50, 0.5)] {
+        let ordinary = judged(
+            &world,
+            &[rated("ordinary", used, rate, Some(100))],
+            &named("/home/me/.ordinary", claude(None)),
+            &seated_facts(None, "/home/me/.ordinary", 1),
+        );
+        assert_eq!(verdict(&ordinary), "walled", "{used} {rate}: {ordinary:?}");
+    }
+}
+
+/// A seat whose window states no reset keeps its overseer's spend for the
+/// window's whole length, a week at the set burn being 25 points, never one
+/// hour of it: a seat at 75 used is past its reserve.
+#[test]
+fn a_seat_with_no_stated_reset_keeps_its_controllers_spend_to_the_windows_end() {
+    let world = World::new(&[]);
+    let mut seat = measured("seat", 75, 5);
+    seat["binding_resets_at"] = Value::Null;
+    seat["resets"]["weekly"] = Value::Null;
+    let answer = judged(
+        &world,
+        &[seat],
+        &named("/home/me/.seat", claude(None)),
+        &seated_facts(Some("/home/me/.seat"), "/home/me/.none", 0),
+    );
+    assert_eq!(verdict(&answer), "seat-reserve", "{answer:?}");
+}
+
+/// An overseer's choice among accounts refuses one another controller on
+/// this machine sits on, `seated`, whatever its room, while that
+/// controller's harness runs, and keeps the account its own seat names
+/// usable, a provider's mark on it included: with another record's
+/// controller seated on the account at 10 used, the choice is this fleet's
+/// own seat at 50 used; with its own left out the answer is `none` naming
+/// the other `seated`; once the other's harness is gone its account is the
+/// choice.
+#[test]
+fn an_overseers_choice_refuses_an_account_another_controller_sits_on() {
+    let mut world = World::new(&[]);
+    world.plant_listing(&[measured("other", 10, 5), measured("own", 50, 5)]);
+    let (other, own) = (world.dir("other"), world.dir("own"));
+    world.write_fleet(Vec::new(), Some(&own));
+    let elsewhere = world.path().join("elsewhere.json");
+    std::fs::write(&elsewhere, "{}").unwrap();
+    let mut harness = std::process::Command::new("sleep")
+        .arg("600")
+        .spawn()
+        .unwrap();
+    let Reading::Live(leader) = process::identity(harness.id()) else {
+        panic!("the held harness's identity reads");
+    };
+    group::seat(
+        &world.settings.account_state.get().unwrap(),
+        &elsewhere,
+        &leader,
+        &other,
+    )
+    .unwrap();
+    let choice = |exclude: Vec<String>| {
+        world.pick(&PickRequest {
+            for_overseer: true,
+            exclude,
+            ..claude(None)
+        })
+    };
+    let kept = choice(Vec::new());
+    assert_eq!(chosen(&kept).as_deref(), Some(own.as_str()), "{kept}");
+    let refused = choice(vec![own.clone()]);
+    assert_eq!(
+        left_out(&refused),
+        vec![(other.clone(), "seated".to_owned())],
+        "{refused}"
+    );
+    harness.kill().unwrap();
+    harness.wait().unwrap();
+    let freed = choice(Vec::new());
+    assert_eq!(chosen(&freed).as_deref(), Some(other.as_str()), "{freed}");
+    // The provider's mark on the account the caller's own seat names.
+    let mut marked = measured("own", 50, 5);
+    marked["seat"] = json!(1);
+    let rows = rows(&[marked], &world.settings);
+    let mut facts = FleetFacts::default();
+    facts.seat(
+        &rows,
+        &group::Seats {
+            own: Some(("/home/me/.own".to_owned(), true)),
+            ..group::Seats::default()
+        },
+    );
+    let own_choice = accounts::pick(
+        &rows,
+        &PickRequest {
+            for_overseer: true,
+            ..claude(None)
+        },
+        &facts,
+        &world.settings.accounts.get().unwrap(),
+        now(),
+    );
+    assert_eq!(
+        picked(&own_choice).as_deref(),
+        Some("/home/me/.own"),
+        "{own_choice:?}"
     );
 }
 

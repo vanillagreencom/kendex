@@ -676,6 +676,12 @@ impl<'a> Operation<'a> {
         .read_stale(stale)
     }
 
+    /// The record the operation's intent stands in, which a publication
+    /// writes.
+    pub fn record_path(&self) -> &Path {
+        self.run.path
+    }
+
     /// The publication: the runner's pane and identity
     /// pass to the record it publishes; everything else the set names, the
     /// predecessor's handles included, must already be discharged by its own

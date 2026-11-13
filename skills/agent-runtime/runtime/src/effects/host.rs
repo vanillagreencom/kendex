@@ -1569,7 +1569,7 @@ pub fn adopt_controller(
             same,
         },
     };
-    super::adoption::apply_adoption(path, r, &read, locking)
+    super::adoption::apply_adoption(path, r, &read, &settings.account_state, locking)
 }
 
 /// Whether the record names `pane` on the server `pid` at `start`, or at

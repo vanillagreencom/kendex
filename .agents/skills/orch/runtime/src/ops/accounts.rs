@@ -442,8 +442,10 @@ pub fn walk(
     Ok(walk::walk(&env(settings), ground, &req, now)?)
 }
 
-/// The fleet's seats and live charges per account from its state file:
-/// the overseer's account is a seat; every lane record
+/// The seats per account, this machine's seat records with the controller
+/// of the fleet's state file as the caller's own beside the provider's
+/// `seat=1` rows, and the fleet's live charges per account from its state
+/// file: every lane record
 /// charges its account while the occupancy reader proves its identity
 /// live, protects it unknown, or holds it preparing or reserved, and
 /// names the instant it began spending on that account where its record
@@ -451,9 +453,9 @@ pub fn walk(
 /// and a wake keeps, else `running_at`, else `launched_at`, which a
 /// relaunch keeps from the first launch, so a lane relaunched onto the
 /// account after a usage sample is counted after it; the lane `replaces`
-/// names is left out. The provider's `seat=1` rows join the
-/// seats from the listing, read before the readings are resolved, so a
-/// seat the provider holds is a seat whichever reading is judged. A worker
+/// names is left out. The provider's `seat=1` rows are the listing's, read
+/// before the readings are resolved, so a seat the provider holds is a seat
+/// whichever reading is judged. A worker
 /// outside the fleet that a lead recorded on an account under
 /// `account_state` charges it while it runs, fleet record or none, with no
 /// instant: its spend is projected as begun after any sample.
@@ -470,9 +472,9 @@ pub fn fleet_facts(
     now: u64,
 ) -> std::result::Result<FleetFacts, String> {
     let mut facts = FleetFacts::default();
-    for row in rows.iter().filter(|r| r.seat) {
-        facts.seats.push(row.canon.clone());
-    }
+    let seats = agent_runtime::group::seats(account_state, Some(path), host.still_runs)
+        .map_err(|e| e.to_string())?;
+    facts.seat(rows, &seats);
     facts.charges = agent_runtime::group::charges(
         &agent_runtime::group::workers_dir(account_state),
         host.still_runs,
@@ -482,15 +484,6 @@ pub fn fleet_facts(
         return Ok(facts);
     };
     let fleet = FleetState::view(path, &snapshot.doc).map_err(|e| e.to_string())?;
-    if let Some(account) = fleet
-        .overseer
-        .as_ref()
-        .and_then(|o| o.extra.get("account"))
-        .and_then(Value::as_str)
-        .filter(|a| !a.is_empty())
-    {
-        facts.seats.push(wall::canon(account));
-    }
     let charges = occupancy::lane_charges(&fleet.lanes, &fleet.intents, now, host);
     for charge in charges {
         let ChargeSource::Lane { item } = charge.source;
