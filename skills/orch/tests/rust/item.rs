@@ -975,7 +975,7 @@ mod dev_artifacts {
         .unwrap();
         w.record_start(&ci, &format!("tree={}", w.tree()));
         let head = w.head();
-        let ci_args = |commit: &str| {
+        let ci_args = |commit: &str, validate: &str| {
             w.call(
                 &["dev-return", "write"],
                 "ci",
@@ -987,7 +987,7 @@ mod dev_artifacts {
                     "--commit",
                     commit,
                     "--validate",
-                    "pass",
+                    validate,
                     "--validate-run-dir",
                     ci.to_str().unwrap(),
                     "--item",
@@ -997,7 +997,7 @@ mod dev_artifacts {
                 ],
             )
         };
-        let path = result(&ci_args(&head[..7]))["path"]
+        let path = result(&ci_args(&head[..7], "pass"))["path"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -1006,8 +1006,21 @@ mod dev_artifacts {
         assert_eq!(v["validate_mode"], "ci");
         assert_eq!(w.check("ci")["verdict"], "accept");
         fs::remove_file(&path).unwrap();
+        // A failing ci receipt named by a short commit is checked at the
+        // HEAD it names, never refused as another HEAD.
+        let path = result(&ci_args(&head[..7], "FAILING: lint"))["path"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let failing = w.check("ci");
+        assert_eq!(
+            (failing["verdict"].clone(), failing["reason"].clone()),
+            (json!("retry"), json!("valid")),
+            "{failing}"
+        );
+        fs::remove_file(&path).unwrap();
         w.commit("more.txt");
-        refused(&ci_args(&w.head()), "ci-contents-mismatch");
+        refused(&ci_args(&w.head(), "pass"), "ci-contents-mismatch");
         // The record keeps every field the evidence and the arguments name.
         let shot = w.root.join("shot.png");
         fs::write(&shot, "png").unwrap();
@@ -1601,7 +1614,11 @@ mod dev_artifacts {
             assert!(out.stdout.is_empty());
             assert_eq!(receipts(), before, "{rest:?}");
         }
-        for (branch, commit) in [("work", ""), (" ", head.as_str())] {
+        for (branch, commit, key) in [
+            ("work", "", "required"),
+            (" ", head.as_str(), "required"),
+            ("work", "deadbeef", "commit-unresolvable"),
+        ] {
             let out = w
                 .command()
                 .args(["dev-return", "--text", "write"])
@@ -1619,7 +1636,7 @@ mod dev_artifacts {
                 .unwrap();
             assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
             assert!(
-                stderr(&out).starts_with("dev-return-write: required "),
+                stderr(&out).starts_with(&format!("dev-return-write: {key} ")),
                 "{}",
                 stderr(&out)
             );
@@ -4257,7 +4274,7 @@ mod dev_artifacts {
         /// the item's record: the stage closed and its end notice marked
         /// with the send's word, never `owed`. Returns its run directory.
         fn validated(&self, round: &str, cmd: &str) -> PathBuf {
-            let started = result(
+            self.awaited(
                 &self
                     .command()
                     .env("DEV_VALIDATE_CMD", cmd)
@@ -4267,7 +4284,12 @@ mod dev_artifacts {
                     ])
                     .output()
                     .unwrap(),
-            );
+            )
+        }
+        /// The run a `validate start` answered with, waited for as
+        /// `validated` waits.
+        fn awaited(&self, started: &Output) -> PathBuf {
+            let started = result(started);
             let dir = PathBuf::from(started["run_dir"].as_str().unwrap());
             let bound = std::time::Instant::now() + Duration::from_secs(90);
             // The job closes the stage with its notice `owed`, sends it, and
@@ -4401,6 +4423,64 @@ mod dev_artifacts {
         assert_eq!(answer["verdict"], "accept", "{answer}");
         assert_eq!(w.doc()["pre_delegate_sha"], w.head().as_str());
         assert_eq!(w.read_proof(PASSING, "round", &[])["proof"], "complete");
+    }
+
+    /// A fix round of a project declaring a narrower mode may run the whole
+    /// battery with its cause: the receipt written from that run is accepted
+    /// and the round records that run once. A check that judged the mode by
+    /// the declaration would refuse it and send the lane to run it again.
+    #[test]
+    fn a_fix_rounds_own_full_run_is_accepted_once_where_a_narrower_mode_is_declared() {
+        let w = World::new();
+        w.stamp("r1");
+        w.commit("app.txt");
+        let dir = w.awaited(
+            &w.command()
+                .env(
+                    "DEV_VALIDATE_RANGE_CMD",
+                    "printf 'validate: lanes=range selection=all\\n'",
+                )
+                .args([
+                    "validate",
+                    "start",
+                    "--item",
+                    "issue-8",
+                    "--round",
+                    "r1",
+                    "--base",
+                    "main",
+                    "--mode",
+                    "full",
+                    "--cause",
+                    "the range misses a shared fixture",
+                    "--poll",
+                    "1",
+                ])
+                .output()
+                .unwrap(),
+        );
+        let written = result(&w.write(
+            "r1",
+            "fix",
+            "pass",
+            &[
+                "--validate-run-dir",
+                dir.to_str().unwrap(),
+                "--item",
+                "1",
+                "Applied",
+                "x",
+            ],
+        ));
+        let receipt: Value =
+            serde_json::from_str(&fs::read_to_string(written["path"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(receipt["validate_mode"], "full");
+        let answer = w.check("r1");
+        assert_eq!(answer["verdict"], "accept", "{answer}");
+        let rounds = w.doc()["validate_rounds"].clone();
+        assert_eq!(rounds.as_array().map(Vec::len), Some(1), "{rounds}");
+        assert_eq!(rounds[0]["mode"], "full");
     }
 
     /// The declared command a red run runs: the battery reports its lanes

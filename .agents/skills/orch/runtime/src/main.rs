@@ -780,9 +780,21 @@ enum CycleOp {
     /// One `rollup class=` row per class with a record, in the target
     /// table's order then `unclassified`, and each recorded stage's
     /// `stage item=` row; nothing is written.
+    ///
+    /// `full_mode_runs` is the number of recorded validation runs in `full`
+    /// mode (the `DEV_VALIDATE_CMD` run, which need not be the whole suite):
+    /// each run a round's receipt cited at its check, whatever the verdict,
+    /// and each restack run its push recorded, one per run; a started run no
+    /// receipt and no push recorded is not counted.
     Report,
     /// The `rollup class=` rows, each appended to the fleet log as a
     /// `cycle` row under its class.
+    ///
+    /// `full_mode_runs` is the number of recorded validation runs in `full`
+    /// mode (the `DEV_VALIDATE_CMD` run, which need not be the whole suite):
+    /// each run a round's receipt cited at its check, whatever the verdict,
+    /// and each restack run its push recorded, one per run; a started run no
+    /// receipt and no push recorded is not counted.
     Rollup,
     /// A running lane's `stage item=` rows, by start, read without a cycle.
     Stages {

@@ -767,16 +767,10 @@ fn run_tree(id: &Identity, run: &Run) -> Result<String> {
     committed_tree(&id.worktree, &run.head)
 }
 
-fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
+fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Result<()> {
     let round = round_record(&r.id)?;
     let base = round["base_sha"].as_str().expect("round schema");
-    let target = committed_tree(
-        &r.id.worktree,
-        &git(
-            &r.id.worktree,
-            &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
-        )?,
-    )?;
+    let target = committed_tree(&r.id.worktree, commit)?;
     let tree = run_tree(&r.id, run)?;
     if !ancestor(&r.id.worktree, base, &run.head)? {
         let equivalent = committed_tree(&r.id.worktree, base)? == tree;
@@ -851,7 +845,7 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
     let request = proof::ReadProof {
         need: proof::Need::Round,
         tree,
-        head: Some(r.commit.clone()),
+        head: Some(commit.to_owned()),
         base: Some(base.to_owned()),
         round: None,
         exception: None,
@@ -1147,18 +1141,11 @@ fn near_ceiling(r: &WriteReturn) -> (Value, Value) {
     }
 }
 
-/// A round that made no change, admitted where the item's own text permits
-/// that end: what the receipt records of it.
-struct NoChange {
-    clause: String,
-    commit: String,
-}
-
 /// The worker quotes the item's sentence; the item's live description,
 /// read as the launch gate reads it, proves the sentence is the item's.
 /// Whether it permits the end is the acceptance's judgement, never the
-/// worker's.
-fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
+/// worker's. `Some` is the quoted sentence, which the receipt records.
+fn no_change<'a>(settings: &Settings, r: &'a WriteReturn, commit: &str) -> Result<Option<&'a str>> {
     let clause = match (r.validate.as_str(), r.no_change.as_deref()) {
         ("not-run", Some(clause)) if nonempty(clause) => clause,
         ("not-run", _) => return Err(refuse("required", "no-change")),
@@ -1197,10 +1184,6 @@ fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
     }
     let worktree = &r.id.worktree;
     let head = git(worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let commit = git(
-        worktree,
-        &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
-    )?;
     let path = state::item_path(&settings.state_dir, issue);
     let delegated = crate::validate::load(&path)?.and_then(|s| {
         s.doc
@@ -1247,17 +1230,14 @@ fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
     if !folded(&item.body).contains(&folded(clause)) {
         return Err(refuse("no-change-unpermitted", format!("item={issue}")));
     }
-    Ok(Some(NoChange {
-        clause: clause.to_owned(),
-        commit,
-    }))
+    Ok(Some(clause))
 }
 
 /// A group that is not the last passes its committed work and its item
 /// decisions to the group after it, which owns validation: the receipt
 /// claims no acceptance, so it names no run. The group is the one the
 /// delegating side recorded when the round began, never the worker's word.
-fn hand_over(settings: &Settings, r: &WriteReturn) -> Result<bool> {
+fn hand_over(settings: &Settings, r: &WriteReturn, commit: &str) -> Result<bool> {
     if r.validate != "handed-over" {
         return Ok(false);
     }
@@ -1299,11 +1279,7 @@ fn hand_over(settings: &Settings, r: &WriteReturn) -> Result<bool> {
     let Some(delegated) = delegated else {
         return Err(refuse("handover-unmoved", "pre_delegate_sha=unrecorded"));
     };
-    let commit = git(
-        &r.id.worktree,
-        &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
-    )?;
-    if commit == delegated || !ancestor(&r.id.worktree, &delegated, &commit)? {
+    if commit == delegated || !ancestor(&r.id.worktree, &delegated, commit)? {
         return Err(refuse(
             "handover-unmoved",
             format!("commit={commit} delegated={delegated}"),
@@ -1365,6 +1341,18 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     {
         return Err(refuse("required", "branch and commit"));
     }
+    // The check compares the stored commit with HEAD by its full name, so
+    // every route judges and stores the one commit the given text names.
+    let commit = git(
+        &r.id.worktree,
+        &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
+    )
+    .map_err(|e| match e {
+        Error::Artifact {
+            key: "git-failed", ..
+        } => refuse("commit-unresolvable", format!("commit={}", r.commit)),
+        other => other,
+    })?;
     if !["pass", "no-verdict", "not-run", "handed-over"].contains(&r.validate.as_str())
         && !r.validate.starts_with("FAILING:")
     {
@@ -1381,8 +1369,8 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     if r.near_ceiling_base.as_deref() == Some("") {
         return Err(refuse("required", "near-ceiling-base"));
     }
-    let no_change = no_change(settings, r)?;
-    let handed_over = hand_over(settings, r)?;
+    let no_change = no_change(settings, r, &commit)?;
+    let handed_over = hand_over(settings, r, &commit)?;
     let exception = cited_exception(settings, r)?;
     let run = match (&r.validate_run_dir, &r.validate_record) {
         (Some(dir), None) => Some(run_record(dir)?),
@@ -1394,9 +1382,6 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
         }
         _ => return Err(refuse("required", "one validation evidence source")),
     };
-    let mut commit = no_change
-        .as_ref()
-        .map_or_else(|| r.commit.clone(), |n| n.commit.clone());
     if let Some(run) = &run {
         if !r.validate.starts_with("FAILING:")
             && r.validate != run.verdict
@@ -1407,15 +1392,10 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
                 format!("validate={} run={}", r.validate, run.verdict),
             ));
         }
-        // A ci receipt is checked against the exact current HEAD, so it
-        // records the full commit its pending contents were compared with.
+        // A ci pass leaves the run to CI, which runs the commit: the contents
+        // it compared must be that commit's tree.
         if run.mode == "ci" && r.validate == "pass" {
             let mismatch = |_| refuse("ci-contents-mismatch", &r.commit);
-            commit = git(
-                &r.id.worktree,
-                &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
-            )
-            .map_err(mismatch)?;
             if run.tree != committed_tree(&r.id.worktree, &commit).map_err(mismatch)? {
                 return Err(refuse("ci-contents-mismatch", &r.commit));
             }
@@ -1436,7 +1416,7 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     if r.kind == "fix"
         && let Some(run) = &run
     {
-        bind_run(settings, r, run)?;
+        bind_run(settings, r, run, &commit)?;
     }
     let summary = match (&r.summary, &r.summary_file, &r.recovered_text) {
         (Some(s), None, None) => json!(s),
@@ -1473,8 +1453,8 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     if !screenshots.is_empty() {
         record["screenshots"] = json!(screenshots);
     }
-    if let Some(no_change) = &no_change {
-        record["no_change"] = json!(no_change.clause);
+    if let Some(clause) = no_change {
+        record["no_change"] = json!(clause);
     }
     if let Some(exception) = &exception {
         record["exception"] = serde_json::to_value(exception)?;

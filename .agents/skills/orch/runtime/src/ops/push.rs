@@ -507,7 +507,7 @@ fn restack_run(dirs: &[PathBuf], head: &str) -> std::result::Result<Option<Chose
     Ok(best.map(|(_, dir, run, line)| (dir, run, line)))
 }
 
-/// The restack run's stage and validation row, once per run directory: the
+/// The restack run's stage and validation row, once per run: the
 /// run's identity and times with its proof and outcome, so the proof reader
 /// reads a restack range run as it reads a round's. `Ok(None)` where the
 /// item has no record or no run qualifies and none was named.
@@ -536,12 +536,7 @@ fn record_stage(
     let epoch =
         |k: &str| agent_runtime::clock::epoch_secs(&word(k)).ok_or_else(|| format!("timing {k}"));
     let run_dir = dir.display().to_string();
-    let id = dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .trim_start_matches("dev-validate-")
-        .to_owned();
+    let id = super::run_id_of(&run_dir);
     let seconds: u64 = word("seconds").parse().map_err(|_| "seconds".to_owned())?;
     let proof = run.proof().map_err(|e| e.to_string())?;
     let stage = json!({
@@ -571,10 +566,14 @@ fn record_stage(
             let snapshot = loaded(path)?;
             let mut doc = snapshot.doc.clone();
             let stages = record::array_mut(path, &mut doc, "stages")?;
-            if stages
-                .iter()
-                .any(|s| s.get("run_dir").and_then(Value::as_str) == Some(run_dir.as_str()))
-            {
+            // A round's stage spells the run's directory from the record's
+            // worktree, which may differ from the canonical one: the run's
+            // id is the same in both.
+            if stages.iter().any(|s| {
+                s.get("run_dir")
+                    .and_then(Value::as_str)
+                    .is_some_and(|d| super::run_id_of(d) == id)
+            }) {
                 return Ok(());
             }
             stages.push(stage.clone());

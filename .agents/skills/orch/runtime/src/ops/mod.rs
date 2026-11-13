@@ -73,7 +73,7 @@ pub use item::{
 pub use item::{PruneRound, RoundField, RoundPruned, prune_round};
 // The stop's bounded wait reads the job by the item transitions' one identity
 // reader.
-pub(crate) use item::job_ended;
+pub(crate) use item::{job_ended, run_id_of};
 pub use lane::{
     AdoptSession, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, CloseRequested,
     Delivery, Ended, LaneAdopted, LaneLaunched, LaneParked, LaneReleased, LaneReserved, LaunchLane,

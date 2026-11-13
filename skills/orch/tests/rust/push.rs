@@ -1021,6 +1021,35 @@ mod push {
         );
     }
 
+    /// A round's stage spells its run's directory from the record's
+    /// worktree, which may name the checkout through a link: the restack
+    /// push over that same run records no second stage and no second
+    /// validation row.
+    #[test]
+    fn a_run_a_round_recorded_through_another_spelling_of_its_worktree_is_recorded_once() {
+        let repo = Repo::new("KEN-1", RANGE);
+        repo.link_agents();
+        let link = repo.root.join("link");
+        std::os::unix::fs::symlink(&repo.wt, &link).unwrap();
+        repo.record(json!({"worktree": link.display().to_string()}));
+        restacked(&repo);
+        let run = range_run(&repo);
+        let spelled = link.join("tmp").join(Path::new(&run).file_name().unwrap());
+        let mut record = repo.read();
+        record["stages"] = json!([{"kind": "validate", "round_id": "r1", "start": 1, "end": 2,
+                                   "run_dir": spelled.display().to_string(), "outcome": "pass"}]);
+        fs::write(repo.record_path("KEN-1"), record.to_string()).unwrap();
+        let out = repo.push("branch");
+        assert_eq!(exit(&out), Some(0), "{}", stderr(&out));
+        let record = repo.read();
+        assert_eq!(
+            record["stages"].as_array().map(Vec::len),
+            Some(1),
+            "{record}"
+        );
+        assert!(record.get("validate_rounds").is_none(), "{record}");
+    }
+
     #[test]
     fn an_unrecorded_timing_write_keeps_the_push_verdict_and_the_retry_identity() {
         let repo = Repo::new("KEN-1", RANGE);

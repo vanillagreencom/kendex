@@ -520,7 +520,7 @@ fn item_name(path: &Path) -> String {
 
 /// The run id a run directory's name carries: its basename without the
 /// prefix, or the whole basename where a caller named it otherwise.
-fn run_id_of(run_dir: &str) -> String {
+pub(crate) fn run_id_of(run_dir: &str) -> String {
     let name = Path::new(run_dir)
         .file_name()
         .and_then(|n| n.to_str())

@@ -297,7 +297,7 @@ fn rounds_of(doc: &Map<String, Value>) -> Value {
         "review": i64::from(first_panel) + int(doc.get("rereview_cycles")),
         "fix": int(doc.get("cycles")),
         "bot": int(doc.get("pr_comment_review").and_then(|o| o.get("iterations"))),
-        "full_validations": doc
+        "full_mode_runs": doc
             .get("validate_rounds")
             .and_then(Value::as_array)
             .map_or(0, |rounds| rounds.iter().filter(|r| r.get("mode").and_then(Value::as_str) == Some("full")).count()),
@@ -1377,7 +1377,7 @@ pub fn line_of(item: &str, c: &Value) -> String {
         None => "-".to_owned(),
     };
     format!(
-        "cycle item={item} {delivery} class={} tier={} target={} merge_group={} ci_head={} ci_clean={} waited={} lane={} actual={} open={} verdict={} phase={} phase_secs={} cause={} bot_wait={} draft={} thread_fix={} paused={} missing={missing} review={} fix={} bot={} full_validations={} pr_rounds={pr_rounds} escaped={} tier_inputs={} class_reason={} escape_cause={} refixed={}",
+        "cycle item={item} {delivery} class={} tier={} target={} merge_group={} ci_head={} ci_clean={} waited={} lane={} actual={} open={} verdict={} phase={} phase_secs={} cause={} bot_wait={} draft={} thread_fix={} paused={} missing={missing} review={} fix={} bot={} full_mode_runs={} pr_rounds={pr_rounds} escaped={} tier_inputs={} class_reason={} escape_cause={} refixed={}",
         n(&g("class")),
         n(&g("tier")),
         n(&g("target")),
@@ -1399,7 +1399,7 @@ pub fn line_of(item: &str, c: &Value) -> String {
         n(&r("review")),
         n(&r("fix")),
         n(&r("bot")),
-        n(&r("full_validations")),
+        n(&r("full_mode_runs")),
         n(&g("escaped")),
         n(&g("tier_inputs")),
         n(&g("class_reason")),
@@ -1714,7 +1714,7 @@ fn rollup_row(class: &str, c: &[&Value]) -> String {
         .filter(|r| r.get("secs").map(interval).is_none_or(|v| v.is_null()))
         .count();
     format!(
-        "rollup class={class} items={} median={} p90={} lane_median={} open_median={} miss_share={miss_share} misses={} draft={draft} review={} fix={} bot={} full_validations={} rounds_unread={} escaped={} estimate_miss={} path_miss={} refixed={} pr_rounds={} pr_rounds_unread={} round_median={} fix_median={} rounds_untimed={untimed}",
+        "rollup class={class} items={} median={} p90={} lane_median={} open_median={} miss_share={miss_share} misses={} draft={draft} review={} fix={} bot={} full_mode_runs={} rounds_unread={} escaped={} estimate_miss={} path_miss={} refixed={} pr_rounds={} pr_rounds_unread={} round_median={} fix_median={} rounds_untimed={untimed}",
         c.len(),
         nearest(measured("actual"), 0.5),
         nearest(measured("actual"), 0.9),
@@ -1724,7 +1724,7 @@ fn rollup_row(class: &str, c: &[&Value]) -> String {
         sum("review"),
         sum("fix"),
         sum("bot"),
-        sum("full_validations"),
+        sum("full_mode_runs"),
         count(&|r| r.get("rounds").is_none_or(Value::is_null)),
         count(&|r| r.get("escaped") == Some(&Value::Bool(true))),
         count(&|r| r.get("escape_cause").and_then(Value::as_str) == Some("estimate-miss")),
@@ -1974,7 +1974,7 @@ mod tests {
         });
         assert_eq!(
             line_of("KEN-2", &c),
-            "cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- ci_head=60 ci_clean=- waited=0 lane=1500 actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 draft=0 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true"
+            "cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- ci_head=60 ci_clean=- waited=0 lane=1500 actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 draft=0 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_mode_runs=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true"
         );
         assert_eq!(
             c["stamps"],
@@ -1997,7 +1997,7 @@ mod tests {
                 &class("small", "stub"),
                 Some("micro")
             ),
-            "cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- ci_head=- ci_clean=- waited=0 lane=1100 actual=1100 open=140 verdict=met phase=first_commit phase_secs=900 cause=- bot_wait=40 draft=0 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-"
+            "cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- ci_head=- ci_clean=- waited=0 lane=1100 actual=1100 open=140 verdict=met phase=first_commit phase_secs=900 cause=- bot_wait=40 draft=0 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_mode_runs=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-"
         );
     }
 
@@ -3300,7 +3300,7 @@ mod tests {
 
     #[test]
     fn the_rollup_counts_each_class_its_median_and_p90() {
-        let rounds = json!({"review": 1, "fix": 2, "bot": 1, "full_validations": 1});
+        let rounds = json!({"review": 1, "fix": 2, "bot": 1, "full_mode_runs": 1});
         let record = |class: Value,
                       actual: i64,
                       verdict: &str,
@@ -3375,10 +3375,10 @@ mod tests {
         ]);
         assert_eq!(
             rows.join("\n"),
-            "rollup class=render items=1 median=30 p90=30 lane_median=- open_median=- miss_share=- misses=0 draft=- review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0
-rollup class=micro items=4 median=200 p90=1000 lane_median=- open_median=- miss_share=- misses=1 draft=- review=3 fix=6 bot=3 full_validations=3 rounds_unread=1 escaped=1 estimate_miss=0 path_miss=0 refixed=1 pr_rounds=1 pr_rounds_unread=1 round_median=500 fix_median=900 rounds_untimed=1
-rollup class=standard items=1 median=6000 p90=6000 lane_median=- open_median=- miss_share=- misses=1 draft=- review=1 fix=2 bot=1 full_validations=1 rounds_unread=0 escaped=0 estimate_miss=0 path_miss=0 refixed=1 pr_rounds=2 pr_rounds_unread=0 round_median=900 fix_median=60 rounds_untimed=0
-rollup class=unclassified items=1 median=50 p90=50 lane_median=- open_median=- miss_share=- misses=0 draft=- review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0"
+            "rollup class=render items=1 median=30 p90=30 lane_median=- open_median=- miss_share=- misses=0 draft=- review=1 fix=2 bot=1 full_mode_runs=1 rounds_unread=0 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0
+rollup class=micro items=4 median=200 p90=1000 lane_median=- open_median=- miss_share=- misses=1 draft=- review=3 fix=6 bot=3 full_mode_runs=3 rounds_unread=1 escaped=1 estimate_miss=0 path_miss=0 refixed=1 pr_rounds=1 pr_rounds_unread=1 round_median=500 fix_median=900 rounds_untimed=1
+rollup class=standard items=1 median=6000 p90=6000 lane_median=- open_median=- miss_share=- misses=1 draft=- review=1 fix=2 bot=1 full_mode_runs=1 rounds_unread=0 escaped=0 estimate_miss=0 path_miss=0 refixed=1 pr_rounds=2 pr_rounds_unread=0 round_median=900 fix_median=60 rounds_untimed=0
+rollup class=unclassified items=1 median=50 p90=50 lane_median=- open_median=- miss_share=- misses=0 draft=- review=- fix=- bot=- full_mode_runs=- rounds_unread=1 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0"
         );
         let medians = rollup_of(vec![
             json!({"class": "micro", "actual": 3557, "lane_secs": 1200, "open": 3437, "verdict": "miss"}),

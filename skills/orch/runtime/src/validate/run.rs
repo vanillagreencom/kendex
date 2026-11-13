@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Route, Sent};
 use crate::ops::mail::{KeyedSend, SendResult};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
-use crate::ops::{self, ReconcileRound, Request, job_ended};
+use crate::ops::{self, ReconcileRound, Request, job_ended, run_id_of};
 use crate::send::Keyed;
 use crate::settings::Settings;
 use crate::state::{
@@ -753,15 +753,6 @@ fn send_session(
     }
 }
 
-/// The run id a run directory's name carries.
-fn run_id_of(run_dir: &str) -> &str {
-    let name = Path::new(run_dir)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or(run_dir);
-    name.strip_prefix("dev-validate-").unwrap_or(name)
-}
-
 /// Send the stage's owed notice and mark it: the owner word written, or
 /// `owed` where the send is held and the stage left for the next walk.
 fn send_and_mark(
@@ -854,7 +845,7 @@ pub fn run(
     // ended the child recorded its intent on the stage before it did.
     let (stages, index) = stage_of(&path, run_dir)?;
     let left = read_left(&run_dir_path, stages[index].stop.is_some());
-    let notice = validate::end_notice(run_id_of(run_dir), run_dir, left.outcome);
+    let notice = validate::end_notice(&run_id_of(run_dir), run_dir, left.outcome);
     let ended = apply(
         &path,
         Validate::End(RecordEnd {

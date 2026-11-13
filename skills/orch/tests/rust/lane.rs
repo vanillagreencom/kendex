@@ -5191,7 +5191,7 @@ fn the_cycle_verbs_print_the_rollup_and_a_running_lanes_stages() {
         .to_string(),
     )
     .unwrap();
-    let rollup = "rollup class=micro items=1 median=100 p90=100 lane_median=100 open_median=- miss_share=0/1 misses=0 draft=- review=- fix=- bot=- full_validations=- rounds_unread=1 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0";
+    let rollup = "rollup class=micro items=1 median=100 p90=100 lane_median=100 open_median=- miss_share=0/1 misses=0 draft=- review=- fix=- bot=- full_mode_runs=- rounds_unread=1 escaped=0 estimate_miss=0 path_miss=0 refixed=0 pr_rounds=- pr_rounds_unread=1 round_median=- fix_median=- rounds_untimed=0";
     let before = std::fs::read(fleet.fleet_path()).unwrap();
     let out = cycle(&["report"]);
     assert_eq!(
@@ -5625,7 +5625,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             Some(fix) => assert_eq!(
                 (cycle["rounds"].clone(), cycle["waited"].clone()),
                 (
-                    json!({"review": 2, "fix": fix, "bot": 3, "full_validations": 1}),
+                    json!({"review": 2, "fix": fix, "bot": 3, "full_mode_runs": 1}),
                     json!(2400)
                 ),
                 "{case}: {notes:?}"
