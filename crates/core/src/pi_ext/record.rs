@@ -93,6 +93,65 @@ pub fn resolve_declared(
     }))
 }
 
+/// The remote catalogs `update-pi` brought current for the declared Pi
+/// packages it reads, each repository and selector fetched once per run
+/// however many packages and scopes read it.
+///
+/// [`resolve_declared`] reads the cache, which answers offline with
+/// whatever an earlier fetch left there. An update that installed or
+/// reported against that answer could keep or reinstall an older release
+/// and still report the package updated, so the update fetches first
+/// through [`crate::remote::sync`] and treats a package whose catalog it
+/// could not bring current as unresolved for this run. A cached pin needs
+/// no fetch, as `sync` states, and a path or reserved source has nothing to
+/// fetch.
+#[derive(Debug, Default)]
+pub struct Freshness {
+    /// The fetch failure per cache key and selector; `None` is current.
+    attempts: std::collections::BTreeMap<(String, Option<String>), Option<String>>,
+}
+
+impl Freshness {
+    /// Fetch the catalogs `manifest`'s Pi declarations read, at the
+    /// selector [`resolve_declared`] reads each at: the item's `rev`, which
+    /// outranks its source's. Returns the refusal for each declared package
+    /// whose catalog could not be brought current.
+    pub fn refresh(
+        &mut self,
+        env: &Env,
+        manifest: &crate::manifest::Manifest,
+    ) -> std::collections::BTreeMap<String, CoreError> {
+        let mut unrefreshed = std::collections::BTreeMap::new();
+        for (name, decl) in &manifest.pi_extensions {
+            let Some(source) = manifest.sources.get(&decl.source) else {
+                continue;
+            };
+            let Some(repo) = source.repo.as_deref().filter(|_| source.enabled) else {
+                continue;
+            };
+            let rev = decl.rev.as_deref().or(source.rev.as_deref());
+            let key = (crate::remote::cache_key(env, repo), rev.map(str::to_owned));
+            let failed = self.attempts.entry(key).or_insert_with(|| {
+                match crate::remote::sync(env, repo, rev) {
+                    Ok(resolution) => resolution.fetch_failed,
+                    Err(error) => Some(error.to_string()),
+                }
+            });
+            if let Some(reason) = failed {
+                unrefreshed.insert(
+                    name.clone(),
+                    CoreError::SourceUnrefreshed {
+                        name: decl.source.clone(),
+                        repo: repo.to_owned(),
+                        reason: reason.clone(),
+                    },
+                );
+            }
+        }
+        unrefreshed
+    }
+}
+
 /// What `update-pi` does with one declared package, decided here once for
 /// the verb that installs it (`update-pi`'s plan), for the plans that name
 /// it (`record_matching`), for the check that names it (`drift::report`)

@@ -318,6 +318,15 @@ pub enum CoreError {
     #[error("source '{name}' has not been downloaded yet — refresh it first")]
     SourcePending { name: String },
 
+    #[error(
+        "source '{name}' ({repo}) could not be brought current, so its cached copy was not used: {reason}"
+    )]
+    SourceUnrefreshed {
+        name: String,
+        repo: String,
+        reason: String,
+    },
+
     #[error("source '{name}' is disabled")]
     SourceDisabled { name: String },
 

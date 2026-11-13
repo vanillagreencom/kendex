@@ -856,6 +856,88 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
     assert_eq!(checked.status.code(), Some(0), "{checked:?}");
 }
 
+/// A global package installed from a tracking remote catalog whose cache
+/// is one release behind upstream. One `update-pi` either installs the
+/// release upstream names now, or, with the catalog out of reach, names
+/// the package not evaluated and leaves the copy and its record as they
+/// were: the cached release is never installed or reported current.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_stale_remote_catalog_is_refreshed_or_refused_before_the_update() {
+    for reachable in [true, false] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        let env = kendex_core::env::Env::host_rooted(&root);
+        let upstream = root.join("git/owner/catalog");
+        let release = |version: u32| {
+            write(
+                &upstream.join("pi-extensions/pi-widgets/package.json"),
+                &format!("{{\"name\":\"pi-widgets\",\"version\":\"{version}.0.0\"}}\n"),
+            );
+            write(
+                &upstream.join("pi-extensions/pi-widgets/index.js"),
+                &format!("export const version = {version};\n"),
+            );
+        };
+        release(1);
+        git(&upstream, &["init", "--quiet", "-b", "main"]);
+        let first = commit(&upstream, "one");
+        write(
+            &env.global_manifest_file(),
+            "schema = 7\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+        );
+        fs::create_dir_all(root.join(".pi/agent")).unwrap();
+        let refresh = kendex(&root, &root, &["refresh", "--scope", "global", "--yes"]);
+        assert!(refresh.status.success(), "{refresh:?}");
+        let installed = root.join(".pi/agent/packages/pi-widgets/index.js");
+        assert_eq!(
+            fs::read_to_string(&installed).unwrap(),
+            "export const version = 1;\n"
+        );
+        release(2);
+        let second = commit(&upstream, "two");
+        if !reachable {
+            fs::rename(&upstream, root.join("git/owner/gone")).unwrap();
+        }
+        let lock_path = kendex_core::lock::lock_path(&env, &kendex_core::model::Scope::Global);
+        let recorded = fs::read(&lock_path).unwrap();
+        let not_evaluated = "not-evaluated=pi-widgets scope=global";
+
+        let check = kendex(&root, &root, &["update-pi", "--check", "--scope", "global"]);
+        let update = kendex(&root, &root, &["update-pi", "--scope", "global"]);
+
+        let source_commit = || {
+            kendex_core::lock::load(&lock_path)
+                .unwrap()
+                .entries
+                .values()
+                .find(|entry| entry.name == "pi-widgets")
+                .and_then(|entry| entry.source_commit.clone())
+        };
+        if reachable {
+            assert!(check.status.success(), "{check:?}");
+            assert!(update.status.success(), "{update:?}");
+            assert_eq!(
+                fs::read_to_string(&installed).unwrap(),
+                "export const version = 2;\n"
+            );
+            assert_eq!(source_commit().as_deref(), Some(second.as_str()));
+        } else {
+            for (run, output) in [("check", &check), ("update", &update)] {
+                assert_eq!(output.status.code(), Some(1), "{run}: {output:?}");
+                let notes = String::from_utf8_lossy(&output.stderr);
+                assert_eq!(notes.matches(not_evaluated).count(), 1, "{run}: {notes}");
+            }
+            assert_eq!(
+                fs::read_to_string(&installed).unwrap(),
+                "export const version = 1;\n"
+            );
+            assert_eq!(fs::read(&lock_path).unwrap(), recorded);
+            assert_eq!(source_commit().as_deref(), Some(first.as_str()));
+        }
+    }
+}
+
 #[test]
 fn verification_and_record_recovery_compare_pi_bytes() {
     let tmp = fixture();
