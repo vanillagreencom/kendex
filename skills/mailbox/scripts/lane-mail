@@ -1156,10 +1156,6 @@ if [ "$VERB" = owner-answers ]; then
     printf 'owner-answers: tracker=absent\n'
     exit 0
   fi
-  ROOT="${ROOT:-$PWD}"
-  LANE_MAIL="$SCRIPT_DIR/lane-mail"
-  owner_answers
-  exit 0
 fi
 
 # The cause readings a stalled cloud lane's close carries into the fleet log,
@@ -1362,7 +1358,7 @@ if [ -z "$ROOT" ]; then
     overseer:*)
       ROOT="$(mailbox_common_root . 2>/dev/null)" || ROOT=""
       ;;
-    *:send | *:drain | *:pending | *:events | *:compact)
+    *:send | *:drain | *:pending | *:events | *:compact | *:owner-answers)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
         ROOT="$(exec "$WORKTREE" path --checkout-fallback "$ITEM" 2>/dev/null)" || ROOT=""
@@ -1376,6 +1372,12 @@ if [ -z "$ROOT" ]; then
     ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || ROOT=""
   fi
   [ -n "$ROOT" ] || refuse root-unresolved "$ITEM"
+fi
+
+if [ "$VERB" = owner-answers ]; then
+  LANE_MAIL="$SCRIPT_DIR/lane-mail"
+  owner_answers
+  exit 0
 fi
 
 # A send writes a mailbox of the caller's own repository, never one another
