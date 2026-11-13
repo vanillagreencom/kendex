@@ -3688,7 +3688,8 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
 
 /// The records a close ends by what they already are: a done record
 /// answers `closed` and asks nothing; `terminal-state` answers the
-/// tracker's word alone; a stopped or parked record's full close on a
+/// tracker's word alone, for a record parked on its own ask too, which
+/// waits on no pull request; a stopped or parked record's full close on a
 /// terminal item is the provider's close alone, with no stop and no
 /// mailbox read; a park or a keep of a parked record answers `parked` and
 /// changes nothing; a terminal close whose mailbox read fails on a provider
@@ -3699,7 +3700,16 @@ fn a_close_answers_a_record_by_what_it_already_is() {
     let parked = json!({"repo": "o/r", "pr": 7, "head": "h2", "at": "2026-01-29T16:00:00Z"});
     let mut parked_lane = with("status", json!("parked"));
     parked_lane["parked"] = parked.clone();
+    let mut ask_parked = with("status", json!("parked"));
+    ask_parked["parked"] =
+        json!({"repo": "o/r", "head": "h2", "at": "2026-01-29T16:00:00Z", "ask": "a1"});
     let mut rows = vec![
+        (
+            CloseCase2::new("ask parked, terminal state", vec![ask_parked]),
+            "state",
+            "parked",
+            vec![],
+        ),
         (
             CloseCase2::new("done", vec![with("status", json!("done"))]),
             "closed",
@@ -3756,7 +3766,7 @@ fn a_close_answers_a_record_by_what_it_already_is() {
     ];
     for (case, _, _, _) in &mut rows {
         match case.name {
-            "terminal state" => {
+            "terminal state" | "ask parked, terminal state" => {
                 case.request =
                     json!({"op": "close-lane", "item": "KEN-1", "mode": "terminal-state"});
             }
@@ -3798,7 +3808,9 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             case.name
         );
         match case.name {
-            "terminal state" => assert_eq!(answer["result"]["state"], "completed"),
+            "terminal state" | "ask parked, terminal state" => {
+                assert_eq!(answer["result"]["state"], "completed", "{}", case.name);
+            }
             "stopped" | "parked" => assert!(
                 fleet.mail_log().is_empty(),
                 "{}: no mailbox read on a terminal item: {:?}",
@@ -3820,6 +3832,9 @@ fn a_close_answers_a_record_by_what_it_already_is() {
         }
     }
 }
+
+/// The lane's one open ask, as the mailbox's `pending` lists it.
+const ASK_A1: &str = r#"{"kind":"ask","id":"a1"}"#;
 
 /// The pull request a park of KEN-1 reads on `o/r` (number 7, or a
 /// dependency's), open, armed and clean on the lane's head and branch.
@@ -3906,8 +3921,10 @@ impl Fleet {
     }
 }
 
-/// A park is admitted by its pull request alone, judged before anything is
-/// signalled: the provider's sandbox check, the pull request open on the
+/// A park is admitted by its pull request or by the lane's own oldest open
+/// ask, judged before anything is signalled: the provider's sandbox check,
+/// the ask it names the open one (a pull request's park refuses any open
+/// ask `ask-unanswered`), the pull request open on the
 /// lane's own head and branch (read through the provider's `cat`, loose or
 /// packed, else the item's recorded branch), a head read there named by the
 /// sandbox's `origin` remote-tracking ref, its clean status file bound to
@@ -4128,6 +4145,27 @@ fn a_park_is_judged_before_anything_is_signalled() {
             |f| f.answer("SANDBOX_STOP_STATUS", "1"),
             Some("park-failed"),
         ),
+        // A park on the lane's own open ask reads no pull request; one
+        // naming another ask, and a pull request's park beside an open ask,
+        // stop nothing.
+        (
+            "an ask park on the open ask",
+            park(json!({"ask": "a1"})),
+            |f| f.env.push(("LANE_MAIL_ASKS".to_owned(), ASK_A1.to_owned())),
+            None,
+        ),
+        (
+            "an ask park on another ask",
+            park(json!({"ask": "a2"})),
+            |f| f.env.push(("LANE_MAIL_ASKS".to_owned(), ASK_A1.to_owned())),
+            Some("ask-not-open"),
+        ),
+        (
+            "a pull request's park beside an open ask",
+            park(json!({"pr": 7})),
+            |f| f.env.push(("LANE_MAIL_ASKS".to_owned(), ASK_A1.to_owned())),
+            Some("ask-unanswered"),
+        ),
     ];
     for (case, request, setup, refused) in rows {
         let mut fleet = Fleet::park_world();
@@ -4148,6 +4186,10 @@ fn a_park_is_judged_before_anything_is_signalled() {
                 if case == "a watched dependency" {
                     assert_eq!(lane["parked"]["until_repo"], "other/repo", "{case}: {lane}");
                 }
+                if case == "an ask park on the open ask" {
+                    assert_eq!(lane["parked"]["ask"], "a1", "{case}: {lane}");
+                    assert!(lane["parked"].get("pr").is_none(), "{case}: {lane}");
+                }
                 let check = calls
                     .iter()
                     .position(|c| c.starts_with("stop-sandbox --check "))
@@ -4166,6 +4208,14 @@ fn a_park_is_judged_before_anything_is_signalled() {
                 assert_eq!(lane["sandbox"], "standing", "{case}: {lane}");
                 assert_eq!(lane["park_owed"], json!({"pr": 7}), "{case}: {lane}");
             }
+            Some("ask-unanswered") => {
+                assert_eq!(
+                    answer["refusal"]["key"], "ask-unanswered",
+                    "{case}: {answer}"
+                );
+                assert!(!stopped, "{case}: nothing is signalled: {calls:?}");
+                assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
+            }
             Some(reason) => {
                 assert_eq!(answer["refusal"]["key"], "park-refused", "{case}: {answer}");
                 assert_eq!(
@@ -4183,11 +4233,48 @@ fn a_park_is_judged_before_anything_is_signalled() {
                     assert_eq!(fields["head"], "h2", "{case}: {answer}");
                     assert_eq!(fields["remote"], remote, "{case}: {answer}");
                 }
+                if reason == "ask-not-open" {
+                    let fields = refusal_fields(&answer);
+                    assert_eq!(fields["ask"], "a2", "{case}: {answer}");
+                    assert_eq!(fields["open"], "a1", "{case}: {answer}");
+                }
                 assert!(!stopped, "{case}: nothing is signalled: {calls:?}");
                 assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
             }
         }
     }
+}
+
+/// A park asked of a stopped record writes the park owed before its sandbox
+/// stop: a kept sandbox whose stop the provider refuses as still stopping
+/// (no `sandbox-stopped` line) stays stopped and standing with the park
+/// owed; the same park asked again over a sandbox already down, answered
+/// by its `sandbox-stopped` line, parks and clears both marks.
+#[test]
+fn a_park_of_a_kept_sandbox_whose_stop_fails_stays_owed_until_a_park_confirms() {
+    let mut fleet = Fleet::park_world();
+    let mut kept = with("repo", json!("o/r"));
+    kept["status"] = json!("stopped");
+    kept["sandbox"] = json!("standing");
+    fleet.write_lanes(vec![kept]);
+    fleet.plant_tracker("KEN-1", "started");
+    let park = json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"pr": 7}}});
+    fleet.answer("SANDBOX_STOP_STATUS", "3");
+    let refused = fleet.close(park.clone());
+    assert_eq!(refused["refusal"]["key"], "park-failed", "{refused}");
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert_eq!(lane["sandbox"], "standing", "{lane}");
+    assert_eq!(lane["park_owed"], json!({"pr": 7}), "{lane}");
+    fleet
+        .env
+        .retain(|(name, _)| name != "LANE_HOST_STUB_SANDBOX_STOP_STATUS");
+    let parked = fleet.close(park);
+    assert_eq!(parked["result"]["word"], "parked", "{parked}");
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["status"], "parked", "{lane}");
+    assert!(lane.get("park_owed").is_none(), "{lane}");
+    assert!(lane.get("sandbox").is_none(), "{lane}");
 }
 
 /// A park of a record that names no repository is judged in the fleet's

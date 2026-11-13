@@ -23,7 +23,7 @@
 //! a close whose end this runtime did not see: nothing is closed again, the
 //! pass names it as its failure each pass, and the lane is the operator's.
 //! The baseline rows (`lane-stalled`, `start-stalled`, `lane-long`,
-//! `lane-prepare`, `close-pending`) go through the runner's commit as every
+//! `lane-prepare`, `close-pending`, `park-owed`) go through the runner's commit as every
 //! row does.
 
 // Every reading is matched variant by variant.
@@ -82,6 +82,9 @@ pub const CLOSE_PENDING_ROW: &str = "close-pending";
 /// a merged lane read neither idle nor exited was asked whether its work
 /// left nothing behind.
 pub const LEFT_ROW: &str = "lane-left";
+/// `park-owed<TAB><item><TAB><result>`: the last result told of the park a
+/// stopped record still owes, cleared once the record owes none.
+pub const PARK_OWED_ROW: &str = "park-owed";
 /// `clone-root<TAB><item><TAB><clone>`: the clone a hosted lane's worktree
 /// `.git` named on the last pass that read it, kept once the worktree is
 /// gone, since the merge's saved state stays in that clone.
@@ -909,12 +912,18 @@ pub enum Closed {
 }
 
 /// The close verb's request for `lane` at `reason`: a lane read exited on
-/// two passes keeps its sandbox; a finished lane's delivery is the merge
-/// the GitHub duty read last for its item (`merged`, `REPO#N ...`).
+/// two passes keeps its sandbox; a stopped record's owed park is that park
+/// again; a finished lane's delivery is the merge the GitHub duty read last
+/// for its item (`merged`, `REPO#N ...`).
 fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
     let mut request = serde_json::json!({"op": "close-lane", "item": lane.item});
     if reason == KEEP_REASON {
         request["mode"] = Value::from("keep-sandbox");
+    }
+    if reason == PARK_REASON
+        && let Some(wait) = lane.extra.get(state::PARK_OWED)
+    {
+        request["mode"] = serde_json::json!({ "park": wait });
     }
     let merged = pass
         .baseline
@@ -932,6 +941,9 @@ fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
 
 /// The reason the watch asks a close that keeps the sandbox.
 pub const KEEP_REASON: &str = "exited-twice";
+
+/// The reason the watch asks the park a stopped record still owes.
+const PARK_REASON: &str = "park-owed";
 
 /// The close verb through the runtime's entry, `--state-dir DIR op --fleet
 /// --request FILE`, under its bound: the reply it printed, read by its word.
@@ -2308,6 +2320,56 @@ pub fn retry_pending_closes(lanes: &[&Lane], pass: &Pass, hosts: &Hosts, out: &m
         } else {
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
         }
+    }
+}
+
+/// The parks stopped records still owe: each record `stopped` whose sandbox
+/// stands with a `park_owed` is asked that park through the one close, each
+/// pass, judged by the verb's answer alone; a result unlike the last one
+/// told is told once. A sandbox kept with no park owed is never asked.
+pub fn complete_parks(pass: &Pass, out: &mut Produced) {
+    let owed: Vec<&Lane> = pass.fleet.lanes.iter().filter(|l| owes_park(l)).collect();
+    for item in pass.baseline.identities(PARK_OWED_ROW) {
+        if !owed.iter().any(|l| l.item == item) {
+            out.changes.push(clear(PARK_OWED_ROW, &item));
+        }
+    }
+    for lane in owed {
+        let Some(closed) = close_once(pass, lane, PARK_REASON, out) else {
+            continue;
+        };
+        let result = park_result(&lane.item, &closed);
+        if pass.baseline.get(PARK_OWED_ROW, &lane.item) != Some(result.as_str()) {
+            out.events.push(Event::ParkOwed {
+                item: lane.item.clone(),
+                result: result.clone(),
+            });
+            out.changes.push(set(PARK_OWED_ROW, &lane.item, result));
+        }
+    }
+}
+
+fn owes_park(lane: &Lane) -> bool {
+    lane.status == LaneStatus::Stopped
+        && lane.extra.get(state::SANDBOX).and_then(Value::as_str) == Some(state::STANDING)
+        && lane
+            .extra
+            .get(state::PARK_OWED)
+            .is_some_and(Value::is_object)
+}
+
+/// What a park's answer tells: `parked`, the refusal's key and fields
+/// without the item, or the cause of an answer that parked nothing.
+fn park_result(item: &str, closed: &Closed) -> String {
+    match closed {
+        Closed::Closed { .. } => "parked".to_owned(),
+        Closed::Failed { cause } => match cause.strip_prefix("refused key=") {
+            Some(refusal) => refusal.replacen(&format!(" item={item}"), "", 1),
+            None => cause.clone(),
+        },
+        Closed::Unanswered { cause } => format!("unanswered {cause}"),
+        Closed::Refused { path } => format!("refused path={path}"),
+        Closed::Deferred => "deferred".to_owned(),
     }
 }
 

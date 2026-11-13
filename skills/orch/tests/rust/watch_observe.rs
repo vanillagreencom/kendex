@@ -4217,6 +4217,99 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
     assert_eq!(world.close_log().len(), 8);
 }
 
+/// The close verb's refusal as the runtime exits with it.
+fn refusal_reply(key: &str, fields: Value) -> Value {
+    let reply = json!({"protocol": "orch-runtime-v1", "ok": false,
+        "refusal": {"key": key, "fields": fields}});
+    json!({"exit": 1, "stdout": format!("{reply}\n")})
+}
+
+/// A stopped record whose sandbox stands with a park owed is asked that park
+/// through the close verb each pass, with the wait the record kept; each
+/// result unlike the last one told is told once, the same refusal again
+/// tells nothing, and a parked answer is told once and its row leaves with
+/// the owed park. A sandbox kept with no park owed, and a relaunch in flight
+/// over an owed park, are never asked.
+#[test]
+fn a_stopped_record_owing_a_park_is_asked_it_each_pass_and_each_new_result_told_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let owing = |item: &str, status: &str, owed: Option<Value>| {
+        let mut lane = hosted_lane(dir.path(), item, item, "/w/lane");
+        lane["status"] = json!(status);
+        lane["sandbox"] = json!("standing");
+        if let Some(owed) = owed {
+            lane["park_owed"] = owed;
+        }
+        lane
+    };
+    let lanes = vec![
+        owing("KEN-1", "stopped", Some(json!({"until_pr": 1400}))),
+        owing("KEN-2", "stopped", None),
+        owing("KEN-3", "preparing", Some(json!({"pr": 7}))),
+    ];
+    fleet.set_lanes(lanes.clone());
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let ask = close_call(
+        &driver.state_dir,
+        r#"{"item":"KEN-1","mode":{"park":{"until_pr":1400}},"op":"close-lane"}"#,
+    );
+    let told = |produced: &Produced| -> Vec<String> {
+        event_lines(produced)
+            .into_iter()
+            .filter(|l| l.starts_with("EVENT park-owed "))
+            .collect()
+    };
+    let failed = refusal_reply(
+        "park-failed",
+        json!([["item", "KEN-1"], ["cause", "exit=3"]]),
+    );
+    world.plant_close(json!({"KEN-1": failed}));
+    let first = driver.pass(&state);
+    assert_eq!(
+        told(&first),
+        vec!["EVENT park-owed KEN-1 result=park-failed cause=exit=3"]
+    );
+    assert_eq!(world.close_log(), vec![ask.clone()]);
+    let again = driver.pass(&state);
+    assert!(told(&again).is_empty(), "{:?}", lines(&again));
+    assert_eq!(world.close_log(), vec![ask.clone(), ask.clone()]);
+    world.plant_close(json!({"KEN-1": refusal_reply(
+        "park-refused",
+        json!([["item", "KEN-1"], ["reason", "pr-not-open"], ["pr", "1400"], ["state", "MERGED"]]),
+    )}));
+    let merged = driver.pass(&state);
+    assert_eq!(
+        told(&merged),
+        vec!["EVENT park-owed KEN-1 result=park-refused reason=pr-not-open pr=1400 state=MERGED"]
+    );
+    world.plant_close(
+        json!({"KEN-1": verb_reply("KEN-1", "parked", json!({"parked": {"head": "h2"}}))}),
+    );
+    let parked = driver.pass(&state);
+    assert_eq!(told(&parked), vec!["EVENT park-owed KEN-1 result=parked"]);
+    assert_eq!(world.close_log().len(), 4);
+    let mut after = lanes;
+    after[0]["status"] = json!("parked");
+    after[0].as_object_mut().unwrap().remove("park_owed");
+    after[0].as_object_mut().unwrap().remove("sandbox");
+    fleet.set_lanes(after);
+    let quiet = driver.pass(&fleet.read());
+    assert!(told(&quiet).is_empty(), "{:?}", lines(&quiet));
+    assert_eq!(driver.baseline.get(hosted::PARK_OWED_ROW, "KEN-1"), None);
+    assert!(
+        world.close_log().iter().all(|l| l == &ask),
+        "a kept sandbox and a relaunch in flight are never asked: {:?}",
+        world.close_log()
+    );
+    assert_eq!(world.close_log().len(), 4);
+}
+
 /// A hosted lane's status file is on its host, not this disk: it is read
 /// through `lane-host cat` under the record's host, a `2` confirmed by
 /// `touch`: a missing file past the bound is `start-stalled`, a file that

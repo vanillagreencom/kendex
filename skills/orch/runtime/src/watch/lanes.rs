@@ -995,6 +995,7 @@ pub fn observe(pass: &Pass) -> Produced {
         }
     }
     hosted::prune_close_markers(pass, &mut out);
+    hosted::complete_parks(pass, &mut out);
     // A `status=none` kind's window holds no harness the pane passes judge.
     let lanes: Vec<(&Lane, Capabilities)> = in_flight
         .iter()

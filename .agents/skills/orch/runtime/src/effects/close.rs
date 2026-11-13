@@ -232,10 +232,11 @@ pub fn close_lane(
     if let CloseMode::Park(wait) = &r.mode
         && wait.pr.is_none()
         && wait.until_pr.is_none()
+        && wait.ask.is_none()
     {
         return Err(refused(
             "request-invalid",
-            &[("item", &r.item), ("field", "park"), ("requires", "pr")],
+            &[("item", &r.item), ("field", "park"), ("requires", "pr|ask")],
         ));
     }
     let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
@@ -463,6 +464,7 @@ impl Close<'_> {
         }
         if let Some(wait) = self.park() {
             let judged = self.park_judge(wait)?;
+            self.owe_park(&judged)?;
             return self.park_sandbox(&judged, Vec::new());
         }
         if self.keep() {
@@ -934,14 +936,26 @@ impl Close<'_> {
 
     /// An ask the lane holds unanswered refuses the close: the answer would
     /// reach the session the close ends. A mailbox that cannot be read
-    /// refuses too.
+    /// refuses too. A park on the lane's own ask passes: its judge reads
+    /// that ask, and the answer reaches the relaunched session.
     fn refuse_ask(&self) -> Result<()> {
-        match lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
-            Ok(None) => Ok(()),
-            Ok(Some(ask)) => Err(refused(
+        if self.park().is_some_and(|wait| wait.ask.is_some()) {
+            return Ok(());
+        }
+        match self.open_ask()? {
+            None => Ok(()),
+            Some(ask) => Err(refused(
                 "ask-unanswered",
                 &[("item", self.item()), ("ask", &ask)],
             )),
+        }
+    }
+
+    /// The oldest ask the lane's mailbox holds unanswered; a mailbox that
+    /// cannot be read refuses.
+    fn open_ask(&self) -> Result<Option<String>> {
+        match lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
+            Ok(ask) => Ok(ask),
             Err(cause) if cause.starts_with(hosted::BUSY) => Err(refused(
                 hosted::BUSY,
                 &[("item", self.item()), ("step", "mail-read")],
@@ -1277,15 +1291,24 @@ impl Close<'_> {
     }
 
     /// The one reading that admits a park, made before anything is
-    /// signalled: the provider's check, the pull request open on the lane's
-    /// own head and branch (a queue park) or the dependency open in a
-    /// watched repository, a head read from the worktree pushed to its
-    /// sandbox's `origin`, the lane's clean-status record bound to that
-    /// head, and for a queue park the merge queue holding it, or auto-merge
-    /// armed with GitHub reading it CLEAN, and the github skill's reducer
-    /// silent on it.
+    /// signalled: the provider's check, the ask it names the lane's oldest
+    /// open one, the pull request open on the lane's own head and branch (a
+    /// queue park) or the dependency open in a watched repository, a head
+    /// read from the worktree pushed to its sandbox's `origin`, the lane's
+    /// clean-status record bound to that head, and for a queue park the
+    /// merge queue holding it, or auto-merge armed with GitHub reading it
+    /// CLEAN, and the github skill's reducer silent on it.
     fn park_judge(&self, wait: &ParkWait) -> Result<ParkLane> {
         self.park_check()?;
+        if let Some(ask) = &wait.ask {
+            let open = self.open_ask()?;
+            if open.as_deref() != Some(ask.as_str()) {
+                return Err(self.park_refused(
+                    "ask-not-open",
+                    &[("ask", ask), ("open", open.as_deref().unwrap_or("none"))],
+                ));
+            }
+        }
         let gh = crate::watch::github::handle(Path::new("gh"));
         // A lane that parks is hosted, and a hosted launch records the
         // repository it names.
@@ -1299,28 +1322,39 @@ impl Close<'_> {
         {
             return Err(self.park_refused("repo-unwatched", &[("repo", until)]));
         }
-        let (target, target_repo) = match wait.until_pr {
-            Some(n) => (n, until_repo.clone().unwrap_or_else(|| repo.clone())),
-            None => (wait.pr.unwrap_or_default(), repo.clone()),
+        let target = match wait.until_pr {
+            Some(n) => Some((n, until_repo.clone().unwrap_or_else(|| repo.clone()))),
+            None => wait.pr.map(|n| (n, repo.clone())),
         };
-        let pull = self.park_pull(&gh, &target_repo, target)?;
-        if pull.state != "OPEN" {
-            return Err(self.park_refused(
-                "pr-not-open",
-                &[("pr", &target.to_string()), ("state", &pull.state)],
-            ));
-        }
-        let dependency = wait.until_pr.is_some();
+        let pull = match target {
+            Some((number, target_repo)) => {
+                let pull = self.park_pull(&gh, &target_repo, number)?;
+                if pull.state != "OPEN" {
+                    return Err(self.park_refused(
+                        "pr-not-open",
+                        &[("pr", &number.to_string()), ("state", &pull.state)],
+                    ));
+                }
+                Some(pull)
+            }
+            None => None,
+        };
+        // A queue park's pull request is the lane's own; a dependency park
+        // and an ask park read none of its checks.
+        let queue = pull.as_ref().filter(|_| wait.until_pr.is_none());
         // A head read from the worktree is the sandbox's alone until its
         // remote-tracking ref names it: the park would strand it with the
         // agent that can push it stopped. The pull request's head, taken
         // where the worktree is unread, is the remote's.
-        let (head, branch, source) = match self.lane_head() {
-            Ok(LaneHead {
-                head,
-                branch,
-                remote,
-            }) => {
+        let (head, branch, source) = match (self.lane_head(), queue) {
+            (
+                Ok(LaneHead {
+                    head,
+                    branch,
+                    remote,
+                }),
+                _,
+            ) => {
                 if remote.as_deref() != Some(head.as_str()) {
                     return Err(self.park_refused(
                         "unpushed",
@@ -1332,8 +1366,8 @@ impl Close<'_> {
                 }
                 (head, branch, "worktree")
             }
-            Err(()) if dependency => return Err(self.park_refused("worktree-unread", &[])),
-            Err(()) => match self.recorded_branch() {
+            (Err(()), None) => return Err(self.park_refused("worktree-unread", &[])),
+            (Err(()), Some(pull)) => match self.recorded_branch() {
                 Some(branch) => (pull.head_ref_oid.clone(), branch, "workflow-state"),
                 None => {
                     return Err(self
@@ -1341,8 +1375,8 @@ impl Close<'_> {
                 }
             },
         };
-        let pr = wait.pr.unwrap_or(target).to_string();
-        if !dependency {
+        let pr = wait.pr.unwrap_or_default().to_string();
+        if let Some(pull) = queue {
             if pull.head_ref_name != branch {
                 return Err(self.park_refused(
                     "pr-branch-mismatch",
@@ -1383,7 +1417,7 @@ impl Close<'_> {
         if !bound {
             return Err(self.park_refused("clean-status-invalid", &[("branch-source", source)]));
         }
-        if !dependency {
+        if let Some(pull) = queue {
             let queued =
                 pull.is_in_merge_queue || matches!(pull.merge_queue_entry, Nullable::Present(_));
             if !queued {
@@ -1407,8 +1441,36 @@ impl Close<'_> {
             pr: wait.pr,
             until_pr: wait.until_pr,
             until_repo,
+            ask: wait.ask.clone(),
             reservation: None,
+            owed: false,
         })
+    }
+
+    /// A stopped record's park recorded owed before its sandbox stop, where
+    /// the record does not owe this wait already: a stop that fails then
+    /// leaves the park for the watch to complete, never a kept sandbox.
+    fn owe_park(&self, park: &ParkLane) -> Result<()> {
+        let wait = serde_json::to_value(ParkWait {
+            pr: park.pr,
+            until_pr: park.until_pr,
+            until_repo: park.until_repo.clone(),
+            ask: park.ask.clone(),
+        })?;
+        if self.lane.extra.get(state::PARK_OWED) == Some(&wait) {
+            return Ok(());
+        }
+        let owed = ParkLane {
+            owed: true,
+            ..park.clone()
+        };
+        super::lane_operation::apply_request(
+            self.path,
+            &Request::ParkLane(owed),
+            self.env,
+            self.locking,
+        )?;
+        Ok(())
     }
 
     /// The pull request's state, head, arm, merge state and queue

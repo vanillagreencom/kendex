@@ -136,6 +136,13 @@ pub enum Event {
     LaneCloseRefused {
         item: String,
     },
+    /// This runtime's own: the park a stopped record owes, asked again;
+    /// `result` is `parked`, or the refusal's key with its fields, printed
+    /// when it changes.
+    ParkOwed {
+        item: String,
+        result: String,
+    },
     Triage {
         id: String,
     },
@@ -523,6 +530,7 @@ impl Event {
             }
             Event::LaneClosed { item } => format!("EVENT lane-closed {item}"),
             Event::LaneCloseRefused { item } => format!("EVENT lane-close-refused {item}"),
+            Event::ParkOwed { item, result } => format!("EVENT park-owed {item} result={result}"),
             Event::Triage { id } => format!("EVENT triage {id}"),
             Event::Handoff { item } => format!("EVENT handoff {item}"),
             Event::WindowGone { lane } => format!("EVENT window-gone {lane}"),

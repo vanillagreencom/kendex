@@ -458,8 +458,9 @@ pub enum CloseMode {
     IfTerminal,
 }
 
-/// The pull request a park waits on: the lane's own, a dependency, or both;
-/// a dependency in another repository names it.
+/// What a park waits on: a pull request, the lane's own, a dependency, or
+/// both, a dependency in another repository naming it; or the lane's own
+/// open mailbox ask, whose answer the overseer sends once it relaunches it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParkWait {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -468,6 +469,8 @@ pub struct ParkWait {
     pub until_pr: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until_repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<String>,
 }
 
 /// A lane's delivery: its merged pull request, or a direct push's commit.
@@ -499,10 +502,18 @@ pub struct ParkLane {
     pub until_pr: Option<u64>,
     #[serde(default)]
     pub until_repo: Option<String>,
+    /// The lane's open ask the park waits on.
+    #[serde(default)]
+    pub ask: Option<String>,
     /// A finite hold on the lane's cap slot through the park, where the
     /// caller wants one; parked disk alone charges nothing.
     #[serde(default)]
     pub reservation: Option<Reservation>,
+    /// The park recorded owed before its sandbox stop: the record stays
+    /// stopped with its sandbox standing and the wait kept, so a stop that
+    /// fails leaves the park for the watch to complete.
+    #[serde(default)]
+    pub owed: bool,
 }
 
 /// Hold a lane's cap slot deliberately until `until`, an ISO 8601 UTC stamp
@@ -759,10 +770,10 @@ fn workflow_verb(text: &str) -> Option<&'static str> {
     found.map(|(_, verb)| verb)
 }
 
-/// Unpark at `at`: a standing `parked` moves into `pending_pr`
-/// (`{pr, repo, head}` plus `until_pr` and `until_repo` where set) and
-/// appends `{from: parked.at, to: $at, cause: "parked"}` to `pauses`; the
-/// `parked` key is removed either way.
+/// Unpark at `at`: a standing `parked` that names a pull request moves into
+/// `pending_pr` (`{pr, repo, head}` plus `until_pr` and `until_repo` where
+/// set), and any appends `{from: parked.at, to: $at, cause: "parked"}` to
+/// `pauses`; the `parked` key is removed either way.
 fn unpark(path: &Path, lane: &mut Document, index: usize, at: &str) -> Result<()> {
     let parked = match lane.get("parked") {
         None => return Ok(()),
@@ -783,6 +794,14 @@ fn unpark(path: &Path, lane: &mut Document, index: usize, at: &str) -> Result<()
     if parked.get("at").is_some_and(|v| !v.is_null()) {
         let pause = json!({"from": parked["at"], "to": at, "cause": "parked"});
         record::array_mut(path, lane, "pauses")?.push(pause);
+    }
+    // An ask park waits on no pull request: nothing is pending after it.
+    if ["pr", "until_pr"]
+        .iter()
+        .all(|key| parked.get(*key).is_none_or(Value::is_null))
+    {
+        record::delete(lane, "parked");
+        return Ok(());
     }
     let mut pending = Map::new();
     for key in ["pr", "repo", "head"] {
@@ -1740,6 +1759,21 @@ pub(super) fn park_lane(
             item: r.item.clone(),
             status: lane.status,
         }),
+        LaneStatus::Stopped if r.owed => {
+            let wait = ParkWait {
+                pr: r.pr,
+                until_pr: r.until_pr,
+                until_repo: r.until_repo.clone(),
+                ask: r.ask.clone(),
+            };
+            let lane = lane_doc_mut(path, doc, index)?;
+            record::set(lane, state::SANDBOX, state::STANDING);
+            record::set(lane, state::PARK_OWED, serde_json::to_value(wait)?);
+            Ok(LaneParked {
+                lane: lane_at(path, doc, index)?,
+                parked_now: false,
+            })
+        }
         LaneStatus::Stopped => {
             if let Some(reservation) = &r.reservation {
                 check_reservation(&r.item, reservation, env)?;
@@ -1756,6 +1790,9 @@ pub(super) fn park_lane(
             }
             if let Some(until_repo) = &r.until_repo {
                 parked.insert("until_repo".to_owned(), Value::from(until_repo.as_str()));
+            }
+            if let Some(ask) = &r.ask {
+                parked.insert("ask".to_owned(), Value::from(ask.as_str()));
             }
             let lane = lane_doc_mut(path, doc, index)?;
             record::set(lane, "status", LaneStatus::Parked.word());
@@ -3373,6 +3410,27 @@ mod tests {
             .collect();
         expected.extend(["pauses".to_owned(), "pending_pr".to_owned()]);
         assert_eq!(keys(&after), expected);
+        // A park on the lane's own ask names no pull request: its pause is
+        // kept and nothing is pending.
+        let asked = text.replacen(
+            "\"pr\": 5814, \"repo\": \"bmethod/kendex\", \"head\": \"abc123\", \"until_pr\": 5820,",
+            "\"repo\": \"bmethod/kendex\", \"head\": \"abc123\", \"ask\": \"a1\",",
+            1,
+        );
+        fs::write(&path, &asked).unwrap();
+        apply_on(
+            &path,
+            &adopt("KEN-4437", "s9", None),
+            &env(),
+            LOCK,
+            &kernel(4),
+        )
+        .unwrap();
+        let after = lane_doc(&path, "KEN-4437");
+        assert_eq!(after["status"], Value::from("running"));
+        assert!(!after.contains_key("parked"));
+        assert!(!after.contains_key("pending_pr"), "{after:?}");
+        assert_eq!(after["pauses"][0]["cause"], Value::from("parked"));
     }
 
     /// An effect's phase is written onto its open intent before
@@ -3714,7 +3772,9 @@ mod tests {
                 pr: Some(5814),
                 until_pr: Some(5820),
                 until_repo: Some("o/dep".into()),
+                ask: None,
                 reservation,
+                owed: false,
             })
         };
         fleet_with(&path, &[record("KEN-H", "stopped", None)]);
