@@ -64,7 +64,7 @@ Read the linked workflow or reference for the task before acting.
 | Task | Read first |
 |---|---|
 | Draft product videos, posts or outreach | Launch `publicist` for drafting with a task file or attached prompt. Before a publisher setup launch, obtain the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). Carry the approval record and named publisher selections in the setup task file. |
-| Choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
+| Read mail, pages or files, choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
