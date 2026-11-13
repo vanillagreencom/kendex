@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -296,48 +295,6 @@ pub struct ForkProvenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
     pub forked_at: String,
-    /// Coordinates of stored skill bytes. Absent records predate rebasing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill_coordinates: Option<SkillCoordinates>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-pub struct SkillCoordinates {
-    pub directory: PathBuf,
-    pub root: PathBuf,
-}
-
-impl SkillCoordinates {
-    /// Relative paths keep targets that move with a project portable.
-    /// A different volume keeps its absolute path. Detached remote bytes use
-    /// their catalog directory mapped into the scope, as the original renderer does.
-    pub(crate) fn relative_to(&self, scope: &Path) -> Self {
-        let common = scope
-            .ancestors()
-            .find(|root| self.directory.starts_with(root) && self.root.starts_with(root))
-            .unwrap_or(scope);
-        Self {
-            directory: if self.directory == scope {
-                PathBuf::from(".")
-            } else {
-                crate::fs::spelling(Some(common), &self.directory, &scope.join("coordinate"))
-            },
-            root: if self.root == scope {
-                PathBuf::from(".")
-            } else {
-                crate::fs::spelling(Some(common), &self.root, &scope.join("coordinate"))
-            },
-        }
-    }
-
-    pub(crate) fn in_scope(&self, scope: &Path) -> Self {
-        let at = scope.join("coordinate");
-        Self {
-            directory: crate::fs::resolved(&at, &self.directory)
-                .unwrap_or_else(|| scope.join(&self.directory)),
-            root: crate::fs::resolved(&at, &self.root).unwrap_or_else(|| scope.join(&self.root)),
-        }
-    }
 }
 
 /// Package-owned review-bot settings, retained without interpreting their schema.

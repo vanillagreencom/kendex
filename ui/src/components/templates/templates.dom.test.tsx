@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
-import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AppSettings,
@@ -67,9 +66,7 @@ vi.mock("@/bindings", () => ({
     projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
-vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
-}));
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 /** The project every case here installs into or reads a draft from. */
 const ACME_ROOT = "/work/acme";
@@ -307,10 +304,7 @@ describe("creating a template from a project", () => {
     });
     vi.mocked(commands.templateCreateFromProject).mockResolvedValue({
       status: "ok",
-      data: {
-        template: RUST_SERVICE,
-        warnings: ["skills/house-style: link target could not be represented"],
-      },
+      data: RUST_SERVICE,
     });
     mount(
       <CreateTemplateDialog
@@ -331,9 +325,6 @@ describe("creating a template from a project", () => {
     expect(document.body.textContent).toContain(INCLUDED_PACKAGES_LABEL);
 
     await act(async () => button(document, NEW_TEMPLATE_LABEL).click());
-    expect(toast.message).toHaveBeenCalledWith(
-      "skills/house-style: link target could not be represented",
-    );
     expect(commands.templateCreateFromProject).toHaveBeenCalledWith(
       "/work/acme",
       {
@@ -376,7 +367,7 @@ describe("creating a template from a project", () => {
     });
     vi.mocked(commands.templateCreateFromProject).mockResolvedValue({
       status: "ok",
-      data: { template: RUST_SERVICE, warnings: [] },
+      data: RUST_SERVICE,
     });
     mount(
       <CreateTemplateDialog
@@ -640,7 +631,7 @@ describe("an edited marketplace package in the modal", () => {
     });
     vi.mocked(commands.templateCreateFromProject).mockResolvedValue({
       status: "ok",
-      data: { template: RUST_SERVICE, warnings: [] },
+      data: RUST_SERVICE,
     });
     mount(
       <CreateTemplateDialog

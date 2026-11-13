@@ -544,7 +544,11 @@ fn rebase_for_surface(
     files: Files,
 ) -> Files {
     let files = {
-        let (legacy, coordinates) = fork_coordinates(ctx, state);
+        let captured = ctx
+            .manifest
+            .forks
+            .get(&ItemKind::Skill)
+            .is_some_and(|forks| forks.contains_key(ctx.name));
         let local = matches!(
             ctx.decl.source.as_str(),
             crate::manifest::LOCAL_SOURCE_NAME | crate::manifest::INPLACE_SOURCE_NAME
@@ -557,22 +561,20 @@ fn rebase_for_surface(
             Scope::Project { root } => root,
             Scope::Global => &ctx.env.home,
         };
-        let coordinates = if legacy {
+        let coordinates = if captured {
             None
-        } else if coordinates.is_some() {
-            coordinates
         } else if matches!(ctx.scope, Scope::Project { .. })
             && local
             && ctx.sealed.root().starts_with(root)
         {
-            Some(crate::manifest::SkillCoordinates {
+            Some(crate::render::skill::SkillCoordinates {
                 directory: ctx.item_path.to_path_buf(),
                 root: root.clone(),
             })
         } else if matches!(ctx.scope, Scope::Global)
             && ctx.decl.source == crate::manifest::LOCAL_SOURCE_NAME
         {
-            Some(crate::manifest::SkillCoordinates {
+            Some(crate::render::skill::SkillCoordinates {
                 directory: ctx.item_path.to_path_buf(),
                 root: root.ancestors().last().unwrap_or(root).to_path_buf(),
             })
@@ -621,46 +623,6 @@ fn rebase_for_surface(
         (path, bytes)
     })
     .collect()
-}
-
-fn fork_coordinates(
-    ctx: &ItemCtx,
-    state: &mut DesiredState,
-) -> (bool, Option<crate::manifest::SkillCoordinates>) {
-    let fork = ctx
-        .manifest
-        .forks
-        .get(&ItemKind::Skill)
-        .and_then(|forks| forks.get(ctx.name));
-    let coordinates = fork
-        .and_then(|fork| fork.skill_coordinates.as_ref())
-        .map(|coordinates| {
-            coordinates.in_scope(match ctx.scope {
-                Scope::Project { root } => root,
-                Scope::Global => &ctx.env.home,
-            })
-        });
-    let legacy = fork.is_some() && coordinates.is_none();
-    if legacy
-        && !state.warnings.iter().any(|warning| {
-            warning.kind == ItemKind::Skill
-                && warning.name == ctx.name
-                && warning.message.starts_with("skill-fork-legacy:")
-        })
-    {
-        state.warnings.push(super::ItemWarning {
-            kind: ItemKind::Skill,
-            name: ctx.name.to_owned(),
-            harness: None,
-            message: format!(
-                "skill-fork-legacy: {} keeps its stored links; a new fork rebases them",
-                ctx.name
-            ),
-            remediation: None,
-            detail: None,
-        });
-    }
-    (legacy, coordinates)
 }
 
 /// Nothing installs for this group, and every member is told why.

@@ -15,7 +15,6 @@ use crate::engine::agent_carry::{AgentCarry, agent_carry};
 
 /// `(relative path, bytes)` pairs ready to write under the local target.
 type SourceFiles = Vec<(PathBuf, Vec<u8>)>;
-pub(super) type SkillSource = (SourceFiles, crate::manifest::SkillCoordinates);
 
 /// One item's source-form files, read through the sealed catalog at the commit
 /// it was installed from: the skill's tree, or the single file the other kinds
@@ -28,11 +27,7 @@ pub(super) fn source_form(
     item: &ClosureItem,
     commit: Option<&str>,
     in_scope: &crate::engine::ScopeSkills,
-) -> Result<(
-    SourceFiles,
-    Option<AgentCarry>,
-    Vec<crate::render::RenderWarning>,
-)> {
+) -> Result<(SourceFiles, Option<AgentCarry>)> {
     let resolved =
         crate::source::require_ready_at(env, scope, &item.decl.source, manifest, commit)?;
     let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
@@ -45,8 +40,26 @@ pub(super) fn source_form(
     };
     match item.kind {
         ItemKind::Skill => {
-            let (files, _) = skill_source(env, scope, manifest, item, commit)?;
-            Ok((files, None, Vec::new()))
+            let files = sealed.collect_skill_tree(&path)?;
+            // A subdirectory carrying its own SKILL.md is a nested skill —
+            // captured as its own item, so its files are not this skill's
+            // content. Without this, keeping both `plugin` and `plugin/item`
+            // would write `item`'s bytes twice and the second write would clash.
+            let nested: Vec<PathBuf> = files
+                .iter()
+                .filter_map(|(rel, _)| {
+                    let parent = rel.parent()?;
+                    (!parent.as_os_str().is_empty() && rel.file_name()? == "SKILL.md")
+                        .then(|| parent.to_path_buf())
+                })
+                .collect();
+            Ok((
+                files
+                    .into_iter()
+                    .filter(|(rel, _)| !nested.iter().any(|dir| rel.starts_with(dir)))
+                    .collect(),
+                None,
+            ))
         }
         _ => {
             let bytes = sealed.read(&path)?;
@@ -58,70 +71,9 @@ pub(super) fn source_form(
                 .file_name()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(&item.name));
-            Ok((vec![(file, bytes)], carry, Vec::new()))
+            Ok((vec![(file, bytes)], carry))
         }
     }
-}
-
-pub(super) fn skill_source(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    item: &ClosureItem,
-    commit: Option<&str>,
-) -> Result<SkillSource> {
-    let resolved =
-        crate::source::require_ready_at(env, scope, &item.decl.source, manifest, commit)?;
-    let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
-    let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
-    let path =
-        crate::source::find_item(&sealed, &config, item.kind, &item.name).ok_or_else(|| {
-            CoreError::ItemNotInSource {
-                name: item.name.clone(),
-                source_name: item.decl.source.clone(),
-            }
-        })?;
-    let files = sealed.collect_skill_tree(&path)?;
-    // A subdirectory carrying its own SKILL.md is a nested skill —
-    // captured as its own item, so its files are not this skill's
-    // content. Without this, keeping both `plugin` and `plugin/item`
-    // would write `item`'s bytes twice and the second write would clash.
-    let nested: Vec<PathBuf> = files
-        .iter()
-        .filter_map(|(rel, _)| {
-            let parent = rel.parent()?;
-            (!parent.as_os_str().is_empty() && rel.file_name()? == "SKILL.md")
-                .then(|| parent.to_path_buf())
-        })
-        .collect();
-    let files = files
-        .into_iter()
-        .filter(|(rel, _)| !nested.iter().any(|dir| rel.starts_with(dir)))
-        .collect();
-    let scope_root = match scope {
-        Scope::Project { root } => root,
-        Scope::Global => &env.home,
-    };
-    let local = manifest
-        .sources
-        .get(&item.decl.source)
-        .is_some_and(|source| source.path.is_some());
-    let coordinates = if local {
-        crate::manifest::SkillCoordinates {
-            root: scope_root
-                .ancestors()
-                .find(|root| path.starts_with(root))
-                .unwrap_or(scope_root)
-                .to_path_buf(),
-            directory: path,
-        }
-    } else {
-        crate::manifest::SkillCoordinates {
-            directory: scope_root.join(path.strip_prefix(&resolved.root).unwrap_or(&path)),
-            root: scope_root.clone(),
-        }
-    };
-    Ok((files, coordinates.relative_to(scope_root)))
 }
 
 /// The write op for one detached item, after preflighting the local target:

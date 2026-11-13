@@ -358,7 +358,7 @@ fn absorb_fork_edit(
             }
         }
         None => {
-            let Ok((ops, warnings)) = super::fork::absorb_ops(
+            let Ok(ops) = super::fork::absorb_ops(
                 env,
                 scope,
                 manifest,
@@ -370,7 +370,6 @@ fn absorb_fork_edit(
                 return false;
             };
             sink.ops.extend(ops);
-            sink.warnings.extend(warnings);
             sink.absorbed.insert(package, position);
         }
     }

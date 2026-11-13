@@ -504,7 +504,7 @@ fn create(
     let sides = answered(&kept, &answers)?;
     note(COPIES_GO_INTO_THIS_TEMPLATE);
     ask_before_writing(&format!("save this as '{name}'?"), yes)?;
-    let captured = template::create_from_project(
+    let template = template::create_from_project(
         env,
         &project,
         &Chosen {
@@ -519,10 +519,6 @@ fn create(
             customizations: answers.include_customizations,
         },
     )?;
-    for warning in &captured.warnings {
-        crate::ui::report::warning(warning);
-    }
-    let template = captured.template;
     out(&format!(
         "saved {} with {} package(s)",
         template.name,
@@ -715,10 +711,6 @@ fn add(
     note(COPIES_GO_INTO_THIS_TEMPLATE);
     ask_before_writing(&format!("copy these files into '{}'?", template.name), yes)?;
     let after = template::add_from_project(env, &template.name, &project, &wanted, &license)?;
-    for warning in &after.warnings {
-        crate::ui::report::warning(warning);
-    }
-    let after = after.template;
     out(&format!(
         "{} now installs {} package(s)",
         after.name,

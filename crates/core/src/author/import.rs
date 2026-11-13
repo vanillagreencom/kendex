@@ -150,7 +150,6 @@ pub struct ImportOutcome {
     pub written: Vec<String>,
     /// Selections whose exact bytes were already at the destination.
     pub already_present: Vec<String>,
-    pub warnings: Vec<String>,
 }
 
 /// One selection's bytes re-resolved at apply time, with the provenance
@@ -164,7 +163,6 @@ pub(super) struct ResolvedSelection {
     /// Where on this machine the bytes were read from, when they were —
     /// what the target-overlap refusal compares against.
     pub read_from: Option<PathBuf>,
-    pub coordinates: Option<crate::manifest::SkillCoordinates>,
 }
 
 /// Every package the given scopes hold, grouped and deduplicated. Origins
@@ -354,8 +352,6 @@ use origins::{origins_of, resolve_selection, unmanaged_paths};
 /// preview refuses with are decided once, here, so a second copier cannot
 /// answer any of them differently.
 pub struct ResolvedBytes {
-    read_from: Option<PathBuf>,
-    coordinates: Option<crate::manifest::SkillCoordinates>,
     /// `(relative path, bytes)` pairs. A skill is its tree; every other
     /// kind is the one file it keeps, under the leaf it was read as.
     pub files: Vec<(PathBuf, Vec<u8>)>,
@@ -363,25 +359,6 @@ pub struct ResolvedBytes {
     /// at the `NOTICES/<source>/<file>` paths a catalog-shaped tree keeps
     /// them under. Empty for content that is the person's own.
     pub notices: Vec<(PathBuf, Vec<u8>)>,
-}
-
-impl ResolvedBytes {
-    pub(crate) fn relocate_skill(
-        &mut self,
-        destination: &Path,
-    ) -> Vec<crate::render::RenderWarning> {
-        let Some(source) = &self.read_from else {
-            return Vec::new();
-        };
-        let (files, warnings) = crate::render::skill::capture_into(
-            std::mem::take(&mut self.files),
-            source,
-            destination,
-            self.coordinates.as_ref(),
-        );
-        self.files = files;
-        warnings
-    }
 }
 
 /// Re-resolve one selection's bytes, past the same gates the import into
@@ -413,8 +390,6 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
     }
     let answer = resolve_selection(env, scopes, selection)?;
     license_gate(selection, &answer.group)?;
-    let read_from = answer.read_from.clone();
-    let coordinates = answer.coordinates.clone();
     let files = match answer.bytes {
         ItemBytes::Tree(files) => files,
         ItemBytes::File(bytes) => {
@@ -438,12 +413,7 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
             .collect::<Result<Vec<_>>>()?,
         None => Vec::new(),
     };
-    Ok(ResolvedBytes {
-        files,
-        notices,
-        read_from,
-        coordinates,
-    })
+    Ok(ResolvedBytes { files, notices })
 }
 
 /// Where licence and attribution files sit inside a catalog-shaped tree:

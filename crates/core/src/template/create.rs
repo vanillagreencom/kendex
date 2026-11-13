@@ -80,14 +80,6 @@ pub struct Chosen {
     pub customizations: bool,
 }
 
-/// The result of capturing project bytes, without persisting action warnings
-/// as part of the saved template.
-#[derive(Debug, Serialize, Type)]
-pub struct CaptureOutcome {
-    pub template: Template,
-    pub warnings: Vec<String>,
-}
-
 /// One copy to take, held until every check has passed.
 struct Copying {
     kind: crate::model::ItemKind,
@@ -107,11 +99,7 @@ struct Copying {
 /// what is on disk is not what was offered. Every byte is resolved before
 /// the index is written, so a refusal leaves neither an index entry nor a
 /// store.
-pub fn create_from_project(
-    env: &Env,
-    root: &std::path::Path,
-    chosen: &Chosen,
-) -> Result<CaptureOutcome> {
+pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -> Result<Template> {
     let draft = draft_from_project(env, root)?;
     if draft.fingerprint != chosen.fingerprint {
         return Err(CoreError::TemplateDraftStale);
@@ -152,18 +140,7 @@ pub fn create_from_project(
     // writes put there is accounted for by the removal below rather than
     // by a rollback of its own.
     let mut introduced = Vec::new();
-    let mut warnings = Vec::new();
-    for (copy, mut bytes) in resolved {
-        if copy.kind == crate::model::ItemKind::Skill {
-            let destination =
-                crate::source::local_slot(&store::root(env, &saved.id), copy.kind, &copy.name);
-            warnings.extend(
-                bytes
-                    .relocate_skill(&destination)
-                    .into_iter()
-                    .map(|warning| format!("{}: {}", copy.name, warning.message)),
-            );
-        }
+    for (copy, bytes) in resolved {
         if let Err(error) = store::write(
             env,
             &saved.id,
@@ -191,10 +168,7 @@ pub fn create_from_project(
             return Err(error);
         }
     }
-    Ok(CaptureOutcome {
-        template: super::get(env, &saved.name)?,
-        warnings,
-    })
+    super::get(env, &saved.name)
 }
 
 /// Take fresh copies of a project's packages into a template that already
@@ -210,7 +184,7 @@ pub fn add_from_project(
     root: &std::path::Path,
     wanted: &[super::MemberRef],
     license: &LicenseAnswer,
-) -> Result<CaptureOutcome> {
+) -> Result<Template> {
     let template = super::get(env, name)?;
     let draft = draft_from_project(env, root)?;
     let scope = Scope::Project {
@@ -274,18 +248,7 @@ pub fn add_from_project(
     // rollback below removes exactly these — never a notice an earlier
     // copy came under, which is still that copy's.
     let mut introduced = Vec::new();
-    let mut warnings = Vec::new();
-    for (copy, mut resolved) in bytes {
-        if copy.kind == crate::model::ItemKind::Skill {
-            let destination =
-                crate::source::local_slot(&store::root(env, &template.id), copy.kind, &copy.name);
-            warnings.extend(
-                resolved
-                    .relocate_skill(&destination)
-                    .into_iter()
-                    .map(|warning| format!("{}: {}", copy.name, warning.message)),
-            );
-        }
+    for (copy, resolved) in bytes {
         if let Err(error) = store::write(
             env,
             &template.id,
@@ -334,10 +297,7 @@ pub fn add_from_project(
     // terms differ from that orphan refuses against a file no copy here
     // came under: yesterday's leftover becomes tomorrow's false refusal.
     store::prune(env, &template, &after)?;
-    Ok(CaptureOutcome {
-        template: after,
-        warnings,
-    })
+    Ok(after)
 }
 
 /// Save a template from packages picked somewhere else — a marketplace's
@@ -453,8 +413,6 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
             name: local.name.clone(),
             enabled: true,
             source: MemberSource::Copy {
-                skill_coordinates: (kind == crate::model::ItemKind::Skill)
-                    .then(|| std::path::PathBuf::from(store::slot_id(kind, &local.name))),
                 copy: store::slot_id(kind, &local.name),
                 from: None,
                 notices: Vec::new(),
@@ -503,8 +461,6 @@ fn source_of(
         // [`bind_notices`], once the bytes have been read and there is an
         // answer to record. Nothing is copied yet at this point.
         Ok(MemberSource::Copy {
-            skill_coordinates: (kind == crate::model::ItemKind::Skill)
-                .then(|| std::path::PathBuf::from(store::slot_id(kind, &member.name))),
             copy: store::slot_id(kind, &member.name),
             from,
             notices: Vec::new(),

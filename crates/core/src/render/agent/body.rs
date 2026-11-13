@@ -27,23 +27,6 @@ pub(crate) fn rebase_skill(
     rebase_links(text, paths, true, retain_alias, keep)
 }
 
-pub(crate) fn compare_skill_links(text: &str, file: &Path) -> String {
-    let root = file.ancestors().last().unwrap_or(file);
-    rebase_links(
-        text,
-        BodyPaths {
-            source: file,
-            rendered: file,
-            source_root: root,
-            install_root: root,
-        },
-        false,
-        false,
-        |_| false,
-    )
-    .0
-}
-
 fn rebase_links(
     text: &str,
     paths: BodyPaths<'_>,

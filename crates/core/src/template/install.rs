@@ -89,8 +89,6 @@ pub struct ResolvedCopy {
     pub copy: String,
     /// The marketplace the bytes came from, where they came from one.
     pub from: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill_coordinates: Option<std::path::PathBuf>,
 }
 
 /// A member this machine cannot install, and why. A template carrying one
@@ -246,12 +244,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                     }),
                 }
             }
-            MemberSource::Copy {
-                copy,
-                from,
-                skill_coordinates,
-                ..
-            } => {
+            MemberSource::Copy { copy, from, .. } => {
                 let Some(kind) = member.kind.item() else {
                     missing.push(MissingMember {
                         kind: member.kind,
@@ -269,7 +262,6 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         enabled: member.enabled,
                         copy: copy.clone(),
                         from: from.clone(),
-                        skill_coordinates: skill_coordinates.clone(),
                     }),
                     Err(error) => missing.push(MissingMember {
                         kind: member.kind,
@@ -977,19 +969,8 @@ fn install_local(
             .ok_or_else(|| CoreError::TemplateMemberUnknown {
                 member: copy.name.clone(),
             })?;
-        let mut files = store::read(env, template, member, &copy.copy)?;
+        let files = store::read(env, template, member, &copy.copy)?;
         let target = local_slot(&local_root, copy.kind, &copy.name);
-        if copy.kind == ItemKind::Skill {
-            match &copy.skill_coordinates {
-                Some(coordinates) => {
-                    let source = store::root(env, &template.id).join(coordinates);
-                    let (converted, warnings) = crate::render::skill::capture_into(files, &source, &target, None);
-                    files = converted;
-                    landed.install.notes.extend(warnings.into_iter().map(|warning| format!("{}: {}", copy.name, warning.message)));
-                }
-                None => landed.install.notes.push(format!("skill-template-legacy: {} keeps its stored links; a new capture enables rebasing", copy.name)),
-            }
-        }
         // The one rule for putting bytes into a local slot: content
         // already there and byte-identical needs no write, content that
         // differs is a refusal naming it, and a link is never followed.
@@ -1004,8 +985,22 @@ fn install_local(
     // The declarations ride in the same plan as the bytes: a refusal
     // leaves the destination's manifest and its local packages alike
     // byte-identical.
-    let (manifest, declared) =
-        local_copy_declarations(env, destination, resolution, &harnesses, method)?;
+    let mut manifest = engine_ops::manifest_for_mutation(env, destination)?;
+    let mut declared = Vec::new();
+    for copy in &resolution.copies {
+        let decl = ItemDecl {
+            source: LOCAL_SOURCE_NAME.to_owned(),
+            harnesses: harnesses.clone(),
+            method,
+            rev: None,
+            enabled: copy.enabled,
+            env: None,
+        };
+        manifest
+            .declared_mut(copy.kind)
+            .insert(copy.name.clone(), decl);
+        declared.push(format!("{} {}", copy.kind.name(), copy.name));
+    }
     ops.extend(notice_ops(env, template, &local_root)?);
     let manifest_path = crate::manifest::manifest_path(env, destination);
     ops.push(PlannedOp {
@@ -1058,40 +1053,6 @@ fn install_local(
     })?;
     landed.install.rendered(report);
     Ok(())
-}
-
-fn local_copy_declarations(
-    env: &Env,
-    destination: &Scope,
-    resolution: &Resolution,
-    harnesses: &Option<Vec<HarnessId>>,
-    method: Option<Method>,
-) -> Result<(Manifest, Vec<String>)> {
-    let mut manifest = engine_ops::manifest_for_mutation(env, destination)?;
-    let mut declared = Vec::new();
-    for copy in &resolution.copies {
-        let decl = ItemDecl {
-            source: LOCAL_SOURCE_NAME.to_owned(),
-            harnesses: harnesses.clone(),
-            method,
-            rev: None,
-            enabled: copy.enabled,
-            env: None,
-        };
-        manifest
-            .declared_mut(copy.kind)
-            .insert(copy.name.clone(), decl);
-        // These bytes are a template copy in local coordinates, so an older
-        // fork's byte anchor and origin no longer describe this declaration.
-        if let Some(forks) = manifest.forks.get_mut(&copy.kind)
-            && forks.remove(&copy.name).is_some()
-            && forks.is_empty()
-        {
-            manifest.forks.remove(&copy.kind);
-        }
-        declared.push(format!("{} {}", copy.kind.name(), copy.name));
-    }
-    Ok((manifest, declared))
 }
 
 /// What a refused local add answers with once its held copy plan is taken

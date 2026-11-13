@@ -407,23 +407,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     // this conversion leaves behind, not the one it starts in: the source
     // is going, and the packages it carried arrive under `local`. Read
     // once, because per agent it reopens every catalog again.
-    let mut skill_sources = std::collections::BTreeMap::new();
-    for item in closure
-        .items
-        .iter()
-        .filter(|item| item.kind == ItemKind::Skill)
-    {
-        let captured = capture::skill_source(
-            env,
-            &scope,
-            &manifest,
-            item,
-            effective_commit(&lock, item)?.as_deref(),
-        )?;
-        skill_sources.insert(item.name.clone(), captured);
-    }
-    let mut converted =
-        converted_manifest(&manifest, &closure, source_name, &lock, &skill_sources)?;
+    let mut converted = converted_manifest(&manifest, &closure, source_name, &lock)?;
     let arriving: Vec<String> = closure
         .items
         .iter()
@@ -433,27 +417,12 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     let skills = crate::engine::ScopeSkills::after(env, &scope, &converted, &arriving)?;
     let mut ops = Vec::new();
     let mut carried: Vec<(String, AgentCarry)> = Vec::new();
-    let mut capture_warnings = Vec::new();
     for item in &closure.items {
         // Read this item's source-form bytes at the exact commit it installed
         // from — not the source head, which may have moved. A declared item
         // that was never applied has no lock entry; its own pin is the commit.
         let commit = effective_commit(&lock, item)?;
-        let (files, carry, warnings) = match (item.kind == ItemKind::Skill)
-            .then(|| skill_sources.remove(&item.name))
-            .flatten()
-        {
-            Some((files, _)) => (files, None, Vec::new()),
-            _ => source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?,
-        };
-        capture_warnings.extend(warnings.into_iter().map(|warning| super::ItemWarning {
-            kind: item.kind,
-            name: item.name.clone(),
-            harness: None,
-            message: warning.message,
-            remediation: warning.remediation,
-            detail: None,
-        }));
+        let (files, carry) = source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?;
         carried.extend(carry.map(|carry| (item.name.clone(), carry)));
         let target = local_target(env, &scope, item.kind, &item.name)?;
         ops.extend(capture_to_local(item.kind, &item.name, &target, files)?);
@@ -489,9 +458,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
             manifest: Box::new(converted),
         },
     });
-    let mut plan = Plan::landed(scope.clone(), ops)?;
-    plan.warnings = capture_warnings;
-    Ok(plan)
+    Plan::landed(scope.clone(), ops)
 }
 
 /// The plan that follows [`source`] once it is applied: the kept agents now
@@ -505,7 +472,7 @@ pub fn resync_kept(env: &Env, scope: &Scope) -> Result<EngineReport> {
 
 /// The manifest this conversion writes: every kept package reading `local`
 /// and recorded as a fork, and the source it came from gone. Derived before
-/// agent assignments are read, because it is the scope an assignment has
+/// anything is read, because it is the scope a kept agent's assignment has
 /// to resolve against — reasoning from the manifest on disk plans against a
 /// catalog the same plan removes.
 fn converted_manifest(
@@ -513,17 +480,9 @@ fn converted_manifest(
     closure: &Closure,
     source_name: &str,
     lock: &crate::lock::Lock,
-    skill_sources: &std::collections::BTreeMap<String, capture::SkillSource>,
 ) -> Result<Manifest> {
     let mut converted = manifest.clone();
     for item in &closure.items {
-        let skill_coordinates = (item.kind == ItemKind::Skill)
-            .then(|| {
-                skill_sources
-                    .get(&item.name)
-                    .map(|(_, coordinates)| coordinates.clone())
-            })
-            .flatten();
         let provenance = ForkProvenance {
             repo: manifest
                 .sources
@@ -532,7 +491,6 @@ fn converted_manifest(
             source: item.decl.source.clone(),
             commit: effective_commit(lock, item)?,
             forked_at: crate::clock::timestamp(),
-            skill_coordinates,
         };
         // A derived member or dependency becomes a plain declaration; a
         // declared item flips in place. Either way it now reads `local`, holds
