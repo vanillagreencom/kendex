@@ -87,3 +87,31 @@ assert_result "case5 container In Progress"          true  true  "CC-P1" "In Pro
 assert_result "case5 container already Done"         true  true  "CC-P1" "Done"        "" "false" "container" "completed"
 assert_result "case5 container canceled fails"       false false "CC-P1" "Canceled"    "" "false" "container" "canceled"
 assert_result "case5 container missing state_type fails closed" false false "CC-P1" "Todo" "" "false" "container" ""
+
+# --- Case 6: a session root's post-merge metadata ---
+# The root passes only when its checklist already parses, so a box the
+# post-merge `issues complete` refuses fails before submission. Each row:
+# label, Trigger and Deadline fields of box 2, want ok, want errors.
+ROOT_BRANCH_BOX='Branch: the change lands'
+ROOT_POST_PREFIX='Post-merge: the job concluded success; Where: the run list; Why after merge: it runs on main'
+while IFS='|' read -r label fields want_ok want_rule; do
+	post_box="$ROOT_POST_PREFIX; $fields"
+	description=$(printf '## Done when\n\n- [ ] %s\n- [ ] %s\n' "$ROOT_BRANCH_BOX" "$post_box")
+	if [[ -n "$want_rule" ]]; then
+		want_errors=$(jq -cn --arg rule "$want_rule" --arg text "$post_box" '[{box: 2, rule: $rule, text: $text}]')
+	else
+		want_errors='[]'
+	fi
+	out=''
+	rc=0
+	run_output out rc build_completion_validation_result CC-R4 "In Review" "" true session-root started "$description" 2>/dev/null
+	got=$(jq -c '{state_ok, ok, errors}' <<<"$out" 2>/dev/null) || got=unreadable
+	assert_eq "case6 $label" "rc=$rc $got" \
+		"rc=0 $(jq -cn --argjson ok "$want_ok" --argjson errors "$want_errors" '{state_ok: true, ok: $ok, errors: $errors}')"
+done <<'ROWS'
+release trigger without a repository|Trigger: TLK-151 release; Deadline: +24h|false|post-merge-fields
+deadline past the window|Deadline: +100h|false|post-merge-window
+merge trigger in the window|Trigger: merge; Deadline: +24h|true|
+absolute deadline before any merge time|Deadline: 2026-11-20T00:00:00Z|true|
+release trigger with a repository|Trigger: release acme/tool v1.*; Deadline: +24h|true|
+ROWS
