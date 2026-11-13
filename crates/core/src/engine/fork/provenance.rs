@@ -25,6 +25,7 @@ pub(super) fn provenance(
         source: decl.source.clone(),
         commit,
         forked_at: crate::clock::timestamp(),
+        skill_coordinates: None,
     }
 }
 

@@ -410,7 +410,7 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
     ] {
         let f = fixture();
         let catalog = f.project.join("vendor/catalog");
-        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[sibling](../other/SKILL.md)\n[guide](guide.md)\n";
+        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[sibling](../other/SKILL.md)\n[guide](guide.md)\n[outside](../../../../../../outside.md)\n";
         let authored = if crlf {
             authored.replace('\n', "\r\n")
         } else {
@@ -423,6 +423,7 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
             "---\nname: other\ndescription: other\n---\n",
         );
         put(&catalog.join("memory/x.md"), "Memory.\n");
+        put(&f.env.home.join("outside.md"), "Outside the project.\n");
         put(&f.project.join("docs/guide.md"), "Guide.\n");
         if crlf {
             test_util::git(&f.project, &["init", "-q"]);
@@ -497,9 +498,12 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
         } else {
             fork::fork(&f.env, &f.scope, ItemKind::Skill, "ship", harness).unwrap()
         };
+        let name = if beside { "my-ship" } else { "ship" };
+        assert!(plan.warnings.iter().any(|warning| warning.name == name
+            && warning.harness == Some(harness)
+            && warning.message.starts_with("agent-link-unrepresentable:")));
         apply::execute(&f.env, &plan).unwrap();
         apply_now(&f);
-        let name = if beside { "my-ship" } else { "ship" };
         let directory = f.project.join(".agents/skills").join(name);
         let text = fs::read_to_string(directory.join("SKILL.md")).unwrap();
         assert!(text.contains("User edit."));
@@ -522,7 +526,11 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
         assert!(text.contains("[memory](../../../vendor/catalog/memory/x.md)"));
         // Absorb an additional edit through the same capture owner.
         fs::write(directory.join("SKILL.md"), format!("{text}Second edit.\n")).unwrap();
-        apply_now(&f);
+        let absorbed = audit(&f.env, &f.scope).unwrap();
+        assert!(absorbed.warnings.iter().any(|warning| warning.name == name
+            && warning.harness == Some(harness)
+            && warning.message.starts_with("agent-link-unrepresentable:")));
+        apply::execute(&f.env, &absorbed.plan).unwrap();
         apply_now(&f);
         assert!(
             fs::read_to_string(directory.join("SKILL.md"))
@@ -561,4 +569,103 @@ fn replacing_an_in_place_alias_with_a_copy_rebases_external_targets() {
         fs::canonicalize(destination.join("../../../.agents/notes.md")).unwrap(),
         fs::canonicalize(f.project.join(".agents/notes.md")).unwrap()
     );
+}
+
+#[test]
+fn fork_coordinates_survive_project_moves_and_legacy_bytes_stay_untranslated() {
+    for (tagged, moved) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut f = fixture();
+        let source = f.project.join(".kendex-local/skills/ship");
+        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[own](./guide.md)\n";
+        put(&source.join("SKILL.md"), authored);
+        put(&source.join("guide.md"), "Guide.\n");
+        put(&f.project.join(".kendex-local/memory/x.md"), "Memory.\n");
+        let coordinates = if tagged {
+            "skill-coordinates = { directory = '.kendex-local/skills/ship', root = '.' }\n"
+        } else {
+            ""
+        };
+        put(
+            &f.project.join("kendex.toml"),
+            &format!(
+                "schema = 7\n[install]\nharnesses = ['codex', 'claude']\nmethod = 'copy'\n[skills.ship]\nsource = 'local'\n[forks.skill.ship]\nsource = 'cat'\nforked-at = '2026-11-12'\n{coordinates}"
+            ),
+        );
+        if moved {
+            let destination = f.project.with_file_name("moved");
+            fs::rename(&f.project, &destination).unwrap();
+            f.project = destination;
+            f.scope = Scope::Project {
+                root: f.project.clone(),
+            };
+        }
+        let report = audit(&f.env, &f.scope).unwrap();
+        let warnings = report
+            .warnings
+            .iter()
+            .filter(|warning| warning.message.starts_with("skill-fork-legacy:"))
+            .collect::<Vec<_>>();
+        assert_eq!(warnings.len(), usize::from(!tagged));
+        assert!(warnings.iter().all(|warning| warning.name == "ship"));
+        apply::execute(&f.env, &report.plan).unwrap();
+        let output = fs::read_to_string(f.project.join(".agents/skills/ship/SKILL.md")).unwrap();
+        let link = if tagged {
+            "../../../.kendex-local/memory/x.md"
+        } else {
+            "../../memory/x.md"
+        };
+        assert!(output.contains(&format!("[memory]({link})")), "{output}");
+        assert!(output.contains("[own](./guide.md)"));
+        assert_eq!(
+            fs::read_to_string(f.project.join(".kendex-local/skills/ship/SKILL.md")).unwrap(),
+            authored
+        );
+    }
+}
+
+#[test]
+fn detached_source_coordinates_are_used_when_absorbing_later_edits() {
+    for (external, expected) in [
+        (false, "../../../vendor/catalog/memory/x.md"),
+        (true, "../../../../../catalog/memory/x.md"),
+    ] {
+        let mut f = fixture();
+        if !external {
+            f.source = f.project.join("vendor/catalog");
+        }
+        put(
+            &f.source.join("skills/ship/SKILL.md"),
+            "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[own](./guide.md)\n",
+        );
+        put(&f.source.join("skills/ship/guide.md"), "Guide.\n");
+        put(&f.source.join("memory/x.md"), "Memory.\n");
+        declare(&f, "'codex'");
+        apply_now(&f);
+        let detached = kendex_core::engine::detach::source(&f.env, &f.scope, "cat").unwrap();
+        apply::execute(&f.env, &detached).unwrap();
+        apply_now(&f);
+        let directory = f.project.join(".agents/skills/ship");
+        let installed = directory.join("SKILL.md");
+        let text = fs::read_to_string(&installed).unwrap();
+        assert!(text.contains(&format!("[memory]({expected})")), "{text}");
+        fs::write(&installed, format!("{text}My later edit.\n")).unwrap();
+        let absorbed = audit(&f.env, &f.scope).unwrap();
+        assert!(absorbed.fork_edits.iter().any(|edit| edit.name == "ship"));
+        apply::execute(&f.env, &absorbed.plan).unwrap();
+        let stored =
+            fs::read_to_string(f.project.join(".kendex-local/skills/ship/SKILL.md")).unwrap();
+        assert!(stored.contains("[memory](../../memory/x.md)"), "{stored}");
+        assert!(stored.contains("My later edit."));
+        apply_now(&f);
+        let rendered = fs::read_to_string(&installed).unwrap();
+        assert!(
+            rendered.contains(&format!("[memory]({expected})")),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[own](./guide.md)"));
+        assert_eq!(
+            fs::canonicalize(directory.join(expected)).unwrap(),
+            fs::canonicalize(f.source.join("memory/x.md")).unwrap()
+        );
+    }
 }

@@ -72,7 +72,13 @@ pub fn fork(
     }
     let (edited, captured) = capture_rendering(env, scope, kind, name, harness, &manifest, &decl)?;
     let mut ops = capture_ops(env, scope, kind, name, &edited, captured.files)?;
-    let provenance = provenance(&manifest, &decl, captured.read_at);
+    let mut provenance = provenance(&manifest, &decl, captured.read_at);
+    provenance.skill_coordinates = captured.coordinates.map(|coordinates| {
+        coordinates.relative_to(match scope {
+            Scope::Project { root } => root,
+            Scope::Global => &env.home,
+        })
+    });
     // The catalog's mapping tables shaped the rendering and the fork stops
     // reading them, so their effective values move into the manifest or the
     // very next apply renders a different agent under the same name.
@@ -104,7 +110,9 @@ pub fn fork(
             manifest: Box::new(manifest),
         },
     });
-    Plan::landed(scope.clone(), ops)
+    let mut plan = Plan::landed(scope.clone(), ops)?;
+    plan.warnings = captured.warnings;
+    Ok(plan)
 }
 
 /// The file or tree holding this rendering's edited bytes. Skills capture
@@ -194,6 +202,8 @@ struct Captured {
     /// The catalog revision the publisher's file was read at, which the
     /// fork records as the commit its edits were made on.
     read_at: Option<String>,
+    warnings: Vec<super::ItemWarning>,
+    coordinates: Option<crate::manifest::SkillCoordinates>,
 }
 
 /// One fork's inputs, gathered so the capture side reads them in one
@@ -257,43 +267,25 @@ fn published_item(of: &ForkOf) -> Result<PublishedItem> {
 }
 
 fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
+    let directory = local_item(of.env, of.scope, ItemKind::Skill, of.installed_as);
+    let root = match of.scope {
+        Scope::Project { root } => root.clone(),
+        Scope::Global => of.env.home.clone(),
+    };
+    capture_at(
+        of,
+        edited,
+        Some(crate::manifest::SkillCoordinates { directory, root }),
+    )
+}
+
+fn capture_at(
+    of: &ForkOf,
+    edited: &std::path::Path,
+    coordinates: Option<crate::manifest::SkillCoordinates>,
+) -> Result<Captured> {
     Ok(match of.kind {
-        ItemKind::Skill => {
-            let files = source_form(crate::capture::read_tree(edited)?);
-            let unrestored = |cause: String| CoreError::ForkWidensAccess {
-                name: crate::names::shown(of.name),
-                problem: format!("the publisher's keys, because {cause}"),
-            };
-            // The copy carries only the installed key set; the
-            // publisher's other keys come back from the file it was
-            // rendered from, around the person's edits, at the revision
-            // the record that wrote this copy names.
-            let lock = crate::lock::load(&crate::lock::lock_path(of.env, of.scope))?;
-            let installed =
-                crate::library::record_at(of.env, of.scope, &lock, (of.kind, of.name), edited)
-                    .map(crate::source::header::InstalledFrom::of);
-            let published = crate::source::header::published_text(
-                of.env,
-                of.scope,
-                of.manifest,
-                (of.kind, of.name),
-                installed.as_ref(),
-            )?
-            .map_err(unrestored)?;
-            let on_disk = skill_text(&files);
-            let files = crate::render::skill::authored_form(files, &published.text)
-                .map_err(|cause| unrestored(cause.to_string()))?;
-            let files = captured_skill_links(of, edited, files);
-            let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
-                unreachable!("authored_form refuses a tree with no SKILL.md text")
-            };
-            Captured {
-                rendering: skill_round_trip(of, edited, &captured, on_disk),
-                files: Capture::Tree(files),
-                carry: None,
-                read_at: published.commit,
-            }
-        }
+        ItemKind::Skill => capture_skill(of, edited, coordinates)?,
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
         _ => {
@@ -304,50 +296,77 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 carry: captured.carry,
                 read_at: captured.read_at,
                 rendering: (captured.rendering, on_disk),
+                warnings: Vec::new(),
+                coordinates: None,
             }
         }
     })
 }
 
-/// Capture external targets in the local source's coordinates, including
-/// sibling installations which need not have a sibling in the local catalog.
-fn captured_skill_links(
+fn capture_skill(
     of: &ForkOf,
     edited: &std::path::Path,
-    files: crate::render::skill::Files,
-) -> crate::render::skill::Files {
-    let Scope::Project { root } = of.scope else {
-        return files;
+    coordinates: Option<crate::manifest::SkillCoordinates>,
+) -> Result<Captured> {
+    let files = source_form(crate::capture::read_tree(edited)?);
+    let unrestored = |cause: String| CoreError::ForkWidensAccess {
+        name: crate::names::shown(of.name),
+        problem: format!("the publisher's keys, because {cause}"),
     };
-    let destination = local_item(of.env, of.scope, ItemKind::Skill, of.installed_as);
-    files
-        .into_iter()
-        .map(|(rel, bytes)| {
-            let bytes = if let Ok(text) = std::str::from_utf8(&bytes) {
-                let text = if crate::render::skill::carries_name(&rel) {
-                    crate::render::skill::strip_block(text)
-                } else {
-                    text.to_owned()
-                };
-                crate::render::agent::rebase_skill(
-                    &text,
-                    crate::render::agent::BodyPaths {
-                        source: &edited.join(&rel),
-                        source_root: root,
-                        rendered: &destination.join(&rel),
-                        install_root: root,
-                    },
-                    false,
-                    |target| target.starts_with(edited),
-                )
-                .0
-                .into_bytes()
-            } else {
-                bytes
-            };
-            (rel, bytes)
-        })
-        .collect()
+    // The copy carries only the installed key set; the
+    // publisher's other keys come back from the file it was
+    // rendered from, around the person's edits, at the revision
+    // the record that wrote this copy names.
+    let lock = crate::lock::load(&crate::lock::lock_path(of.env, of.scope))?;
+    let installed = crate::library::record_at(of.env, of.scope, &lock, (of.kind, of.name), edited)
+        .map(crate::source::header::InstalledFrom::of);
+    let published = crate::source::header::published_text(
+        of.env,
+        of.scope,
+        of.manifest,
+        (of.kind, of.name),
+        installed.as_ref(),
+    )?
+    .map_err(unrestored)?;
+    let on_disk = skill_text(&files);
+    let files = crate::render::skill::authored_form(files, &published.text)
+        .map_err(|cause| unrestored(cause.to_string()))?;
+    let files = crate::render::skill::with_skill_text(files, crate::render::skill::strip_block);
+    let (files, warnings) = match &coordinates {
+        Some(coordinates) => crate::render::skill::convert_links(
+            files,
+            crate::render::agent::BodyPaths {
+                source: edited,
+                rendered: &coordinates.directory,
+                source_root: &coordinates.root,
+                install_root: &coordinates.root,
+            },
+            false,
+            None,
+        ),
+        None => (files, Vec::new()),
+    };
+    let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
+        unreachable!("authored_form refuses a tree with no SKILL.md text")
+    };
+    Ok(Captured {
+        rendering: skill_round_trip(of, edited, &captured, on_disk, coordinates.as_ref()),
+        files: Capture::Tree(files),
+        carry: None,
+        read_at: published.commit,
+        warnings: warnings
+            .into_iter()
+            .map(|warning| super::ItemWarning {
+                kind: of.kind,
+                name: of.installed_as.to_owned(),
+                harness: Some(of.harness),
+                message: warning.message,
+                remediation: warning.remediation,
+                detail: None,
+            })
+            .collect(),
+        coordinates,
+    })
 }
 
 fn capture_rendering(
@@ -500,7 +519,7 @@ pub(super) fn absorb_ops(
     name: &str,
     harness: HarnessId,
     edited: &std::path::Path,
-) -> Result<Vec<PlannedOp>> {
+) -> Result<(Vec<PlannedOp>, Vec<super::ItemWarning>)> {
     forkable_kind(kind, name)?;
     // The same format gate `edited_rendering` puts on a fork's capture,
     // asked here because an absorb reaches the capture without it. A
@@ -532,7 +551,7 @@ pub(super) fn absorb_ops(
             name: name.to_owned(),
         });
     };
-    let captured = capture(
+    let captured = capture_at(
         &ForkOf {
             env,
             scope,
@@ -544,6 +563,17 @@ pub(super) fn absorb_ops(
             harness,
         },
         edited,
+        manifest
+            .forks
+            .get(&kind)
+            .and_then(|forks| forks.get(name))
+            .and_then(|fork| fork.skill_coordinates.as_ref())
+            .map(|coordinates| {
+                coordinates.in_scope(match scope {
+                    Scope::Project { root } => root,
+                    Scope::Global => &env.home,
+                })
+            }),
     )?;
     // The capture has to hold the whole edit. A rendering carries fields
     // its source form has nowhere to keep — an agent's `description:` and
@@ -576,7 +606,8 @@ pub(super) fn absorb_ops(
             ),
         });
     }
-    into_local_source(env, scope, kind, name, captured.files)
+    let ops = into_local_source(env, scope, kind, name, captured.files)?;
+    Ok((ops, captured.warnings))
 }
 
 /// The path an agent's rendering stands at: a switched-off installation
@@ -628,9 +659,11 @@ fn skill_round_trip(
     edited: &std::path::Path,
     captured: &str,
     on_disk: String,
+    coordinates: Option<&crate::manifest::SkillCoordinates>,
 ) -> (String, String) {
-    let captured = if let Scope::Project { root } = of.scope {
-        let source = local_item(of.env, of.scope, ItemKind::Skill, of.installed_as);
+    let captured = if let Some(coordinates) = coordinates {
+        let source = &coordinates.directory;
+        let root = &coordinates.root;
         crate::render::agent::rebase_skill(
             captured,
             crate::render::agent::BodyPaths {
@@ -640,7 +673,7 @@ fn skill_round_trip(
                 install_root: root,
             },
             false,
-            |target| target.starts_with(&source),
+            |target| target.starts_with(source),
         )
         .0
     } else {

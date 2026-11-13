@@ -98,15 +98,20 @@ pub fn render_skill(
     with_instructions(sealed, source_dir, instructions.as_deref())
 }
 
-/// Rebase Markdown in copied skill trees; source trees keep their own paths.
-pub(crate) fn rebase_links(
+/// Translate a skill tree between explicit byte coordinates. Only forward
+/// rendering retains sibling-package spelling.
+pub(crate) fn convert_links(
     files: Files,
-    source_dir: &Path,
-    sealed: &SealedSource,
-    rendered_dir: &Path,
-    install_root: &Path,
+    paths: super::agent::BodyPaths<'_>,
     retain_alias: bool,
+    siblings: Option<(&SealedSource, &Path)>,
 ) -> (Files, Vec<super::RenderWarning>) {
+    let super::agent::BodyPaths {
+        source: source_dir,
+        rendered: rendered_dir,
+        source_root,
+        install_root,
+    } = paths;
     let mut warnings = Vec::new();
     let files = files
         .into_iter()
@@ -116,7 +121,7 @@ pub(crate) fn rebase_links(
                     text,
                     super::agent::BodyPaths {
                         source: &source_dir.join(&rel),
-                        source_root: install_root,
+                        source_root,
                         rendered: &rendered_dir.join(&rel),
                         install_root,
                     },
@@ -132,7 +137,11 @@ pub(crate) fn rebase_links(
                             .and_then(|parent| {
                                 let sibling =
                                     target.strip_prefix(parent).ok()?.components().next()?;
-                                Some(sealed.is_file(&parent.join(sibling).join(SKILL_FILE)))
+                                Some(siblings.is_some_and(|(sealed, stored)| {
+                                    stored.parent().is_some_and(|parent| {
+                                        sealed.is_file(&parent.join(sibling).join(SKILL_FILE))
+                                    })
+                                }))
                             })
                             .unwrap_or(false)
                     },
@@ -146,6 +155,51 @@ pub(crate) fn rebase_links(
         })
         .collect();
     (files, warnings)
+}
+
+/// Capture a tree at a new physical location without mapping targets into a
+/// different catalog. Explicit coordinates describe tagged stored forks;
+/// other inputs use their canonical content directory.
+pub(crate) fn relocate(
+    files: Files,
+    source: &Path,
+    destination: &Path,
+    coordinates: Option<&crate::manifest::SkillCoordinates>,
+) -> (Files, Vec<super::RenderWarning>) {
+    let physical = match crate::paths::canonical(source) {
+        Ok(path) => path,
+        Err(error) => {
+            return (
+                files,
+                vec![super::RenderWarning::new(format!(
+                    "skill-capture-coordinate-unreadable: {}: {error}",
+                    source.display()
+                ))],
+            );
+        }
+    };
+    let physical = if physical.is_file() {
+        physical.parent().unwrap_or(&physical)
+    } else {
+        &physical
+    };
+    let source = coordinates.map_or(physical, |coordinates| coordinates.directory.as_path());
+    // Captures preserve physical targets even when they leave the nearest
+    // common ancestor of the two skill directories. A volume is the actual
+    // shared coordinate root; different volumes are unrepresentable.
+    let bound = coordinates.map_or(source, |coordinates| coordinates.root.as_path());
+    let root = bound.ancestors().last().unwrap_or(bound);
+    convert_links(
+        files,
+        super::agent::BodyPaths {
+            source,
+            rendered: destination,
+            source_root: root,
+            install_root: root,
+        },
+        false,
+        None,
+    )
 }
 
 /// Shared skill directories must fit older Codex loaders too. Only the
@@ -391,10 +445,48 @@ mod tests {
         };
         for (rendered, text) in rows {
             let files = vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())];
-            let (rebased, warnings) =
-                rebase_links(files.clone(), &source, &sealed, &rendered, &root, true);
+            let (rebased, warnings) = convert_links(
+                files.clone(),
+                super::super::agent::BodyPaths {
+                    source: &source,
+                    rendered: &rendered,
+                    source_root: &root,
+                    install_root: &root,
+                },
+                true,
+                Some((&sealed, &source)),
+            );
             assert_eq!(rebased, files);
             assert!(warnings.is_empty());
+        }
+    }
+
+    #[test]
+    fn captured_links_use_the_content_directory_of_aliases_and_single_file_origins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::test_util::rooted(&tmp);
+        let source = root.join("catalog/skills/ship");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join(SKILL_FILE), "Skill.\n").unwrap();
+        let destination = root.join(".kendex-local/skills/ship");
+        let origins = vec![source.clone(), source.join(SKILL_FILE)];
+        #[cfg(unix)]
+        let origins = {
+            let alias = root.join("alias");
+            std::os::unix::fs::symlink(&source, &alias).unwrap();
+            origins.into_iter().chain([alias]).collect::<Vec<_>>()
+        };
+        for origin in origins {
+            let files = vec![(
+                PathBuf::from(SKILL_FILE),
+                b"[memory](../../memory/x.md)\n[own](./guide.md)\n".to_vec(),
+            )];
+            let (files, warnings) = relocate(files, &origin, &destination, None);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(
+                files[0].1,
+                b"[memory](../../../catalog/memory/x.md)\n[own](./guide.md)\n"
+            );
         }
     }
 

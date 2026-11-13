@@ -49,6 +49,7 @@ pub(super) struct PlanSink<'a> {
     pub(super) absorbed:
         &'a mut std::collections::BTreeMap<(crate::model::ItemKind, String), PathBuf>,
     pub(super) ops: &'a mut Vec<PlannedOp>,
+    pub(super) warnings: &'a mut Vec<super::ItemWarning>,
     pub(super) config_edits: &'a mut ConfigEditPlan,
     pub(super) new_lock: &'a mut Lock,
     pub(super) kept: &'a mut KeptAsIs,

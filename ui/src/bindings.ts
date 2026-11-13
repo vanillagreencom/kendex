@@ -665,7 +665,7 @@ export const commands = {
 	 *  saved and the project is not touched.
 	 */
 	templateDraft: (project: string) => typedError<Draft_Serialize, string>(__TAURI_INVOKE("template_draft", { project })),
-	templateCreateFromProject: (project: string, chosen: Chosen) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_project", { project, chosen })),
+	templateCreateFromProject: (project: string, chosen: Chosen) => typedError<CaptureOutcome_Serialize, string>(__TAURI_INVOKE("template_create_from_project", { project, chosen })),
 	/**
 	 *  Save a template from packages picked in a marketplace. Every member is
 	 *  a marketplace identity; no bytes are copied.
@@ -680,7 +680,7 @@ export const commands = {
 	 *  repositories its marketplace members come from with the version each
 	 *  resolves to, the copies it owns, and the members nothing can reach.
 	 */
-	templateResolve: (name: string) => typedError<Resolution, string>(__TAURI_INVOKE("template_resolve", { name })),
+	templateResolve: (name: string) => typedError<Resolution_Serialize, string>(__TAURI_INVOKE("template_resolve", { name })),
 	templateInstall: (name: string, destination: Scope, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<TemplateInstall, string>(__TAURI_INVOKE("template_install", { name, destination, harnesses, method })),
 	/**  The files a template owns, for the tree that inspects its copies. */
 	templateFiles: (name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("template_files", { name })),
@@ -1188,6 +1188,30 @@ export type CapabilityRow = {
 	harness: HarnessId,
 	kind: ItemKind,
 	caps: KindCaps,
+};
+
+/**
+ *  The result of capturing project bytes, without persisting action warnings
+ *  as part of the saved template.
+ */
+export type CaptureOutcome = CaptureOutcome_Serialize | CaptureOutcome_Deserialize;
+
+/**
+ *  The result of capturing project bytes, without persisting action warnings
+ *  as part of the saved template.
+ */
+export type CaptureOutcome_Deserialize = {
+	template: Template_Deserialize,
+	warnings: string[],
+};
+
+/**
+ *  The result of capturing project bytes, without persisting action warnings
+ *  as part of the saved template.
+ */
+export type CaptureOutcome_Serialize = {
+	template: Template_Serialize,
+	warnings: string[],
 };
 
 /**
@@ -2441,6 +2465,8 @@ export type ForkProvenance_Deserialize = {
 	/**  The source commit the edited install was based on, when known. */
 	commit?: string | null,
 	"forked-at": string,
+	/**  Coordinates of stored skill bytes. Absent records predate rebasing. */
+	"skill-coordinates"?: SkillCoordinates | null,
 };
 
 /**
@@ -2458,6 +2484,8 @@ export type ForkProvenance_Serialize = {
 	/**  The source commit the edited install was based on, when known. */
 	commit?: string | null,
 	"forked-at": string,
+	/**  Coordinates of stored skill bytes. Absent records predate rebasing. */
+	"skill-coordinates"?: SkillCoordinates | null,
 };
 
 /**  Typed `[agent-frontmatter.<harness>.<agent>]` overrides. */
@@ -2647,6 +2675,7 @@ export type ImportOutcome = {
 	written: string[],
 	/**  Selections whose exact bytes were already at the destination. */
 	alreadyPresent: string[],
+	warnings: string[],
 };
 
 /**  What the wizard chose for one candidate. */
@@ -3395,7 +3424,7 @@ export type MemberSource_Deserialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
+rev?: string | null }) & { "skill-coordinates"?: never; copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3421,7 +3450,12 @@ from?: string | null;
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
  */
-notices?: string[] }) & { repo?: never; rev?: never };
+notices?: string[]; 
+/**
+ *  Directory of stored skill bytes, relative to this template store.
+ *  Absent copies retain their pre-rebase interpretation.
+ */
+"skill-coordinates"?: string | null }) & { repo?: never; rev?: never };
 
 /**  Where a member's content comes from when the template is installed. */
 export type MemberSource_Serialize = 
@@ -3436,7 +3470,7 @@ export type MemberSource_Serialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
+rev?: string | null }) & { "skill-coordinates"?: never; copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3462,7 +3496,12 @@ from?: string | null;
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
  */
-notices?: string[] }) & { repo?: never; rev?: never };
+notices?: string[]; 
+/**
+ *  Directory of stored skill bytes, relative to this template store.
+ *  Absent copies retain their pre-rebase interpretation.
+ */
+"skill-coordinates"?: string | null }) & { repo?: never; rev?: never };
 
 /**
  *  Which member a reference means, where a template holds more than one
@@ -4584,14 +4623,27 @@ export type ReportRouteView = {
 };
 
 /**  What a template installs, as it stands on this machine now. */
-export type Resolution = {
+export type Resolution = Resolution_Serialize | Resolution_Deserialize;
+
+/**  What a template installs, as it stands on this machine now. */
+export type Resolution_Deserialize = {
 	groups: ResolvedGroup[],
-	copies: ResolvedCopy[],
+	copies: ResolvedCopy_Deserialize[],
+	missing: MissingMember[],
+};
+
+/**  What a template installs, as it stands on this machine now. */
+export type Resolution_Serialize = {
+	groups: ResolvedGroup[],
+	copies: ResolvedCopy_Serialize[],
 	missing: MissingMember[],
 };
 
 /**  One copy the template owns. */
-export type ResolvedCopy = {
+export type ResolvedCopy = ResolvedCopy_Serialize | ResolvedCopy_Deserialize;
+
+/**  One copy the template owns. */
+export type ResolvedCopy_Deserialize = {
 	kind: ItemKind,
 	name: string,
 	enabled: boolean,
@@ -4599,6 +4651,19 @@ export type ResolvedCopy = {
 	copy: string,
 	/**  The marketplace the bytes came from, where they came from one. */
 	from: string | null,
+	skillCoordinates?: string | null,
+};
+
+/**  One copy the template owns. */
+export type ResolvedCopy_Serialize = {
+	kind: ItemKind,
+	name: string,
+	enabled: boolean,
+	/**  The copy's path inside the template's store. */
+	copy: string,
+	/**  The marketplace the bytes came from, where they came from one. */
+	from: string | null,
+	skillCoordinates?: string | null,
 };
 
 /**
@@ -5317,6 +5382,11 @@ export type Side =
  */
 { side: "copy"; license: LicenseAnswer };
 
+export type SkillCoordinates = {
+	directory: string,
+	root: string,
+};
+
 /**
  *  How the lines of a rendered SKILL.md stand in the catalog's SKILL.md. A
  *  copy cuts the frontmatter to the installed key set and keeps the body,
@@ -5839,6 +5909,7 @@ export type Unsubscribed = Unsubscribed_Serialize | Unsubscribed_Deserialize;
  *  than a bare list.
  */
 export type Unsubscribed_Deserialize = {
+	warnings: string[],
 	undone: string[],
 };
 
@@ -5850,6 +5921,7 @@ export type Unsubscribed_Deserialize = {
  *  than a bare list.
  */
 export type Unsubscribed_Serialize = {
+	warnings: string[],
 	undone?: string[],
 };
 

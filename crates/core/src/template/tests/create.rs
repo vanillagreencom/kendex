@@ -226,7 +226,8 @@ fn the_local_opt_in_decides_whether_unmanaged_packages_are_copied() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert!(!off.members.iter().any(|member| member.name == "stray"));
 
     let on = create_from_project(
@@ -240,7 +241,8 @@ fn the_local_opt_in_decides_whether_unmanaged_packages_are_copied() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     let stray = on
         .members
         .iter()
@@ -307,7 +309,8 @@ fn the_originating_project_is_byte_identical_after_success_and_after_a_refusal()
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert_eq!(
         snapshot(&project.root),
         before,
@@ -361,7 +364,8 @@ fn the_customization_opt_in_carries_package_settings_only() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert!(off.customizations.is_empty());
 
     let on = create_from_project(
@@ -375,7 +379,8 @@ fn the_customization_opt_in_carries_package_settings_only() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert_eq!(
         on.customizations
             .skill_instructions
@@ -418,7 +423,8 @@ fn a_template_carries_the_shared_text_a_token_places() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert_eq!(
         created
             .customizations
@@ -516,8 +522,9 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
 
     // A confirmation kendex can accept, because it recognizes the
     // licence, and the bytes stored are the edited ones.
-    let mine =
-        create_from_project(&project.env, &project.root, &chosen("Mine", confirmed())).unwrap();
+    let mine = create_from_project(&project.env, &project.root, &chosen("Mine", confirmed()))
+        .unwrap()
+        .template;
     let MemberSource::Copy { copy, from, .. } = &mine.members[0].source else {
         panic!("gh should be a copy: {:?}", mine.members[0].source);
     };
@@ -540,7 +547,8 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
             BTreeMap::from([("skill:gh".to_owned(), Side::Marketplace)]),
         ),
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert!(matches!(
         upstream.members[0].source,
         MemberSource::Marketplace { .. }
@@ -595,7 +603,8 @@ fn a_pi_extension_the_project_declares_is_left_out_with_its_reason() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert_eq!(resolve(&project.env, &saved).unwrap().missing, Vec::new());
 
     // And no other path can mint one either.
@@ -711,8 +720,9 @@ fn a_save_answering_an_older_reading_of_the_project_refuses() {
     // and what they save is the bytes that reading offered.
     let now = draft_from_project(&project.env, &project.root).unwrap();
     assert_ne!(now.fingerprint, offered.fingerprint);
-    let saved =
-        create_from_project(&project.env, &project.root, &chosen(&now.fingerprint)).unwrap();
+    let saved = create_from_project(&project.env, &project.root, &chosen(&now.fingerprint))
+        .unwrap()
+        .template;
     let held = stored_file(&project.env, &saved, "skills/house-style/SKILL.md").unwrap();
     assert!(held.contains("edited after the modal opened"), "{held}");
 }
@@ -911,7 +921,8 @@ fn a_refused_replacement_takes_out_the_terms_the_run_introduced() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     let stored = |path: &str| copy_path(&project.env, &template, path).unwrap();
     assert_eq!(
         fs::read_to_string(stored("NOTICES/feline/LICENSE")).unwrap(),
@@ -981,7 +992,8 @@ fn a_refused_replacement_takes_out_the_terms_the_run_introduced() {
         }],
         &confirmed(),
     )
-    .unwrap();
+    .unwrap()
+    .template;
     assert_eq!(
         fs::read_to_string(stored("NOTICES/cat/LICENSE")).unwrap(),
         "MIT License, amended\n"
@@ -1074,7 +1086,8 @@ fn replacing_a_member_takes_the_terms_only_it_owned() {
             ..Chosen::default()
         },
     )
-    .unwrap();
+    .unwrap()
+    .template;
     let stored =
         |file: &str| copy_path(&project.env, &template, &format!("NOTICES/cat/{file}")).unwrap();
     assert!(

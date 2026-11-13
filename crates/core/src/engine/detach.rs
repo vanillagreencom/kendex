@@ -407,7 +407,7 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     // this conversion leaves behind, not the one it starts in: the source
     // is going, and the packages it carried arrive under `local`. Read
     // once, because per agent it reopens every catalog again.
-    let mut converted = converted_manifest(&manifest, &closure, source_name, &lock)?;
+    let mut converted = converted_manifest(env, &scope, &manifest, &closure, source_name, &lock)?;
     let arriving: Vec<String> = closure
         .items
         .iter()
@@ -417,12 +417,22 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     let skills = crate::engine::ScopeSkills::after(env, &scope, &converted, &arriving)?;
     let mut ops = Vec::new();
     let mut carried: Vec<(String, AgentCarry)> = Vec::new();
+    let mut capture_warnings = Vec::new();
     for item in &closure.items {
         // Read this item's source-form bytes at the exact commit it installed
         // from — not the source head, which may have moved. A declared item
         // that was never applied has no lock entry; its own pin is the commit.
         let commit = effective_commit(&lock, item)?;
-        let (files, carry) = source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?;
+        let (files, carry, warnings) =
+            source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?;
+        capture_warnings.extend(warnings.into_iter().map(|warning| super::ItemWarning {
+            kind: item.kind,
+            name: item.name.clone(),
+            harness: None,
+            message: warning.message,
+            remediation: warning.remediation,
+            detail: None,
+        }));
         carried.extend(carry.map(|carry| (item.name.clone(), carry)));
         let target = local_target(env, &scope, item.kind, &item.name)?;
         ops.extend(capture_to_local(item.kind, &item.name, &target, files)?);
@@ -458,7 +468,9 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
             manifest: Box::new(converted),
         },
     });
-    Plan::landed(scope.clone(), ops)
+    let mut plan = Plan::landed(scope.clone(), ops)?;
+    plan.warnings = capture_warnings;
+    Ok(plan)
 }
 
 /// The plan that follows [`source`] once it is applied: the kept agents now
@@ -476,6 +488,8 @@ pub fn resync_kept(env: &Env, scope: &Scope) -> Result<EngineReport> {
 /// to resolve against — reasoning from the manifest on disk plans against a
 /// catalog the same plan removes.
 fn converted_manifest(
+    env: &Env,
+    scope: &Scope,
     manifest: &Manifest,
     closure: &Closure,
     source_name: &str,
@@ -483,6 +497,47 @@ fn converted_manifest(
 ) -> Result<Manifest> {
     let mut converted = manifest.clone();
     for item in &closure.items {
+        let skill_coordinates = if item.kind == ItemKind::Skill {
+            let resolved = crate::source::require_ready_at(
+                env,
+                scope,
+                &item.decl.source,
+                manifest,
+                effective_commit(lock, item)?.as_deref(),
+            )?;
+            let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
+            let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
+            let directory = crate::source::find_item(&sealed, &config, item.kind, &item.name)
+                .ok_or_else(|| CoreError::ItemNotInSource {
+                    name: item.name.clone(),
+                    source_name: item.decl.source.clone(),
+                })?;
+            let scope_root = match scope {
+                Scope::Project { root } => root,
+                Scope::Global => &env.home,
+            };
+            let local = manifest
+                .sources
+                .get(&item.decl.source)
+                .is_some_and(|source| source.path.is_some());
+            let coordinates = if local {
+                let root = scope_root
+                    .ancestors()
+                    .find(|root| directory.starts_with(root))
+                    .unwrap_or(scope_root)
+                    .to_path_buf();
+                crate::manifest::SkillCoordinates { directory, root }
+            } else {
+                crate::manifest::SkillCoordinates {
+                    directory: scope_root
+                        .join(directory.strip_prefix(&resolved.root).unwrap_or(&directory)),
+                    root: scope_root.clone(),
+                }
+            };
+            Some(coordinates.relative_to(scope_root))
+        } else {
+            None
+        };
         let provenance = ForkProvenance {
             repo: manifest
                 .sources
@@ -491,6 +546,7 @@ fn converted_manifest(
             source: item.decl.source.clone(),
             commit: effective_commit(lock, item)?,
             forked_at: crate::clock::timestamp(),
+            skill_coordinates,
         };
         // A derived member or dependency becomes a plain declaration; a
         // declared item flips in place. Either way it now reads `local`, holds

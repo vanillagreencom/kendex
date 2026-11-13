@@ -1,5 +1,6 @@
 // The Mine tab's state: the marketplaces the user authors, the create /
 // use-existing flows, the two optional offers, and the import wizard.
+import { toast } from "sonner";
 import { create } from "zustand";
 import {
   type CreateRequest,
@@ -147,6 +148,7 @@ export const useMineStore = create<MineState>((set, get) => ({
         return false;
       }
       set({ outcome: outcome.data });
+      for (const warning of outcome.data.warnings) toast.message(warning);
       await get().load();
       return true;
     } finally {

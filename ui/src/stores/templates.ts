@@ -6,6 +6,7 @@
 // what installing one writes — those are core's answers, reached through
 // the commands.
 import { useMemo } from "react";
+import { toast } from "sonner";
 import { create } from "zustand";
 import {
   type Chosen,
@@ -119,9 +120,13 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => {
         commands.templateCreateFromSelection(name, members),
       ),
     createFromProject: (project, chosen) =>
-      write(set, get, () =>
-        commands.templateCreateFromProject(project, chosen),
-      ),
+      write(set, get, async () => {
+        const answer = await commands.templateCreateFromProject(project, chosen);
+        if (answer.status === "ok") {
+          for (const warning of answer.data.warnings) toast.message(warning);
+        }
+        return answer;
+      }),
     addMembers: (name, members) =>
       write(set, get, () => commands.templateAddMembers(name, members)),
     removeMembers: (name, members) =>

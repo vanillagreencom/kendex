@@ -354,7 +354,7 @@ fn forking_a_skill_edits_kendex_toml_in_place() {
     let written = fs::read_to_string(&k.manifest).unwrap();
     assert_eq!(
         written,
-        rebound(&k.original) + &forks_table(&written),
+        rebound(&k.original) + &forks_table(&written, ".kendex-local/skills/gh", "."),
         "{written}"
     );
 }
@@ -408,7 +408,8 @@ fn detaching_a_source_edits_kendex_toml_in_place() {
             .expect("the fixture declares install defaults")];
     assert_eq!(
         written,
-        rebound(&k.original.replace(source_block, "")) + &forks_table(&written),
+        rebound(&k.original.replace(source_block, ""))
+            + &forks_table(&written, "../../catalog/skills/gh", "../.."),
         "{written}"
     );
 }
@@ -436,7 +437,7 @@ fn rebound(manifest: &str) -> String {
 /// can say what every other byte of the block is and that the file ends
 /// there. Returned so the caller can put it back into its own expectation.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
-fn forks_table(written: &str) -> String {
+fn forks_table(written: &str, directory: &str, root: &str) -> String {
     let at = written
         .find("\n[forks.skill.gh]\n")
         .expect("the fork is recorded");
@@ -461,8 +462,10 @@ fn forks_table(written: &str) -> String {
         "{block}"
     );
     assert_eq!(
-        lines.get(4..),
-        Some([""].as_slice()),
+        lines[4..].join("\n"),
+        format!(
+            "\n[forks.skill.gh.skill-coordinates]\ndirectory = \"{directory}\"\nroot = \"{root}\"\n"
+        ),
         "the block is the end of the file: {block}"
     );
     block.to_owned()

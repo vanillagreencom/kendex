@@ -231,6 +231,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
             : `Unsubscribed from '${source}'`,
         );
         saying(response);
+        for (const warning of response.data.warnings) toast.message(warning);
         // A page carried on as this subscription must stop pointing at it, and
         // every other derived read goes with it.
         dropCatalogCaches(set);

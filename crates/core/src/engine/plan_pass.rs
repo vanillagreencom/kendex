@@ -24,6 +24,7 @@ pub(super) struct ItemPass {
     pub(super) planned: BTreeSet<(crate::model::ItemKind, String, crate::model::HarnessId)>,
     /// The fork edits this pass took into their own local sources.
     pub(super) fork_edits: Vec<super::ForkEdit>,
+    pub(super) warnings: Vec<super::ItemWarning>,
     /// The installations whose Missing row is a deletion of what the
     /// record says stood there.
     pub(super) recorded_gone: Vec<super::report_types::RecordedGone>,
@@ -53,6 +54,7 @@ pub(super) fn plan_items(
     let ownership = super::ownership_for_plan(env, scope, lock, &state.items)?;
     let mut absorbed = std::collections::BTreeMap::new();
     let mut fork_edits = Vec::new();
+    let mut warnings = Vec::new();
     let mut recorded_gone = Vec::new();
     let mut own_edit_rows = BTreeSet::new();
     let mut planned = BTreeSet::new();
@@ -88,6 +90,7 @@ pub(super) fn plan_items(
             fork_edits: &mut fork_edits,
             absorbed: &mut absorbed,
             ops,
+            warnings: &mut warnings,
             config_edits,
             new_lock,
             kept,
@@ -123,6 +126,7 @@ pub(super) fn plan_items(
     Ok(ItemPass {
         planned,
         fork_edits,
+        warnings,
         recorded_gone,
         own_edit_rows,
     })
