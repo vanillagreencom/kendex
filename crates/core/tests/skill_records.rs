@@ -518,11 +518,21 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
                 "Original guide.\n"
             );
         }
-        assert!(text.contains("[sibling](../../../.agents/skills/other/SKILL.md)"));
-        assert_eq!(
-            fs::canonicalize(directory.join("../other/SKILL.md")).unwrap(),
-            fs::canonicalize(f.project.join(".agents/skills/other/SKILL.md")).unwrap()
-        );
+        let assert_sibling = |text: &str| {
+            let link = text
+                .split("[sibling](")
+                .nth(1)
+                .unwrap()
+                .split(')')
+                .next()
+                .unwrap();
+            assert_eq!(link, "../other/SKILL.md");
+            assert_eq!(
+                fs::canonicalize(directory.join(link)).unwrap(),
+                fs::canonicalize(f.project.join(".agents/skills/other/SKILL.md")).unwrap()
+            );
+        };
+        assert_sibling(&text);
         assert!(text.contains("[memory](../../../vendor/catalog/memory/x.md)"));
         // Absorb an additional edit through the same capture owner.
         fs::write(
@@ -567,11 +577,7 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
                     .any(|row| row.state == DriftState::Conflict)
             );
         }
-        assert!(
-            fs::read_to_string(directory.join("SKILL.md"))
-                .unwrap()
-                .contains("[sibling](../../../.agents/skills/other/SKILL.md)")
-        );
+        assert_sibling(&fs::read_to_string(directory.join("SKILL.md")).unwrap());
     }
 }
 
