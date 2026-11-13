@@ -1,6 +1,6 @@
 # Home layout
 
-Read when setting up a Jarvis home, choosing a home path, starting a continuing session or reaching the managed session from a terminal.
+Read when setting up a Jarvis home, adding an agent, skill or workstream, choosing a home path, starting a continuing session or reaching the managed session from a terminal.
 
 ## Paths
 
@@ -8,7 +8,9 @@ Read when setting up a Jarvis home, choosing a home path, starting a continuing 
 |---|---|---|
 | `AGENTS.md` | Committed | Your standing instructions travel with you. |
 | `skills/NAME/` | Committed | You are the source. Follow [Customize](../README.md#customize) to declare the home source and install your skills. |
+| `agents/NAME.md` | Committed | Your own agent source, declared through [Personal additions](home-contract.md#personal-additions). |
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](memory.md). |
+| `memory/workstreams.md` | Committed | Workstream intent, scope, owner and tracker references under [Personal additions](home-contract.md#personal-additions). Active work stays in the tracker. |
 | `state/handoff.md` | Committed | Default current handoff. `jarvis-session succeed` saves and hands over this file only; `progress-log` and `owner-unanswered` select another through `--handoff PATH` under [Handoff](long-session.md#handoff). |
 | `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](long-session.md#handoff). `jarvis-session succeed` saves its own copy of the handoff as `handoff-<generation>-<id>.md`. |
 | `state/archive/INDEX.md` | Committed | `progress-log --archived` adds one dated line for each file the session's handoff replacement step archives, under [Handoff](long-session.md#handoff). `owner-unanswered` reads any file it does not list, such as the copy `jarvis-session succeed` saves. |
