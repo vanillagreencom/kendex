@@ -1827,6 +1827,122 @@ fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_st
     assert!(argv.contains("-K -"), "{argv}");
 }
 
+/// A stated Pi root is measured through its own Copilot login, as a Copilot
+/// CLI home is, and that reading stands over the statement; a root whose
+/// login does not read, or whose login the endpoint refuses or leaves
+/// unanswered, keeps the statement, with the reason it measured nothing.
+/// Every statement here says its pool is spent, so only a measured reading
+/// finds room.
+#[test]
+fn a_pi_roots_copilot_login_is_measured_first_and_the_statement_stands_in_where_it_does_not() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    let login = |refresh: &str, host: Option<&str>| {
+        let mut entry = json!({"type": "oauth", "refresh": refresh,
+                               "access": format!("tid-{refresh}"), "expires": (now() + 3600) * 1000});
+        if let Some(host) = host {
+            entry["enterpriseUrl"] = json!(host);
+        }
+        json!({"github-copilot": entry})
+    };
+    for (name, auth) in [
+        ("mpi", Some(login("ghu_pi", None))),
+        ("tpi", Some(login("ghu_tenant", Some("acme.ghe.com")))),
+        ("spi", None),
+        ("rpi", Some(login("ghu_refused", None))),
+        ("upi", Some(login("ghu_unanswered", None))),
+    ] {
+        let dir = world.path().join("home").join(format!(".{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(auth) = auth {
+            std::fs::write(dir.join("auth.json"), auth.to_string()).unwrap();
+        }
+    }
+    let pool = ["mpi", "tpi", "spi", "rpi", "upi"]
+        .map(|n| format!("{}=1000/1000", world.dir(n)))
+        .join(",");
+    world
+        .env
+        .push(("AGENT_RUNTIME_COPILOT_POOL".to_owned(), pool));
+    let room = json!({"quota_snapshots": {"premium_interactions": {"entitlement": 1000, "remaining": 600}},
+                      "quota_reset_date_utc": "2099-10-01", "copilot_plan": "individual"});
+    world.plant_answer("ghu_pi", "copilot", &room, None);
+    world.plant_answer("ghu_refused", "copilot", &room, Some("401"));
+    let roster = world.roster();
+    let row = |alias: &str| {
+        roster["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["alias"] == json!(alias))
+            .map(|r| r["record"].clone())
+            .unwrap_or_else(|| panic!("{alias}: {roster}"))
+    };
+    let fields = |r: &Value| {
+        [
+            "harness",
+            "measured_through",
+            "status",
+            "monthly_pct",
+            "pool",
+        ]
+        .map(|k| r[k].clone())
+    };
+    let measured = row("mpi");
+    assert_eq!(
+        fields(&measured),
+        [
+            json!("pi"),
+            json!("local"),
+            json!("ok"),
+            json!(40),
+            json!("copilot")
+        ],
+        "{measured}"
+    );
+    for (alias, reason) in [
+        ("tpi", "token-foreign-host"),
+        ("spi", "auth-missing"),
+        ("rpi", "refused"),
+        ("upi", "unreachable"),
+    ] {
+        let stated = row(alias);
+        assert_eq!(
+            fields(&stated),
+            [
+                json!("pi"),
+                json!("stated"),
+                json!("ok"),
+                json!(100),
+                json!("copilot")
+            ],
+            "{stated}"
+        );
+        assert!(
+            stated["detail"].as_str().unwrap().contains(reason),
+            "{stated}"
+        );
+    }
+    assert_eq!(
+        world.curl_log(),
+        vec![
+            "copilot ghu_pi",
+            "copilot ghu_refused",
+            "copilot ghu_unanswered"
+        ]
+    );
+    let argv = std::fs::read_to_string(world.path().join("fixtures/curl.argv")).unwrap();
+    assert!(
+        !argv.contains("ghu_pi"),
+        "no login on an argument vector: {argv}"
+    );
+    let reply = world.pick(&PickRequest {
+        model: Some("github-copilot/claude-sonnet-5".to_owned()),
+        ..PickRequest::new(Harness::Pi)
+    });
+    assert_eq!(chosen(&reply), Some(world.dir("mpi")), "{reply}");
+}
+
 #[test]
 fn an_excluded_account_is_measured_and_refused_for_lanes_and_a_retired_one_refused_by_name() {
     let today = accounts::today(now());

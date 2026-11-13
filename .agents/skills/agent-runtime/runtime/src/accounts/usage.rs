@@ -387,8 +387,8 @@ pub fn parse_copilot(body: &Value) -> Value {
 pub fn parse_body(harness: Harness, body: &Value, rounding: Rounding) -> Value {
     match harness {
         Harness::Claude => parse_claude(body, rounding),
-        Harness::Copilot => parse_copilot(body),
-        Harness::Codex | Harness::Pi => parse_codex(body, rounding),
+        Harness::Copilot | Harness::Pi => parse_copilot(body),
+        Harness::Codex => parse_codex(body, rounding),
     }
 }
 
@@ -628,11 +628,11 @@ fn base64url(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// A Copilot account's stored login as `config.json` names it.
+/// A Copilot account's stored login as Copilot CLI's `config.json` or a Pi
+/// root's `auth.json` names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CopilotLogin {
-    /// The token itself, under `copilotTokens` (or the older
-    /// `copilot_tokens`).
+    /// The GitHub.com token itself.
     Token(String),
     /// The GitHub.com login `lastLoggedInUser` names, whose token the
     /// Secret Service holds.
@@ -719,6 +719,50 @@ pub fn copilot_login(dir: &str) -> CopilotLogin {
             }
         }
         None | Some(_) => missing(),
+    }
+}
+
+/// The Copilot login a Pi root keeps: `auth.json`'s `github-copilot` OAuth
+/// entry, whose `refresh` is the GitHub token Pi's device login brought
+/// back; its `access` is the Copilot session token Pi derives from it,
+/// which the user endpoint does not take. An entry naming an
+/// `enterpriseUrl` holds another host's token, never sent to GitHub.com.
+pub fn pi_copilot_login(dir: &str) -> CopilotLogin {
+    let path = credential_path(Harness::Pi, dir);
+    let unread = |reason: &'static str, place: &str| CopilotLogin::Unread {
+        reason,
+        place: place.to_owned(),
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return unread("auth-missing", &path);
+        }
+        Err(_) => return unread("auth-unreadable", &path),
+    };
+    let Ok(file) = serde_json::from_str::<Value>(&text) else {
+        return unread("auth-unreadable", &path);
+    };
+    let Some(entry) = file
+        .get("github-copilot")
+        .filter(|e| e.get("type").and_then(Value::as_str) == Some("oauth"))
+    else {
+        return unread("token-missing", &path);
+    };
+    if entry
+        .get("enterpriseUrl")
+        .and_then(Value::as_str)
+        .is_some_and(|host| !host.is_empty())
+    {
+        return unread("token-foreign-host", &path);
+    }
+    match entry
+        .get("refresh")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+    {
+        Some(token) => CopilotLogin::Token(token.to_owned()),
+        None => unread("token-missing", &path),
     }
 }
 

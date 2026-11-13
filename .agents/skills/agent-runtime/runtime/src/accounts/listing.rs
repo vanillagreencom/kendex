@@ -152,7 +152,12 @@ pub fn list(
         if copilot_homes.contains(&wall::canon(&entry.dir)) {
             continue;
         }
-        let mut row = stated_row(&ctx, entry);
+        let root = Found {
+            harness: Harness::Pi,
+            dir: entry.dir.clone(),
+            configured: true,
+        };
+        let mut row = measure(&mut ctx, &root);
         finish(&ctx, &mut row, "copilot");
         rows.push(row);
     }
@@ -388,41 +393,44 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
             },
         )
     };
+    // A Copilot account whose own login yields no reading: the owner's
+    // stated pool where one is stated, else no credential.
+    let unread = |ctx: &Ctx, why: &str| {
+        let canon = wall::canon(dir);
+        let stated = ctx
+            .accounts
+            .copilot_pool
+            .iter()
+            .find(|e| wall::canon(&e.dir) == canon);
+        let reading = match stated {
+            Some(entry) => Reading::stated(entry, &format!("copilot login unread: {why}")),
+            None => Reading::refused(
+                "no_credentials",
+                format!(
+                    "copilot login unread: {why}, and AGENT_RUNTIME_COPILOT_POOL states no reading for this account"
+                ),
+            ),
+        };
+        let through = if stated.is_some() { "stated" } else { "local" };
+        emit(
+            ctx,
+            &Emit {
+                alias: &alias,
+                harness,
+                dir,
+                through,
+                reading,
+                words: None,
+            },
+        )
+    };
     let mut renewed = false;
     let (token, account_id, plan) = match harness {
-        Harness::Copilot => match copilot_token(dir) {
+        Harness::Copilot | Harness::Pi => match copilot_token(harness, dir) {
             Ok(token) => (token, String::new(), String::new()),
-            Err(why) => {
-                let canon = wall::canon(dir);
-                let stated = ctx
-                    .accounts
-                    .copilot_pool
-                    .iter()
-                    .find(|e| wall::canon(&e.dir) == canon);
-                let reading = match stated {
-                    Some(entry) => Reading::stated(entry, &format!("copilot login unread: {why}")),
-                    None => Reading::refused(
-                        "no_credentials",
-                        format!(
-                            "copilot login unread: {why}, and AGENT_RUNTIME_COPILOT_POOL states no reading for this account"
-                        ),
-                    ),
-                };
-                let through = if stated.is_some() { "stated" } else { "local" };
-                return emit(
-                    ctx,
-                    &Emit {
-                        alias: &alias,
-                        harness,
-                        dir,
-                        through,
-                        reading,
-                        words: None,
-                    },
-                );
-            }
+            Err(why) => return unread(ctx, &why),
         },
-        Harness::Claude | Harness::Codex | Harness::Pi => match usage::credential(harness, dir) {
+        Harness::Claude | Harness::Codex => match usage::credential(harness, dir) {
             Credential::Missing(path) => {
                 return row(
                     ctx,
@@ -476,32 +484,49 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
     };
     let mut reading = usage_reading(ctx, harness, dir, &token, &account_id, renewed);
     reading.plan = match (harness, &reading.usage) {
-        (Harness::Copilot, Some(Usage::Body(body))) => body
+        (Harness::Copilot | Harness::Pi, Some(Usage::Body(body))) => body
             .get("copilot_plan")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned(),
-        (Harness::Copilot, _) => String::new(),
+        (Harness::Copilot | Harness::Pi, _) => String::new(),
         _ => plan,
     };
     let mut row = row(ctx, reading);
+    // A Pi root's statement is the reading its owner relies on until its own
+    // login measures the pool: a refused, unanswered or empty answer keeps
+    // it, where a Copilot CLI home reads the error.
+    if harness == Harness::Pi && row["headroom_pct"].is_null() {
+        let status = row["status"].as_str().unwrap_or("error");
+        let why = match row["detail"].as_str() {
+            Some(detail) => format!("{status}: {detail}"),
+            None => status.to_owned(),
+        };
+        return unread(ctx, &why);
+    }
     if renewed {
         row["refreshable"] = json!(true);
     }
     row
 }
 
-/// A Copilot account's token from its stored login: `config.json`'s own,
-/// or the Secret Service item Copilot CLI keeps a keyring login in, read
-/// through `secret-tool search` under the item's `:github` username and
-/// then the older one, without unlocking anything. `Err` is the keyed
-/// reason and where the login was sought.
+/// A Copilot account's token from its stored login: a Pi root's
+/// `auth.json` entry; for a Copilot CLI home `config.json`'s own, or the
+/// Secret Service item Copilot CLI keeps a keyring login in, read through
+/// `secret-tool search` under the item's `:github` username and then the
+/// older one, without unlocking anything. `Err` is the keyed reason and
+/// where the login was sought.
 #[allow(
     clippy::disallowed_methods,
     reason = "the listing's read of a Copilot keyring login, `secret-tool search`, through the one runner under its tag, bounded; it acts on nothing"
 )]
-fn copilot_token(dir: &str) -> Result<String, String> {
-    let login = match usage::copilot_login(dir) {
+fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
+    let stored = if harness == Harness::Pi {
+        usage::pi_copilot_login(dir)
+    } else {
+        usage::copilot_login(dir)
+    };
+    let login = match stored {
         CopilotLogin::Token(token) => return Ok(token),
         CopilotLogin::Unread { reason, place } => return Err(format!("{reason} in {place}")),
         CopilotLogin::Keyring(login) => login,
@@ -576,23 +601,6 @@ fn copilot_token(dir: &str) -> Result<String, String> {
         "keyring-empty in the Secret Service items service=copilot-cli username={} and {}",
         users[0], users[1]
     ))
-}
-
-/// The owner's stated Copilot pool for one Pi root as a row, measured
-/// through `stated`: neither this machine nor a provider read it.
-fn stated_row(ctx: &Ctx, entry: &CopilotPool) -> Value {
-    let alias = alias(ctx.accounts, &entry.dir);
-    emit(
-        ctx,
-        &Emit {
-            alias: &alias,
-            harness: Harness::Pi,
-            dir: &entry.dir,
-            through: "stated",
-            reading: Reading::stated(entry, "no Copilot login is read for a Pi root"),
-            words: None,
-        },
-    )
 }
 
 /// The live token of an account whose access token expired: the refusal
@@ -683,8 +691,8 @@ fn usage_reading(
     }
     let url = match harness {
         Harness::Claude => ctx.accounts.claude_usage_url.clone(),
-        Harness::Copilot => COPILOT_CREDITS_URL.to_owned(),
-        Harness::Codex | Harness::Pi => ctx.accounts.codex_usage_url.clone(),
+        Harness::Copilot | Harness::Pi => COPILOT_CREDITS_URL.to_owned(),
+        Harness::Codex => ctx.accounts.codex_usage_url.clone(),
     };
     let usage_dir = ctx.usage_dir.clone();
     let (reading, notice) = cache::under_refresh_lock(&usage_dir, || {
@@ -851,11 +859,11 @@ fn request(harness: Harness, url: &str, token: &str, account_id: &str) -> Option
             args.extend(["-H", &beta]);
             format!("header = \"Authorization: Bearer {token}\"\n")
         }
-        Harness::Copilot => {
+        Harness::Copilot | Harness::Pi => {
             args.extend(["-H", "Accept: application/json"]);
             format!("header = \"Authorization: token {token}\"\n")
         }
-        Harness::Codex | Harness::Pi => {
+        Harness::Codex => {
             if !account_id.is_empty() {
                 args.extend(["-H", &account]);
             }
@@ -1094,7 +1102,7 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         "excluded": excluded(ctx.accounts, e.alias, e.dir),
         "retired": retired,
     });
-    if e.harness == Harness::Copilot {
+    if matches!(e.harness, Harness::Copilot | Harness::Pi) {
         row["credits_used"] = buckets.get("credits_used").cloned().unwrap_or(Value::Null);
     }
     if let Some(words) = &e.words {

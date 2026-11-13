@@ -106,7 +106,8 @@ pub const CODEX_CREDIT_FLOOR_KEY: &str = "AGENT_RUNTIME_CODEX_CREDIT_FLOOR";
 /// The dollars a cloud or API credit grant must exceed to be picked.
 pub const CLOUD_CREDIT_FLOOR_KEY: &str = "AGENT_RUNTIME_CLOUD_CREDIT_FLOOR";
 /// `<pi root>=<used>/<granted>` pairs: the Copilot pool each Pi root
-/// spends, as the owner states it, judged where no provider row reads it.
+/// spends, as the owner states it, judged where neither the root's own
+/// Copilot login nor a provider row reads it.
 pub const COPILOT_POOL_KEY: &str = "AGENT_RUNTIME_COPILOT_POOL";
 /// The account names the reader never reads, applied here to the stated
 /// Pi roots alone, which no reader lists.
