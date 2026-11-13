@@ -1687,6 +1687,74 @@ fn a_lead_whose_program_cannot_run_removes_its_record_and_refuses_exec_failed() 
     assert!(!record.exists());
 }
 
+/// A lead on an account records the account beside the leader in the one
+/// folder the account picks count; a file anywhere else would leave the
+/// worker uncharged, so it refuses before anything is written or run.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_lead_on_an_account_records_it_in_the_counted_folder_and_refuses_any_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let state = root.join("accounts");
+    let cwd = root.join("cwd");
+    let elsewhere = root.join("elsewhere");
+    for made in [&cwd, &elsewhere] {
+        std::fs::create_dir_all(made).unwrap();
+    }
+    let lead = |file: &std::path::Path, program: &[&std::ffi::OsStr]| {
+        Command::new("setsid")
+            .arg(binary())
+            .args(["process", "lead", "--file"])
+            .arg(file)
+            .args(["--account", "/srv/.wclaude", "--"])
+            .args(program)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", &root)
+            .env("GIT_CEILING_DIRECTORIES", &root)
+            .env("AGENT_RUNTIME_ACCOUNT_STATE_DIR", &state)
+            .current_dir(&cwd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let record = state.join("workers").join("w");
+    let child = lead(&record, &["true".as_ref()]);
+    let leader = child.id();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let recorded: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert_eq!(
+        (&recorded["pid"], &recorded["account"]),
+        (
+            &serde_json::json!(leader),
+            &serde_json::json!("/srv/.wclaude")
+        ),
+        "{recorded}"
+    );
+    assert!(recorded["start"].is_string(), "{recorded}");
+    let outside = elsewhere.join("w");
+    let ran = root.join("ran");
+    let out = lead(&outside, &["touch".as_ref(), ran.as_os_str()])
+        .wait_with_output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{reply}");
+    assert_eq!(reply["refusal"]["key"], "group-file-uncounted", "{reply}");
+    assert_eq!(
+        refusal_field(&reply, "dir"),
+        Some(state.join("workers").display().to_string())
+    );
+    assert!(!outside.exists() && !ran.exists());
+}
+
 /// The recorded group, read and stopped: a member whose parent exited still
 /// names the leader's group and is reached; a process in another group is
 /// not. No record reads gone and stops nothing; a record of another shape

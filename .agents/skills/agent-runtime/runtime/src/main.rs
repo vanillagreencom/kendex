@@ -775,6 +775,32 @@ impl AccountSettings {
     }
 }
 
+/// Refuses `group-file-uncounted` unless `file` sits in the one folder the
+/// account picks count workers from: a worker led on an account under any
+/// other path would run uncharged with no word said.
+fn counted_worker_file(file: &Path) -> Result<()> {
+    let loaded = AccountSettings::load()?;
+    loaded.tell_skipped();
+    let workers = agent_runtime::group::workers_dir(&loaded.state.get()?);
+    std::fs::create_dir_all(&workers).map_err(|e| Error::io("create-dir", &workers, e))?;
+    let parent = file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let resolved =
+        std::fs::canonicalize(&workers).map_err(|e| Error::io("resolve", &workers, e))?;
+    if std::fs::canonicalize(parent).is_ok_and(|p| p == resolved) {
+        return Ok(());
+    }
+    Err(Error::refused(
+        "group-file-uncounted",
+        &[
+            ("file", &file.display().to_string()),
+            ("dir", &workers.display().to_string()),
+        ],
+    ))
+}
+
 fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
     let loaded = AccountSettings::load()?;
     loaded.tell_skipped();
@@ -1006,6 +1032,13 @@ enum ProcessOp {
     Lead {
         #[arg(long)]
         file: PathBuf,
+        /// The account config dir PROGRAM spends on, recorded in FILE as
+        /// `account`: every account pick then charges the account while the
+        /// group runs. FILE must sit in `workers/` under the account records'
+        /// root, the one folder the picks read, else `group-file-uncounted`
+        /// before anything is written or run.
+        #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        account: Option<String>,
         /// PROGRAM and its arguments, after `--`.
         #[arg(last = true, required = true)]
         command: Vec<std::ffi::OsString>,
@@ -1963,11 +1996,23 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &Identity { pid, start },
             ))
             .unwrap_or_default()),
-            ProcessOp::Lead { file, command } => {
+            ProcessOp::Lead {
+                file,
+                account,
+                command,
+            } => {
                 let (program, args) = command
                     .split_first()
                     .expect("clap requires PROGRAM after --");
-                Err(agent_runtime::group::lead(&file, program, args))
+                if account.is_some() {
+                    counted_worker_file(&file)?;
+                }
+                Err(agent_runtime::group::lead(
+                    &file,
+                    account.as_deref(),
+                    program,
+                    args,
+                ))
             }
             ProcessOp::Group { file, member } => agent_runtime::group::reading(&file, member),
             ProcessOp::Stop { file, grace_secs } => {

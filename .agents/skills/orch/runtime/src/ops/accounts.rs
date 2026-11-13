@@ -453,13 +453,17 @@ pub fn walk(
 /// account after a usage sample is counted after it; the lane `replaces`
 /// names is left out. The provider's `seat=1` rows join the
 /// seats from the listing, read before the readings are resolved, so a
-/// seat the provider holds is a seat whichever reading is judged.
+/// seat the provider holds is a seat whichever reading is judged. A worker
+/// outside the fleet that a lead recorded on an account under
+/// `account_state` charges it while it runs, fleet record or none, with no
+/// instant: its spend is projected as begun after any sample.
 #[allow(
     clippy::disallowed_methods,
     reason = "the accounts judge's one read of the fleet state, a snapshot it judges room on; it acts on nothing"
 )]
 pub fn fleet_facts(
     path: &Path,
+    account_state: &Path,
     rows: &[AccountRow],
     replaces: Option<&str>,
     host: &Host,
@@ -469,6 +473,11 @@ pub fn fleet_facts(
     for row in rows.iter().filter(|r| r.seat) {
         facts.seats.push(row.canon.clone());
     }
+    facts.charges = agent_runtime::group::charges(
+        &agent_runtime::group::workers_dir(account_state),
+        host.still_runs,
+    )
+    .map_err(|e| e.to_string())?;
     let Some(snapshot) = crate::state::load(path).map_err(|e| e.to_string())? else {
         return Ok(facts);
     };
@@ -637,7 +646,15 @@ fn pick_read(
         }
     };
     let rows = roster.rows;
-    let mut facts = match fleet_facts(fleet_path, &rows, replaces, host, now) {
+    let account_state = match settings.account_state.get() {
+        Ok(dir) => dir,
+        Err(e) => {
+            return PickAnswer::Unjudged {
+                cause: e.to_string(),
+            };
+        }
+    };
+    let mut facts = match fleet_facts(fleet_path, &account_state, &rows, replaces, host, now) {
         Ok(facts) => facts,
         Err(cause) => {
             return PickAnswer::Unjudged {

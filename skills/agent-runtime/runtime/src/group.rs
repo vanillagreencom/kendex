@@ -12,12 +12,15 @@
 //! pane's `ssh -t` gives, and with it the hang-up that ends the program when
 //! the connection does.
 
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::accounts::wall;
 use crate::error::{Error, Result, ShapeReason};
 use crate::host;
 use crate::process::{self, Identity, Stop};
@@ -39,6 +42,69 @@ pub fn read(path: &Path) -> Result<Option<Identity>> {
             reason: ShapeReason::TypeMismatch,
             cause: e.to_string(),
         })
+}
+
+/// The one folder under the account records' root whose records
+/// [`charges`] counts, and so the one place a lead with an account writes.
+pub fn workers_dir(account_state: &Path) -> PathBuf {
+    account_state.join("workers")
+}
+
+/// A record a lead wrote with `--account`: the leader and the account its
+/// program spends on.
+#[derive(Deserialize)]
+struct Worker {
+    #[serde(flatten)]
+    leader: Identity,
+    account: Option<String>,
+}
+
+/// The charges per account of the workers recorded under `dir`, keyed by the
+/// account's one spelling: a record naming an account charges it while its
+/// leader reads live or unreadable (an unread identity protects its account,
+/// never frees it) and nothing once its leader is gone. A record with no
+/// account, or of another shape, charges nothing. Each file is its caller's:
+/// this read removes none. The names a write's temporary files take (a
+/// leading `.`) are not records.
+pub fn charges(
+    dir: &Path,
+    still_runs: &dyn Fn(&Identity) -> Reading<Identity>,
+) -> Result<BTreeMap<String, u32>> {
+    let mut charges = BTreeMap::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(charges),
+        Err(e) => return Err(Error::io("read-dir", dir, e)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|e| Error::io("read-dir", dir, e))?;
+        if entry.file_name().as_encoded_bytes().starts_with(b".") {
+            continue;
+        }
+        let path = entry.path();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(Error::io("read", &path, e)),
+        };
+        let Ok(Worker {
+            leader,
+            account: Some(account),
+        }) = serde_json::from_slice(&bytes)
+        else {
+            continue;
+        };
+        if account.is_empty() {
+            continue;
+        }
+        match still_runs(&leader) {
+            Reading::Gone => {}
+            Reading::Live(_) | Reading::Unreadable { .. } => {
+                *charges.entry(wall::canon(&account)).or_insert(0) += 1;
+            }
+        }
+    }
+    Ok(charges)
 }
 
 /// Where the caller stands when it asks to lead: its pid, its process group,
@@ -110,10 +176,11 @@ fn caller_standing() -> Result<Standing> {
 /// Lead the group recorded at `path` and become `program` with `args`. A
 /// record whose group still runs refuses `group-live`: a launch that skipped
 /// its stop never starts a second program over the first. The record is
-/// written before the exec and removed where the exec fails. Returns only the
-/// refusal; on success this process is the program.
-pub fn lead(path: &Path, program: &OsStr, args: &[OsString]) -> Error {
-    match lead_checked(path, program, args) {
+/// written before the exec and removed where the exec fails; with `account`
+/// it names the account the program spends on, which [`charges`] counts.
+/// Returns only the refusal; on success this process is the program.
+pub fn lead(path: &Path, account: Option<&str>, program: &OsStr, args: &[OsString]) -> Error {
+    match lead_checked(path, account, program, args) {
         Ok(never) => match never {},
         Err(error) => error,
     }
@@ -121,6 +188,7 @@ pub fn lead(path: &Path, program: &OsStr, args: &[OsString]) -> Error {
 
 fn lead_checked(
     path: &Path,
+    account: Option<&str>,
     program: &OsStr,
     args: &[OsString],
 ) -> Result<std::convert::Infallible> {
@@ -167,10 +235,13 @@ fn lead_checked(
         Reading::Gone => return Err(unread("own-stat-gone")),
         Reading::Unreadable { cause } => return Err(unread(cause)),
     };
-    let record = serde_json::to_value(&leader).map_err(|source| Error::Json {
+    let mut record = serde_json::to_value(&leader).map_err(|source| Error::Json {
         path: path.to_path_buf(),
         source,
     })?;
+    if let Some(account) = account {
+        record["account"] = json!(account);
+    }
     crate::record::replace_atomically(path, &record)?;
     let failed = host::exec(program, args, new_group);
     let removed = match std::fs::remove_file(path) {

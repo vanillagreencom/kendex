@@ -731,7 +731,8 @@ enum LaneOp {
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
     },
-    /// The live charges of a fleet's lanes per account, the count
+    /// The live charges per account of a fleet's lanes and of the workers
+    /// `agent-runtime process lead --account` recorded, the count
     /// agent-runtime's account reading asks for: `{"fleet", "charges",
     /// "started"}`, each account by its canonical config dir.
     Charges {
@@ -2610,10 +2611,16 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
             replaces,
         } => {
             let path = file.unwrap_or_else(|| record::fleet_path(&settings.state_dir));
-            let facts = ops::accounts::fleet_facts(&path, &[], replaces.as_deref(), &host, now)
-                .map_err(|cause| {
-                    agent_runtime::Error::refused("fleet-unread", &[("cause", &cause)])
-                })?;
+            let account_state = settings.account_state.get()?;
+            let facts = ops::accounts::fleet_facts(
+                &path,
+                &account_state,
+                &[],
+                replaces.as_deref(),
+                &host,
+                now,
+            )
+            .map_err(|cause| agent_runtime::Error::refused("fleet-unread", &[("cause", &cause)]))?;
             Ok(serde_json::json!({
                 "fleet": path,
                 "charges": facts.charges,

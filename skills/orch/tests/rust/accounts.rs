@@ -4333,3 +4333,110 @@ fn the_charges_verb_counts_the_live_lanes_the_pick_charges() {
     assert_eq!(replaced["charges"], json!({}), "{replaced}");
     drop(child);
 }
+
+/// A worker this row led through agent-runtime's `process lead`, stopped
+/// through `process stop` by its record and reaped on the way out, past a
+/// failed assertion too.
+#[cfg(target_os = "linux")]
+struct Worker {
+    file: PathBuf,
+    leader: std::process::Child,
+}
+
+#[cfg(target_os = "linux")]
+impl Worker {
+    /// `sleep` led under `setsid`, as a caller with no terminal leads it, its
+    /// record at `file`, with `account` where given; returns once the record
+    /// stands.
+    fn lead(world: &World, file: &Path, account: Option<&str>) -> Worker {
+        let mut command = program("setsid");
+        command
+            .arg(agent_runtime())
+            .args(["process", "lead", "--file"])
+            .arg(file);
+        if let Some(account) = account {
+            command.args(["--account", account]);
+        }
+        command
+            .args(["--", "sleep", "300"])
+            .current_dir(world.path())
+            .env("PATH", tool_path(&[]))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        for (key, value) in &world.env {
+            command.env(key, value);
+        }
+        let worker = Worker {
+            file: file.to_path_buf(),
+            leader: command.spawn().unwrap(),
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::fs::metadata(file).is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{} never written",
+                file.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        worker
+    }
+
+    fn stop(&mut self) {
+        let out = program(agent_runtime())
+            .args(["process", "stop", "--grace-secs", "1", "--file"])
+            .arg(&self.file)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let _ = self.leader.wait();
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Worker {
+    fn drop(&mut self) {
+        let _ = program(agent_runtime())
+            .args(["process", "stop", "--grace-secs", "1", "--file"])
+            .arg(&self.file)
+            .output();
+        let _ = self.leader.kill();
+        let _ = self.leader.wait();
+    }
+}
+
+/// A worker outside every lane that a lead recorded on an account charges
+/// it in the count both pickers judge with, `lane charges` (the count
+/// agent-runtime's reading asks for) and `lane pick`, with no fleet record
+/// at all; a group led with no account charges nothing, and a stopped
+/// worker nothing though its record stands. An uncharged worker would let
+/// a pick place a lane on an account already spending.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_worker_led_on_an_account_charges_the_count_both_pickers_read() {
+    let mut world = World::new(&[]);
+    world.plant_listing(&[measured("aclaude", 20, 0)]);
+    let account = world.dir("aclaude");
+    let canon = std::fs::canonicalize(&account)
+        .unwrap()
+        .display()
+        .to_string();
+    let workers = world.path().join("workers");
+    let read = |world: &World| {
+        let mut command = world.command();
+        command.args(["lane", "charges", "--fleet"]);
+        let charges = World::reply(command)["charges"].clone();
+        let claims = world.pick(&claude(None))["record"]["claims"].clone();
+        (charges, claims)
+    };
+    let plain = Worker::lead(&world, &workers.join("plain"), None);
+    assert_eq!(read(&world), (json!({}), json!(0)));
+    drop(plain);
+    let file = workers.join("w");
+    let mut worker = Worker::lead(&world, &file, Some(&account));
+    assert_eq!(read(&world), (json!({ canon.clone(): 1 }), json!(1)));
+    worker.stop();
+    assert_eq!(read(&world), (json!({}), json!(0)));
+    assert!(std::fs::metadata(&file).is_ok());
+}
