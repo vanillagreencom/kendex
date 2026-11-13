@@ -228,7 +228,7 @@ fn unlocated(
     words: &str,
 ) -> Flow<(PathBuf, Option<PathBuf>)> {
     let has_mailbox = is_dir(&lane_dir.join("tmp").join("lane-mail"));
-    if (vars.jarvis_record && !has_mailbox) || vars.tmux_without_pane {
+    if (vars.jarvis_record.is_some() && !has_mailbox) || vars.tmux_without_pane {
         return Ok((lane_dir, None));
     }
     if !has_mailbox {

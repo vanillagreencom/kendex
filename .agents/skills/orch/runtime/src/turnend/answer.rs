@@ -88,6 +88,26 @@ pub enum Said {
         /// to report the gap instead.
         command: Option<String>,
     },
+    // The caller's identity (`role`): who a session with no lane item is.
+    /// The fleet record names this session's pane and a native identity
+    /// another session's: the payload's session, the recorded harness and
+    /// launch home, each `none` where empty.
+    SessionUnbound {
+        session: String,
+        harness: String,
+        home: String,
+    },
+    /// The heal of the fleet record the caller's key, `<server> <pane>`,
+    /// is bound to could not be written.
+    RecordUnhealed(String),
+    /// Jarvis's own reader could not read the managed session record the
+    /// launch names.
+    JarvisRecordUnread(PathBuf),
+    /// A session in tmux names no pane and none was recovered for it.
+    SessionUnjudged,
+    /// The file that tells a session once that it is unjudged could not be
+    /// written.
+    SessionUnjudgedCache(PathBuf),
     /// A Copilot session start naming no session id.
     LeadUnnamed,
     LeadUnrecorded(PathBuf),
@@ -253,6 +273,24 @@ impl Said {
             Said::MailboxMissing { mail_root, .. } => {
                 ("mailbox-missing", mail_root.display().to_string())
             }
+            Said::SessionUnbound {
+                session,
+                harness,
+                home,
+            } => (
+                "session-unbound",
+                format!(
+                    "{session} harness={harness} home={home} remedy=orch-runtime register --fleet"
+                ),
+            ),
+            Said::RecordUnhealed(key) => ("record-unhealed", key.clone()),
+            Said::JarvisRecordUnread(record) => {
+                ("jarvis-record-unread", record.display().to_string())
+            }
+            Said::SessionUnjudged => ("session-unjudged", "missing-pane".to_owned()),
+            Said::SessionUnjudgedCache(told) => {
+                ("session-unjudged-cache", told.display().to_string())
+            }
             Said::LeadUnnamed => ("lead-unrecorded", "none".to_owned()),
             Said::LeadUnrecorded(path) => ("lead-unrecorded", path.display().to_string()),
             Said::LeadsUnpruned(dir) => ("leads-unpruned", dir.display().to_string()),
@@ -339,6 +377,11 @@ impl Said {
                 marker.display(),
                 mail_root.display()
             ),
+            Said::SessionUnbound { .. } => "the fleet record names this session's pane, and the native session it records is another one, so this session is not the fleet's controller: it reads no overseer mail and judges no controller marks. Registering this session as the controller binds it".to_owned(),
+            Said::RecordUnhealed(_) => "the fleet record names this session's pane and lacks a fact this session knows, its tmux server's start, its harness, its launch home or its native session id, and writing those into the record failed; this caller reads no overseer mail, writes no context or gap and judges no marks until a later turn end or tool call records the binding. The writer's words follow:".to_owned(),
+            Said::JarvisRecordUnread(_) => "The managed Jarvis session record could not be read. Its succession mark is unjudged:".to_owned(),
+            Said::SessionUnjudged => "this session is unjudged because TMUX_PANE is absent and no controller identity could be recovered".to_owned(),
+            Said::SessionUnjudgedCache(_) => "the file that keeps this unjudged session from being told again could not be written, so its next event tells it again:".to_owned(),
             Said::LeadUnnamed => "this Copilot session start names no session id this hook can record, so the session's tool calls read as a caller it cannot name: they are handed no mail, and a halt's refusal does not show the command that reads it, which the turn end still hands over".to_owned(),
             Said::LeadUnrecorded(path) => format!(
                 "this Copilot session is the lead, and its record at {} could not be written, so its tool calls read as a caller it cannot name: they are handed no mail, and a halt's refusal does not show the command that reads it, which the turn end still hands over:",

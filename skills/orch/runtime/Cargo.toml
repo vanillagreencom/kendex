@@ -141,6 +141,22 @@ name = "turnend"
 path = "../tests/rust/turnend.rs"
 
 [[test]]
+name = "turnend_role"
+path = "../tests/rust/turnend_role.rs"
+
+[[test]]
+name = "turnend_controller"
+path = "../tests/rust/turnend_controller.rs"
+
+[[test]]
+name = "turnend_rows"
+path = "../tests/rust/turnend_rows.rs"
+
+[[test]]
+name = "turnend_copilot"
+path = "../tests/rust/turnend_copilot.rs"
+
+[[test]]
 name = "tier"
 path = "../tests/rust/tier.rs"
 

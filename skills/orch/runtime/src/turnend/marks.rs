@@ -276,7 +276,7 @@ fn mark_gate<'a>(
 /// This checkout's settings, read from the lane's root by the load every
 /// verb takes, with the caller's environment and the command line's word on
 /// the private env file.
-fn marks_settings(root: &Path, private_env: bool) -> Result<Settings, String> {
+pub(super) fn marks_settings(root: &Path, private_env: bool) -> Result<Settings, String> {
     let roots = agent_runtime::settings::roots(root).map_err(|e| e.to_string())?;
     let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     let flags = Flags {
@@ -296,7 +296,7 @@ fn record_stamp() -> String {
     clock::now()
 }
 
-fn harness_word(harness: Harness) -> &'static str {
+pub(super) fn harness_word(harness: Harness) -> &'static str {
     match harness {
         Harness::Claude => "claude",
         Harness::Codex => "codex",

@@ -6,13 +6,19 @@
 
 mod agents;
 pub mod answer;
+mod controller;
+mod copilot;
 pub mod identity;
 pub mod mail;
 mod marks;
 pub mod payload;
+mod role;
+mod rows;
+mod wake;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::SystemTime;
 
 use agent_runtime::clock::SystemClock;
@@ -136,11 +142,16 @@ struct Vars {
     pwd: PathBuf,
     /// The item a lane's launch brief set (`LANE_MAIL_ITEM`).
     item: Option<String>,
-    /// A managed Jarvis session names its record.
-    jarvis_record: bool,
+    /// A managed Jarvis session names its record (`JARVIS_RECORD`) and the
+    /// generation that launched it (`JARVIS_GENERATION`).
+    jarvis_record: Option<PathBuf>,
+    jarvis_generation: Option<String>,
     /// In tmux with no pane named, where a controller's identity is read
     /// with no lane discovery.
     tmux_without_pane: bool,
+    /// The socket `$TMUX` names, its first field.
+    tmux_socket: Option<PathBuf>,
+    tmux_pane: Option<String>,
     pi_dir: Option<PathBuf>,
     /// The command line's word on the private env file the settings read.
     private_env: bool,
@@ -157,8 +168,15 @@ impl Vars {
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_default(),
             item: set("LANE_MAIL_ITEM").map(|item| item.to_string_lossy().into_owned()),
-            jarvis_record: set("JARVIS_RECORD").is_some(),
+            jarvis_record: set("JARVIS_RECORD").map(PathBuf::from),
+            jarvis_generation: set("JARVIS_GENERATION")
+                .map(|generation| generation.to_string_lossy().into_owned()),
             tmux_without_pane: set("TMUX").is_some() && set("TMUX_PANE").is_none(),
+            tmux_socket: set("TMUX").map(|tmux| {
+                let tmux = tmux.to_string_lossy().into_owned();
+                PathBuf::from(tmux.split(',').next().unwrap_or_default())
+            }),
+            tmux_pane: set("TMUX_PANE").map(|pane| pane.to_string_lossy().into_owned()),
             pi_dir: set("PI_CODING_AGENT_DIR").map(PathBuf::from),
             private_env,
         }
@@ -187,6 +205,13 @@ struct Turn {
     /// The run's deadline, counted from its start: the agent scan and any
     /// wait keep within it.
     deadline: Deadline<'static>,
+    /// Who a session with no lane item is, read once: its pane key from
+    /// the start of the judgement, its role once the row arm is past.
+    #[allow(
+        dead_code,
+        reason = "read by the controllers' turn ends, the rows' writer and Copilot usage"
+    )]
+    role: Rc<role::Role>,
 }
 
 impl Turn {
@@ -267,6 +292,7 @@ pub fn run(
         ack: None,
         hook_dir: hook_dir.to_path_buf(),
         deadline: Deadline::start(&SystemClock),
+        role: Rc::new(role::Role::default()),
     };
     match judge(&mut turn, &vars, arm, event, stdin) {
         Ok(()) => turn.pass(),
@@ -399,32 +425,34 @@ fn judged(
     payload: &Payload,
     continued: bool,
 ) -> Flow {
-    session_pane()?;
-    match arm {
-        Arm::Row { .. } => {
-            if lane.item.is_none() {
-                session_row()?;
-            }
-            return Ok(());
+    role::session_pane(turn, vars, lane, payload)?;
+    if let Arm::Row { .. } = arm {
+        if lane.item.is_none() {
+            rows::session_row(turn, vars, lane, payload)?;
         }
-        Arm::Compact => return compaction_mark(),
-        Arm::Usage => return usage_read(),
+        return Ok(());
+    }
+    role::read(turn, vars, lane, payload);
+    match arm {
+        Arm::Compact => return copilot::compaction_mark(turn, vars, lane, payload),
+        Arm::Usage => return copilot::usage_read(turn, vars, lane, payload),
         Arm::Stop
         | Arm::ModelSwitch
         | Arm::Halt
         | Arm::Lane
+        | Arm::Row { .. }
         | Arm::Deliver
         | Arm::Start
         | Arm::Prompt => {}
     }
-    lane_row()?;
-    jarvis_row()?;
+    rows::lane_row(turn, vars, lane, payload)?;
+    rows::jarvis_row(turn, vars, lane, payload)?;
     let lead = turn.caller == Caller::Lead;
     if *arm == Arm::Start && turn.harness == Harness::Copilot && lead {
-        context_reader_check()?;
+        controller::context_reader_check(turn, vars, lane, payload)?;
     }
     if *arm == Arm::Deliver && lane.item.is_none() && lead {
-        overseer_tool_check()?;
+        controller::overseer_tool_check(turn, vars, lane, payload)?;
     }
     if *arm == Arm::ModelSwitch {
         return model_switch();
@@ -440,49 +468,6 @@ fn judged(
     }
     marks::handoff_check(turn, arm, lane, vars, payload)?;
     mail::idle_check(turn, vars, arm, lane, continued)
-}
-
-/// Where a session in tmux with no pane named recovers its controller's
-/// pane; it holds nothing.
-fn session_pane() -> Flow {
-    Ok(())
-}
-
-/// Where a session with no lane writes its own event row; it writes none.
-fn session_row() -> Flow {
-    Ok(())
-}
-
-/// Where a Copilot lead's automatic compaction is flagged; it flags none.
-fn compaction_mark() -> Flow {
-    Ok(())
-}
-
-/// Where a Copilot session's context reading is recorded; it records none.
-fn usage_read() -> Flow {
-    Ok(())
-}
-
-/// Where a Pi lane's turn row is written; it writes none.
-fn lane_row() -> Flow {
-    Ok(())
-}
-
-/// Where a managed Jarvis session's row is written; it writes none.
-fn jarvis_row() -> Flow {
-    Ok(())
-}
-
-/// Where a Copilot overseer's start is told it has no context reader; it
-/// tells nothing.
-fn context_reader_check() -> Flow {
-    Ok(())
-}
-
-/// Where the overseer's context is judged at its tool call; it judges
-/// nothing.
-fn overseer_tool_check() -> Flow {
-    Ok(())
 }
 
 /// Where a model switch is recorded or handed off; it records nothing.
