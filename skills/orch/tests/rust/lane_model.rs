@@ -85,6 +85,8 @@ fn planted_lane(runner: &Runner, root: &Path) -> Value {
         "mail_root": root.display().to_string(),
         "model": "claude-fable-5-1",
         "effort": "high",
+        "class": CLASS,
+        "class_reason": CLASS_REASON,
         "launched_at": "2026-11-12T10:00:00Z",
         "launch": {"pid": GONE_PID, "start": "ticks:1"},
     }]);
@@ -390,11 +392,11 @@ fn a_moved_launch_or_session_starts_no_recovery() {
 /// job the launcher refused; a lane on `local` or no host is this
 /// machine's. A hosted lane is refused before its switch is claimed, its
 /// predecessor being its host's, and so is a setting the replacement's
-/// launch would refuse.
+/// launch would refuse or a recovery limit that is no count.
 #[test]
 fn an_unpreparable_record_is_refused_before_anything_stops() {
     type Plant = fn(&mut Value, &Path, &Path);
-    let rows: [(&str, Plant, Settings, &str, &str, bool); 9] = [
+    let rows: [(&str, Plant, Settings, &str, &str, bool); 10] = [
         (
             "no model",
             |lane, _, _| {
@@ -483,6 +485,14 @@ fn an_unpreparable_record_is_refused_before_anything_stops() {
             "",
             false,
         ),
+        (
+            "a recovery limit that is no count",
+            |_, _, _| {},
+            &[("ORCH_MODEL_RECOVERY_LIMIT", "many")],
+            "setting-invalid",
+            "",
+            false,
+        ),
     ];
     for (name, plant, env, key, cause, spent) in rows {
         let dir = tempfile::tempdir().unwrap();
@@ -524,6 +534,73 @@ fn an_unpreparable_record_is_refused_before_anything_stops() {
             .is_err(),
             "{name}: no job started"
         );
+    }
+}
+
+/// A record naming no class, or no reason for it, is refused by its cause
+/// before anything stops, as one naming no model: the relaunch keeps the
+/// record's pair, so its launch would refuse once the close had retired the
+/// predecessor. Nothing is composed, closed or started.
+#[test]
+fn a_record_naming_no_class_or_reason_is_refused_before_anything_stops() {
+    type Plant = fn(&mut Value);
+    let rows: [(&str, Plant); 3] = [
+        ("no class", |lane| {
+            lane.as_object_mut().unwrap().remove("class");
+        }),
+        ("no reason", |lane| {
+            lane.as_object_mut().unwrap().remove("class_reason");
+        }),
+        ("a blank reason", |lane| lane["class_reason"] = json!(" ")),
+    ];
+    for (name, plant) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-record");
+        runner.init_fleet();
+        let mut fleet = planted_lane(&runner, runner.state_dir());
+        plant(&mut fleet["lanes"][0]);
+        switched(&mut fleet, false, Vec::new());
+        runner.write_fleet(&fleet);
+        let bound = identity(&fleet["lanes"][0]);
+        let out = runner.op_fleet(&recovery("current", &bound));
+        assert_eq!(
+            reply(&out),
+            json!({
+                "protocol": "orch-runtime-v1",
+                "ok": false,
+                "refusal": {
+                    "key": "model-recovery-unprepared",
+                    "fields": [["item", ITEM], ["cause", "class-unrecorded"]],
+                    "text": "refused model-recovery-unprepared: [(\"item\", \"KEN-R\"), (\"cause\", \"class-unrecorded\")]",
+                },
+            }),
+            "{name}: {}",
+            stderr(&out)
+        );
+        let after = runner.fleet();
+        let lane = &after["lanes"][0];
+        assert_eq!(lane["model_check"]["recovery_started"], true, "{name}");
+        assert_eq!(lane["status"], "running", "{name}");
+        assert_eq!(lane["launch"], fleet["lanes"][0]["launch"], "{name}");
+        assert!(
+            after["fleet_log"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["kind"] != "close"),
+            "{name}: nothing closed"
+        );
+        for suffix in ["md", "close.json", "json", "log", "unit"] {
+            let file = runner
+                .state_dir()
+                .join(format!("model-recovery-{ITEM}.{suffix}"));
+            assert!(
+                std::fs::symlink_metadata(&file).is_err(),
+                "{name}: {}",
+                file.display()
+            );
+        }
     }
 }
 
@@ -891,6 +968,56 @@ fn a_recovery_job_launches_only_after_its_close_and_marks_what_the_launch_met() 
     }
 }
 
+/// A recovery relaunches on the account its record names, and a record
+/// whose account is empty names none, so the launch chooses one as for a
+/// record naming no account. The entry fails the close, so nothing
+/// launches.
+#[test]
+fn a_recorded_empty_account_names_no_account_on_the_relaunch() {
+    let rows = [
+        (
+            "a named account",
+            "/home/me/.aclaude",
+            Some("/home/me/.aclaude"),
+        ),
+        ("an empty account", "", None),
+    ];
+    for (name, account, named) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-record");
+        runner.init_fleet();
+        let work = runner.state_dir().to_path_buf();
+        install_stand_in(&work, &work.join("entry-calls"), "1", "0", "0");
+        let mut fleet = planted_lane(&runner, &work);
+        fleet["lanes"][0]["account"] = json!(account);
+        switched(&mut fleet, false, Vec::new());
+        runner.write_fleet(&fleet);
+        let bound = identity(&fleet["lanes"][0]);
+        let out = runner.op_fleet(&recovery("current", &bound));
+        let answer = reply(&out);
+        assert_eq!(answer["ok"], true, "{name}: {}", stderr(&out));
+        let pid = answer["result"]["job"]["pid"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{name}: {answer}")) as u32;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while live(pid) {
+            assert!(Instant::now() < deadline, "{name}: the job never ended");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let request: Value = serde_json::from_str(
+            &std::fs::read_to_string(work.join(format!("model-recovery-{ITEM}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            request.get("account").and_then(Value::as_str),
+            named,
+            "{name}: {request}"
+        );
+        assert_eq!(runner.fleet()["lanes"][0]["status"], "running", "{name}");
+    }
+}
+
 /// The turn end's in-process start admits its request under its settings
 /// as the command does, before its claim: a setting the replacement's
 /// launch would refuse leaves the switch unspent. The limit of one would
@@ -962,5 +1089,59 @@ fn the_turn_ends_start_judges_its_settings_before_it_claims() {
             .iter()
             .all(|row| row["kind"] != "model-recovery-limit"),
         "{after}"
+    );
+}
+
+/// The stop job's own run over a group record it cannot stop by, for an
+/// item whose record no longer stands: the failure has nowhere to be kept,
+/// so the job answers `model-predecessor-unrecorded` with the stop's cause
+/// and the store's refusal, and writes no record.
+#[test]
+fn a_predecessor_stop_whose_item_record_is_gone_is_refused_unrecorded() {
+    let bound =
+        json!({"launch": {"pid": 41, "start": "ticks:41"}, "launched_at": "2026-11-12T10:00:00Z"});
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-record");
+    let path = runner
+        .state_dir()
+        .join(format!("workflow-state-{ITEM}.json"));
+    let file = runner.state_dir().join("lane-host-pid");
+    std::fs::write(&file, "not a group record").unwrap();
+    let request = runner.state_dir().join("stop.json");
+    std::fs::write(&request, predecessor_stop(&file, &bound, true).to_string()).unwrap();
+    let out = runner.run(&[
+        "op",
+        "--file",
+        &path.display().to_string(),
+        "--request",
+        &request.display().to_string(),
+    ]);
+    let file = file.display().to_string();
+    let store = format!("{}: no state file", path.display());
+    let fields = [
+        ("file", file.as_str()),
+        ("cause", "record-shape"),
+        ("pid", "none"),
+        ("exit", "1"),
+        ("store", store.as_str()),
+    ];
+    assert_eq!(
+        reply(&out),
+        json!({
+            "protocol": "orch-runtime-v1",
+            "ok": false,
+            "refusal": {
+                "key": "model-predecessor-unrecorded",
+                "fields": fields,
+                "text": format!("refused model-predecessor-unrecorded: {fields:?}"),
+            },
+        }),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        std::fs::symlink_metadata(&path).is_err(),
+        "a record written for a gone item"
     );
 }

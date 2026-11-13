@@ -745,10 +745,12 @@ fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
 }
 
 /// A lane record carrying what the relaunch needs: the model the pick is
-/// asked for and the checkout, session and refresh word an earlier
-/// launcher recorded under `recovery`.
+/// asked for, the class and reason the relaunch keeps, and the checkout,
+/// session and refresh word an earlier launcher recorded under `recovery`.
 fn relaunchable(mut record: Value, cwd: &Path) -> Value {
     record["model"] = json!("opus");
+    record["class"] = json!(CLASS);
+    record["class_reason"] = json!(CLASS_REASON);
     record["recovery"] = json!({
         "cwd": cwd.display().to_string(),
         "flags": "--model opus",
@@ -940,6 +942,79 @@ fn a_walled_lanes_relaunch_under_an_empty_recorded_session_runs_under_the_watchs
     let started = driver.relaunches.borrow();
     assert_eq!(started.len(), 1);
     assert_eq!(started[0].session, server.session);
+}
+
+/// A walled lane whose record names no class, or no reason for it, is
+/// refused before anything stops: the relaunch keeps the record's pair, so
+/// its launch would refuse once the close had retired the walled harness.
+/// The refusal is said under the wall after the pick's line; no request,
+/// brief or marker is written and nothing starts.
+#[test]
+fn a_walled_lane_naming_no_class_or_reason_is_refused_before_anything_stops() {
+    type Plant = fn(&mut Value);
+    let rows: [(&str, Plant); 2] = [
+        ("no class", |record| {
+            record.as_object_mut().unwrap().remove("class");
+        }),
+        ("no reason", |record| {
+            record.as_object_mut().unwrap().remove("class_reason");
+        }),
+    ];
+    for (name, plant) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+        let mut record = relaunchable(
+            lane_record(
+                "KEN-4",
+                "gh-4",
+                "claude",
+                &server,
+                &pane,
+                Some(&identity),
+                dir.path(),
+            ),
+            dir.path(),
+        );
+        plant(&mut record);
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+        let first = driver.pass(&state);
+        assert_eq!(
+            lines(&first),
+            vec![
+                "EVENT usage-limit gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z".to_owned(),
+                "pick lane=/home/me/.bclaude".to_owned(),
+                "wall-relaunch-refused lane=gh-4 reason=context-unavailable cause=class-unrecorded"
+                    .to_owned(),
+                "⏺ Working through the queue.".to_owned(),
+                BANNER.to_owned(),
+                "Run /usage-credits to raise it".to_owned(),
+                "❯\u{a0}".to_owned(),
+            ],
+            "{name}"
+        );
+        assert!(
+            driver.relaunches.borrow().is_empty(),
+            "{name}: nothing starts"
+        );
+        for suffix in ["md", "close.json", "json"] {
+            let file = driver
+                .state_dir
+                .join(format!("wall-relaunch-KEN-4.{suffix}"));
+            assert!(!file.exists(), "{name}: {}", file.display());
+        }
+        let marker = driver
+            .settings
+            .claim_store
+            .parent()
+            .unwrap()
+            .join("wall-relaunch.gh-4");
+        assert!(!marker.exists(), "{name}: {}", marker.display());
+    }
 }
 
 /// A `claude` the launch rows start that hits a weekly wall: it draws
@@ -5208,8 +5283,6 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     // the flags `main` recorded as given: its launch refused a lane on an
     // account without either.
     record["effort"] = json!("high");
-    record["class"] = json!(CLASS);
-    record["class_reason"] = json!(CLASS_REASON);
     record["recovery"]["flags"] = json!("--model opus --effort high");
     record["account"] = json!(old_account.display().to_string());
     fleet.set_lanes(vec![record]);
@@ -5319,8 +5392,6 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         // the flags `main` recorded as given: its launch refused a lane on an
         // account without either.
         record["effort"] = json!("high");
-        record["class"] = json!(CLASS);
-        record["class_reason"] = json!(CLASS_REASON);
         record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         let world = HostedWorld::new(dir.path());
@@ -5477,8 +5548,6 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         // the flags `main` recorded as given: its launch refused a lane on an
         // account without either.
         record["effort"] = json!("high");
-        record["class"] = json!(CLASS);
-        record["class_reason"] = json!(CLASS_REASON);
         record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         fleet.set_lanes(vec![record]);

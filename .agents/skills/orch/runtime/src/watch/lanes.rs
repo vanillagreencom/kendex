@@ -1937,8 +1937,11 @@ pub(crate) struct Composed {
 /// composition's accounts and brief. The checkout is the one the launch ran
 /// from (`checkout` on a hosted record, whose `mail_root` is its host's;
 /// the `recovery.cwd` an earlier launcher recorded; else `mail_root`). A
-/// record whose checkout is gone, or whose provider is spelled relative to
-/// nothing, refuses before anything is stopped. `Err` is the cause word.
+/// record naming no class or no reason (`class-unrecorded`: the launch
+/// keeps the record's pair and would refuse once the close had retired the
+/// predecessor), whose checkout is gone, or whose provider is spelled
+/// relative to nothing, refuses before anything is stopped. `Err` is the
+/// cause word.
 #[allow(
     clippy::disallowed_methods,
     reason = "a relaunch's request and brief files, beside the state, written before the detached relaunch starts"
@@ -1949,6 +1952,14 @@ pub(crate) fn compose_relaunch(
     how: &Composition,
     state_dir: &Path,
 ) -> Result<Composed, String> {
+    if lane.class.is_none()
+        || lane
+            .class_reason
+            .as_deref()
+            .is_none_or(|r| r.trim().is_empty())
+    {
+        return Err("class-unrecorded".to_owned());
+    }
     let recovery = lane.extra.get("recovery").and_then(Value::as_object);
     let field = |key: &str| recovery.and_then(|r| r.get(key));
     let cwd = lane

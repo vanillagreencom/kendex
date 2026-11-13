@@ -579,9 +579,9 @@ pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<(
         }
         Request::CloseOwnedResources(_) => effect(false, false),
         // The claim is spent where the replacement's launch could not run:
-        // the limit it counts against and every key that launch reads.
+        // every key that launch reads. The limit is judged where the claim
+        // reads it, before it is taken.
         Request::RecoverLaneModel(_) => {
-            settings.model_recovery_limit.get()?;
             effect(false, false)?;
             settings.lane_output.get()?;
             Ok(())
@@ -1670,5 +1670,94 @@ mod tests {
         };
         assert_eq!(t.expected.pane, Value::Null);
         assert_eq!(t.expected.pending, Value::Null);
+    }
+
+    /// A model recovery's claim and a predecessor stop's keep judge the
+    /// record they commit against: where another writer moves it between
+    /// the read and the store, the moved record is judged again and answers
+    /// with that writer's state, never `record-changed`.
+    #[test]
+    fn a_recovery_claim_and_a_stop_keep_judge_a_moved_snapshot_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let bound = serde_json::json!({
+            "launch": {"pid": 41, "start": "ticks:41"},
+            "launched_at": "2026-11-12T10:00:00Z",
+        });
+        // Another writer's one edit of the record at `path`, in the gap.
+        let moved = std::cell::Cell::new(false);
+        let writer = |path: &Path, edit: fn(&mut Document)| {
+            if !moved.replace(true) {
+                let mut doc = object(path);
+                edit(&mut doc);
+                fs::write(path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+            }
+        };
+
+        // A claim whose switch another claimant started in the gap.
+        let fleet_path = fleet_file(dir.path());
+        let mut doc = object(&fleet_path);
+        let mut lane = doc["lanes"][0].clone();
+        lane["item"] = "KEN-R".into();
+        lane["status"] = "running".into();
+        lane["launch"] = bound["launch"].clone();
+        lane["launched_at"] = bound["launched_at"].clone();
+        lane["model_check"] = serde_json::json!({
+            "outcome": "switched", "session_id": "current",
+            "launch_identity": bound, "recovery_started": false,
+        });
+        doc.insert("lanes".to_owned(), Value::Array(vec![lane]));
+        fs::write(&fleet_path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        let claim = Request::RecoverLaneModel(Box::new(lane_model::RecoverLaneModel {
+            item: "KEN-R".to_owned(),
+            session: "current".to_owned(),
+            launch_identity: bound.clone(),
+            mark: None,
+            limit: Some(3),
+        }));
+        let refused = apply_interleaved(&fleet_path, &claim, &env(), LOCK, None, &|| {
+            writer(&fleet_path, |doc| {
+                doc["lanes"][0]["model_check"]["recovery_started"] = true.into();
+            });
+        })
+        .unwrap_err();
+        assert_eq!(refused.key(), "model-recovery-unbound", "{refused}");
+
+        // A keep whose handoff another switch took in the gap.
+        moved.set(false);
+        let item_path = item_file(dir.path());
+        let mut doc = object(&item_path);
+        doc.insert(
+            "handoff".to_owned(),
+            serde_json::json!({"session_id": "current", "cause": "model-switched"}),
+        );
+        doc.insert(
+            "model_checks".to_owned(),
+            serde_json::json!({"current": {"launch_identity": bound}}),
+        );
+        fs::write(&item_path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        let keep = Request::StopModelPredecessor(Box::new(lane_model::StopModelPredecessor {
+            session: "current".to_owned(),
+            launch_identity: bound,
+            file: dir.path().join("lane-host-pid"),
+            job: true,
+            failure: Some(lane_model::StopFailure {
+                cause: "timeout".to_owned(),
+                pid: Some(41),
+                exit: 0,
+            }),
+        }));
+        let applied = apply_interleaved(&item_path, &keep, &env(), LOCK, None, &|| {
+            writer(&item_path, |doc| {
+                doc["handoff"]["session_id"] = "later".into();
+            });
+        })
+        .unwrap();
+        let Report::StopModelPredecessor(kept) = applied.report else {
+            panic!("{:?}", applied.report)
+        };
+        assert!(!kept.written, "{kept:?}");
+        let doc = object(&item_path);
+        assert_eq!(doc["handoff"]["session_id"], "later");
+        assert!(doc["handoff"].get("stop_failure").is_none(), "{doc:?}");
     }
 }
