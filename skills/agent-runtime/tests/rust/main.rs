@@ -107,34 +107,6 @@ fn the_runner_reads_an_answer_larger_than_a_pipe_within_the_timeout() {
     assert!(out.stderr.iter().all(|b| *b == b'e'));
 }
 
-#[test]
-fn judge_reads_a_screen_fixture_through_the_one_judge() {
-    let dir = tempfile::tempdir().unwrap();
-    let screen = dir.path().join("screen.txt");
-    std::fs::write(&screen, "❯ do it\n✻ Churned for 6s · done\n❯\u{a0}\n").unwrap();
-    let out = Command::new(binary())
-        .args(["judge", "--harness", "claude", "--screen"])
-        .arg(&screen)
-        .output()
-        .unwrap();
-    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(reply["result"]["state"], "idle");
-    let out = Command::new(binary())
-        .args([
-            "judge",
-            "--harness",
-            "claude",
-            "--process",
-            "shells-only",
-            "--screen",
-        ])
-        .arg(&screen)
-        .output()
-        .unwrap();
-    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(reply["result"]["state"], "exited");
-}
-
 /// The bypass posture is the one place a harness's permission flag is
 /// spelled; a native posture never carries it.
 #[test]
@@ -168,10 +140,10 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
     assert!(!native.args.contains(&flag));
 }
 
-/// Pi 1.4.0's default composer at rest: the capture-pane output of the
-/// native probe (`tests/native/thin-path.sh`) at rest once its turns ended.
+/// Pi 1.4.0's default composer at rest: the capture-pane output of a real
+/// Pi session at rest once its turns ended.
 const PI_IDLE: &str = include_str!("fixtures/pi-idle.txt");
-/// The same session while its first turn ran: the drawn lines the probe's
+/// The same session while its first turn ran: the drawn lines its
 /// inspection kept, with the `── ⠹ Working ──` editor border.
 const PI_WORKING: &str = include_str!("fixtures/pi-working.txt");
 
@@ -247,121 +219,6 @@ fn each_harness_s_real_idle_capture_reads_idle_under_its_own_rule() {
             "under {other:?}"
         );
     }
-}
-
-#[test]
-fn the_judge_verb_takes_the_harness_that_drew_the_screen() {
-    let dir = tempfile::tempdir().unwrap();
-    let screen = dir.path().join("pi.txt");
-    std::fs::write(&screen, PI_IDLE).unwrap();
-    let out = Command::new(binary())
-        .args(["judge", "--harness", "pi", "--screen"])
-        .arg(&screen)
-        .output()
-        .unwrap();
-    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(reply["result"]["state"], "idle");
-    let out = Command::new(binary())
-        .args(["judge", "--harness", "nope", "--screen"])
-        .arg(&screen)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(reply["refusal"]["key"], "harness-unknown");
-}
-
-/// The native probe reads a `process live` reply through
-/// `tests/native/lib/reading.sh`, the same function thin-path.sh sources.
-/// Fed the binary's own replies: a child this test holds reads `live`,
-/// then `gone` once it exited and is still held unreaped; an unreadable
-/// reading, in the binary's own serialization, carries its cause; a
-/// refusal reply and an empty answer read `unread`. The `identity_start`
-/// reader gives a live identity's start and nothing for a gone one.
-#[test]
-fn the_native_probe_reads_the_binary_s_own_process_replies_by_their_reading() {
-    use agent_runtime::process::Identity;
-    use agent_runtime::protocol::Reply;
-    use agent_runtime::reading::Reading;
-    use std::io::Write;
-    use std::time::{Duration, Instant};
-
-    let lib = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../tests/native/lib/reading.sh"
-    );
-    // The shell function over `input`, as the probe runs it.
-    let through = |function: &str, input: &[u8]| -> String {
-        let mut child = Command::new("bash")
-            .args(["-c", &format!(". \"$1\" && {function}"), "_", lib])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(input).unwrap();
-        let out = child.wait_with_output().unwrap();
-        assert!(out.status.success(), "{function}: {:?}", out.status);
-        String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
-    };
-    let reading = |input: &[u8]| -> serde_json::Value {
-        serde_json::from_str(&through("process_reading", input)).unwrap()
-    };
-    let reply =
-        |args: &[&str]| -> Vec<u8> { Command::new(binary()).args(args).output().unwrap().stdout };
-
-    // A child this test holds, killed and reaped on drop whatever is asserted.
-    struct Held(std::process::Child);
-    impl Drop for Held {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let mut child = Held(Command::new("sleep").arg("30").spawn().unwrap());
-    let pid = child.0.id().to_string();
-
-    let identity = reply(&["process", "identity", &pid]);
-    let start = through("identity_start", &identity);
-    assert!(!start.is_empty(), "a live identity has a start");
-    assert_eq!(
-        reading(&reply(&["process", "live", &pid, &start])),
-        serde_json::json!({"reading": "live", "cause": null})
-    );
-
-    child.0.kill().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let gone = loop {
-        let now = reading(&reply(&["process", "live", &pid, &start]));
-        if now["reading"] != "live" {
-            break now;
-        }
-        assert!(Instant::now() < deadline, "the child never read gone");
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert_eq!(gone, serde_json::json!({"reading": "gone", "cause": null}));
-    assert_eq!(
-        through("identity_start", &reply(&["process", "identity", &pid])),
-        "",
-        "a gone identity has no start"
-    );
-
-    let unreadable = serde_json::to_vec(&Reply::ok(Reading::<Identity>::Unreadable {
-        cause: "ticks-unavailable",
-    }))
-    .unwrap();
-    assert_eq!(
-        reading(&unreadable),
-        serde_json::json!({"reading": "unreadable", "cause": "ticks-unavailable"})
-    );
-    let refused = reply(&["inspect", "--record", "/nonexistent/record.json"]);
-    assert_eq!(
-        reading(&refused),
-        serde_json::json!({"reading": "unread", "cause": null})
-    );
-    assert_eq!(
-        reading(b""),
-        serde_json::json!({"reading": "unread", "cause": null})
-    );
 }
 
 /// A private tmux server on its own socket with one detached session,

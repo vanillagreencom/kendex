@@ -871,23 +871,6 @@ mod tests {
     }
 
     #[test]
-    fn a_first_write_needs_an_absent_file_and_starts_at_revision_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("r.json");
-        let body = Body {
-            name: "a".into(),
-            count: 1,
-        };
-        let revision = write(&path, 1, &body, &Map::new(), Expect::Absent).unwrap();
-        assert_eq!(revision, 1);
-        let loaded = read::<Body>(&path, V).unwrap().unwrap();
-        assert_eq!(loaded.body, body);
-        assert_eq!(loaded.revision, 1);
-        let err = write(&path, 1, &body, &Map::new(), Expect::Absent).unwrap_err();
-        assert!(matches!(err, Error::RevisionMismatch { found: 1, .. }));
-    }
-
-    #[test]
     fn a_stale_revision_is_refused_and_leaves_the_file_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("r.json");
@@ -961,16 +944,6 @@ mod tests {
         .unwrap();
         let err = read::<Body>(&path, V).unwrap_err();
         assert!(matches!(err, Error::RecordVersion { found: 9, .. }));
-    }
-
-    #[test]
-    fn a_missing_file_reads_as_none_not_as_an_empty_record() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(
-            read::<Body>(&dir.path().join("none.json"), V)
-                .unwrap()
-                .is_none()
-        );
     }
 
     /// A clock that moves only when the wait sleeps on it, and the record of

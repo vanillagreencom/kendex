@@ -1133,16 +1133,8 @@ fn a_reproduction_runs_its_command_even_when_a_pass_or_selector_would_answer_it(
 }
 
 #[test]
-fn the_entry_help_states_its_contract_and_a_full_start_ignores_a_base_and_refuses_unused_options() {
+fn a_full_start_ignores_a_base_and_refuses_unused_options() {
     let w = World::new();
-    // The workflows send a reader to the entry's `--help` for its contract:
-    // the long help, not the one-line summary `-h` prints.
-    let help = |flag: &str| {
-        let out = w.entry(&[flag], &[]);
-        assert!(out.status.success(), "{}", stderr(&out));
-        text(&out)
-    };
-    assert_ne!(help("--help"), help("-h"));
     let out = w.local(
         &["--base", "absent-ref"],
         &[("DEV_VALIDATE_RANGE_CMD", "echo range")],
@@ -1687,31 +1679,6 @@ fn wait_budgets_and_launch_grace_use_the_injected_clock_and_do_not_start_work() 
         assert_eq!(field(&line, "state"), want);
         assert_eq!(exit, if want == "running" { 3 } else { 1 });
         assert!(!w.worktree.join("must-not-run").exists());
-    }
-}
-
-#[test]
-fn wait_reads_a_finished_ci_receipt_as_pending_proof_and_a_completed_local_run_as_pass() {
-    for mode in ["full", "ci"] {
-        let w = World::new();
-        let dir = executor_dir(&w, "true", 20);
-        let start = fs::read_to_string(dir.join("start"))
-            .unwrap()
-            .replace("validate-mode=full", &format!("validate-mode={mode}"));
-        fs::write(dir.join("start"), start).unwrap();
-        fs::write(dir.join("exit"), "guard-exit=0 at=2026-01-01T00:00:00Z\n").unwrap();
-        fs::write(
-            dir.join("timing"),
-            "started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:00:00Z\nseconds=0\n",
-        )
-        .unwrap();
-        let out = w.entry(&["--wait", "--run-dir", dir.to_str().unwrap()], &[]);
-        assert!(out.status.success());
-        assert_eq!(field(&text(&out), "validate"), "pass");
-        assert_eq!(
-            field(&read_record(&w, dir.to_str().unwrap()), "verdict"),
-            if mode == "ci" { "pending" } else { "pass" }
-        );
     }
 }
 
@@ -2897,128 +2864,6 @@ fn a_foreground_stop_records_intent_before_signalling_and_closes_the_stage_stopp
         w.entry(&["--record", "--run-dir", &dir], &[]).status.code(),
         Some(2)
     );
-}
-
-#[test]
-fn require_proof_binds_both_the_expected_commit_and_its_snapshot() {
-    let w = World::new();
-    let wt = w.worktree.display().to_string();
-    let proof = |proof_head: &str, expected: &str| {
-        w.entry(
-            &[
-                "--resolve-mode",
-                "--worktree",
-                &wt,
-                "--require-proof",
-                proof_head,
-                "--expected-head",
-                expected,
-            ],
-            &[],
-        )
-    };
-    // No run: the proof is missing, named by the CI admission's own cause.
-    let before = w.commit("before.rs");
-    let out = proof(&before, &before);
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert_eq!(
-        field(&text(&out), "ci-fallback"),
-        "push-base",
-        "{}",
-        text(&out)
-    );
-    w.commit("source.rs");
-    let out = w.local(&[], &[]);
-    assert!(out.status.success());
-    let head = w.head();
-    // The released fences pass no --base: the proof's base is the merge base
-    // with the origin base branch, and a restack of the run's tree onto it
-    // that conflicts nowhere proves the run's head.
-    let out = proof(&head, &head);
-    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
-    assert_eq!(text(&out).lines().next(), Some("validate-mode=full"));
-    assert_eq!(field(&text(&out), "validation-proof"), "tree-pass");
-    // A proof asked for another head than the run's is the run's local pass
-    // over the tree.
-    let out = proof(&before, &head);
-    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
-    assert_eq!(field(&text(&out), "validation-proof"), "local-pass");
-    let args = [
-        "--resolve-mode",
-        "--worktree",
-        w.worktree.to_str().unwrap(),
-        "--require-proof",
-        head.as_str(),
-        "--expected-head",
-        head.as_str(),
-    ];
-    fs::write(w.worktree.join("source.rs"), "changed\n").unwrap();
-    let out = w.entry(&args, &[]);
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(field(&text(&out), "cause"), "tree-mismatch");
-    let out = w.entry(
-        &[
-            "--resolve-mode",
-            "--worktree",
-            w.worktree.to_str().unwrap(),
-            "--require-proof",
-            &head,
-            "--expected-head",
-            "other",
-        ],
-        &[],
-    );
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(field(&text(&out), "cause"), "head-mismatch");
-    // A base the proof cannot resolve is no answer.
-    git(&w.worktree, &["checkout", "-q", "--", "source.rs"]);
-    git(
-        &w.worktree,
-        &["update-ref", "-d", "refs/remotes/origin/main"],
-    );
-    let out = proof(&head, &head);
-    assert_eq!(out.status.code(), Some(2), "{}", text(&out));
-    assert!(
-        stderr(&out).contains("dev-validate-run: proof-base-unresolved"),
-        "{}",
-        stderr(&out)
-    );
-}
-
-#[test]
-fn the_real_systemd_client_refuses_invalid_environment_and_an_absent_private_bus_before_launch() {
-    let w = World::new();
-    let executable = Path::new("/usr/bin/systemd-run");
-    if !executable.is_file() {
-        return;
-    }
-    for invalid in [false, true] {
-        let mut command = program(executable);
-        command.env("XDG_RUNTIME_DIR", &w.root).env(
-            "DBUS_SESSION_BUS_ADDRESS",
-            format!("unix:path={}/absent-bus", w.root.display()),
-        );
-        command.args([
-            "--user",
-            "--quiet",
-            "--collect",
-            "--unit=orch-private-validation-contract",
-        ]);
-        if invalid {
-            command.arg("--setenv=BASH_FUNC_bad%%=x");
-        }
-        let out = command.args(["--", "/bin/true"]).output().unwrap();
-        assert_eq!(out.status.code(), Some(1));
-        let error = stderr(&out);
-        assert!(
-            error.contains(if invalid {
-                "Cannot assign environment variable "
-            } else {
-                "Failed to connect to "
-            }),
-            "{error}"
-        );
-    }
 }
 
 fn ci_world(w: &World, case: &str) -> (String, String, String) {

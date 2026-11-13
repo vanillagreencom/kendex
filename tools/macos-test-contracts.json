@@ -223,7 +223,6 @@
     "skills/orch/tests/oversee_report_quiet.sh": "mixed",
     "skills/orch/tests/overseer-host.sh": "mixed",
     "skills/orch/tests/overseer-preference.sh": "linux-duplicate",
-    "skills/orch/tests/overseer_run.sh": "linux-duplicate",
     "skills/orch/tests/pane_write.sh": "linux-duplicate",
     "skills/orch/tests/post_merge.sh": "linux-duplicate",
     "skills/orch/tests/pr-view-json-messages.sh": "linux-duplicate",

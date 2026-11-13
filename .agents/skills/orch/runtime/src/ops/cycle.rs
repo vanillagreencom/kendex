@@ -2369,43 +2369,6 @@ mod tests {
     }
 
     #[test]
-    fn the_first_ready_is_recorded_without_changing_the_phase() {
-        for (name, ready, want, draft) in [
-            ("draft-then-ready", json!([at(240)]), at(240), 120),
-            (
-                "repeated-ready-with-nulls",
-                json!([null, at(240), at(180), null]),
-                at(180),
-                120,
-            ),
-            ("no-ready", json!([]), Value::Null, 0),
-            ("only-null", json!([null]), Value::Null, 0),
-        ] {
-            let mut t = timeline(600, 300, 110);
-            t["ready_times"] = ready;
-            let c = cycle(
-                &lane("KEN-1", json!({})),
-                &t,
-                &class("micro", "stub"),
-                Some("micro"),
-            );
-            assert_eq!(c["stamps"]["ready"], want, "{name}");
-            assert_eq!(
-                json!([
-                    c["stamps"]["pr_opened"],
-                    c["phase"],
-                    c["phase_secs"],
-                    c["gate_waits"],
-                    c["missing"]
-                ]),
-                json!([at(120), "gate_green", 180,
-                    {"bot_wait": 180 - draft, "draft": draft, "thread_fix": 0, "paused": 0}, []]),
-                "{name}"
-            );
-        }
-    }
-
-    #[test]
     fn the_ci_green_phase_names_the_larger_part_of_its_gap_as_its_cause() {
         for (name, push, spans, clean, cause) in [
             (

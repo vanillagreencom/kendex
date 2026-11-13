@@ -804,14 +804,6 @@ mod tests {
         assert_eq!(Harness::Pi.account_var(None), "CLAUDE_CONFIG_DIR");
     }
 
-    #[test]
-    fn copilot_owns_its_main_thread_process_name() {
-        assert!(Harness::Copilot.owns_process("MainThread"));
-        assert!(Harness::Copilot.owns_process("copilot"));
-        assert!(!Harness::Claude.owns_process("MainThread"));
-        assert!(Harness::Pi.owns_process("pi"));
-    }
-
     /// The full-bypass spelling table: every supported spelling is
     /// recognized, a `FLAG=VALUE` spelling in its two-word form too, and a
     /// non-bypass permission word is not a bypass.

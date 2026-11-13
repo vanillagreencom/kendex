@@ -608,7 +608,8 @@ fn terminal_close(item: &str) -> Value {
 /// at a cap of one with the stable key and its values; the same lane ended
 /// charges nothing though its status, pane and pending return still stand,
 /// so the next lane is admitted with occupancy zero, its preparing row then
-/// charges the cap, and the ended lane's record keeps every field.
+/// charges the cap, and the ended lane's record keeps every field; a stopped
+/// lane whose harness runs holds its slot and refuses its own relaunch.
 #[test]
 fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
     let fleet = Fleet::new(1);
@@ -689,6 +690,30 @@ fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
     let answer = reply(&out);
     assert_eq!(answer["refusal"]["key"], "cap-reached");
     assert_eq!(answer["refusal"]["fields"][0], json!(["occupancy", "1"]));
+
+    // A stopped lane whose harness still runs holds its slot, and its own
+    // relaunch is refused rather than doubling it; once it ends, the
+    // relaunch replaces its own lane.
+    let fleet = Fleet::new(1);
+    fleet.init_fleet();
+    let mut stopped = Owned::sleep();
+    fleet.write_lanes(vec![record(
+        "KEN-D",
+        "stopped",
+        Some(&stopped),
+        fleet.state_dir(),
+    )]);
+    let answer = reply(&fleet.op(&launch("KEN-E", fleet.state_dir())));
+    assert_eq!(answer["refusal"]["key"], "cap-reached", "{answer}");
+    let answer = reply(&fleet.op(&launch("KEN-D", fleet.state_dir())));
+    assert_eq!(answer["refusal"]["key"], "harness-live", "{answer}");
+    end(&mut stopped);
+    let answer = reply(&fleet.op(&launch("KEN-D", fleet.state_dir())));
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(
+        answer["result"]["persisted"]["report"]["admission"]["occupancy"],
+        0
+    );
 }
 
 /// Through the executable: a stopped lane's relaunch the cap refuses is a
@@ -1708,20 +1733,18 @@ fn a_launch_below_standard_after_its_miss_is_refused_until_one_at_standard_confi
 
 /// Through the executable: a `no-landing` disposition on a lane
 /// whose recorded harness is gone retires the attempt and keeps the item's
-/// work: the lane reads stopped with its pending return, launch, recovery
-/// route and counter, the log row carries the disposition, and the retired
+/// work: the lane reads stopped with its pending return, parked record,
+/// launch, recovery route and counter, the log row carries the disposition,
+/// and the retired
 /// attempt charges nothing.
 #[test]
 fn a_no_landing_disposition_retires_the_attempt_and_keeps_the_work() {
     let fleet = Fleet::new(1);
     fleet.init_fleet();
     let mut harness = Owned::sleep();
-    fleet.write_lanes(vec![record(
-        "KEN-A",
-        "running",
-        Some(&harness),
-        fleet.state_dir(),
-    )]);
+    let mut lane = record("KEN-A", "running", Some(&harness), fleet.state_dir());
+    lane["parked"] = json!({"head": "abc", "repo": "o/r", "at": "2026-10-24T20:00:00Z"});
+    fleet.write_lanes(vec![lane]);
     end(&mut harness);
     let before = fleet.lane("KEN-A");
     let disposition = json!({

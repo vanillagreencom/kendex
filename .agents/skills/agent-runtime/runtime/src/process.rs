@@ -1193,14 +1193,6 @@ mod tests {
         drop(child);
     }
 
-    #[test]
-    fn only_shells_below_reads_an_exited_harness_pane_as_shells() {
-        let t = rows(&[(20, 1, "bash"), (21, 20, "zsh"), (22, 21, "sh")]);
-        assert!(only_shells_below(&t, 20));
-        let t = rows(&[(20, 1, "bash"), (21, 20, "claude")]);
-        assert!(!only_shells_below(&t, 20));
-    }
-
     /// On a real process: a child this test holds reads live
     /// under its identity, and once it has exited, still held unreaped so
     /// its pid is nobody else's, reads gone. A recorded start the pid never

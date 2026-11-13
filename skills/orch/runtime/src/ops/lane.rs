@@ -2458,7 +2458,6 @@ mod tests {
     use super::super::testing::*;
     use super::*;
     use crate::error::Error;
-    use crate::ops::occupancy::{ChargeReason, ChargeSource};
     use crate::ops::{Effect, Report, Request, apply_on};
     use crate::state::{LaneStatus, fixtures};
     use agent_runtime::intent::{EffectOp, Phase};
@@ -2853,205 +2852,6 @@ mod tests {
             "recovery": {"cwd": format!("/w/{item}"), "flags": "", "refresh": true},
             "cycles": 2,
         })
-    }
-
-    fn charges(admission: &Occupancy) -> Vec<(String, ChargeReason)> {
-        admission
-            .charges
-            .iter()
-            .map(|c| {
-                let source = match &c.source {
-                    ChargeSource::Lane { item } => item.clone(),
-                };
-                (source, c.reason)
-            })
-            .collect()
-    }
-
-    /// The cap, against processes this test holds: a lane
-    /// whose recorded harness runs charges a slot and refuses the next lane
-    /// at a cap of one; the same lane with its harness ended charges nothing
-    /// though its status, pane and pending return still stand, so the next
-    /// lane is admitted and every retained field of the ended lane is left
-    /// as it was; a stopped lane whose harness still runs holds its slot and
-    /// refuses its own relaunch; `over_cap` admits past the cap and is
-    /// recorded.
-    #[test]
-    fn the_cap_charges_live_harnesses_and_releases_ended_attempts() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = fleet_file(dir.path());
-        let mut harness = Held::sleep();
-        let id = harness.identity();
-        fleet_with(&path, &[record("KEN-A", "running", Some(&id))]);
-        let before = lane_doc(&path, "KEN-A");
-
-        let err = apply_on(&path, &launch("KEN-B"), &env(), LOCK, &kernel(1)).unwrap_err();
-        assert_eq!(err.key(), "cap-reached");
-        assert_eq!(
-            err.fields(),
-            [
-                ("occupancy".to_owned(), "1".to_owned()),
-                ("cap".to_owned(), "1".to_owned()),
-                ("lanes".to_owned(), "1".to_owned()),
-                ("setting".to_owned(), "ORCH_OVERSEER_LANES".to_owned())
-            ]
-        );
-        assert_eq!(
-            fleet(&path).lanes.len(),
-            1,
-            "a refused launch writes nothing"
-        );
-
-        // Between turns the harness sleeps at its barrier: still live, still
-        // one slot.
-        let err = apply_on(&path, &launch("KEN-B"), &env(), LOCK, &kernel(1)).unwrap_err();
-        assert_eq!(err.key(), "cap-reached");
-
-        // The attempt ends: its record reads running with its pane and its
-        // pending return, and charges nothing.
-        harness.end();
-        let applied = apply_on(&path, &launch("KEN-B"), &env(), LOCK, &kernel(1)).unwrap();
-        let Report::LaunchLane(l) = &applied.report else {
-            panic!()
-        };
-        assert_eq!(l.admission.occupancy, 0);
-        assert_eq!(l.admission.cap, 1);
-        assert!(l.admission.charges.is_empty());
-        assert_eq!(l.lane.status, LaneStatus::Preparing);
-        assert_eq!(
-            lane_doc(&path, "KEN-A"),
-            before,
-            "the ended lane keeps every field: status, pane, pending return, recovery, counters"
-        );
-
-        // The committed preparing row charges the cap: a third lane meets it.
-        let err = apply_on(&path, &launch("KEN-C"), &env(), LOCK, &kernel(1)).unwrap_err();
-        assert_eq!(err.key(), "cap-reached");
-        let Report::LaunchLane(l) = apply_on(
-            &path,
-            &Request::LaunchLane(Box::new(LaunchLane {
-                over_cap: Some("fleet".into()),
-                ..launch_fields("KEN-C")
-            })),
-            &env(),
-            LOCK,
-            &kernel(1),
-        )
-        .unwrap()
-        .report
-        else {
-            panic!()
-        };
-        assert_eq!(l.admission.occupancy, 1);
-        assert_eq!(
-            charges(&l.admission),
-            [("KEN-B".to_owned(), ChargeReason::Preparing)]
-        );
-        assert_eq!(l.lane.over_cap.as_deref(), Some("fleet"));
-
-        // A stopped lane whose harness still runs: a returned turn did not
-        // end it. It holds its slot, and its own relaunch is refused rather
-        // than doubling it.
-        let mut live = Held::sleep();
-        let live_id = live.identity();
-        fleet_with(&path, &[record("KEN-D", "stopped", Some(&live_id))]);
-        let err = apply_on(&path, &launch("KEN-E"), &env(), LOCK, &kernel(1)).unwrap_err();
-        assert_eq!(err.key(), "cap-reached");
-        let err = apply_on(&path, &launch("KEN-D"), &env(), LOCK, &kernel(4)).unwrap_err();
-        assert_eq!(err.key(), "harness-live");
-        assert_eq!(err.fields()[1], ("pid".to_owned(), live_id.pid.to_string()));
-        live.end();
-        let Report::LaunchLane(l) = apply_on(&path, &launch("KEN-D"), &env(), LOCK, &kernel(1))
-            .unwrap()
-            .report
-        else {
-            panic!()
-        };
-        assert_eq!(
-            l.admission.occupancy, 0,
-            "the relaunch replaces its own lane"
-        );
-    }
-
-    /// Five stopped attempts, each with a surviving window and
-    /// no reservation, beside N-1 live lanes at cap N: occupancy is N-1, not
-    /// N+4, and the independent candidate is admitted, committed as the Nth
-    /// slot, the cap unchanged.
-    #[test]
-    fn normal_admission_at_cap_n_ignores_stopped_attempts_with_empty_windows() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = fleet_file(dir.path());
-        let live: Vec<Held> = (0..3).map(|_| Held::sleep()).collect();
-        let mut ended: Vec<Held> = (0..5).map(|_| Held::sleep()).collect();
-        let mut lanes: Vec<Value> = live
-            .iter()
-            .enumerate()
-            .map(|(n, h)| record(&format!("KEN-L{n}"), "running", Some(&h.identity())))
-            .collect();
-        lanes.extend(
-            ended
-                .iter()
-                .enumerate()
-                .map(|(n, h)| record(&format!("KEN-S{n}"), "stopped", Some(&h.identity()))),
-        );
-        for h in &mut ended {
-            h.end();
-        }
-        fleet_with(&path, &lanes);
-        let Report::LaunchLane(l) = apply_on(&path, &launch("KEN-N"), &env(), LOCK, &kernel(4))
-            .unwrap()
-            .report
-        else {
-            panic!()
-        };
-        assert_eq!(l.admission.occupancy, 3);
-        assert_eq!(
-            charges(&l.admission),
-            [
-                ("KEN-L0".to_owned(), ChargeReason::Live),
-                ("KEN-L1".to_owned(), ChargeReason::Live),
-                ("KEN-L2".to_owned(), ChargeReason::Live),
-            ]
-        );
-        // Committed: the next candidate meets the cap.
-        let err = apply_on(&path, &launch("KEN-O"), &env(), LOCK, &kernel(4)).unwrap_err();
-        assert_eq!(err.key(), "cap-reached");
-        assert_eq!(err.fields()[0], ("occupancy".to_owned(), "4".to_owned()));
-    }
-
-    /// A planted reader standing in for a kernel that cannot answer: the
-    /// unreadable identity protects its slot as unknown and refuses the next
-    /// lane; the own lane whose reading is unknown refuses its relaunch
-    /// rather than starting a second harness over it.
-    #[test]
-    fn an_unreadable_identity_protects_its_slot_and_its_lane() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = fleet_file(dir.path());
-        let id = Identity {
-            pid: 4242,
-            start: "ticks:42".into(),
-        };
-        fleet_with(&path, &[record("KEN-U", "running", Some(&id))]);
-        let unread = |_: &Identity| Reading::Unreadable {
-            cause: "stat-unreadable",
-        };
-        let host = Host {
-            lane_cap: Some(Judged { read: Ok(1) }),
-            cloud_lane_cap: None,
-            admission: Some(no_reads()),
-            still_runs: &unread,
-            accounts: None,
-        };
-        let err = apply_on(&path, &launch("KEN-V"), &env(), LOCK, &host).unwrap_err();
-        assert_eq!(err.key(), "cap-reached");
-        fleet_with(&path, &[record("KEN-U", "stopped", Some(&id))]);
-        let err = apply_on(&path, &launch("KEN-U"), &env(), LOCK, &host).unwrap_err();
-        assert_eq!(err.key(), "harness-unreadable");
-        assert_eq!(
-            err.fields()[2],
-            ("cause".to_owned(), "stat-unreadable".to_owned())
-        );
-        assert!(fleet(&path).intents.is_empty());
     }
 
     /// A first launch's brief requests a cycle; the touched set its brief
@@ -3519,133 +3319,6 @@ mod tests {
         }
     }
 
-    /// An adoption binds the lane under an identity the kernel answers live
-    /// for, given or kept: a gone one is no execution to adopt and an
-    /// unreadable one authorizes nothing, each refused with the file as it
-    /// was; a bound lane refuses another running session.
-    #[test]
-    fn adopt_session_binds_a_prepared_lane_under_a_live_identity_only() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = fleet_file(dir.path());
-        let id = intend(&path, &launch("KEN-4468"));
-        run(&path, &outcome(&id, Outcome::Failed)).unwrap();
-        let held = Held::sleep();
-        let live = held.identity();
-        let bound =
-            |item: &str, session: &str, launch: LaunchIdentity| adopt(item, session, Some(launch));
-        let as_launch = |id: &Identity| LaunchIdentity {
-            pane: Some("%11".into()),
-            server: Some(41020),
-            server_start: None,
-            pid: Some(id.pid as u64),
-            start: Some(id.start.clone()),
-        };
-        let kernel = &kernel(4);
-        assert_eq!(
-            apply_on(
-                &path,
-                &bound("KEN-none", "s1", as_launch(&live)),
-                &env(),
-                LOCK,
-                kernel
-            )
-            .unwrap_err()
-            .key(),
-            "lane-missing"
-        );
-        assert_eq!(
-            apply_on(
-                &path,
-                &bound("KEN-4437", "s1", as_launch(&live)),
-                &env(),
-                LOCK,
-                kernel
-            )
-            .unwrap_err()
-            .key(),
-            "lane-done"
-        );
-        let before = fs::read_to_string(&path).unwrap();
-        let gone = Identity {
-            pid: live.pid,
-            start: "ticks:0".into(),
-        };
-        let err = apply_on(
-            &path,
-            &bound("KEN-4468", "s1", as_launch(&gone)),
-            &env(),
-            LOCK,
-            kernel,
-        )
-        .unwrap_err();
-        assert_eq!(err.key(), "identity-gone");
-        assert_eq!(err.fields()[1], ("pid".to_owned(), live.pid.to_string()));
-        let unread = |_: &Identity| Reading::Unreadable {
-            cause: "stat-unreadable",
-        };
-        let unreadable = Host {
-            still_runs: &unread,
-            ..super::super::testing::host()
-        };
-        let err = apply_on(
-            &path,
-            &bound("KEN-4468", "s1", as_launch(&live)),
-            &env(),
-            LOCK,
-            &unreadable,
-        )
-        .unwrap_err();
-        assert_eq!(err.key(), "harness-unreadable");
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            before,
-            "refusals write nothing"
-        );
-        let applied = apply_on(
-            &path,
-            &bound("KEN-4468", "s1", as_launch(&live)),
-            &env(),
-            LOCK,
-            kernel,
-        )
-        .unwrap();
-        let Report::AdoptSession(a) = applied.report else {
-            panic!()
-        };
-        assert!(a.adopted_now);
-        assert_eq!(a.lane.status, LaneStatus::Running);
-        assert_eq!(a.lane.running_at.as_deref(), Some("2026-01-29T15:20:00Z"));
-        assert_eq!(a.lane.launch.as_ref().unwrap().pid, Some(live.pid as u64));
-        let Report::AdoptSession(b) = apply_on(
-            &path,
-            &bound("KEN-4468", "s1", as_launch(&live)),
-            &env(),
-            LOCK,
-            kernel,
-        )
-        .unwrap()
-        .report
-        else {
-            panic!()
-        };
-        assert!(!b.adopted_now);
-        let err = apply_on(
-            &path,
-            &bound("KEN-4468", "s2", as_launch(&live)),
-            &env(),
-            LOCK,
-            kernel,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            Error::LaneLive {
-                status: LaneStatus::Running,
-                ..
-            }
-        ));
-    }
-
     /// Adopting a parked lane runs
     /// the unpark, and adopting without `launch` keeps the recorded
     /// identity, which must read live.
@@ -3848,7 +3521,8 @@ mod tests {
     }
 
     /// The live-harness guard: a lane whose recorded harness runs refuses a
-    /// bare close `lane-live`, an unreadable one `harness-unreadable`, and
+    /// bare close `lane-live`, an unreadable one `harness-unreadable` for a
+    /// bare close and a `no-landing` disposition alike, and
     /// a recorded pane with no identity `lane-live`; `terminal` evidence
     /// admits the close whatever the harness reads, recorded on the intent;
     /// two grounds refuse; a lane with neither identity nor pane reads
@@ -3872,6 +3546,22 @@ mod tests {
             ..kernel(4)
         };
         let err = apply_on(&path, &close("KEN-W"), &env(), LOCK, &unreadable).unwrap_err();
+        assert_eq!(err.key(), "harness-unreadable");
+        let no_landing = Request::CloseOwnedResources(CloseOwnedResources {
+            item: "KEN-W".into(),
+            terminal: None,
+            no_landing: Some(NoLanding {
+                reason: "diagnosis".into(),
+                source: "overseer".into(),
+                interrupt: false,
+                park: None,
+            }),
+            ended: None,
+            identity: None,
+            cycle: None,
+            disposed: None,
+        });
+        let err = apply_on(&path, &no_landing, &env(), LOCK, &unreadable).unwrap_err();
         assert_eq!(err.key(), "harness-unreadable");
         let both = Request::CloseOwnedResources(CloseOwnedResources {
             item: "KEN-W".into(),
@@ -3998,90 +3688,6 @@ mod tests {
         assert_eq!(row["kind"], json!("close"));
         assert_eq!(row["verdict"], json!("completed"));
         assert_eq!(row["source"], json!("linear"));
-    }
-
-    /// A close on the `no-landing` disposition retires the
-    /// attempt and keeps the item's work: the lane reads stopped, its
-    /// pending return, parked record, launch, recovery route and counters
-    /// stay, and the fleet log carries the disposition. An unreadable
-    /// harness refuses the disposition.
-    #[test]
-    fn a_no_landing_close_retires_the_attempt_and_keeps_the_item_s_work() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = fleet_file(dir.path());
-        let gone = Identity {
-            pid: 2_000_000_000,
-            start: "ticks:1".into(),
-        };
-        let mut rec = record("KEN-D", "running", Some(&gone));
-        rec["parked"] = json!({"head": "abc", "repo": "o/r", "at": "2026-10-24T20:00:00Z"});
-        fleet_with(&path, &[rec]);
-        let before = lane_doc(&path, "KEN-D");
-        let disposition = Request::CloseOwnedResources(CloseOwnedResources {
-            item: "KEN-D".into(),
-            terminal: None,
-            no_landing: Some(NoLanding {
-                reason: "diagnosis-complete".into(),
-                source: "overseer".into(),
-                interrupt: false,
-                park: None,
-            }),
-            ended: None,
-            identity: None,
-            cycle: None,
-            disposed: None,
-        });
-        let unread = |_: &Identity| Reading::Unreadable {
-            cause: "stat-unreadable",
-        };
-        let unreadable = Host {
-            still_runs: &unread,
-            ..kernel(4)
-        };
-        assert_eq!(
-            apply_on(&path, &disposition, &env(), LOCK, &unreadable)
-                .unwrap_err()
-                .key(),
-            "harness-unreadable"
-        );
-        let Report::CloseOwnedResources(c) =
-            apply_on(&path, &disposition, &env(), LOCK, &kernel(4))
-                .unwrap()
-                .report
-        else {
-            panic!()
-        };
-        let Effect::Persisted { intent } = &c.effect else {
-            panic!()
-        };
-        assert_eq!(
-            LaneMembers::of(&path, intent).unwrap().close,
-            Some(CloseGround::NoLanding {
-                reason: "diagnosis-complete".into(),
-                source: "overseer".into(),
-                interrupt: false,
-                park: None,
-            })
-        );
-        run(&path, &outcome(&intent.id, Outcome::Confirmed)).unwrap();
-        let after = lane_doc(&path, "KEN-D");
-        assert_eq!(after["status"], json!("stopped"));
-        let mut kept = before.clone();
-        kept["status"] = json!("stopped");
-        assert_eq!(after, kept, "everything but the status is as it was");
-        let row = fleet(&path).fleet_log.pop().unwrap();
-        assert_eq!(row["kind"], json!("close"));
-        assert_eq!(row["disposition"], json!("no-landing"));
-        assert_eq!(row["reason"], json!("diagnosis-complete"));
-        assert_eq!(row["source"], json!("overseer"));
-        // The retired attempt charges nothing; its record is recoverable.
-        let Report::LaunchLane(l) = apply_on(&path, &launch("KEN-E"), &env(), LOCK, &kernel(1))
-            .unwrap()
-            .report
-        else {
-            panic!()
-        };
-        assert_eq!(l.admission.occupancy, 0);
     }
 
     /// `park-lane` records the park `close-lane` writes after the

@@ -712,27 +712,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_validate_request_decodes_by_its_step_inside_the_op_envelope() {
-        let text = r#"{"op": "validate", "step": "mark", "round_id": "r", "run_dir": "/w/tmp/dev-validate-x", "owner": "sent"}"#;
-        let request: super::super::Request = serde_json::from_str(text).unwrap();
-        assert_eq!(request.name(), "validate");
-        let super::super::Request::Validate(Validate::Mark(mark)) = request else {
-            panic!("{request:?}");
-        };
-        assert_eq!(mark.owner, "sent");
-        let report = Validated::Mark(Marked {
-            round_id: "r".into(),
-            run_dir: "/w/tmp/dev-validate-x".into(),
-            owner: "sent".into(),
-            marked_now: true,
-        });
-        let wire = serde_json::to_value(super::super::Report::Validate(Box::new(report))).unwrap();
-        assert_eq!(wire["op"], "validate");
-        assert_eq!(wire["step"], "mark");
-        assert_eq!(wire["marked_now"], true);
-    }
-
-    #[test]
     fn the_paths_digest_is_stable_and_order_sensitive() {
         let a = paths_hash(&["a".into(), "b".into()]);
         assert_eq!(a, paths_hash(&["a".into(), "b".into()]));

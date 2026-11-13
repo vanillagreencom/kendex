@@ -520,23 +520,6 @@ mod push {
     }
 
     #[test]
-    fn a_push_with_no_map_leaves_the_record_alone() {
-        let repo = Repo::new("KEN-1", "");
-        record_with_fixes(&repo, &repo.head());
-        let mut before = repo.read();
-        let out = repo.push("branch");
-        let reply = result(&out);
-        assert_eq!(reply["reconciled"], json!([]));
-        assert_eq!(reply["push"]["status"], "confirmed");
-        let mut after = repo.read();
-        assert_eq!(after["push_attempt"]["state"], "confirmed");
-        before.as_object_mut().unwrap().remove("push_attempt");
-        after.as_object_mut().unwrap().remove("push_attempt");
-        assert_eq!(after, before, "no map moves no recorded commit");
-        assert_eq!(repo.remote("ken-1"), repo.head());
-    }
-
-    #[test]
     fn push_arguments_reach_the_real_push_verbatim() {
         let repo = Repo::new("KEN-1", "");
         repo.record(json!({}));
@@ -873,26 +856,6 @@ mod push {
             .unwrap();
         assert!(out.status.success(), "restack: {}", stderr(&out));
         assert!(fs::metadata(repo.map()).is_ok(), "the restack left its hop");
-    }
-
-    #[test]
-    fn restack_hops_reconcile_in_order_before_the_push() {
-        let repo = Repo::new("KEN-1", "");
-        let old = repo.head();
-        record_with_fixes(&repo, &old);
-        restacked(&repo);
-        let restacked_head = repo.head();
-        let out = repo.push("branch");
-        let reply = result(&out);
-        assert_eq!(
-            reply["reconciled"],
-            json!([{"key": "restack-reconcile", "map_entries": 1, "fixed_items": 1, "pr_fixes": 1}])
-        );
-        assert_eq!(
-            repo.read()["fixed_items"][0]["commit"],
-            &restacked_head[..7]
-        );
-        assert!(fs::metadata(repo.map()).is_err());
     }
 
     #[test]

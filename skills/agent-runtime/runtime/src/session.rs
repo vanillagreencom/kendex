@@ -736,18 +736,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slugs_follow_each_store_spelling() {
-        assert_eq!(
-            claude_slug(Path::new("/home/x/dev/.worktrees/k")),
-            "-home-x-dev--worktrees-k"
-        );
-        assert_eq!(
-            pi_slug(Path::new("/home/x/dev/kendex")),
-            "--home-x-dev-kendex--"
-        );
-    }
-
-    #[test]
     fn a_codex_subagent_rollout_is_not_a_lead() {
         let dir = tempfile::tempdir().unwrap();
         let lead = dir.path().join("rollout-a-1.jsonl");

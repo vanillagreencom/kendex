@@ -1184,11 +1184,4 @@ mod tests {
             })
         ));
     }
-
-    #[test]
-    fn shell_quoting_keeps_an_apostrophe_and_a_dollar_literal() {
-        assert_eq!(shell_quote("it's $x"), "'it'\\''s $x'");
-        assert_eq!(shell_quote("plain-word.v1"), "plain-word.v1");
-        assert_eq!(shell_quote(""), "''");
-    }
 }

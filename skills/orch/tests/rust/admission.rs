@@ -861,8 +861,9 @@ fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
 
 /// A running lane's added path is judged against the holders through
 /// `admit` and widens its record with the touched set and the obligation a
-/// stopped holder yields; a live holder refuses it with its id and the
-/// record stays as it was.
+/// stopped holder yields, a holder already recorded keeping its first stamp
+/// and gaining the paths, the standing scope kept; a live holder refuses it
+/// with its id and the record stays as it was; a done lane refuses.
 #[test]
 fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder() {
     let fleet = Fleet::new();
@@ -874,8 +875,13 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     fleet.write_lanes(vec![
         json!({
             "item": "KEN-L", "tracker": "linear", "harness": "claude", "status": "running",
-            "mail_root": "/w/l", "touched": ["src/a.sh"], "in_scope": [],
+            "mail_root": "/w/l", "touched": ["src/a.sh"], "in_scope": ["docs/"],
+            "rebase": [{"holder": "KEN-S", "branch": "ken-s", "paths": ["src/a.sh"], "at": "2026-01-01T00:00:00Z"}],
             "launch": {"pane": "%1", "server": 41020, "pid": 1, "start": "ticks:1"},
+        }),
+        json!({
+            "item": "KEN-D", "tracker": "linear", "harness": "claude", "status": "done",
+            "mail_root": "/w/d", "touched": [],
         }),
         holder(
             "KEN-S",
@@ -895,12 +901,14 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     );
     assert_eq!(answer["result"]["rebase"][0]["holder"], "KEN-S");
     assert_eq!(answer["result"]["rebase"][0]["branch"], "ken-s");
+    assert_eq!(answer["result"]["in_scope"], json!(["docs/"]));
     let lane = fleet.lane("KEN-L");
     assert_eq!(
         lane["touched"],
         json!(["src/a.sh", "src/b.sh", "src/new.sh"])
     );
-    assert_eq!(lane["rebase"][0]["paths"], json!(["src/b.sh"]));
+    assert_eq!(lane["rebase"][0]["paths"], json!(["src/a.sh", "src/b.sh"]));
+    assert_eq!(lane["rebase"][0]["at"], "2026-01-01T00:00:00Z");
     assert_eq!(
         lane["status"], "running",
         "the record moves in nothing else"
@@ -931,6 +939,10 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
             "at": answer["result"]["rebase"][0]["at"],
         }])
     );
+    assert_eq!(fleet.fleet(), before);
+
+    let out = fleet.admit(&json!({"item": "KEN-D", "paths": ["src/z.sh"]}));
+    assert_eq!(refusal(&out).0, "lane-done");
     assert_eq!(fleet.fleet(), before);
 }
 

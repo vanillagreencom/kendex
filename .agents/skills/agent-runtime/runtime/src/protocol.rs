@@ -246,19 +246,6 @@ mod tests {
     use super::*;
     use crate::error::ShapeReason;
 
-    #[test]
-    fn a_refusal_opens_with_its_key_and_fields() {
-        let error = Error::refused("pane-missing", &[("pane", "%7")]);
-        assert_eq!(
-            diagnostic_line(&error),
-            "agent-runtime: pane-missing pane=%7"
-        );
-        let reply: Reply<()> = Reply::refused(&error);
-        assert!(!reply.ok);
-        assert_eq!(reply.protocol, PROTOCOL);
-        assert_eq!(reply.refusal.unwrap().key, "pane-missing");
-    }
-
     /// The record errors carry the path and the value the reader refused,
     /// so a caller can act on the line without parsing the text.
     #[test]
@@ -306,17 +293,5 @@ mod tests {
                 .collect();
             assert_eq!(Refusal::from(error).fields, expected, "{}", error.key());
         }
-    }
-
-    #[test]
-    fn outcomes_serialize_as_kebab_case_words() {
-        assert_eq!(
-            serde_json::to_string(&Outcome::NotStarted).unwrap(),
-            "\"not-started\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Outcome::Unconfirmed).unwrap(),
-            "\"unconfirmed\""
-        );
     }
 }

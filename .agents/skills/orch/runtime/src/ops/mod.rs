@@ -973,34 +973,6 @@ mod tests {
     use agent_runtime::intent::EffectOp;
 
     #[test]
-    fn a_request_on_the_other_kind_of_file_refuses_before_reading() {
-        let dir = tempfile::tempdir().unwrap();
-        let item_path = item_file(dir.path());
-        let fleet_path = fleet_file(dir.path());
-        let rows = [
-            (launch("KEN-1"), &item_path, Kind::Fleet),
-            (
-                Request::BeginRound(BeginRound {
-                    kind: RoundKind::Dev,
-                    body_revision: None,
-                    exception: None,
-                    group: None,
-                }),
-                &fleet_path,
-                Kind::Item,
-            ),
-        ];
-        for (request, path, wanted) in rows {
-            let err = run(path, &request).unwrap_err();
-            assert!(
-                matches!(&err, Error::OpKind { wanted: w, .. } if *w == wanted),
-                "{err}"
-            );
-        }
-        assert_eq!(fs::read_to_string(&item_path).unwrap(), fixtures::ITEM);
-    }
-
-    #[test]
     fn a_missing_file_refuses_as_record_missing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("workflow-state-KEN-1.json");

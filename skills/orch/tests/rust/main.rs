@@ -305,7 +305,7 @@ fn inspect_reads_an_unstamped_file_as_an_item_without_writing() {
 #[test]
 fn inspect_refuses_a_stamped_file_and_malformed_input_without_touching_the_file() {
     let dir = tempfile::tempdir().unwrap();
-    let rows: [(&str, String, &str, Option<&str>); 5] = [
+    let rows: [(&str, String, &str, Option<&str>); 6] = [
         (
             "workflow-state-KEN-9999.json",
             NEWER.to_owned(),
@@ -335,6 +335,12 @@ fn inspect_refuses_a_stamped_file_and_malformed_input_without_touching_the_file(
             FLEET.replacen("\"done\"", "\"closing\"", 1),
             "record-shape",
             Some("field=lanes reason=type-mismatch"),
+        ),
+        (
+            "workflow-state-oversee.json",
+            FLEET.replacen("\"KEN-4470\"", "4470", 1),
+            "record-shape",
+            Some("field=launch_queue reason=type-mismatch"),
         ),
     ];
     for (name, text, key, fields) in rows {

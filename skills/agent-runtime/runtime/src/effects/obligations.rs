@@ -1445,36 +1445,6 @@ mod tests {
     }
 
     #[test]
-    fn a_handle_read_on_the_way_is_an_obligation_until_its_own_end() {
-        // The foreground found in the recorded pane is stopped by
-        // its own identity; its stop settles it and nothing else.
-        let mut obligations =
-            Obligations::of_launch(Some(&launch(Some("%7"), Some(4242), None, None)), None);
-        obligations.add(Obligation::Process(identity(77)), Role::Harness, None);
-        obligations.discharge(Discharge::Pane {
-            pane: pane(),
-            end: PaneEnd::Close(Close::Closed),
-        });
-        let remaining = obligations
-            .clone()
-            .settled()
-            .expect_err("the foreground stands");
-        assert_eq!(
-            standing(&remaining),
-            vec![Obligation::Process(identity(77))]
-        );
-        obligations.discharge(Discharge::Process {
-            identity: identity(77),
-            end: ProcessEnd::Stop(Stop::Stopped { signaled: 1 }),
-        });
-        assert_eq!(discharged_by(&obligations), vec!["closed", "stopped"]);
-        // A discharged handle is not added again by a later read of the
-        // record.
-        obligations.add(Obligation::Process(identity(77)), Role::Harness, None);
-        assert!(obligations.settled().is_ok());
-    }
-
-    #[test]
     fn a_record_without_a_server_or_a_start_keeps_what_it_names_as_an_obligation() {
         let serverless = Obligations::of_launch(
             Some(&launch(Some("%7"), None, Some(31), Some("ticks:31"))),

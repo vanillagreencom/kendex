@@ -6377,6 +6377,8 @@ fn a_hosted_lane_whose_runtime_is_unbuilt_is_refused_before_any_window() {
     );
 }
 
+/// A hold stand-in whose row never releases it would stay on the machine
+/// after the suite: each one ends within its bound.
 #[test]
 fn a_hold_fixture_whose_row_never_releases_it_ends_within_its_bound() {
     use std::io::Write;

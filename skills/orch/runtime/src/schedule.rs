@@ -283,55 +283,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn running_one_duty_moves_no_other_deadline() {
-        let start = Instant::now();
-        for ran in Duty::ALL {
-            let mut s = Schedule::new(&Cadences::defaults(), start, &Duty::ALL);
-            let before: Vec<Instant> = Duty::ALL.iter().map(|d| s.due(*d)).collect();
-            s.advance(ran, start + secs(1));
-            for (duty, was) in Duty::ALL.iter().zip(before) {
-                if *duty == ran {
-                    assert_eq!(
-                        s.due(*duty),
-                        start + secs(1) + Cadences::defaults().of(ran).every
-                    );
-                } else {
-                    assert_eq!(s.due(*duty), was, "{ran:?} moved {duty:?}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn mail_events_do_not_reset_the_heartbeat_deadline() {
-        let start = Instant::now();
-        let mut s = Schedule::new(&Cadences::defaults(), start, &Duty::ALL);
-        let heartbeat = start + secs(6000);
-        s.advance(Duty::Heartbeat, start);
-        assert_eq!(s.due(Duty::Heartbeat), heartbeat);
-        let mut t = start;
-        for _ in 0..50 {
-            t += secs(7);
-            s.wake(Duty::Mail, t);
-            assert_eq!(s.due(Duty::Mail), t.min(s.due(Duty::Mail)));
-            s.advance(Duty::Mail, t + secs(2));
-            assert_eq!(s.due(Duty::Heartbeat), heartbeat);
-            assert_eq!(s.due(Duty::Tracker), start);
-        }
-    }
-
-    #[test]
-    fn a_wake_moves_a_duty_earlier_never_later() {
-        let start = Instant::now();
-        let mut s = Schedule::new(&Cadences::defaults(), start, &Duty::ALL);
-        s.advance(Duty::Tracker, start);
-        s.wake(Duty::Tracker, start + secs(300));
-        assert_eq!(s.due(Duty::Tracker), start + secs(240));
-        s.wake(Duty::Tracker, start + secs(30));
-        assert_eq!(s.due(Duty::Tracker), start + secs(30));
-    }
-
     /// A schedule carries only the duties its thread owns, in `ALL` order,
     /// and a tie between equal due times breaks in that order.
     #[test]

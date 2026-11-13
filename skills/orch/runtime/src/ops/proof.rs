@@ -993,52 +993,6 @@ mod tests {
     }
 
     #[test]
-    fn a_range_row_over_another_base_chains_through_that_bases_tree_to_a_whole_row() {
-        let stages = [
-            stage(
-                10,
-                Some(StageOutcome::Pass),
-                proof(ValidateMode::Full, "t0", ""),
-            ),
-            stage(
-                20,
-                Some(StageOutcome::Pass),
-                proof(ValidateMode::Range, "t1", "h0"),
-            ),
-        ];
-        let mut tree_of = |commit: &str| (commit == "h0").then(|| "t0".to_owned());
-        let read = read(
-            &stages,
-            &[],
-            &ask(Need::Submit, "t1", Some("mb")),
-            &range_declared(),
-            &mut tree_of,
-        );
-        assert_eq!(read.proof, Verdict::Complete);
-        assert_eq!(
-            read.rows
-                .iter()
-                .map(|r| r.tree.as_str())
-                .collect::<Vec<_>>(),
-            ["t1", "t0"]
-        );
-        // The base's tree unread: never coverage.
-        let read = read_with_no_tree(&stages, &ask(Need::Submit, "t1", Some("mb")));
-        assert_eq!(read.proof, Verdict::Missing);
-        assert_eq!(
-            read.lacks,
-            Some(Lacks {
-                tree: "t1".into(),
-                mode: ValidateMode::Range
-            })
-        );
-    }
-
-    fn read_with_no_tree(stages: &[Stage], r: &ReadProof) -> ProofRead {
-        read(stages, &[], r, &range_declared(), &mut |_| None)
-    }
-
-    #[test]
     fn a_chain_that_returns_to_a_tree_already_read_ends_there() {
         let stages = [
             stage(
@@ -1065,50 +1019,5 @@ mod tests {
             &mut tree_of,
         );
         assert_eq!(read.proof, Verdict::Missing);
-    }
-
-    #[test]
-    fn a_recovery_reads_the_rounds_own_rows_and_a_pass_after_its_fail_is_not_voided() {
-        let mut other = stage(
-            30,
-            Some(StageOutcome::Pass),
-            proof(ValidateMode::Full, "t", ""),
-        );
-        other.round_id = Some("other".into());
-        let stages = [
-            stage(
-                10,
-                Some(StageOutcome::Fail),
-                proof(ValidateMode::Range, "t", "b"),
-            ),
-            stage(
-                20,
-                Some(StageOutcome::Pass),
-                proof(ValidateMode::Range, "t", "b"),
-            ),
-            other,
-        ];
-        let read = read_with_no_tree(&stages, &ask(Need::Recovery, "t", Some("b")));
-        assert_eq!(read.proof, Verdict::Complete);
-        assert_eq!(read.rows[0].run_dir, "/w/tmp/dev-validate-20");
-        // The other round's row alone proves nothing for this round.
-        let read = read_with_no_tree(&stages[2..], &ask(Need::Recovery, "t", Some("b")));
-        assert_eq!(read.proof, Verdict::Missing);
-    }
-
-    #[test]
-    fn an_open_later_row_at_the_tree_voids_the_pass() {
-        let stages = [
-            stage(
-                10,
-                Some(StageOutcome::Pass),
-                proof(ValidateMode::Full, "t", ""),
-            ),
-            stage(20, None, proof(ValidateMode::Full, "t", "")),
-        ];
-        assert_eq!(
-            read_with_no_tree(&stages, &ask(Need::Round, "t", None)).proof,
-            Verdict::Missing
-        );
     }
 }

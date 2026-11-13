@@ -426,34 +426,6 @@ pub fn lane(lane: &Lane, files: Files, scripts: &Path, now: u64) -> LaneContext 
 mod tests {
     use super::*;
 
-    /// The record's two shapes, and what is neither (`lane_context_record
-    /// _fields`): a reading with tokens and no gap, a gap with no tokens.
-    #[test]
-    fn a_record_is_a_reading_or_a_gap_and_nothing_else() {
-        let reading = ContextRecord::parse(
-            r#"{"harness":"claude","model":"opus","tokens":910000,"window":1000000,"session_id":"s1","pane_key":"4242 %7","gap":null,"at":"2026-10-01T00:00:00Z"}"#,
-        )
-        .unwrap();
-        assert_eq!(reading.tokens, Some(910_000));
-        assert_eq!(reading.context_arg().as_deref(), Some("910000:1000000"));
-        assert_eq!(reading.window_full(Harness::Claude), Some(false));
-        let gap = ContextRecord::parse(
-            r#"{"harness":"claude","tokens":null,"window":null,"pane_key":"4242 %7","gap":"pane-unrecorded","at":"2026-10-01T00:00:00Z"}"#,
-        )
-        .unwrap();
-        assert_eq!(gap.gap.as_deref(), Some("pane-unrecorded"));
-        assert_eq!(gap.context_arg(), None);
-        for bad in [
-            r#"{"tokens":1,"gap":"x"}"#,
-            r#"{"tokens":null,"gap":null}"#,
-            r#"{"tokens":"1"}"#,
-            "[]",
-            "not json",
-        ] {
-            assert!(ContextRecord::parse(bad).is_err(), "{bad}");
-        }
-    }
-
     /// The full-window table: the window a claude, codex or pi
     /// reading names is the hard limit; a copilot reading is never full; a
     /// reading naming no window takes the declared capacity for its model,

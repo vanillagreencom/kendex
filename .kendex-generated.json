@@ -929,7 +929,6 @@
   ".agents/skills/orch/scripts/oversee-watch",
   ".agents/skills/orch/scripts/overseer-host",
   ".agents/skills/orch/scripts/overseer-host-tmux",
-  ".agents/skills/orch/scripts/overseer-run",
   ".agents/skills/orch/scripts/post-merge",
   ".agents/skills/orch/scripts/pr-order",
   ".agents/skills/orch/scripts/pr-view-json",

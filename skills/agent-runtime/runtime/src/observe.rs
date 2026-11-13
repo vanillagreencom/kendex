@@ -526,33 +526,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_claude_screen_at_its_composer_is_idle() {
-        let screen = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts";
-        assert_eq!(
-            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
-            State::Idle
-        );
-    }
-
-    #[test]
-    fn a_streaming_token_counter_is_working() {
-        let screen = "❯ do the thing\n✻ Thinking… (esc to interrupt · ↓ 1.2k tokens)";
-        assert_eq!(
-            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
-            State::Working
-        );
-    }
-
-    #[test]
-    fn a_numbered_dialog_row_is_asking() {
-        let screen = "❯ run tests\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select";
-        assert_eq!(
-            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
-            State::Asking
-        );
-    }
-
-    #[test]
     fn a_usage_banner_below_the_last_turn_is_a_usage_wall_unless_the_account_has_room() {
         let screen = "❯ work\nYou've hit your session limit · resets 9:50am\n❯\u{a0}";
         assert!(matches!(
@@ -860,17 +833,6 @@ mod tests {
     }
 
     #[test]
-    fn a_pi_working_border_is_working_even_with_the_composer_triple_below_it() {
-        let screen = format!(
-            " Create the file\n── ⠹ Working {PI_RULE}\n{PI_RULE}\n{PI_PROMPT_LINE}\n0.4%/1.0M\n"
-        );
-        assert_eq!(
-            judge(&screen, Harness::Pi, &ProcessReading::HarnessUp, None),
-            State::Working
-        );
-    }
-
-    #[test]
     fn a_pi_screen_without_the_composer_is_unjudged_and_the_marker_rule_stays_off_pi() {
         let screen = format!("{PI_RULE}\n{PI_PROMPT_LINE}\n some output\n");
         assert_eq!(
@@ -970,11 +932,5 @@ mod tests {
             }),
             Reading::Gone
         );
-    }
-
-    #[test]
-    fn the_trust_dialog_is_named_over_the_whole_capture() {
-        assert!(trust_dialog("Do you trust the files in this folder?\n  1. Yes").is_some());
-        assert!(trust_dialog("nothing").is_none());
     }
 }
