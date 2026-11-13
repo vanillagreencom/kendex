@@ -157,23 +157,41 @@ fn engine_run<'a>(
     }
 }
 
-/// The fleet's own mailbox and tmux server: what a watch's start named;
-/// in any other process the mailbox program and main checkout of the
-/// checkout it stands in and the server its own `$TMUX` names, else the
-/// user's default. A watch is started detached and inherits its directory
-/// and environment from whatever started it, so only its start names them.
-/// A server that cannot be read refuses `tmux-server-unnamed` with the
-/// read's cause before any server is asked.
-pub fn fleet_reach(settings: &Settings) -> Result<agent_runtime::effects::Reach> {
-    if let Some(reach) = &settings.reach {
-        return Ok(reach.clone());
+/// The fleet's own mailbox, with no server: what a watch's start named; in
+/// any other process the mailbox program and main checkout of the checkout
+/// these settings were read for. A validation notice needs no server, so a
+/// caller that sends only notices reads no environment and asks nothing.
+pub fn fleet_mailbox(settings: &Settings) -> agent_runtime::effects::Reach {
+    match &settings.reach {
+        Some(reach) => agent_runtime::effects::Reach {
+            socket: None,
+            ..reach.clone()
+        },
+        None => agent_runtime::effects::Reach {
+            mail_program: settings.lane_mail_cli.clone(),
+            mail_root: settings.roots.common.clone(),
+            socket: None,
+        },
     }
-    let socket = agent_runtime::host::tmux::ambient_socket()
-        .map_err(|e| refused("tmux-server-unnamed", &[("cause", e.key())]))?;
+}
+
+/// The fleet's own mailbox and tmux server: what a watch's start named;
+/// in any other process [`fleet_mailbox`] and the server its own `$TMUX`
+/// names, else the user's default. A watch is started detached and inherits
+/// its directory and environment from whatever started it, so only its
+/// start names them. A server that cannot be read refuses
+/// `tmux-server-unnamed` with the read's cause before any server is asked.
+pub fn fleet_reach(settings: &Settings) -> Result<agent_runtime::effects::Reach> {
+    let socket = match &settings.reach {
+        Some(reach) => reach.socket.clone(),
+        None => Some(
+            agent_runtime::host::tmux::ambient_socket()
+                .map_err(|e| refused("tmux-server-unnamed", &[("cause", e.key())]))?,
+        ),
+    };
     Ok(agent_runtime::effects::Reach {
-        mail_program: settings.lane_mail_cli.clone(),
-        mail_root: settings.roots.common.clone(),
-        socket: Some(socket),
+        socket,
+        ..fleet_mailbox(settings)
     })
 }
 

@@ -2257,7 +2257,9 @@ fn reconcile_recovery(settings: &Settings, r: &RecoverRound, env: &Env) -> Resul
     let path = state::item_path(&settings.state_dir, &r.id.issue);
     let rows = stages(settings, &r.id.issue)?;
     if r.directive_unconfirmed {
-        stop_worktree_runs(settings, &r.id.issue, &r.id.worktree, env)?;
+        // The stops' owed notices go through the fleet's mailbox.
+        let reach = crate::effects::fleet_mailbox(settings);
+        stop_worktree_runs(settings, &reach, &r.id.issue, &r.id.worktree, env)?;
         for row in rows
             .iter()
             .filter(|s| s.kind == StageKind::Validate && s.end.is_none() && s.job.is_some())
@@ -2266,8 +2268,14 @@ fn reconcile_recovery(settings: &Settings, r: &RecoverRound, env: &Env) -> Resul
                 .run_dir
                 .as_deref()
                 .ok_or_else(|| refuse("stop-failed", "started run has no directory"))?;
-            let stopped =
-                crate::validate::run::stop(settings, Some(&r.id.issue), dir, env, Locking::FLOCK)?;
+            let stopped = crate::validate::run::stop(
+                settings,
+                &reach,
+                Some(&r.id.issue),
+                dir,
+                env,
+                Locking::FLOCK,
+            )?;
             if stopped.job != crate::validate::run::JobState::Gone {
                 return Err(refuse("stop-failed", dir));
             }
@@ -2369,8 +2377,14 @@ fn released_live_run(settings: &Settings, r: &RecoverRound) -> Result<Option<Pat
 /// The worktree's unfinished runs ended by the validation entry's
 /// `--stop --worktree` stop, before a replacement round is minted. The
 /// started jobs of the item's own open stages are its stage loop's.
-fn stop_worktree_runs(settings: &Settings, issue: &str, worktree: &Path, env: &Env) -> Result<()> {
-    crate::validate::run::stop_worktree(settings, worktree, Some(issue), env, Locking::FLOCK)
+fn stop_worktree_runs(
+    settings: &Settings,
+    reach: &agent_runtime::effects::Reach,
+    issue: &str,
+    worktree: &Path,
+    env: &Env,
+) -> Result<()> {
+    crate::validate::run::stop_worktree(settings, reach, worktree, Some(issue), env, Locking::FLOCK)
         .map(|_| ())
         .map_err(|e| refuse("stop-failed", e))
 }

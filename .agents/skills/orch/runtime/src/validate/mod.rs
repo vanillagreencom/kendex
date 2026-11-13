@@ -1602,7 +1602,7 @@ pub(crate) fn memory_max(settings: &crate::settings::ValidateSettings) -> Result
     reason = "the admitted validation launch uses the shared recorded launcher"
 )]
 fn ask_launcher(
-    _settings: &Settings,
+    settings: &Settings,
     worktree: &Path,
     run_dir: &Path,
     item: &str,
@@ -1617,10 +1617,16 @@ fn ask_launcher(
             };
         }
     };
-    let state = _settings.state_dir.display().to_string();
+    // The job inherits this process's directory, which may stand in
+    // another checkout than the one these settings were read for: it
+    // reaches only the mailbox named on its command line, and asks no
+    // server.
+    let reach =
+        agent_runtime::controller::run::reach_words(&crate::effects::fleet_mailbox(settings));
+    let state = settings.state_dir.display().to_string();
     let rd = run_dir.display().to_string();
     let executable = exe.display().to_string();
-    let args = [
+    let mut args = vec![
         &*executable,
         "--state-dir",
         &state,
@@ -1633,6 +1639,7 @@ fn ask_launcher(
         "--run-dir",
         &rd,
     ];
+    args.extend(reach.iter().map(String::as_str));
     let name = format!(
         "validate-{}",
         worktree.file_name().unwrap_or_default().to_string_lossy()

@@ -5204,3 +5204,306 @@ fn a_stage_policy_outside_its_form_refuses_by_name() {
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(out.stdout.is_empty());
 }
+
+// --- the end notice's reach, with two checkouts' mailbox programs ---
+
+/// The real mailbox program, behind each checkout's recorder.
+fn real_lane_mail() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/scripts/lane-mail")
+        .canonicalize()
+        .unwrap()
+}
+
+impl World {
+    /// A second checkout, `other`, beside the world's worktree, and in each
+    /// a mailbox program at the install path (`.agents/skills/mailbox/
+    /// scripts/lane-mail`) that appends the directory it runs in and its
+    /// words to `<root>/mail-<checkout>.log` and runs the real program. A
+    /// row run through [`World::run_in`] names no `LANE_MAIL_CLI`, so each
+    /// checkout's settings name its own recorder: a notice sent through the
+    /// wrong program, or in the wrong directory, lands in `other`'s
+    /// mailbox and its record, inside the root.
+    fn two_mailboxes(&self) -> PathBuf {
+        let other = self.root.join("other");
+        fs::create_dir_all(&other).unwrap();
+        git(&other, &["init", "-q", "-b", "main"]);
+        git(&other, &["config", "gc.auto", "0"]);
+        git(&other, &["config", "maintenance.auto", "false"]);
+        fs::write(other.join(".gitignore"), "tmp\n.agents\n").unwrap();
+        git(&other, &["add", ".gitignore"]);
+        git(&other, &["commit", "-q", "-m", "base"]);
+        for checkout in [&self.worktree, &other] {
+            let mailbox = checkout.join(".agents/skills/mailbox");
+            if fs::symlink_metadata(&mailbox).is_ok() {
+                fs::remove_file(&mailbox).unwrap();
+            }
+            fs::create_dir_all(mailbox.join("scripts")).unwrap();
+            support::write_executable(
+                &mailbox.join("scripts/lane-mail"),
+                format!(
+                    "#!/bin/sh\nprintf '%s %s\\n' \"$(pwd -P)\" \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+                    self.mail_log(checkout).display(),
+                    real_lane_mail().display()
+                ),
+            );
+        }
+        other
+    }
+
+    fn mail_log(&self, checkout: &Path) -> PathBuf {
+        self.root.join(format!(
+            "mail-{}.log",
+            checkout.file_name().unwrap().to_string_lossy()
+        ))
+    }
+
+    /// The calls `checkout`'s recorder took: its directory, then its words.
+    fn mail_calls(&self, checkout: &Path) -> Vec<String> {
+        fs::read_to_string(self.mail_log(checkout))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The binary run from `cwd` with the world's environment but its
+    /// `LANE_MAIL_CLI`.
+    fn run_in(&self, cwd: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
+        let mut command = support::isolated();
+        command.args(args).current_dir(cwd);
+        for (k, v) in self.env() {
+            if k != "LANE_MAIL_CLI" {
+                command.env(k, v);
+            }
+        }
+        for (k, v) in extra {
+            command.env(k, v);
+        }
+        command.output().unwrap()
+    }
+
+    /// The end notice of the run in `dir` landed once in `checkout`'s
+    /// mailbox, through `checkout`'s own program run there, and `other`'s
+    /// program and mailbox took nothing.
+    fn notice_landed_in(&self, checkout: &Path, other: &Path, dir: &str) {
+        let inbox = |at: &Path| at.join("tmp/lane-mail").join(ITEM_ID).join("to-lane.jsonl");
+        let landed = fs::read_to_string(inbox(checkout)).unwrap_or_default();
+        assert_eq!(landed.lines().count(), 1, "{landed}");
+        assert!(landed.contains(&format!("run-dir={dir} ")), "{landed}");
+        let calls = self.mail_calls(checkout);
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|c| c.starts_with(&format!(
+                    "{} send --item {ITEM_ID} --directive ",
+                    checkout.display()
+                )))
+                .count(),
+            1,
+            "{calls:?}"
+        );
+        assert_eq!(self.mail_calls(other), Vec::<String>::new());
+        assert!(
+            fs::symlink_metadata(other.join("tmp/lane-mail")).is_err(),
+            "nothing landed in the other checkout"
+        );
+    }
+}
+
+/// A foreground validation the entry runs for a named worktree, from a
+/// shell standing in another checkout, sends its end notice through the
+/// worktree checkout's own mailbox program run in that checkout: the notice
+/// lands in the worktree's mailbox, never the other checkout's.
+#[test]
+fn a_foreground_entry_run_from_another_checkout_sends_its_notice_through_the_named_worktrees_mailbox()
+ {
+    let w = World::new();
+    let other = w.two_mailboxes();
+    let admitted = ok(&w.op(
+        &json!({"op":"record-validation-admission","round_id":ROUND}),
+        &[],
+    ));
+    let id = admitted["report"]["run_id"].as_str().unwrap();
+    let dir = admitted["report"]["run_dir"].as_str().unwrap();
+    let wt = w.worktree.display().to_string();
+    let out = w.run_in(
+        &other,
+        &[
+            "--state-dir",
+            w.state.to_str().unwrap(),
+            "validate",
+            "entry",
+            "--worktree",
+            &wt,
+            "--foreground",
+            "--poll",
+            "1",
+            "--run-id",
+            id,
+        ],
+        &[],
+    );
+    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
+    assert_eq!(w.stage(dir)["notice"]["owner"], "sent");
+    w.notice_landed_in(&w.worktree, &other, dir);
+}
+
+/// `words` without `flag` and the value after it, which stands there.
+fn without<'a>(words: &[&'a str], flag: &str) -> Vec<&'a str> {
+    let at = words
+        .iter()
+        .position(|w| *w == flag)
+        .unwrap_or_else(|| panic!("no {flag} in {words:?}"));
+    [&words[..at], &words[at + 2..]].concat()
+}
+
+/// A detached validation run reaches only the mailbox its start named. The
+/// entry, run for a named worktree from a shell standing in another
+/// checkout, launches the run with the worktree checkout's mailbox on its
+/// command line; the run started as launched, in the shell's directory,
+/// sends its end notice through that program run in that checkout. Started
+/// without either flag it refuses `mailbox-unnamed` naming the flag before
+/// it runs anything, with no mailbox program asked.
+#[test]
+fn a_detached_validation_run_sends_through_the_mailbox_its_start_named_and_refuses_without_one() {
+    let w = World::new();
+    let other = w.two_mailboxes();
+    let (path, manager) = manager(&w);
+    let admitted = ok(&w.op(
+        &json!({"op":"record-validation-admission","round_id":ROUND}),
+        &[],
+    ));
+    let id = admitted["report"]["run_id"].as_str().unwrap();
+    let dir = admitted["report"]["run_dir"].as_str().unwrap();
+    let wt = w.worktree.display().to_string();
+    let state = w.state.display().to_string();
+    let launch = [
+        ("PATH", path.as_str()),
+        ("VALIDATE_MANAGER_DIR", manager.as_str()),
+        ("VALIDATE_START_ANSWER", "record-only"),
+    ];
+    let out = w.run_in(
+        &other,
+        &[
+            "--state-dir",
+            &state,
+            "validate",
+            "entry",
+            "--worktree",
+            &wt,
+            "--poll",
+            "1",
+            "--budget",
+            "1",
+            "--run-id",
+            id,
+        ],
+        &launch,
+    );
+    assert_eq!(directory(&out), dir);
+    let (argv, _) = unit_launch(&manager, dir);
+    // The run's words after its executable, as the manager would start it.
+    let job: Vec<&str> = argv
+        .iter()
+        .map(String::as_str)
+        .skip_while(|w| *w != "--")
+        .skip(2)
+        .collect();
+    for (flag, field) in [
+        ("--mail-program", "mail_program"),
+        ("--mail-root", "mail_root"),
+    ] {
+        let out = w.run_in(&other, &without(&job, flag), &[]);
+        assert_eq!(refusal(&out), "mailbox-unnamed", "{flag}");
+        assert_eq!(
+            reply(&out)["refusal"]["fields"],
+            json!([["field", field]]),
+            "{flag}"
+        );
+    }
+    assert!(
+        w.stage(dir)["end"].is_null(),
+        "the refused runs ran nothing"
+    );
+    assert!(fs::symlink_metadata(Path::new(dir).join("exit")).is_err());
+    assert_eq!(w.mail_calls(&w.worktree), Vec::<String>::new());
+    assert_eq!(w.mail_calls(&other), Vec::<String>::new());
+    let ended = ok(&w.run_in(&other, &job, &[]));
+    assert_eq!(ended["closed_now"], true, "{ended}");
+    assert_eq!(ended["notice"], "sent", "{ended}");
+    w.notice_landed_in(&w.worktree, &other, dir);
+}
+
+/// A detached start from a process whose tmux server cannot be read (no
+/// `$TMUX`, no numeric `$UID`, an `id` that answers nothing) launches its
+/// run: the run sends only notices, so its command line names the fleet's
+/// mailbox program and root and no server.
+#[test]
+fn a_detached_start_whose_tmux_server_cannot_be_read_launches_naming_the_fleets_mailbox_and_no_server()
+ {
+    let w = World::new();
+    let other = w.two_mailboxes();
+    let (_, manager) = manager(&w);
+    let tools = w.root.join("no-uid");
+    fs::create_dir_all(&tools).unwrap();
+    support::write_executable(&tools.join("id"), "#!/bin/sh\nexit 1\n");
+    let path = support::tool_path(&[&tools, &support::fixtures().join("validate-tools")]);
+    let admitted = ok(&w.op(
+        &json!({"op":"record-validation-admission","round_id":ROUND}),
+        &[],
+    ));
+    let id = admitted["report"]["run_id"].as_str().unwrap();
+    let dir = admitted["report"]["run_dir"].as_str().unwrap();
+    let wt = w.worktree.display().to_string();
+    let state = w.state.display().to_string();
+    let out = w.run_in(
+        &other,
+        &[
+            "--state-dir",
+            &state,
+            "validate",
+            "entry",
+            "--worktree",
+            &wt,
+            "--poll",
+            "1",
+            "--budget",
+            "1",
+            "--run-id",
+            id,
+        ],
+        &[
+            ("PATH", path.as_str()),
+            ("VALIDATE_MANAGER_DIR", manager.as_str()),
+            ("VALIDATE_START_ANSWER", "record-only"),
+        ],
+    );
+    assert_eq!(directory(&out), dir, "{}", stderr(&out));
+    let (argv, _) = unit_launch(&manager, dir);
+    let job: Vec<&str> = argv
+        .iter()
+        .map(String::as_str)
+        .skip_while(|w| *w != "--")
+        .skip(2)
+        .collect();
+    let after = |flag: &str| {
+        job.iter()
+            .position(|w| *w == flag)
+            .map(|at| job[at + 1].to_owned())
+    };
+    let program = w.worktree.join(".agents/skills/mailbox/scripts/lane-mail");
+    assert_eq!(
+        after("--mail-program").as_deref(),
+        Some(program.to_str().unwrap()),
+        "{job:?}"
+    );
+    assert_eq!(
+        after("--mail-root").as_deref(),
+        Some(w.worktree.to_str().unwrap()),
+        "{job:?}"
+    );
+    assert!(!job.contains(&"--socket"), "{job:?}");
+    assert_eq!(w.mail_calls(&w.worktree), Vec::<String>::new());
+    assert_eq!(w.mail_calls(&other), Vec::<String>::new());
+}

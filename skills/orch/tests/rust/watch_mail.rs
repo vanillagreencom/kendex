@@ -494,8 +494,9 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
     std::fs::write(&text, "Rebase onto main.\n").unwrap();
     let held = Mailbox::new(holding).bounded(secs(30));
     let first = std::thread::scope(|s| {
-        let send =
-            s.spawn(|| held.send_directive(ITEM, Some(&w.root), false, &text, Some("op-1"), None));
+        let send = s.spawn(|| {
+            held.send_directive(ITEM, Some(&w.root), false, &text, Some("op-1"), None, None)
+        });
         let deadline = Instant::now() + secs(20);
         let pid = loop {
             if let Ok(pid) = std::fs::read_to_string(&mark)
@@ -540,8 +541,15 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
     let landed = rows(&mailbox);
     assert_eq!(landed.len(), 1, "the append landed before the death");
     assert_eq!(landed[0]["delivery_id"], "op-1");
-    let again =
-        Mailbox::new(hold()).send_directive(ITEM, Some(&w.root), false, &text, Some("op-1"), None);
+    let again = Mailbox::new(hold()).send_directive(
+        ITEM,
+        Some(&w.root),
+        false,
+        &text,
+        Some("op-1"),
+        None,
+        None,
+    );
     assert_eq!(
         again,
         Ok(Sent::Repeated {
@@ -550,8 +558,15 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
     );
     assert_eq!(rows(&mailbox), landed, "one envelope");
     // Another operation's send lands beside it.
-    let other =
-        Mailbox::new(hold()).send_directive(ITEM, Some(&w.root), false, &text, Some("op-2"), None);
+    let other = Mailbox::new(hold()).send_directive(
+        ITEM,
+        Some(&w.root),
+        false,
+        &text,
+        Some("op-2"),
+        None,
+        None,
+    );
     assert!(matches!(other, Ok(Sent::Mailbox { .. })), "{other:?}");
     assert_eq!(rows(&mailbox).len(), 2);
 }

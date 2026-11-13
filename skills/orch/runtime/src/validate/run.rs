@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock;
+use agent_runtime::effects::Reach;
 use serde::Serialize;
 
 use super::{KILL_GRACE, apply, item_of_run_dir, load};
@@ -24,6 +25,7 @@ use agent_runtime::journal::Env;
 
 /// How long the mailbox program is given to take the notice.
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// How long the launcher's stop is given: the setsid teardown's TERM grace
 /// and KILL, or the user manager's own stop of the unit.
 /// How long the stop waits for the job it ended to read gone: on the setsid
@@ -621,12 +623,14 @@ enum NoticeSend {
 /// this walker alone, so a second walker of the same notice (the owed walk
 /// meeting the job's send in flight) never removes the file the first's
 /// program is about to read; the record carries the key, never the file.
+/// Both routes run `reach`'s program in its root.
 #[allow(
     clippy::disallowed_methods,
     reason = "the end notice's file, this walker's own under the state directory, created exclusively for the mailbox program to read and removed by this walker after its send"
 )]
 fn send_notice(
     settings: &Settings,
+    reach: &Reach,
     item: &str,
     key: &str,
     text: &str,
@@ -649,9 +653,9 @@ fn send_notice(
     }
     let mark = match lane_record(settings, item) {
         Ok(Some(lane)) if lane.session_channel() => {
-            send_session(settings, &lane, key, &path, env, locking)
+            send_session(settings, reach, &lane, key, &path, env, locking)
         }
-        Ok(Some(_) | None) => send_directive(settings, item, key, &path),
+        Ok(Some(_) | None) => send_directive(reach, item, key, &path),
         Err(_) => NoticeSend::Held,
     };
     let _ = fs::remove_file(&path);
@@ -676,16 +680,25 @@ pub(crate) fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane
     Ok(fleet.lanes.into_iter().find(|l| l.item == item))
 }
 
-/// The mailbox's outbound directive to a non-session lane, keyed by the run.
+/// The mailbox's outbound directive to a non-session lane, keyed by the run:
+/// `reach`'s program run in its root, the lane's box left to the program's
+/// own lookup from there.
 #[allow(
     clippy::disallowed_methods,
     reason = "the validation job's one outbound send of the lane's end notice through the mailbox program, keyed by the run so a replay lands once"
 )]
-fn send_directive(settings: &Settings, item: &str, key: &str, file: &Path) -> NoticeSend {
-    match Mailbox::new(settings.lane_mail_cli.clone())
+fn send_directive(reach: &Reach, item: &str, key: &str, file: &Path) -> NoticeSend {
+    match Mailbox::new(reach.mail_program.clone())
         .bounded(NOTICE_TIMEOUT)
-        .send_directive(item, None, false, file, Some(key), None)
-    {
+        .send_directive(
+            item,
+            None,
+            false,
+            file,
+            Some(key),
+            None,
+            Some(&reach.mail_root),
+        ) {
         Ok(Sent::Mailbox { .. } | Sent::Repeated { .. }) => NoticeSend::Marked("sent".to_owned()),
         // The program routed the lane to its session itself: the send's own
         // result marks it.
@@ -726,14 +739,14 @@ fn session_mark(result: SendResult) -> String {
 /// twice, a repeated line in the session and not a harm.
 fn send_session(
     settings: &Settings,
+    reach: &Reach,
     lane: &Lane,
     key: &str,
     file: &Path,
     env: &Env,
     locking: Locking,
 ) -> NoticeSend {
-    let fleet = record::fleet_path(&settings.state_dir);
-    match crate::send::run_keyed(&fleet, &lane.item, file, settings, env, locking, key) {
+    match crate::send::run_keyed(&lane.item, file, settings, reach, env, locking, key) {
         Ok(Keyed::Sent(sent)) => NoticeSend::Marked(session_mark(sent.send.result)),
         Ok(Keyed::Found(KeyedSend::Settled(result))) => NoticeSend::Marked(session_mark(result)),
         Ok(Keyed::Found(KeyedSend::Owed | KeyedSend::Unreadable)) | Err(_) => NoticeSend::Held,
@@ -754,6 +767,7 @@ fn run_id_of(run_dir: &str) -> &str {
 fn send_and_mark(
     path: &Path,
     settings: &Settings,
+    reach: &Reach,
     item: &str,
     stage: &Stage,
     env: &Env,
@@ -765,7 +779,7 @@ fn send_and_mark(
         return Ok(String::new());
     };
     let to = notice.to.as_deref().unwrap_or(item);
-    let mark = match send_notice(settings, to, &notice.key, &notice.text, env, locking) {
+    let mark = match send_notice(settings, reach, to, &notice.key, &notice.text, env, locking) {
         NoticeSend::Marked(mark) => mark,
         NoticeSend::Held => return Ok(agent_runtime::intent::NOTICE_OWED.to_owned()),
     };
@@ -787,9 +801,11 @@ fn send_and_mark(
     })
 }
 
-/// The job's main: run the executor, close the stage, send the notice.
+/// The job's main: run the executor, close the stage, send the notice
+/// through `reach`.
 pub fn run(
     settings: &Settings,
+    reach: &Reach,
     item: &str,
     round: &str,
     run_dir: &str,
@@ -869,7 +885,7 @@ pub fn run(
     }
     // The notice is on disk as `owed`; the send follows and the mark after.
     let (stages, index) = stage_of(&path, run_dir)?;
-    let notice = send_and_mark(&path, settings, item, &stages[index], env, locking)?;
+    let notice = send_and_mark(&path, settings, reach, item, &stages[index], env, locking)?;
     Ok(RunReply {
         item: item.to_owned(),
         round_id: round.to_owned(),
@@ -886,8 +902,14 @@ pub fn run(
 /// before the item's `reconcile-round` transition. A mark the store refused
 /// leaves the notice owed, so the next reconcile sends again; the mailbox
 /// reads a repeat within its window as sent, and a session send is read by
-/// its key on the lane's record.
-pub fn deliver_owed(settings: &Settings, path: &Path, env: &Env, locking: Locking) -> Result<()> {
+/// its key on the lane's record. Each goes through `reach`.
+pub fn deliver_owed(
+    settings: &Settings,
+    reach: &Reach,
+    path: &Path,
+    env: &Env,
+    locking: Locking,
+) -> Result<()> {
     let Some(snapshot) = load(path)? else {
         return Ok(());
     };
@@ -905,7 +927,7 @@ pub fn deliver_owed(settings: &Settings, path: &Path, env: &Env, locking: Lockin
                 .as_ref()
                 .is_some_and(agent_runtime::intent::Notice::owed)
     }) {
-        if let Err(e) = send_and_mark(path, settings, &item, stage, env, locking) {
+        if let Err(e) = send_and_mark(path, settings, reach, &item, stage, env, locking) {
             // The store refused the mark: the notice stays owed for the
             // next reconcile, and this one is not failed over it.
             let _ = e;
@@ -988,9 +1010,10 @@ pub struct WorktreeStop {
 /// open stages `keep` admits, which its caller stops through those stages: a
 /// run an item admits through its stage's stop, and a run no item admits, one
 /// whose stage is closed or one `keep` admits with no job, by the identity
-/// its own files name.
+/// its own files name. A stop's owed notices go through `reach`.
 pub fn stop_worktree(
     settings: &Settings,
+    reach: &Reach,
     worktree: &Path,
     keep: Option<&str>,
     env: &Env,
@@ -1014,7 +1037,7 @@ pub fn stop_worktree(
                     count(stop_files(&run.dir)?);
                 }
             }
-            Ok((item, _)) => match stop(settings, Some(&item), &rd, env, locking) {
+            Ok((item, _)) => match stop(settings, reach, Some(&item), &rd, env, locking) {
                 Ok(reply) if reply.ended == JobEnded::Signalled => count(Some(&reply.runner)),
                 Ok(_) => {}
                 Err(Error::RunClosed { .. }) => count(stop_files(&run.dir)?),
@@ -1182,9 +1205,10 @@ fn reconcile(path: &Path, round_id: &str, env: &Env, locking: Locking) -> Result
 /// notice owed and the walk sends it, whatever sentinel the executor wrote
 /// first; a job that closed the stage itself before it was ended read the
 /// same word, the first closer winning. `item` names the record; with none,
-/// the run directory finds it.
+/// the run directory finds it. The walk sends through `reach`.
 pub fn stop(
     settings: &Settings,
+    reach: &Reach,
     item: Option<&str>,
     run_dir: &str,
     env: &Env,
@@ -1221,9 +1245,9 @@ pub fn stop(
     };
     // The finishing transition's own clock: the stop and the wait took time.
     let env = &env_now(env);
-    deliver_owed(settings, &path, env, locking)?;
+    deliver_owed(settings, reach, &path, env, locking)?;
     reconcile(&path, &round_id, env, locking)?;
-    deliver_owed(settings, &path, env, locking)?;
+    deliver_owed(settings, reach, &path, env, locking)?;
     let (stages, index) = stage_of(&path, run_dir)?;
     let stage = &stages[index];
     Ok(StopReply {

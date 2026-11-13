@@ -446,12 +446,12 @@ impl<'a> LaneOperation<'a> {
         Ok(Some(self.engine.read_process_end(&id)?))
     }
 
-    /// [`pending_ask`] through this run's mailbox CLI.
+    /// [`pending_ask`] through this run's reach's mailbox program.
     pub(super) fn unanswered_ask(
         &self,
         lane: &Lane,
     ) -> std::result::Result<Option<String>, String> {
-        pending_ask(&self.run.settings.lane_mail_cli, lane)
+        pending_ask(&self.run.engine.reach.mail_program, lane)
     }
 
     /// End every validation run in a local lane's worktree before the
@@ -497,6 +497,7 @@ impl<'a> LaneOperation<'a> {
         // its item's stage: the close keeps no stage's job running.
         let answer = crate::validate::run::stop_worktree(
             self.run.settings,
+            &self.run.engine.reach,
             Path::new(root),
             None,
             self.run.engine.env,
@@ -955,5 +956,229 @@ mod tests {
             crate::ops::lane_moved(&lane, &keys),
             "another stamp alone moves it"
         );
+    }
+
+    const ITEM: &str = "KEN-4687";
+    const ROUND: &str = "1769600000123456789-1837";
+
+    /// A detached close's world: two checkouts under one temporary root,
+    /// each with a mailbox program at the install path that records the
+    /// directory it ran in and its words, and answers nothing. `named` is
+    /// the checkout the run's reach names (the start's); `own` is the one
+    /// the process's settings were read in (the directory a detached job
+    /// inherits), the fleet and the item under its state directory. A send
+    /// through any other mailbox program or directory lands in `own`'s
+    /// record, never outside the root.
+    struct Detached {
+        _dir: tempfile::TempDir,
+        named: PathBuf,
+        own: PathBuf,
+        lane: PathBuf,
+        settings: Settings,
+        path: PathBuf,
+    }
+
+    fn recorder(checkout: &Path) -> PathBuf {
+        let program = checkout.join(crate::settings::LANE_MAIL_CLI_DEFAULT);
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nprintf '%s %s\\n' \"$(pwd -P)\" \"$*\" >> '{}'\nexit 2\n",
+                checkout.join("mail.log").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        program
+    }
+
+    impl Detached {
+        fn new() -> Detached {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().canonicalize().unwrap();
+            let (named, own, lane) = (root.join("named"), root.join("own"), root.join("lane"));
+            for checkout in [&named, &own] {
+                recorder(checkout);
+            }
+            std::fs::create_dir_all(lane.join("tmp")).unwrap();
+            let state = own.join("state");
+            std::fs::create_dir_all(&state).unwrap();
+            let settings = crate::settings::load(
+                &agent_runtime::settings::Roots {
+                    project: own.clone(),
+                    common: own.clone(),
+                },
+                &[],
+                &crate::settings::Flags {
+                    state_dir: Some(state.clone()),
+                    private_env: false,
+                },
+            )
+            .unwrap();
+            // What a mutant that reads the checkout's settings reaches.
+            assert_eq!(
+                settings.lane_mail_cli,
+                own.join(crate::settings::LANE_MAIL_CLI_DEFAULT)
+            );
+            let path = state.join(agent_runtime::record::FLEET_FILE_NAME);
+            let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+            fleet["intents"] = json!([{
+                "id": format!("close-resources:{ITEM}:1-1"), "op": "close-resources",
+                "target": ITEM, "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started"
+            }]);
+            std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
+            Detached {
+                _dir: dir,
+                named,
+                own,
+                lane,
+                settings,
+                path,
+            }
+        }
+
+        fn reach(&self) -> agent_runtime::effects::Reach {
+            agent_runtime::effects::Reach {
+                mail_program: self.named.join(crate::settings::LANE_MAIL_CLI_DEFAULT),
+                mail_root: self.named.clone(),
+                socket: None,
+            }
+        }
+
+        fn lane(&self) -> Lane {
+            serde_json::from_value(json!({
+                "item": ITEM, "status": "running", "host": null,
+                "mail_root": self.lane.display().to_string(),
+            }))
+            .unwrap()
+        }
+
+        fn intent(&self) -> Intent {
+            serde_json::from_value(json!({
+                "id": format!("close-resources:{ITEM}:1-1"), "op": "close-resources",
+                "target": ITEM, "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started"
+            }))
+            .unwrap()
+        }
+
+        /// The calls `checkout`'s program recorded: its directory, then its words.
+        fn calls(checkout: &Path) -> Vec<String> {
+            std::fs::read_to_string(checkout.join("mail.log"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
+    fn env() -> agent_runtime::journal::Env {
+        agent_runtime::journal::Env {
+            now_secs: 1_769_700_000,
+            now_nanos: 1_769_700_000_000_000_000,
+            nonce: 77,
+            owner: None,
+        }
+    }
+
+    /// A detached close reads the lane's pending asks through the mailbox
+    /// program its start named, never the one the checkout it inherited
+    /// would name.
+    #[test]
+    fn a_close_reads_the_lanes_asks_through_its_runs_reach_never_the_inherited_checkouts() {
+        let w = Detached::new();
+        let env = env();
+        let run = super::super::Run {
+            engine: super::super::engine_run(
+                &w.path,
+                &w.settings,
+                w.reach(),
+                &env,
+                Locking::FLOCK,
+                &agent_runtime::clock::SystemClock,
+            ),
+            settings: &w.settings,
+        };
+        let lane = w.lane();
+        let close = LaneOperation::open_close(&run, &w.intent(), &lane).unwrap();
+        let _ = close.unanswered_ask(&lane);
+        let calls = Detached::calls(&w.named);
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(
+            calls[0].contains(&format!(" pending --item {ITEM} ")),
+            "{calls:?}"
+        );
+        assert_eq!(Detached::calls(&w.own), Vec::<String>::new());
+    }
+
+    /// A detached close's validation stop sends the end notices its stop
+    /// owes through its run's reach: the program the start named, run in
+    /// the root the start named, never the inherited checkout's program or
+    /// directory.
+    #[test]
+    fn a_close_sends_its_validation_stops_notices_through_its_runs_reach_in_its_root() {
+        let w = Detached::new();
+        let open = w.lane.join("tmp/dev-validate-open");
+        let done = w.lane.join("tmp/dev-validate-done");
+        std::fs::create_dir_all(&open).unwrap();
+        std::fs::create_dir_all(&done).unwrap();
+        std::fs::write(open.join("start"), "start=1\n").unwrap();
+        std::fs::write(open.join("runner"), "runner=attached\n").unwrap();
+        std::fs::write(done.join("start"), "start=1\n").unwrap();
+        std::fs::write(done.join("exit"), "guard-exit=0 at=1769600002\n").unwrap();
+        let mut item: Value = serde_json::from_str(crate::state::fixtures::ITEM).unwrap();
+        item["worktree"] = json!(w.lane.display().to_string());
+        let stages = item["stages"].as_array_mut().unwrap();
+        stages.push(json!({
+            "kind": "validate", "round_id": ROUND, "start": 1769600001, "end": null,
+            "run_dir": open.display().to_string(),
+            "job": {"record": open.join("runner").display().to_string(), "runner": "attached"}
+        }));
+        stages.push(json!({
+            "kind": "validate", "round_id": ROUND, "start": 1769600001, "end": 1769600002,
+            "run_dir": done.display().to_string(), "outcome": "pass",
+            "job": {"record": done.join("runner").display().to_string(), "runner": "attached"},
+            "notice": {"to": ITEM, "key": "validate-done", "owner": "owed",
+                       "text": format!("validation-end run=done state=pass run-dir={}", done.display())}
+        }));
+        std::fs::write(
+            crate::state::item_path(&w.settings.state_dir, ITEM),
+            serde_json::to_vec(&item).unwrap(),
+        )
+        .unwrap();
+        let env = env();
+        let run = super::super::Run {
+            engine: super::super::engine_run(
+                &w.path,
+                &w.settings,
+                w.reach(),
+                &env,
+                Locking::FLOCK,
+                &agent_runtime::clock::SystemClock,
+            ),
+            settings: &w.settings,
+        };
+        let lane = w.lane();
+        let mut close = LaneOperation::open_close(&run, &w.intent(), &lane).unwrap();
+        close.stop_validations(&lane).unwrap().unwrap();
+        let calls = Detached::calls(&w.named);
+        assert!(
+            calls.iter().any(|c| c.starts_with(&format!(
+                "{} send --item {ITEM} --directive ",
+                w.named.display()
+            ))),
+            "{calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .all(|c| c.starts_with(&format!("{} ", w.named.display()))),
+            "{calls:?}"
+        );
+        assert_eq!(Detached::calls(&w.own), Vec::<String>::new());
     }
 }

@@ -11,6 +11,7 @@
 //! The mailbox writes no orch state; this
 //! module and that mark are the record's writers.
 
+use agent_runtime::effects::Reach;
 use agent_runtime::record::Locking;
 use std::path::{Path, PathBuf};
 
@@ -112,25 +113,38 @@ pub enum Keyed {
     Found(KeyedSend),
 }
 
-/// [`run`] under `key`, the caller's name for this send (the validation end
-/// notice's `validate-<run_id>`): the owed write carries
-/// it, every settle keeps it on the record, and the write reads the lane's
-/// send under it before it writes, inside the store's lock,
+/// [`run`] on the fleet under the settings' state directory, under `key`,
+/// the caller's name for this send (the validation end notice's
+/// `validate-<run_id>`), through `reach`, the mailbox of the process the
+/// caller runs in: its program, run in its root. The owed write carries
+/// the key, every settle keeps it on the record, and the write reads the
+/// lane's send under it before it writes, inside the store's lock,
 /// so a replay of the notice, whichever walker makes it, learns from
 /// the one record whether its own send is out or settled and makes no
 /// second one; nothing is run on a found send.
 pub fn run_keyed(
-    path: &Path,
     item: &str,
     file: &Path,
     settings: &Settings,
+    reach: &Reach,
     env: &Env,
     locking: Locking,
     key: &str,
 ) -> Result<Keyed> {
-    send(path, item, file, settings, env, locking, Some(key))
+    let path = agent_runtime::record::fleet_path(&settings.state_dir);
+    send(
+        &path,
+        item,
+        file,
+        settings,
+        env,
+        locking,
+        Some((key, reach)),
+    )
 }
 
+/// The send under `keyed`'s key through its reach, else the `send` verb's
+/// own: the caller's mailbox program in the directory the caller runs in.
 fn send(
     path: &Path,
     item: &str,
@@ -138,8 +152,9 @@ fn send(
     settings: &Settings,
     env: &Env,
     locking: Locking,
-    key: Option<&str>,
+    keyed: Option<(&str, &Reach)>,
 ) -> Result<Keyed> {
+    let key = keyed.map(|(key, _)| key);
     let text = std::fs::read_to_string(file)
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("read-directive", file, e)))?
         .trim_end()
@@ -161,13 +176,18 @@ fn send(
         unreachable!("the owed write names its receipt: {owed:?}");
     };
     let receipt = receipt_path(&settings.state_dir, item, name);
-    let answer = Mailbox::new(settings.lane_mail_cli.clone()).send_directive(
+    let (program, cwd) = match keyed {
+        Some((_, reach)) => (&reach.mail_program, Some(reach.mail_root.as_path())),
+        None => (&settings.lane_mail_cli, None),
+    };
+    let answer = Mailbox::new(program.clone()).send_directive(
         item,
         None,
         false,
         file,
         None,
         Some(&settings.state_dir),
+        cwd,
     );
     let send = match answer {
         Ok(Sent::Session { send }) => send,

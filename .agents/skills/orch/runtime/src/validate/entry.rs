@@ -314,8 +314,9 @@ fn entry(
     }
     let settings = resolve_at(&worktree, flags)?;
     if args.stop {
+        let reach = crate::effects::fleet_mailbox(&settings);
         let run::WorktreeStop { units, groups } =
-            run::stop_worktree(&settings, &worktree, None, env, locking)
+            run::stop_worktree(&settings, &reach, &worktree, None, env, locking)
                 .map_err(unanswered_refusal)?;
         return Ok(TextReply::new(
             format!("state=stopped units={units} groups={groups}"),
@@ -395,6 +396,7 @@ fn entry(
         if req.foreground && started.launched {
             run::run(
                 &settings,
+                &crate::effects::fleet_mailbox(&settings),
                 &started.item,
                 &started.round_id,
                 &started.run_dir,

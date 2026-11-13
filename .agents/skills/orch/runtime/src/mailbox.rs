@@ -856,11 +856,15 @@ impl Mailbox {
 
     /// `send --directive` to the lane `item`, the text in `file`: at `root`
     /// where the caller names the mailbox root, else at the checkout the
-    /// program runs in; under `delivery_id` where the caller names its
+    /// program runs in, `cwd` where the caller names it; under `delivery_id` where the caller names its
     /// delivery, so a retry after a crash between the append and the receipt
     /// lands nothing twice; against the fleet record under `state_dir` where
     /// the caller names one, so the program routes by the lane's recorded
     /// channel. A session lane's receipt is handed back whatever its result.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the program's own flags, each optional, and the directory a reach's write runs in"
+    )]
     pub fn send_directive(
         &self,
         item: &str,
@@ -869,6 +873,7 @@ impl Mailbox {
         file: &Path,
         delivery_id: Option<&str>,
         state_dir: Option<&Path>,
+        cwd: Option<&Path>,
     ) -> Result<Sent, Refusal> {
         const VERB: &str = "send";
         let root = root.map(|r| r.display().to_string());
@@ -890,7 +895,7 @@ impl Mailbox {
             args.push("--state-dir");
             args.push(dir);
         }
-        let answer = self.call(VERB, &args)?;
+        let answer = self.call_on(VERB, &args, None, cwd)?;
         if let Some(line) = answer
             .stderr
             .lines()

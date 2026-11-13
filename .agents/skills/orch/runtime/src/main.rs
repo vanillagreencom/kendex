@@ -543,7 +543,8 @@ enum ValidateOp {
         restack: bool,
     },
     /// The run's job: run the kept executor as the bounded child, close
-    /// the stage once with the lane's end notice owed, send it and mark it.
+    /// the stage once with the lane's end notice owed, send it through the
+    /// mailbox its start named and mark it.
     Run {
         #[arg(long)]
         item: String,
@@ -551,6 +552,8 @@ enum ValidateOp {
         round: String,
         #[arg(long)]
         run_dir: String,
+        #[command(flatten)]
+        reach: WatchReach,
     },
     /// Stop a started run: the stop recorded on its open stage, the job ended
     /// by its recorded identity through the launcher, the stage closed
@@ -782,26 +785,29 @@ enum WatchOp {
     },
 }
 
-/// The mailbox and tmux server a watch reaches, each named by its start: a
-/// watch runs detached and inherits its directory and environment from
-/// whatever started it, which may stand in another checkout.
+/// The mailbox a detached process reaches (a watch, a validation run) and
+/// the tmux server a watch reaches, each named by its start: it inherits
+/// its directory and environment from whatever started it, which may stand
+/// in another checkout.
 #[derive(Args)]
 struct WatchReach {
-    /// The mailbox program the watch's owner alerts and mail reads run.
+    /// The mailbox program its notices, alerts and mail reads run.
     #[arg(long)]
     mail_program: Option<PathBuf>,
-    /// The mailbox root they are delivered and read under.
+    /// The mailbox root they are delivered and read under, the directory a
+    /// write runs in.
     #[arg(long)]
     mail_root: Option<PathBuf>,
-    /// The tmux server the watch asks where a record names none.
+    /// The tmux server it asks where a record names none.
     #[arg(long)]
     socket: Option<PathBuf>,
 }
 
 impl WatchReach {
-    /// The reach the start named, refused before anything is read or asked:
-    /// `mailbox-unnamed` naming the missing flag, else `tmux-server-unnamed`.
-    fn named(&self) -> Result<agent_runtime::effects::Reach> {
+    /// The mailbox the start named, refused before anything is read or
+    /// run: `mailbox-unnamed` naming the missing flag; the server where the
+    /// start named one.
+    fn mailbox(&self) -> Result<agent_runtime::effects::Reach> {
         let missing = |field: &str| {
             Error::Runtime(agent_runtime::Error::refused(
                 "mailbox-unnamed",
@@ -813,14 +819,25 @@ impl WatchReach {
             .clone()
             .ok_or_else(|| missing("mail_program"))?;
         let mail_root = self.mail_root.clone().ok_or_else(|| missing("mail_root"))?;
-        let socket = self.socket.clone().ok_or_else(|| {
-            Error::Runtime(agent_runtime::Error::refused("tmux-server-unnamed", &[]))
-        })?;
         Ok(agent_runtime::effects::Reach {
             mail_program,
             mail_root,
-            socket: Some(socket),
+            socket: self.socket.clone(),
         })
+    }
+
+    /// The reach a watch's start named, refused before anything is read or
+    /// asked: `mailbox-unnamed` naming the missing flag, else
+    /// `tmux-server-unnamed`.
+    fn named(&self) -> Result<agent_runtime::effects::Reach> {
+        let reach = self.mailbox()?;
+        if reach.socket.is_none() {
+            return Err(Error::Runtime(agent_runtime::Error::refused(
+                "tmux-server-unnamed",
+                &[],
+            )));
+        }
+        Ok(reach)
     }
 }
 
@@ -1649,9 +1666,11 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             }
             // A round's reconcile first sends the end notices its closed runs
             // still owe, the continuation a crash between a run's close and
-            // its send left.
-            if let Request::ReconcileRound(_) = &request {
-                orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
+            // its send left, through the fleet's mailbox.
+            let notice_reach = matches!(request, Request::ReconcileRound(_))
+                .then(|| effects::fleet_mailbox(&settings));
+            if let Some(reach) = &notice_reach {
+                orch_runtime::validate::run::deliver_owed(&settings, reach, &path, &env, locking)?;
             }
             // The notices earlier outcomes still owe are sent before the
             // request's own transition; a mark the store refused is in the
@@ -1684,8 +1703,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 // The reconcile may have closed a runtime-started run and written
                 // its end notice owed in that same transition; the owed walk runs
                 // after it as well as before, so that notice is sent in this call.
-                if let Request::ReconcileRound(_) = &request {
-                    orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
+                if let Some(reach) = &notice_reach {
+                    orch_runtime::validate::run::deliver_owed(
+                        &settings, reach, &path, &env, locking,
+                    )?;
                 }
                 // Run the live effect the persisted intent names and record its
                 // outcome; the committed outcome transition is the result.
@@ -2133,6 +2154,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             if request.foreground && started.launched {
                 started.outcome = orch_runtime::validate::run::run(
                     &settings,
+                    &effects::fleet_mailbox(&settings),
                     &started.item,
                     &started.round_id,
                     &started.run_dir,
@@ -2149,12 +2171,17 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     item,
                     round,
                     run_dir,
+                    reach,
                 },
         } => {
+            // The job reaches only the mailbox its start named, judged before
+            // anything runs: one found from the directory it inherited may be
+            // another checkout's.
+            let reach = reach.mailbox()?;
             let settings = resolve_settings(&flags)?;
             let env = Env::system()?;
             serde_json::to_value(orch_runtime::validate::run::run(
-                &settings, &item, &round, &run_dir, &env, locking,
+                &settings, &reach, &item, &round, &run_dir, &env, locking,
             )?)?
         }
         Verb::Validate {
@@ -2164,6 +2191,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let env = Env::system()?;
             serde_json::to_value(orch_runtime::validate::run::stop(
                 &settings,
+                &effects::fleet_mailbox(&settings),
                 item.as_deref(),
                 &run_dir,
                 &env,

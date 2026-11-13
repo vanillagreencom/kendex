@@ -533,8 +533,8 @@ pub struct Settings {
     pub claim_store: PathBuf,
     pub lane_mail_cli: PathBuf,
     /// The mailbox and tmux server a watch's start named on its command
-    /// line; `None` in every other process. `effects::fleet_reach` is its
-    /// one reader.
+    /// line; `None` in every other process. `effects::fleet_mailbox` and
+    /// `effects::fleet_reach` are its readers.
     pub reach: Option<agent_runtime::effects::Reach>,
     pub apple_workflow: String,
     pub apple_labels: Vec<String>,

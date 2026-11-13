@@ -732,13 +732,17 @@ fn validation_world() -> (World, PathBuf) {
 
 impl World {
     fn validate(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
+        self.validate_in(&self.root, args, extra)
+    }
+
+    /// [`World::validate`] run from `cwd`.
+    fn validate_in(&self, cwd: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let scripts = orch_scripts();
         let mut command = isolated();
         command
             .arg("--state-dir")
             .arg(&self.root)
             .args(args)
-            .current_dir(&self.root)
             .env(
                 "CHANGE_SCOPE_PATHS_CLI",
                 scripts.join("../../change-scope/scripts/harness-only"),
@@ -750,7 +754,9 @@ impl World {
             .env("VALIDATE_START_ANSWER", "record-only")
             .env("VALIDATE_MANAGER_DIR", self.root.join("manager"));
         self.env(&mut command, extra);
-        command.env(
+        // After the world's own variables, which name its root as the
+        // directory.
+        command.current_dir(cwd).env(
             "PATH",
             tool_path(&[
                 &fixtures().join("validate-tools"),
@@ -760,27 +766,43 @@ impl World {
         command.output().unwrap()
     }
 
-    /// One started run, run by the row: the stage closed and the notice
-    /// sent over the session route; the run directory.
+    /// One started run, run by the row as the start launched it (the words
+    /// after the executable on the planted manager's unit, the reach its
+    /// start named among them): the stage closed and the notice sent over
+    /// the session route; the run directory.
+    /// `extra` reaches the start and the run alike: a mailbox program it
+    /// names is the one the start names on the run's command line.
     fn validated(&self, extra: &[(&str, &str)]) -> (String, Value) {
+        self.validated_in(extra, &self.root, extra)
+    }
+
+    /// [`World::validated`] with the start's own `start` variables, and the
+    /// run started in `cwd`, the directory a detached job inherits from its
+    /// starter, with its own `run` variables.
+    fn validated_in(
+        &self,
+        start: &[(&str, &str)],
+        cwd: &Path,
+        run: &[(&str, &str)],
+    ) -> (String, Value) {
         let started = result(&self.validate(
             &["validate", "start", "--item", CLOUD, "--round", ROUND],
-            &[],
+            start,
         ));
         let dir = started["run_dir"].as_str().unwrap().to_owned();
-        let ended = result(&self.validate(
-            &[
-                "validate",
-                "run",
-                "--item",
-                CLOUD,
-                "--round",
-                ROUND,
-                "--run-dir",
-                &dir,
-            ],
-            extra,
-        ));
+        let manager = self.root.join("manager");
+        let launches = std::fs::read_to_string(manager.join("launches")).unwrap();
+        let unit = launches.lines().last().unwrap();
+        let argv = std::fs::read_to_string(manager.join(format!("{unit}.argv"))).unwrap();
+        // The words after the executable: the state directory, which
+        // `validate` names itself, then the verb and its flags.
+        let job: Vec<&str> = argv.lines().skip_while(|w| *w != "--").skip(2).collect();
+        assert_eq!(
+            job[..2],
+            ["--state-dir", self.root.to_str().unwrap()],
+            "{argv}"
+        );
+        let ended = result(&self.validate_in(cwd, &job[2..], run));
         (dir, ended)
     }
 
@@ -889,6 +911,34 @@ fn a_rejected_session_notice_is_marked_by_its_result_never_sent() {
         w.stage(&item, &dir)["notice"]["owner"],
         "unsent:session:archived"
     );
+}
+
+/// A detached validation run sends a cloud lane's end notice over the
+/// session route through the mailbox its start named: that program, run in
+/// the fleet's checkout, though the run stands in another repository and
+/// its own settings name another program. That program is never asked, and
+/// the session takes the notice once.
+#[test]
+fn a_detached_runs_session_notice_goes_through_the_mailbox_its_start_named() {
+    let (w, item) = validation_world();
+    let log = w._aux.path().join("other-lane-mail.log");
+    let other = w._aux.path().join("other-lane-mail");
+    write_executable(
+        &other,
+        format!(
+            "#!/bin/sh\nprintf '%s %s\\n' \"$(pwd -P)\" \"$*\" >> '{}'\nexit 2\n",
+            log.display()
+        ),
+    );
+    let (dir, ended) = w.validated_in(
+        &[],
+        &w.root.join("foreign"),
+        &[("LANE_MAIL_CLI", other.to_str().unwrap())],
+    );
+    assert_eq!(ended["notice"], "sent", "{ended}");
+    assert_eq!(w.stage(&item, &dir)["notice"]["owner"], "sent");
+    assert_eq!(w.cli_calls(), one_call_of(&w, "validation-end run="));
+    assert_eq!(w.log(&log), Vec::<String>::new());
 }
 
 /// The three lines the one CLI call of the notice logs: the argv, the
