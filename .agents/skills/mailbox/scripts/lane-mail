@@ -32,9 +32,14 @@ usage() {
   cat <<'USAGE'
 Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
+       lane-mail owner-answers --item ITEM [--root ROOT]
        lane-mail compact --item ITEM [--root ROOT]
        lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
+
+owner-answers reads posted owner asks once, repairs their action descriptions,
+and delivers later owner comments through the existing delivery-id check. With
+no optional Linear skill it exits 0 with `owner-answers: tracker=absent`.
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
 through `lane-host` for a lane on another host.
@@ -678,7 +683,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | pending | events | resolve | compact | peer) ;;
+  ask | notice | wait | inbox | watch | send | drain | pending | events | resolve | compact | peer | owner-answers) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -784,7 +789,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ "$VERB" = compact ]; then
+if [ "$VERB" = compact ] || [ "$VERB" = owner-answers ]; then
   for given in $OPTS_GIVEN; do
     case "$given" in --item | --root) ;; *) refuse option-unknown "$given" ;; esac
   done
@@ -1033,6 +1038,126 @@ fi
 lm_cleanup() { orch_release_lock; [ -z "$WORK_DIR" ] || rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
 
+TRACKER_QUOTA_JQ='select(type == "object") |
+  select(.status == "future" or .status == "elapsed" or .status == "missing" or .status == "invalid") |
+  select(.limit == "requests" or .limit == "complexity" or .limit == "endpoint" or .limit == "unknown") |
+  select(.reset | type == "string") |
+  select(if .status == "future" or .status == "elapsed" then
+    (.reset_epoch | type == "number" and . >= 0 and . == floor) and .reset == (.reset_epoch | todateiso8601)
+    else .reset_epoch == null and .reset == "unavailable" end)'
+
+tracker_quota_line() {
+  local now
+  now="$(date -u +%s)" || return 1
+  jq -r --argjson now "$now" '
+    if .status == "future" and .reset_epoch <= $now then .status="elapsed" else . end |
+    "tracker-quota status=\(.status) reset=\(.reset) limit=\(.limit)"' <<<"$1"
+}
+
+# A standalone pass returns the transport refusal to its caller; the fleet
+# caller owns persistence and stopping its remaining tracker work.
+tracker_quota_refusal() { # STDERR_FILE
+  local receipt line
+  receipt="$(jq -Rrnc '[inputs | fromjson? | objects | select(.code == "RATELIMITED") | .quota | objects] | last // empty' <"$1")" || return 1
+  [[ -n "$receipt" ]] || return 1
+  receipt="$(jq -ce "$TRACKER_QUOTA_JQ" <<<"$receipt")" || return 1
+  OWNER_TRACKER_READ=unread
+  line="$(tracker_quota_line "$receipt")" || return 1
+  cat -- "$1" >&2
+  printf 'EVENT %s\n' "$line"
+}
+owner_answers() {
+  OWNER_TRACKER_READ=disabled
+  owner_tracker_settings "$SCRIPT_DIR" || return 0
+  OWNER_TRACKER_READ=unread
+  local items asks issue ask comment id rc repair description labels label ids=()
+  if ! "$LANE_MAIL" pending --item "$ITEM" --root "$ROOT" --to owner >"$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err"; then
+    echo 'KEN-3624-unread cause=asks' >&2; return 0
+  fi
+  if ! asks="$(jq -s 'any(.[]; .tracker_posted == true)' "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
+    echo 'KEN-3624-unread cause=asks-format' >&2; return 0
+  fi
+  [[ "$asks" == true ]] || { OWNER_TRACKER_READ=read; return 0; }
+  if ! labels="$(jq -rs --arg label "$OWNER_TRACKER_LABEL" "$OWNER_TRACKER_JQ"'
+    owner_tracker_open_labels($label)[]' "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
+    echo 'KEN-3624-unread cause=asks-format' >&2; return 0
+  fi
+  : >"$WORK_DIR/tracker-item-lists"
+  while IFS= read -r label; do
+    if ! items="$("$TRACKER" issues list --assignee "$OWNER_TRACKER_EMAIL" --label "$label" --max --format=safe 2>"$WORK_DIR/tracker.err")"; then
+      tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+      echo 'KEN-3624-unread cause=issues' >&2; return 0
+    fi
+    if ! jq -ce arrays <<<"$items" >>"$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err"; then
+      echo 'KEN-3624-unread cause=issues-format' >&2; return 0
+    fi
+  done <<<"$labels"
+  if ! items="$(jq -cs 'add | unique_by(.id)' "$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err")"; then
+    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
+  fi
+  if ! jq -c --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_ACTION_JQ"'
+    .[] | . as $item
+    | ([$asks[] | select(.tracker_posted == true and .issue == $item.id and (.do // "") != "")] | last) as $ask
+    | select($ask != null and ((.description // "") | test("^\\*\\*[^*\\r\\n]+, what you do:\\*\\* ") | not))
+    | {id, description: ((.description // "") | owner_action_line($item.assignee; $ask.do))}' \
+    <<<"$items" >"$WORK_DIR/tracker-repairs" 2>"$WORK_DIR/tracker.err"; then
+    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
+  fi
+  while IFS= read -r repair; do
+    issue="$(jq -r '.id' <<<"$repair")" || return 1
+    description="$(jq -r '.description + "."' <<<"$repair")" || return 1
+    description="${description%.}"
+    if ! "$TRACKER" issues update "$issue" --description "$description" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err"; then
+      tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+      owner_tracker_unwritten "$issue" description
+    fi
+  done <"$WORK_DIR/tracker-repairs"
+  if ! items="$(jq -r '.[].id' <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
+    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
+  fi
+  while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$items"
+  [[ ${#ids[@]} -gt 0 ]] || { OWNER_TRACKER_READ=read; return 0; }
+  if ! "$TRACKER" comments bulk-list "${ids[@]}" --format=safe >"$WORK_DIR/tracker-comments" 2>"$WORK_DIR/tracker.err"; then
+    tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+    echo 'KEN-3624-unread cause=comments' >&2; return 0
+  fi
+  if ! jq -cn --slurpfile comments "$WORK_DIR/tracker-comments" --arg email "$OWNER_TRACKER_EMAIL" \
+    --slurpfile asks "$WORK_DIR/tracker-asks" '
+      $asks[] | select(.tracker_posted == true) | . as $ask
+      | ($comments[0][$ask.issue] // []) as $rows
+      # A legacy record carries no comment id; its comment carries an ask= line.
+      | ([$rows[] | select(if $ask.tracker_comment != null then .id == $ask.tracker_comment
+          else (.body | split("\n") | index("ask=" + $ask.id)) != null end)]
+        | sort_by(.created_at) | first) as $posted
+      | select($posted != null)
+      | ($rows | sort_by(.created_at))[] | select((.user_email | ascii_downcase) == ($email | ascii_downcase)
+          and .created_at > $posted.created_at and .id != $posted.id)
+      | {ask: $ask.id, comment: .}' >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
+    echo 'KEN-3624-unread cause=comments-format' >&2; return 0
+  fi
+  while IFS= read -r comment; do
+    ask="$(jq -r '.ask' <<<"$comment")" || return 1
+    id="$(jq -r '.comment.id' <<<"$comment")" || return 1
+    jq -r '.comment.body' <<<"$comment" >"$WORK_DIR/tracker-answer" || return 1
+    rc=0
+    "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --re "$ask" --delivery-id "linear:$id" \
+      --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
+    if [[ "$rc" -ne 0 && "$(head -n 1 "$WORK_DIR/tracker.err")" != lane-mail:\ delivery-repeated=* ]]; then
+      echo 'KEN-3624-unread cause=delivery' >&2; return 0
+    fi
+    [[ "$rc" -ne 0 ]] || OWNER_TRACKER_DELIVERED=1
+  done <"$WORK_DIR/tracker-answers"
+  OWNER_TRACKER_READ=read
+}
+
+if [ "$VERB" = owner-answers ]; then
+  TRACKER="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+  if [ ! -x "$TRACKER" ]; then
+    printf 'owner-answers: tracker=absent\n'
+    exit 0
+  fi
+fi
+
 # The cause readings a stalled cloud lane's close carries into the fleet log,
 # kept on its record as directive_send: when this send ran, its result
 # (sent, archived or failed) and the CLI's words, and the account's cloud
@@ -1233,7 +1358,7 @@ if [ -z "$ROOT" ]; then
     overseer:*)
       ROOT="$(mailbox_common_root . 2>/dev/null)" || ROOT=""
       ;;
-    *:send | *:drain | *:pending | *:events | *:compact)
+    *:send | *:drain | *:pending | *:events | *:compact | *:owner-answers)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
         ROOT="$(exec "$WORKTREE" path --checkout-fallback "$ITEM" 2>/dev/null)" || ROOT=""
@@ -1247,6 +1372,12 @@ if [ -z "$ROOT" ]; then
     ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || ROOT=""
   fi
   [ -n "$ROOT" ] || refuse root-unresolved "$ITEM"
+fi
+
+if [ "$VERB" = owner-answers ]; then
+  LANE_MAIL="$SCRIPT_DIR/lane-mail"
+  owner_answers
+  exit 0
 fi
 
 # A send writes a mailbox of the caller's own repository, never one another
@@ -2308,7 +2439,11 @@ case "$VERB" in
       lm_ask "$MSGID"
       BY=text
     fi
-    [ "$ITEM" != overseer ] || [ "$HOST" -eq 1 ] || lm_require_overseer full "$ROOT"
+    # Owner replies are consumed by owner-channel readers without a fleet.
+    if [ "$ITEM" = overseer ] && [ "$HOST" -eq 0 ] &&
+       { [ -z "$MSGID" ] || [ "$(jq -r '.to // ""' <<<"$ASK_JSON")" != owner ]; }; then
+      lm_require_overseer full "$ROOT"
+    fi
     # Succession publishes the opened successor before stopping its predecessor.
     # The current record (not its pending command) therefore still names a pane
     # while neither session is taking a turn. No timer can make a dead pane read.
