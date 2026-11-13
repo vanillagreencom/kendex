@@ -260,6 +260,19 @@ pub fn codex_capacity_refused(slice: &str) -> bool {
         && slice.lines().any(|l| CODEX_MARKER.is_match(l))
 }
 
+/// Codex's line for a turn its provider's API refused, as a real pane drew
+/// it: the error glyph at the line's start, then the provider's JSON error
+/// body. An answer quoting the words draws them indented.
+static CODEX_API_ERROR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"^■ \{"detail":"#).unwrap());
+
+/// Whether a Codex slice judged idle sits at its composer after an API error
+/// ended its turn: the error line and the marker line are both drawn in it.
+pub fn codex_api_error(slice: &str) -> bool {
+    slice.lines().any(|l| CODEX_API_ERROR.is_match(l))
+        && slice.lines().any(|l| CODEX_MARKER.is_match(l))
+}
+
 /// Whether a wall screen is the live process's: a screen first seen before
 /// the process holding the pane started was drawn by an earlier process and
 /// is scrollback, not a wall.
@@ -874,6 +887,26 @@ mod tests {
         assert!(!codex_capacity_refused("› first turn\nsome answer\n› "));
         assert!(!codex_capacity_refused(
             "❯ note\n● Selected model is at capacity, it said.\n❯\u{a0}"
+        ));
+    }
+
+    /// A Codex turn the provider's API ended reads `idle` through the
+    /// judge, and its marker tells it from a finished turn's idle (the five
+    /// lines a real pane drew from the error to the footer); an answer
+    /// quoting the error indented, and the capacity refusal, are not it.
+    #[test]
+    fn the_codex_api_error_turn_end_is_idle_and_its_marker_tells_it_apart() {
+        let screen = "■ {\"detail\":\"Bad Request\"}\n1 background terminal running · /ps to view · /stop to close\n› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view";
+        assert_eq!(
+            judge(screen, Harness::Codex, &ProcessReading::HarnessUp, None),
+            State::Idle
+        );
+        assert!(codex_api_error(&below_last_turn(screen)));
+        assert!(!codex_api_error(
+            "› what failed?\n  ■ {\"detail\":\"Bad Request\"} is what the log said\n› Ask Codex to do anything"
+        ));
+        assert!(!codex_api_error(
+            "› Continue the task.\n▲ Selected model is at capacity. Try again later.\n› Ask Codex to do anything"
         ));
     }
 

@@ -17,6 +17,14 @@
 //! the row once read. The wake reads that row from its tick's snapshot and
 //! writes no row of its own.
 //!
+//! Resume: the lanes duty sets a row of kind [`RESUME_KIND`], its identity
+//! the lane's name, its value the wall it asks a resume for
+//! (`usage-limit|<identity>|<reset>`), for a lane [`resumable`] names whose
+//! wall's reset passed. The wake reads the lane's account through the close's
+//! own account read and, once it reads room, types the resume sentence before
+//! the inbox line into the pane past its usage banner (`deliver
+//! --account-room`), once per row value: the mark keeps the value typed.
+//!
 //! Codex: Codex publishes no idle signal, so no resume of a live Codex
 //! session is ever started beside it, and its paste route is unproved on a
 //! real Codex; the duty reads a Codex lane idle, reports `wake-limit` and
@@ -52,6 +60,8 @@ use agent_runtime::effects::overseer_socket;
 
 /// The baseline row kind the mail duty signals unread mail with.
 pub const UNREAD_KIND: &str = "unread";
+/// The baseline row kind the lanes duty asks a resume with.
+pub const RESUME_KIND: &str = "resume";
 /// The watch's wake record, beside the fleet state: it shares the runner's
 /// own records' stem, which the retention duty never judges.
 pub const WAKE_FILE: &str = "oversee-watch.wake.json";
@@ -70,6 +80,55 @@ fn line_for(target: &str) -> String {
     format!(
         "Run .agents/skills/mailbox/scripts/lane-mail inbox --item {target} and act on every envelope it prints, answers and directives alike, as its text directs."
     )
+}
+
+/// A resume the lanes duty asked: its row's value, which the mark keeps
+/// once typed, and the cause the row names.
+struct Resume {
+    row: String,
+    cause: &'static str,
+    /// How the session's last turn ended, as the sentence says it.
+    ended: &'static str,
+}
+
+impl Resume {
+    /// The resume a row's value asks for; none for a cause the wake does
+    /// not resume.
+    fn of(row: &str) -> Option<Resume> {
+        let (cause, ended) = match row.split('|').next()? {
+            "usage-limit" => (
+                "usage-limit",
+                "its account's usage limit, which has since reset",
+            ),
+            _ => return None,
+        };
+        Some(Resume {
+            row: row.to_owned(),
+            cause,
+            ended,
+        })
+    }
+
+    /// The line typed for `target`: the resume sentence, then the inbox
+    /// line, so the resumed turn reads the mail that waited too.
+    fn line(&self, target: &str) -> String {
+        format!(
+            "Resume the orch workflow for {target} from where this session stopped: your last turn ended on {}. {}",
+            self.ended,
+            line_for(target)
+        )
+    }
+}
+
+/// Whether the wake resumes `lane` at a passed wall: a lane it types into,
+/// on a harness with a paste route, spending an account the wall's account
+/// reading measures. The lanes duty asks a resume for such a lane alone.
+pub fn resumable(lane: &Lane) -> bool {
+    // The socket only names where a paste would go.
+    lane_target(lane, Path::new("")).is_some_and(|target| {
+        route_limit(target.harness).is_none()
+            && crate::effects::room_measured(lane, Some(target.harness)).is_some()
+    })
 }
 
 /// The capability limit a harness has for a positively idle paste, where
@@ -91,11 +150,13 @@ fn unwoken(target: &str, outcome: Option<&WakeOutcome>) -> Option<Event> {
         WakeOutcome::Unconfirmed { cause } => Some(Event::WakeUnconfirmed {
             target: target.to_owned(),
             cause: cause.clone(),
+            resume: None,
         }),
         WakeOutcome::Limit { harness, cause } => Some(Event::WakeLimit {
             target: target.to_owned(),
             harness: harness.clone(),
             cause: cause.clone(),
+            resume: None,
         }),
     }
 }
@@ -276,14 +337,17 @@ impl Wake {
     )]
     fn run(&self, tick: &Tick) -> Result<Produced> {
         let mut produced = Produced::default();
-        let unread: Vec<(String, String)> = tick
-            .baseline
-            .rows
-            .iter()
-            .filter(|r| r.kind == UNREAD_KIND)
-            .map(|r| (r.identity.clone(), r.value.clone()))
-            .collect();
-        if unread.is_empty() {
+        let rows = |kind: &str| -> Vec<(String, String)> {
+            tick.baseline
+                .rows
+                .iter()
+                .filter(|r| r.kind == kind)
+                .map(|r| (r.identity.clone(), r.value.clone()))
+                .collect()
+        };
+        let unread = rows(UNREAD_KIND);
+        let resumes = rows(RESUME_KIND);
+        if unread.is_empty() && resumes.is_empty() {
             return Ok(produced);
         }
         // The marks as the record holds them at the start of this pass:
@@ -299,6 +363,54 @@ impl Wake {
                 .to_path_buf(),
         };
         let host = crate::ops::Host::kernel();
+        // A resume goes first: its line runs the inbox read too, so the
+        // unread state it types for stands marked when the mail is served.
+        for (name, row) in resumes {
+            let Some(resume) = Resume::of(&row) else {
+                continue;
+            };
+            let Some(lane) = fleet
+                .lanes
+                .iter()
+                .find(|l| super::lanes::lane_name(l) == name)
+                .filter(|l| resumable(l) && !crate::ops::wake::turn_runs(l, &host))
+            else {
+                continue;
+            };
+            let Some(target) = lane_target(lane, &socket) else {
+                continue;
+            };
+            let marked = record.get(&target.name);
+            if marked.and_then(|m| m.resume.as_deref()) == Some(row.as_str()) {
+                continue;
+            }
+            // The local listing: the wake types into local lanes alone.
+            let room = crate::effects::account_room(
+                &self.settings,
+                &self.fleet,
+                "local",
+                lane,
+                Some(target.harness),
+                tick.wall,
+            );
+            if room != "room" {
+                continue;
+            }
+            let state = unread
+                .iter()
+                .find(|(t, _)| *t == target.name)
+                .map(|(_, s)| s.clone())
+                .or_else(|| marked.map(|m| m.unread.clone()))
+                .unwrap_or_default();
+            self.first_pass(
+                &target,
+                &state,
+                Some(&resume),
+                tick.wall,
+                &mut record,
+                &mut produced,
+            )?;
+        }
         for (name, state) in unread {
             let target = if name == OVERSEER_TARGET {
                 fleet
@@ -354,13 +466,16 @@ impl Wake {
             }
             // The paste may have gone in: the file alone says whether the
             // turn arrived, and nothing is typed again for this state.
-            match self.read(target)? {
+            match self.read(target, false)? {
                 Read::Idle { turns } if turns > mark.turns_before => {
                     mark.outcome = Some(WakeOutcome::Delivered { turns_after: turns });
                     // Woken after all: nothing is owed to the owner.
                     mark.owner = None;
                     self.write(record, &name, Some(mark))?;
-                    produced.events.push(Event::WakeDelivered { target: name });
+                    produced.events.push(Event::WakeDelivered {
+                        target: name,
+                        resume: None,
+                    });
                     Ok(())
                 }
                 // Still idle and unwoken: the owner's turn.
@@ -379,12 +494,13 @@ impl Wake {
                         target: name,
                         harness,
                         cause,
+                        resume: None,
                     });
                     Ok(())
                 }
             }
         } else {
-            self.first_pass(target, unread, now, record, produced)
+            self.first_pass(target, unread, None, now, record, produced)
         }
     }
 
@@ -422,18 +538,23 @@ impl Wake {
         Ok(())
     }
 
-    /// A new unread state: the target read idle, marked, typed where its
-    /// harness has a route and confirmed, the outcome and the owner's word
-    /// written with the mark.
+    /// A new unread state, or the resume `resume` asks: the target read
+    /// idle, marked, typed where its harness has a route and confirmed, the
+    /// outcome and the owner's word written with the mark. A resume reads
+    /// the pane past its usage banner, types its sentence before the inbox
+    /// line and says `resume=` on its line, with no `idle-unread`; every
+    /// mark carries the last resume typed for the target.
     fn first_pass(
         &self,
         target: &Target,
         unread: &str,
+        resume: Option<&Resume>,
         now: u64,
         record: &mut WakeRecord,
         produced: &mut Produced,
     ) -> Result<()> {
         let name = target.name.clone();
+        let standing = record.get(&name).cloned();
         let mut mark = WakeMark {
             pane: target.pane.clone(),
             server: target.server,
@@ -443,22 +564,29 @@ impl Wake {
             at: now,
             outcome: None,
             owner: None,
+            resume: resume
+                .map(|r| r.row.clone())
+                .or_else(|| standing.as_ref().and_then(|m| m.resume.clone())),
+        };
+        let said = resume.map(|r| r.cause.to_owned());
+        let lines = |event: Event| match resume {
+            Some(_) => vec![event],
+            None => vec![Event::IdleUnread { lane: name.clone() }, event],
         };
         let limit = |mark: &mut WakeMark, harness: String, cause: String| {
             mark.outcome = Some(WakeOutcome::Limit {
                 harness: harness.clone(),
                 cause: cause.clone(),
             });
-            vec![
-                Event::IdleUnread { lane: name.clone() },
-                Event::WakeLimit {
-                    target: name.clone(),
-                    harness,
-                    cause,
-                },
-            ]
+            lines(Event::WakeLimit {
+                target: name.clone(),
+                harness,
+                cause,
+                resume: said.clone(),
+            })
         };
-        let events = match self.read(target)? {
+        let room = resume.is_some();
+        let events = match self.read(target, room)? {
             Read::Refused => return Ok(()),
             Read::Limit { harness, cause } => limit(&mut mark, harness, cause),
             Read::Idle { turns } => match route_limit(target.harness) {
@@ -471,32 +599,29 @@ impl Wake {
                     mark.turns_before = turns;
                     // The mark is on disk before anything is typed.
                     self.write(record, &name, Some(mark.clone()))?;
-                    match self.paste(target, &line_for(&name), turns)? {
+                    let line = resume.map_or_else(|| line_for(&name), |r| r.line(&name));
+                    match self.paste(target, &line, turns, room)? {
                         Paste::Confirmed { turns_after } => {
                             mark.outcome = Some(WakeOutcome::Delivered { turns_after });
-                            vec![
-                                Event::IdleUnread { lane: name.clone() },
-                                Event::WakeDelivered {
-                                    target: name.clone(),
-                                },
-                            ]
+                            lines(Event::WakeDelivered {
+                                target: name.clone(),
+                                resume: said.clone(),
+                            })
                         }
                         Paste::Unconfirmed { cause } => {
                             mark.outcome = Some(WakeOutcome::Unconfirmed {
                                 cause: cause.clone(),
                             });
-                            vec![
-                                Event::IdleUnread { lane: name.clone() },
-                                Event::WakeUnconfirmed {
-                                    target: name.clone(),
-                                    cause,
-                                },
-                            ]
+                            lines(Event::WakeUnconfirmed {
+                                target: name.clone(),
+                                cause,
+                                resume: said.clone(),
+                            })
                         }
                         Paste::Refused => {
-                            // Nothing was typed: the mark it was written
-                            // for stands for nothing.
-                            self.write(record, &name, None)?;
+                            // Nothing was typed: the mark that stood before
+                            // stands again.
+                            self.write(record, &name, standing)?;
                             return Ok(());
                         }
                     }
@@ -509,9 +634,10 @@ impl Wake {
         Ok(())
     }
 
-    /// Read the target through `deliver --no-paste`.
-    fn read(&self, target: &Target) -> Result<Read> {
-        let mut args = self.target_args(target)?;
+    /// Read the target through `deliver --no-paste`; `room` passes the
+    /// account read with room, which judges a usage banner past.
+    fn read(&self, target: &Target, room: bool) -> Result<Read> {
+        let mut args = self.target_args(target, room)?;
         args.push("--no-paste".to_owned());
         match self.call(&args)? {
             Answer::Refused => Ok(Read::Refused),
@@ -532,9 +658,9 @@ impl Wake {
     }
 
     /// Type `line` into the target through `deliver`, confirmed by a user
-    /// turn beyond `turns_before`.
-    fn paste(&self, target: &Target, line: &str, turns_before: u64) -> Result<Paste> {
-        let mut args = self.target_args(target)?;
+    /// turn beyond `turns_before`; `room` as [`Wake::read`] takes it.
+    fn paste(&self, target: &Target, line: &str, turns_before: u64, room: bool) -> Result<Paste> {
+        let mut args = self.target_args(target, room)?;
         args.extend([
             "--turns-before".to_owned(),
             turns_before.to_string(),
@@ -560,7 +686,7 @@ impl Wake {
         }
     }
 
-    fn target_args(&self, target: &Target) -> Result<Vec<String>> {
+    fn target_args(&self, target: &Target, room: bool) -> Result<Vec<String>> {
         let mut args = vec![
             "deliver".to_owned(),
             "--harness".to_owned(),
@@ -601,6 +727,9 @@ impl Wake {
         }
         if let Some(id) = &target.session_id {
             args.extend(["--session-id".to_owned(), id.clone()]);
+        }
+        if room {
+            args.push("--account-room".to_owned());
         }
         Ok(args)
     }

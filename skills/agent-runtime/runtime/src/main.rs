@@ -98,6 +98,11 @@ enum Verb {
         /// Deliver whatever the screen says; for a probe that knows better.
         #[arg(long)]
         force: bool,
+        /// The caller read the session's account with room after its reset:
+        /// a usage banner on the screen is judged past, every other rung of
+        /// the judge kept.
+        #[arg(long, requires = "harness")]
+        account_room: bool,
         /// The session's harness, with the facts below in place of a record.
         #[arg(long, requires_all = ["socket", "server_pid", "pane", "cwd"])]
         harness: Option<String>,
@@ -1239,12 +1244,14 @@ struct Judged {
 /// terminal is read against `recorded` where the caller has one: that
 /// identity alone is the harness, and an ended one is read as other, never
 /// replaced. With none, the harness-named process now in the
-/// foreground is read, for the caller to record.
+/// foreground is read, for the caller to record. `account_room` is the
+/// caller's reading of the session's account, as the judge takes it.
 fn judge_pane(
     harness: Harness,
     owns: &dyn Fn(&str) -> bool,
     pane: &tmux::Pane,
     recorded: Option<&Identity>,
+    account_room: Option<bool>,
 ) -> Result<Judged> {
     let fields = match tmux::pane_fields(&pane.server, &pane.id) {
         Reading::Live(fields) => fields,
@@ -1271,7 +1278,7 @@ fn judge_pane(
     };
     let reading = observe::foreground(fields.pid, owns, recorded);
     let screen = tmux::capture(pane)?;
-    let state = observe::judge(&screen, harness, &reading, None);
+    let state = observe::judge(&screen, harness, &reading, account_room);
     let screen_tail: Vec<String> = screen
         .lines()
         .rev()
@@ -1296,6 +1303,7 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
         &owns(rec),
         &rec.pane,
         rec.harness_process.as_ref(),
+        None,
     )?;
     let fields = match judged.pane {
         Reading::Live(fields) => fields,
@@ -1786,6 +1794,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             file,
             line,
             force,
+            account_room,
             harness,
             program,
             socket,
@@ -1878,6 +1887,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                         &owns,
                         &session.pane,
                         session.recorded.as_ref(),
+                        account_room.then_some(true),
                     )?;
                     (session, judged)
                 }

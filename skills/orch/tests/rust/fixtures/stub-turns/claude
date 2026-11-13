@@ -19,6 +19,9 @@
 #                     each hold takes one line, in the order written.
 #   STUB_TURNS_DROP   non-empty: no row is written, as a harness that lost
 #                     the pasted line.
+#   STUB_TURNS_WALL   a file whose lines are drawn above the first composer,
+#                     as a session standing at its usage-limit banner; every
+#                     later turn is served.
 # It launches no model and reaches no account; it stands until its stdin
 # closes, which a kill-server or a window kill does.
 state="${STUB_TURNS_STATE:-}"
@@ -45,6 +48,9 @@ if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
   rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
   printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+fi
+if [ -n "${STUB_TURNS_WALL:-}" ]; then
+  while IFS= read -r drawn; do printf '%s\n' "$drawn"; done < "$STUB_TURNS_WALL"
 fi
 composer
 set_state idle

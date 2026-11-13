@@ -1506,7 +1506,7 @@ impl Gate<'_> {
         let file = self
             .notice_dir
             .join(format!("{item}.{}.{index}.notice", self.nonce));
-        let status = root.join("tmp").join(format!("lane-status-{item}.md"));
+        let status = crate::state::status_file(root, item);
         let mut handle = match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

@@ -175,11 +175,13 @@ pub enum Event {
     IdleUnread {
         lane: String,
     },
-    // The wake duty's own lines.
+    // The wake duty's own lines; `resume` is the cause of the resume the
+    // wake typed (`usage-limit`), none for a mail wake.
     /// This runtime's own: the wake's line confirmed by
     /// a new user turn in the target's own bound session file.
     WakeDelivered {
         target: String,
+        resume: Option<String>,
     },
     /// This runtime's own: the wake's line typed and the bound passed with
     /// no such turn, `cause` the verb's word (`turn-pending`, `pane-gone`,
@@ -187,6 +189,7 @@ pub enum Event {
     WakeUnconfirmed {
         target: String,
         cause: String,
+        resume: Option<String>,
     },
     /// This runtime's own: the target read idle with
     /// unread mail and no confirmable route for its harness; nothing typed.
@@ -194,6 +197,7 @@ pub enum Event {
         target: String,
         harness: String,
         cause: String,
+        resume: Option<String>,
     },
     LaneReady {
         item: String,
@@ -496,6 +500,13 @@ fn with_unit(secs: u64) -> String {
     format!("{secs}s")
 }
 
+/// A wake line's ` resume=<cause>` field, empty for a mail wake.
+fn resumed(resume: Option<&str>) -> String {
+    resume
+        .map(|cause| format!(" resume={cause}"))
+        .unwrap_or_default()
+}
+
 impl Event {
     /// The line without its newline.
     pub fn render(&self) -> String {
@@ -542,15 +553,29 @@ impl Event {
             Event::StartStalled { item, age } => format!("EVENT start-stalled {item} age={age}"),
             Event::IdleUnread { lane } => format!("EVENT idle-unread {lane}"),
             // The wake duty's own lines.
-            Event::WakeDelivered { target } => format!("EVENT wake-delivered {target}"),
-            Event::WakeUnconfirmed { target, cause } => {
-                format!("EVENT wake-unconfirmed {target} cause={cause}")
+            Event::WakeDelivered { target, resume } => {
+                format!(
+                    "EVENT wake-delivered {target}{}",
+                    resumed(resume.as_deref())
+                )
             }
+            Event::WakeUnconfirmed {
+                target,
+                cause,
+                resume,
+            } => format!(
+                "EVENT wake-unconfirmed {target} cause={cause}{}",
+                resumed(resume.as_deref())
+            ),
             Event::WakeLimit {
                 target,
                 harness,
                 cause,
-            } => format!("EVENT wake-limit {target} harness={harness} cause={cause}"),
+                resume,
+            } => format!(
+                "EVENT wake-limit {target} harness={harness} cause={cause}{}",
+                resumed(resume.as_deref())
+            ),
             Event::LaneReady { item } => format!("EVENT lane-ready {item}"),
             Event::LanePrepareStuck {
                 item,

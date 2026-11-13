@@ -42,6 +42,12 @@ pub fn item_of(path: &Path) -> Option<&str> {
         .and_then(|n| n.strip_suffix(".json"))
 }
 
+/// The status file a lane writes under its root `root`: every reader in
+/// this runtime names the file through this one function.
+pub fn status_file(root: &Path, item: &str) -> PathBuf {
+    root.join("tmp").join(format!("lane-status-{item}.md"))
+}
+
 /// The directive id of an owner-directed micro change's item, keyed
 /// `directive-<id>`: the hook's item alphabet
 /// (`hooks/lane-mail-check.sh` `item_alphabet`) and the mailbox's

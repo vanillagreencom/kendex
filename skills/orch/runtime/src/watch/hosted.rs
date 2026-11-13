@@ -1910,8 +1910,7 @@ fn root_of(lane: &Lane) -> Option<&str> {
     lane.mail_root.as_deref().filter(|r| !r.is_empty())
 }
 
-/// The lane's status file through the provider: `<root>/tmp/lane-status-
-/// <item>.md`.
+/// The lane's status file through the provider, under its root on its host.
 pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
     let Some(root) = root_of(lane) else {
         return Answer::Gone;
@@ -1920,7 +1919,7 @@ pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
         scripts,
         host_of(lane),
         &lane.item,
-        &format!("{root}/tmp/lane-status-{}.md", lane.item),
+        &state::status_file(Path::new(root), &lane.item).to_string_lossy(),
     )
 }
 

@@ -549,6 +549,7 @@ fn a_usage_limit_screen_is_reported_once_and_an_older_screen_is_not_a_wall() {
         lines(&first),
         vec![
             "EVENT usage-limit gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z".to_owned(),
+            "wall-relaunch-refused lane=gh-4 reason=record-unnamed".to_owned(),
             "⏺ Working through the queue.".to_owned(),
             BANNER.to_owned(),
             "Run /usage-credits to raise it".to_owned(),
@@ -689,8 +690,9 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
 }
 
 /// The reset is pinned to the first sighting; once the clock passes it the
-/// lane is `usage-limit-passed` once more, with the banner window under it,
-/// and no account record is renewed for a reset behind the clock.
+/// lane is `usage-limit-passed` once more, with the wake's resume and the
+/// banner window under it, and no account record is renewed for a reset
+/// behind the clock.
 #[test]
 fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -727,6 +729,7 @@ fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
         vec![
             "EVENT usage-limit-passed gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z"
                 .to_owned(),
+            "resume wake".to_owned(),
             "⏺ Working through the queue.".to_owned(),
             BANNER.to_owned(),
             "Run /usage-credits to raise it".to_owned(),
@@ -742,6 +745,192 @@ fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
     );
     let again = driver.pass(&state);
     assert!(lines(&again).is_empty(), "{:?}", lines(&again));
+}
+
+/// A pane whose `claude` process draws the screen it starts on and redraws
+/// the pane whole with each screen file whose path is typed into it
+/// ([`redraw`]), so a row moves a lane's screen under one live identity.
+fn redrawing_claude(server: &Server, dir: &Path, name: &str, screen: &str) -> (String, Identity) {
+    let bin = dir.join(format!("{name}-bin"));
+    std::fs::create_dir_all(&bin).unwrap();
+    let claude = bin.join("claude");
+    write_executable(
+        &claude,
+        "#!/bin/bash\ndraw() { printf '\\033[2J\\033[H'; while IFS= read -r l; do printf '%s\\n' \"$l\"; done < \"$1\"; }\ndraw \"$1\"\nwhile IFS= read -r f; do draw \"$f\"; done\n",
+    );
+    let first = dir.join(format!("{name}-screen-0.txt"));
+    std::fs::write(&first, screen).unwrap();
+    let pane = server.open_window(
+        name,
+        dir,
+        &format!("exec {} {}", claude.display(), first.display()),
+    );
+    let identity = await_named(server, &pane, "claude");
+    (pane, identity)
+}
+
+/// The screen `screen` drawn into `pane` through [`redrawing_claude`], read
+/// back once `needle` is on it.
+fn redraw(server: &Server, pane: &str, dir: &Path, file: &str, screen: &str, needle: &str) {
+    let path = dir.join(file);
+    std::fs::write(&path, screen).unwrap();
+    server.send_line(pane, &path.display().to_string());
+    await_drawn(server, pane, needle);
+}
+
+/// The wall screen of [`walled_claude`] with the banner `banner`.
+fn wall_screen(banner: &str) -> String {
+    format!("⏺ Working through the queue.\n{banner}\nRun /usage-credits to raise it\n❯\u{a0}\n")
+}
+
+/// A wall ends at the first read with no banner, so the same banner drawn
+/// again after it is `usage-limit` once more under the same identity.
+#[test]
+fn a_wall_that_cleared_and_came_back_with_the_same_banner_is_reported_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = redrawing_claude(&server, dir.path(), "gh-4", &wall_screen(BANNER));
+    await_drawn(&server, &pane, "weekly limit");
+    fleet.set_lanes(vec![lane_record(
+        "KEN-4",
+        "gh-4",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        dir.path(),
+    )]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let wall = vec!["EVENT usage-limit gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z"];
+    assert_eq!(event_lines(&driver.pass(&state)), wall);
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    redraw(
+        &server,
+        &pane,
+        dir.path(),
+        "gh-4-screen-1.txt",
+        "⏺ Back at work after the wall.\n❯\u{a0}\n",
+        "Back at work",
+    );
+    driver.pass(&state);
+    redraw(
+        &server,
+        &pane,
+        dir.path(),
+        "gh-4-screen-2.txt",
+        &wall_screen(BANNER),
+        "weekly limit",
+    );
+    assert_eq!(event_lines(&driver.pass(&state)), wall);
+}
+
+/// A wall whose reset passed on a lane the wake reaches is
+/// `usage-limit-passed` with `resume wake` and the wake's `resume` row
+/// keyed to the identity and the reset; one the wake does not reach (its
+/// record names no account) says `resume unreached` and asks nothing; a
+/// record naming no model, or no account, says why no pick ran while the
+/// reset is ahead. A resumed turn that ended at the same banner is told
+/// once with `resume walled`, its row cleared, so no second resume is
+/// asked for that wall, and the next pass says nothing.
+#[test]
+fn a_passed_wall_asks_the_wake_for_one_resume_and_a_resume_answered_by_the_same_banner_is_told_once()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = redrawing_claude(&server, dir.path(), "gh-4", &wall_screen(BANNER));
+    await_drawn(&server, &pane, "weekly limit");
+    let (unreached, unreached_identity) =
+        redrawing_claude(&server, dir.path(), "gh-5", &wall_screen(BANNER));
+    await_drawn(&server, &unreached, "weekly limit");
+    let mut no_account = lane_record(
+        "KEN-5",
+        "gh-5",
+        "claude",
+        &server,
+        &unreached,
+        Some(&unreached_identity),
+        dir.path(),
+    );
+    no_account.as_object_mut().unwrap().remove("account");
+    no_account["model"] = json!("opus");
+    fleet.set_lanes(vec![
+        lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        ),
+        no_account,
+    ]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let notes = |produced: &Produced| -> Vec<String> {
+        lines(produced)
+            .into_iter()
+            .filter(|l| {
+                l.starts_with("EVENT ") || l.starts_with("resume ") || l.starts_with("wall-")
+            })
+            .collect()
+    };
+    assert_eq!(
+        notes(&driver.pass(&state)),
+        vec![
+            "EVENT usage-limit gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z",
+            "wall-relaunch-refused lane=gh-4 reason=record-unnamed",
+            "EVENT usage-limit gh-5 resets=2027-10-04T18:00:00Z",
+            "wall-relaunch-refused lane=gh-5 reason=account-unknown",
+        ]
+    );
+    driver.now = BANNER_RESET + 60;
+    assert_eq!(
+        notes(&driver.pass(&state)),
+        vec![
+            "EVENT usage-limit-passed gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z",
+            "resume wake",
+            "EVENT usage-limit-passed gh-5 resets=2027-10-04T18:00:00Z",
+            "resume unreached",
+        ]
+    );
+    let asked = format!(
+        "usage-limit|{}:{}|{BANNER_RESET}",
+        identity.pid, identity.start
+    );
+    assert_eq!(driver.baseline.get("resume", "gh-4"), Some(asked.as_str()));
+    assert_eq!(driver.baseline.get("resume", "gh-5"), None);
+    assert!(lines(&driver.pass(&state)).is_empty());
+    assert_eq!(driver.baseline.get("resume", "gh-4"), Some(asked.as_str()));
+    // The resume typed, the turn answered by the same banner.
+    redraw(
+        &server,
+        &pane,
+        dir.path(),
+        "gh-4-screen-1.txt",
+        &format!(
+            "{}❯ Resume the orch workflow for KEN-4\n{BANNER}\nRun /usage-credits again\n❯\u{a0}\n",
+            wall_screen(BANNER).trim_end_matches("❯\u{a0}\n")
+        ),
+        "credits again",
+    );
+    let told = driver.pass(&state);
+    assert_eq!(
+        lines(&told),
+        vec![
+            "EVENT usage-limit-passed gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z"
+                .to_owned(),
+            "resume walled".to_owned(),
+            BANNER.to_owned(),
+            "Run /usage-credits again".to_owned(),
+            "❯\u{a0}".to_owned(),
+        ]
+    );
+    assert_eq!(driver.baseline.get("resume", "gh-4"), None);
+    assert!(lines(&driver.pass(&state)).is_empty());
 }
 
 /// A lane record carrying what the relaunch needs: the model the pick is
@@ -1414,6 +1603,42 @@ fn a_codex_capacity_refusal_is_model_capacity_once() {
     assert!(lines(&second).is_empty(), "{:?}", lines(&second));
 }
 
+/// A Codex turn its provider's API ended (the screen a real hosted lane's
+/// pane drew) is no finished return: the idle line carries
+/// `cause=api-error`, once.
+#[test]
+fn a_codex_api_error_turn_end_is_no_finished_return() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let codex = named_sleep(dir.path(), "codex");
+    let fixture = fixtures()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("fixtures/oversee-watch/codex-api-error.txt");
+    let line = format!("cat {}; exec {} 600", fixture.display(), codex.display());
+    let pane = server.open_window("gh-7", dir.path(), &format!("bash -c \"{line}\""));
+    let identity = await_named(&server, &pane, "codex");
+    await_drawn(&server, &pane, "Bad Request");
+    fleet.set_lanes(vec![lane_record(
+        "KEN-7",
+        "gh-7",
+        "codex",
+        &server,
+        &pane,
+        Some(&identity),
+        dir.path(),
+    )]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let told: Vec<String> = (0..3)
+        .flat_map(|_| event_lines(&driver.pass(&state)))
+        .collect();
+    assert_eq!(told, vec!["EVENT idle-after-return gh-7 cause=api-error"]);
+}
+
 /// A Pi lane is judged from its rows, since its carrier's drawing cannot
 /// settle it: a Stop row is idle on the second pass with the pane's tail
 /// under it and no `cause=` for the ordinary end (`stop_reason=stop`, which
@@ -1485,6 +1710,7 @@ fn a_pi_lane_is_judged_from_its_rows_as_the_released_watch_judged_it() {
         lines(&walled),
         vec![
             "EVENT usage-limit gh-5 /home/me/.eclaude".to_owned(),
+            "wall-relaunch-refused lane=gh-5 reason=record-unnamed".to_owned(),
             "429 Usage limit reached for this model".to_owned()
         ]
     );
@@ -6142,6 +6368,69 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
     );
     let log = world.host_log();
     assert!(!log.iter().any(|l| l.contains("capture")), "{log:?}");
+}
+
+/// A Codex lane at its composer below a prior turn is idle on the first
+/// pass where it is local, and on the second where it is hosted: a hosted
+/// lane's screen between a finished tool call and the next reads the same.
+#[test]
+fn a_codex_lane_below_a_prior_turn_is_idle_on_its_first_pass_locally_and_on_its_second_hosted() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let drawn = "printf '%s\\n' '› complete' '› Type a prompt'";
+    let codex = named_sleep(dir.path(), "codex");
+    let line = format!("{drawn}; exec {} 600", codex.display());
+    let local = server.open_window("gh-1", dir.path(), &format!("bash -c \"{line}\""));
+    let identity = await_named(&server, &local, "codex");
+    await_drawn(&server, &local, "Type a prompt");
+    let shell = server.open_window(
+        "gh-2",
+        dir.path(),
+        &format!("{drawn}; exec bash --norc --noprofile"),
+    );
+    await_drawn(&server, &shell, "Type a prompt");
+    let mut hosted = hosted_lane(dir.path(), "KEN-2", "gh-2", "/remote/KEN-2");
+    hosted["harness"] = json!("codex");
+    hosted["launch"] = json!({"pane": shell, "server": server.pid});
+    fleet.set_lanes(vec![
+        lane_record(
+            "KEN-1",
+            "gh-1",
+            "codex",
+            &server,
+            &local,
+            Some(&identity),
+            dir.path(),
+        ),
+        hosted,
+    ]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (
+            &format!("{} capabilities", provider(dir.path())),
+            ok(SSH_LINE),
+        ),
+        ("status --item KEN-2 --harness codex", ok("running\n")),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let idle = |produced: &Produced| -> Vec<String> {
+        event_lines(produced)
+            .into_iter()
+            .filter(|l| l.starts_with("EVENT idle-after-return"))
+            .collect()
+    };
+    assert_eq!(
+        idle(&driver.pass(&state)),
+        vec!["EVENT idle-after-return gh-1"]
+    );
+    assert_eq!(
+        idle(&driver.pass(&state)),
+        vec!["EVENT idle-after-return gh-2"]
+    );
 }
 
 /// The scripts directory of a row's provider world: `provider`, the

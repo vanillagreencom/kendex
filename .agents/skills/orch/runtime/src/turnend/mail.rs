@@ -283,7 +283,7 @@ pub(super) fn idle_check(
         .iter()
         .rfind(|e| e.mailbox.as_deref() == Some("to-lane") && e.kind() == "directive")
         .is_some_and(|e| e.halt == Some(true));
-    let status_file = lane.root.join("tmp").join(format!("lane-status-{item}.md"));
+    let status_file = crate::state::status_file(&lane.root, item);
     let record = Record {
         path: lane.mail_root.join(item).join("sent-count"),
         status: status_state(turn, &status_file),

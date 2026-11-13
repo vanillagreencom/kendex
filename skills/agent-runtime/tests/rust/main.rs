@@ -864,6 +864,27 @@ fn deliver_confirms_by_the_fixed_file_s_user_turn_and_never_by_the_paste_alone()
     let (refused, code) = deliver_on(&pane, &home, &["--session-id", "x", "--line", "lost"]);
     assert_eq!(code, 1, "{refused}");
     assert_eq!(refused["refusal"]["key"], "deliver-refused", "{refused}");
+    // A composer under a usage banner is a wall, refused; a caller that
+    // read the account with room after its reset reads it idle.
+    pane.run_stub(
+        dir.path(),
+        "claude",
+        "printf '%s\\n' \"You've hit your session limit · resets 6pm (UTC)\"\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\n",
+    );
+    pane.await_row(&|l| l.contains("session limit"));
+    let read = ["--session-id", "keeps-1", "--no-paste"];
+    let (walled, code) = deliver_on(&pane, &home, &read);
+    assert_eq!(code, 1, "{walled}");
+    assert_eq!(walled["refusal"]["key"], "deliver-refused", "{walled}");
+    let state = walled["refusal"]["fields"]
+        .as_array()
+        .and_then(|fields| fields.iter().find(|field| field[0] == "state"))
+        .map(|field| field[1].clone());
+    assert_eq!(state, Some(serde_json::json!("walled")), "{walled}");
+    let (past, code) = deliver_on(&pane, &home, &[&read[..], &["--account-room"]].concat());
+    assert_eq!(code, 0, "{past}");
+    assert_eq!(past["result"]["delivery"], "read", "{past}");
+    assert_eq!(past["result"]["state"]["state"], "idle", "{past}");
 }
 
 #[test]

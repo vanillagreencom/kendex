@@ -67,6 +67,7 @@ use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
+use super::wake;
 use crate::effects::start_brief;
 use crate::marker;
 use crate::ops::CLOUD_KIND;
@@ -78,12 +79,13 @@ use agent_runtime::intent::Phase;
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
-const LANE_ROWS: [&str; 9] = [
+const LANE_ROWS: [&str; 10] = [
     "lane-exited",
     "lane-asking",
     "lane-idle",
     "model-capacity",
     "usage-limit",
+    wake::RESUME_KIND,
     "lane-unreadable",
     "start-stalled",
     hosted::CLOSE_PENDING_ROW,
@@ -355,7 +357,8 @@ pub enum LaneState {
     Working,
     /// `cause` is the stop's own word from the harness's row where the
     /// lane was judged by its rows and the word is not its ordinary end;
-    /// a pane-judged idle carries none.
+    /// a pane-judged idle carries none but `api-error`, a Codex turn its
+    /// provider's API ended.
     Idle {
         capacity: bool,
         cause: Option<String>,
@@ -451,11 +454,18 @@ pub fn classify(inputs: &Inputs) -> LaneState {
         };
     };
     match observe::judge(screen, harness, process, inputs.account_room) {
-        State::Idle => LaneState::Idle {
-            capacity: harness == Harness::Codex
-                && observe::codex_capacity_refused(&observe::below_last_turn(screen)),
-            cause: None,
-        },
+        // Codex's two turn ends that are no finished return, each by its
+        // line on the pane: the capacity refusal first, then an API error.
+        State::Idle => {
+            let slice = observe::below_last_turn(screen);
+            let codex = harness == Harness::Codex;
+            let capacity = codex && observe::codex_capacity_refused(&slice);
+            LaneState::Idle {
+                capacity,
+                cause: (codex && !capacity && observe::codex_api_error(&slice))
+                    .then(|| "api-error".to_owned()),
+            }
+        }
         State::Working => LaneState::Working,
         State::Asking => LaneState::Asking,
         State::RateLimitSwitch => LaneState::RateLimitSwitch,
@@ -1240,13 +1250,19 @@ fn observe_one(
             source,
         } => wall(obs, *kind, banner, *source, &slice, pass, hosts, cap, out),
         LaneState::Unreadable { .. } => (obs.state.clone(), WallReading::Unavailable),
-        LaneState::Gone
-        | LaneState::Exited
+        // A gone window's rows wait for the pass that judges it.
+        LaneState::Gone => (obs.state.clone(), WallReading::Clear),
+        // A read with no banner ends the wall: a later wall under the same
+        // banner is news again.
+        LaneState::Exited
         | LaneState::Asking
         | LaneState::RateLimitSwitch
         | LaneState::Working
         | LaneState::Idle { .. }
-        | LaneState::Unjudged { .. } => (obs.state.clone(), WallReading::Clear),
+        | LaneState::Unjudged { .. } => {
+            out.changes.push(clear("usage-limit", lane));
+            (obs.state.clone(), WallReading::Clear)
+        }
     };
     if !matches!(
         state,
@@ -1386,7 +1402,10 @@ fn observe_one(
             if prior == format!("{key}|reported") {
                 return reading;
             }
+            // A hosted lane's screen between a finished tool call and the
+            // next reads the same, so only a local lane's is believed at once.
             let codex_after_turn = obs.lane.harness.as_deref() == Some("codex")
+                && hosted::host_of(obs.lane) == "local"
                 && obs.screen.as_deref().is_some_and(|s| s != slice);
             if prior == key || codex_after_turn {
                 out.changes
@@ -1506,10 +1525,13 @@ fn copilot_note(lane: &Lane, pass: &Pass) -> Option<String> {
 /// The wall: the `usage-limit` row keyed to the identity it was judged for,
 /// the screen's age against the live process's start, the reset the banner
 /// names, the account wall record, the route (the pick, and under `auto`
-/// the relaunch), then the line once per reported event with the banner
-/// window under it. The state the lane takes for the kind loops: walled
-/// where the wall stands, unjudged where it is an older screen or could
-/// not be judged; and what the record's wall transition is told.
+/// the relaunch) while the reset is ahead and the wake's resume once it
+/// passed, then the line once per reported event with the banner window
+/// under it; the row keeps the screen's hash, so a resumed turn that ended
+/// at the same banner is told once. The state the lane takes for the kind
+/// loops: walled where the wall stands, unjudged where it is an older
+/// screen or could not be judged; and what the record's wall transition is
+/// told.
 #[allow(
     clippy::too_many_arguments,
     reason = "the wall's inputs are the observation, the judge's three words, the slice, the pass, the hosts and the sink"
@@ -1607,6 +1629,13 @@ fn wall(
         && prior
             .get(3)
             .is_some_and(|r| *r == reported || (!passed && r == "lane-relaunched"));
+    // A resume asked for this wall whose screen has since moved under the
+    // same banner: the resumed turn ended at the wall again, told once.
+    let screen = hash_of(slice).to_string();
+    let rewalled = quiet
+        && passed
+        && pass.baseline.get(wake::RESUME_KIND, lane).is_some()
+        && prior.get(4).is_some_and(|s| *s != screen);
     // The account wall is recorded on every walled pass, the quiet ones
     // included, so a record a write failed to land lands later.
     let account = obs.lane.account.clone().unwrap_or_default();
@@ -1633,7 +1662,7 @@ fn wall(
         })
         .err()
         .map(|e| e.to_string());
-    if quiet {
+    if quiet && !rewalled {
         return (walled, observed);
     }
     let lines = match source {
@@ -1646,8 +1675,8 @@ fn wall(
         },
     };
     let mut notes = Vec::new();
-    if !passed {
-        match route(obs, &account, pass, hosts, out, &mut notes) {
+    match reset_at.filter(|_| passed) {
+        None => match route(obs, &account, pass, hosts, out, &mut notes) {
             Routed::Relaunched => {
                 out.changes.push(set(
                     "usage-limit",
@@ -1657,7 +1686,22 @@ fn wall(
                 return (walled, observed);
             }
             Routed::Left => {}
+        },
+        // A passed reset: the wake resumes the lane it reaches, once per
+        // wall, and the note says whether it will.
+        Some(_) if rewalled => {
+            notes.push("resume walled".to_owned());
+            out.changes.push(clear(wake::RESUME_KIND, lane));
         }
+        Some(at) if wake::resumable(obs.lane) => {
+            notes.push("resume wake".to_owned());
+            out.changes.push(set(
+                wake::RESUME_KIND,
+                lane,
+                format!("usage-limit|{identity}|{at}"),
+            ));
+        }
+        Some(_) => notes.push("resume unreached".to_owned()),
     }
     // The line's body: the lane, the claimed account where the record names
     // one, `resets=` where read, `wall_kind=auth`.
@@ -1684,7 +1728,7 @@ fn wall(
     out.changes.push(set(
         "usage-limit",
         lane,
-        format!("{first_seen}|{hash}|{identity}|{reported}"),
+        format!("{first_seen}|{hash}|{identity}|{reported}|{screen}"),
     ));
     (walled, observed)
 }
@@ -1721,13 +1765,16 @@ fn route(
         notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
         Routed::Left
     };
-    // A record naming no item, harness, model or account asks no pick and
-    // leaves the wall to the overseer with the event alone.
+    // A record naming no harness or model, or no account, asks no pick and
+    // leaves the wall to the overseer with the reason under the event.
     let harness = obs.lane.harness.as_deref().and_then(Harness::parse);
     let model = obs.lane.model.as_deref().unwrap_or("");
-    let (Some(harness), false, false) = (harness, model.is_empty(), account.is_empty()) else {
-        return Routed::Left;
+    let (Some(harness), false) = (harness, model.is_empty()) else {
+        return refused(notes, "record-unnamed");
     };
+    if account.is_empty() {
+        return refused(notes, "account-unknown");
+    }
     let to = match (pass.route.pick)(harness, model, account) {
         Pick::Lane(to) => {
             notes.push(format!("pick lane={to}"));
@@ -2100,9 +2147,7 @@ fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     }
     let file = match caps.files {
         Files::Local => {
-            let path = Path::new(root)
-                .join("tmp")
-                .join(format!("lane-status-{}.md", lane.item));
+            let path = state::status_file(Path::new(root), &lane.item);
             match (pass.readers.status_file)(&path) {
                 Reading::Live(()) => Answer::Live(()),
                 Reading::Gone => Answer::Gone,
@@ -2314,9 +2359,7 @@ fn lane_step(lane: &Lane) -> String {
     let Some(root) = lane.mail_root.as_deref() else {
         return "none".to_owned();
     };
-    let path = Path::new(root)
-        .join("tmp")
-        .join(format!("lane-status-{}.md", lane.item));
+    let path = state::status_file(Path::new(root), &lane.item);
     match std::fs::read_to_string(&path) {
         Ok(text) => step_of(&text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => "none".to_owned(),

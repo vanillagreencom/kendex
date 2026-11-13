@@ -75,7 +75,10 @@ pub enum WakeOutcome {
 /// outcome once known, and, for the overseer alone, where the owner's turn
 /// stands for an outcome that left the mail unread (`watch::owner_alert`):
 /// `told` once the outcome is on the log, `alerted` once the owner holds
-/// the words, none where nothing is owed.
+/// the words, none where nothing is owed. `resume` is the last resume typed
+/// into the target (the lanes duty's `resume` row as it stood), carried by
+/// every later mark for the target, so a resume is typed once whatever mail
+/// wake replaces its mark.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WakeMark {
     pub pane: String,
@@ -89,6 +92,8 @@ pub struct WakeMark {
     pub outcome: Option<WakeOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<Word>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
 }
 
 impl WakeMark {
@@ -139,6 +144,7 @@ mod tests {
             at: 1_769_700_000,
             outcome,
             owner: None,
+            resume: None,
         }
     }
 

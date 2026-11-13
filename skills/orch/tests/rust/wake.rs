@@ -26,6 +26,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use agent_runtime::accounts::wall::{self as account_wall, AccountWallWrite, WallChannel};
 use agent_runtime::clock::Clock;
 use agent_runtime::process::Identity;
 use agent_runtime::settings::Roots;
@@ -785,12 +786,32 @@ fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
     fleet.server.await_composer(&pane.id);
     fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
     let clock = FakeClock::new();
+    // The mark an earlier resume left: the refused paste restores it, so
+    // the resume it carries is never typed again.
+    let standing = WakeMark {
+        pane: pane.id.clone(),
+        server: u64::from(fleet.server.pid),
+        server_start: Some(fleet.server.start),
+        unread: "m-0".into(),
+        turns_before: 0,
+        at: 1,
+        outcome: Some(WakeOutcome::Delivered { turns_after: 0 }),
+        owner: None,
+        resume: Some("usage-limit|1:ticks:1|1".into()),
+    };
+    let mut record = WakeRecord::default();
+    record.set("KEN-1", standing.clone());
+    std::fs::write(fleet.record_file(), serde_json::to_vec(&record).unwrap()).unwrap();
     let mut body = wake::body(&fleet.fleet_file(), &settings_in(&fleet.root, &refusing));
     let state = unread(&[("KEN-1", "m-1")]);
     let refused = run_once(&mut body, &state, &clock).unwrap();
     assert_eq!(rendered(&refused), Vec::<String>::new());
     assert!(count.exists(), "the load was refused");
-    assert_eq!(fleet.mark("KEN-1"), None, "nothing typed, no mark stands");
+    assert_eq!(
+        fleet.mark("KEN-1"),
+        Some(standing.clone()),
+        "nothing typed, the mark that stood stands"
+    );
     assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
     let typed = run_once(&mut body, &state, &clock).unwrap();
     assert_eq!(
@@ -798,6 +819,11 @@ fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
         vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
     );
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|m| m.resume),
+        standing.resume,
+        "the mail wake's mark carries the resume"
+    );
 }
 
 /// The paste route is unproved on Codex, where a paste would run again over
@@ -828,6 +854,119 @@ fn a_codex_shaped_lane_reads_wake_limit_and_is_not_typed_into() {
     assert!(!typed.exists(), "{:?}", std::fs::read_to_string(&typed));
     let again = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new(), "reported once");
+}
+
+/// The account a row of the local listing measures at `weekly` percent of
+/// its weekly window at `now`.
+fn account_row(weekly: u64, now: u64) -> Value {
+    let reset = agent_runtime::clock::iso_utc(now + 7 * 86_400);
+    json!({
+        "alias": "aclaude", "harness": "claude", "config_dir": "/accounts/.aclaude",
+        "measured_through": "local", "status": "ok", "headroom_pct": 100 - weekly,
+        "binding_bucket": "weekly", "binding_resets_at": reset, "wall": weekly,
+        "weekly_pct": weekly, "monthly_pct": null, "model_buckets": [],
+        "resets": {"weekly": reset, "model": null, "monthly": null},
+        "usage_rate_state": "one-sample", "usage_age_s": 0, "claims": 0, "pool": "plan"
+    })
+}
+
+/// The lanes duty's resume row for a lane whose wall's reset passed: the
+/// session stands at its usage banner, so a mail wake is refused there. While
+/// its account reads walled nothing is typed or marked; once it reads room
+/// the resume sentence and the inbox line are typed past the banner, once,
+/// `wake-delivered <item> resume=usage-limit`; the repeat on the standing row
+/// types nothing, and a later mail wake types the inbox line alone and keeps
+/// the resume in its mark, so the standing row is never typed again.
+#[test]
+fn a_passed_wall_is_resumed_once_when_its_account_reads_room_and_a_later_mail_wake_types_no_resume()
+{
+    let mut fleet = Fleet::new();
+    let clock = FakeClock::new();
+    let now = clock.wall_secs();
+    let accounts = fleet.root.join("accounts");
+    let account_state = fleet.root.join("account-state");
+    let account = accounts.join("home/.aclaude");
+    let env = plant_listing(&accounts, &account_state, &[account_row(20, now)], now).env;
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    fleet.settings = settings_with(&fleet.root, agent_runtime(), &env);
+    // The account's wall record, its reset a minute ahead: the account
+    // reads walled until the clock passes it.
+    let banner = "  ⎿ \u{a0}You've hit your weekly limit · resets Oct 4, 2025, 6pm (UTC)";
+    account_wall::record_account_wall(
+        &account_state,
+        &AccountWallWrite {
+            config_dir: account.display().to_string(),
+            reset: Some(now + 60),
+            now,
+            first_seen: now,
+            banner: banner.to_owned(),
+            channel: WallChannel::Pane,
+        },
+    )
+    .unwrap();
+    let wall = fleet.root.join("wall.txt");
+    std::fs::write(
+        &wall,
+        format!("⏺ Working through the queue.\n{banner}\nRun /usage-credits to raise it\n"),
+    )
+    .unwrap();
+    let pane = fleet.open(
+        "KEN-1",
+        "claude",
+        "lead-1",
+        &[
+            ("CLAUDE_CONFIG_DIR", &account.display().to_string()),
+            ("STUB_TURNS_WALL", &wall.display().to_string()),
+        ],
+    );
+    fleet.server.await_composer(&pane.id);
+    let mut lane = fleet.lane("KEN-1", "claude", &pane);
+    lane["account"] = json!(account.display().to_string());
+    fleet.set_lanes(vec![lane]);
+    let turns = || file_turns(&project_dir(&account, &fleet.cwd).join("lead-1.jsonl"));
+    let asked = "usage-limit|1:ticks:1|1759600800";
+    let mut baseline = Baseline::default();
+    baseline.apply(Change::Set {
+        kind: wake::RESUME_KIND.into(),
+        identity: "KEN-1".into(),
+        value: asked.into(),
+    });
+    let mut body = fleet.body();
+    let walled = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&walled), Vec::<String>::new());
+    assert_eq!(turns(), Vec::<String>::new(), "nothing typed into the wall");
+    assert_eq!(fleet.mark("KEN-1"), None);
+    clock.release(Duration::from_secs(120));
+    let resumed = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&resumed),
+        vec!["EVENT wake-delivered KEN-1 resume=usage-limit"]
+    );
+    let typed = turns();
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(
+        typed[0].starts_with("Resume the orch workflow for KEN-1 from where this session stopped: your last turn ended on its account's usage limit, which has since reset. Run .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-1"),
+        "{typed:?}"
+    );
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|m| m.resume).as_deref(),
+        Some(asked)
+    );
+    let repeat = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&repeat), Vec::<String>::new());
+    baseline.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: "m-1".into(),
+    });
+    let mail = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&mail),
+        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
+    );
+    let again = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new());
+    assert_eq!(turns().len(), 2, "the resume typed once, the mail once");
 }
 
 /// A lane the wake may not type into is typed nothing and marked nothing:

@@ -315,6 +315,57 @@ impl WallRead {
     }
 }
 
+/// The account `lane` spends and its harness, where the wall's account
+/// reading measures it: a record naming its account, on a harness the
+/// accounts judge reads usage for.
+pub(crate) fn room_measured(lane: &Lane, harness: Option<Harness>) -> Option<(&str, Harness)> {
+    let account = lane.account.as_deref().filter(|a| !a.is_empty())?;
+    match harness? {
+        harness @ (Harness::Claude | Harness::Codex) => Some((account, harness)),
+        Harness::Copilot | Harness::Pi => None,
+    }
+}
+
+/// A walled lane's account read (`lanes pick --lane` in process), the one
+/// reading a wall's lift and the watch's resume weigh: for the model the
+/// record names, the whole account where it names none, the widest reading,
+/// so it lifts no wall the model's own would keep; under the record's host
+/// `host`, `local` for a local lane, never the caller's setting. The word is
+/// `room`, `walled`, `unlisted`, `unmeasured`, `read-failed`, or `none` for a
+/// lane [`room_measured`] does not measure.
+pub(crate) fn account_room(
+    settings: &Settings,
+    fleet: &Path,
+    host: &str,
+    lane: &Lane,
+    harness: Option<Harness>,
+    now: u64,
+) -> &'static str {
+    let Some((account, harness)) = room_measured(lane, harness) else {
+        return "none";
+    };
+    let request = agent_runtime::accounts::PickRequest {
+        harness,
+        model: lane.model.clone().filter(|m| !m.is_empty()),
+        exclude: Vec::new(),
+        for_overseer: false,
+        lane: Some(account.to_owned()),
+        projected: false,
+        max_pct: None,
+        min_headroom_pct: None,
+        binding_floor: false,
+        admit_unread_scope: false,
+        opens_here: false,
+    };
+    match super::lane_operation::pick_account(settings, fleet, host, &request, now).exit() {
+        0 => "room",
+        3 => "walled",
+        4 => "unlisted",
+        5 => "unmeasured",
+        _ => "read-failed",
+    }
+}
+
 /// How often the exit wait reads the lane again.
 const EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -807,53 +858,21 @@ impl Close<'_> {
         refused("lane-live", &fields)
     }
 
-    /// The record's account read for the wall (`lanes pick --lane` in
-    /// process): for the model the record names, the whole account where it
-    /// names none, the widest reading, so it lifts no wall the model's own
-    /// would keep; under the record's host, `local` for a local lane, never
-    /// the caller's setting. Then, on room, the reset the banner names:
-    /// a dated reset still ahead keeps the wall with it, a clause that keys
-    /// to no time (a zone with no zoneinfo here, a date that names no day)
-    /// keeps it `unresolved`, and a clock or weekday reset names no day,
-    /// which the account's reading answers alone.
+    /// The record's account read for the wall ([`account_room`]); then, on
+    /// room, the reset the banner names: a dated reset still ahead keeps the
+    /// wall with it, a clause that keys to no time (a zone with no zoneinfo
+    /// here, a date that names no day) keeps it `unresolved`, and a clock or
+    /// weekday reset names no day, which the account's reading answers
+    /// alone.
     fn wall(&self, banner: &str) -> WallRead {
-        let account = self.lane.account.as_deref().filter(|a| !a.is_empty());
-        let harness = self.who.harness.as_deref().and_then(Harness::parse);
-        let (Some(account), Some(harness @ (Harness::Claude | Harness::Codex))) =
-            (account, harness)
-        else {
-            return WallRead {
-                account: "none",
-                resets: None,
-            };
-        };
-        let request = agent_runtime::accounts::PickRequest {
-            harness,
-            model: self.lane.model.clone().filter(|m| !m.is_empty()),
-            exclude: Vec::new(),
-            for_overseer: false,
-            lane: Some(account.to_owned()),
-            projected: false,
-            max_pct: None,
-            min_headroom_pct: None,
-            binding_floor: false,
-            admit_unread_scope: false,
-            opens_here: false,
-        };
-        let answer = super::lane_operation::pick_account(
+        let account = account_room(
             self.settings,
             self.path,
             self.host,
-            &request,
+            &self.lane,
+            self.who.harness.as_deref().and_then(Harness::parse),
             self.env.now_secs,
         );
-        let account = match answer.exit() {
-            0 => "room",
-            3 => "walled",
-            4 => "unlisted",
-            5 => "unmeasured",
-            _ => "read-failed",
-        };
         let read = |resets: Option<String>| WallRead { account, resets };
         if account != "room" {
             return read(None);

@@ -1024,13 +1024,17 @@ fn every_event_renders_to_its_recorded_bytes() {
         ),
         // The wake duty's own lines.
         (
-            Event::WakeDelivered { target: s("KEN-1") },
+            Event::WakeDelivered {
+                target: s("KEN-1"),
+                resume: None,
+            },
             "EVENT wake-delivered KEN-1",
         ),
         (
             Event::WakeUnconfirmed {
                 target: s("overseer"),
                 cause: s("turn-pending"),
+                resume: None,
             },
             "EVENT wake-unconfirmed overseer cause=turn-pending",
         ),
@@ -1039,6 +1043,7 @@ fn every_event_renders_to_its_recorded_bytes() {
                 target: s("KEN-1"),
                 harness: s("codex"),
                 cause: s("process-running"),
+                resume: None,
             },
             "EVENT wake-limit KEN-1 harness=codex cause=process-running",
         ),
