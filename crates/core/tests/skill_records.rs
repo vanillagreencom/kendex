@@ -525,13 +525,48 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
         );
         assert!(text.contains("[memory](../../../vendor/catalog/memory/x.md)"));
         // Absorb an additional edit through the same capture owner.
-        fs::write(directory.join("SKILL.md"), format!("{text}Second edit.\n")).unwrap();
+        fs::write(
+            directory.join("SKILL.md"),
+            format!("{text}Second edit.\n[new sibling](../other/SKILL.md)\n"),
+        )
+        .unwrap();
         let absorbed = audit(&f.env, &f.scope).unwrap();
+        apply::execute(&f.env, &absorbed.plan).unwrap();
+        apply_now(&f);
+        let local = f
+            .project
+            .join(".kendex-local/skills")
+            .join(name)
+            .join("SKILL.md");
+        assert!(fs::read_to_string(local).unwrap().contains("Second edit."));
         assert!(absorbed.warnings.iter().any(|warning| warning.name == name
             && warning.harness == Some(harness)
             && warning.message.starts_with("agent-link-unrepresentable:")));
-        apply::execute(&f.env, &absorbed.plan).unwrap();
-        apply_now(&f);
+        assert!(settled(&f));
+        let installed_text = fs::read_to_string(directory.join("SKILL.md")).unwrap();
+        let sibling = installed_text
+            .split("[new sibling](")
+            .nth(1)
+            .unwrap()
+            .split(')')
+            .next()
+            .unwrap();
+        assert_eq!(
+            fs::canonicalize(directory.join(sibling)).unwrap(),
+            fs::canonicalize(f.project.join(".agents/skills/other/SKILL.md")).unwrap()
+        );
+        if !beside {
+            let managed_edit = installed_text.replace("[direct]", "[changed managed instruction]");
+            assert_ne!(managed_edit, installed_text);
+            fs::write(directory.join("SKILL.md"), managed_edit).unwrap();
+            assert!(
+                audit(&f.env, &f.scope)
+                    .unwrap()
+                    .drift
+                    .iter()
+                    .any(|row| row.state == DriftState::Conflict)
+            );
+        }
         assert!(
             fs::read_to_string(directory.join("SKILL.md"))
                 .unwrap()
@@ -573,6 +608,57 @@ fn replacing_an_in_place_alias_with_a_copy_rebases_external_targets() {
 
 #[test]
 fn fork_coordinates_survive_project_moves_and_legacy_bytes_stay_untranslated() {
+    for (harnesses, method) in [
+        ("'antigravity'", "symlink"),
+        ("'antigravity'", "copy"),
+        ("'antigravity', 'codex'", "symlink"),
+    ] {
+        let f = fixture();
+        let source = f.env.global_local_source_dir().join("skills/ship");
+        put(
+            &source.join("SKILL.md"),
+            "---\nname: ship\ndescription: ship\n---\n[memory](../../../memory/x.md)\n",
+        );
+        put(&f.env.home.join("memory/x.md"), "Memory.\n");
+        put(
+            &f.env.global_manifest_file(),
+            &format!(
+                "schema = 7\n[install]\nharnesses = [{harnesses}]\nmethod = '{method}'\n[skills.ship]\nsource = 'local'\n[forks.skill.ship]\nsource = 'cat'\nforked-at = '2026-11-12'\nskill-coordinates = {{ directory = '.agents/skills/ship', root = '.' }}\n"
+            ),
+        );
+        let report = audit(&f.env, &Scope::Global).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        let installed = f.env.home.join(if method == "copy" {
+            ".gemini/config/skills/ship/SKILL.md"
+        } else {
+            ".agents/skills/ship/SKILL.md"
+        });
+        let text = fs::read_to_string(&installed).unwrap();
+        let link = text
+            .split("[memory](")
+            .nth(1)
+            .unwrap()
+            .split(')')
+            .next()
+            .unwrap();
+        assert_eq!(
+            fs::canonicalize(installed.parent().unwrap().join(link)).unwrap(),
+            f.env.home.join("memory/x.md")
+        );
+        let alias = f.env.home.join(".gemini/config/skills/ship/SKILL.md");
+        let alias_text = fs::read_to_string(&alias).unwrap();
+        let alias_link = alias_text
+            .split("[memory](")
+            .nth(1)
+            .unwrap()
+            .split(')')
+            .next()
+            .unwrap();
+        assert_eq!(
+            fs::canonicalize(alias.parent().unwrap().join(alias_link)).unwrap(),
+            f.env.home.join("memory/x.md")
+        );
+    }
     for (tagged, moved) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut f = fixture();
         let source = f.project.join(".kendex-local/skills/ship");

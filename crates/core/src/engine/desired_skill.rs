@@ -179,20 +179,13 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
             state,
         );
     }
-    let variants = groups
-        .iter()
-        .map(|group| render_variant(ctx, state, group, enabled))
-        .collect::<Result<Vec<Variant>>>()?;
-
-    // The base tree is the scope's shared location; the group that natively
-    // reads it owns it, the first group otherwise. A variant with the base's
-    // bytes links to it; a divergent variant lives at its own surface, which
-    // every group has at either scope.
     let base = skill_canonical(ctx.env, ctx.scope, ctx.name);
     let owner = groups
         .iter()
         .position(|group| group.native == base)
         .unwrap_or(0);
+    let (variants, destinations) =
+        placement_variants(ctx, state, &groups, enabled, &base, owner, method)?;
     // Where each group's tree lands, and whether it may land there at
     // all: a group deduplicates onto the owner's rendering, so its place
     // follows from what rendered and never from where the owner's tree
@@ -202,25 +195,16 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         let Variant::Rendered {
             files,
             source_files,
-            hash,
+            hash: _,
             read_as,
         } = &variants[index]
         else {
             trees.push(None);
             continue;
         };
-        let deduped = index == owner
-            || matches!(&variants[owner], Variant::Rendered { hash: owned, .. } if owned == hash);
-        let (canonical, link) = if method == Method::Copy {
-            (group.native.clone(), None)
-        } else if deduped {
-            match group.native == base {
-                true => (base.clone(), None),
-                false => (base.clone(), Some(group.native.clone())),
-            }
-        } else {
-            (group.native.clone(), None)
-        };
+        let canonical = destinations[index].clone();
+        let link =
+            (method != Method::Copy && canonical != group.native).then(|| group.native.clone());
         // The one place the question is answered: this tree is the source
         // exactly where the source is where it stands.
         let in_place = source.as_ref() == Some(&canonical);
@@ -255,6 +239,42 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         }
     }
     Ok(())
+}
+
+fn placement_variants(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    groups: &[SurfaceGroup],
+    enabled: bool,
+    base: &std::path::Path,
+    owner: usize,
+    method: Method,
+) -> Result<(Vec<Variant>, Vec<PathBuf>)> {
+    let mut variants = Vec::with_capacity(groups.len());
+    let mut destinations = Vec::with_capacity(groups.len());
+    let mut probe = DesiredState {
+        agent_names: crate::source::agent_names::Uses::new(ctx.manifest),
+        ..DesiredState::default()
+    };
+    let owner_probe = render_variant(ctx, &mut probe, &groups[owner], enabled, base)?;
+    for (index, group) in groups.iter().enumerate() {
+        let destination = if method == Method::Copy {
+            group.native.clone()
+        } else if index == owner {
+            base.to_path_buf()
+        } else {
+            let candidate = render_variant(ctx, &mut probe, group, enabled, base)?;
+            if matches!((&candidate, &owner_probe), (Variant::Rendered { hash: candidate, .. }, Variant::Rendered { hash: owned, .. }) if candidate == owned)
+            {
+                base.to_path_buf()
+            } else {
+                group.native.clone()
+            }
+        };
+        variants.push(render_variant(ctx, state, group, enabled, &destination)?);
+        destinations.push(destination);
+    }
+    Ok((variants, destinations))
 }
 
 /// The commands the source declares, for a skill some tree of which lands.
@@ -432,6 +452,7 @@ fn render_variant(
     state: &mut DesiredState,
     group: &SurfaceGroup,
     enabled: bool,
+    destination: &std::path::Path,
 ) -> Result<Variant> {
     let (mut rendered, read_as) =
         crate::render::skill::with_instructions(ctx.sealed, ctx.item_path, None)?;
@@ -442,7 +463,7 @@ fn render_variant(
     let source_files = crate::render::skill::with_skill_text(rendered.files().to_vec(), |text| {
         crate::render::skill::inject_instructions(text, instructions.as_deref())
     });
-    let files = rebase_for_surface(ctx, state, group, rendered.into_files());
+    let files = rebase_for_surface(ctx, state, destination, rendered.into_files());
     rendered = crate::render::skill::Rendered::new(files);
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
     // installation's content under, so a catalog shipping one of its own
@@ -519,7 +540,7 @@ fn render_variant(
 fn rebase_for_surface(
     ctx: &ItemCtx,
     state: &mut DesiredState,
-    group: &SurfaceGroup,
+    destination: &std::path::Path,
     files: Files,
 ) -> Files {
     let files = {
@@ -536,29 +557,35 @@ fn rebase_for_surface(
             Scope::Project { root } => root,
             Scope::Global => &ctx.env.home,
         };
-        if !legacy
-            && (coordinates.is_some()
-                || (matches!(ctx.scope, Scope::Project { .. })
-                    && local
-                    && ctx.sealed.root().starts_with(root)))
+        let coordinates = if legacy {
+            None
+        } else if coordinates.is_some() {
+            coordinates
+        } else if matches!(ctx.scope, Scope::Project { .. })
+            && local
+            && ctx.sealed.root().starts_with(root)
         {
-            let (files, warnings) = crate::render::skill::convert_links(
-                files,
-                crate::render::agent::BodyPaths {
-                    source: coordinates
-                        .as_ref()
-                        .map_or(ctx.item_path, |coordinates| coordinates.directory.as_path()),
-                    rendered: &group.native,
-                    source_root: coordinates
-                        .as_ref()
-                        .map_or(root.as_path(), |coordinates| coordinates.root.as_path()),
-                    install_root: coordinates
-                        .as_ref()
-                        .map_or(root.as_path(), |coordinates| coordinates.root.as_path()),
-                },
-                effective_method(ctx.decl, ctx.manifest) != Method::Copy,
-                Some((ctx.sealed, ctx.item_path)),
-            );
+            Some(crate::manifest::SkillCoordinates {
+                directory: ctx.item_path.to_path_buf(),
+                root: root.clone(),
+            })
+        } else if matches!(ctx.scope, Scope::Global)
+            && ctx.decl.source == crate::manifest::LOCAL_SOURCE_NAME
+        {
+            Some(crate::manifest::SkillCoordinates {
+                directory: ctx.item_path.to_path_buf(),
+                root: root.ancestors().last().unwrap_or(root).to_path_buf(),
+            })
+        } else {
+            None
+        };
+        {
+            let (files, warnings) = crate::render::skill::Located::new(files, coordinates)
+                .render_at(
+                    destination,
+                    effective_method(ctx.decl, ctx.manifest) != Method::Copy,
+                    Some((ctx.sealed, ctx.item_path)),
+                );
             state
                 .warnings
                 .extend(warnings.into_iter().map(|warning| super::ItemWarning {
@@ -569,8 +596,6 @@ fn rebase_for_surface(
                     remediation: warning.remediation,
                     detail: None,
                 }));
-            files
-        } else {
             files
         }
     };

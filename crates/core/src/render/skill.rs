@@ -6,6 +6,8 @@ use crate::error::Result;
 use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
+mod coordinates;
+pub(crate) use coordinates::{Located, capture_into, round_trip};
 mod keys;
 mod rendered;
 pub(crate) use keys::{KeysUnreadable, dropped_metadata, installed_keys};
@@ -96,110 +98,6 @@ pub fn render_skill(
 ) -> Result<(Rendered, SkillText)> {
     let instructions = skill_instructions(manifest, name);
     with_instructions(sealed, source_dir, instructions.as_deref())
-}
-
-/// Translate a skill tree between explicit byte coordinates. Only forward
-/// rendering retains sibling-package spelling.
-pub(crate) fn convert_links(
-    files: Files,
-    paths: super::agent::BodyPaths<'_>,
-    retain_alias: bool,
-    siblings: Option<(&SealedSource, &Path)>,
-) -> (Files, Vec<super::RenderWarning>) {
-    let super::agent::BodyPaths {
-        source: source_dir,
-        rendered: rendered_dir,
-        source_root,
-        install_root,
-    } = paths;
-    let mut warnings = Vec::new();
-    let files = files
-        .into_iter()
-        .map(|(rel, bytes)| {
-            let bytes = if let Ok(text) = std::str::from_utf8(&bytes) {
-                let (text, notices) = super::agent::rebase_skill(
-                    text,
-                    super::agent::BodyPaths {
-                        source: &source_dir.join(&rel),
-                        source_root,
-                        rendered: &rendered_dir.join(&rel),
-                        install_root,
-                    },
-                    retain_alias,
-                    |target| {
-                        if target.starts_with(source_dir) {
-                            return true;
-                        }
-                        // A sibling package moves with its own tree; a loose
-                        // file beside the packages still needs rebasing.
-                        source_dir
-                            .parent()
-                            .and_then(|parent| {
-                                let sibling =
-                                    target.strip_prefix(parent).ok()?.components().next()?;
-                                Some(siblings.is_some_and(|(sealed, stored)| {
-                                    stored.parent().is_some_and(|parent| {
-                                        sealed.is_file(&parent.join(sibling).join(SKILL_FILE))
-                                    })
-                                }))
-                            })
-                            .unwrap_or(false)
-                    },
-                );
-                warnings.extend(notices);
-                text.into_bytes()
-            } else {
-                bytes
-            };
-            (rel, bytes)
-        })
-        .collect();
-    (files, warnings)
-}
-
-/// Capture a tree at a new physical location without mapping targets into a
-/// different catalog. Explicit coordinates describe tagged stored forks;
-/// other inputs use their canonical content directory.
-pub(crate) fn relocate(
-    files: Files,
-    source: &Path,
-    destination: &Path,
-    coordinates: Option<&crate::manifest::SkillCoordinates>,
-) -> (Files, Vec<super::RenderWarning>) {
-    let physical = match crate::paths::canonical(source) {
-        Ok(path) => path,
-        Err(error) => {
-            return (
-                files,
-                vec![super::RenderWarning::new(format!(
-                    "skill-capture-coordinate-unreadable: {}: {error}",
-                    source.display()
-                ))],
-            );
-        }
-    };
-    let physical = if physical.is_file() {
-        physical.parent().unwrap_or(&physical)
-    } else {
-        &physical
-    };
-    let source = coordinates.map_or(physical, |coordinates| coordinates.directory.as_path());
-    // Captures preserve physical targets even when they leave the nearest
-    // common ancestor of the two skill directories. A volume is the actual
-    // shared coordinate root; different volumes are unrepresentable.
-    let bound = coordinates.map_or(source, |coordinates| coordinates.root.as_path());
-    let root = bound.ancestors().last().unwrap_or(bound);
-    convert_links(
-        files,
-        super::agent::BodyPaths {
-            source,
-            rendered: destination,
-            source_root: root,
-            install_root: root,
-        },
-        false,
-        None,
-    )
 }
 
 /// Shared skill directories must fit older Codex loaders too. Only the
@@ -445,17 +343,14 @@ mod tests {
         };
         for (rendered, text) in rows {
             let files = vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())];
-            let (rebased, warnings) = convert_links(
+            let (rebased, warnings) = Located::new(
                 files.clone(),
-                super::super::agent::BodyPaths {
-                    source: &source,
-                    rendered: &rendered,
-                    source_root: &root,
-                    install_root: &root,
-                },
-                true,
-                Some((&sealed, &source)),
-            );
+                Some(crate::manifest::SkillCoordinates {
+                    directory: source.clone(),
+                    root: root.clone(),
+                }),
+            )
+            .render_at(&rendered, true, Some((&sealed, &source)));
             assert_eq!(rebased, files);
             assert!(warnings.is_empty());
         }
@@ -481,7 +376,7 @@ mod tests {
                 PathBuf::from(SKILL_FILE),
                 b"[memory](../../memory/x.md)\n[own](./guide.md)\n".to_vec(),
             )];
-            let (files, warnings) = relocate(files, &origin, &destination, None);
+            let (files, warnings) = capture_into(files, &origin, &destination, None);
             assert!(warnings.is_empty(), "{warnings:?}");
             assert_eq!(
                 files[0].1,

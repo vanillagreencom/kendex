@@ -52,7 +52,7 @@ pub fn apply(
         if let ItemBytes::Tree(files) = &mut answer.bytes
             && let Some(source) = &answer.read_from
         {
-            let (converted, warnings) = crate::render::skill::relocate(
+            let (converted, warnings) = crate::render::skill::capture_into(
                 std::mem::take(files),
                 source,
                 &dest,

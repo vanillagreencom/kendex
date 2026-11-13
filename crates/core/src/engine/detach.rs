@@ -407,7 +407,23 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     // this conversion leaves behind, not the one it starts in: the source
     // is going, and the packages it carried arrive under `local`. Read
     // once, because per agent it reopens every catalog again.
-    let mut converted = converted_manifest(env, &scope, &manifest, &closure, source_name, &lock)?;
+    let mut skill_sources = std::collections::BTreeMap::new();
+    for item in closure
+        .items
+        .iter()
+        .filter(|item| item.kind == ItemKind::Skill)
+    {
+        let captured = capture::skill_source(
+            env,
+            &scope,
+            &manifest,
+            item,
+            effective_commit(&lock, item)?.as_deref(),
+        )?;
+        skill_sources.insert(item.name.clone(), captured);
+    }
+    let mut converted =
+        converted_manifest(&manifest, &closure, source_name, &lock, &skill_sources)?;
     let arriving: Vec<String> = closure
         .items
         .iter()
@@ -423,8 +439,13 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
         // from — not the source head, which may have moved. A declared item
         // that was never applied has no lock entry; its own pin is the commit.
         let commit = effective_commit(&lock, item)?;
-        let (files, carry, warnings) =
-            source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?;
+        let (files, carry, warnings) = match (item.kind == ItemKind::Skill)
+            .then(|| skill_sources.remove(&item.name))
+            .flatten()
+        {
+            Some((files, _)) => (files, None, Vec::new()),
+            _ => source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?,
+        };
         capture_warnings.extend(warnings.into_iter().map(|warning| super::ItemWarning {
             kind: item.kind,
             name: item.name.clone(),
@@ -484,60 +505,25 @@ pub fn resync_kept(env: &Env, scope: &Scope) -> Result<EngineReport> {
 
 /// The manifest this conversion writes: every kept package reading `local`
 /// and recorded as a fork, and the source it came from gone. Derived before
-/// anything is read, because it is the scope a kept agent's assignment has
+/// agent assignments are read, because it is the scope an assignment has
 /// to resolve against — reasoning from the manifest on disk plans against a
 /// catalog the same plan removes.
 fn converted_manifest(
-    env: &Env,
-    scope: &Scope,
     manifest: &Manifest,
     closure: &Closure,
     source_name: &str,
     lock: &crate::lock::Lock,
+    skill_sources: &std::collections::BTreeMap<String, capture::SkillSource>,
 ) -> Result<Manifest> {
     let mut converted = manifest.clone();
     for item in &closure.items {
-        let skill_coordinates = if item.kind == ItemKind::Skill {
-            let resolved = crate::source::require_ready_at(
-                env,
-                scope,
-                &item.decl.source,
-                manifest,
-                effective_commit(lock, item)?.as_deref(),
-            )?;
-            let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
-            let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
-            let directory = crate::source::find_item(&sealed, &config, item.kind, &item.name)
-                .ok_or_else(|| CoreError::ItemNotInSource {
-                    name: item.name.clone(),
-                    source_name: item.decl.source.clone(),
-                })?;
-            let scope_root = match scope {
-                Scope::Project { root } => root,
-                Scope::Global => &env.home,
-            };
-            let local = manifest
-                .sources
-                .get(&item.decl.source)
-                .is_some_and(|source| source.path.is_some());
-            let coordinates = if local {
-                let root = scope_root
-                    .ancestors()
-                    .find(|root| directory.starts_with(root))
-                    .unwrap_or(scope_root)
-                    .to_path_buf();
-                crate::manifest::SkillCoordinates { directory, root }
-            } else {
-                crate::manifest::SkillCoordinates {
-                    directory: scope_root
-                        .join(directory.strip_prefix(&resolved.root).unwrap_or(&directory)),
-                    root: scope_root.clone(),
-                }
-            };
-            Some(coordinates.relative_to(scope_root))
-        } else {
-            None
-        };
+        let skill_coordinates = (item.kind == ItemKind::Skill)
+            .then(|| {
+                skill_sources
+                    .get(&item.name)
+                    .map(|(_, coordinates)| coordinates.clone())
+            })
+            .flatten();
         let provenance = ForkProvenance {
             repo: manifest
                 .sources

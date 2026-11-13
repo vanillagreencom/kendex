@@ -373,7 +373,7 @@ impl ResolvedBytes {
         let Some(source) = &self.read_from else {
             return Vec::new();
         };
-        let (files, warnings) = crate::render::skill::relocate(
+        let (files, warnings) = crate::render::skill::capture_into(
             std::mem::take(&mut self.files),
             source,
             destination,

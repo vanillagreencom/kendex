@@ -983,7 +983,7 @@ fn install_local(
             match &copy.skill_coordinates {
                 Some(coordinates) => {
                     let source = store::root(env, &template.id).join(coordinates);
-                    let (converted, warnings) = crate::render::skill::relocate(files, &source, &target, None);
+                    let (converted, warnings) = crate::render::skill::capture_into(files, &source, &target, None);
                     files = converted;
                     landed.install.notes.extend(warnings.into_iter().map(|warning| format!("{}: {}", copy.name, warning.message)));
                 }

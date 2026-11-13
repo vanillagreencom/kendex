@@ -1862,13 +1862,24 @@ fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn template_capture_coordinates_reach_install_and_legacy_copies_keep_their_bytes() {
-    for (tagged, detached, old_fork) in [
-        (true, false, false),
-        (false, false, false),
-        (true, true, false),
-        (true, false, true),
+    for (tagged, detached, old_fork, global, method) in [
+        (true, false, false, true, crate::manifest::Method::Copy),
+        (true, false, false, true, crate::manifest::Method::Symlink),
+        (true, false, false, false, crate::manifest::Method::Copy),
+        (false, false, false, false, crate::manifest::Method::Copy),
+        (true, true, false, false, crate::manifest::Method::Copy),
+        (true, false, true, false, crate::manifest::Method::Copy),
     ] {
-        let project = seeded();
+        let mut project = seeded();
+        if global {
+            let home = project.home.join("global-home");
+            fs::create_dir_all(&home).unwrap();
+            project.env = Env::fake(
+                &project.home.join("outside-data"),
+                crate::env::FakeOs::Linux,
+            );
+            project.env.home = home;
+        }
         let name = if detached { "house-style" } else { "stray" };
         let directory = project.root.join(if detached {
             ".kendex-local/skills"
@@ -1935,9 +1946,14 @@ fn template_capture_coordinates_reach_install_and_legacy_copies_keep_their_bytes
             *skill_coordinates = None;
             fs::write(stored.join("SKILL.md"), &legacy).unwrap();
         }
-        let target = destination(&project, "link-destination");
-        let Scope::Project { root } = &target else {
-            unreachable!()
+        let target = if global {
+            Scope::Global
+        } else {
+            destination(&project, "link-destination")
+        };
+        let root = match &target {
+            Scope::Project { root } => root,
+            Scope::Global => &project.env.home,
         };
         if old_fork {
             skill(&project.catalog.join("skills"), name, "Old source.");
@@ -1955,29 +1971,56 @@ fn template_capture_coordinates_reach_install_and_legacy_copies_keep_their_bytes
             &template,
             &target,
             Some(vec![HarnessId::Codex]),
-            Some(crate::manifest::Method::Copy),
+            Some(method),
         )
         .unwrap();
         assert!(outcome.stopped.is_none(), "{outcome:?}");
-        let manifest = crate::manifest::load_current(&root.join("kendex.toml"))
-            .unwrap()
-            .unwrap();
+        let manifest =
+            crate::manifest::load_current(&crate::manifest::manifest_path(&project.env, &target))
+                .unwrap()
+                .unwrap();
         assert!(!manifest.recorded_fork(crate::model::ItemKind::Skill, name));
         assert_eq!(
             outcome
                 .notes
                 .iter()
                 .any(|note| note.contains(name) && note.contains("agent-link-unrepresentable:")),
-            tagged,
+            tagged && !global,
             "{outcome:?}"
         );
+        if global {
+            let installed = project
+                .env
+                .home
+                .join(if method == crate::manifest::Method::Copy {
+                    format!(".codex/skills/{name}/SKILL.md")
+                } else {
+                    format!(".agents/skills/{name}/SKILL.md")
+                });
+            let output = fs::read_to_string(&installed).unwrap();
+            let link = crate::check_catalog::links::relative_links(&output)
+                .into_iter()
+                .find(|link| link.target.contains("memory/x.md"))
+                .unwrap();
+            assert_eq!(
+                crate::fs::resolved(&installed, std::path::Path::new(&link.path)).unwrap(),
+                expected
+            );
+        }
         let warnings = outcome
             .notes
             .iter()
             .filter(|note| note.starts_with("skill-template-legacy:"))
             .count();
         assert_eq!(warnings, usize::from(!tagged));
-        let local = root.join(format!(".kendex-local/skills/{name}/SKILL.md"));
+        let local = if global {
+            project
+                .env
+                .global_local_source_dir()
+                .join(format!("skills/{name}/SKILL.md"))
+        } else {
+            root.join(format!(".kendex-local/skills/{name}/SKILL.md"))
+        };
         let bytes = fs::read(&local).unwrap();
         if tagged {
             let output = String::from_utf8(bytes).unwrap();
