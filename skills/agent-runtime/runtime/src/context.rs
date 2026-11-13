@@ -266,13 +266,13 @@ pub fn codex_turn(path: &Path) -> Result<Named, String> {
 /// the one the session's id names under the harness home for `cwd`; for
 /// Copilot CLI the status-line record under that home, judged at `now`
 /// (seconds since the epoch) and bound to the transcript where one is named.
-pub struct SessionAt<'a> {
-    pub harness: Harness,
-    pub session: &'a str,
-    pub transcript: Option<&'a Path>,
-    pub home: Option<&'a Path>,
-    pub cwd: &'a Path,
-    pub now: u64,
+struct SessionAt<'a> {
+    harness: Harness,
+    session: &'a str,
+    transcript: Option<&'a Path>,
+    home: Option<&'a Path>,
+    cwd: &'a Path,
+    now: u64,
 }
 
 /// A session's own record that could not be read: a stable key and the
@@ -307,17 +307,20 @@ impl Member {
     }
 }
 
-/// The model and the effort a session runs on now, each its own answer.
+/// The model and the effort a session runs on now, each its own answer, and
+/// the name its launch gave it, which no session record holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Now {
     pub model: Result<Member, RecordUnread>,
     pub effort: Result<Member, RecordUnread>,
+    pub agent: Member,
 }
 
 /// Whether `harness`'s own session record is measured to carry the effort:
 /// a Codex `turn_context` does. Claude Code's transcript, Copilot CLI's
-/// status-line record and Pi's session file are not, so their effort is the
-/// launch's declaration alone.
+/// status-line record and Pi's session file are not, so their effort is
+/// unrecorded: the effort a launch asked for is no reading of the one the
+/// session runs on.
 fn effort_recorded(harness: Harness) -> bool {
     match harness {
         Harness::Codex => true,
@@ -325,33 +328,62 @@ fn effort_recorded(harness: Harness) -> bool {
     }
 }
 
-/// What `session model` answers for the session `at` names: each member
-/// from the session's own record first, and from the launch's
-/// `declared_model` or `declared_effort` only where that record names none.
-/// A member the record cannot be read for is that failure.
-pub fn session_now(
-    at: &SessionAt,
-    declared_model: Option<&str>,
-    declared_effort: Option<&str>,
-) -> Now {
+/// What `session model` answers for the session `at` names: the model from
+/// the session's own record first, and from the launch's `declared_model`
+/// only where that record names none; the effort from that record alone;
+/// the name from the launch's `declared_agent` alone. A member the record
+/// cannot be read for is that failure.
+fn session_now(at: &SessionAt, declared_model: Option<&str>, declared_agent: Option<&str>) -> Now {
     let named = session_named(at);
     let effort = match &named {
         Err(unread) if effort_recorded(at.harness) => Err(unread.clone()),
-        Ok(named) if effort_recorded(at.harness) => Ok(Member::of(&named.effort, declared_effort)),
-        Ok(_) | Err(_) => Ok(Member::of("", declared_effort)),
+        Ok(named) if effort_recorded(at.harness) => Ok(Member::of(&named.effort, None)),
+        Ok(_) | Err(_) => Ok(Member::Unrecorded),
     };
     Now {
         model: named.map(|named| Member::of(&named.model, declared_model)),
         effort,
+        agent: Member::of("", declared_agent),
     }
 }
 
+/// [`session_now`] for the calling session `session` of `harness`, read
+/// where this process runs: the harness home its variable names, else the
+/// harness's default; the working directory; the clock; and the launch's
+/// declarations in this process's environment, which only a process the
+/// session itself runs inherits. The one reading behind `agent-runtime
+/// session model` and orch's call for the session bound at its pane.
+pub fn calling_session(harness: Harness, session: &str, transcript: Option<&Path>) -> Now {
+    let home = std::env::var_os(harness.home_var())
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| crate::session::default_home(harness));
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let declared = |name: &str| std::env::var(name).ok();
+    session_now(
+        &SessionAt {
+            harness,
+            session,
+            transcript,
+            home: home.as_deref(),
+            cwd: &cwd,
+            now,
+        },
+        declared(crate::launch::LAUNCH_MODEL_VAR).as_deref(),
+        declared(crate::launch::LAUNCH_AGENT_VAR).as_deref(),
+    )
+}
+
 impl Now {
-    /// The two lines `session model` prints, model first: `<member>=<value>
-    /// source=session|launch`, `session-<member>-unrecorded harness=
-    /// session=` where neither names it, or the read's own key with the
-    /// harness, the session and its cause.
-    pub fn lines(&self, harness: Harness, session: &str) -> [String; 2] {
+    /// The three lines `session model` prints, model, effort, agent:
+    /// `<member>=<value> source=session|launch`, `session-<member>-unrecorded
+    /// harness= session=` where neither names it, or the read's own key with
+    /// the harness, the session and its cause.
+    pub fn lines(&self, harness: Harness, session: &str) -> [String; 3] {
         let line = |member: &str, answer: &Result<Member, RecordUnread>| match answer {
             Ok(Member::Session(word)) => format!("{member}={word} source=session"),
             Ok(Member::Launch(word)) => format!("{member}={word} source=launch"),
@@ -366,13 +398,18 @@ impl Now {
                 unread.key, unread.cause
             ),
         };
-        [line("model", &self.model), line("effort", &self.effort)]
+        [
+            line("model", &self.model),
+            line("effort", &self.effort),
+            line("agent", &Ok(self.agent.clone())),
+        ]
     }
 
-    /// 0 where both members answer, 1 where one is unrecorded by name, 2
+    /// 0 where every member answers, 1 where one is unrecorded by name, 2
     /// where a read failed: a refusal and an unknown are different answers.
     pub fn exit_code(&self) -> i32 {
-        let answers = [&self.model, &self.effort];
+        let agent = Ok(self.agent.clone());
+        let answers = [&self.model, &self.effort, &agent];
         if answers.iter().any(|answer| answer.is_err()) {
             2
         } else if answers

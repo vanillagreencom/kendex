@@ -2953,6 +2953,65 @@ fn the_admission_refuses_a_record_of_no_session_or_another_pane() {
     assert_eq!(admitted(&out), (0, "room".to_owned()), "{}", out.stderr);
 }
 
+impl World {
+    /// `orch-runtime session` run from the lane, with `env` added.
+    fn session(&self, env: Env) -> Out {
+        let mut command = isolated();
+        command
+            .arg("session")
+            .current_dir(&self.lane)
+            .env("PWD", &self.lane)
+            .env("HOME", &self.home)
+            .env("PATH", tool_path(&[&self.stand_ins()]))
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let out = command.output().expect("orch-runtime");
+        Out {
+            code: out.status.code().expect("an exit status"),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
+    }
+}
+
+/// A call naming no session answers for the session the lane's record binds
+/// at the caller's pane, read from that session's own transcript, with the
+/// name its launch declared: `agent-runtime session model`'s three lines.
+/// With no record, or one bound at another pane, it is `session-unnamed`
+/// naming the record, and nothing of the record's session is printed.
+#[test]
+fn a_call_naming_no_session_reads_the_session_bound_at_its_pane() {
+    let world = World::launched();
+    let record = world.mail_root().join(ITEM).join("context.json");
+    let unnamed = format!("session-unnamed record={} cause=", record.display());
+    let at_three = world.on_pane("%3");
+    let at_four = world.on_pane("%4");
+    let mut three = borrowed(&at_three);
+    three.push(("AGENT_RUNTIME_LAUNCH_AGENT", ITEM));
+    let four = borrowed(&at_four);
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    let refused = |out: &Out| {
+        out.code == 2 && out.stdout.lines().count() == 1 && out.stdout.starts_with(&unnamed)
+    };
+    let out = world.session(&three);
+    assert!(refused(&out), "no record: {} {}", out.stdout, out.stderr);
+    world.tool_call("claude", Some(&transcript), &three);
+    let out = world.session(&three);
+    assert_eq!(
+        (out.code, out.stdout.as_str()),
+        (
+            1,
+            "model=claude-haiku-5-5 source=session\nsession-effort-unrecorded harness=claude session=s1\nagent=ken-1 source=launch\n"
+        ),
+        "{}",
+        out.stderr
+    );
+    let out = world.session(&four);
+    assert!(refused(&out), "another pane: {} {}", out.stdout, out.stderr);
+}
+
 /// A Codex attached launch the reserve alone refuses, the plain mark still
 /// with room, is admitted to process-owned reviewers; at the plain mark it
 /// is due, and a checkpoint or another harness keeps its plain verdict. A

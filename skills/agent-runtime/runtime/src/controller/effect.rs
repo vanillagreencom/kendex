@@ -535,6 +535,7 @@ impl Successor {
                 account: self.account.as_deref(),
                 model: self.model.as_deref(),
                 effort: self.effort.as_deref(),
+                agent: Some("controller"),
                 cwd: &self.cwd,
                 brief: None,
                 permission: self.permission,

@@ -148,6 +148,7 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
         cwd: "/work/tree".into(),
         model: Some("opus".into()),
         effort: None,
+        agent: None,
         permission,
         question_tool: QuestionTool::Off,
         compaction: Compaction::Native,

@@ -63,6 +63,8 @@ pub struct Spec<'a> {
     pub account: Option<&'a Path>,
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
+    /// The name the opener gives the session.
+    pub agent: Option<&'a str>,
     pub cwd: &'a Path,
     pub brief: Option<&'a Path>,
     /// The posture the caller judged; `None` takes the settings' posture.
@@ -111,6 +113,7 @@ pub fn build_launch(
         cwd: spec.cwd.to_path_buf(),
         model: spec.model.map(str::to_owned),
         effort: spec.effort.map(str::to_owned),
+        agent: spec.agent.map(str::to_owned),
         permission,
         question_tool: spec.question_tool,
         compaction: spec.compaction,

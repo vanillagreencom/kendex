@@ -269,6 +269,11 @@ enum Verb {
         #[arg(long, group = "launch")]
         checkpoint: bool,
     },
+    /// The model, effort and name of the session bound at the caller's pane,
+    /// for a caller inside it that names no session: the three lines and
+    /// exit of `agent-runtime session model` for the session the lane's
+    /// record binds there, or `session-unnamed` at exit 2 where none does.
+    Session,
     /// The merge cycles the fleet record holds, printed as text lines: the
     /// per-class totals, or a running lane's stage rows. No fleet record
     /// prints nothing.
@@ -2009,6 +2014,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         } => {
             let answer =
                 orch_runtime::turnend::admission::run(&item, checkpoint, flags.private_env);
+            std::process::exit(answer.write());
+        }
+        Verb::Session => {
+            let answer = orch_runtime::turnend::admission::session(flags.private_env);
             std::process::exit(answer.write());
         }
         Verb::Cycle { op } => {

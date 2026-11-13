@@ -202,7 +202,8 @@ enum Verb {
         #[command(subcommand)]
         op: ControllerOp,
     },
-    /// What the calling session runs on now, read from its own record.
+    /// What the calling session runs on now, read from its own record, and
+    /// the name its launch gave it.
     Session {
         #[command(subcommand)]
         op: SessionOp,
@@ -211,14 +212,15 @@ enum Verb {
 
 #[derive(Subcommand)]
 enum SessionOp {
-    /// Print two lines, the model's then the effort's: `<member>=<value>
-    /// source=session|launch`, the session's own record first and the
-    /// launch's declaration only where it names none; else
-    /// `session-<member>-unrecorded`, or the key of a read that failed.
-    /// Exit 0 where both answer, 1 where one is unrecorded, 2 where a read
-    /// failed. The record is `--transcript`, else the file `--session`
-    /// names under the harness home (its variable, else under `HOME`) for
-    /// the working directory; for Copilot CLI its status-line record there.
+    /// Print three lines, the model's, the effort's, then the name the
+    /// launch gave the session: `<member>=<value> source=session|launch`,
+    /// the session's own record first and, for the model and the name, the
+    /// launch's declaration where it names none; else
+    /// `session-<member>-unrecorded`, or the key of a read that failed. Exit
+    /// 0 where all answer, 1 where one is unrecorded, 2 where a read failed.
+    /// The record is `--transcript`, else the file `--session` names under
+    /// the harness home (its variable, else under `HOME`) for the working
+    /// directory; for Copilot CLI its status-line record there.
     Model {
         #[arg(long, value_parser = harness_word)]
         harness: Harness,
@@ -233,7 +235,7 @@ fn harness_word(word: &str) -> std::result::Result<Harness, String> {
     Harness::parse(word).ok_or_else(|| format!("harness-unknown harness={word}"))
 }
 
-/// `session model`: its two lines and its exit in place of the JSON reply,
+/// `session model`: its three lines and its exit in place of the JSON reply,
 /// since its reader binds a review's flags from the lines and stops on the
 /// exit.
 fn session_verb(op: SessionOp) -> ! {
@@ -242,28 +244,7 @@ fn session_verb(op: SessionOp) -> ! {
         session,
         transcript,
     } = op;
-    let home = std::env::var_os(harness.home_var())
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| session::default_home(harness));
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let declared = |name: &str| std::env::var(name).ok();
-    let answer = agent_runtime::context::session_now(
-        &agent_runtime::context::SessionAt {
-            harness,
-            session: &session,
-            transcript: transcript.as_deref(),
-            home: home.as_deref(),
-            cwd: &cwd,
-            now,
-        },
-        declared(launch::LAUNCH_MODEL_VAR).as_deref(),
-        declared(launch::LAUNCH_EFFORT_VAR).as_deref(),
-    );
+    let answer = agent_runtime::context::calling_session(harness, &session, transcript.as_deref());
     let mut out = std::io::stdout().lock();
     for line in answer.lines(harness, &session) {
         let _ = writeln!(out, "{line}");

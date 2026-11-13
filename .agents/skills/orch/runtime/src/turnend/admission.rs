@@ -7,7 +7,8 @@
 //! turn end's own, through agent-runtime's reader for the harness, and the
 //! judge is the one judge of a reading. The answer is one JSON line,
 //! `verdict`, `decision` and `source`, at exit 0, or a keyed refusal at
-//! exit 2.
+//! exit 2. The same bound record names the session a call for its model,
+//! effort and name reads, the caller naming none.
 
 use std::path::{Path, PathBuf};
 
@@ -58,6 +59,77 @@ pub fn bound_session(mailbox: &Path) -> Result<ContextRecord, Unbound> {
         });
     }
     Ok(bound)
+}
+
+/// The model, effort and name of the session bound at the caller's pane,
+/// for a call that names no session: the lane at the caller's directory,
+/// its record bound by [`bound_session`], and agent-runtime's reading of the
+/// session that record names, printed as `agent-runtime session model`
+/// prints it, so the record keeps one reader and the session one. With no
+/// lane, no record or one of another pane, the one line `session-unnamed`
+/// at exit 2; a lane the turn end refuses to read keeps that refusal.
+pub fn session(private_env: bool) -> Answer {
+    let vars = Vars::read(private_env);
+    let mut turn = Turn::new(Harness::Unlisted, PathBuf::new());
+    let unnamed = |fields: String| Answer {
+        stdout: format!("session-unnamed {fields}\n"),
+        stderr: String::new(),
+        code: 2,
+        ack: None,
+        unwritten: None,
+    };
+    let payload = match Payload::decode(b"", false) {
+        Ok(payload) => payload,
+        Err(invalid) => return turn.refuse(Said::PayloadInvalid, &invalid.0),
+    };
+    let dir = vars.project_dir.as_ref().unwrap_or(&vars.pwd).clone();
+    let mailbox = match Lane::read(&mut turn, &vars, &payload) {
+        Ok(Lane {
+            mail_root,
+            item: Some(item),
+            ..
+        }) => mail_root.join(item),
+        Err(answer) if answer.code != 0 => return answer,
+        Ok(_) | Err(_) => return unnamed(format!("dir={} cause=no lane", dir.display())),
+    };
+    let path = mailbox.join(CONTEXT_RECORD);
+    let record = match bound_session(&mailbox) {
+        Ok(record) => record,
+        Err(Unbound::Unrecorded { record, cause }) => {
+            return unnamed(format!("record={} cause={cause}", record.display()));
+        }
+        Err(Unbound::OtherPane { recorded, caller }) => {
+            let pane = |key: Option<String>| key.unwrap_or_else(|| "none".to_owned());
+            return unnamed(format!(
+                "record={} cause=recorded at pane {}, called from pane {}",
+                path.display(),
+                pane(recorded),
+                pane(caller)
+            ));
+        }
+    };
+    let harness = record
+        .harness
+        .as_deref()
+        .and_then(agent_runtime::harness::Harness::parse);
+    let Some(harness) = harness else {
+        return unnamed(format!("record={} cause=no harness", path.display()));
+    };
+    let session = record.session_id.unwrap_or_default();
+    let transcript = record.transcript.map(PathBuf::from);
+    let now = agent_runtime::context::calling_session(harness, &session, transcript.as_deref());
+    let mut stdout = String::new();
+    for line in now.lines(harness, &session) {
+        stdout.push_str(&line);
+        stdout.push('\n');
+    }
+    Answer {
+        stdout,
+        stderr: String::new(),
+        code: now.exit_code(),
+        ack: None,
+        unwritten: None,
+    }
 }
 
 /// Judge `item`'s session for an attached launch, with the attached-agent

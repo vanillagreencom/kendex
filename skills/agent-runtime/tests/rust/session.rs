@@ -25,13 +25,13 @@ struct Row {
     /// The `--transcript` the row names, under the root.
     transcript: Option<&'static str>,
     plant: fn(&Path),
-    lines: [&'static str; 2],
+    lines: [&'static str; 3],
     exit: i32,
 }
 
 const LAUNCH: [(&str, &str); 2] = [
     ("AGENT_RUNTIME_LAUNCH_MODEL", "gpt-6.1-launch"),
-    ("AGENT_RUNTIME_LAUNCH_EFFORT", "low"),
+    ("AGENT_RUNTIME_LAUNCH_AGENT", "KEN-7"),
 ];
 
 fn write(path: &Path, text: &str) {
@@ -121,11 +121,12 @@ const ROWS: &[Row] = &[
         lines: [
             "model=gpt-6.1-sol source=session",
             "effort=high source=session",
+            "agent=KEN-7 source=launch",
         ],
         exit: 0,
     },
     Row {
-        name: "a claude transcript names the model, the launch the effort",
+        name: "a claude transcript names the model, never the effort",
         harness: "claude",
         session: "k1",
         env: &[LAUNCH[0], LAUNCH[1]],
@@ -134,12 +135,13 @@ const ROWS: &[Row] = &[
         plant: claude_transcript,
         lines: [
             "model=claude-opus-5-5 source=session",
-            "effort=low source=launch",
+            "session-effort-unrecorded harness=claude session=k1",
+            "agent=KEN-7 source=launch",
         ],
-        exit: 0,
+        exit: 1,
     },
     Row {
-        name: "a pi file naming no model takes the launch's, and no effort is declared",
+        name: "a pi file naming no model takes the launch's, and no effort",
         harness: "pi",
         session: "p1",
         env: &[LAUNCH[0]],
@@ -149,6 +151,7 @@ const ROWS: &[Row] = &[
         lines: [
             "model=gpt-6.1-launch source=launch",
             "session-effort-unrecorded harness=pi session=p1",
+            "session-agent-unrecorded harness=pi session=p1",
         ],
         exit: 1,
     },
@@ -163,6 +166,7 @@ const ROWS: &[Row] = &[
         lines: [
             "model=claude-opus-5 source=session",
             "session-effort-unrecorded harness=copilot session=c1",
+            "session-agent-unrecorded harness=copilot session=c1",
         ],
         exit: 1,
     },
@@ -176,7 +180,8 @@ const ROWS: &[Row] = &[
         plant: copilot_home_only,
         lines: [
             "session-record-unread harness=copilot session=c1 cause=missing",
-            "effort=low source=launch",
+            "session-effort-unrecorded harness=copilot session=c1",
+            "agent=KEN-7 source=launch",
         ],
         exit: 2,
     },
@@ -184,13 +189,14 @@ const ROWS: &[Row] = &[
         name: "a codex session with no rollout is absent",
         harness: "codex",
         session: "x1",
-        env: &[("CODEX_HOME", "/codex"), LAUNCH[0], LAUNCH[1]],
+        env: &[("CODEX_HOME", "/codex"), LAUNCH[0]],
         unset: &[],
         transcript: None,
         plant: codex_store_without_the_session,
         lines: [
             "session-file-absent harness=codex session=x1",
             "session-file-absent harness=codex session=x1",
+            "session-agent-unrecorded harness=codex session=x1",
         ],
         exit: 2,
     },
@@ -198,13 +204,14 @@ const ROWS: &[Row] = &[
         name: "a codex store that cannot be listed is unreadable",
         harness: "codex",
         session: "x1",
-        env: &[("CODEX_HOME", "/codex"), LAUNCH[0], LAUNCH[1]],
+        env: &[("CODEX_HOME", "/codex"), LAUNCH[0]],
         unset: &[],
         transcript: None,
         plant: codex_store_unlisted,
         lines: [
             "session-file-unreadable harness=codex session=x1 cause=",
             "session-file-unreadable harness=codex session=x1 cause=",
+            "session-agent-unrecorded harness=codex session=x1",
         ],
         exit: 2,
     },
@@ -212,13 +219,14 @@ const ROWS: &[Row] = &[
         name: "a transcript that cannot be read is unreadable",
         harness: "claude",
         session: "k1",
-        env: &[LAUNCH[0], LAUNCH[1]],
+        env: &[LAUNCH[0]],
         unset: &[],
         transcript: Some("claude.jsonl"),
         plant: a_directory_as_transcript,
         lines: [
             "session-file-unreadable harness=claude session=k1 cause=",
-            "effort=low source=launch",
+            "session-effort-unrecorded harness=claude session=k1",
+            "session-agent-unrecorded harness=claude session=k1",
         ],
         exit: 2,
     },
@@ -226,19 +234,20 @@ const ROWS: &[Row] = &[
         name: "no harness home and no HOME names no record",
         harness: "codex",
         session: "x1",
-        env: &[LAUNCH[0], LAUNCH[1]],
+        env: &[LAUNCH[0]],
         unset: &["HOME"],
         transcript: None,
         plant: nothing,
         lines: [
             "harness-home-unnamed harness=codex session=x1",
             "harness-home-unnamed harness=codex session=x1",
+            "session-agent-unrecorded harness=codex session=x1",
         ],
         exit: 2,
     },
 ];
 
-/// Each row's two lines and exit. A line ending in `cause=` is matched as a
+/// Each row's three lines and exit. A line ending in `cause=` is matched as a
 /// prefix: the cause is the operating system's words.
 #[test]
 fn session_model_answers_from_the_session_first_and_tells_a_refusal_from_an_unread_record() {
@@ -273,7 +282,7 @@ fn session_model_answers_from_the_session_first_and_tells_a_refusal_from_an_unre
         }
         let stdout = String::from_utf8_lossy(&out.stdout);
         let lines: Vec<&str> = stdout.lines().collect();
-        let matched = lines.len() == 2
+        let matched = lines.len() == 3
             && row.lines.iter().zip(&lines).all(|(want, got)| {
                 if want.ends_with("cause=") {
                     got.starts_with(want) && got.len() > want.len()

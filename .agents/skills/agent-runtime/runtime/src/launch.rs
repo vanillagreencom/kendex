@@ -81,6 +81,9 @@ pub struct LaunchIntent {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// The name the opener gives the session: a lane's item, `controller`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     #[serde(default)]
     pub permission: Permission,
     #[serde(default)]
@@ -172,12 +175,13 @@ pub const LAUNCH_SCRUB: [&str; 15] = [
     "HYPRLAND_INSTANCE_SIGNATURE",
 ];
 
-/// The variables a launch declares the model and the effort it pins under,
-/// read back by `agent-runtime session model` where the session's own
-/// record names neither. Every launch clears both before it sets what it
-/// pins, so a session never answers with its opener's.
+/// The variables a launch declares the model it pins under, read back by
+/// `agent-runtime session model` where the session's own record names none,
+/// and the name its opener gives the session, which no harness records.
+/// Every launch clears both before it sets what it pins, so a session never
+/// answers with its opener's.
 pub const LAUNCH_MODEL_VAR: &str = "AGENT_RUNTIME_LAUNCH_MODEL";
-pub const LAUNCH_EFFORT_VAR: &str = "AGENT_RUNTIME_LAUNCH_EFFORT";
+pub const LAUNCH_AGENT_VAR: &str = "AGENT_RUNTIME_LAUNCH_AGENT";
 
 /// Claude's prompt switches a full-bypass launch sets to `1` in the
 /// environment, which the provider reads from the launch environment only
@@ -220,7 +224,7 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     }
     for (name, pinned) in [
         (LAUNCH_MODEL_VAR, &intent.model),
-        (LAUNCH_EFFORT_VAR, &intent.effort),
+        (LAUNCH_AGENT_VAR, &intent.agent),
     ] {
         if !env_remove.iter().any(|n| n == name) {
             env_remove.push(name.to_owned());
@@ -556,6 +560,7 @@ mod tests {
             cwd: PathBuf::from("/work/tree"),
             model: Some("opus".into()),
             effort: Some("high".into()),
+            agent: None,
             permission: Permission::Bypass,
             question_tool: QuestionTool::Off,
             compaction: Compaction::Native,
@@ -599,7 +604,7 @@ mod tests {
         for name in LAUNCH_SCRUB
             .iter()
             .copied()
-            .chain([LAUNCH_MODEL_VAR, LAUNCH_EFFORT_VAR])
+            .chain([LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR])
             .chain(i.env_remove.iter().map(String::as_str))
         {
             sh.env(name, "parent");
@@ -792,28 +797,28 @@ mod tests {
         }
     }
 
-    /// The child of every harness reads the model and effort its launch
+    /// The child of every harness reads the model and name its launch
     /// pinned under the declared names, and none where the launch pins none:
     /// the opener's own values never reach it.
     #[test]
-    fn a_launch_declares_the_model_and_effort_it_pins_and_clears_its_opener_s() {
+    fn a_launch_declares_the_model_and_name_it_pins_and_clears_its_opener_s() {
         let dir = tempfile::tempdir().unwrap();
         for h in Harness::ALL {
             let mut i = bare(h);
             i.home = Some(dir.path().join(format!(".1{h}")));
             i.model = Some("gpt-6.1-sol".into());
-            i.effort = Some("high".into());
+            i.agent = Some("KEN-7".into());
             let env = child_env(dir.path(), i.clone());
             let declared = |env: &BTreeMap<String, String>| {
-                [LAUNCH_MODEL_VAR, LAUNCH_EFFORT_VAR].map(|n| env.get(n).cloned())
+                [LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR].map(|n| env.get(n).cloned())
             };
             assert_eq!(
                 declared(&env),
-                [Some("gpt-6.1-sol".into()), Some("high".into())],
+                [Some("gpt-6.1-sol".into()), Some("KEN-7".into())],
                 "{h}"
             );
             i.model = None;
-            i.effort = None;
+            i.agent = None;
             assert_eq!(declared(&child_env(dir.path(), i)), [None, None], "{h}");
         }
     }
@@ -899,8 +904,8 @@ mod tests {
         unnamed.compaction = Compaction::Off;
         assert_eq!(
             build(&unnamed).unwrap().env.keys().collect::<Vec<_>>(),
-            [LAUNCH_EFFORT_VAR, LAUNCH_MODEL_VAR, "CODEX_HOME"],
-            "the home and the declared model and effort alone"
+            [LAUNCH_MODEL_VAR, "CODEX_HOME"],
+            "the home and the declared model alone"
         );
         for h in [Harness::Claude, Harness::Copilot, Harness::Pi] {
             let mut i = named(h);
