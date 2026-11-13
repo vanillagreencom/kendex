@@ -2094,7 +2094,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     base_checkout,
                     stage,
                 },
-        } => orch_runtime::policy::reply(&base_checkout, stage)?,
+        } => orch_runtime::policy::reply(&base_checkout, stage, flags.private_env)?,
         Verb::Validate {
             op:
                 ValidateOp::Start {

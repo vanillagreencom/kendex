@@ -5036,6 +5036,22 @@ impl World {
         }
         self.run(&args, extra)
     }
+
+    /// `validate policy` from an invocation that reads private env files:
+    /// the row's isolation without `--no-private-env`.
+    fn policy_reading_private(&self, base: &Path) -> Output {
+        let mut command = support::program(support::binary());
+        command
+            .arg("--state-dir")
+            .arg(&self.state)
+            .args(["validate", "policy", "--base-checkout"])
+            .arg(base)
+            .current_dir(&self.worktree);
+        for (k, v) in self.env() {
+            command.env(k, v);
+        }
+        command.output().unwrap()
+    }
 }
 
 const STAGE_WORDS: [&str; 6] = [
@@ -5049,14 +5065,16 @@ const STAGE_WORDS: [&str; 6] = [
 
 /// Which optional stage runs is the main checkout's committed choice alone:
 /// unset runs every stage, a list runs the stages it names, an empty value
-/// none; the private env file outranks the committed files, and neither the
-/// caller's own `ORCH_STAGES` nor the worktree's settings file reaches the
-/// answer, so a branch never switches off its own stages. No tool is
-/// installed in the base checkout, and a chosen stage still answers `run`.
+/// none; the private env file outranks the committed files where the
+/// invocation reads private files and reaches nothing under
+/// `--no-private-env`; neither the caller's own `ORCH_STAGES` nor the
+/// worktree's settings file reaches the answer, so a branch never switches
+/// off its own stages. No tool is installed in the base checkout, and a
+/// chosen stage still answers `run`.
 #[test]
 fn the_stage_policy_is_the_base_checkouts_committed_choice() {
     type Files<'a> = &'a [(&'a str, &'a str)];
-    let cases: [(&str, Files, &[&str], bool); 5] = [
+    let cases: [(&str, Files, &[&str], bool); 4] = [
         ("unset", &[], &STAGE_WORDS, false),
         (
             "listed",
@@ -5086,25 +5104,6 @@ fn the_stage_policy_is_the_base_checkouts_committed_choice() {
                 ),
             ],
             &["doc-limits"],
-            true,
-        ),
-        (
-            "private file over both",
-            &[
-                (
-                    "kendex.settings.toml",
-                    "[env]\nORCH_STAGES = \"preflight\"\n",
-                ),
-                (
-                    ".kendex/settings.toml",
-                    "[env]\nORCH_STAGES = \"doc-limits\"\n",
-                ),
-                (
-                    ".env.local",
-                    "ORCH_STAGES=\"external-review local-review\"\n",
-                ),
-            ],
-            &["external-review", "local-review"],
             true,
         ),
     ];
@@ -5137,6 +5136,40 @@ fn the_stage_policy_is_the_base_checkouts_committed_choice() {
             assert_eq!(one["answer"], all["stages"][word], "{case} {word}");
         }
     }
+
+    let w = World::new();
+    let base = w.base_checkout(&[
+        (
+            "kendex.settings.toml",
+            "[env]\nORCH_STAGES = \"preflight\"\n",
+        ),
+        (
+            ".kendex/settings.toml",
+            "[env]\nORCH_STAGES = \"doc-limits\"\n",
+        ),
+        (
+            ".env.local",
+            "ORCH_STAGES=\"external-review local-review\"\n",
+        ),
+    ]);
+    let running = |out: &Output| -> Vec<String> {
+        let stages = ok(out)["stages"].clone();
+        STAGE_WORDS
+            .iter()
+            .filter(|word| stages[**word] == "run")
+            .map(|word| (*word).to_owned())
+            .collect()
+    };
+    assert_eq!(
+        running(&w.policy(&base, None, &[])),
+        ["doc-limits"],
+        "--no-private-env"
+    );
+    assert_eq!(
+        running(&w.policy_reading_private(&base)),
+        ["external-review", "local-review"],
+        "the private file over both"
+    );
 }
 
 /// A stage policy outside its form refuses by name and answers no stage: a

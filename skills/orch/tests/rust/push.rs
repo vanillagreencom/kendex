@@ -1348,6 +1348,59 @@ mod push {
         assert_eq!(repo.remote("main"), receipt["commit"]);
     }
 
+    /// Where the main checkout's committed stage list leaves out
+    /// `git-hooks`, as a repository whose lanes validate through the runner
+    /// commits it, the armed chain proves nothing: a micro publication
+    /// validates its range through the runner, a red run publishing
+    /// nothing; a list outside its form refuses before any transport.
+    #[test]
+    fn a_micro_publication_validates_its_range_where_the_policy_runs_no_git_hooks() {
+        let range = "DEV_VALIDATE_RANGE_CMD = \"test ! -e tmp/fail && git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\nDEV_VALIDATE_TIMEOUT_SECS = \"30\"\n";
+        let stages = "ORCH_STAGES = \"external-review local-review preflight doc-limits\"\n";
+        let repo = Repo::new("KEN-1", &format!("{BASE}{stages}{range}"));
+        repo.link_agents();
+        repo.record(json!({"tier": "micro"}));
+        let base = repo.remote("main");
+        let publish = |repo: &Repo, receipt: &Value| {
+            repo.op(
+                json!({"op": "record-push", "mode": "publish", "worktree": repo.wt,
+                "base": receipt["before"], "head": receipt["commit"]}),
+            )
+        };
+        let receipt = prepared(&repo);
+        fs::write(repo.wt.join("tmp/fail"), "").unwrap();
+        assert!(
+            refusal(&publish(&repo, &receipt)).starts_with("orch-runtime: delivery-validate"),
+            "a red range run refuses the publication"
+        );
+        assert_eq!(repo.remote("main"), base, "a red run publishes nothing");
+        fs::remove_file(repo.wt.join("tmp/fail")).unwrap();
+        let reply = result(&publish(&repo, &receipt));
+        assert_eq!(reply["validation"]["exit"], 0, "{reply}");
+        assert_eq!(
+            fs::read_to_string(repo.wt.join("tmp/validated"))
+                .unwrap()
+                .trim(),
+            receipt["commit"]
+        );
+        assert_eq!(repo.remote("main"), receipt["commit"]);
+
+        let misspelt = Repo::new("KEN-1", &format!("{BASE}ORCH_STAGES = \"git-hook\"\n"));
+        misspelt.link_agents();
+        misspelt.record(json!({"tier": "micro"}));
+        let base = misspelt.remote("main");
+        let receipt = prepared(&misspelt);
+        assert_eq!(
+            refusal(&publish(&misspelt, &receipt)),
+            "orch-runtime: setting-invalid key=ORCH_STAGES value=git-hook"
+        );
+        assert_eq!(
+            misspelt.remote("main"),
+            base,
+            "an unread policy publishes nothing"
+        );
+    }
+
     /// The micro cycle's own check refuses the publication where change-scope
     /// cannot classify the prepared range (none installed beside the
     /// configured path reader), then where the range earns a wider cycle (an

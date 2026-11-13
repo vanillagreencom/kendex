@@ -25,6 +25,7 @@ use super::admission::ScopeRange;
 use super::proof::{self, Hop};
 use super::{findings, loaded, tier};
 use crate::error::{Error, Result};
+use crate::policy::{Stage, Stages};
 use crate::settings::{self, Settings};
 use crate::state;
 use crate::validate::files::RunFile;
@@ -1090,7 +1091,14 @@ pub fn run(
                 .unwrap_or("standard");
             if tier == "micro" {
                 micro_tier(settings, &worktree, base, prepared)?;
-            } else {
+            }
+            // The micro cycle's proof is the armed commit chain, so a range
+            // whose repository's committed policy runs no git hooks is
+            // validated as every other tier's is.
+            let chain_proves = tier == "micro"
+                && Stages::read(&at_worktree.roots.common, flags.private_env)?
+                    .runs(Stage::GitHooks);
+            if !chain_proves {
                 reply.validation = Some(validate_range(&worktree, base, prepared)?);
             }
             let after = head(&worktree)?;

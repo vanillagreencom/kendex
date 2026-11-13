@@ -567,6 +567,10 @@ pub struct Settings {
     /// The `QA_KEYS` that are set, as written.
     pub qa: BTreeMap<String, String>,
     pub lane_output: Judged<LaneOutput>,
+    /// Whether this invocation reads any private env file:
+    /// `--no-private-env` turns it off for every reader, the base
+    /// checkout's policy among them.
+    pub private_env: bool,
 }
 
 /// orch's one setup under an install's root: it builds the agent-runtime
@@ -1044,6 +1048,7 @@ pub fn load(
         claim_store,
         lane_mail_cli,
         reach: None,
+        private_env: flags.private_env,
         apple_workflow: values
             .raw("ORCH_APPLE_WORKFLOW")
             .unwrap_or(".github/workflows/mac-run.yml")

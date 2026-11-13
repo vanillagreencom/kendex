@@ -17,21 +17,24 @@ pub const STAGES_KEY: &str = "ORCH_STAGES";
 
 /// The consumer's committed review policy from the base checkout's files,
 /// `kendex.settings.toml`, then `.kendex/settings.toml`, then its private
-/// env file, the later outranking the earlier; no process variable reaches
-/// it, since the policy is the consumer's, never the caller's.
-pub fn policy(base: &Path) -> Result<BTreeMap<String, String>> {
+/// env file where `private_env` holds, the later outranking the earlier; no
+/// process variable reaches it, since the policy is the consumer's, never
+/// the caller's.
+pub fn policy(base: &Path, private_env: bool) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
     for name in agent_runtime::settings::SETTINGS_FILES {
         for (key, value) in agent_runtime::settings::settings_file(&base.join(name))? {
             values.insert(key, value);
         }
     }
-    let private = agent_runtime::settings::private_env_file(
-        &base.join(agent_runtime::settings::DEFAULT_ENV_FILE),
-        None,
-        &settings::KEYS,
-    )?;
-    values.extend(private.values);
+    if private_env {
+        let private = agent_runtime::settings::private_env_file(
+            &base.join(agent_runtime::settings::DEFAULT_ENV_FILE),
+            None,
+            &settings::KEYS,
+        )?;
+        values.extend(private.values);
+    }
     Ok(values)
 }
 
@@ -101,8 +104,8 @@ impl Stages {
     }
 
     /// The stages the committed policy of the main checkout `base` runs.
-    pub fn read(base: &Path) -> Result<Stages> {
-        Stages::of(&policy(base)?)
+    pub fn read(base: &Path, private_env: bool) -> Result<Stages> {
+        Stages::of(&policy(base, private_env)?)
     }
 
     pub fn runs(&self, stage: Stage) -> bool {
@@ -117,7 +120,7 @@ fn answer(stages: &Stages, stage: Stage) -> &'static str {
 /// `validate policy`'s answer for the base checkout `base`: every stage's
 /// `run` or `skip`, or the one stage asked. A base that is not a directory
 /// refuses, since its absent files would read as the default.
-pub fn reply(base: &Path, stage: Option<Stage>) -> Result<Value> {
+pub fn reply(base: &Path, stage: Option<Stage>, private_env: bool) -> Result<Value> {
     if !std::fs::metadata(base).is_ok_and(|m| m.is_dir()) {
         return Err(agent_runtime::Error::refused(
             "field-invalid",
@@ -128,7 +131,7 @@ pub fn reply(base: &Path, stage: Option<Stage>) -> Result<Value> {
         )
         .into());
     }
-    let stages = Stages::read(base)?;
+    let stages = Stages::read(base, private_env)?;
     let mut reply = json!({"base_checkout": base.display().to_string(), "set": stages.set});
     match stage {
         Some(stage) => {

@@ -531,6 +531,7 @@ pub fn run(
         draft: false,
         pull: None,
         eligibility: None,
+        private_env: settings.private_env,
     };
     let judged = gate.judge();
     if !matches!(judged, Err(Stop::Refused(_))) {
@@ -582,6 +583,8 @@ struct Gate<'a> {
     pull: Option<Pull>,
     /// The head's eligibility, judged once per call (`ineligible`).
     eligibility: Option<Option<&'static str>>,
+    /// Whether the base checkout's policy takes its private env file.
+    private_env: bool,
 }
 
 /// The head's admission to a Copilot request on this call: only
@@ -662,7 +665,7 @@ impl Gate<'_> {
         if let Some(mode) = recorded_mode(self.path, &self.doc)? {
             return Ok(mode);
         }
-        let policy = policy(&self.r.base_checkout)?;
+        let policy = policy(&self.r.base_checkout, self.private_env)?;
         let mode = match policy.get(GATE_MODE_KEY).map(String::as_str) {
             None | Some("enforce") => review::gate_mode(&self.gh, &self.r.repo, &self.view.base)?,
             Some("off") => GateMode::Off,
@@ -965,7 +968,7 @@ impl Gate<'_> {
         if let Some(judged) = self.eligibility {
             return Ok(judged);
         }
-        let policy = policy(&self.r.base_checkout)?;
+        let policy = policy(&self.r.base_checkout, self.private_env)?;
         let pull = match self.pull.take() {
             Some(pull) => pull,
             None => review::pull(&self.gh, &self.r.repo, self.r.pr)?,

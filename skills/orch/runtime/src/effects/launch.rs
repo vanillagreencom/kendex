@@ -1207,7 +1207,7 @@ fn cloud_launch(
             );
         }
     }
-    let stages = match Stages::read(&claim_root) {
+    let stages = match Stages::read(&claim_root, run.settings.private_env) {
         Ok(stages) => stages,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
