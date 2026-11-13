@@ -1,6 +1,7 @@
 //! The `agent-runtime` command: the versioned boundary other languages and
-//! hosts speak to the library through. Every verb prints one JSON reply on
-//! stdout; a refusal also prints one keyed line on stderr and exits 1. A
+//! hosts speak to the library through. Every verb but `session model`
+//! (lines of its own) prints one JSON reply on stdout; a refusal also
+//! prints one keyed line on stderr and exits 1. A
 //! usage error prints `agent-runtime: usage` and clap's message on stderr
 //! and exits 2, clap's own convention, with no reply: there was no request
 //! to answer.
@@ -195,6 +196,74 @@ enum Verb {
         #[command(subcommand)]
         op: ControllerOp,
     },
+    /// What the calling session runs on now, read from its own record.
+    Session {
+        #[command(subcommand)]
+        op: SessionOp,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionOp {
+    /// Print two lines, the model's then the effort's: `<member>=<value>
+    /// source=session|launch`, the session's own record first and the
+    /// launch's declaration only where it names none; else
+    /// `session-<member>-unrecorded`, or the key of a read that failed.
+    /// Exit 0 where both answer, 1 where one is unrecorded, 2 where a read
+    /// failed. The record is `--transcript`, else the file `--session`
+    /// names under the harness home (its variable, else under `HOME`) for
+    /// the working directory; for Copilot CLI its status-line record there.
+    Model {
+        #[arg(long, value_parser = harness_word)]
+        harness: Harness,
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        transcript: Option<PathBuf>,
+    },
+}
+
+fn harness_word(word: &str) -> std::result::Result<Harness, String> {
+    Harness::parse(word).ok_or_else(|| format!("harness-unknown harness={word}"))
+}
+
+/// `session model`: its two lines and its exit in place of the JSON reply,
+/// since its reader binds a review's flags from the lines and stops on the
+/// exit.
+fn session_verb(op: SessionOp) -> ! {
+    let SessionOp::Model {
+        harness,
+        session,
+        transcript,
+    } = op;
+    let home = std::env::var_os(harness.home_var())
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| session::default_home(harness));
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let declared = |name: &str| std::env::var(name).ok();
+    let answer = agent_runtime::context::session_now(
+        &agent_runtime::context::SessionAt {
+            harness,
+            session: &session,
+            transcript: transcript.as_deref(),
+            home: home.as_deref(),
+            cwd: &cwd,
+            now,
+        },
+        declared(launch::LAUNCH_MODEL_VAR).as_deref(),
+        declared(launch::LAUNCH_EFFORT_VAR).as_deref(),
+    );
+    let mut out = std::io::stdout().lock();
+    for line in answer.lines(harness, &session) {
+        let _ = writeln!(out, "{line}");
+    }
+    let _ = out.flush();
+    std::process::exit(answer.exit_code());
 }
 
 /// The hand-over's verbs, each over the controller record `--record` names.
@@ -1846,6 +1915,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         },
         Verb::Accounts { op } => accounts_verb(op),
         Verb::Controller { op } => controller_verb(op),
+        Verb::Session { op } => session_verb(op),
     }
 }
 

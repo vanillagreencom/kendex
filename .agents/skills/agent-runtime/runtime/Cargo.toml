@@ -51,6 +51,10 @@ path = "../tests/rust/walk.rs"
 name = "controller"
 path = "../tests/rust/controller.rs"
 
+[[test]]
+name = "session"
+path = "../tests/rust/session.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

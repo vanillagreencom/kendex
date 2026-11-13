@@ -172,6 +172,13 @@ pub const LAUNCH_SCRUB: [&str; 15] = [
     "HYPRLAND_INSTANCE_SIGNATURE",
 ];
 
+/// The variables a launch declares the model and the effort it pins under,
+/// read back by `agent-runtime session model` where the session's own
+/// record names neither. Every launch clears both before it sets what it
+/// pins, so a session never answers with its opener's.
+pub const LAUNCH_MODEL_VAR: &str = "AGENT_RUNTIME_LAUNCH_MODEL";
+pub const LAUNCH_EFFORT_VAR: &str = "AGENT_RUNTIME_LAUNCH_EFFORT";
+
 /// Claude's prompt switches a full-bypass launch sets to `1` in the
 /// environment, which the provider reads from the launch environment only
 /// (its permission-modes and env-vars pages): the inline-shell and
@@ -209,6 +216,17 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     for name in LAUNCH_SCRUB {
         if !env_remove.iter().any(|n| n == name) {
             env_remove.push(name.to_owned());
+        }
+    }
+    for (name, pinned) in [
+        (LAUNCH_MODEL_VAR, &intent.model),
+        (LAUNCH_EFFORT_VAR, &intent.effort),
+    ] {
+        if !env_remove.iter().any(|n| n == name) {
+            env_remove.push(name.to_owned());
+        }
+        if let Some(word) = pinned.as_deref().filter(|w| !w.is_empty()) {
+            env.insert(name.to_owned(), word.to_owned());
         }
     }
     if let Some(program) = &intent.program
@@ -564,9 +582,9 @@ mod tests {
 
     /// The environment a child of the rendered line sees: the line is run
     /// by `sh` in `dir` with a recorder as the harness, every scrubbed name,
-    /// every name the intent removes, a Copilot token and `HOME` set on the
-    /// child shell; the recorder prints its environment one `NAME=VALUE` a
-    /// line.
+    /// both declared launch names, every name the intent removes, a Copilot
+    /// token and `HOME` set on the child shell; the recorder prints its
+    /// environment one `NAME=VALUE` a line.
     fn child_env(dir: &Path, mut i: LaunchIntent) -> BTreeMap<String, String> {
         let recorder = dir.join("show-env");
         crate::host::write_executable(&recorder, "#!/bin/sh\nexec env\n");
@@ -581,6 +599,7 @@ mod tests {
         for name in LAUNCH_SCRUB
             .iter()
             .copied()
+            .chain([LAUNCH_MODEL_VAR, LAUNCH_EFFORT_VAR])
             .chain(i.env_remove.iter().map(String::as_str))
         {
             sh.env(name, "parent");
@@ -773,6 +792,32 @@ mod tests {
         }
     }
 
+    /// The child of every harness reads the model and effort its launch
+    /// pinned under the declared names, and none where the launch pins none:
+    /// the opener's own values never reach it.
+    #[test]
+    fn a_launch_declares_the_model_and_effort_it_pins_and_clears_its_opener_s() {
+        let dir = tempfile::tempdir().unwrap();
+        for h in Harness::ALL {
+            let mut i = bare(h);
+            i.home = Some(dir.path().join(format!(".1{h}")));
+            i.model = Some("gpt-6.1-sol".into());
+            i.effort = Some("high".into());
+            let env = child_env(dir.path(), i.clone());
+            let declared = |env: &BTreeMap<String, String>| {
+                [LAUNCH_MODEL_VAR, LAUNCH_EFFORT_VAR].map(|n| env.get(n).cloned())
+            };
+            assert_eq!(
+                declared(&env),
+                [Some("gpt-6.1-sol".into()), Some("high".into())],
+                "{h}"
+            );
+            i.model = None;
+            i.effort = None;
+            assert_eq!(declared(&child_env(dir.path(), i)), [None, None], "{h}");
+        }
+    }
+
     /// The skills tree is read after the pane's shell expanded the line,
     /// under the HOME the row gives the child, since the builder never sees
     /// a HOME.
@@ -854,8 +899,8 @@ mod tests {
         unnamed.compaction = Compaction::Off;
         assert_eq!(
             build(&unnamed).unwrap().env.keys().collect::<Vec<_>>(),
-            ["CODEX_HOME"],
-            "the home alone"
+            [LAUNCH_EFFORT_VAR, LAUNCH_MODEL_VAR, "CODEX_HOME"],
+            "the home and the declared model and effort alone"
         );
         for h in [Harness::Claude, Harness::Copilot, Harness::Pi] {
             let mut i = named(h);

@@ -16,6 +16,7 @@ use std::time::Duration;
 use serde_json::{Map, Value};
 
 use crate::harness::Harness;
+use crate::reading::Reading;
 
 /// What one read of a session's file found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,23 +42,41 @@ pub enum Usage {
 /// is many times this.
 pub const TAIL_BYTES: u64 = 1_048_576;
 
-/// The usage `read` takes from the session file at `path`: from its last
-/// [`TAIL_BYTES`] first, then from the whole file where that tail holds no
-/// usage line. The tail opens on a partial line, which `read` passes over
-/// as it passes over any line that is no JSON (the line the harness is
-/// still appending included). `Err` where the file cannot be opened or
-/// read, or where `read` refuses a line it cannot sum.
+/// The usage `read` takes from the session file at `path`, the whole file's
+/// reading: its last usage line and the model the file last names. The last
+/// [`TAIL_BYTES`] are a shortcut that stands where they hold a usage line
+/// and, for a measured one, a model; otherwise the whole file is read, since
+/// a harness may name the model once near the head (a Codex rollout's one
+/// `turn_context`, megabytes before its last token count). The tail opens on
+/// a partial line, which `read` passes over as it passes over any line that
+/// is no JSON (the line the harness is still appending included). `Err`
+/// where the file cannot be opened or read, or where `read` refuses a line
+/// it cannot sum.
 pub fn read_file(
     path: &Path,
     read: impl Fn(&str) -> Result<Usage, String>,
 ) -> Result<Usage, String> {
+    tail_first(path, read, |tail| match tail {
+        Usage::Measured { model, .. } => !model.is_empty(),
+        Usage::Unread => true,
+        Usage::Absent => false,
+    })
+}
+
+/// What `read` takes from the file at `path`: from its last [`TAIL_BYTES`]
+/// where that reading `stands`, else from the whole file.
+fn tail_first<T>(
+    path: &Path,
+    read: impl Fn(&str) -> Result<T, String>,
+    stands: impl Fn(&T) -> bool,
+) -> Result<T, String> {
     let fail = |e: io::Error| format!("{}: {e}", path.display());
     let mut file = File::open(path).map_err(fail)?;
     let len = file.metadata().map_err(fail)?.len();
     if len > TAIL_BYTES {
         file.seek(SeekFrom::Start(len - TAIL_BYTES)).map_err(fail)?;
         let tail = read(&lossy(&mut file).map_err(fail)?)?;
-        if tail != Usage::Absent {
+        if stands(&tail) {
             return Ok(tail);
         }
         file.seek(SeekFrom::Start(0)).map_err(fail)?;
@@ -163,16 +182,12 @@ pub fn claude_compaction_off() -> bool {
 /// smaller than the window); any other evidence, or none, leaves the point
 /// unresolved and never discards the count.
 pub fn codex(text: &str, overrides: Option<&str>) -> Result<Usage, String> {
-    let mut model = String::new();
+    let mut turn = Named::default();
     let mut last: Option<Option<(u64, Option<u64>)>> = None;
     for line in objects(text) {
         let payload = line.get("payload");
         match word(&line, "type") {
-            "turn_context" => {
-                if let Some(Value::String(named)) = payload.and_then(|p| p.get("model")) {
-                    named.clone_into(&mut model);
-                }
-            }
+            "turn_context" => turn.take_turn(payload),
             "event_msg" => {
                 let Some(payload) = payload else { continue };
                 if payload.get("type").and_then(Value::as_str) != Some("token_count") {
@@ -202,9 +217,222 @@ pub fn codex(text: &str, overrides: Option<&str>) -> Result<Usage, String> {
         Some(Some((tokens, window))) => Usage::Measured {
             tokens,
             window,
-            model,
+            model: turn.model,
         },
     })
+}
+
+/// What a session's own record names it runs on: the model and the
+/// reasoning effort, each empty where the record names none.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Named {
+    pub model: String,
+    pub effort: String,
+}
+
+impl Named {
+    /// Each member a Codex `turn_context` payload names, which the last
+    /// such line that names it holds: the payload carries both under these
+    /// keys (measured on Codex 0.167.2).
+    fn take_turn(&mut self, payload: Option<&Value>) {
+        for (key, member) in [("model", &mut self.model), ("effort", &mut self.effort)] {
+            if let Some(Value::String(named)) = payload.and_then(|p| p.get(key)) {
+                named.clone_into(member);
+            }
+        }
+    }
+}
+
+/// What the `turn_context` lines of the rollout at `path` name, under
+/// [`read_file`]'s rule: the tail stands where it names a model, else the
+/// whole file is read. `Err` where the file cannot be opened or read.
+pub fn codex_turn(path: &Path) -> Result<Named, String> {
+    tail_first(
+        path,
+        |text| {
+            let mut turn = Named::default();
+            for line in objects(text) {
+                if word(&line, "type") == "turn_context" {
+                    turn.take_turn(line.get("payload"));
+                }
+            }
+            Ok(turn)
+        },
+        |turn| !turn.model.is_empty(),
+    )
+}
+
+/// Where a session's own record is found: the file the caller names, else
+/// the one the session's id names under the harness home for `cwd`; for
+/// Copilot CLI the status-line record under that home, judged at `now`
+/// (seconds since the epoch) and bound to the transcript where one is named.
+pub struct SessionAt<'a> {
+    pub harness: Harness,
+    pub session: &'a str,
+    pub transcript: Option<&'a Path>,
+    pub home: Option<&'a Path>,
+    pub cwd: &'a Path,
+    pub now: u64,
+}
+
+/// A session's own record that could not be read: a stable key and the
+/// cause where one was given. It is an unknown, never a record that names
+/// nothing, so the launch's declaration never stands in for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordUnread {
+    pub key: &'static str,
+    pub cause: String,
+}
+
+/// One member of what a session runs on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Member {
+    /// The session's own record names it.
+    Session(String),
+    /// The session's own record names none and the launch declared it.
+    Launch(String),
+    /// Neither names it.
+    Unrecorded,
+}
+
+impl Member {
+    fn of(named: &str, declared: Option<&str>) -> Member {
+        if !named.is_empty() {
+            return Member::Session(named.to_owned());
+        }
+        match declared.filter(|word| !word.is_empty()) {
+            Some(word) => Member::Launch(word.to_owned()),
+            None => Member::Unrecorded,
+        }
+    }
+}
+
+/// The model and the effort a session runs on now, each its own answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Now {
+    pub model: Result<Member, RecordUnread>,
+    pub effort: Result<Member, RecordUnread>,
+}
+
+/// Whether `harness`'s own session record is measured to carry the effort:
+/// a Codex `turn_context` does. Claude Code's transcript, Copilot CLI's
+/// status-line record and Pi's session file are not, so their effort is the
+/// launch's declaration alone.
+fn effort_recorded(harness: Harness) -> bool {
+    match harness {
+        Harness::Codex => true,
+        Harness::Claude | Harness::Copilot | Harness::Pi => false,
+    }
+}
+
+/// What `session model` answers for the session `at` names: each member
+/// from the session's own record first, and from the launch's
+/// `declared_model` or `declared_effort` only where that record names none.
+/// A member the record cannot be read for is that failure.
+pub fn session_now(
+    at: &SessionAt,
+    declared_model: Option<&str>,
+    declared_effort: Option<&str>,
+) -> Now {
+    let named = session_named(at);
+    let effort = match &named {
+        Err(unread) if effort_recorded(at.harness) => Err(unread.clone()),
+        Ok(named) if effort_recorded(at.harness) => Ok(Member::of(&named.effort, declared_effort)),
+        Ok(_) | Err(_) => Ok(Member::of("", declared_effort)),
+    };
+    Now {
+        model: named.map(|named| Member::of(&named.model, declared_model)),
+        effort,
+    }
+}
+
+impl Now {
+    /// The two lines `session model` prints, model first: `<member>=<value>
+    /// source=session|launch`, `session-<member>-unrecorded harness=
+    /// session=` where neither names it, or the read's own key with the
+    /// harness, the session and its cause.
+    pub fn lines(&self, harness: Harness, session: &str) -> [String; 2] {
+        let line = |member: &str, answer: &Result<Member, RecordUnread>| match answer {
+            Ok(Member::Session(word)) => format!("{member}={word} source=session"),
+            Ok(Member::Launch(word)) => format!("{member}={word} source=launch"),
+            Ok(Member::Unrecorded) => {
+                format!("session-{member}-unrecorded harness={harness} session={session}")
+            }
+            Err(unread) if unread.cause.is_empty() => {
+                format!("{} harness={harness} session={session}", unread.key)
+            }
+            Err(unread) => format!(
+                "{} harness={harness} session={session} cause={}",
+                unread.key, unread.cause
+            ),
+        };
+        [line("model", &self.model), line("effort", &self.effort)]
+    }
+
+    /// 0 where both members answer, 1 where one is unrecorded by name, 2
+    /// where a read failed: a refusal and an unknown are different answers.
+    pub fn exit_code(&self) -> i32 {
+        let answers = [&self.model, &self.effort];
+        if answers.iter().any(|answer| answer.is_err()) {
+            2
+        } else if answers
+            .iter()
+            .any(|answer| matches!(answer, Ok(Member::Unrecorded)))
+        {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+/// What the session's own record names: its model on every harness, its
+/// effort where [`effort_recorded`].
+fn session_named(at: &SessionAt) -> Result<Named, RecordUnread> {
+    let unread = |key: &'static str, cause: String| RecordUnread { key, cause };
+    let home = || {
+        at.home
+            .ok_or_else(|| unread("harness-home-unnamed", String::new()))
+    };
+    let file = || match at.transcript {
+        Some(path) => Ok(path.to_path_buf()),
+        None => match crate::session::fixed_id_file(at.harness, home()?, at.cwd, at.session) {
+            Reading::Live(path) => Ok(path),
+            Reading::Gone => Err(unread("session-file-absent", String::new())),
+            Reading::Unreadable { cause } => {
+                Err(unread("session-file-unreadable", cause.to_owned()))
+            }
+        },
+    };
+    let failed = |cause: String| unread("session-file-unreadable", cause);
+    let model = |usage: Usage| Named {
+        model: match usage {
+            Usage::Measured { model, .. } => model,
+            Usage::Unread | Usage::Absent => String::new(),
+        },
+        effort: String::new(),
+    };
+    match at.harness {
+        Harness::Codex => codex_turn(&file()?).map_err(failed),
+        Harness::Claude => read_file(&file()?, |text| claude(text, false))
+            .map(model)
+            .map_err(failed),
+        Harness::Pi => read_file(&file()?, |text| pi(text, false, |_| None))
+            .map(model)
+            .map_err(failed),
+        Harness::Copilot => {
+            let transcript = at
+                .transcript
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            copilot_record(home()?, at.session, &transcript, at.now)
+                .map(|record| Named {
+                    model: record.model,
+                    effort: String::new(),
+                })
+                .map_err(|reason| unread("session-record-unread", reason.to_owned()))
+        }
+    }
 }
 
 /// Whether Codex launched under `overrides` compacts no earlier than
@@ -738,6 +966,78 @@ mod tests {
             Ok(measured(5000, None, "claude-opus-5-5"))
         );
         assert!(read_file(&dir.join("absent"), |t| claude(t, false)).is_err());
+    }
+
+    /// A rollout in the shape measured on Codex 0.167.2: its one
+    /// `turn_context`, naming `gpt-6.1-sol` at effort `high`, is its tenth
+    /// line, some 130 KB in, and four megabytes of other lines follow it,
+    /// the last token count, 264,601 tokens, among them.
+    fn measured_rollout() -> String {
+        let pad = |kind: &str, n: usize| {
+            format!(
+                r#"{{"type":"{kind}","payload":{{"text":"{}"}}}}"#,
+                "x".repeat(n)
+            )
+        };
+        let mut lines =
+            vec![r#"{"type":"session_meta","payload":{"id":"s1","cwd":"/w"}}"#.to_owned()];
+        lines.extend((0..8).map(|_| pad("response_item", 16_400)));
+        lines.push(r#"{"type":"turn_context","payload":{"approval_policy":"never","cwd":"/w","effort":"high","model":"gpt-6.1-sol","summary":"auto","turn_id":"t1"}}"#.to_owned());
+        let kinds = [
+            "event_msg",
+            "response_item",
+            "token_usage_record",
+            "inter_agent_communication_metadata",
+            "world_state",
+        ];
+        lines.extend((0..1000).map(|n| pad(kinds[n % kinds.len()], 4096)));
+        lines.push(codex_count(264_601, 400_000));
+        lines.push(pad("event_msg", 4096));
+        let text = lines.join("\n");
+        let at = text.find(r#""turn_context""#).unwrap() as u64;
+        assert!(
+            at + TAIL_BYTES < text.len() as u64,
+            "the turn context lies before the tail"
+        );
+        text
+    }
+
+    #[test]
+    fn a_rollout_whose_one_turn_context_lies_before_its_tail_names_that_model() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rollout.jsonl");
+        std::fs::write(&path, measured_rollout()).unwrap();
+        assert_eq!(
+            read_file(&path, |t| codex(t, None)),
+            Ok(measured(264_601, None, "gpt-6.1-sol"))
+        );
+    }
+
+    /// The turn reading takes each member from the last `turn_context` that
+    /// names it, before the tail as well as in it.
+    #[test]
+    fn a_codex_turn_names_the_model_and_effort_its_turn_context_names() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rollout.jsonl");
+        let mut switched = measured_rollout();
+        switched.push('\n');
+        switched.push_str(
+            r#"{"type":"turn_context","payload":{"effort":"xhigh","model":"gpt-6.1-astra"}}"#,
+        );
+        let turn = |model: &str, effort: &str| Named {
+            model: model.to_owned(),
+            effort: effort.to_owned(),
+        };
+        let rows = [
+            (measured_rollout(), turn("gpt-6.1-sol", "high")),
+            (switched, turn("gpt-6.1-astra", "xhigh")),
+            (codex_count(1000, 258_400), turn("", "")),
+        ];
+        for (text, want) in rows {
+            std::fs::write(&path, &text).unwrap();
+            assert_eq!(codex_turn(&path), Ok(want));
+        }
+        assert!(codex_turn(&root.path().join("absent")).is_err());
     }
 
     /// A status-line record in the form `copilot-statusline` writes it under
