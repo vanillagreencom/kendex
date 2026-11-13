@@ -212,6 +212,12 @@ struct Turn {
         reason = "read by the controllers' turn ends, the rows' writer and Copilot usage"
     )]
     role: Rc<role::Role>,
+    /// What the controller's tool call or Copilot start hands the model
+    /// ahead of the call's own answer.
+    notice: Option<Box<controller::Notice>>,
+    /// The wake check's notice, said on stderr where it was found and
+    /// carried into a later refusal's text.
+    wake: Option<String>,
 }
 
 impl Turn {
@@ -221,10 +227,25 @@ impl Turn {
     }
 
     /// The one exit for a refusal: the text on stderr, and the harness's
-    /// shape of it on stdout with its exit status.
+    /// shape of it on stdout with its exit status. A finished tool call's
+    /// refusal carries the controller's notice ahead of its own text and
+    /// records it told, so a refusal never withholds a mark the same call
+    /// judged.
     fn refuse(&mut self, said: Said, cause: &str) -> Answer {
-        let text = said.text(cause);
-        let (stdout, code) = answer::refusal(self.harness, self.arm.as_ref(), &text);
+        let mut text = said.text(cause);
+        if self.arm == Some(Arm::Deliver)
+            && let Some(notice) = self.notice.take()
+        {
+            text = format!("{}\n{text}", notice.text);
+            notice.told();
+        }
+        // The wake's notice already stands on stderr; a harness that reads
+        // the refusal from stdout is handed it there too.
+        let shaped = match &self.wake {
+            Some(wake) => format!("{text}\n{wake}"),
+            None => text.clone(),
+        };
+        let (stdout, code) = answer::refusal(self.harness, self.arm.as_ref(), &shaped);
         let mut stderr = std::mem::take(&mut self.stderr);
         stderr.push_str(&text);
         stderr.push('\n');
@@ -293,6 +314,8 @@ pub fn run(
         hook_dir: hook_dir.to_path_buf(),
         deadline: Deadline::start(&SystemClock),
         role: Rc::new(role::Role::default()),
+        notice: None,
+        wake: None,
     };
     match judge(&mut turn, &vars, arm, event, stdin) {
         Ok(()) => turn.pass(),

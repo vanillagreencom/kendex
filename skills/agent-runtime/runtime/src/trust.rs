@@ -694,6 +694,27 @@ fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
     })
 }
 
+/// Whether a session starting on the Copilot home `home` loads a context
+/// reader, read and never made: the extension the launch installs,
+/// readable and loaded while `enabledFeatureFlags.EXTENSIONS` is true in
+/// its settings.json, else a status line that writes the fallback session
+/// record. `Err` with the status line's cause where neither stands. A
+/// session start asks this, never [`prepare`], since a hook must not change
+/// the operator's home.
+pub fn copilot_reader(home: &Path) -> std::result::Result<(), &'static str> {
+    let extension = home.join("extensions/kendex-lane-context/extension.mjs");
+    let enabled = || {
+        fs::read_to_string(home.join("settings.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .is_some_and(|doc| doc["enabledFeatureFlags"]["EXTENSIONS"] == Value::Bool(true))
+    };
+    if fs::File::open(&extension).is_ok() && enabled() {
+        return Ok(());
+    }
+    status_line(home)
+}
+
 /// The file a path names through its links, hop by hop, at most forty.
 fn link_target(path: &Path) -> Option<PathBuf> {
     let mut target = path.to_path_buf();
@@ -1278,6 +1299,42 @@ mod tests {
         assert_eq!(
             key(&copilot(Path::new("rel/.copilot"), Some(&pending)).unwrap_err()),
             "home-relative"
+        );
+    }
+
+    /// A start's reader check reads the home and writes nothing: the
+    /// extension counts only while its flag is true, a home without it
+    /// counts on a working status line alone, and the first thing that
+    /// fails names the cause.
+    #[test]
+    fn a_copilot_start_reads_its_reader_and_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join(".copilot");
+        assert_eq!(copilot_reader(&home), Err("settings-missing"));
+        assert!(fs::symlink_metadata(&home).is_err(), "nothing written");
+        let extension = home.join("extensions/kendex-lane-context/extension.mjs");
+        fs::create_dir_all(extension.parent().unwrap()).unwrap();
+        fs::write(&extension, EXTENSION).unwrap();
+        let flag = |on: bool| format!("{{\"enabledFeatureFlags\": {{\"EXTENSIONS\": {on}}}}}\n");
+        fs::write(home.join("settings.json"), flag(true)).unwrap();
+        assert_eq!(copilot_reader(&home), Ok(()));
+        fs::write(home.join("settings.json"), flag(false)).unwrap();
+        assert_eq!(copilot_reader(&home), Err("no-status-line"));
+        fs::remove_file(&extension).unwrap();
+        fs::write(home.join("settings.json"), flag(true)).unwrap();
+        assert_eq!(copilot_reader(&home), Err("no-status-line"));
+        let script = root.path().join("copilot-statusline");
+        fs::write(&script, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let line = format!(
+            "{{\"statusLine\": {{\"type\": \"command\", \"command\": \"{}\", \"refreshInterval\": 30}}}}\n",
+            script.display()
+        );
+        fs::write(home.join("settings.json"), line).unwrap();
+        assert_eq!(copilot_reader(&home), Ok(()));
+        assert!(
+            fs::symlink_metadata(&extension).is_err(),
+            "the reader is never installed"
         );
     }
 }

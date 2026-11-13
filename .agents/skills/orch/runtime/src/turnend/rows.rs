@@ -350,6 +350,8 @@ mod tests {
             hook_dir: PathBuf::new(),
             deadline: Deadline::start(&SystemClock),
             role: Rc::new(role::Role::default()),
+            notice: None,
+            wake: None,
         }
     }
 

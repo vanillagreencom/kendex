@@ -138,6 +138,53 @@ pub enum Said {
         lines: String,
         command: Option<String>,
     },
+    /// A Copilot overseer's session starts on the home below, which loads
+    /// no context reader; the status line's cause is the cause.
+    ContextReaderMissing(String),
+    /// A controller mark reached.
+    ControllerMark(Box<Reached>),
+    /// The marks judge gave no answer a refusal can stand on: `unmeasured`
+    /// where it could not take a figure and no mark fired, `unjudged` where
+    /// it refused or named a mark without what it read.
+    Marks(&'static str),
+    // A controller's own turn end (`controller`): the fleet's overseer.
+    /// The payload's transcript is not bound to the controller's session
+    /// under its launch home; the binding's reason is the cause.
+    TranscriptUnowned(String),
+    /// The fleet record lost this session, `<server> <pane>`, and names the
+    /// controller under the key below, or none.
+    PaneUnrecorded(String),
+    /// The overseer's gap record that could not be written.
+    ContextGapUnrecorded(PathBuf),
+    /// A managed Jarvis session's context mark reached, at the tokens read.
+    JarvisContext {
+        tokens: u64,
+        instruction: String,
+    },
+    /// A gap a managed Jarvis session's mark meets, under the gap's own
+    /// key: said and passed, since its succession cannot clear it.
+    JarvisUnjudged(Box<Said>),
+    // The controller's mail and wake (`mail`, `wake`).
+    /// The unread lines of the checkout's overseer mailbox, which this
+    /// session reads as the fleet's bound controller while no watch holds
+    /// the fleet; the read that acknowledges a halt, where the lead is
+    /// shown it.
+    OverseerUnread {
+        count: usize,
+        lines: String,
+        command: Option<String>,
+    },
+    /// Whether a live watch holds the fleet could not be settled from the
+    /// watch's claim at this path; the cause follows.
+    FleetState(PathBuf),
+    /// Nothing can wake the bound controller; the start command follows.
+    WakeUnarmed,
+    /// The wake check could not judge, under the gap's key (`wake-record`,
+    /// `wake-setting`, `wake-process`) and the input it names.
+    WakeUnjudged {
+        gap: &'static str,
+        value: String,
+    },
     /// A finished Copilot tool call from a session no lead record names.
     CallUnrecorded(String),
     /// The context answer could not be written.
@@ -279,6 +326,17 @@ pub struct Routes {
     pub notice: String,
 }
 
+/// A controller mark reached: its kind, the figure read and the mark it
+/// reached, the window a context reading named, and the succession that
+/// clears it.
+pub struct Reached {
+    pub kind: agent_runtime::controller::views::MarkKind,
+    pub value: String,
+    pub mark: String,
+    pub window: String,
+    pub instruction: String,
+}
+
 impl Said {
     fn key(&self) -> (&'static str, String) {
         match self {
@@ -321,6 +379,25 @@ impl Said {
             Said::InboxEnvelope => ("inbox", "envelope".to_owned()),
             Said::Halt { id, .. } => ("halt", id.clone()),
             Said::Unread { count, .. } => ("unread", count.to_string()),
+            Said::ContextReaderMissing(home) => (
+                "context-reader",
+                format!(
+                    "missing home={home} fix=orch-runtime register --fleet then start a new session"
+                ),
+            ),
+            Said::ControllerMark(reached) => (reached.kind.word(), reached.value.clone()),
+            Said::Marks(word) => ("marks", (*word).to_owned()),
+            Said::TranscriptUnowned(transcript) => ("transcript-unowned", transcript.clone()),
+            Said::PaneUnrecorded(key) => ("pane-unrecorded", key.clone()),
+            Said::ContextGapUnrecorded(path) => {
+                ("context-gap-unrecorded", path.display().to_string())
+            }
+            Said::JarvisContext { tokens, .. } => ("context", tokens.to_string()),
+            Said::JarvisUnjudged(gap) => gap.key(),
+            Said::OverseerUnread { count, .. } => ("unread", count.to_string()),
+            Said::FleetState(path) => ("fleet-state", path.display().to_string()),
+            Said::WakeUnarmed => ("wake", "unarmed".to_owned()),
+            Said::WakeUnjudged { gap, value } => (gap, value.clone()),
             Said::CallUnrecorded(session) => ("session-unrecorded", session.clone()),
             Said::NoticeUnwritten => ("notice", "unwritten".to_owned()),
             Said::QuestionTool { tool, .. } => ("question-tool", tool.clone()),
@@ -468,6 +545,58 @@ impl Said {
                 }
                 text
             }
+            Said::ContextReaderMissing(_) => "This Copilot overseer starts without a context reader, so its context mark is never judged. Register its Copilot home with orch-runtime register --fleet, then start a new session so the reader loads. What the status line fallback lacks is below:".to_owned(),
+            Said::Marks("unmeasured") => "the orch runtime's marks could not take one reading this session's triggers use, and no other mark fired; the gap is reported rather than held, and a reading nothing took is never read as room. Its own answer, naming the figure that was missing, is below:".to_owned(),
+            Said::Marks(_) => "the orch runtime's marks, the one judge of this session's own marks, gave an answer this hook cannot act on: a refusal, or one naming a mark without the figure it read or a kind this hook does not know. No trigger is judged; the gap is reported rather than held, because a session told to run a judge that cannot answer could never end a turn. What it answered is below:".to_owned(),
+            Said::ControllerMark(reached) => {
+                let Reached {
+                    kind,
+                    value,
+                    mark,
+                    window,
+                    instruction,
+                } = reached.as_ref();
+                match kind {
+                agent_runtime::controller::views::MarkKind::Context => format!(
+                    "this overseer requires handoff under the shared context rule at {value} tokens used. Handoff is required at 400000 tokens used, or strictly past {mark} percent of the printed window ({window} tokens). Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n{instruction}"
+                ),
+                agent_runtime::controller::views::MarkKind::Headroom => format!(
+                    "The orch runtime reads the account this overseer runs its credential out of as having {value} percent headroom left, at or below the ORCH_OVERSEER_HEADROOM_PCT mark of {mark}. Succeed this session yourself: a walled overseer runs no turn at all, so it reads no mail, handles no event and cannot hand over once the wall lands.\n{instruction}"
+                ),
+                agent_runtime::controller::views::MarkKind::Rate => format!(
+                    "The orch runtime projects that this overseer account will reach its wall in {value} minutes, at or before the ORCH_OVERSEER_WALL_MINUTES mark of {mark}. Succeed this session yourself before the account walls.\n{instruction}"
+                ),
+                agent_runtime::controller::views::MarkKind::Memory => format!(
+                    "The orch runtime reads the memory of this overseer's harness process at {value} percent of its cgroup cap, at or past the ORCH_OVERSEER_MEMORY_PCT mark of {mark}. Succeed this session yourself before the cap ends it with no handoff.\n{instruction}"
+                ),
+                }
+            }
+            Said::TranscriptUnowned(transcript) => format!(
+                "the payload's transcript {transcript} is not bound to this overseer session under its recorded launch home. The hook reads no transcript. It records a null token count and uses the binding reason below as the gap. The runtime watch reports overseer-context-unmeasured. The judge evaluates the account triggers without a context reading:"
+            ),
+            Said::PaneUnrecorded(_) => "the fleet record names the overseer by the pane key below, or none, not this session's own, although the overseer context record holds this session's reading; this session is judged on no mark, and its context record is written with no reading and the gap pane-unrecorded, which the runtime watch reports as overseer-context-unmeasured. Run orch-runtime register --fleet from the overseer's own pane, or the runtime's succession (orch-runtime successor --fleet --predecessor, then request-transfer), to name the overseer again:".to_owned(),
+            Said::ContextGapUnrecorded(path) => format!(
+                "this overseer turn end took no context reading, so the context mark is not judged at it, and the record naming why could not be written to {}, which keeps its earlier entry; the account marks are judged as usual:",
+                path.display()
+            ),
+            Said::JarvisContext { tokens, instruction } => format!(
+                "This managed Jarvis session reached its context handoff mark at {tokens} tokens used.\n{instruction}"
+            ),
+            Said::JarvisUnjudged(_) => "This managed Jarvis session's succession mark is unjudged: the input named above could not be read or bound to this session, and succeeding the session would not repair it, so the turn ends and the gap is reported. The cause follows:".to_owned(),
+            Said::OverseerUnread {
+                lines, command, ..
+            } => {
+                let mut text = format!(
+                    "the fleet record of the checkout this session works in names this session's pane and no live watch holds the fleet state, so this session reads that checkout's overseer mailbox; a peer repository or the owner sent these messages there. Act on each as its text directs:\n{lines}"
+                );
+                if let Some(command) = command {
+                    text.push_str(&format!("\na halt among them refuses every tool call but one until the lane runs exactly this command:\n{command}"));
+                }
+                text
+            }
+            Said::FleetState(_) => "the checkout's overseer mailbox holds a file, and whether a live watch holds the fleet state and reads it could not be settled from the watch's claim named above, so the mailbox is neither read here nor passed as read; the cause follows:".to_owned(),
+            Said::WakeUnarmed => "the registered session has no running wake process; arm it before ending the turn:".to_owned(),
+            Said::WakeUnjudged { .. } => "the wake check is unjudged; independent turn-end checks still run".to_owned(),
             Said::CallUnrecorded(session) => format!(
                 "this finished Copilot tool call's session {session} is no lead session this install recorded at a session start or at a turn end its own transcript proved, so it may be a subagent's: the unread lines are not handed over here and stay unread for the lead's turn end, which hands them over and acknowledges them"
             ),

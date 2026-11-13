@@ -9,13 +9,19 @@
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use agent_runtime::reading::Reading;
 
 use super::answer::{self, Harness, Routes, Said};
 use super::identity::{Lane, shell_quoted};
 use super::payload::{Caller, Payload};
+use super::role::Binding;
 use super::{Answer, Arm, Flow, Turn, Vars};
 use crate::mailbox::{Mailbox, Noticed, Refusal};
 use crate::settings::{self, Flags};
+use crate::watch::claim;
+use crate::watch::mail::overseer_dir;
 
 /// The harness question tools by the names their tool-call payloads carry:
 /// Claude Code's `AskUserQuestion` and `EnterPlanMode`, whose plan ends in
@@ -57,9 +63,11 @@ impl Ack {
     }
 }
 
-/// The lane's unread mail: held at a turn end, refused at a tool call only
-/// where a halt stands, handed over as context at the arms that carry one.
-/// A session that is no launched lane, or whose mailbox has never been
+/// The session's unread mail: held at a turn end, refused at a tool call
+/// only where a halt stands, handed over as context at the arms that carry
+/// one. A launched lane reads its own mailbox; a session with no lane item
+/// reads the checkout's overseer mailbox only as [`overseer_reader`] admits
+/// it. A session that reads neither, or whose mailbox has never been
 /// written, has nothing here. The halt arm acknowledges nothing; every
 /// other answer that carries the lines moves the cursor past them once
 /// written, but a Copilot prompt, whose context the CLI may drop, and a
@@ -71,20 +79,35 @@ pub(super) fn check(
     lane: &Lane,
     payload: &Payload,
 ) -> Flow {
-    let Some(item) = &lane.item else {
-        return Ok(());
+    let overseer_box = overseer_dir(&lane.root);
+    let (item, reader) = match &lane.item {
+        Some(item) => {
+            // Anything at the path, a dangling link included, goes on to the
+            // reader, whose own rule refuses what it cannot read.
+            let file = lane.mail_root.join(item).join("to-lane.jsonl");
+            if std::fs::symlink_metadata(&file).is_err() || !lane.launched(turn)? {
+                return Ok(());
+            }
+            // Lane mail is the lead's: a subagent's turn end is handed none.
+            if *arm == Arm::Stop && turn.caller != Caller::Lead {
+                return Ok(());
+            }
+            let reader =
+                mail_reader(lane, vars).map_err(|(said, cause)| turn.refuse(said, &cause))?;
+            (item.as_str(), reader)
+        }
+        None => {
+            let Some(reader) = overseer_reader(turn, vars, arm, lane, &overseer_box)? else {
+                return Ok(());
+            };
+            let item = overseer_box
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            (item, reader)
+        }
     };
-    // Anything at the path, a dangling link included, goes on to the
-    // reader, whose own rule refuses what it cannot read.
-    let file = lane.mail_root.join(item).join("to-lane.jsonl");
-    if std::fs::symlink_metadata(&file).is_err() || !lane.launched(turn)? {
-        return Ok(());
-    }
-    // Lane mail is the lead's: a subagent's turn end is handed none.
-    if *arm == Arm::Stop && turn.caller != Caller::Lead {
-        return Ok(());
-    }
-    let reader = mail_reader(lane, vars).map_err(|(said, cause)| turn.refuse(said, &cause))?;
+    let overseer = lane.item.is_none();
     let mailbox = Mailbox::new(reader);
     let peeked = mailbox.inbox_peek(item, &lane.root).map_err(|refusal| {
         let said = match &refusal {
@@ -132,19 +155,30 @@ pub(super) fn check(
         };
         return Err(turn.refuse(said, ""));
     }
-    let unread = Said::Unread {
-        count: peeked.unread.len(),
-        lines: peeked
-            .unread
-            .iter()
-            .map(|(line, _)| line.as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        command: command.filter(|_| turn.caller == Caller::Lead),
+    let count = peeked.unread.len();
+    let lines = peeked
+        .unread
+        .iter()
+        .map(|(line, _)| line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let command = command.filter(|_| turn.caller == Caller::Lead);
+    let unread = if overseer {
+        Said::OverseerUnread {
+            count,
+            lines,
+            command,
+        }
+    } else {
+        Said::Unread {
+            count,
+            lines,
+            command,
+        }
     };
     let ack = Box::new(Ack {
         reader: mailbox.cli().to_path_buf(),
-        item: item.clone(),
+        item: item.to_owned(),
         root: lane.root.clone(),
         count: peeked.count,
     });
@@ -480,6 +514,65 @@ fn mail_reader(lane: &Lane, vars: &Vars) -> Result<PathBuf, (Said, String)> {
     Ok(cli)
 }
 
+/// The reader of the checkout's overseer mailbox `overseer_box`, where this
+/// session is its one reader: its lead's or an unknown caller's, at any arm
+/// but a tool call (a halt there halts no one, by the reader's own
+/// contract), with a file in the box, its reader installed, the fleet
+/// record binding this session and no live watch holding that fleet. `lane-mail
+/// peer send --repo` lands a note there for the checkout's controller, and
+/// a session the owner opened in the same checkout for other work is no
+/// controller, so it is handed nothing; a live watch reads the box itself.
+/// Whether a watch holds the fleet that cannot be settled is refused under
+/// `fleet-state=`, since reading the box then could take a live watch's
+/// mail, and passing could leave the checkout's mail unread.
+fn overseer_reader(
+    turn: &mut Turn,
+    vars: &Vars,
+    arm: &Arm,
+    lane: &Lane,
+    overseer_box: &Path,
+) -> Flow<Option<PathBuf>> {
+    // A subagent is no reader either: its role carries no binding.
+    if *arm == Arm::Halt {
+        return Ok(None);
+    }
+    if std::fs::symlink_metadata(overseer_box.join("to-lane.jsonl")).is_err() {
+        return Ok(None);
+    }
+    let Ok(reader) = mail_reader(lane, vars) else {
+        return Ok(None);
+    };
+    let role = Rc::clone(&turn.role);
+    let Binding::Bound(controller) = &role.binding else {
+        return Ok(None);
+    };
+    match watch_live(&controller.fleet) {
+        Ok(true) => Ok(None),
+        Ok(false) => Ok(Some(reader)),
+        Err((path, cause)) => Err(turn.refuse(Said::FleetState(path), &cause)),
+    }
+}
+
+/// Whether a live watch holds the fleet record at `fleet`: its claim names
+/// this record and its process runs under the identity it recorded. A
+/// directory that does not resolve holds no claim; a claim that cannot be
+/// read, or whose process cannot be judged, is the claim's path and the
+/// cause, never an absent claim.
+fn watch_live(fleet: &Path) -> Result<bool, (PathBuf, String)> {
+    let Ok(paths) = claim::Paths::of(fleet) else {
+        return Ok(false);
+    };
+    let held = claim::read(&paths).map_err(|e| (paths.pid.clone(), e.to_string()))?;
+    let Some(held) = held else {
+        return Ok(false);
+    };
+    match claim::read_live(&held) {
+        Reading::Live(_) => Ok(true),
+        Reading::Gone => Ok(false),
+        Reading::Unreadable { cause } => Err((paths.pid, cause.to_owned())),
+    }
+}
+
 /// The plain read that acknowledges a halt, as the lead runs it.
 fn read_command(reader: &Path, item: &str, root: &Path) -> String {
     format!(
@@ -511,7 +604,9 @@ fn routes(lane: &Lane, vars: &Vars, item: &str) -> Routes {
 
 /// The context answer for `text` under `event`, with the cursor move made
 /// once it is written; one that cannot be written is refused as the arm
-/// refuses, so nothing meant to be handed over passes as handed.
+/// refuses, so nothing meant to be handed over passes as handed. The
+/// controller's notice of the same call rides ahead of the mail and is
+/// recorded told, as a refusal carries it, so mail never withholds it.
 fn hand_over(
     turn: &mut Turn,
     event: &str,
@@ -519,9 +614,19 @@ fn hand_over(
     kendex_ack: Option<&[String]>,
     ack: Option<Box<Ack>>,
 ) -> Answer {
+    let mut stderr = std::mem::take(&mut turn.stderr);
+    let text = match turn.notice.take() {
+        Some(notice) => {
+            stderr.push_str(&notice.text);
+            stderr.push('\n');
+            notice.told();
+            format!("{}\n{text}", notice.text)
+        }
+        None => text.to_owned(),
+    };
     Answer {
-        stdout: answer::context(turn.harness, event, text, kendex_ack),
-        stderr: std::mem::take(&mut turn.stderr),
+        stdout: answer::context(turn.harness, event, &text, kendex_ack),
+        stderr,
         code: 0,
         ack,
         unwritten: Some(answer::refusal(turn.harness, turn.arm.as_ref(), "").1),
