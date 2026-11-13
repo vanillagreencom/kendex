@@ -31,7 +31,6 @@ fn template_of(project: &super::create::Project, name: &str) -> Template {
         },
     )
     .unwrap()
-    .template
 }
 
 /// A fresh project directory this machine can install into.
@@ -602,8 +601,7 @@ fn a_member_saved_switched_off_installs_switched_off() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     let off = template
         .members
         .iter()
@@ -665,8 +663,7 @@ fn a_carried_customization_reaches_the_installed_file() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     assert!(
         !template.customizations.is_empty(),
         "the fixture should carry a skill instruction: {:?}",
@@ -738,8 +735,7 @@ fn a_hook_installs_with_the_environment_its_declaration_sets() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     assert_eq!(
         template
             .customizations
@@ -815,8 +811,7 @@ fn a_carried_hook_environment_naming_no_variable_refuses_before_any_write() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     // The index as a hand edit could leave it: shell text where a name
     // belongs. Nothing a save writes spells this.
     let tampered = change(&project.env, "Tampered", |template| {
@@ -909,8 +904,7 @@ fn removing_a_member_takes_its_customizations_out_of_the_template() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     assert_eq!(
         template
             .customizations
@@ -1020,8 +1014,7 @@ fn one_name_claimed_by_two_members_refuses_before_anything_is_written() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     let both = add_members(&project.env, "Both ways", vec![market("owner/first")]).unwrap();
     assert_eq!(both.members.len(), 2, "{:?}", both.members);
 
@@ -1261,8 +1254,7 @@ fn a_render_that_refuses_after_the_copy_committed_is_a_refusal() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     let target = destination(&project, "unrenderable");
     let Scope::Project { root } = &target else {
         unreachable!("built as a project scope")
@@ -1333,8 +1325,7 @@ fn a_render_that_refuses_after_the_subscription_committed_reports_the_subscripti
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     let resolution = resolve(&project.env, &template).unwrap();
     assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
     assert_eq!(resolution.groups[0].source, None, "{:?}", resolution.groups);
@@ -1425,8 +1416,7 @@ fn removing_the_last_licensed_copy_takes_its_notices_with_it() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
     let listed = |template: &Template| -> Vec<String> {
         stored_files(&project.env, template)
             .unwrap()
@@ -1555,8 +1545,7 @@ fn a_destination_holding_different_terms_refuses_rather_than_skipping() {
             ..Chosen::default()
         },
     )
-    .unwrap()
-    .template;
+    .unwrap();
 
     let target = destination(&project, "opinionated");
     let Scope::Project { root } = &target else {
@@ -1694,8 +1683,7 @@ fn a_member_no_tool_can_take_leaves_the_personal_scope_unsubscribed() {
                 ..Chosen::default()
             },
         )
-        .unwrap()
-        .template;
+        .unwrap();
         let target = destination(&project, "fresh");
         let Scope::Project { root } = &target else {
             unreachable!("built as a project scope")
@@ -1765,8 +1753,7 @@ fn a_copy_no_tool_can_take_is_rolled_back_with_the_refusal() {
                 ..Chosen::default()
             },
         )
-        .unwrap()
-        .template;
+        .unwrap();
         let target = destination(&project, "fresh");
         let Scope::Project { root } = &target else {
             unreachable!("built as a project scope")
@@ -1857,184 +1844,4 @@ fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
     drop(busy);
     assert!(crate::apply::recover(&project.env, &target).unwrap());
     assert!(!written.exists());
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn template_capture_coordinates_reach_install_and_legacy_copies_keep_their_bytes() {
-    for (tagged, detached, old_fork, global, method) in [
-        (true, false, false, true, crate::manifest::Method::Copy),
-        (true, false, false, true, crate::manifest::Method::Symlink),
-        (true, false, false, false, crate::manifest::Method::Copy),
-        (false, false, false, false, crate::manifest::Method::Copy),
-        (true, true, false, false, crate::manifest::Method::Copy),
-        (true, false, true, false, crate::manifest::Method::Copy),
-    ] {
-        let mut project = seeded();
-        if global {
-            let home = project.home.join("global-home");
-            fs::create_dir_all(&home).unwrap();
-            project.env = Env::fake(
-                &project.home.join("outside-data"),
-                crate::env::FakeOs::Linux,
-            );
-            project.env.home = home;
-        }
-        let name = if detached { "house-style" } else { "stray" };
-        let directory = project.root.join(if detached {
-            ".kendex-local/skills"
-        } else {
-            ".claude/skills"
-        });
-        let body = if detached {
-            "[memory](../../memory/x.md)\n[own](./guide.md)"
-        } else {
-            "[memory](../../../memory/x.md)\n[own](./guide.md)"
-        };
-        skill(&directory, name, body);
-        let expected = project.root.join(if detached {
-            "publisher/memory/x.md"
-        } else {
-            "memory/x.md"
-        });
-        fs::create_dir_all(expected.parent().unwrap()).unwrap();
-        fs::write(&expected, "Memory.\n").unwrap();
-        if detached {
-            let path = project.root.join("kendex.toml");
-            let mut manifest = fs::read_to_string(&path).unwrap();
-            manifest.push_str("\n[forks.skill.house-style]\nsource = 'cat'\nforked-at = '2026-11-12'\nskill-coordinates = { directory = 'publisher/skills/house-style', root = '.' }\n");
-            fs::write(path, manifest).unwrap();
-        }
-        let draft = draft_from_project(&project.env, &project.root).unwrap();
-        let mut template = create_from_project(
-            &project.env,
-            &project.root,
-            &Chosen {
-                name: "Links".into(),
-                fingerprint: draft.fingerprint,
-                locals: if detached {
-                    Vec::new()
-                } else {
-                    vec!["skill:stray".into()]
-                },
-                members: if detached {
-                    vec!["skill:house-style".into()]
-                } else {
-                    Vec::new()
-                },
-                ..Chosen::default()
-            },
-        )
-        .unwrap()
-        .template;
-        let MemberSource::Copy {
-            skill_coordinates, ..
-        } = &mut template.members[0].source
-        else {
-            unreachable!()
-        };
-        assert!(skill_coordinates.is_some());
-        let stored = copy_path(&project.env, &template, &format!("skills/{name}")).unwrap();
-        let legacy = fs::read(directory.join(name).join("SKILL.md")).unwrap();
-        if !tagged {
-            let MemberSource::Copy {
-                skill_coordinates, ..
-            } = &mut template.members[0].source
-            else {
-                unreachable!()
-            };
-            *skill_coordinates = None;
-            fs::write(stored.join("SKILL.md"), &legacy).unwrap();
-        }
-        let target = if global {
-            Scope::Global
-        } else {
-            destination(&project, "link-destination")
-        };
-        let root = match &target {
-            Scope::Project { root } => root,
-            Scope::Global => &project.env.home,
-        };
-        if old_fork {
-            skill(&project.catalog.join("skills"), name, "Old source.");
-            fs::write(root.join("kendex.toml"), format!("schema = 7\n[sources.old]\n{}\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n[skills.{name}]\nsource = 'old'\n", crate::test_util::source_path(&project.catalog))).unwrap();
-            let old = crate::engine::audit(&project.env, &target).unwrap();
-            crate::apply::execute(&project.env, &old.plan).unwrap();
-            let detached = crate::engine::detach::source(&project.env, &target, "old").unwrap();
-            crate::apply::execute(&project.env, &detached).unwrap();
-            let settled = crate::engine::audit(&project.env, &target).unwrap();
-            crate::apply::execute(&project.env, &settled.plan).unwrap();
-            fs::remove_dir_all(root.join(".kendex-local/skills").join(name)).unwrap();
-        }
-        let outcome = install(
-            &project.env,
-            &template,
-            &target,
-            Some(vec![HarnessId::Codex]),
-            Some(method),
-        )
-        .unwrap();
-        assert!(outcome.stopped.is_none(), "{outcome:?}");
-        let manifest =
-            crate::manifest::load_current(&crate::manifest::manifest_path(&project.env, &target))
-                .unwrap()
-                .unwrap();
-        assert!(!manifest.recorded_fork(crate::model::ItemKind::Skill, name));
-        assert_eq!(
-            outcome
-                .notes
-                .iter()
-                .any(|note| note.contains(name) && note.contains("agent-link-unrepresentable:")),
-            tagged && !global,
-            "{outcome:?}"
-        );
-        if global {
-            let installed = project
-                .env
-                .home
-                .join(if method == crate::manifest::Method::Copy {
-                    format!(".codex/skills/{name}/SKILL.md")
-                } else {
-                    format!(".agents/skills/{name}/SKILL.md")
-                });
-            let output = fs::read_to_string(&installed).unwrap();
-            let link = crate::check_catalog::links::relative_links(&output)
-                .into_iter()
-                .find(|link| link.target.contains("memory/x.md"))
-                .unwrap();
-            assert_eq!(
-                crate::fs::resolved(&installed, std::path::Path::new(&link.path)).unwrap(),
-                expected
-            );
-        }
-        let warnings = outcome
-            .notes
-            .iter()
-            .filter(|note| note.starts_with("skill-template-legacy:"))
-            .count();
-        assert_eq!(warnings, usize::from(!tagged));
-        let local = if global {
-            project
-                .env
-                .global_local_source_dir()
-                .join(format!("skills/{name}/SKILL.md"))
-        } else {
-            root.join(format!(".kendex-local/skills/{name}/SKILL.md"))
-        };
-        let bytes = fs::read(&local).unwrap();
-        if tagged {
-            let output = String::from_utf8(bytes).unwrap();
-            let link = crate::check_catalog::links::relative_links(&output)
-                .into_iter()
-                .find(|link| link.target.contains("memory/x.md"))
-                .unwrap();
-            assert_eq!(
-                crate::fs::resolved(&local, std::path::Path::new(&link.path)).unwrap(),
-                expected
-            );
-            assert!(output.contains("[own](./guide.md)"));
-        } else {
-            assert_eq!(bytes, legacy);
-        }
-    }
 }

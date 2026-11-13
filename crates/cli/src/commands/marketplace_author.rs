@@ -214,15 +214,7 @@ fn imported(style: &Style, outcome: &author::ImportOutcome) -> Vec<String> {
             "",
         )
     });
-    written
-        .chain(present)
-        .chain(
-            outcome
-                .warnings
-                .iter()
-                .flat_map(|warning| style.report_warning(warning)),
-        )
-        .collect()
+    written.chain(present).collect()
 }
 
 fn selection(

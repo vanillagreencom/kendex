@@ -412,30 +412,6 @@ pub(super) fn scope_manifest(env: &Env, scope: &Scope) -> Manifest {
         .unwrap_or_default()
 }
 
-fn own_coordinates(
-    env: &Env,
-    scope: &Scope,
-    selection: &ImportSelection,
-    group: &CandidateGroup,
-) -> Result<Option<crate::manifest::SkillCoordinates>> {
-    if selection.kind != ItemKind::Skill || !matches!(group, CandidateGroup::Own) {
-        return Ok(None);
-    }
-    let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
-        .unwrap_or_default();
-    Ok(manifest
-        .forks
-        .get(&ItemKind::Skill)
-        .and_then(|forks| forks.get(&selection.name))
-        .and_then(|fork| fork.skill_coordinates.as_ref())
-        .map(|coordinates| {
-            coordinates.in_scope(match scope {
-                Scope::Project { root } => root,
-                Scope::Global => &env.home,
-            })
-        }))
-}
-
 /// The bytes behind one selection, re-read now so the hash the person saw
 /// is revalidated against what is on disk at apply time — along with the
 /// provenance that governs it and its licence evidence files.
@@ -474,10 +450,8 @@ pub(super) fn resolve_selection(
                 Some((source, _, _)) => notice_files(env, &row.scope, source)?,
                 None => Vec::new(),
             };
-            let coordinates = own_coordinates(env, &row.scope, selection, &read.group)?;
             return Ok(ResolvedSelection {
                 bytes,
-                coordinates,
                 group: read.group,
                 notices,
                 read_from: read.read_from,

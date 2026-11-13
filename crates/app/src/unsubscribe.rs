@@ -85,11 +85,6 @@ pub fn unsubscribe(
         // The conversion has no report. The resync below supplies the report
         // that repository effects need.
         let plan = detach::source(env, scope, source).map_err(|e| e.to_string())?;
-        warnings.extend(
-            plan.warnings
-                .iter()
-                .map(|warning| format!("{}: {}", warning.name, warning.message)),
-        );
         apply::execute(env, &plan).map_err(|e| e.to_string())?;
         Vec::new()
     } else {

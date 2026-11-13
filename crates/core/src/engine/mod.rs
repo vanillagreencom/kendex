@@ -288,7 +288,6 @@ fn plan_scope_with_lock_base(
         &mut written,
     )?;
 
-    state.warnings.extend(item_pass.warnings.iter().cloned());
     let (mut scope_notes, planned_shims, removed_settings_comments) = plan_scope_files(
         env,
         scope,

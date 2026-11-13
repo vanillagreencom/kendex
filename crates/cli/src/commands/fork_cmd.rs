@@ -52,9 +52,6 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
         Some(new) => kendex_core::engine::fork::rename_fork(env, &scope, kind, &args.name, new)?,
         None => kendex_core::engine::fork::fork(env, &scope, kind, &args.name, harness)?,
     };
-    for warning in &plan.warnings {
-        crate::ui::report::warning(&warning.message);
-    }
     for op in &plan.ops {
         say(&format!("  - {}", op.line()));
     }

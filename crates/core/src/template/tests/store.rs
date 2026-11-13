@@ -97,7 +97,6 @@ fn prune_refuses_a_delete_that_would_land_outside_the_store() {
             name: "keep".to_owned(),
             enabled: true,
             source: MemberSource::Copy {
-                skill_coordinates: None,
                 copy: "skills/keep.md".to_owned(),
                 from: None,
                 notices: Vec::new(),
@@ -254,7 +253,6 @@ fn a_symlinked_store_folder_refuses_every_write_and_every_read() {
                 name: "gh".to_owned(),
                 enabled: true,
                 source: MemberSource::Copy {
-                    skill_coordinates: None,
                     copy: "skills/gh".to_owned(),
                     from: None,
                     notices: Vec::new(),
@@ -288,7 +286,6 @@ fn a_symlinked_store_folder_refuses_every_write_and_every_read() {
             name: "gh".to_owned(),
             enabled: true,
             source: MemberSource::Copy {
-                skill_coordinates: None,
                 copy: "skills/gh".to_owned(),
                 from: None,
                 notices: vec!["NOTICES/cat/LICENSE".to_owned()],

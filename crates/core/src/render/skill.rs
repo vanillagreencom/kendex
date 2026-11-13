@@ -7,7 +7,7 @@ use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
 mod coordinates;
-pub(crate) use coordinates::{Located, capture_into, round_trip};
+pub(crate) use coordinates::{Located, SkillCoordinates};
 mod keys;
 mod rendered;
 pub(crate) use keys::{KeysUnreadable, dropped_metadata, installed_keys};
@@ -345,7 +345,7 @@ mod tests {
             let files = vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())];
             let (rebased, warnings) = Located::new(
                 files.clone(),
-                Some(crate::manifest::SkillCoordinates {
+                Some(SkillCoordinates {
                     directory: source.clone(),
                     root: root.clone(),
                 }),
@@ -353,35 +353,6 @@ mod tests {
             .render_at(&rendered, true, Some((&sealed, &source)));
             assert_eq!(rebased, files);
             assert!(warnings.is_empty());
-        }
-    }
-
-    #[test]
-    fn captured_links_use_the_content_directory_of_aliases_and_single_file_origins() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = crate::test_util::rooted(&tmp);
-        let source = root.join("catalog/skills/ship");
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join(SKILL_FILE), "Skill.\n").unwrap();
-        let destination = root.join(".kendex-local/skills/ship");
-        let origins = vec![source.clone(), source.join(SKILL_FILE)];
-        #[cfg(unix)]
-        let origins = {
-            let alias = root.join("alias");
-            std::os::unix::fs::symlink(&source, &alias).unwrap();
-            origins.into_iter().chain([alias]).collect::<Vec<_>>()
-        };
-        for origin in origins {
-            let files = vec![(
-                PathBuf::from(SKILL_FILE),
-                b"[memory](../../memory/x.md)\n[own](./guide.md)\n".to_vec(),
-            )];
-            let (files, warnings) = capture_into(files, &origin, &destination, None);
-            assert!(warnings.is_empty(), "{warnings:?}");
-            assert_eq!(
-                files[0].1,
-                b"[memory](../../../catalog/memory/x.md)\n[own](./guide.md)\n"
-            );
         }
     }
 

@@ -125,7 +125,6 @@ fn a_saved_template_reads_back_exactly_as_it_was_written() {
             name: "house".to_owned(),
             enabled: true,
             source: MemberSource::Copy {
-                skill_coordinates: None,
                 copy: "agents/house.md".to_owned(),
                 from: Some("someone/else".to_owned()),
                 notices: Vec::new(),
@@ -361,7 +360,6 @@ fn a_reference_names_which_of_three_members_it_means() {
                 name: "code-quality".to_owned(),
                 enabled: true,
                 source: MemberSource::Copy {
-                    skill_coordinates: None,
                     copy: "skills/code-quality".to_owned(),
                     from: None,
                     notices: Vec::new(),

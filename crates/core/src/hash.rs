@@ -654,21 +654,6 @@ pub fn relevant_sections(
     let shared_keys = [name, "all", "*"];
     match kind {
         ItemKind::Skill => {
-            let fork = manifest.forks.get(&kind).and_then(|forks| forks.get(name));
-            if let Some(coordinates) = fork.and_then(|fork| fork.skill_coordinates.as_ref()) {
-                push(
-                    "fork-skill-directory",
-                    name,
-                    &crate::paths::slashed(&coordinates.directory),
-                );
-                push(
-                    "fork-skill-root",
-                    name,
-                    &crate::paths::slashed(&coordinates.root),
-                );
-            } else if fork.is_some() {
-                push("fork-skill-coordinates", name, "legacy");
-            }
             for key in shared_keys {
                 if let Some(text) = manifest.skill_instructions.get(key) {
                     push(

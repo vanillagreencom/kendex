@@ -37,8 +37,7 @@ mod install;
 mod store;
 
 pub use create::{
-    CaptureOutcome, Chosen, LicenseAnswer, Side, add_from_project, create_from_project,
-    create_from_selection,
+    Chosen, LicenseAnswer, Side, add_from_project, create_from_project, create_from_selection,
 };
 pub use draft::{
     Draft, DraftError, DraftLocal, DraftMember, DraftOrigin, Excluded, draft_from_project,
@@ -176,10 +175,6 @@ pub enum MemberSource {
         /// be shown or written into anybody's project.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         notices: Vec<String>,
-        /// Directory of stored skill bytes, relative to this template store.
-        /// Absent copies retain their pre-rebase interpretation.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        skill_coordinates: Option<std::path::PathBuf>,
     },
 }
 

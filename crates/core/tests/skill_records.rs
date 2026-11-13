@@ -398,190 +398,6 @@ fn a_held_install_keeps_the_link_it_recorded() {
 }
 
 #[test]
-fn captured_skills_keep_installed_targets_and_consumer_instructions() {
-    use kendex_core::author::import::{CandidateGroup, inventory};
-    use kendex_core::engine::fork;
-    use kendex_core::model::{HarnessId, ItemKind};
-    for (harness, method, beside, crlf) in [
-        (HarnessId::Codex, "copy", false, false),
-        (HarnessId::Codex, "copy", true, false),
-        (HarnessId::Claude, "symlink", true, false),
-        (HarnessId::Codex, "copy", false, true),
-    ] {
-        let f = fixture();
-        let catalog = f.project.join("vendor/catalog");
-        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[sibling](../other/SKILL.md)\n[guide](guide.md)\n[outside](../../../../../../outside.md)\n";
-        let authored = if crlf {
-            authored.replace('\n', "\r\n")
-        } else {
-            authored.to_owned()
-        };
-        put(&catalog.join("skills/ship/SKILL.md"), &authored);
-        put(&catalog.join("skills/ship/guide.md"), "Original guide.\n");
-        put(
-            &catalog.join("skills/other/SKILL.md"),
-            "---\nname: other\ndescription: other\n---\n",
-        );
-        put(&catalog.join("memory/x.md"), "Memory.\n");
-        put(&f.env.home.join("outside.md"), "Outside the project.\n");
-        put(&f.project.join("docs/guide.md"), "Guide.\n");
-        if crlf {
-            test_util::git(&f.project, &["init", "-q"]);
-            put(&f.project.join(".gitattributes"), "*.md text eol=crlf\n");
-        }
-        put(
-            &f.project.join("kendex.toml"),
-            "schema = 7\n[sources.cat]\npath = 'vendor/catalog'\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n[skills.ship]\nsource = 'cat'\n[skills.other]\nsource = 'cat'\n[skill-instructions]\nship = '[direct](../../../docs/guide.md) {{shared-text:guide}}'\n[shared-text]\nguide = '[shared](../../../docs/guide.md)'\n",
-        );
-        let manifest_path = f.project.join("kendex.toml");
-        let manifest = fs::read_to_string(&manifest_path).unwrap();
-        put(
-            &manifest_path,
-            &manifest
-                .replace("['codex']", &format!("['{}']", harness.name()))
-                .replace("'copy'", &format!("'{method}'")),
-        );
-        apply_now(&f);
-        if harness == HarnessId::Claude {
-            assert_eq!(
-                fs::read_link(f.project.join(".claude/skills/ship")).unwrap(),
-                PathBuf::from("../../.agents/skills/ship")
-            );
-        }
-        let installed = f.project.join(".agents/skills/ship/SKILL.md");
-        let text = fs::read_to_string(&installed).unwrap();
-        if crlf {
-            assert!(text.contains("\r\n"));
-        }
-        assert!(text.contains("[direct](../../../docs/guide.md) [shared](../../../docs/guide.md)"));
-        let candidates = inventory(&f.env, std::slice::from_ref(&f.scope)).unwrap();
-        let ship = candidates.iter().find(|c| c.name == "ship").unwrap();
-        assert!(
-            ship.origins
-                .iter()
-                .any(|o| matches!(o.group, CandidateGroup::Marketplace { .. }))
-        );
-        assert!(
-            !ship
-                .origins
-                .iter()
-                .any(|o| matches!(o.group, CandidateGroup::Edited { .. }))
-        );
-        fs::write(&installed, format!("{text}User edit.\n")).unwrap();
-        put(
-            &installed.parent().unwrap().join("guide.md"),
-            "Edited guide.\n",
-        );
-        if method == "copy" {
-            let candidates = inventory(&f.env, std::slice::from_ref(&f.scope)).unwrap();
-            assert!(
-                candidates
-                    .iter()
-                    .find(|c| c.name == "ship")
-                    .unwrap()
-                    .origins
-                    .iter()
-                    .any(|o| matches!(o.group, CandidateGroup::Edited { .. }))
-            );
-        }
-        let plan = if beside {
-            fork::fork_beside(
-                &f.env,
-                &f.scope,
-                ItemKind::Skill,
-                "ship",
-                harness,
-                "my-ship",
-                None,
-            )
-            .unwrap()
-        } else {
-            fork::fork(&f.env, &f.scope, ItemKind::Skill, "ship", harness).unwrap()
-        };
-        let name = if beside { "my-ship" } else { "ship" };
-        assert!(plan.warnings.iter().any(|warning| warning.name == name
-            && warning.harness == Some(harness)
-            && warning.message.starts_with("agent-link-unrepresentable:")));
-        apply::execute(&f.env, &plan).unwrap();
-        apply_now(&f);
-        let directory = f.project.join(".agents/skills").join(name);
-        let text = fs::read_to_string(directory.join("SKILL.md")).unwrap();
-        assert!(text.contains("User edit."));
-        assert!(text.contains("[guide](guide.md)"));
-        assert_eq!(
-            fs::read_to_string(directory.join("guide.md")).unwrap(),
-            "Edited guide.\n"
-        );
-        if beside {
-            assert_eq!(
-                fs::read_to_string(f.project.join(".agents/skills/ship/guide.md")).unwrap(),
-                "Original guide.\n"
-            );
-        }
-        let assert_sibling = |text: &str| {
-            let link = text
-                .split("[sibling](")
-                .nth(1)
-                .unwrap()
-                .split(')')
-                .next()
-                .unwrap();
-            assert_eq!(link, "../other/SKILL.md");
-            assert_eq!(
-                fs::canonicalize(directory.join(link)).unwrap(),
-                fs::canonicalize(f.project.join(".agents/skills/other/SKILL.md")).unwrap()
-            );
-        };
-        assert_sibling(&text);
-        assert!(text.contains("[memory](../../../vendor/catalog/memory/x.md)"));
-        // Absorb an additional edit through the same capture owner.
-        fs::write(
-            directory.join("SKILL.md"),
-            format!("{text}Second edit.\n[new sibling](../other/SKILL.md)\n"),
-        )
-        .unwrap();
-        let absorbed = audit(&f.env, &f.scope).unwrap();
-        apply::execute(&f.env, &absorbed.plan).unwrap();
-        apply_now(&f);
-        let local = f
-            .project
-            .join(".kendex-local/skills")
-            .join(name)
-            .join("SKILL.md");
-        assert!(fs::read_to_string(local).unwrap().contains("Second edit."));
-        assert!(absorbed.warnings.iter().any(|warning| warning.name == name
-            && warning.harness == Some(harness)
-            && warning.message.starts_with("agent-link-unrepresentable:")));
-        assert!(settled(&f));
-        let installed_text = fs::read_to_string(directory.join("SKILL.md")).unwrap();
-        let sibling = installed_text
-            .split("[new sibling](")
-            .nth(1)
-            .unwrap()
-            .split(')')
-            .next()
-            .unwrap();
-        assert_eq!(
-            fs::canonicalize(directory.join(sibling)).unwrap(),
-            fs::canonicalize(f.project.join(".agents/skills/other/SKILL.md")).unwrap()
-        );
-        if !beside {
-            let managed_edit = installed_text.replace("[direct]", "[changed managed instruction]");
-            assert_ne!(managed_edit, installed_text);
-            fs::write(directory.join("SKILL.md"), managed_edit).unwrap();
-            assert!(
-                audit(&f.env, &f.scope)
-                    .unwrap()
-                    .drift
-                    .iter()
-                    .any(|row| row.state == DriftState::Conflict)
-            );
-        }
-        assert_sibling(&fs::read_to_string(directory.join("SKILL.md")).unwrap());
-    }
-}
-
-#[test]
 fn replacing_an_in_place_alias_with_a_copy_rebases_external_targets() {
     let f = fixture();
     let source = f.project.join(".agents/skills/ship");
@@ -613,217 +429,62 @@ fn replacing_an_in_place_alias_with_a_copy_rebases_external_targets() {
 }
 
 #[test]
-fn fork_coordinates_survive_project_moves_and_legacy_bytes_stay_untranslated() {
-    for beside in [false, true] {
+fn global_fork_and_absorption_keep_authored_bytes_without_coordinates() {
+    {
         let f = fixture();
-        let env = Env::fake(&f.env.home.join("home"), FakeOs::Linux);
-        put(&f.env.home.join("memory/x.md"), "Outside home.\n");
-        put(&env.home.join("memory/inside.md"), "Inside home.\n");
+        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../../memory/x.md)\n";
+        put(&f.source.join("skills/ship/SKILL.md"), authored);
+        put(&f.env.home.join("memory/x.md"), "Memory.\n");
         put(
-            &f.source.join("skills/ship/SKILL.md"),
-            "---\nname: ship\ndescription: ship\n---\n[memory](../../../../memory/x.md)\n[inside](../../../memory/inside.md)\n",
-        );
-        put(
-            &env.global_manifest_file(),
+            &f.env.global_manifest_file(),
             &format!(
                 "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['codex']\nmethod = 'symlink'\n[skills.ship]\nsource = 'cat'\n",
                 source_path(&f.source)
             ),
         );
-        let report = audit(&env, &Scope::Global).unwrap();
-        apply::execute(&env, &report.plan).unwrap();
-        let plan = if beside {
-            kendex_core::engine::fork::fork_beside(
-                &env,
-                &Scope::Global,
-                kendex_core::model::ItemKind::Skill,
-                "ship",
-                kendex_core::model::HarnessId::Codex,
-                "my-ship",
-                None,
-            )
-            .unwrap()
-        } else {
-            kendex_core::engine::fork::fork(
-                &env,
-                &Scope::Global,
-                kendex_core::model::ItemKind::Skill,
-                "ship",
-                kendex_core::model::HarnessId::Codex,
-            )
-            .unwrap()
-        };
-        assert!(
-            plan.warnings
-                .iter()
-                .any(|warning| warning.message.starts_with("agent-link-unrepresentable:"))
-        );
-        apply::execute(&env, &plan).unwrap();
-        let name = if beside { "my-ship" } else { "ship" };
-        for _ in 0..2 {
-            let report = audit(&env, &Scope::Global).unwrap();
-            apply::execute(&env, &report.plan).unwrap();
-            let installed = env.home.join(".agents/skills").join(name);
-            let text = fs::read_to_string(installed.join("SKILL.md")).unwrap();
-            for (label, expected) in [
-                ("memory", f.env.home.join("memory/x.md")),
-                ("inside", env.home.join("memory/inside.md")),
-            ] {
-                let link = text
-                    .split(&format!("[{label}]("))
-                    .nth(1)
-                    .unwrap()
-                    .split(')')
-                    .next()
-                    .unwrap();
-                assert_eq!(fs::canonicalize(installed.join(link)).unwrap(), expected);
-            }
-        }
-    }
-    for (harnesses, method) in [
-        ("'antigravity'", "symlink"),
-        ("'antigravity'", "copy"),
-        ("'antigravity', 'codex'", "symlink"),
-    ] {
-        let f = fixture();
-        let source = f.env.global_local_source_dir().join("skills/ship");
-        put(
-            &source.join("SKILL.md"),
-            "---\nname: ship\ndescription: ship\n---\n[memory](../../../memory/x.md)\n",
-        );
-        put(&f.env.home.join("memory/x.md"), "Memory.\n");
-        put(
-            &f.env.global_manifest_file(),
-            &format!(
-                "schema = 7\n[install]\nharnesses = [{harnesses}]\nmethod = '{method}'\n[skills.ship]\nsource = 'local'\n[forks.skill.ship]\nsource = 'cat'\nforked-at = '2026-11-12'\nskill-coordinates = {{ directory = '.agents/skills/ship', root = '.' }}\n"
-            ),
-        );
         let report = audit(&f.env, &Scope::Global).unwrap();
         apply::execute(&f.env, &report.plan).unwrap();
-        let installed = f.env.home.join(if method == "copy" {
-            ".gemini/config/skills/ship/SKILL.md"
-        } else {
-            ".agents/skills/ship/SKILL.md"
-        });
-        let text = fs::read_to_string(&installed).unwrap();
-        let link = text
-            .split("[memory](")
-            .nth(1)
-            .unwrap()
-            .split(')')
-            .next()
-            .unwrap();
-        assert_eq!(
-            fs::canonicalize(installed.parent().unwrap().join(link)).unwrap(),
-            f.env.home.join("memory/x.md")
-        );
-        let alias = f.env.home.join(".gemini/config/skills/ship/SKILL.md");
-        let alias_text = fs::read_to_string(&alias).unwrap();
-        let alias_link = alias_text
-            .split("[memory](")
-            .nth(1)
-            .unwrap()
-            .split(')')
-            .next()
-            .unwrap();
-        assert_eq!(
-            fs::canonicalize(alias.parent().unwrap().join(alias_link)).unwrap(),
-            f.env.home.join("memory/x.md")
-        );
-    }
-    for (tagged, moved) in [(false, false), (true, false), (false, true), (true, true)] {
-        let mut f = fixture();
-        let source = f.project.join(".kendex-local/skills/ship");
-        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[own](./guide.md)\n";
-        put(&source.join("SKILL.md"), authored);
-        put(&source.join("guide.md"), "Guide.\n");
-        put(&f.project.join(".kendex-local/memory/x.md"), "Memory.\n");
-        let coordinates = if tagged {
-            "skill-coordinates = { directory = '.kendex-local/skills/ship', root = '.' }\n"
-        } else {
-            ""
-        };
-        put(
-            &f.project.join("kendex.toml"),
-            &format!(
-                "schema = 7\n[install]\nharnesses = ['codex', 'claude']\nmethod = 'copy'\n[skills.ship]\nsource = 'local'\n[forks.skill.ship]\nsource = 'cat'\nforked-at = '2026-11-12'\n{coordinates}"
-            ),
-        );
-        if moved {
-            let destination = f.project.with_file_name("moved");
-            fs::rename(&f.project, &destination).unwrap();
-            f.project = destination;
-            f.scope = Scope::Project {
-                root: f.project.clone(),
-            };
-        }
-        let report = audit(&f.env, &f.scope).unwrap();
-        let warnings = report
-            .warnings
-            .iter()
-            .filter(|warning| warning.message.starts_with("skill-fork-legacy:"))
-            .collect::<Vec<_>>();
-        assert_eq!(warnings.len(), usize::from(!tagged));
-        assert!(warnings.iter().all(|warning| warning.name == "ship"));
-        apply::execute(&f.env, &report.plan).unwrap();
-        let output = fs::read_to_string(f.project.join(".agents/skills/ship/SKILL.md")).unwrap();
-        let link = if tagged {
-            "../../../.kendex-local/memory/x.md"
-        } else {
-            "../../memory/x.md"
-        };
-        assert!(output.contains(&format!("[memory]({link})")), "{output}");
-        assert!(output.contains("[own](./guide.md)"));
-        assert_eq!(
-            fs::read_to_string(f.project.join(".kendex-local/skills/ship/SKILL.md")).unwrap(),
-            authored
-        );
-    }
-}
-
-#[test]
-fn detached_source_coordinates_are_used_when_absorbing_later_edits() {
-    for (external, expected) in [
-        (false, "../../../vendor/catalog/memory/x.md"),
-        (true, "../../../../../catalog/memory/x.md"),
-    ] {
-        let mut f = fixture();
-        if !external {
-            f.source = f.project.join("vendor/catalog");
-        }
-        put(
-            &f.source.join("skills/ship/SKILL.md"),
-            "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[own](./guide.md)\n",
-        );
-        put(&f.source.join("skills/ship/guide.md"), "Guide.\n");
-        put(&f.source.join("memory/x.md"), "Memory.\n");
-        declare(&f, "'codex'");
-        apply_now(&f);
-        let detached = kendex_core::engine::detach::source(&f.env, &f.scope, "cat").unwrap();
-        apply::execute(&f.env, &detached).unwrap();
-        apply_now(&f);
-        let directory = f.project.join(".agents/skills/ship");
-        let installed = directory.join("SKILL.md");
-        let text = fs::read_to_string(&installed).unwrap();
-        assert!(text.contains(&format!("[memory]({expected})")), "{text}");
-        fs::write(&installed, format!("{text}My later edit.\n")).unwrap();
-        let absorbed = audit(&f.env, &f.scope).unwrap();
-        assert!(absorbed.fork_edits.iter().any(|edit| edit.name == "ship"));
-        apply::execute(&f.env, &absorbed.plan).unwrap();
-        let stored =
-            fs::read_to_string(f.project.join(".kendex-local/skills/ship/SKILL.md")).unwrap();
-        assert!(stored.contains("[memory](../../memory/x.md)"), "{stored}");
-        assert!(stored.contains("My later edit."));
-        apply_now(&f);
-        let rendered = fs::read_to_string(&installed).unwrap();
+        let forked = kendex_core::engine::fork::fork(
+            &f.env,
+            &Scope::Global,
+            kendex_core::model::ItemKind::Skill,
+            "ship",
+            kendex_core::model::HarnessId::Codex,
+        )
+        .unwrap();
+        apply::execute(&f.env, &forked).unwrap();
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(f.env.global_manifest_file()).unwrap()).unwrap();
         assert!(
-            rendered.contains(&format!("[memory]({expected})")),
-            "{rendered}"
+            manifest["forks"]["skill"]["ship"]
+                .get("skill-coordinates")
+                .is_none()
         );
-        assert!(rendered.contains("[own](./guide.md)"));
-        assert_eq!(
-            fs::canonicalize(directory.join(expected)).unwrap(),
-            fs::canonicalize(f.source.join("memory/x.md")).unwrap()
+        let stored = f.env.global_local_source_dir().join("skills/ship/SKILL.md");
+        assert_eq!(fs::read_to_string(&stored).unwrap(), authored);
+        let report = audit(&f.env, &Scope::Global).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        let installed = f.env.home.join(".agents/skills/ship/SKILL.md");
+        let edited = format!("{authored}Second edit.\n");
+        fs::write(&installed, &edited).unwrap();
+        let report = audit(&f.env, &Scope::Global).unwrap();
+        assert!(
+            !report
+                .drift
+                .iter()
+                .any(|row| row.state == DriftState::Conflict)
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(fs::read_to_string(&stored).unwrap(), edited);
+        let report = audit(&f.env, &Scope::Global).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(fs::read_to_string(installed).unwrap(), edited);
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(f.env.global_manifest_file()).unwrap()).unwrap();
+        assert!(
+            manifest["forks"]["skill"]["ship"]
+                .get("skill-coordinates")
+                .is_none()
         );
     }
 }

@@ -120,13 +120,9 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => {
         commands.templateCreateFromSelection(name, members),
       ),
     createFromProject: (project, chosen) =>
-      write(set, get, async () => {
-        const answer = await commands.templateCreateFromProject(project, chosen);
-        if (answer.status === "ok") {
-          for (const warning of answer.data.warnings) toast.message(warning);
-        }
-        return answer;
-      }),
+      write(set, get, () =>
+        commands.templateCreateFromProject(project, chosen),
+      ),
     addMembers: (name, members) =>
       write(set, get, () => commands.templateAddMembers(name, members)),
     removeMembers: (name, members) =>

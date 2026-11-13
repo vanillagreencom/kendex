@@ -33,10 +33,7 @@ pub fn template_draft(project: PathBuf) -> Result<Draft, String> {
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn template_create_from_project(
-    project: PathBuf,
-    chosen: Chosen,
-) -> Result<template::CaptureOutcome, String> {
+pub fn template_create_from_project(project: PathBuf, chosen: Chosen) -> Result<Template, String> {
     let env = env()?;
     template::create_from_project(&env, &project, &chosen).map_err(|e| e.to_string())
 }

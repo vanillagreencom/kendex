@@ -153,7 +153,6 @@ pub struct Plan {
     /// against wherever the link went.
     root: Option<PathBuf>,
     pub ops: Vec<PlannedOp>,
-    pub warnings: Vec<crate::engine::ItemWarning>,
     pub(crate) reads: Vec<ReadCheck>,
 }
 
@@ -183,7 +182,6 @@ impl Plan {
             scope,
             root,
             ops,
-            warnings: Vec::new(),
             reads,
         })
     }
