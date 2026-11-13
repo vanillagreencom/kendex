@@ -19,44 +19,6 @@
 # shellcheck source=../copilot-session.sh
 source "${BASH_SOURCE[0]%/*}/../copilot-session.sh"
 
-# The share of the window at which Copilot starts compacting is
-# LANE_CONTEXT_COPILOT_COMPACTION_PCT (lib/lane-context.sh), the one figure
-# both Copilot readers judge against. A reading taken here is recorded under
-# this capacity source, so a turn end tells it from the reading the orch
-# copilot-lane-context extension records, which it reads first.
-LANE_ADAPTER_COPILOT_CAPACITY_SOURCE="80% of context_window_size, from the Copilot statusLine session record"
-
-# One reading from a session record on stdin, as copilot_session_read accepted
-# it: `<tokens>\t<capacity>\t<model>`, the capacity empty where the record names
-# no window, and `$1` where the record carries no token count.
-lane_adapter_copilot_reading() { # UNREAD
-  local capacity=""
-  copilot_session_fields "$(cat)" || return 1
-  if [ -z "$CS_TOKENS" ]; then
-    printf '%s\n' "$1"
-    return 0
-  fi
-  [ -z "$CS_WINDOW" ] || capacity=$((CS_WINDOW * LANE_CONTEXT_COPILOT_COMPACTION_PCT / 100))
-  printf '%s\t%s\t%s\n' "$CS_TOKENS" "$capacity" "$CS_MODEL"
-}
-
-# lane_adapter_copilot_transcript_owned PATH SESSION HOME — whether PATH is the
-# transcript Copilot writes for the session SESSION under the account directory
-# HOME: `HOME/session-state/SESSION/events.jsonl`. 0 where it is; 1 with
-# `session-mismatch` in LANE_ADAPTER_OWNED_REASON where the file is not in the
-# directory named for SESSION, and `home-mismatch` where it sits outside HOME.
-lane_adapter_copilot_transcript_owned() { # PATH SESSION HOME
-  LANE_ADAPTER_OWNED_REASON=""
-  case "$1" in
-    */session-state/"$2"/events.jsonl) ;;
-    *) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;
-  esac
-  case "$1" in
-    "${3%/}"/session-state/"$2"/events.jsonl) ;;
-    *) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;
-  esac
-}
-
 # Whether the account at HOME runs copilot-statusline as its status line, often
 # enough for its record to stay fresh: 0 where HOME/settings.json sets
 # `statusLine` to a command whose first word is that script, by any path, an
@@ -197,16 +159,6 @@ copilot_context_install() { # HOME
   fi
   COPILOT_CONTEXT_CAUSE="$LANE_ADAPTER_COPILOT_STATUS_REASON"
   return 1
-}
-
-# copilot_context_reader HOME: the reader a new session can load. SessionStart
-# uses this check, not the installer: a hook must not change the operator's home.
-copilot_context_reader() { # HOME
-  if [[ -r "$1/extensions/kendex-lane-context/extension.mjs" ]] &&
-      jq -e '.enabledFeatureFlags.EXTENSIONS == true' "$1/settings.json" >/dev/null 2>&1; then
-    return 0
-  fi
-  lane_adapter_copilot_status_line "$1"
 }
 
 # copilot_hooks_gate WORKTREE HOME: the same hook scope and settings judge for

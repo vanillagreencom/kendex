@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # The world the lane-mail suites share: the temp root, the assertions, a lane
 # repository with the hook installed where kendex renders it, the payload
-# runner, the real `lane-mail` sender, a peer repository sending into the
-# lane's overseer mailbox, the tmux pane the fleet record names, and the
+# runner, the tmux pane the fleet record names, and the
 # overseer session. lane-mail-compact.test.sh and lane-mail-usage.test.sh
 # source it after `set -euo pipefail`; each counts into the PASS and FAIL set
 # here and reports them itself.
@@ -28,7 +27,6 @@ LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
 # The runtime the hook writes and judges through is the built one, found in
 # the cache scripts/setup fills for this checkout's sources, whatever HOME a
 # row runs the hook under.
-ORCH_RUNTIME="$REPO_ROOT/skills/orch/scripts/orch-runtime"
 AGENT_RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$REPO_ROOT/skills/agent-runtime/scripts/lib/key.sh")" \
   || { echo "lane-mail-world: runtime-cache=unresolved" >&2; exit 1; }
 export AGENT_RUNTIME_CACHE
@@ -48,22 +46,8 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-world: scratch=re
 # that kills the hook before its trap runs leaves its directory here.
 mkdir -p "$TMP_ROOT/tmp"
 export TMPDIR="$TMP_ROOT/tmp"
-# FAKE_WATCH is the stand-in watch process the overseer mailbox rows start.
-trap 'stop_wake_processes; [ -z "${FAKE_WATCH:-}" ] || kill "$FAKE_WATCH" 2>/dev/null || :; chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
-STATE_LOG="$TMP_ROOT/state-verbs"
-# Whether this world can hold two names differing only in case. On a
-# case-insensitive filesystem, every macOS default one, the second name is the
-# first directory, so the ambiguity the hook refuses cannot be built at all.
-mkdir -p "$TMP_ROOT/case-probe/A"
-CASE_SENSITIVE=1
-[ ! -d "$TMP_ROOT/case-probe/a" ] || CASE_SENSITIVE=0
-# Whether a mode-000 file can deny this reader. Root ignores the mode, so every
-# row that seals a file and asserts the read failed reads a readable file there
-# and fails on a world it was never written for. The sibling orch suites guard
-# their permission fixtures the same way.
-CAN_DENY_READS=1
-[ "$(id -u)" -ne 0 ] || CAN_DENY_READS=0
 PASS=0
 FAIL=0
 
@@ -74,11 +58,6 @@ assert_eq() { # GOT WANT LABEL
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$3" "$2" "$1"
   fi
-}
-
-# The whole assertion: exit status and keyed first line, `-` being silence.
-expect() { # RC FIRST LABEL
-  assert_eq "RC=$RC first=$(first_line)" "RC=$1 first=$2" "$3"
 }
 
 # shellcheck source=lib/first-line.sh
@@ -109,23 +88,6 @@ new_lane() { # NAME BRANCH
   lay_out_lane "$2"
 }
 
-# A lane in a worktree added from a main clone at MAIN, as `worktree create`
-# makes one: the two share the common git directory the launch marker lives in.
-MAIN=""
-new_worktree_lane() { # NAME BRANCH
-  REPORT_ITEM=""
-  MAIN="$TMP_ROOT/$1-main"
-  LANE="$TMP_ROOT/$1"
-  mkdir -p "$MAIN"
-  git -C "$MAIN" init -q
-  git -C "$MAIN" config gc.auto 0
-  git -C "$MAIN" config maintenance.auto false
-  git -C "$MAIN" checkout -q -b main
-  git -C "$MAIN" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
-  git -C "$MAIN" worktree add -q -b "$2" "$LANE"
-  lay_out_lane "$2"
-}
-
 # The install and the launch record, on the repository LANE names. The orch
 # scripts directory is a link, as a case that replaces it expects, to a
 # directory beside it holding the scripts one link each (plant_siblings),
@@ -142,10 +104,6 @@ lay_out_lane() { # BRANCH
   ln -s -f -n ../../.agents/skills/orch "$LANE/.claude/skills/orch"
   ln -s -f -n ../../.agents/skills/mailbox "$LANE/.claude/skills/mailbox"
   install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
-  if [ -n "${CONTEXT_LIB_VARIANT:-}" ]; then
-    hole_install lib/lane-context.sh
-    cp -- "$CONTEXT_LIB_VARIANT" "$LANE/.agents/skills/orch/scripts/lib/lane-context.sh"
-  fi
   mark_lane "$1"
 }
 
@@ -181,10 +139,6 @@ printf '%s\n' '{"compaction":{"enabled":false}}' > "$OFFLINE_HOME/.pi/agent/sett
 CODEX_COMPACTION='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
 printf '#!/bin/sh\nexit 1\n' > "$NO_FETCH"
 chmod +x "$NO_FETCH"
-# The account mark is never judged in that world, so the hook reports the gap
-# and ends the turn. This is the whole of a passing turn end's stderr on a lane
-# the marks are reached on, and `-` on one they are not.
-GAP='lane-mail-check: account=unlisted'
 
 # A notice the lane sends through the real `lane-mail notice`, as a working
 # lane reports a step before its turn ends, so the idle judge reads a send
@@ -246,19 +200,6 @@ stop() { # [ENV=VAL...]
   run_payload '{"session_id":"s1","stop_hook_active":false}' "$@"
 }
 
-# The turn the harness continued because a stop hook blocked.
-stop_active() { # [ENV=VAL...]
-  run_payload '{"session_id":"s1","stop_hook_active":true}' "$@"
-}
-
-# A turn end whose payload names a transcript, as the harness writes one.
-stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
-  local path="$1" active="$2"
-  shift 2
-  run_payload "$(jq -nc --arg p "$path" --argjson a "$active" \
-    '{session_id:"s1",stop_hook_active:$a,transcript_path:$p}')" "$@"
-}
-
 # One assistant line carrying the usage the harness recorded for it, in the
 # spelling that harness writes usage in; the context is its input tokens plus
 # the cache the prompt was read from, and every spelling below sums to TOKENS.
@@ -310,10 +251,6 @@ write_transcript() { # PATH TOKENS
   usage_line claude "$2" > "$1"
 }
 
-append_transcript() { # PATH TOKENS
-  usage_line claude "$2" >> "$1"
-}
-
 # Everything a kendex install renders beside the mailbox reader, taken from the
 # catalog itself rather than from a second list here: the handoff marks run
 # three of these scripts and those scripts run others, so a case that plants
@@ -340,115 +277,6 @@ plant_siblings() { # SCRIPTS_DIR [SKIP]
   [ -e "${package%/*}/agent-runtime" ] || ln -s "$REPO_ROOT/skills/agent-runtime" "${package%/*}/agent-runtime"
 }
 
-# The runtime the hook asks for the watch's claim, `orch-runtime watch
-# status --file STATE`, as a stub in the install SCRIPTS_DIR names answering
-# what MODE plants, with the event log beside the lane's fleet state:
-#   none              no claim stands
-#   live CWD [ORIGIN] a live claim from CWD, origin `hand` unless named,
-#                     this suite's pid as the watch's
-#   gone              a claim whose identity reads gone
-#   unreadable        a claim the runtime cannot read, cause cmdline-unreadable
-#   fails             the runtime refusing: its keyed line on stderr, exit 1
-#   unbuilt           the wrapper with no binary for its sources: its
-#                     `setup-required` line naming the install's scripts/setup
-#                     on stderr, exit 69, as skills/orch/scripts/orch-runtime
-#                     answers it
-#   pick-unbuilt      no claim stands, and `accounts pick` alone answers as
-#                     `unbuilt` does
-# The account judge the hook asks at a lane's turn end, `accounts pick`,
-# is answered in every mode but `fails` and `unbuilt`: the reply planted at
-# SCRIPTS_DIR/orch-runtime.pick where a case plants one, else the judge
-# beside the stub, SCRIPTS_DIR/lanes, asked the same question through its
-# `pick` and its answer wrapped as the verb's reply, the exit by number and
-# the record, its stderr passed through.
-# Every other verb, the store's reads and writes and a lane's `marks`, runs
-# the real runtime in every mode but `unbuilt` (runtime_delegate_arm).
-runtime_delegate_arm() { # SCRIPTS_DIR — the stub's last case arm
-  sed -e "s|@LOG@|$STATE_LOG|g" -e "s|@FAULT@|$1/orch-runtime.fault|g" -e "s|@RUNTIME@|$ORCH_RUNTIME|g" <<'ARM'
-  *)
-    case "${words[0]:-}" in state) word=${words[1]:-} ;; *) word=${words[0]:-} ;; esac
-    printf '%s\n' "$word" >> '@LOG@'
-    case "$(cat -- '@FAULT@' 2>/dev/null || :):$word" in
-      path-fails:path | heal-fails:heal | standing-fails:handoff-standing | set-fails:set)
-        echo 'orch-runtime: lock-timeout path=fixture' >&2; exit 1 ;;
-    esac
-    exec '@RUNTIME@' "$@" ;;
-ARM
-}
-runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
-  local scripts="$1" mode="$2" state claim reply delegate
-  state=$(cd -- "$LANE" && "$ORCH_RUNTIME" state path --fleet | jq -er '.result.path') || return 1
-  delegate=$(runtime_delegate_arm "$scripts") || return 1
-  case "$mode" in
-    none | pick-unbuilt) claim=null ;;
-    live) claim=$(jq -nc --arg cwd "${3:-}" --arg origin "${4:-hand}" --argjson pid "$$" \
-      '{pid:$pid,start:"ticks:1",pane:"none",origin:$origin,cwd:$cwd,standing:"live"}') || return 1 ;;
-    gone) claim=$(jq -nc --arg cwd "$LANE" \
-      '{pid:1,start:"ticks:1",pane:"none",origin:"hand",cwd:$cwd,standing:"gone"}') || return 1 ;;
-    unreadable) claim='{"pid":1,"start":"ticks:1","pane":"none","origin":"hand","cwd":"","standing":"unreadable","cause":"cmdline-unreadable"}' ;;
-    fails | unbuilt) claim="" ;;
-    *) echo "runtime-stub: mode=unknown value=$mode" >&2; return 1 ;;
-  esac
-  rm -f -- "$scripts/orch-runtime" "$scripts/orch-runtime.reply"
-  if [ "$mode" = fails ]; then
-    # The claim read refused; the marks still answer from the judge files.
-    cat > "$scripts/orch-runtime" <<STUB
-#!/usr/bin/env bash
-words=("\$@")
-while [ "\${words[0]:-}" = --state-dir ]; do words=("\${words[@]:2}"); done
-case "\${words[0]:-} \${words[1]:-}" in
-  "marks --fleet")
-    printf '%s\n' "\$*" >> '$JUDGE_DIR/args'
-    [ ! -f '$JUDGE_DIR/err' ] || cat '$JUDGE_DIR/err' >&2
-    [ ! -f '$JUDGE_DIR/out' ] || cat '$JUDGE_DIR/out'
-    exit "\$(cat '$JUDGE_DIR/rc' 2>/dev/null || echo 0)" ;;
-  "watch status" | "accounts pick") echo "orch-runtime: claim-unreadable path=${state%/*}/oversee-watch.pid cause=record=unreadable" >&2; exit 1 ;;
-$delegate
-esac
-STUB
-  elif [ "$mode" = unbuilt ]; then
-    printf '#!/bin/sh\necho "orch-runtime: setup-required key=fixture run=%s" >&2\nexit 69\n' \
-      "$scripts/setup" > "$scripts/orch-runtime"
-  else
-    reply=$(jq -nc --argjson claim "$claim" --arg log "${state%/*}/oversee-watch.log" \
-      '{ok:true,result:{claim:$claim,due:{},events:0,log:$log}}') || return 1
-    printf '%s\n' "$reply" > "$scripts/orch-runtime.reply"
-    rm -f -- "$scripts/orch-runtime.pick"
-    cat > "$scripts/orch-runtime" <<STUB
-#!/usr/bin/env bash
-words=("\$@")
-while [ "\${words[0]:-}" = --state-dir ]; do words=("\${words[@]:2}"); done
-case "\${words[0]:-} \${words[1]:-}" in
-  "watch status") cat -- '$scripts/orch-runtime.reply' ;;
-  "marks --fleet")
-    printf '%s\n' "\$*" >> '$JUDGE_DIR/args'
-    # stdout is handed away before the wait: the hook reads this in a command
-    # substitution, which stays open while any writer holds that pipe, so a
-    # sleep left behind by the ceiling would outlast the kill.
-    [ ! -f '$JUDGE_DIR/hang' ] || { exec 1>/dev/null; sleep 120; }
-    [ ! -f '$JUDGE_DIR/err' ] || cat '$JUDGE_DIR/err' >&2
-    [ ! -f '$JUDGE_DIR/out' ] || cat '$JUDGE_DIR/out'
-    exit "\$(cat '$JUDGE_DIR/rc' 2>/dev/null || echo 0)" ;;
-  "accounts pick")
-    if [ '$mode' = pick-unbuilt ]; then echo "orch-runtime: setup-required key=fixture run=$scripts/setup" >&2; exit 69; fi
-    if [ -f '$scripts/orch-runtime.pick' ]; then cat -- '$scripts/orch-runtime.pick'; exit 0; fi
-    shift 2
-    args=()
-    for arg in "\$@"; do
-      [ "\$arg" = --fleet ] || args+=("\$arg")
-    done
-    rc=0
-    out=\$('$scripts/lanes' pick \${args[@]+"\${args[@]}"} --json) || rc=\$?
-    jq -cn --argjson rc "\$rc" --arg out "\$out" '{protocol: "orch-runtime-v1", ok: true, result: {
-      answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured", "7": "cloud-repo-unset"}[\$rc | tostring] // "unjudged"),
-      exit: \$rc, record: (try (\$out | fromjson) catch null)}}' ;;
-$delegate
-esac
-STUB
-  fi
-  chmod +x "$scripts/orch-runtime"
-}
-
 # The real orch skill beside the hook, with SKIP left out: the walk finds this
 # copy before the one under .agents, so a case can hole an install without
 # touching anything else the lane carries.
@@ -462,61 +290,6 @@ plant_install() { # [SKIP]
   ln -s "$REPO_ROOT/skills/mailbox/scripts/lib" "$LANE/.claude/skills/mailbox/scripts/lib"
   ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "$LANE/.claude/skills/mailbox/scripts/lane-mail"
   plant_siblings "$LANE/.claude/skills/orch/scripts" "${1:-}"
-}
-
-# The orch install the lane renders under .agents, which the hook finds from
-# any hook directory in the lane, made a copy with SKIP left out: a script, or
-# a library under lib/.
-hole_install() { # SKIP [SCRIPTS_DIR]
-  local dir="${2:-$LANE/.agents/skills/orch/scripts}" entry
-  if [ -L "$dir" ]; then
-    rm -f -- "$dir"
-    mkdir -p "$dir"
-    case "$1" in lib/*) plant_siblings "$dir" lib ;; *) plant_siblings "$dir" "$1" ;; esac
-  fi
-  mkdir -p "$dir"
-  case "$1" in
-    lib/*)
-      [ ! -L "$dir/lib" ] || rm -f -- "$dir/lib"
-      mkdir -p "$dir/lib"
-      for entry in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
-        [ "lib/${entry##*/}" != "$1" ] || continue
-        ln -s -f -n "$entry" "$dir/lib/${entry##*/}"
-      done
-      ;;
-    *) ;;
-  esac
-  rm -f -- "$dir/$1"
-}
-
-# The repository's own reader: it touches MARKER, so a run of it is visible.
-plant_reader() { # MARKER
-  rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
-  rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
-  mkdir -p "$LANE/.agents/skills/orch/scripts"
-  mkdir -p "$LANE/.agents/skills/mailbox/scripts"
-  printf '#!/bin/sh\ntouch %s\n' "$1" > "$LANE/.agents/skills/mailbox/scripts/lane-mail"
-  chmod +x "$LANE/.agents/skills/mailbox/scripts/lane-mail"
-  plant_siblings "$LANE/.agents/skills/orch/scripts"
-}
-
-# The real reader behind one planted shell line that runs first, so a case can
-# break one verb and keep every other one: the line decides on "$1".
-wrap_reader() { # LINE
-  rm -f -- "${LANE:?}/.agents/skills/mailbox/scripts"
-  mkdir -p "$LANE/.agents/skills/mailbox/scripts"
-  printf '#!/usr/bin/env bash\n%s\nexec %q "$@"\n' "$1" "$LANE_MAIL" > "$LANE/.agents/skills/mailbox/scripts/lane-mail"
-  chmod +x "$LANE/.agents/skills/mailbox/scripts/lane-mail"
-  # The orch scripts beside the reader source the mailbox library through
-  # `../../mailbox/scripts/lib`, as an install lays it out.
-  ln -s "$REPO_ROOT/skills/mailbox/scripts/lib" "$LANE/.agents/skills/mailbox/scripts/lib"
-}
-
-send() { # ITEM TEXT [--re MSGID]
-  ITEM="$1"
-  printf '%s\n' "$2" > "$TMP_ROOT/msg.txt"
-  shift 2
-  (cd "$LANE" && "$LANE_MAIL" send --item "$ITEM" --root "$LANE" "${@:---directive}" --file "$TMP_ROOT/msg.txt")
 }
 
 # --- the overseer's identity -----------------------------------------------
@@ -572,74 +345,8 @@ record_overseer() { # PANE SERVER [HOME] [START]
     set oversee overseer "$record" >/dev/null)
 }
 
-# The environment a session inside the overseer's own pane carries.
-overseer_env() { # [PANE]
-  printf '%s\n' "PATH=$TMUX_BIN:$PATH" "TMUX=fake" "TMUX_PANE=${1:-$OVERSEER_PANE}" \
-    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" "CLAUDE_CONFIG_DIR=$OVERSEER_HOME_DIR"
-}
-
-# Every persisted mailbox file, including its cursor, context and told gap.
-overseer_snapshot() {
-  local file
-  for file in "$LANE/tmp/lane-mail/overseer"/* "$LANE/tmp/lane-mail/overseer"/.[!.]*; do
-    [ -f "$file" ] || continue
-    printf '%s ' "${file##*/}"
-    cksum < "$file"
-  done
-}
-
-bind_overseer() { # HARNESS HOME SESSION
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee \
-    --arg harness "$1" --arg home "$2" --arg session "$3" \
-    '.overseer += {harness:$harness, home:$home, session_id:$session}' >/dev/null)
-}
-
-# `lane-mail peer send --repo` from another repository's checkout into the
-# overseer mailbox of the checkout LANE names; the reader notice the send
-# writes on stderr lands in peer.err.
-PEER_SENDER="$TMP_ROOT/peer-sender"
-mkdir -p "$PEER_SENDER"
-git -C "$PEER_SENDER" init -q
-git -C "$PEER_SENDER" config gc.auto 0
-git -C "$PEER_SENDER" config maintenance.auto false
-git -C "$PEER_SENDER" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
-peer_send() { # TEXT
-  printf '%s\n' "$1" > "$TMP_ROOT/peer.txt"
-  (cd "$PEER_SENDER" && "$LANE_MAIL" peer send --repo "$LANE" --file "$TMP_ROOT/peer.txt" >/dev/null 2>"$TMP_ROOT/peer.err")
-}
-# The overseer mailbox's unread lines carrying TEXT, read without moving the
-# cursor: what the hook left for another reader.
-overseer_unread() { # TEXT
-  (cd "$LANE" && "$LANE_MAIL" inbox --item overseer --root "$LANE" --peek) | grep -cF -- "$1" || :
-}
-
-# Every keyed value the run wrote, in order, each under its own English: the
-# leading run keyed_block reads stops at the first explanation, and the idle
-# refusal follows the marks' reports.
-hook_keys() {
-  sed -n 's/^lane-mail-check: \([a-z-]*=[^ ]*\).*/\1/p' "$ERR_FILE" | paste -sd';' -
-}
-
-# A copy of the hook with one constant rewritten, so a row can reach a bound
-# the shipped value would make it wait for. The rewrite is asserted, never
-# assumed. This is a fixture, not a control: it plants no defect.
-VARIANT_PATH=""
-variant() { # NAME SED-ARGUMENT...
-  VARIANT_PATH="$TMP_ROOT/$1.sh"
-  local name="$1"
-  shift
-  sed "$@" "${VARIANT_SOURCE:-$HOOK}" > "$VARIANT_PATH"
-  assert_eq "$(cmp -s "$VARIANT_PATH" "${VARIANT_SOURCE:-$HOOK}" && echo same || echo differs)" "differs" \
-    "the $name copy really differs from the hook"
-}
-
 # --- the overseer -----------------------------------------------------------
-# The judge, and the whole of what this hook reads about an overseer's marks:
-# the runtime stub's `marks --fleet` arm (runtime_stub). It records its argv,
-# so a row can pin that the hook asked for the judgement and nothing else, and
-# answers from files a row writes: `out` its reply, `rc` its exit status,
-# `err` its own words, `hang` a read that outlasts the hook's ceiling. Its own
-# behaviour is the runtime's Rust rows' subject.
+# The files a row writes for the overseer's marks judge: `out` its reply.
 JUDGE_DIR="$TMP_ROOT/judge"
 mkdir -p "$JUDGE_DIR"
 plant_judge() { # [SCRIPTS_DIR]
@@ -652,8 +359,6 @@ plant_judge() { # [SCRIPTS_DIR]
 judge_says() { # RESULT
   jq -nc --argjson result "$1" '{protocol: "orch-runtime-v1", ok: true, result: $result}' > "$JUDGE_DIR/out"
 }
-judge_calls() { [ -f "$JUDGE_DIR/args" ] && wc -l < "$JUDGE_DIR/args" | tr -d ' ' || echo 0; }
-judge_argv() { cat "$JUDGE_DIR/args" 2>/dev/null || true; }
 
 # The marks verb's replies, each captured for the inputs the fixture records.
 MARKS_REPLIES="$TEST_DIR/fixtures/marks-replies.json"
@@ -661,24 +366,6 @@ marks_reply() { # SHAPE
   jq -ce --arg shape "$1" '.[$shape].reply | objects' "$MARKS_REPLIES"
 }
 
-# The account judge's replies to a lane's turn end, `accounts pick --lane`'s
-# own for the inputs the fixture records, held to the judge by the cloud row
-# of tests/rust/accounts.rs. pick_reply prints SHAPE's in the
-# runtime's envelope, its record naming DIR as ALIAS.
-PICK_REPLIES="$TEST_DIR/fixtures/pick-replies.json"
-pick_reply() { # SHAPE DIR ALIAS
-  jq -ce --arg shape "$1" --arg dir "$2" --arg alias "$3" \
-    '.[$shape].reply | objects
-     | .record.config_dir = $dir | .record.alias = $alias
-     | {protocol: "orch-runtime-v1", ok: true, result: .}' "$PICK_REPLIES"
-}
-CONTEXT_MARK_LINE=$(marks_reply context)
-# The same crossing with the succession the operator turned off, which the
-# judgement reports in its own reply and this hook reads nowhere else.
-OFF_MARK_LINE=$(marks_reply context-off)
-OFF_HEADROOM_LINE=$(marks_reply headroom-off)
-HEADROOM_MARK_LINE=$(marks_reply headroom)
-RATE_MARK_LINE=$(marks_reply rate)
 BELOW_MARK_LINE=$(marks_reply below)
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
@@ -690,125 +377,6 @@ new_overseer() { # NAME [PANE] [SERVER]
   plant_judge
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   record_overseer "${2:-$OVERSEER_PANE}" "${3:-$OVERSEER_SERVER}"
-}
-
-# Real processes with the argv the wake check reads, not a pgrep answer stub.
-# A FIFO holds each shell without a child process; the parent reads its ready
-# handshake before the hook can inspect it. The environment is only this
-# fixture's, and the owner stops and reaps every process before removal.
-WAKE_PIDS=()
-WAKE_SEQUENCE=0
-WAKE_PID=""
-WAKE_STATE=""
-wake_process() { # SCRIPT ARGS...
-  local script="$1" dir
-  shift
-  WAKE_SEQUENCE=$((WAKE_SEQUENCE + 1))
-  dir="$TMP_ROOT/wake-process-$WAKE_SEQUENCE"
-  mkdir -p -- "$dir" "${script%/*}"
-  mkfifo "$dir/ready" "$dir/wait"
-  printf '%s\n' '#!/bin/sh' 'printf "ready\n" > "$WAKE_READY"' 'read -r line < "$WAKE_WAIT"' > "$script"
-  env -i "PATH=$PATH" "WAKE_READY=$dir/ready" "WAKE_WAIT=$dir/wait" sh "$script" "$@" &
-  WAKE_PID=$!
-  WAKE_PIDS+=("$WAKE_PID")
-  read -r _ < "$dir/ready"
-}
-stop_wake_processes() {
-  local pid
-  for pid in ${WAKE_PIDS[@]+"${WAKE_PIDS[@]}"}; do
-    kill "$pid" 2>/dev/null || :
-    wait "$pid" 2>/dev/null || :
-  done
-  WAKE_PIDS=()
-}
-start_follow() { # [CWD]
-  local cwd="${1:-$LANE}"
-  wake_process "$cwd/tmp/waiter.fixture/follow.sh" "$cwd/tmp/waiter.fixture/watch.log" 1
-}
-# A repeat watch is the runtime's live claim, read through `watch status`;
-# a single-pass watch is a real process the wake check finds by its argv.
-start_wake_watch() { # repeat|single [CWD] [ORIGIN]
-  WAKE_STATE=$(cd -- "$LANE" && "$ORCH_RUNTIME" state path --fleet | jq -er '.result.path') || return 1
-  if [ "$1" = repeat ]; then
-    runtime_stub "$LANE/.claude/skills/orch/scripts" live "${2:-$LANE}" "${3:-hand}"
-    return
-  fi
-  wake_process "$TMP_ROOT/watch-$WAKE_SEQUENCE/oversee-watch" --state "$WAKE_STATE"
-}
-
-# Matching a whole source line keeps a control from changing another rule.
-wake_mutant() { # NAME OLD NEW [SOURCE]
-  local count line source="${4:-$HOOK}"
-  [ ! -L "$source" ] || { echo "wake-mutant: source=symlink" >&2; exit 1; }
-  count=$(grep -Fxc -- "$2" "$source") || { echo "wake-mutant: match=missing" >&2; exit 1; }
-  [ "$count" -eq 1 ] || { echo "wake-mutant: match=$count" >&2; exit 1; }
-  MUTANT_PATH="$TMP_ROOT/$1.sh"
-  while IFS= read -r line; do
-    if [ "$line" = "$2" ]; then printf '%s\n' "$3"; else printf '%s\n' "$line"; fi
-  done < "$source" > "$MUTANT_PATH"
-  cmp -s -- "$source" "$MUTANT_PATH" && { echo "wake-mutant: changed=no" >&2; exit 1; }
-  return 0
-}
-
-wake_overseer() { # NAME HARNESS [HOOK]
-  local dir
-  new_overseer "$1"
-  judge_says "$BELOW_MARK_LINE"
-  case "$2" in
-    claude) dir=.claude ;;
-    codex) dir=.codex ;;
-    copilot)
-      dir=.github
-      record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$COP_HOME"
-      mkdir -p "$COP_HOME/session-state/s1" "$LANE/tmp/lane-mail/overseer"
-      : > "$COP_HOME/session-state/s1/events.jsonl"
-      bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"
-        lane_context_record "$2" copilot 100000 800000 "" s1 "$3" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' \
-        _ "$REPO_ROOT/skills/orch/scripts" "$LANE/tmp/lane-mail/overseer" "$OVERSEER_SERVER $OVERSEER_PANE"
-      ;;
-    pi) dir=.pi ;;
-    *) echo "wake-world: harness=unknown value=$2" >&2; exit 1 ;;
-  esac
-  if [ "$dir" != .claude ]; then
-    mkdir -p "$LANE/$dir/skills"
-    ln -s "$LANE/.claude/skills/orch" "$LANE/$dir/skills/orch"
-    ln -s "$LANE/.claude/skills/mailbox" "$LANE/$dir/skills/mailbox"
-  fi
-  if [ "$2" = pi ]; then dir="$dir/kendex"; fi
-  install_hook "${3:-$HOOK}" "$LANE/$dir/hooks/lane-mail-check.sh"
-  CALL_ENV=("PATH=$TMUX_BIN:$PATH" TMUX=fake "TMUX_PANE=$OVERSEER_PANE"
-    "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" "HOME=$COP_HOME"
-    "CLAUDE_CONFIG_DIR=$OVERSEER_HOME_DIR" "CODEX_HOME=$OVERSEER_HOME_DIR" "COPILOT_HOME=$COP_HOME")
-}
-
-# A refusal or passed wake warning has its key first on stderr.
-# Stop context would continue the turn.
-# The Start value is protocol data: the command the caller must run.
-wake_observation() { # START
-  local decision=- context=- command=0 text first answer
-  first=$(first_line) || return 1
-  text=$(cat -- "$ERR_FILE") || return 1
-  if [ -s "$TMP_ROOT/stdout" ]; then
-    decision=$(jq -r '.decision // "-"' "$TMP_ROOT/stdout") || return 1
-    context=$(jq -r '(.additionalContext // .hookSpecificOutput.additionalContext // "-") | split("\n")[0]' "$TMP_ROOT/stdout") || return 1
-    answer=$(jq -r '.additionalContext // .hookSpecificOutput.additionalContext // ""' "$TMP_ROOT/stdout") || return 1
-    [ -z "$answer" ] || text=$answer
-  fi
-  [ -z "$1" ] || command=$(grep -Fc -- "$1" <<< "$text" || :)
-  printf 'RC=%s first=%s decision=%s context=%s command=%s' "$RC" "$first" "$decision" "$context" "$command"
-}
-
-# A hook install with its ordinary command dependencies but no pgrep. This
-# reaches the wake probe's availability branch, not a payload dependency gap.
-wake_without_pgrep() {
-  local cmd executable bin="$TMP_ROOT/no-pgrep"
-  mkdir -p "$bin"
-  for cmd in bash jq cat git tr awk mktemp tail dirname sed ps flock date rm mv sleep basename grep realpath readlink mkdir chmod touch find head wc stat \
-    sort cut sha256sum shasum; do
-    if executable=$(command -v "$cmd"); then ln -s -f -- "$executable" "$bin/$cmd"; fi
-  done
-  ln -s -f -- "$TMUX_BIN/tmux" "$bin/tmux"
-  CALL_ENV+=("PATH=$bin")
 }
 
 # session-rows reads ancestry through ps. This table names one top-level
@@ -824,41 +392,6 @@ wake_row_process_table() {
   chmod +x "$TMUX_BIN/ps"
 }
 
-# The record that ends an overseer's refusal, written on the fleet's own item.
-# It names the session that wrote it in both of the two names this hook reads,
-# the payload's id and the pane key, and a row supplies another value for
-# whichever name it is about.
-record_overseer_handoff() { # [SESSION_ID] [PANE_KEY]
-  local record
-  record="$(jq -nc --arg s "${1:-s1}" --arg k "${2:-$OVERSEER_SERVER $OVERSEER_PANE}" \
-    '{written_at:"2026-09-20T06:20:00Z",handoff_file:"tmp/handoffs/OVERSEER-HANDOFF.md",
-      pane_key:$k,session_id:$s}')"
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee handoff \
-    "$record" >/dev/null)
-}
-
-# The one store verb the runtime stub of the install new_overseer planted, or
-# of the one DIR names, fails, with the keyed line of a lock the runtime
-# could not take: `path` for path-fails, `heal` for heal-fails,
-# `handoff-standing` for standing-fails, `set` for set-fails, none for
-# delegate. Every verb the stub hands the runtime appends its word to
-# STATE_LOG, so a row can count what the hook asked; the log starts empty.
-state_stub() { # path-fails|heal-fails|standing-fails|set-fails|delegate [DIR]
-  local dir="${2:-$LANE/.claude/skills/orch/scripts}"
-  case "$1" in
-    path-fails | heal-fails | standing-fails | set-fails | delegate) ;;
-    *) echo "state-stub: mode=unknown value=$1" >&2; return 1 ;;
-  esac
-  rm -f -- "$STATE_LOG"
-  printf '%s\n' "$1" > "${dir:?}/orch-runtime.fault"
-}
-
-# A watch claim read the runtime cannot answer: the hook's one watch read
-# fails, every other script of the install stays real.
-watch_stub() { # [SCRIPTS_DIR]
-  runtime_stub "${1:-$LANE/.claude/skills/orch/scripts}" fails
-}
-
 # The overseer's own native transcript: the claude file the payload's session
 # s1 owns under OVERSEER_HOME_DIR, the shape lib/adapters/claude.sh names, so
 # the ownership gate reads it as this session's own, into TRANSCRIPT, which
@@ -871,34 +404,12 @@ overseer_transcript() {
   write_transcript "$TRANSCRIPT" "${OVERSEER_CONTEXT%%:*}"
 }
 
-# The fleet record for this pane rewritten with the pane and server alone,
-# plus FIELDS: no server start, no home and no harness unless FIELDS names
-# them, the shape a writer from before those were recorded left; and one
-# field of the record as it now stands, `none` where it names none.
-startless_record() { # [FIELDS_JSON] — the pane and server alone, plus FIELDS
-  local fields="${1:-}"
-  [ -n "$fields" ] || fields='{}'
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
-    "$(jq -nc --arg s "$OVERSEER_SERVER" --arg p "$OVERSEER_PANE" --argjson f "$fields" \
-      '{server:$s,pane:$p,window:"@7",launch_line:"claude -n overseer"} + $f')" >/dev/null)
-}
-recorded_field() { # FIELD
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee ".overseer.$1 // \"none\"")
-}
-
 # The lane-mail-deliver and lane-mail-halt hooks, which run the judge beside
 # them, installed with it.
 install_arms() { # [JUDGE]
   install_hook "$TEST_DIR/../lane-mail-deliver.sh" "$LANE/.claude/hooks/lane-mail-deliver.sh"
   install_hook "$TEST_DIR/../lane-mail-halt.sh" "$LANE/.claude/hooks/lane-mail-halt.sh"
   install_hook "${1:-$HOOK}" "$LANE/.claude/hooks/lane-mail-check.sh"
-}
-
-# The event a deliver run's JSON names and the first line of the context it
-# carries; `-` for no output.
-context_line() {
-  [ -s "$TMP_ROOT/stdout" ] || { echo -; return; }
-  jq -r '"\(.hookSpecificOutput.hookEventName) \(.hookSpecificOutput.additionalContext | split("\n")[0])"' "$TMP_ROOT/stdout"
 }
 
 mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the hook

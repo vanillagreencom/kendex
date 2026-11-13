@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# Tests for the harness adapters under lib/adapters/, reached through
-# lib/lane-context.sh. An adapter turns the records its harness writes into
-# one reading, the tokens the last response left in the context and the
-# window the model has. The turn-end hook reads a reading through an
-# adapter, so a row here pins what it reads. The judge of a reading is the
-# runtime's `marks`, whose own rows are the runtime's.
+# Tests for what lib/lane-context.sh and its adapters under lib/adapters/
+# still answer: a Claude model's launch identity and window, the launch's
+# compaction settings, a context record's fields, and the Copilot hook scope.
 #
 # LIB_UNDER_TEST names another copy of the library, with its adapters beside
 # it, for the must-fail controls at the end; each control runs only the one
@@ -44,91 +41,8 @@ eval "assertions_$(declare -f fail)"
 pass() { printf '%s\t%s\n' "$SECTION_NOW" "$1" >> "$SITES"; assertions_pass "$@"; }
 fail() { printf '%s\t%s\n' "$SECTION_NOW" "$1" >> "$SITES"; assertions_fail "$@"; }
 
-# A known managed launch for the ordinary transcript rows. Each configuration
-# row below replaces its own evidence, independent of the developer machine.
-export DISABLE_AUTO_COMPACT=1 DISABLE_COMPACT=0
 unset ANTHROPIC_BASE_URL ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
 unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_MANTLE CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
-export ORCH_COMPACTION_OVERRIDES='{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}'
-export PI_CODING_AGENT_DIR="$TMP_ROOT/pi-reading-agent"
-PI_READ_PROJECT="$TMP_ROOT/pi-reading-project"
-mkdir -p "$PI_CODING_AGENT_DIR" "$PI_READ_PROJECT"
-printf '%s\n' '{"compaction":{"enabled":false}}' > "$PI_CODING_AGENT_DIR/settings.json"
-
-# reading LIB HARNESS WINDOW — the adapter's answer for the transcript on
-# stdin, with TABs shown as `|` and the exit status beside it.
-reading() { # LIB HARNESS WINDOW
-  local out rc=0
-  out="$(bash -c 'set -euo pipefail; source "$1"; lane_context_reading "$2" "$3" "$4"' _ "$1" "$2" "$3" "$PI_READ_PROJECT")" || rc=$?
-  printf 'rc=%s%s' "$rc" "${out:+ ${out//$'\t'/|}}"
-}
-
-# One transcript line per spelling a harness writes, with a model and a figure.
-# Each figure holds 7 output tokens, the response the next request sends back,
-# so a figure one over a prompt is read only where the output is summed.
-claude_line() { # MODEL TOKENS
-  jq -nc --arg m "$1" --argjson t "$2" \
-    '{type:"assistant",message:{model:$m,usage:{input_tokens:1,cache_read_input_tokens:($t - 8),cache_creation_input_tokens:0,output_tokens:7}}}'
-}
-codex_context() { # MODEL
-  jq -nc --arg m "$1" '{type:"turn_context",payload:{model:$m}}'
-}
-codex_count() { # TOKENS WINDOW
-  jq -nc --argjson t "$1" --argjson w "$2" \
-    '{type:"event_msg",payload:{type:"token_count",info:{last_token_usage:{input_tokens:($t - 7),output_tokens:7,total_tokens:$t},model_context_window:$w}}}'
-}
-pi_line() { # MODEL TOKENS [PROVIDER]
-  jq -nc --arg m "$1" --argjson t "$2" --arg p "${3:-}" \
-    '{type:"message",message:({role:"assistant",model:$m,usage:{input:1,output:7,cacheRead:($t - 8),cacheWrite:0,totalTokens:$t}}
-      + (if $p == "" then {} else {provider:$p} end))}'
-}
-
-# The transcripts, each named for what it holds.
-T="$TMP_ROOT/t"; mkdir -p "$T"
-{ claude_line claude-opus-5-5 600000; claude_line claude-opus-5-5 1000; } > "$T/claude-last"
-{ claude_line claude-opus-5-5 1000; printf '{"type":"assistant","message":{"usa'; } > "$T/claude-partial"
-{ claude_line claude-fable-5-1 700000
-  jq -nc '{type:"assistant",message:{model:"<synthetic>",usage:{input_tokens:0,cache_read_input_tokens:0,cache_creation_input_tokens:0}}}'; } > "$T/claude-synthetic"
-claude_line claude-sonnet-5 400000 > "$T/claude-sonnet"
-claude_line claude-haiku-4-5-20251001 150000 > "$T/claude-haiku"
-claude_line MyProviderModel 150000 > "$T/claude-unknown"
-jq -nc '{type:"assistant",message:{model:"claude-opus-5-5",usage:{prompt_tokens:5}}}' > "$T/claude-unread"
-jq -nc '{type:"user",message:{content:"hi"}}' > "$T/none"
-{ codex_context gpt-6-astra; codex_count 1000 258400; codex_count 232560 258400; } > "$T/codex-last"
-{ codex_context gpt-6-astra; codex_count 1000 258400
-  jq -nc '{type:"event_msg",payload:{type:"token_count",info:null}}'; } > "$T/codex-null-info"
-{ codex_context gpt-6-astra
-  jq -nc '{type:"event_msg",payload:{type:"token_count",info:{last_token_usage:{},model_context_window:258400}}}'; } > "$T/codex-unread"
-codex_context gpt-6-astra > "$T/codex-none"
-{ pi_line m 600000; pi_line m 1000; } > "$T/pi-last"
-claude_line claude-opus-5-5 1000 > "$T/pi-claude-spelled"
-pi_line claude-opus-5-5 1000 pi-claude > "$T/pi-provider"
-
-if section reads; then
-  echo "=== each adapter reads the last reading its harness recorded ==="
-  # `file|harness|payload window|answer`
-  while IFS='|' read -r file harness window want; do
-    assert_eq "$(reading "$LIB" "$harness" "$window" < "$T/$file")" "$want" "$harness reads $file as: $want"
-  done <<'ROWS'
-claude-last|claude||rc=0 1000|1000000|claude-opus-5-5
-claude-partial|claude||rc=0 1000|1000000|claude-opus-5-5
-claude-synthetic|claude||rc=0 700000|1000000|claude-fable-5-1
-claude-sonnet|claude||rc=0 400000|1000000|claude-sonnet-5
-claude-haiku|claude||rc=0 150000|200000|claude-haiku-4-5-20251001
-claude-unknown|claude||rc=0 150000|200000|MyProviderModel
-claude-unread|claude||rc=0 unread
-none|claude||rc=0
-codex-last|codex||rc=0 232560|258400|gpt-6-astra
-codex-null-info|codex||rc=0 1000|258400|gpt-6-astra
-codex-unread|codex||rc=0 unread
-codex-none|codex||rc=0
-pi-last|pi|200000|rc=0 1000|200000|m
-pi-last|pi||rc=0 1000||m
-pi-provider|pi|200000|rc=0 1000|200000|pi-claude/claude-opus-5-5
-pi-claude-spelled|pi|200000|rc=0 unread
-claude-last|opencode||rc=3
-ROWS
-fi
 
 if section claude-identity; then
   echo "=== Claude families and native aliases need no version pins ==="
@@ -231,188 +145,20 @@ claude-lyra-9-9|200000|1
 ROWS
 fi
 
-if section compaction-config; then
-  echo "=== effective compaction settings preserve unresolved token use ==="
-  # harness|evidence|point. Enabled/unknown configurations keep the token count.
-  while IFS='|' read -r harness evidence point; do
-    case "$harness" in
-      claude)
-        answer=$(DISABLE_AUTO_COMPACT="$evidence" reading "$LIB" claude "" < "$T/claude-last")
-        want="rc=0 1000|$point|claude-opus-5-5" ;;
-      codex)
-        answer=$(ORCH_COMPACTION_OVERRIDES="$evidence" reading "$LIB" codex "" < "$T/codex-last")
-        want="rc=0 232560|$point|gpt-6-astra" ;;
-      pi)
-        printf '%s\n' "$evidence" > "$PI_CODING_AGENT_DIR/settings.json"
-        answer=$(reading "$LIB" pi 200000 < "$T/pi-last" 2>"$TMP_ROOT/pi-settings.err")
-        want="rc=0 1000|$point|m" ;;
-    esac
-    assert_eq "$answer" "$want" "$harness configuration $evidence gives point ${point:-unresolved}"
-  done <<'ROWS'
-claude|0|
-claude|1|1000000
-codex||
-codex|not-json|
-codex|[]|
-codex|{"harness":"codex","settings":false}|
-codex|{"harness":"claude","settings":{}}|
-codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807"}}|
-codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"200000","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}|
-codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"total","model_post_turn_compact_threshold_percent":"0"}}|
-codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"80"}}|
-codex|{"harness":"codex","settings":{"model_auto_compact_token_limit":"258400","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}|258400
-pi|not-json|
-pi|{}|
-pi|{"compaction":{"enabled":true}}|
-pi|{"compaction":{"enabled":false}}|200000
-ROWS
-
-  # Read the custom launch's generated environment, then run the real adapter.
-  mkdir -p "$TMP_ROOT/launch-bin"
-  cat > "$TMP_ROOT/launch-bin/codex" <<'STUB'
-#!/usr/bin/env bash
-printf '%s' "${ORCH_COMPACTION_OVERRIDES:-}"
-STUB
-  chmod +x "$TMP_ROOT/launch-bin/codex"
-  while IFS='|' read -r cmd point; do
-    evidence=$(PATH="$TMP_ROOT/launch-bin:$PATH" "$BASH" -euo pipefail -c '
-      source "$1/lib/lane-launch.sh"
-      line=$(lane_launch_line "$2" codex CODEX_HOME "$3" custom)
-      "$BASH" -c "$line"
-    ' _ "$SCRIPTS_DIR" "$cmd" "$TMP_ROOT/launch-home")
-    answer=$(ORCH_COMPACTION_OVERRIDES="$evidence" reading "$LIB" codex "" < "$T/codex-last")
-    assert_eq "$answer" "rc=0 232560|$point|gpt-6-astra" "custom Codex command window: $cmd"
-  done <<'ROWS'
-codex -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0|258400
-codex prompt|
-codex -c model_auto_compact_token_limit=9223372036854775807; echo unknown|
-ROWS
-fi
-
-if section before-point; then
-  # Every harness names the point its reading is judged against through its
-  # adapter. Sonnet's point must fit a supported 200K session even when its
-  # alias selects a larger one.
-  while IFS='|' read -r harness model point; do
-    case "$harness" in
-      claude) claude_line "$model" 180000 > "$T/before-point" ;;
-      codex) { codex_context "$model"; codex_count 180000 258400; } > "$T/before-point" ;;
-      pi) pi_line "$model" 180000 > "$T/before-point" ;;
-    esac
-    answer=$(reading "$LIB" "$harness" 200000 < "$T/before-point")
-    got=${answer#*|}; got=${got%%|*}
-    assert_eq "$got" "$point" "$harness $model before-point is $point"
-  done <<'ROWS'
-claude|claude-opus-5-5|1000000
-claude|sonnet|200000
-claude|claude-sonnet-4-5-20250929|200000
-claude|claude-sonnet-4-6|200000
-claude|claude-sonnet-9-9|200000
-codex|gpt-6-astra|258400
-pi|m|200000
-ROWS
-fi
-
-if section pi-compaction; then
-  echo "=== a Pi launch reads whether Pi would compact the session ==="
-  PI_AGENT="$TMP_ROOT/pi-agent"; PI_PROJECT="$TMP_ROOT/pi-project"
-  mkdir -p "$PI_AGENT" "$PI_PROJECT/.pi"
-  # `user settings|project settings|answer` — `-` is no file; 0 compacts, 1 does
-  # not, 2 is a file that could not be read.
-  while IFS='|' read -r user project want; do
-    rm -f -- "$PI_AGENT/settings.json" "$PI_PROJECT/.pi/settings.json"
-    [[ "$user" == - ]] || printf '%s\n' "$user" > "$PI_AGENT/settings.json"
-    [[ "$project" == - ]] || printf '%s\n' "$project" > "$PI_PROJECT/.pi/settings.json"
-    rc=0
-    PI_CODING_AGENT_DIR="$PI_AGENT" bash -c 'source "$1"; lane_adapter_pi_compaction_on "$2"' _ "$LIB" "$PI_PROJECT" || rc=$?
-    assert_eq "rc=$rc" "$want" "user $user and project $project: $want"
-  done <<'ROWS'
--|-|rc=0
-{}|-|rc=0
-{"compaction":{"enabled":true}}|-|rc=0
-{"compaction":{"enabled":false}}|-|rc=1
-{"compaction":{"enabled":false}}|{"compaction":{"enabled":true}}|rc=0
-{"compaction":{"enabled":false}}|{"compaction":{"enabled":false}}|rc=1
-{"compaction":{"enabled":true}}|{"compaction":{"enabled":false}}|rc=0
-not json|-|rc=2
-ROWS
-fi
-
 if section record; then
-  echo "=== the reading a turn end records ==="
-  BOX="$TMP_ROOT/box"; mkdir -p "$BOX"
-  bash -c 'source "$1"; lane_context_record "$2" codex 232560 258400 gpt-6-astra s1 "7000 %9"' _ "$LIB" "$BOX"
-  assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
-    '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"capacity_source":null,"session_id":"s1","pane_key":"7000 %9","gap":null}' \
-    "the record names the reading, the share used, and the session and pane it belongs to"
-  assert_eq "$(ls -A "$BOX")" "context.json" "the record lands by a rename, leaving no staged file beside it"
-  # A turn end that took no reading writes the reason as the gap, with no token
-  # count, and the one parser of a record reads it back as a gap and not as a
-  # reading, which the report's judge refuses to judge.
-  bash -c 'source "$1"; lane_context_record "$2" claude null "" "" s1 "7000 %9" home-unnamed' _ "$LIB" "$BOX"
-  assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
-    '{"harness":"claude","model":null,"tokens":null,"window":null,"used_pct":null,"capacity_source":null,"session_id":"s1","pane_key":"7000 %9","gap":"home-unnamed"}' \
-    "a gap record names the reason and the session and pane, with no reading"
+  echo "=== a context record's fields ==="
   # shellcheck disable=SC2016  # expanded by the child shell.
   fields() { bash -c 'source "$1"; if lane_context_record_fields "$2"; then
       printf "rc=0 harness=%s tokens=%s pane=%s session=%s gap=%s at=%s\n" "$LANE_CTX_HARNESS" "${LANE_CTX_TOKENS:-none}" "$LANE_CTX_PANE_KEY" "${LANE_CTX_SESSION:-none}" "${LANE_CTX_GAP:-none}" "${LANE_CTX_AT:+set}"
     else echo "rc=$?"; fi' _ "$LIB" "$1"; }
   while IFS='|' read -r record expected what; do
     assert_eq "$(fields "$record")" "$expected" "$what"
-  done <<ROWS
-$(cat "$BOX/context.json")|rc=0 harness=claude tokens=none pane=7000 %9 session=s1 gap=home-unnamed at=set|a gap record parses with its gap, its session and no tokens
+  done <<'ROWS'
+{"harness":"claude","model":null,"tokens":null,"window":null,"used_pct":null,"capacity_source":null,"session_id":"s1","pane_key":"7000 %9","gap":"home-unnamed","at":"t"}|rc=0 harness=claude tokens=none pane=7000 %9 session=s1 gap=home-unnamed at=set|a gap record parses with its gap, its session and no tokens
 {"harness":"claude","tokens":5,"gap":null,"pane_key":"k","at":"t"}|rc=0 harness=claude tokens=5 pane=k session=none gap=none at=set|a reading parses with no gap
 {"harness":"claude","tokens":null,"gap":null,"pane_key":"k"}|rc=1|a record with neither a reading nor a gap is no record
 {"harness":"claude","tokens":5,"gap":"home-unnamed","pane_key":"k"}|rc=1|a record carrying both a reading and a gap is no record
 ROWS
-  bash -c 'source "$1"; lane_context_record "$2" copilot 150000 217600 "" s1 "" "" "80% of tokenLimit"' _ "$LIB" "$BOX"
-  assert_eq "$(bash -c 'source "$1"; lane_context_record_fields "$(cat "$2")"; printf "%s|%s|%s" "$LANE_CTX_SESSION" "$LANE_CTX_WINDOW" "$LANE_CTX_AT"' _ "$LIB" "$BOX/context.json" | cut -c1-12)" \
-    "s1|217600|20" "a record's fields name its session apart from the time it was taken"
-  assert_eq "$(jq -c '[.capacity_source, .gap]' "$BOX/context.json")" '["80% of tokenLimit",null]' \
-    "a reading whose capacity is not the window its harness reported names where it came from, and names no gap"
-fi
-
-if section copilot-reading; then
-  echo "=== a Copilot usage reading read as one reading ==="
-  # copilot_reading PAYLOAD — lane_context_copilot_reading's answer, TABs as `|`.
-  copilot_reading() { # PAYLOAD
-    local out rc=0
-    out="$(printf '%s' "$1" | bash -c 'source "$1"; lane_context_copilot_reading' _ "$LIB" 2>/dev/null)" || rc=$?
-    printf 'rc=%s%s' "$rc" "${out:+ ${out//$'\t'/|}}"
-  }
-  # `payload|want`: the payload the copilot-lane-context extension hands the
-  # usage arm, the capacity 80 percent of the token limit, rounded down.
-  COPILOT_SOURCE="80% of tokenLimit, Copilot's backgroundCompactionThreshold default"
-  while IFS='|' read -r payload want; do
-    assert_eq "$(copilot_reading "$payload")" "${want//@/$COPILOT_SOURCE}" "copilot $payload: ${want//@/SOURCE}"
-  done <<'ROWS'
-{"session_id":"s1","cwd":"/w","current_tokens":150000,"token_limit":272000}|rc=0 150000|217600|@
-{"session_id":"s1","cwd":"/w","current_tokens":0,"token_limit":24001}|rc=0 0|19200|@
-{"current_tokens":150000,"token_limit":0}|rc=5
-{"current_tokens":150000}|rc=5
-{"current_tokens":"150000","token_limit":272000}|rc=5
-{"current_tokens":1.5,"token_limit":272000}|rc=5
-[]|rc=5
-ROWS
-fi
-
-if section compaction-flag; then
-  echo "=== a Copilot session's compaction flag, and whose it is ==="
-  FLAGBOX="$TMP_ROOT/flagbox"; mkdir -p "$FLAGBOX"
-  flagged() { # SESSION
-    local rc=0
-    bash -c 'source "$1"; lane_context_compaction_flagged "$2" "$3"' _ "$LIB" "$FLAGBOX" "$1" 2>/dev/null || rc=$?
-    printf 'rc=%s' "$rc"
-  }
-  assert_eq "$(flagged s1)" "rc=1" "no flag standing flags no session"
-  bash -c 'source "$1"; lane_context_compaction_flag "$2" copilot auto s1 "7000 %9"' _ "$LIB" "$FLAGBOX"
-  assert_eq "$(jq -c 'del(.at)' "$FLAGBOX/compaction.json")" \
-    '{"harness":"copilot","trigger":"auto","session_id":"s1","pane_key":"7000 %9"}' \
-    "the flag names the trigger, and the session and pane it belongs to"
-  assert_eq "$(flagged s1)" "rc=0" "its own session is flagged"
-  assert_eq "$(flagged s2)" "rc=1" "another session is not, so a successor is never held on its predecessor's compaction"
-  printf 'not json\n' > "$FLAGBOX/compaction.json"
-  assert_eq "$(flagged s1)" "rc=2" "a flag that is no JSON object is unreadable, neither flagged nor clear"
 fi
 
 if section scope; then
@@ -460,51 +206,6 @@ bare|-|rc=1
 ROWS
 fi
 
-if section owned; then
-  echo "=== the ownership gate binds a reading to its own session's file ==="
-  # lane_context_transcript_owned holds a transcript to the session id and launch
-  # home the current-session record names, so a reader takes a reading only off
-  # the file that session wrote: a newer unrelated transcript, a predecessor's in
-  # the same pane, or one under an account the fleet never picked is refused.
-  owned() { # HARNESS PATH SESSION HOME
-    bash -c 'source "$1"
-      if lane_context_transcript_owned "$2" "$3" "$4" "$5"; then echo "0 owned"
-      else echo "$? $LANE_CONTEXT_OWNED_REASON"; fi' _ "$LIB" "$1" "$2" "$3" "$4"
-  }
-  OWN="$TMP_ROOT/own"
-  CHOME="$OWN/claude-home"; mkdir -p "$CHOME/projects/repo"
-  XHOME="$OWN/other-home"; mkdir -p "$XHOME/projects/repo"
-  KHOME="$OWN/codex-home"; mkdir -p "$KHOME/sessions/2026/09/27"
-  YHOME="$OWN/other-codex-home"; mkdir -p "$YHOME/sessions/2026/09/27"
-  CLAUDE_OWNED="$CHOME/projects/repo/s1.jsonl"
-  CLAUDE_S2="$CHOME/projects/repo/s2.jsonl"
-  CLAUDE_FOREIGN="$XHOME/projects/repo/s1.jsonl"
-  CLAUDE_SUBAGENT="$CHOME/projects/repo/s1/subagents/agent-x.jsonl"
-  CODEX_OWNED="$KHOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s1.jsonl"
-  CODEX_S2="$KHOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s2.jsonl"
-  mkdir -p "$(dirname "$CLAUDE_SUBAGENT")"
-  : > "$CLAUDE_OWNED"; : > "$CLAUDE_S2"; : > "$CLAUDE_FOREIGN"; : > "$CLAUDE_SUBAGENT"
-  : > "$CODEX_OWNED"; : > "$CODEX_S2"
-  # `harness|path|session|home|want`
-  while IFS='|' read -r harness path session home want; do
-    assert_eq "$(owned "$harness" "$path" "$session" "$home")" "$want" \
-      "$harness $(basename -- "${path:-none}") for ${session:-none} under $(basename -- "${home:-none}"): $want"
-  done <<ROWS
-claude|$CLAUDE_OWNED|s1|$CHOME|0 owned
-claude|$CLAUDE_S2|s1|$CHOME|1 session-mismatch
-claude|$CLAUDE_SUBAGENT|s1|$CHOME|1 session-mismatch
-claude|$CLAUDE_FOREIGN|s1|$CHOME|1 home-mismatch
-claude||s1|$CHOME|1 binding-missing
-claude|$CLAUDE_OWNED||$CHOME|1 binding-missing
-claude|$CLAUDE_OWNED|s1||1 home-unnamed
-codex|$CODEX_OWNED|s1|$KHOME|0 owned
-codex|$CODEX_S2|s1|$KHOME|1 session-mismatch
-codex|$CODEX_OWNED|s1|$YHOME|1 home-mismatch
-opencode|$CLAUDE_OWNED|s1|$CHOME|3 harness-unlisted
-opencode|$CLAUDE_OWNED||$CHOME|3 harness-unlisted
-ROWS
-fi
-
 if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   echo "=== must-fail controls ==="
   SECTION_NOW=controls
@@ -539,8 +240,6 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     out="$(LANE_CONTEXT_SUITE_ONLY="$table" LIB_UNDER_TEST="$copy/lane-context.sh" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
     assert_eq "$(grep -cF -- "FAIL  $5" <<<"$out" || true)" "1" "control $1: $5 goes red"
   }
-  control copilot-share lane-context.sh 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=80' 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=100' \
-    'copilot {"session_id":"s1","cwd":"/w","current_tokens":150000'
   control native-alias adapters/claude.sh '[[ "${2:-}" != launch ]] || model=${1:-}' 'model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}' \
     'launch identity sonnet pin=claude-sonnet-4-6'
   control version-identity adapters/claude.sh '  printf '\''%s\n'\'' "${model}"' '  printf '\''%s\n'\'' "${model%-20261001}"' \
@@ -553,65 +252,20 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'resolved identity claude-fable-5-1[1m] pin='
   control recorded-alias adapters/claude.sh 'if [[ "${2:-}" != resolved ]]; then' 'if false; then' \
     'recorded identity sonnet pin=claude-sonnet-4-6'
-  control copilot-floor lane-context.sh '(.token_limit * $pct / 100 | floor | tostring)' '(.token_limit * $pct / 100 | ceil | tostring)' \
-    'copilot {"session_id":"s1","cwd":"/w","current_tokens":0'
-  control copilot-zero-limit lane-context.sh ' or .token_limit == 0 then' ' then' \
-    'copilot {"current_tokens":150000,"token_limit":0}'
-  control flag-any-session lane-context.sh 'else (.session_id // "") == $s end' 'else true end' \
-    'another session is not'
   control scope-registry lane-context.sh '[ -f "$dir/$name.sh" ] && [ -f "$dir/$name.json" ]' '[ -f "$dir/$name.sh" ]' \
     'scope bare under none'
   control scope-start lane-context.sh 'LANE_CONTEXT_COPILOT_HOOKS="lane-mail-check lane-mail-compact lane-mail-start"' 'LANE_CONTEXT_COPILOT_HOOKS="lane-mail-check lane-mail-compact"' \
     'scope nostart under none'
-  control first-reading adapters/claude.sh '| last // empty' '| first // empty' \
-    'claude reads claude-last as'
-  control no-synthetic-skip adapters/claude.sh ' and .model != "<synthetic>"' '' \
-    'claude reads claude-synthetic as'
-  control pi-spelling adapters/pi.sh 'if has("input") or has("output") or has("cacheRead") or has("cacheWrite")' 'if false' \
-    'pi reads pi-last as: rc=0 1000|200000|m'
-  control claude-output adapters/claude.sh ' + (.output_tokens // 0))' ')' \
-    'claude reads claude-last as'
-  control pi-provider adapters/pi.sh '"\(.provider)/\(.model)"' '.model' \
-    'pi reads pi-provider as: rc=0 1000|200000|pi-claude/claude-opus-5-5'
-  control pi-output adapters/pi.sh '(.input // 0) + (.output // 0)' '(.input // 0)' \
-    'pi reads pi-last as: rc=0 1000|200000|m'
-  control codex-window adapters/codex.sh '\(point($i.model_context_window))' '' \
-    'codex reads codex-last as'
-  control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
-    'codex configuration  gives point unresolved'
   control claude-family adapters/claude.sh '*sonnet*=200000' '*sonnet*=1000000' \
-    'claude sonnet before-point is 200000'
+    'claude window of sonnet: 200000'
   control claude-default adapters/claude.sh 'LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW=200000' 'LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW=1000000' \
     'dry launch claude-lyra-9-9 uses its budget'
   control claude-new-model-launch adapters/claude.sh '  printf '\''%s\n'\'' "$LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW"' '  return 0' \
     'dry launch claude-lyra-9-9 disables compaction'
   control claude-notice adapters/claude.sh 'LANE_ADAPTER_CLAUDE_WINDOW_NOTICED=true' ':' \
     'dry launch claude-lyra-9-9 notice count'
-  control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
-    'claude configuration 0 gives point unresolved'
-  control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \
-    'user {"compaction":{"enabled":false}} and project {"compaction":{"enabled":true}}: rc=0'
-  control owned-claude-session adapters/claude.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \
-    'claude s2.jsonl for s1 under claude-home: 1 session-mismatch'
-  control owned-claude-home adapters/claude.sh '*) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;' '*) ;;' \
-    'claude s1.jsonl for s1 under claude-home: 1 home-mismatch'
-  control owned-codex-session adapters/codex.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \
-    'codex rollout-2026-09-27T00-00-00-s2.jsonl for s1 under codex-home: 1 session-mismatch'
-  control owned-codex-home adapters/codex.sh '*) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;' '*) ;;' \
-    'codex rollout-2026-09-27T00-00-00-s1.jsonl for s1 under other-codex-home: 1 home-mismatch'
-  control gap-written lane-context.sh 'gap: ($gap | nul), at: $at}' 'at: $at}' \
-    'a gap record names the reason and the session and pane, with no reading'
   control gap-parsed lane-context.sh 'or (.tokens == null and (.gap | type)' 'or (false and (.gap | type)' \
     'a gap record parses with its gap, its session and no tokens'
-  control owned-binding-missing lane-context.sh 'if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then' 'if false; then' \
-    'claude none for s1 under claude-home: 1 binding-missing'
-  control owned-home-unnamed lane-context.sh 'if [ -z "${4:-}" ]; then' 'if false; then' \
-    'claude s1.jsonl for s1 under none: 1 home-unnamed'
-  control owned-harness-unlisted lane-context.sh '*) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;' '*) ;;' \
-    'opencode s1.jsonl for s1 under claude-home: 3 harness-unlisted'
-  control owned-unlisted-first lane-context.sh '*) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;' \
-    '*) [ -n "${3:-}" ] || { LANE_CONTEXT_OWNED_REASON=binding-missing; return 1; }; LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;' \
-    'opencode s1.jsonl for none under claude-home: 3 harness-unlisted'
 fi
 
 echo

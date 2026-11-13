@@ -547,31 +547,30 @@ managed_claude_launch() { # LIB RESUME_FILE
       line=$(lane_launch_line "$LANE_SESSION_CMD" claude "$LANE_SESSION_ACCOUNT_VAR" "$3" prefix) || exit
       "$BASH" -c "$line"' _ "$1" "$2" "$TMP_ROOT/compaction-home"
 }
-managed_claude_reading() { # OBSERVED_ENV
-  env "DISABLE_AUTO_COMPACT=$(jq -r .auto <<<"$1")" "DISABLE_COMPACT=$(jq -r .manual <<<"$1")" \
-    "$BASH" -c 'source "$1"; lane_adapter_claude_reading unread' \
-    _ "$SCRIPTS_DIR/lib/adapters/claude.sh" <<'TRANSCRIPT'
-{"message":{"model":"sonnet","usage":{"input_tokens":180001}}}
-TRANSCRIPT
+# The compaction words a managed session's hooks inherit, which the runtime's
+# context reader takes as compaction off (agent-runtime context.rs
+# claude_compaction_off).
+managed_claude_compaction() { # OBSERVED_ENV
+  jq -r '"auto=\(.auto) manual=\(.manual)"' <<<"$1"
 }
 while IFS='|' read -r resume identity; do
   observed=$(managed_claude_launch "$SCRIPTS_DIR/lib/lane-launch.sh" "$resume")
   assert_eq "$(jq -c '[.argv[] | select(. == "-n" or . == "jarvis" or . == "--session-id" or . == "--resume" or . == "managed-session")]' <<<"$observed")" \
     "[\"-n\",\"jarvis\",\"$identity\",\"managed-session\"]" "managed Claude $identity retains its native identity"
-  assert_eq "$(managed_claude_reading "$observed")" $'180001\t200000\tsonnet' \
+  assert_eq "$(managed_claude_compaction "$observed")" 'auto=1 manual=' \
     "managed Claude $identity establishes its context window"
 done <<'ROWS'
 |--session-id
 history.jsonl|--resume
 ROWS
 
-# Removing only the managed policy gives a setting-free launch:
-# the actual adapter still reads tokens, but cannot establish a window.
+# Removing only the managed policy gives a setting-free launch, whose
+# session the reader cannot establish a window for.
 MUTANT_MANAGED="$(mutant_scripts lane-launch-managed lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
 mutate_file "$MUTANT_MANAGED" 'compaction="$(launch_choice_compaction claude "")" || return 1' \
   'compaction="$(launch_choice_compaction claude "")" || return 1; compaction=""'
 observed=$(managed_claude_launch "$MUTANT_MANAGED" "")
-assert_eq "$(managed_claude_reading "$observed")" $'180001\t\tsonnet' \
+assert_eq "$(managed_claude_compaction "$observed")" 'auto= manual=' \
   'control: a managed launch without its compaction policy leaves the context window empty'
 
 compaction_child() { # LIB FORM CMD

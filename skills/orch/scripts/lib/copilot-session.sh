@@ -81,51 +81,6 @@ copilot_session_write() { # HOME NOW
   mv -f -- "$staged" "$path" || { rm -f -- "$staged"; COPILOT_SESSION_REASON=record=unwritable; return 1; }
 }
 
-# copilot_session_read HOME SESSION_ID TRANSCRIPT NOW — the record bound to
-# SESSION_ID under HOME, into COPILOT_SESSION_RECORD, 0 where every binding
-# agrees. Into a variable and never onto stdout: a caller reading it through a
-# command substitution would lose the reason with the subshell. TRANSCRIPT is
-# the path the caller's payload names, empty where it names none. 1 with
-# COPILOT_SESSION_REASON naming the first binding that did not agree:
-#   unbound           SESSION_ID is empty or outside a session id's alphabet
-#   missing           no record for that session under HOME
-#   unreadable        a file there that is not a record this library wrote
-#   wrong-session     the record's own session_id is another session's
-#   wrong-account     the record names another account directory
-#   wrong-transcript  TRANSCRIPT was given and the record names another
-#   stale             written_at is older than COPILOT_SESSION_MAX_AGE_S or
-#                     later than NOW: a record the CLI stopped refreshing, and
-#                     one stamped by a clock ahead of the reader's, are both
-#                     records nothing vouches for
-COPILOT_SESSION_RECORD=""
-copilot_session_read() { # HOME SESSION_ID TRANSCRIPT NOW
-  local home="$1" session="$2" transcript="$3" now="$4" path record fields
-  local rec_session rec_home rec_transcript written age
-  COPILOT_SESSION_REASON=""
-  COPILOT_SESSION_RECORD=""
-  path="$(copilot_session_record_path "$home" "$session")" || { COPILOT_SESSION_REASON=unbound; return 1; }
-  [ -f "$path" ] || { COPILOT_SESSION_REASON=missing; return 1; }
-  record="$(cat -- "$path" 2>/dev/null)" || { COPILOT_SESSION_REASON=unreadable; return 1; }
-  fields="$(jq -r '
-    if type != "object" or (.session_id | type) != "string" or (.copilot_home | type) != "string"
-       or (.written_at | type) != "number" then error("shape") else . end
-    | [.session_id, .copilot_home, ((.transcript_path | strings) // ""), (.written_at | floor | tostring)]
-    | join("\t")' <<<"$record" 2>/dev/null)" || { COPILOT_SESSION_REASON=unreadable; return 1; }
-  rec_session="${fields%%	*}"; fields="${fields#*	}"
-  rec_home="${fields%%	*}"; fields="${fields#*	}"
-  rec_transcript="${fields%%	*}"
-  written="${fields#*	}"
-  [ "$rec_session" = "$session" ] || { COPILOT_SESSION_REASON=wrong-session; return 1; }
-  [ "$rec_home" = "$home" ] || { COPILOT_SESSION_REASON=wrong-account; return 1; }
-  if [ -n "$transcript" ] && [ "$rec_transcript" != "$transcript" ]; then
-    COPILOT_SESSION_REASON=wrong-transcript
-    return 1
-  fi
-  age=$((now - written))
-  { [ "$age" -ge 0 ] && [ "$age" -le "$COPILOT_SESSION_MAX_AGE_S" ]; } || { COPILOT_SESSION_REASON=stale; return 1; }
-  COPILOT_SESSION_RECORD="$record"
-}
-
 # copilot_session_fields RECORD — one record split into the figures its readers
 # act on, each empty where the CLI sent none or sent a value of another type:
 #   CS_MODEL        status.model.id
@@ -155,28 +110,6 @@ copilot_session_fields() { # RECORD
   CS_WINDOW="${line%%	*}"; line="${line#*	}"
   CS_NANO_AIU="${line%%	*}"
   CS_ALLOW_ALL="${line#*	}"
-}
-
-# copilot_session_stop_cause RECORD GRANTED — the stop cause a record
-# establishes for a session whose launch GRANTED allow-all:
-# `allow-all-blocked-by-policy` where GRANTED is `true` and the CLI reports
-# allow_all_enabled false. Enterprise managed settings, delivered for the
-# account or for the machine, can block the allow-all mode, and the CLI
-# refreshes them each hour, so a session launched with `--allow-all` can lose
-# it mid-run; every tool call then waits on a permission prompt nobody at the
-# pane answers. That is a stop with its own cause, never a quiet lane. A
-# session launched without allow-all reports false as well and waits on its
-# prompts by design; the record alone cannot tell the two apart, so the
-# caller passes the launch's grant: the lane-mail-check hook the session's
-# COPILOT_ALLOW_ALL, which lib/lane-launch.sh lane_copilot_env sets `true` on
-# a launch line granting it and empty on any other. Prints the cause, 0;
-# prints nothing, 1, where GRANTED is anything but `true`, or the record says
-# allow-all is on, does not say, or is not JSON.
-copilot_session_stop_cause() { # RECORD GRANTED
-  [ "$2" = true ] || return 1
-  copilot_session_fields "$1" || return 1
-  [ "$CS_ALLOW_ALL" = false ] || return 1
-  printf 'allow-all-blocked-by-policy\n'
 }
 
 # The session id a session's workspace.yaml names, from its `id:` line, empty

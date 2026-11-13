@@ -369,12 +369,11 @@ for input in skills/orch/scripts/lib/lane-launch.sh skills/orch/references/skill
   printf '\n# launch replay\n' >> "$actual/.agents/$input"
 done
 for input in skills/orch/tests/lane-launch-trust.sh skills/orch/tests/lane_context_adapters.sh \
-  skills/orch/tests/lane_model_recovery.sh \
   skills/orch/tests/lane-claims.sh; do
   printf '\n# launch replay\n' >> "$actual/$input"
 done
 direct_launch_selection() { # SELECTED PATHS
-  grep -Fxq 'skills/orch/tests/lane_model_recovery.sh' <<<"$1" &&
+  grep -Fxq 'skills/orch/tests/lane-launch-trust.sh' <<<"$1" &&
     grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1" &&
     ! grep -Fxq 'skills/orch/tests/lanes-usage-pct.sh' <<<"$1"
 }
