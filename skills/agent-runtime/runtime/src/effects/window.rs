@@ -27,7 +27,9 @@ use crate::intent::{Obligation, Opening, Phase, Role};
 /// possibly opened that the record names as such;
 /// `LineUnsent` is a window that opened, recorded at `opening`, whose line
 /// could not be typed, its one pane closed again by exact id and that close
-/// discharged by its own answer, so the caller judges what stands.
+/// discharged by its own answer, so the caller judges what stands; for the
+/// session's idle shell, a line not typed or whose receipt never came, the
+/// shell left standing.
 pub enum OpenRefusal {
     Refused(crate::Error),
     Unanswered { refusal: crate::Error },
@@ -205,6 +207,7 @@ impl Operation<'_> {
             session_id,
             baseline,
             pane: None,
+            adopted: false,
             asked: false,
             home: home.map(|h| h.display().to_string()),
             home_implicit,
@@ -263,6 +266,12 @@ impl Operation<'_> {
     /// whose line could not be typed, or whose `new-window` failed after
     /// printing its pane, has its one pane closed again by exact
     /// id and that close discharged by its own answer.
+    ///
+    /// A start `alone` over a session whose one window is an idle shell
+    /// ([`tmux::sole_idle_shell`]) runs its line in that shell instead, so
+    /// the session holds the controller's window alone. A listing that does
+    /// not answer opens a window as every other case does: a window of the
+    /// effect's own touches nothing of the session's.
     pub fn open_window(
         &mut self,
         server: &Server,
@@ -270,11 +279,15 @@ impl Operation<'_> {
         name: &str,
         command: &LaunchCommand,
         opening: &Opening,
+        alone: bool,
     ) -> Result<std::result::Result<Pane, OpenRefusal>> {
         let receipt_path = self.receipt_path();
         self.write()?;
         if let Err(e) = receipt::arm(&receipt_path) {
             return Ok(Err(OpenRefusal::Refused(e)));
+        }
+        if alone && let Reading::Live(Some(shell)) = tmux::sole_idle_shell(server, session) {
+            return self.run_in_idle_shell(shell, command, opening, &receipt_path);
         }
         let asked = Opening {
             asked: true,
@@ -351,6 +364,69 @@ impl Operation<'_> {
         }
         self.read_receipt()?;
         Ok(Err(OpenRefusal::LineUnsent { refusal }))
+    }
+
+    /// Type the launch line into `shell`, the session's idle shell, a pane
+    /// this effect did not open: recorded `adopted` before the line is
+    /// typed, and the effect's own pane only once its receipt names it,
+    /// within the launch bound. A line the person typed and left unsent
+    /// reads idle, so one interrupt key is pressed first: every shell
+    /// [`crate::process::is_shell`] names discards its pending line on it and
+    /// prompts again, and the runtime runs only the line it wrote. Until the
+    /// receipt nothing of the effect closes or stops the shell, since it may
+    /// still be the person's: a line refused before its paste leaves the
+    /// shell standing as it is.
+    fn run_in_idle_shell(
+        &mut self,
+        shell: Pane,
+        command: &LaunchCommand,
+        opening: &Opening,
+        receipt_path: &Path,
+    ) -> Result<std::result::Result<Pane, OpenRefusal>> {
+        let role = self.principal_role();
+        self.obligations
+            .add(Obligation::Receipt, role, self.harness);
+        self.record_phase(Phase::Opening {
+            opening: Opening {
+                pane: Some(shell.id.clone()),
+                adopted: true,
+                ..opening.clone()
+            },
+        })?;
+        let line = receipt::launch_line(receipt_path, &self.intent_id, command);
+        if let Err(refusal) =
+            tmux::send_key(&shell, "C-c").and_then(|()| tmux::send_line(&shell, &line))
+        {
+            self.read_receipt()?;
+            return Ok(Err(OpenRefusal::LineUnsent { refusal }));
+        }
+        let deadline = self.now() + self.run.settings.verify.get()?;
+        loop {
+            if let Ok(receipt::Reading::Present(registered)) =
+                receipt::read(receipt_path, &self.intent_id)
+                && registered.pane == shell.id
+            {
+                self.obligations.adopt(
+                    PaneRef {
+                        pane: shell.id.clone(),
+                        server: opening.server,
+                        server_start: Some(opening.server_start),
+                    },
+                    role,
+                    self.harness,
+                );
+                self.write()?;
+                return Ok(Ok(shell));
+            }
+            if self.now() >= deadline {
+                break;
+            }
+            self.sleep(POLL);
+        }
+        self.read_receipt()?;
+        Ok(Err(OpenRefusal::LineUnsent {
+            refusal: crate::Error::refused("receipt-unwritten", &[("pane", &shell.id)]),
+        }))
     }
 
     /// Read the pane's receipt where it still stands: a
@@ -477,7 +553,8 @@ impl Operation<'_> {
     /// unobservable. Then, in order: the pane's receipt, whose pid is read
     /// before its pane is adopted by exact id; else the recorded pane, which
     /// a reconcile within the bound leaves to register and one past it
-    /// closes by that exact id; else nothing opened. No pane is enumerated
+    /// closes by that exact id, an adopted shell excepted, which is left
+    /// standing; else nothing opened. No pane is enumerated
     /// and no window's name, option or environment is read. Every read here
     /// is three-valued; an adopted pane is recorded as
     /// `window-opened` under the registered identity before the caller goes
@@ -541,6 +618,27 @@ impl Operation<'_> {
                     self.write()?;
                     return Ok(recovered);
                 };
+                // A shell the effect typed into is not its own until its
+                // receipt names it: past the bound the line never ran there,
+                // and the shell stands as it was.
+                if opening.adopted {
+                    let recovered = if within_bound(
+                        opening,
+                        self.clock.wall(),
+                        self.run.settings.verify.get()?,
+                    ) {
+                        Recovered::Pending {
+                            note: "receipt-pending",
+                            cause: None,
+                        }
+                    } else {
+                        self.obligations
+                            .discharge(Discharge::Receipt(ReceiptEnd::Absent));
+                        recovered_failed("nothing-registered", Some("pane-kept"), &self.obligations)
+                    };
+                    self.write()?;
+                    return Ok(recovered);
+                }
                 let key = PaneRef {
                     pane: pane_id.clone(),
                     server: opening.server,

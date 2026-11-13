@@ -182,10 +182,16 @@ pub struct Opening {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub baseline: Vec<String>,
-    /// The pane the effect's own `new-window` created, recorded before the
-    /// launch line is typed into it; `None` until then.
+    /// The pane the effect's own `new-window` created, or the session's idle
+    /// shell it types into (`adopted`), recorded before the launch line is
+    /// typed into it; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<String>,
+    /// `pane` is a shell the effect did not open: it becomes the effect's
+    /// only once its receipt names it, so no close of the effect's reaches
+    /// it before the line ran there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adopted: bool,
     /// Whether the launcher has been asked for the window: written before
     /// `new-window` runs, so a phase with no pane and
     /// `asked` names a window possibly opened, and one without it nothing.

@@ -214,12 +214,19 @@ pub fn fleet_view(path: &Path) -> Result<FleetView> {
 }
 
 /// The controller record the fleet holds; none refuses `overseer-missing`.
+/// A stopped controller's record (`off`) names no pane: the stop closed that
+/// pane or gave it back to its session as a shell, under the same id, so it
+/// is no handle of a controller's to retire, and a start may run in it.
 pub fn read_overseer(path: &Path) -> Result<Overseer> {
-    fleet_view(path)?
+    let mut overseer = fleet_view(path)?
         .overseer
         .ok_or_else(|| Error::OverseerMissing {
             path: path.to_path_buf(),
-        })
+        })?;
+    if overseer.extra.get("off").is_some_and(|off| !off.is_null()) {
+        overseer.extra.remove("pane");
+    }
+    Ok(overseer)
 }
 
 /// The intent `intent_id` as the fleet records it.
@@ -251,7 +258,7 @@ pub fn overseer_target_of(
 /// A pid a record carries as the number the runtime writes or the string a
 /// shell writer's jq `--arg` writes (the controller's `server` and
 /// `harness_pid`).
-fn pid_value(value: &Value) -> Option<u64> {
+pub(crate) fn pid_value(value: &Value) -> Option<u64> {
     match value {
         Value::Number(n) => n.as_u64(),
         Value::String(s) => s.parse().ok(),

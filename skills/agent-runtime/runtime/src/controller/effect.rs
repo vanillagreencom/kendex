@@ -27,9 +27,9 @@ use crate::effects::prepare::{
 };
 use crate::effects::{
     Binding, Bootstrap, Claimant, Companion, EffectOutcome, Identity, Observed, OpenRefusal,
-    Operation, Pane, Polled, ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State,
-    Stop, Target, TurnConfirm, WindowClose, Wire, Word, opening_observation, overseer_target_of,
-    read_intent, read_overseer,
+    Operation, Pane, Polled, ProcessRead, Proof, Published, Recovered, Server, SessionFloor,
+    SignIn, State, Stop, Target, TurnConfirm, WindowClose, Wire, Word, opening_observation,
+    overseer_target_of, read_intent, read_overseer,
 };
 use crate::error::{Error, Result};
 use crate::harness::Harness;
@@ -853,6 +853,14 @@ pub fn start_effect(run: &Run, intent_id: &str, r: &StartController) -> Result<E
     )
 }
 
+/// Whether the record names a pane on `server`, by its pid and start.
+fn names_pane_on(overseer: &Overseer, server: &Server) -> bool {
+    let number = |key: &str| overseer.extra.get(key).and_then(crate::effects::pid_value);
+    overseer.extra.contains_key("pane")
+        && number("server") == Some(u64::from(server.pid))
+        && number("server_start") == Some(server.start)
+}
+
 fn succeed(
     run: &Run,
     intent_id: &str,
@@ -1005,7 +1013,12 @@ fn succeed(
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
     })?;
-    let pane = match operation.open_window(&server, &session, "overseer", &command, &opening)? {
+    // A start may run in the session's idle shell, never in a pane the record
+    // names on this server: that is the predecessor's, whose window the
+    // retirement closes. A stopped record names none.
+    let alone = mode == Mode::Start && !names_pane_on(&overseer, &server);
+    let window = operation.open_window(&server, &session, "overseer", &command, &opening, alone)?;
+    let pane = match window {
         Ok(pane) => pane,
         // Refused before the launcher was asked: `arm` failed before the
         // receipt or window was recorded, so nothing stands and the
@@ -1025,7 +1038,8 @@ fn succeed(
         }
         // A window that opened and could not be typed into: closed again by
         // its exact id, the failure completes; a close the host did not
-        // answer leaves the recorded pane for the reconcile at `opening`.
+        // answer leaves the recorded pane for the reconcile at `opening`. An
+        // idle shell whose line did not run is left as it stands.
         Err(OpenRefusal::LineUnsent { refusal }) => {
             let mut outcome = operation.settle(
                 Word::Failed,

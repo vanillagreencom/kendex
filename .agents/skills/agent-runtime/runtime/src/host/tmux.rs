@@ -372,6 +372,100 @@ pub fn new_window(
     }
 }
 
+/// The one pane of `session` where the session holds one window with one
+/// pane and that pane's shell holds its own terminal: a shell at its prompt
+/// with no foreground job, as a session stands before anything ran in it.
+/// `None` where a second window or pane stands, or the one pane stands dead
+/// or runs a command. One `list-panes` and one read of the shell's
+/// terminal group answer it. A typed but unsent line is not told from an
+/// empty prompt: neither tmux nor the kernel carries it. The session gone is
+/// `Gone`; a server, a listing or a process that does not answer is
+/// `Unreadable`.
+pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> {
+    if let Err(e) = confirm(server) {
+        return Reading::Unreadable { cause: e.key() };
+    }
+    let socket = server.socket.display().to_string();
+    let target = format!("={session}");
+    let output = match run_with(
+        "tmux",
+        "list-panes",
+        &[
+            "-S",
+            &socket,
+            "list-panes",
+            "-s",
+            "-t",
+            &target,
+            "-F",
+            "#{pane_id}\t#{window_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{session_name}",
+        ],
+        &[],
+        None,
+        TIMEOUT,
+    ) {
+        Ok(output) => output,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "tmux-unavailable",
+            };
+        }
+    };
+    if !output.status.success() {
+        return if stderr_text(&output).starts_with("can't find session") {
+            Reading::Gone
+        } else {
+            Reading::Unreadable {
+                cause: "tmux-failed",
+            }
+        };
+    }
+    let text = stdout_text(&output);
+    let unparsed = Reading::Unreadable {
+        cause: "panes-unparsed",
+    };
+    let line = match text.lines().collect::<Vec<_>>()[..] {
+        [line] => line,
+        [] => return unparsed,
+        [_, _, ..] => return Reading::Live(None),
+    };
+    let mut parts = line.splitn(6, '\t');
+    let (Some(id), Some(window), Some(pid), Some(command), Some(dead), Some(session)) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return unparsed;
+    };
+    if !id.starts_with('%') || !window.starts_with('@') {
+        return unparsed;
+    }
+    let pid: u32 = match dead {
+        "1" => return Reading::Live(None),
+        "0" => match pid.parse() {
+            Ok(pid) => pid,
+            Err(_) => return unparsed,
+        },
+        _ => return unparsed,
+    };
+    if !crate::process::is_shell(command) {
+        return Reading::Live(None);
+    }
+    match crate::process::foreground_group(pid) {
+        Reading::Live(Some(group)) if group == pid => Reading::Live(Some(Pane {
+            server: server.clone(),
+            id: id.to_owned(),
+            window: window.to_owned(),
+            session: session.to_owned(),
+        })),
+        Reading::Live(_) | Reading::Gone => Reading::Live(None),
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+    }
+}
+
 /// The pane a `new-window -P` line names, `%N @N session`. The ids are
 /// checked by their sigils, since a caller closes the window by the id read
 /// here and tmux takes a bare word as a window's name.
@@ -560,17 +654,96 @@ pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, Stri
 }
 
 /// Run one `kill-*` command against an exact target and read what it did.
+/// A target holding its session's one pane is never closed: kendex makes no
+/// session, so closing that pane would end one the person made. The pane is
+/// given back as the session's shell instead ([`give_back`]); every other
+/// target is closed.
 fn close(server: &Server, operation: &'static str, target: &str) -> Close {
     if let Err(e) = confirm(server) {
         return Close::Unreadable {
             cause: e.key().to_owned(),
         };
     }
+    if let Some(pane) = sole_pane(server, target) {
+        return give_back(server, &pane);
+    }
     let socket = server.socket.display().to_string();
     match run_with(
         "tmux",
         operation,
         &["-S", &socket, operation, "-t", target],
+        &[],
+        None,
+        TIMEOUT,
+    ) {
+        Ok(output) if output.status.success() => Close::Closed,
+        Ok(output) if names_missing_target(&stderr_text(&output)) => Close::AlreadyGone,
+        Ok(output) => Close::Unreadable {
+            cause: stderr_text(&output),
+        },
+        Err(e) => Close::Unreadable {
+            cause: e.to_string(),
+        },
+    }
+}
+
+/// The pane `target` names where the server proves it its session's one
+/// pane: one window in the session and one pane in that window, read by the
+/// exact target in one `display-message`. `None` for any other answer, a
+/// target gone or a read that fails included: that close runs as every
+/// other close does and reads its own answer.
+fn sole_pane(server: &Server, target: &str) -> Option<String> {
+    let socket = server.socket.display().to_string();
+    let output = run_with(
+        "tmux",
+        "session-panes",
+        &[
+            "-S",
+            &socket,
+            "display-message",
+            "-p",
+            "-t",
+            target,
+            "#{pane_id}\t#{window_panes}\t#{session_windows}",
+        ],
+        &[],
+        None,
+        TIMEOUT,
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
+    let text = stdout_text(&output);
+    match text.splitn(3, '\t').collect::<Vec<_>>()[..] {
+        [pane, "1", "1"] if pane.starts_with('%') => Some(pane.to_owned()),
+        _ => None,
+    }
+}
+
+/// Give `pane`, its session's one pane, back as the session's shell: what
+/// runs in it is ended and the pane runs its own start command again
+/// (`respawn-pane -k`, no command), its `remain-on-exit` returned to the
+/// session's, so the session stands as its maker left it. Read `Closed`:
+/// what kendex ran there is gone.
+fn give_back(server: &Server, pane: &str) -> Close {
+    let socket = server.socket.display().to_string();
+    match run_with(
+        "tmux",
+        "respawn-pane",
+        &[
+            "-S",
+            &socket,
+            "respawn-pane",
+            "-k",
+            "-t",
+            pane,
+            ";",
+            "set-option",
+            "-p",
+            "-u",
+            "-t",
+            pane,
+            "remain-on-exit",
+        ],
         &[],
         None,
         TIMEOUT,
@@ -973,5 +1146,49 @@ mod tests {
             "the sibling stands"
         );
         assert_eq!(kill_pane(&sibling.pane), Close::AlreadyGone);
+    }
+
+    /// A close of its session's one pane, by window or by pane, gives the
+    /// pane back as the session's shell: the session stands, the same pane
+    /// runs a fresh shell, and its kept exit is the session's again. Beside
+    /// a second window the same close takes that window.
+    #[test]
+    fn a_close_of_its_sessions_one_pane_gives_it_back_and_beside_another_closes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(dir.path());
+        let server = &private.0;
+        let Reading::Live(first) = pane_fields(server, "%0") else {
+            panic!("the session's pane is live");
+        };
+        keep_on_exit(&first.pane).expect("the pane is kept");
+        let mut pid = first.pid;
+        for closer in [kill_window, kill_pane] {
+            assert_eq!(closer(&first.pane), Close::Closed);
+            assert_eq!(session_present(server, "t").ok(), Some(true));
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let again = loop {
+                let Reading::Live(again) = pane_fields(server, "%0") else {
+                    panic!("the pane stands");
+                };
+                if crate::process::is_shell(&again.command) {
+                    break again;
+                }
+                assert!(std::time::Instant::now() < deadline, "{again:?}");
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            assert_ne!(again.pid, pid, "a fresh shell runs in the pane");
+            pid = again.pid;
+        }
+        let kept = tmux(
+            Some(&server.socket),
+            "remain-on-exit",
+            &["display-message", "-p", "-t", "%0", "#{remain-on-exit}"],
+        )
+        .expect("the option reads");
+        assert_eq!(kept, "off", "the pane's exit is the session's");
+        let second = new_window(server, "t", "w", dir.path()).expect("a second window");
+        assert_eq!(kill_window(&second), Close::Closed);
+        assert_eq!(pane_fields(server, &second.id), Reading::Gone);
+        assert!(matches!(pane_fields(server, "%0"), Reading::Live(_)));
     }
 }

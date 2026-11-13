@@ -1547,6 +1547,7 @@ mod tests {
                 session_id: None,
                 baseline: Vec::new(),
                 pane: pane.map(str::to_owned),
+                adopted: false,
                 asked,
                 home: None,
                 home_implicit: false,

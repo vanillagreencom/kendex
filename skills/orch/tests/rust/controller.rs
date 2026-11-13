@@ -1526,8 +1526,8 @@ fn crash_controller(server: &Server, runner: &Runner, pane: &str) {
     });
 }
 
-/// A session whose one window is the controller's, its creator's own window
-/// closed after the start, outlives the controller's harness: the published
+/// A session whose one window is the controller's, the start run in the
+/// session's own shell, outlives the controller's harness: the published
 /// pane is kept dead, so the watch reads the death and its recovery opens
 /// the successor in that same session, then closes the dead window, and the
 /// successor's window stands alone.
@@ -1541,7 +1541,6 @@ fn a_controller_alone_in_its_session_outlives_its_harness_and_is_recovered_there
     runner.tools = Some(bin);
     runner.env.extend(env);
     let predecessor = started_controller(&runner);
-    server.close_birth_window();
     assert_eq!(server.session_panes(), vec![predecessor.clone()]);
     crash_controller(&server, &runner, &predecessor);
     let intent = watched_transfer(&runner);
@@ -1569,7 +1568,6 @@ fn a_completed_hand_over_closes_the_kept_predecessor_and_leaves_one_controller_w
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = started_controller(&runner);
-    server.close_birth_window();
     let mut fleet = runner.fleet();
     fleet["overseer"]["pending"] = pending(runner.state_dir());
     runner.write_fleet(&fleet);
@@ -1590,20 +1588,25 @@ fn a_completed_hand_over_closes_the_kept_predecessor_and_leaves_one_controller_w
 }
 
 /// An explicit stop of a published controller leaves no controller window:
-/// the pane kept past its harness has its window closed by the stop, and
-/// the session holds its creator's window alone.
+/// the pane kept past its harness, opened beside the session's own two
+/// windows, has its window closed by the stop.
 #[test]
 fn a_stop_closes_the_kept_controller_window() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
-    let birth = server.session_panes();
+    server.open_window("second", dir.path(), pane_shell());
+    let before = server.session_panes();
     started_controller(&runner);
     runner.op_fleet(&json!({"op": "stop-controller"}));
     let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    assert_eq!(server.session_panes(), birth, "no controller window stands");
+    assert_eq!(
+        server.session_panes(),
+        before,
+        "no controller window stands"
+    );
 }
 
 /// The first launch of a controller on a fleet that recorded none publishes
@@ -6105,11 +6108,15 @@ impl Launched {
 }
 
 /// The runner's one window on the server, as the record and the receipt
-/// name it: the pane that is not the session's first.
+/// name it: the one pane opened beside the session's first, or that first
+/// pane itself, the session's shell a start ran in.
 fn runner_pane(server: &Server) -> String {
-    let panes: Vec<String> = server.panes().into_iter().filter(|p| p != "%0").collect();
-    assert_eq!(panes.len(), 1, "one runner opened: {panes:?}");
-    panes.into_iter().next().unwrap()
+    let panes = server.panes();
+    match panes.iter().filter(|p| *p != "%0").collect::<Vec<_>>()[..] {
+        [] if panes == ["%0"] => "%0".to_owned(),
+        [opened] => opened.clone(),
+        _ => panic!("one runner opened: {panes:?}"),
+    }
 }
 
 fn rollouts(home: &Path) -> Vec<std::path::PathBuf> {
@@ -6513,12 +6520,6 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     );
     let text = std::fs::read_to_string(brief)
         .unwrap_or_else(|e| panic!("the brief left with the launch: {} {e}", brief.display()));
-    assert_eq!(
-        server.panes().len(),
-        2,
-        "the runner's one pane: {:?}",
-        server.panes()
-    );
     let pane = runner_pane(&server);
 
     // A repeated launch before the release meets the open intent and holds
@@ -7351,6 +7352,7 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
         let mut runner = suite_runner(&server, "stub-resume");
         runner.verify = Some(1);
         runner.init_fleet();
+        hold_server(&server);
         let cwd = runner.state_dir().to_path_buf();
         let home = dir.path().join(format!("{harness}-home"));
         if harness == "codex" {
@@ -7706,6 +7708,9 @@ fn a_pi_controller_resume_continues_by_the_session_file_its_pending_names() {
         let mut runner = suite_runner(&server, "stub-record");
         runner.verify = Some(1);
         runner.init_fleet();
+        if case == "named" {
+            hold_server(&server);
+        }
         let cwd = runner.state_dir().to_path_buf();
         let home = dir.path().join("pi-home");
         std::fs::create_dir_all(&home).unwrap();
@@ -10960,4 +10965,223 @@ fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv
         json!(["--permission-mode", "dontAsk"]),
         "the caller's permission words stand on the record: {overseer}"
     );
+}
+
+/// A second session on the server, as a person's server holds others: a
+/// runner that ends the fleet session it ran alone in, its shell exec'd
+/// away, leaves the server standing for the close that reads its window.
+fn hold_server(server: &Server) {
+    let held = tmux(&server.socket, &["new-session", "-d", "-s", "bystander"]);
+    assert!(held.status.success(), "new-session: {}", stderr(&held));
+}
+
+/// What holds `pane`'s terminal, as tmux names it.
+fn foreground_name(server: &Server, pane: &str) -> String {
+    let out = tmux(
+        &server.socket,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{pane_current_command}",
+        ],
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// The first start over a session whose one window is an idle shell runs
+/// the controller in that shell: the session holds one window, the
+/// controller's.
+#[test]
+fn a_first_start_runs_in_the_sessions_one_idle_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let birth = server.session_panes();
+    let pane = started_controller(&runner);
+    assert_eq!(server.session_panes(), birth, "one window stands");
+    assert_eq!(
+        vec![pane],
+        birth,
+        "the controller runs in the session's shell"
+    );
+}
+
+/// A start beside a pane that is not an idle shell opens a window of its
+/// own and leaves that pane as it stood: the session's shell running a
+/// command, replaced by one, or running a shell as its job, or a second
+/// window standing.
+#[test]
+fn a_start_beside_a_busy_shell_or_a_second_window_opens_its_own_window() {
+    // (what the session's shell is given, what then holds its terminal)
+    let cases = [
+        (Some("sleep 600"), "sleep"),
+        (Some("exec sleep 600"), "sleep"),
+        (Some("sh -c 'read line'"), "sh"),
+        (None, ""),
+    ];
+    for (line, holder) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let shell = server.session_panes()[0].clone();
+        match line {
+            Some(line) => {
+                server.send_line(&shell, line);
+                wait_until("the job holds the shell's terminal", SETTLE, || {
+                    foreground_name(&server, &shell) == holder
+                });
+            }
+            None => {
+                server.open_window("second", dir.path(), pane_shell());
+            }
+        }
+        let before = server.session_panes();
+        let pane = started_controller(&runner);
+        let after = server.session_panes();
+        assert_eq!(after.len(), before.len() + 1, "{line:?}: {after:?}");
+        assert!(!before.contains(&pane), "{line:?}: its own window");
+        assert!(after.contains(&shell), "{line:?}: the shell stands");
+        if line.is_some() {
+            assert_eq!(
+                foreground_name(&server, &shell),
+                holder,
+                "{line:?}: the job still holds the shell"
+            );
+        }
+    }
+}
+
+/// A start over the session's idle shell whose launch line is refused
+/// before its paste fails and leaves that shell standing, untyped: nothing
+/// of the session is closed.
+#[test]
+fn a_failed_start_over_the_idle_shell_leaves_it_standing() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let tools = runner.state_dir().join("refusing-tools");
+    std::fs::create_dir(&tools).unwrap();
+    write_executable(
+        &tools.join("tmux"),
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = load-buffer ]; then\n    echo 'refused: load-buffer' >&2\n    exit 1\n  fi\ndone\nexec '{}' \"$@\"\n",
+            which_tmux()
+        ),
+    );
+    runner.tools = Some(tools);
+    let birth = server.session_panes();
+    let report = effect_report(&runner.op_fleet(&json!({
+        "op": "start-controller",
+        "controller": pending(runner.state_dir()),
+    })));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "launch-line-unsent",
+        "{report}"
+    );
+    assert_eq!(server.session_panes(), birth, "the shell stands alone");
+    let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &birth[0]]);
+    assert!(
+        !String::from_utf8_lossy(&screen.stdout).contains("/bin/sh -c"),
+        "nothing typed into the shell"
+    );
+}
+
+/// A line the person typed into the session's idle shell and left unsent
+/// is discarded before the start types its own: joined to it, the launch
+/// line would never run. The receipt is written and the controller runs in
+/// that shell.
+#[test]
+fn a_start_over_a_line_left_unsent_in_the_idle_shell_runs_only_its_own_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let shell = server.session_panes()[0].clone();
+    let typed = tmux(
+        &server.socket,
+        &["send-keys", "-t", &shell, "-l", "false && "],
+    );
+    assert!(typed.status.success(), "send-keys: {}", stderr(&typed));
+    wait_until("the unsent line shows", SETTLE, || {
+        let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &shell]);
+        String::from_utf8_lossy(&screen.stdout).contains("false &&")
+    });
+    let pane = started_controller(&runner);
+    assert_eq!(pane, shell, "the controller runs in the session's shell");
+    assert_eq!(server.session_panes(), vec![shell], "one window stands");
+}
+
+/// A stop of a controller alone in its session gives its pane back as the
+/// session's shell: kendex never ends a session it did not make. The
+/// session keeps one idle shell window, and the next start runs there: one
+/// window across the start, the stop and the start.
+#[test]
+fn a_stop_of_a_controller_alone_leaves_its_sessions_shell_and_the_next_start_runs_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let birth = server.session_panes();
+    assert_eq!(vec![started_controller(&runner)], birth);
+    runner.op_fleet(&json!({"op": "stop-controller"}));
+    let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(
+        server.session_panes(),
+        birth,
+        "the session's one window stands"
+    );
+    wait_until("the window holds an idle shell", SETTLE, || {
+        foreground_name(&server, &birth[0]) == "bash"
+    });
+    assert_eq!(
+        vec![started_controller(&runner)],
+        birth,
+        "the next start runs in that shell"
+    );
+    assert_eq!(server.session_panes(), birth, "one window stands");
+}
+
+/// A start whose job ended after it recorded the session's idle shell and
+/// before its line ran there is failed by the reconcile once the launch
+/// bound has passed, and the shell is left as it stands: no receipt ever
+/// made it the effect's own.
+#[test]
+fn a_start_ended_before_its_line_ran_in_the_idle_shell_fails_and_leaves_the_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let shell = server.session_panes()[0].clone();
+    let pid = server.pane_pid(&shell);
+    let mut opening = opening_phase(&server, now_ms() - 5_000, Some(&shell));
+    opening["adopted"] = json!(true);
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = json!({"pending": pending(runner.state_dir())});
+    fleet["intents"] = json!([{
+        "id": "start-controller:overseer:0:1-1",
+        "op": "start-controller",
+        "target": "overseer:0",
+        "created_at": "2026-01-29T15:20:00Z",
+        "outcome": "not-started",
+        "phase": opening,
+        "obligations": {"standing": [{"kind": "receipt", "role": "runner"}], "discharged": []},
+    }]);
+    runner.write_fleet(&fleet);
+    let report = runner.reconcile_one();
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "nothing-registered",
+        "{report}"
+    );
+    assert_eq!(report["intent"]["observation"]["cause"], "pane-kept");
+    assert_eq!(server.session_panes(), vec![shell.clone()]);
+    assert_eq!(server.pane_pid(&shell), pid, "the shell is untouched");
 }
