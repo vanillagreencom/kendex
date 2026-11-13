@@ -566,7 +566,8 @@ echo "=== restack continue runs the commit hooks under the branch's committed se
 
 # The commit-msg hook is the commit-guards resolver, which reads an exported
 # key ahead of the tree's committed settings. The control cuts the scrub from
-# the replay continue in a private package copy.
+# the replay continue in a private package copy, made beside a copy of
+# commit-guards as the shipped script stands beside it.
 settings_read() { # SCRIPT WORLD
   build "$2" settings-conflict publish restack-replay resolve
   cat >"$MAIN/.git/hooks/commit-msg" <<HOOK
@@ -584,6 +585,7 @@ assert_eq "$(settings_read "$WORKTREE_SCRIPT" settings-fixed)" "rc=0 read=branch
   "the replay continue's commit-msg hook reads the branch's value, not the main checkout's"
 mkdir -p "$TMP_ROOT/settings-pkg"
 cp -R "$(cd "$TEST_DIR/.." && pwd)" "$TMP_ROOT/settings-pkg/worktree"
+cp -R "$(cd "$TEST_DIR/../.." && pwd)/commit-guards" "$TMP_ROOT/settings-pkg/commit-guards"
 settings_mutant="$TMP_ROOT/settings-pkg/worktree/scripts/worktree"
 sed -i.bak 's/(GIT_EDITOR=true without_committed_settings git -C "\$WT_PATH" cherry-pick --continue/(GIT_EDITOR=true git -C "$WT_PATH" cherry-pick --continue/' "$settings_mutant"
 rm -f -- "${settings_mutant:?}.bak"

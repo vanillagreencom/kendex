@@ -159,6 +159,9 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+# The one key the caller names, and the two keys that decide how it prints:
+# no other line of the project files is read. The value is printed, and
+# nothing is started after the load.
+kendex_load_project_env "$PROJECT_ROOT" -- "$1" ORCH_USER_MODE ORCH_CONSUMER_REPOS
 
 orch_env_value "$@"

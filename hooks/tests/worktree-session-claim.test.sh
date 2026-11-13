@@ -484,28 +484,28 @@ EOF
 }
 output_failure_rows
 
-# The worktree skill's scripts load the main checkout's `.env.local` as shell,
-# so a hook that ran one would run the repository's code at every session
-# start. A row: label|dir|owner, the session starting in TREE or HARNESS_TREE
-# under a `.env.local` that creates a file when anything sources it.
-ENV_ROWS="a skill-created worktree runs no project file|tree|alice
-a worktree with no issue record runs no project file|harness|none"
+# The worktree skill's scripts load the main checkout's settings and
+# `.env.local`, so a hook that ran one would take the repository's values at
+# every session start. Both files name an owner the guard's ladder ranks
+# above USER, so a load of either one claims the tree under that owner. A
+# row: label|dir|owner, the session starting in TREE or HARNESS_TREE.
+ENV_ROWS="a skill-created worktree loads no project file|tree|alice
+a worktree with no issue record loads no project file|harness|none"
 env_rows() {
-  local label dir want_owner cwd ran="$TMP_ROOT/env-ran"
-  printf ': >"%s"\n' "$ran" >"$MAIN/.env.local"
+  local label dir want_owner cwd
+  printf '[env]\nKENDEX_SESSION_OWNER = "settings-owner"\n' >"$MAIN/kendex.settings.toml"
+  printf 'export KENDEX_SESSION_OWNER=private-owner\n' >"$MAIN/.env.local"
   while IFS='|' read -r label dir want_owner; do
     release_all
     install_world installed
-    rm -f -- "$ran"
     case "$dir" in
       tree) cwd=$TREE ;;
       harness) cwd=$HARNESS_TREE ;;
     esac
     run_hook_in "$cwd" USER=alice || :
-    assert_eq "ran=$([ -e "$ran" ] && echo yes || echo no) owner=$(lease_owner "$cwd")" \
-      "ran=no owner=$want_owner" "$label"
+    assert_eq "owner=$(lease_owner "$cwd")" "owner=$want_owner" "$label"
   done <<<"$ENV_ROWS"
-  rm -f -- "${MAIN:?}/.env.local"
+  rm -f -- "${MAIN:?}/.env.local" "${MAIN:?}/kendex.settings.toml"
 }
 env_rows
 
@@ -553,10 +553,15 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # failed claim stops a working session at compaction or clear.
   control maintenance-stops '  6) advise maintenance "$ROOT" \' '  6) notice maintenance "$ROOT" \' session_rows \
     "claude: a compaction or clear in the admitted session continues past a busy guard lock;claude: an admitted session continues past a failed lease write;"
-  # A hook that claims whatever tree it starts in runs the project file of
-  # one no `worktree create` returned, such as a harness's own.
+  # A hook that claims whatever tree it starts in claims one no `worktree
+  # create` returned, such as a harness's own.
   control unmarked-env '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' ':' env_rows \
-    "a worktree with no issue record runs no project file;"
+    "a worktree with no issue record loads no project file;"
+  # A hook that loads the main checkout's project files before it claims
+  # takes the owner they name, as one asking the skill's scripts would.
+  control loads-project-env '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' \
+    '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0; . "'"$WORKTREE_SCRIPTS"'/lib/kendex-env.sh"; kendex_load_project_env "${COMMON_DIR%/.git}" -- KENDEX_SESSION_OWNER' env_rows \
+    "a skill-created worktree loads no project file;"
 
 fi
 

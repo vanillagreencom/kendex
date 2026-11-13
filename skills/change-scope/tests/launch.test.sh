@@ -147,15 +147,15 @@ settings_control() { # NAME SETTING LINE REPLACEMENT
 settings_control standard-paths match \
   '    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then' '    if false; then'
 settings_control root-refusal root-malformed \
-  '    kendex_load_settings_file "$root/kendex.settings.toml" || exit 1' \
-  '    kendex_load_settings_file "$root/kendex.settings.toml" || :'
+  '    kendex_load_settings_file "$root/kendex.settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1' \
+  '    kendex_load_settings_file "$root/kendex.settings.toml" -- HARNESS_CI_STANDARD_PATHS || :'
 settings_control local-refusal local-malformed \
-  '    kendex_load_settings_file "$root/.kendex/settings.toml" || exit 1' \
-  '    kendex_load_settings_file "$root/.kendex/settings.toml" || :'
+  '    kendex_load_settings_file "$root/.kendex/settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1' \
+  '    kendex_load_settings_file "$root/.kendex/settings.toml" -- HARNESS_CI_STANDARD_PATHS || :'
 settings_control root-resolution resolver-failed \
   '  root="$(change_scope_main_root "$1")" || return 1' '  root="$(change_scope_main_root "$1")" || root="$1"'
 settings_control local-precedence local-empty \
-  '    kendex_load_settings_file "$root/.kendex/settings.toml" || exit 1' '    : "$root/.kendex/settings.toml" || exit 1'
+  '    kendex_load_settings_file "$root/.kendex/settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1' '    : "$root/.kendex/settings.toml" || exit 1'
 
 # Expected delta floors the estimate; a body with no count is standard.
 LOCATION='**Location**: `src/main.rs`'

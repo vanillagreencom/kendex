@@ -43,11 +43,11 @@ mailbox_fleet_record() ( # full|data DIR [STATE_DIR]
     # shellcheck source=kendex-env.sh
     . "$lib/kendex-env.sh" || return 1
     if [ "$scope" = full ]; then
-        kendex_load_project_env "$top" || return 1
+        kendex_load_project_env "$top" -- ORCH_STATE_DIR || return 1
     else
         for file in kendex.settings.toml .kendex/settings.toml; do
             value="$(unset ORCH_STATE_DIR
-                kendex_load_settings_file "$top/$file" || exit 1
+                kendex_load_settings_file "$top/$file" -- ORCH_STATE_DIR || exit 1
                 [ -z "${ORCH_STATE_DIR+set}" ] || printf '=%s' "$ORCH_STATE_DIR")" || return 1
             [ -z "$value" ] || ORCH_STATE_DIR="${value#=}"
         done

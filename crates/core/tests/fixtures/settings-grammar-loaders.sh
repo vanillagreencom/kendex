@@ -47,7 +47,7 @@ env_sh() { # KEY -> loads:VALUE | refused | unread
     unset -v "$1" 2>/dev/null || :
     # shellcheck source=/dev/null
     source "$env_lib"
-    kendex_load_settings_file "$file" >/dev/null 2>&1 || { echo refused; exit 0; }
+    kendex_load_settings_file "$file" -- "$1" >/dev/null 2>&1 || { echo refused; exit 0; }
     # The shell's own variable, not `printenv`: this answers whether the
     # load created one. `printenv` would only answer whether one exists,
     # which for an inherited name is true however the file reads — and for

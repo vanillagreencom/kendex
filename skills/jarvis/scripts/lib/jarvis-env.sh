@@ -9,7 +9,7 @@ ORCH_SCRIPTS="$JARVIS_LIB/../../../orch/scripts"
 source "$MAILBOX_LIB/kendex-env.sh"
 
 jarvis_load() {
-  kendex_load_project_env "$1" || return 1
+  [[ ! -r "$ORCH_SCRIPTS/lib/settings-names.sh" ]] || source "$ORCH_SCRIPTS/lib/settings-names.sh"; kendex_load_project_env "$1" -- JARVIS_CONTROL_HOST JARVIS_CONTROL_USER JARVIS_LOG_DIR JARVIS_MAIN_HOST JARVIS_REMOTE_HOSTS JARVIS_UNATTENDED_HARNESSES JARVIS_WAKE_SETTLE_SECS ${orch_settings_names[@]+"${orch_settings_names[@]}"} || return 1
   export JARVIS_CONTROL_HOST="${JARVIS_CONTROL_HOST:-}"
   export JARVIS_CONTROL_USER="${JARVIS_CONTROL_USER:-}"
   export JARVIS_REMOTE_HOSTS="${JARVIS_REMOTE_HOSTS:-}"

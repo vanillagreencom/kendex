@@ -168,6 +168,20 @@ project_file() {
       printf 'export SECOND_OPINION_CURRENT_MODEL=codex\n' >"$PROJ/.env.local"
       printf '[env]\n# SECOND_OPINION_CURRENT_MODEL = "claude"\nUNRELATED = "1"\n\n[notes]\nSECOND_OPINION_CURRENT_MODEL = "claude"\n' >"$PROJ/kendex.settings.toml"
       ;;
+    # A roster naming my-model first, its command from the settings file or
+    # from the private env file.
+    target-settings) printf '[env]\nSECOND_OPINION_MODELS = "my-model codex"\nSECOND_OPINION_MY_MODEL_CMD = "%s"\n' "$ROW/bin/lane-extra" >"$PROJ/kendex.settings.toml" ;;
+    target-envlocal)
+      printf '[env]\nSECOND_OPINION_MODELS = "my-model codex"\n' >"$PROJ/kendex.settings.toml"
+      printf 'SECOND_OPINION_MY_MODEL_CMD=%s\n' "$ROW/bin/lane-extra" >"$PROJ/.env.local"
+      ;;
+    # A forced target with spaces in it, beside a private env file that
+    # exports BASH_ENV: a bash program that sources it leaves bash-env-ran.
+    target-spaced)
+      printf '[env]\nSECOND_OPINION_TARGET = "x BASH_ENV y"\n' >"$PROJ/kendex.settings.toml"
+      printf 'export BASH_ENV=%s\n' "$ROW/bash-env.sh" >"$PROJ/.env.local"
+      printf ': >"%s"\n' "$ROW/bash-env-ran" >"$ROW/bash-env.sh"
+      ;;
     *) echo "UNKNOWN-PROJECT-FILE: $1" >&2; exit 2 ;;
   esac
 }

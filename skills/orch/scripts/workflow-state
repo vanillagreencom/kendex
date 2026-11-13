@@ -1924,7 +1924,7 @@ workflow_state_path() { # KEY
     local STATE_DIR STATE_PREFIX STATE_DIR_FLAG
     # shellcheck source=lib/kendex-env.sh
     source "$SCRIPT_DIR/lib/kendex-env.sh" || return 1
-    kendex_load_project_env "$PROJECT_ROOT" || return 1
+    kendex_load_project_env "$PROJECT_ROOT" -- ORCH_STATE_DIR || return 1
     STATE_DIR_FLAG=""
     resolve_state_dir || return 1
     cmd_path "$@"
@@ -1985,12 +1985,13 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 settings_state_dir() { # FILE
     (
         unset ORCH_STATE_DIR
-        kendex_load_settings_file "$1" || exit 1
+        kendex_load_settings_file "$1" -- ORCH_STATE_DIR || exit 1
         [[ -z "${ORCH_STATE_DIR+set}" ]] || printf '=%s' "$ORCH_STATE_DIR"
     )
 }
 if [[ "$parse_rc" -eq 9 ]]; then
-    kendex_load_project_env "$PROJECT_ROOT"
+    # FLEET_DIR roots the default archive (lib/state-archive.sh).
+    kendex_load_project_env "$PROJECT_ROOT" -- ORCH_STATE_DIR FLEET_DIR
 else
     for settings_file in kendex.settings.toml .kendex/settings.toml; do
         settings_dir="$(settings_state_dir "$PROJECT_ROOT/$settings_file")" || exit 1

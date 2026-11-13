@@ -19,6 +19,9 @@
 #   bigdiff                  a staged file whose diff runs past the inline cap
 #   bigdel                   bigdiff, and a committed file deleted after it
 #   settings:<globs>         the project settings' SECOND_OPINION_REVIEW_INSTRUCTIONS
+#   bases                    origin/main and origin/trunk refs, and two commits
+#   defaultbranch:<branch>   the project settings' WORKTREE_DEFAULT_BRANCH
+#   script:cut               the copy with that name cut from the package's list
 #   bsd                      sed, head, stat, cat, basename and dirname refusing `--`
 # The state adds:
 #   lenses=<the lens names in the prompt's order>[+bash3.2 when the portability lens names it]
@@ -44,6 +47,13 @@ mkdir -p "$PROJ/skills"
 git init -q "$PROJ"
 second_opinion_install "$SKILL_DIR" "$PROJ/skills"
 HERMETIC="$PROJ/skills/second-opinion/scripts/second-opinion"
+# The must-fail control's copy beside it: worktree's default branch cut from
+# the package's list.
+CUT="$PROJ/skills/second-opinion/scripts/second-opinion-cut"
+sed 's/^  WORKTREE_DEFAULT_BRANCH)$/  )/' "$HERMETIC" >"$CUT"
+chmod +x "$CUT"
+[[ "$(grep -c '^  WORKTREE_DEFAULT_BRANCH)$' "$HERMETIC")" == 1 && "$(grep -c '^  WORKTREE_DEFAULT_BRANCH)$' "$CUT")" == 0 ]] \
+  || { echo "control branch-unasked finds exactly one line to cut" >&2; exit 2; }
 
 # BSD utilities that read `--` as a file operand.
 BSDBIN="$TMP_ROOT/bsdbin"
@@ -132,6 +142,25 @@ suite_word() {
       rm "$WORK/zgone.txt"
       ;;
     settings:*) printf '[env]\nSECOND_OPINION_REVIEW_INSTRUCTIONS = "%s"\n' "${1#settings:}" >"$PROJ/kendex.settings.toml" ;;
+    # origin/main at the first commit, origin/trunk at `first`, HEAD at
+    # `second`: a scope from trunk holds `second` alone, one from main both
+    bases)
+      git -C "$WORK" update-ref refs/remotes/origin/main HEAD
+      printf 'first\n' >"$WORK/first.txt"
+      git -C "$WORK" add first.txt
+      git -C "$WORK" -c commit.gpgsign=false commit -q -m first
+      git -C "$WORK" update-ref refs/remotes/origin/trunk HEAD
+      printf 'second\n' >"$WORK/second.txt"
+      git -C "$WORK" add second.txt
+      git -C "$WORK" -c commit.gpgsign=false commit -q -m second
+      HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
+      ;;
+    # the project settings' WORKTREE_DEFAULT_BRANCH, none from the caller
+    defaultbranch:*)
+      printf '[env]\nWORKTREE_DEFAULT_BRANCH = "%s"\n' "${1#defaultbranch:}" >"$PROJ/kendex.settings.toml"
+      W_UNSET+=(-u WORKTREE_DEFAULT_BRANCH)
+      ;;
+    script:cut) W_SCRIPT="$CUT" ;;
     bsd) W_ENV+=("PATH=$BSDBIN:$TMP_ROOT/psbin:$TMP_ROOT/bin:$PATH") ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
   esac
@@ -247,5 +276,7 @@ a diff past the cap is cut at its last whole line inside it and ends with a mark
 a deletion past the cap is in the owner-only file the marker names, readable while the review runs|bigdel env:SECOND_OPINION_CLAUDE_INLINE_DIFF=1|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=mode=700,ignore=* tmp=0 dirty=- lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+world,+first,[diff truncated at the 131072-byte cap: the remaining 140141 of its 140391 bytes are omitted; page them with your read tools from the whole diff, kept until this review ends at: <work>/tmp/second-opinion/review-claude-diff.*] paged=-rw-------:-gone
 another target's setting leaves this target's prompt without the diff|env:SECOND_OPINION_CODEX_INLINE_DIFF=1|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 BSD utilities that refuse -- still build the whole prompt|layout:full bsd|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head> diff=-
+a review with no range is scoped from the default branch the project's settings name|bases defaultbranch:trunk env:SECOND_OPINION_CLAUDE_INLINE_DIFF=1|review --range=|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+second
+control: with that name cut from the package's list, the scope starts from origin/main|bases defaultbranch:trunk script:cut env:SECOND_OPINION_CLAUDE_INLINE_DIFF=1|review --range=|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+first,+second
 "
 finish

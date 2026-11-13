@@ -30,7 +30,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+source "$SCRIPT_DIR/lib/settings-names.sh"
+kendex_load_project_env "$PROJECT_ROOT" -- "${orch_settings_names[@]}"
 overseer_host_resolve_loaded host
 verb="${1:-}"
 case "$verb" in

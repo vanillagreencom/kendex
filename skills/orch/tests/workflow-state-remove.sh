@@ -99,6 +99,30 @@ done
   && pass "the last line names the archive, which holds what went and the kept status file and mailbox" \
   || fail "the last line names the archive, which holds what went and the kept status file and mailbox" "archive=$archive missing:$missing"
 
+# The fleet folder a project's own settings file sets roots the archive:
+# workflow-state's load asks for FLEET_DIR. Each run is made from that project,
+# with no FLEET_DIR in the environment and HOME inside this suite's root.
+settings_fleet_run() { # NAME SCRIPT — prints the archive the close-out names
+  local sd="$TMP_ROOT/$1-sd" project="$TMP_ROOT/$1-project" out
+  build "$sd"
+  mkdir -p "$project" "$TMP_ROOT/$1-home"
+  printf '[env]\nFLEET_DIR = "%s"\n' "$TMP_ROOT/$1-fleet" > "$project/kendex.settings.toml"
+  out="$(cd "$project" && env -u FLEET_DIR -u ORCH_PROGRESS_REPORT_DIR HOME="$TMP_ROOT/$1-home" \
+    ORCH_RECORD_RETENTION_DAYS=2 bash "$2" --state-dir "$sd" remove KEN-1 2>&1)" || true
+  out="$(tail -n 1 <<<"$out")"
+  printf '%s' "${out#removed kept=}"
+}
+archive="$(settings_fleet_run settings-fleet "$WS")"
+[[ "$archive" == "$TMP_ROOT/settings-fleet-fleet/archive/"*"/oversee/close-KEN-1-"*.tgz ]] \
+  && pass "the project settings' FLEET_DIR roots the close-out's archive" \
+  || fail "the project settings' FLEET_DIR roots the close-out's archive" "archive=$archive"
+FLEET_UNASKED="$(mutant_scripts fleet-unasked workflow-state)/workflow-state" || exit 1
+mutate_file "$FLEET_UNASKED" '-- ORCH_STATE_DIR FLEET_DIR' '-- ORCH_STATE_DIR'
+archive="$(settings_fleet_run settings-fleet-cut "$FLEET_UNASKED")"
+[[ "$archive" == "$TMP_ROOT/settings-fleet-cut-home/.fleet/archive/"*"/oversee/close-KEN-1-"*.tgz ]] \
+  && pass "control: with FLEET_DIR unasked, the archive falls back under HOME" \
+  || fail "control: with FLEET_DIR unasked, the archive falls back under HOME" "archive=$archive"
+
 # The fleet's own files, each under a key its name carries, so only the fleet
 # exclusion keeps it: ITEM|PATH|label.
 while IFS='|' read -r item path label; do

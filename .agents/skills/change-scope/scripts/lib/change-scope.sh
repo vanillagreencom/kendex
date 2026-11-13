@@ -198,8 +198,8 @@ change_scope_location_load() { # REPO
     unset HARNESS_CI_STANDARD_PATHS
     # shellcheck source=kendex-env.sh
     . "$CHANGE_SCOPE_LIB_DIR/kendex-env.sh" || exit 1
-    kendex_load_settings_file "$root/kendex.settings.toml" || exit 1
-    kendex_load_settings_file "$root/.kendex/settings.toml" || exit 1
+    kendex_load_settings_file "$root/kendex.settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1
+    kendex_load_settings_file "$root/.kendex/settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1
     globs=()
     read -r -a globs <<<"${HARNESS_CI_STANDARD_PATHS:-}"
     [ "${#globs[@]}" -eq 0 ] || printf '%s\n' "${globs[@]}"
@@ -330,7 +330,8 @@ base_settings() {
     # shellcheck source=kendex-env.sh
     . "$CHANGE_SCOPE_LIB_DIR/kendex-env.sh" || exit 1
     for file in "${files[@]}"; do
-      kendex_load_settings_file "$file" || exit 1
+      # shellcheck disable=SC2086
+      kendex_load_settings_file "$file" -- $BASE_SETTINGS_KEYS || exit 1
     done
     for key in $BASE_SETTINGS_KEYS; do
       [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3

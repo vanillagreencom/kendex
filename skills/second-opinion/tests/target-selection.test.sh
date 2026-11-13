@@ -143,4 +143,25 @@ got="$(run review)"
 assert_eq "$([[ -e "$ROW/copilot-ran" ]] && printf ran || printf 'never ran')" 'never ran' "a copilot executable on PATH is never run without SECOND_OPINION_COPILOT_CMD"
 assert_eq "$(grep -c -F -- "$(err_word nocmd:copilot:COPILOT)" "$ROW/stderr")" 1 "the copilot target is skipped naming its missing command, not a missing CLI"
 assert_eq "${got%% *}" rc=0 "the next roster entry answers instead"
+
+# A target's own settings come from the project files once the committed
+# roster names it, from the settings file and the private env file alike. A
+# forced target with spaces in it builds no name, so the private file's
+# BASH_ENV is never assigned and no bash program of the run sources it.
+echo "=== a target's own settings come from the project files ==="
+for file in settings envlocal; do
+  # shellcheck disable=SC2086 # DEFAULTS is a word list
+  build "target-$file" $DEFAULTS models:- "proj:target-$file"
+  assert_eq "$(run detect)" "rc=0 out=my-model err= $NONE" "a target the committed roster names takes its command from the $file file"
+done
+bash_env_ran() { [[ -e "$ROW/bash-env-ran" ]] && printf ran || printf 'never ran'; }
+# shellcheck disable=SC2086 # DEFAULTS is a word list
+build target-spaced $DEFAULTS proj:target-spaced
+got="$(run detect)"
+assert_eq "${got%% err=*} $(bash_env_ran)" "rc=1 out=none never ran" "a forced target with spaces in it asks for no name outside a target's own"
+# shellcheck disable=SC2086 # DEFAULTS is a word list
+build target-spaced-control $DEFAULTS proj:target-spaced
+mutate_script "$SO" '  target_name_valid "$_target" || continue' '  : cut'
+got="$(run detect)"
+assert_eq "$(bash_env_ran)" ran "control: with the name check cut, the forced target asks for BASH_ENV and a bash program of the run sources it"
 finish

@@ -191,7 +191,7 @@ if [ -z "$AWAITING_AFTER" ]; then
   # The project's settings load in a subshell, as the github.sh router finds
   # them, so the project files set nothing else in this process.
   project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || project_root=""
-  AWAITING_AFTER="$(kendex_load_project_env "$project_root" && printf '%s' "${PR_REVIEW_WAIT_SECS-900}")" || {
+  AWAITING_AFTER="$(kendex_load_project_env "$project_root" -- PR_REVIEW_WAIT_SECS && printf '%s' "${PR_REVIEW_WAIT_SECS-900}")" || {
     watch_message watch-settings-unreadable "$project_root" "::error::pr-watch: the project settings could not be read for PR_REVIEW_WAIT_SECS" >&2
     exit 2
   }

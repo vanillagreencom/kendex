@@ -448,17 +448,32 @@ if ! PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)
 fi
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
-# kendex_load_project_env snapshots and re-asserts it.
+# kendex_load_project_env snapshots and re-asserts it. A load assigns only the
+# names it asks for: the fixed names here, and each target's own names once the
+# roster is known (target_settings_names below).
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
+# The package's one declared list: its fixed names, worktree's default branch
+# a review's scope starts from (derive_review_scope), and the four suffixes of
+# a target's own names (target_var).
+SETTINGS_NAMES=(SECOND_OPINION_ARTIFACT_DIR SECOND_OPINION_COUNT
+  SECOND_OPINION_CURRENT_MODEL SECOND_OPINION_FOREGROUND_CAP
+  SECOND_OPINION_MODELS SECOND_OPINION_REVIEW_INSTRUCTIONS
+  SECOND_OPINION_REVIEW_TARGETS SECOND_OPINION_TARGET SECOND_OPINION_TIMEOUT
+  WORKTREE_DEFAULT_BRANCH)
+TARGET_SETTINGS_SUFFIXES=(CMD MODEL ROOM_CMD INLINE_DIFF)
+readonly -a SETTINGS_NAMES TARGET_SETTINGS_SUFFIXES
 # errexit would abort on a refused load anyway, but this marker is the
 # OBSERVABLE contract: it names the terminator, so a later tolerance
 # failure (`|| true`, a set +e window) cannot pass the pin on the
 # loader's own stderr plus an unrelated exit 1.
-kendex_load_project_env "$PROJECT_ROOT" || {
-  echo "second-opinion: refusing to run on a rejected settings load" >&2
-  exit 1
+load_project_settings() { # NAME...
+  kendex_load_project_env "$PROJECT_ROOT" -- "$@" || {
+    echo "second-opinion: refusing to run on a rejected settings load" >&2
+    exit 1
+  }
 }
+load_project_settings "${SETTINGS_NAMES[@]}"
 if ! $FOREGROUND_CAP_WAS_IN_CALLER_ENV && [[ -n "${SECOND_OPINION_FOREGROUND_CAP+x}" ]]; then
   echo "Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP; remove it there and pass --foreground or export it in this session" >&2
   exit 1
@@ -1065,6 +1080,9 @@ target_var() {
   printf 'SECOND_OPINION_%s_%s' "$(printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_')" "$2"
 }
 target_cmd_var() { target_var "$1" CMD; }
+# The shape of a target name: consider_target refuses any other, and only such
+# a name builds the names a target reads.
+target_name_valid() { [[ "$1" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; }
 
 # Declared model identity of a target: SECOND_OPINION_<NAME>_MODEL, else the
 # model harness_model names for it, else the model a stock Copilot entry's
@@ -1295,6 +1313,23 @@ target_room() {
 # eligible remains the run refuses and says why: a same-model review presented
 # as a second opinion is worse than no review.
 
+# Each target's own settings, asked once the roster and a forced target are
+# known: both are settings, so no fixed list holds these names. Only a target
+# consider_target accepts builds names, so a value makes the loader assign a
+# target's four keys under this package's prefix and nothing else: a forced
+# target is not split on whitespace, and a built name with a space in it would
+# ask for each word inside it.
+TARGET_SETTINGS_NAMES=()
+while IFS= read -r _target; do
+  target_name_valid "$_target" || continue
+  for _suffix in "${TARGET_SETTINGS_SUFFIXES[@]}"; do
+    _name="$(target_var "$_target" "$_suffix")" || exit 1
+    TARGET_SETTINGS_NAMES+=("$_name")
+  done
+done < <(roster_entries; [[ -z "$FORCED_TARGET" ]] || printf '%s\n' "$FORCED_TARGET")
+unset _target _suffix _name
+load_project_settings ${TARGET_SETTINGS_NAMES[@]+"${TARGET_SETTINGS_NAMES[@]}"}
+
 [[ -n "${SECOND_OPINION_REVIEW_TARGETS:-}" ]] \
   && echo "→ SECOND_OPINION_REVIEW_TARGETS is not read; the roster is SECOND_OPINION_MODELS" >&2
 
@@ -1325,7 +1360,7 @@ SEEN_NAMESPACES=()
 roster_has_current() {
   local t
   while IFS= read -r t; do
-    [[ "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    target_name_valid "$t" || continue
     [[ "$(target_model "$t")" == "$CURRENT_MODEL" ]] && return 0
   done < <(roster_entries)
   return 1
@@ -1349,7 +1384,7 @@ skip_target() {
 # the same lane would race on its artifact paths and duplicate its provenance.
 consider_target() {
   local t="$1" model existing ns
-  if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+  if ! target_name_valid "$t"; then
     # An arbitrary token would otherwise reach indirect variable expansion and
     # per-lane file paths.
     skip_target "$t" "invalid target name"

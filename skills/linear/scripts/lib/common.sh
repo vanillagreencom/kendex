@@ -74,7 +74,17 @@ _CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
 # Load public config and local secrets before deriving defaults.
 # shellcheck source=kendex-env.sh
 source "$_LIB_DIR/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+# The linear package's one declared list: the settings and credentials its
+# scripts read, LINEAR_CACHE_ROOT included so that its retirement is still
+# reported, and KENDEX_ENV_FILE, which auth-check reads to name the private
+# file. A name not here is never assigned from a project file.
+linear_settings_names=(
+    KENDEX_ENV_FILE KENDEX_USER_EMAIL LINEAR_AGENT_LABELS LINEAR_API_KEY LINEAR_APP_TOKEN
+    LINEAR_CACHE_ROOT LINEAR_CLIENT_ID LINEAR_CLIENT_SECRET LINEAR_FORMAT
+    LINEAR_JOURNAL_DIR LINEAR_REQUIRE_REACH LINEAR_RETRY_BASE_DELAY
+    LINEAR_TAXONOMY_FILE LINEAR_TEAM LINEAR_TEAM_PREFIX
+)
+kendex_load_project_env "$PROJECT_ROOT" -- "${linear_settings_names[@]}"
 
 # The local store is gone, and a root setting left in the environment or a
 # project file would otherwise read as if it still redirected something.

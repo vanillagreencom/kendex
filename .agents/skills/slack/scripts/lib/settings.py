@@ -45,7 +45,7 @@ ROOT_ENV = r'''
 set -euo pipefail
 source "$1/scripts/lib/kendex-env.sh"
 kendex_project_env_supports selected-private-path || exit 1
-kendex_load_project_env "$2" _slack_private_file || exit 1
+kendex_load_project_env "$2" _slack_private_file -- "${@:4}" || exit 1
 reader=$3
 shift 3
 export "$@"

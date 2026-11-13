@@ -122,7 +122,7 @@ branch_growth_render_roots() {
     exec 3>&1 1>&2
     # shellcheck source=kendex-env.sh
     source "$BRANCH_GROWTH_LIB_DIR/kendex-env.sh" || exit 1
-    kendex_load_project_env "$repo_root" || exit 1
+    kendex_load_project_env "$repo_root" -- ORCH_SIZE_RENDER_ROOTS || exit 1
     printf '%s' "${ORCH_SIZE_RENDER_ROOTS:-}" >&3
   )" || {
     branch_growth_fail "the kendex project settings under '$repo_root' could not be read"

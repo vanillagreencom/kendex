@@ -24,7 +24,7 @@ read_value() { # LIBRARY FUNCTION KEY
     cd -- "$4"
     source "$1"
     if [[ "$2" == kendex_load_project_env ]]; then
-      kendex_load_project_env "$4" || exit 1
+      kendex_load_project_env "$4" -- "$3" || exit 1
       printf "%s" "${!3}"
     else
       "$2" "$3" fallback

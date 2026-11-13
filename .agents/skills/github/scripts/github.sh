@@ -245,7 +245,9 @@ if [ -z "$_help_route" ]; then
     if [ -n "$_env_root" ]; then
         # shellcheck source=lib/kendex-env.sh
         source "$SCRIPT_DIR/lib/kendex-env.sh"
-        kendex_load_project_env "$_env_root"
+        # shellcheck source=lib/settings-names.sh
+        source "$SCRIPT_DIR/lib/settings-names.sh"
+        kendex_load_project_env "$_env_root" -- "${github_settings_names[@]}"
     fi
     if [ -n "$_CALLER_GH_TOKEN_SET" ]; then
         export GH_TOKEN="$_CALLER_GH_TOKEN"

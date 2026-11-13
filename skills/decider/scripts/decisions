@@ -161,7 +161,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
+# The decider's one declared list: the names this script reads.
+kendex_load_project_env "$PROJECT_ROOT" -- DECISIONS_DIR DECISIONS_BASE_REF DECISION_ID_PREFIX DECISION_ID_WIDTH
 
 if ! command -v jq &>/dev/null; then
   emit_error dependency-missing command=jq "jq is required but is not installed."

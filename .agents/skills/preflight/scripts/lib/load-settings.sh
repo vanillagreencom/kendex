@@ -54,15 +54,18 @@ pf_stage_settings_file() { # SOURCE SNAPSHOT-ROOT ALLOW-UNTRACKED
   }
 }
 
+# Preflight's one declared list: the names its checks read from the project.
+pf_settings_names=(PREFLIGHT_JSONC_GLOBS PREFLIGHT_MIGRATION_GLOBS PREFLIGHT_SOURCED_LIB_GLOBS)
+
 pf_load_project_env() { # MODE ROOT SCRATCH
   local mode="$1" root="$2" scratch="$3" snapshot="$3/settings"
   if [ "$mode" != staged ]; then
-    kendex_load_project_env "$root"
+    kendex_load_project_env "$root" -- "${pf_settings_names[@]}"
     return
   fi
   mkdir -p -- "$snapshot/.kendex" || return 1
   pf_stage_settings_file kendex.settings.toml "$snapshot" 0 || return 1
   pf_stage_settings_file .kendex/settings.toml "$snapshot" 0 || return 1
   pf_stage_settings_file .env.local "$snapshot" 1 || return 1
-  kendex_load_project_env "$snapshot"
+  kendex_load_project_env "$snapshot" -- "${pf_settings_names[@]}"
 }

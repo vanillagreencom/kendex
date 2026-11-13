@@ -2403,7 +2403,7 @@ settings_values() { # FILE KEY...
     file=$1
     shift
     source "$TOOLS_DIR/../skills/orch/scripts/lib/kendex-env.sh" || exit 1
-    kendex_load_settings_file "$file" || exit 1
+    kendex_load_settings_file "$file" -- "$@" || exit 1
     for key in "$@"; do printf '%s=%s\n' "$key" "${!key-}"; done
   )
 }

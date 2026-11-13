@@ -1972,7 +1972,7 @@ lm_wait_minutes() {
   fi
   # shellcheck source=lib/kendex-env.sh
   . "$SCRIPT_DIR/lib/kendex-env.sh"
-  kendex_load_project_env "$OWN_ROOT" 2>"$WORK_DIR/env.err" ||
+  kendex_load_project_env "$OWN_ROOT" -- ORCH_ASK_WAIT_MINUTES 2>"$WORK_DIR/env.err" ||
     refuse file-unreadable "$OWN_ROOT/kendex.settings.toml" "$(cat -- "$WORK_DIR/env.err")"
   WAIT="${ORCH_ASK_WAIT_MINUTES-120}"
   case "$WAIT" in

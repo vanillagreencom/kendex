@@ -184,7 +184,8 @@ owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY [ASK TO CLOSE]
   # shellcheck source=kendex-env.sh
   # shellcheck source=common-root.sh
   if . "$1/lib/kendex-env.sh" && . "$1/lib/common-root.sh" &&
-     root="$(mailbox_common_root .)" && kendex_load_project_env "$root"; then
+     root="$(mailbox_common_root .)" &&
+     kendex_load_project_env "$root" -- ORCH_OWNER_EMAIL KENDEX_USER_EMAIL ORCH_OWNER_ASK_LABEL; then
     OWNER_TRACKER_SETTINGS_CAUSE=settings-unset
     OWNER_TRACKER_EMAIL="${ORCH_OWNER_EMAIL:-${KENDEX_USER_EMAIL:-}}"
     OWNER_TRACKER_LABEL="${ORCH_OWNER_ASK_LABEL:-}"

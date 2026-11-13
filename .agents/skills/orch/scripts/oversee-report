@@ -370,7 +370,8 @@ exec 2>"$WORK_DIR/held.err"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT" || refuse settings-load "$PROJECT_ROOT"
+source "$SCRIPT_DIR/lib/settings-names.sh"
+kendex_load_project_env "$PROJECT_ROOT" -- "${orch_settings_names[@]}" || refuse settings-load "$PROJECT_ROOT"
 # shellcheck source=lib/date-ladder.sh
 source "$SCRIPT_DIR/lib/date-ladder.sh"
 # shellcheck source=lib/lane-gitfile.sh

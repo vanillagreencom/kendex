@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The `--no-private-env` global flag on workflow-state: a caller reading
 # another checkout's state parses that checkout's settings files and never
-# sources its private env file, which would run the checkout's shell in the
-# caller, and takes ORCH_STATE_DIR alone from those settings, so no PATH or
+# reads its private env file, whose values are the checkout's own, and
+# takes ORCH_STATE_DIR alone from those settings, so no PATH or
 # loader variable of the checkout's reaches a tool the caller runs. Each row
 # reads the fleet state in a checkout whose settings move the state directory
 # and whose private env file or [env] table would run its own code. The
@@ -31,33 +31,31 @@ source "$TEST_DIR/lib/growth-state.sh"
 echo "=== workflow-state --no-private-env ==="
 
 PEER="$TMP_ROOT/peer"
-SENTINEL="$TMP_ROOT/sourced"
 git init -q "$PEER"
 git -C "$PEER" config gc.auto 0
 git -C "$PEER" config maintenance.auto false
 printf '[env]\nORCH_STATE_DIR = "fleet"\n' > "$PEER/kendex.settings.toml"
-printf 'touch %q\n' "$SENTINEL" > "$PEER/.env.local"
+# The private file's state directory is what shows it was read.
+printf 'ORCH_STATE_DIR=private\n' > "$PEER/.env.local"
 
 OUT=""
 path_of() { # SCRIPT [GLOBAL OPTS...]
   local script="$1"
   shift
-  rm -f -- "$SENTINEL"
   OUT="$(cd "$PEER" && env -u ORCH_STATE_DIR -u KENDEX_ENV_FILE "$script" "$@" path oversee)"
 }
-sourced() { if [ -e "$SENTINEL" ]; then echo sourced; else echo unsourced; fi; }
 
-# ARGS|PATH|SENTINEL|LABEL, ARGS `-` for none.
-while IFS='|' read -r args want sentinel label; do
+# ARGS|PATH|LABEL, ARGS `-` for none.
+while IFS='|' read -r args want label; do
   if [ "$args" = - ]; then path_of "$WS"; else path_of "$WS" "$args"; fi
-  assert_eq "$OUT $(sourced)" "$want $sentinel" "$label"
+  assert_eq "$OUT" "$want" "$label"
 done <<EOF
--|$PEER/fleet/workflow-state-oversee.json|sourced|without the flag the private env file is sourced
---no-private-env|$PEER/fleet/workflow-state-oversee.json|unsourced|the flag reads the settings and never sources the private env file
+-|$PEER/private/workflow-state-oversee.json|without the flag the private env file is read
+--no-private-env|$PEER/fleet/workflow-state-oversee.json|the flag reads the settings and never the private env file
 EOF
 
 path_of "$WS" --state-dir "$TMP_ROOT/given" --no-private-env
-assert_eq "$OUT $(sourced)" "$TMP_ROOT/given/workflow-state-oversee.json unsourced" \
+assert_eq "$OUT" "$TMP_ROOT/given/workflow-state-oversee.json" \
   "the flag stands beside --state-dir"
 
 # A peer whose [env] points PATH at its own jq and head, each writing RAN
@@ -103,7 +101,8 @@ mutant() { # NAME OLD NEW
 
 mutant sources-anyway 'if [[ "$parse_rc" -eq 9 ]]; then' 'if true; then'
 path_of "$MUTANT" --no-private-env
-assert_eq "$(sourced)" "sourced" "control: a loader that ignores the flag sources the private env file"
+assert_eq "$OUT" "$PEER/private/workflow-state-oversee.json" \
+  "control: a loader that ignores the flag reads the private env file"
 
 mutant no-settings 'for settings_file in kendex.settings.toml .kendex/settings.toml; do' 'for settings_file in; do'
 path_of "$MUTANT" --no-private-env
@@ -111,7 +110,7 @@ assert_eq "$OUT" "$PEER/tmp/workflow-state-oversee.json" \
   "control: without the settings load the flag reads the default state directory"
 
 mutant whole-table '        settings_dir="$(settings_state_dir "$PROJECT_ROOT/$settings_file")" || exit 1' \
-  '        kendex_load_settings_file "$PROJECT_ROOT/$settings_file" || exit 1; settings_dir=""'
+  '        kendex_load_settings_file "$PROJECT_ROOT/$settings_file" -- PATH LD_PRELOAD ORCH_STATE_DIR || exit 1; settings_dir=""'
 armed_get "$MUTANT"
 assert_eq "${OUT#* }" "ran preload=none" \
   "control: a loader that sets the whole [env] table in the sender runs the peer's own tools"

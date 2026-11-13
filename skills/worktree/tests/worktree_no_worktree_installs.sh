@@ -17,7 +17,7 @@ export MSYS=winsymlinks:nativestrict
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-unset WORKTREE_SETUP_CMD WORKTREE_TEST_PR_HEAD
+unset WORKTREE_SETUP_CMD WORKTREE_TEST_PR_HEAD SETUP_TEST_EXIT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
@@ -265,6 +265,9 @@ done <<<"$ROWS"
 # writing its marker. The marker records its physical working directory.
 setup_fixture() {
   local mode="$1"
+  # The planted command's exit status, which a row exports for the runs it
+  # makes fail.
+  unset SETUP_TEST_EXIT
   mkdir -p "$MAIN/config"
   printf 'secret\n' >"$MAIN/config/local.txt"
   printf 'copy\n' >"$MAIN/copied.txt"
@@ -282,13 +285,13 @@ SETTINGS
   WT="$ROOT/.worktrees/repo/issue-setup"
   case "$mode" in
     unset) sed '/^WORKTREE_SETUP_CMD =/d' "$MAIN/kendex.settings.toml" >"$ROOT/settings"; mv "$ROOT/settings" "$MAIN/kendex.settings.toml" ;;
-    fail|retry-fail|retry-ok|transfer|transfer-retry) printf 'export SETUP_TEST_EXIT="1"\n' >"$MAIN/.env.local" ;;
+    fail|retry-fail|retry-ok|transfer|transfer-retry) export SETUP_TEST_EXIT=1 ;;
   esac
   case "$mode" in
     retry-fail|retry-ok)
       tool create issue-setup
       [[ -f "$WT/setup-marker" ]] || { echo 'FIXTURE: failed setup did not leave its marker' >&2; exit 2; }
-      [[ "$mode" != retry-ok ]] || printf 'export SETUP_TEST_EXIT="0"\n' >"$MAIN/.env.local"
+      [[ "$mode" != retry-ok ]] || export SETUP_TEST_EXIT=0
       ;;
     codex|claude|branch) git -C "$MAIN" worktree add -q -b app-created "$WT" main ;;
     hosted) WT="$ROOT/.worktrees/repo/lane" ;;
@@ -300,7 +303,7 @@ SETTINGS
       printf 'untracked\n' >"$MAIN/untracked.txt"
       if [[ "$mode" == transfer-retry ]]; then
         tool create issue-setup --transfer issue-setup
-        printf 'export SETUP_TEST_EXIT="0"\n' >"$MAIN/.env.local"
+        export SETUP_TEST_EXIT=0
       fi
       ;;
   esac
@@ -317,7 +320,7 @@ SETTINGS
       git -C "$MAIN" add base.txt
       git -C "$MAIN" commit -q -m main-change
       git -C "$MAIN" push -q origin main
-      [[ "$mode" != keep-fail ]] || printf 'export SETUP_TEST_EXIT="1"\n' >"$MAIN/.env.local"
+      [[ "$mode" != keep-fail ]] || export SETUP_TEST_EXIT=1
       ;;
     unavailable)
       mkdir -p "$ROOT/pkg"
@@ -404,7 +407,7 @@ hosted_recovery_row() {
   build "hosted-$route-$SETUP_CASE_SERIAL" repo
   setup_fixture success
   WT="$ROOT/.worktrees/repo/lane"
-  printf 'export SETUP_TEST_EXIT="1"\n' >"$MAIN/.env.local"
+  export SETUP_TEST_EXIT=1
   case "$route" in
     branch) command='create issue-setup feature --hosted' ;;
     from) command='create issue-setup feature --hosted --from main' ;;
@@ -434,11 +437,11 @@ hosted_recovery_row() {
   git_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
   [[ ! -f "$git_dir/kendex-issue" ]] || record="$(cat "$git_dir/kendex-issue")"
   assert_eq "$record" issue-setup "$route: failed hosted setup keeps its issue identity"
-  printf 'export SETUP_TEST_EXIT="0"\n' >"$MAIN/.env.local"
+  export SETUP_TEST_EXIT=0
   assert_eq "$(setup_result "$mode" 'create issue-setup --hosted --reuse')" \
     'rc=0 out=<root>/.worktrees/repo/lane err=worktree-reuse-dirty: <root>/.worktrees/repo/lane calls=2 marker=ok registered=yes stash='"$stash"' preserved=yes consumer=a7f4c9;b1d8e2' "$route: hosted reuse retries setup in the retained tree"
   assert_eq "$(git -C "$WT" branch --show-current)" feature "$route: hosted retry preserves its non-issue branch"
-  unset WORKTREE_TEST_PR_HEAD
+  unset WORKTREE_TEST_PR_HEAD SETUP_TEST_EXIT
 }
 echo '=== hosted setup recovery on non-issue branches ==='
 for route in branch from base pr transfer; do

@@ -907,6 +907,19 @@ LANES="$TMP_ROOT/mutant-no-client/scripts/lanes"
 table \
   "control: with the missing client id read as expired, the lane sends its operator to a re-login|ORCH_LANES_CLAUDE_CLIENT_ID=|$LIST|claude.status=expired"
 LANES="$SCRIPTS_DIR/lanes"
+# The client id a project's own settings file sets reaches the renewal: orch's
+# list asks for it. The runs are made from that project, the id unset here.
+CLIENT_PROJECT="$TMP_ROOT/client-project"; mkdir -p "$CLIENT_PROJECT"
+git -C "$CLIENT_PROJECT" init -q -b main
+printf '[env]\nORCH_LANES_CLAUDE_CLIENT_ID = "client-1"\n' > "$CLIENT_PROJECT/kendex.settings.toml"
+SETTINGS_FREE="$NOSETTINGS"; NOSETTINGS="$CLIENT_PROJECT"
+table \
+  "a client id the project's settings file sets reaches the renewal||$LIST|claude.status=expired claude.headroom_pct=null"
+lanes_mutant mutant-client-list lib/settings-names.sh '^  ORCH_LANES_CLAUDE_CLIENT_ID$'
+LANES="$TMP_ROOT/mutant-client-list/scripts/lanes"
+table \
+  "control: with the client id cut from orch's list, the project's id never reaches the renewal||$LIST|claude.status=error claude.cause=$NO_CLIENT_CAUSE"
+LANES="$SCRIPTS_DIR/lanes"; NOSETTINGS="$SETTINGS_FREE"
 new_home enterprise
 make_lane "$H" claude 3600 enterprise
 jq -n '{spend: {}}' > "$FIXTURE_DIR/.claude.json"

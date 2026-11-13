@@ -1798,6 +1798,7 @@ touch node_modules/dep
             inherited = {f"BASH_FUNC_{function}%%": "() { return 0; }"
                          for function in ("strip_trailing_slashes", "normalize_worktree_config_path", "split_worktree_config_words")}
             result = self.create(SSH_TEST_SUPPORT_MARKER=str(marker), **inherited)
+            self.last_copy_support_result = result
             self.assertEqual(result.returncode, 1, result.stderr)
             remote_library = Path(self.row["clone"]) / support / name
             fields = [line.split() for line in result.stderr.splitlines()
@@ -1822,7 +1823,8 @@ touch node_modules/dep
             self.assertNotEqual(self.script.read_text(), original)
             with self.assertRaises(AssertionError):
                 self.test_install_refuses_unavailable_copy_support_before_project_settings()
-            self.assertTrue((self.root / "copy-settings-loaded-0").exists())
+            # The private file's command line is refused once settings load.
+            self.assertIn(b"kendex-env: private-env-line", self.last_copy_support_result.stderr)
 
     def test_install_rejects_invalid_copy_paths_without_installing(self):
         self.fake_npm()
@@ -1989,8 +1991,8 @@ touch node_modules/dep
   [[ "$1" == selected-private-path ]]
 }
 '''
-        output = '''  if [[ -n "${2:-}" ]]; then
-    printf -v "$2" '%s' "$_kendex_private_file"
+        output = '''  if [[ -n "$_kendex_out" ]]; then
+    printf -v "$_kendex_out" '%s' "$_kendex_private_file"
   fi
 '''
         self.assertEqual(original.count(capability), 1)
@@ -3521,7 +3523,7 @@ fi'''))
                 else:
                     settings.write_text(f'[env]\nORCH_ARCHIVE_ROOT = "{folder}"\n')
                     if source in ("private", "environment"):
-                        private.write_text(f'printf "settings-note\\n"\nORCH_ARCHIVE_ROOT="{folder}-private"\n')
+                        private.write_text(f'ORCH_ARCHIVE_ROOT="{folder}-private"\n')
                         folder = Path(str(folder) + "-private")
                     if source == "environment":
                         folder = self.root / (source + " environment")

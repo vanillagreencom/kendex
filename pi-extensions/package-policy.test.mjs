@@ -287,7 +287,7 @@ const settingsPath = join(root, "..", "kendex.settings.toml");
 const settingsReader = join(root, "..", "skills", "orch", "scripts", "lib", "kendex-env.sh");
 
 function validationBoundSecs() {
-	const script = 'set -euo pipefail; source "$1"; kendex_load_settings_file "$2"; printf "%s" "${DEV_VALIDATE_TIMEOUT_SECS-}"';
+	const script = 'set -euo pipefail; source "$1"; kendex_load_settings_file "$2" -- DEV_VALIDATE_TIMEOUT_SECS; printf "%s" "${DEV_VALIDATE_TIMEOUT_SECS-}"';
 	const read = spawnSync("bash", ["-c", script, "validation-bound", settingsReader, settingsPath], { encoding: "utf8", env: { PATH: process.env.PATH } });
 	assert.equal(read.status, 0, `reading DEV_VALIDATE_TIMEOUT_SECS from ${settingsPath} failed: ${read.stderr || read.error}`);
 	assert.match(read.stdout, /^[1-9][0-9]*$/, `DEV_VALIDATE_TIMEOUT_SECS in ${settingsPath} is not a positive whole number of seconds: [${read.stdout}]`);

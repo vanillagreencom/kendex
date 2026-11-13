@@ -155,7 +155,29 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 # committed_settings_keys.
 CALLER_ENV_NAMES=""
 case "${1:-}" in path|exists) ;; *) CALLER_ENV_NAMES="$(compgen -e)" ;; esac
-kendex_load_project_env "$PROJECT_ROOT"
+# The names worktree takes from the project's files: its own settings and
+# the private file's selector, then the list of each sibling package that
+# stands beside it: github's, which its GitHub reads take, and
+# commit-guards', which the hooks of its git commands read from the
+# environment it hands them (committed_settings_keys).
+WORKTREE_SETTINGS_NAMES=(
+  BOT_EMAIL BOT_NAME BOT_REMOTE_NAME BOT_REMOTE_URL BOT_SIGNING_KEY KENDEX_ENV_FILE
+  WORKTREE_BASE_DIR WORKTREE_COPIES WORKTREE_DEFAULT_BRANCH WORKTREE_HOSTED_NAME
+  WORKTREE_MKDIRS WORKTREE_RELATIVE_SYMLINKS WORKTREE_SETUP_CMD WORKTREE_SYMLINKS
+)
+GITHUB_NAMES_LIB="$SCRIPT_DIR/../../github/scripts/lib/settings-names.sh"
+if [[ -f "$GITHUB_NAMES_LIB" ]]; then
+  # shellcheck source=../../github/scripts/lib/settings-names.sh
+  source "$GITHUB_NAMES_LIB"
+  WORKTREE_SETTINGS_NAMES+=("${github_settings_names[@]}")
+fi
+COMMIT_GUARDS_NAMES_LIB="$SCRIPT_DIR/../../commit-guards/scripts/lib/settings-names.sh"
+if [[ -f "$COMMIT_GUARDS_NAMES_LIB" ]]; then
+  # shellcheck source=../../commit-guards/scripts/lib/settings-names.sh
+  source "$COMMIT_GUARDS_NAMES_LIB"
+  WORKTREE_SETTINGS_NAMES+=("${commit_guards_settings_names[@]}")
+fi
+kendex_load_project_env "$PROJECT_ROOT" -- "${WORKTREE_SETTINGS_NAMES[@]}"
 
 # Worktree link setup, health and repair.
 # shellcheck source=lib/links.sh
@@ -941,7 +963,7 @@ committed_settings_keys() (
     git -C "$PROJECT_ROOT" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || rc=$?
     # --error-unmatch keeps exit 1 for an untracked path alone.
     case "$rc" in
-      0) kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1 ;;
+      0) kendex_load_settings_file "$PROJECT_ROOT/$file" -- "${WORKTREE_SETTINGS_NAMES[@]}" || exit 1 ;;
       1) untracked+=("$file") ;;
       *) exit 1 ;;
     esac
@@ -951,9 +973,9 @@ committed_settings_keys() (
     caller_exported "$name" || unset "$name"
   done <<<"$tracked"
   for file in ${untracked[@]+"${untracked[@]}"}; do
-    kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1
+    kendex_load_settings_file "$PROJECT_ROOT/$file" -- "${WORKTREE_SETTINGS_NAMES[@]}" || exit 1
   done
-  kendex_source_env_file "$PROJECT_ROOT/$private" || exit 1
+  kendex_source_env_file "$PROJECT_ROOT/$private" -- "${WORKTREE_SETTINGS_NAMES[@]}" || exit 1
   while IFS= read -r name; do
     [[ -n "${!name+x}" ]] || printf '%s\n' "$name"
   done <<<"$tracked"

@@ -569,7 +569,7 @@ load_install_settings() {
     printf 'lane-host-ssh: loader-private-path-missing path=%s output=selected-private-path\\n' "$loader" >&2
     return 1
   fi
-  kendex_load_project_env "$1" selected_private >&2 || return 1
+  kendex_load_project_env "$1" selected_private -- WORKTREE_SYMLINKS WORKTREE_COPIES >&2 || return 1
   printf '%q ' "${WORKTREE_SYMLINKS:-}" "$selected_private" "${WORKTREE_COPIES:-}"
 }
 settings=$(load_install_settings "$1") || exit 1
@@ -888,7 +888,7 @@ if test -r "$loader"; then
   if ! test -f "$state"; then
     # ORCH_STATE_DIR as the checkout's settings and private env file set it,
     # else tmp; a relative value joins the clone.
-    if ! dir=$(cd "$from" && . "$loader" && kendex_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && printf '%s\\n' "${ORCH_STATE_DIR:-tmp}"); then
+    if ! dir=$(cd "$from" && . "$loader" && kendex_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "" -- ORCH_STATE_DIR && printf '%s\\n' "${ORCH_STATE_DIR:-tmp}"); then
       printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
       exit 1
     fi

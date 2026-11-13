@@ -330,8 +330,10 @@ kendex_github_load_project_env_preserving_caller() {
   lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck source=kendex-env.sh
   source "$lib_dir/kendex-env.sh"
+  # shellcheck source=settings-names.sh
+  source "$lib_dir/settings-names.sh"
   local load_status=0
-  kendex_load_project_env "$project_root" || load_status=$?
+  kendex_load_project_env "$project_root" -- "${github_settings_names[@]}" || load_status=$?
   if [[ "$load_status" -ne 0 ]]; then
     # A FAILED load supplies no token: the loader stops before .env.local,
     # so a value exported ahead of the bad line would beat the personal
@@ -381,7 +383,7 @@ kendex_github_load_token() {
       # value exported ahead of the bad line would beat the .env.local
       # override the ladder promises wins.
       source "$lib_dir/kendex-env.sh" >/dev/null || true
-      kendex_load_project_env "$project_root" >/dev/null || exit 3
+      kendex_load_project_env "$project_root" -- GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN >/dev/null || exit 3
       kendex_github_select_auth_token "$mode" || true
     ) || load_status=$?
   fi

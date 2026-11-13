@@ -161,7 +161,7 @@ lane_hosted_state_dir() {
     if ! setting="$(
       source "$LANE_GITFILE_LIB/kendex-env.sh" || exit 1
       unset ORCH_STATE_DIR KENDEX_ENV_FILE
-      kendex_load_settings_file "$4/settings.toml" || exit 1
+      kendex_load_settings_file "$4/settings.toml" -- ORCH_STATE_DIR KENDEX_ENV_FILE || exit 1
       [[ -z "${ORCH_STATE_DIR+set}" ]] || printf 's=%s\n' "$ORCH_STATE_DIR"
       [[ -z "${KENDEX_ENV_FILE+set}" ]] || printf 'e=%s\n' "$KENDEX_ENV_FILE"
     )" 2>"$4/state.err"; then
@@ -299,7 +299,7 @@ lane_local_state_path() {
   dir="$("$BASH" -c 'set -euo pipefail
 cd -- "$1"
 . "$2"
-kendex_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+kendex_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" -- ORCH_STATE_DIR
 printf "%s\n" "${ORCH_STATE_DIR:-tmp}"' lane-gitfile "$1" "$LANE_GITFILE_LIB/kendex-env.sh" 2>"$3/state.err")" || return 1
   if [[ "$dir" != /* ]]; then
     common="$1"
