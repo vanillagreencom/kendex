@@ -934,7 +934,10 @@ tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row[
                            "archive", "root", "--suffix", suffix], stdout=subprocess.PIPE)
     if root.returncode != 0:
         raise SystemExit(root.returncode if root.returncode > 0 else 1)
-    directory = Path(json.loads(root.stdout)["result"]["root"]) / suffix
+    placed = json.loads(root.stdout)["result"]["root"]
+    if placed is None:
+        return
+    directory = Path(placed) / suffix
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix=f"tmp-{time.time_ns()}-", suffix=".tgz", dir=directory, delete=False) as archive:
@@ -1116,7 +1119,7 @@ Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories, and the item's workflow state, falling back to
 an older launch's settings when needed, with a lane-host-state member naming that
 state's member, under ORCH_ARCHIVE_ROOT/REPO/ITEM/tmp-STAMP.tgz
-(the root defaults to ${FLEET_DIR:-$HOME/.fleet}/archive) and prints kept=PATH.
+and prints kept=PATH; with no root set it keeps no archive and prints no kept line.
 A configured root requires a readable Git worktree list on this host. A failed archive stops
 close, as does a state directory the clone's workflow-state cannot resolve,
 reported as state-unresolved. An already removed worktree's tmp cannot be recovered. No remaining tmp

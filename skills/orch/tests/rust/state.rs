@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 const ITEM: &str = "KEN-4687";
 
 /// One state directory under a temporary root, and the binary run against
-/// it with the suites' isolation.
+/// it with the suites' isolation from that root.
 struct Store {
     dir: tempfile::TempDir,
 }
@@ -47,7 +47,7 @@ impl Store {
     fn run_env(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
         let mut command = support::isolated();
         command.arg("--state-dir").arg(self.state_dir());
-        command.args(args);
+        command.args(args).current_dir(self.dir.path());
         for (name, value) in env {
             command.env(name, value);
         }
@@ -1581,14 +1581,14 @@ fn state_remove_waits_on_the_records_lock_a_writer_holds() {
     store.init_fleet();
     let path = store.item_path(ITEM);
     let before = fs::read_to_string(&path).unwrap();
-    let fleet_dir = store.dir.path().display().to_string();
+    let archive_root = store.dir.path().join("archive").display().to_string();
     let mut guard = agent_runtime::record::lock(&path).unwrap();
     guard
         .with(|| {
             let (key, _) = refused_env(
                 &store,
                 &["state", "remove", "--item", ITEM],
-                &[("FLEET_DIR", &fleet_dir)],
+                &[("ORCH_ARCHIVE_ROOT", &archive_root)],
             );
             assert_eq!(key, "lock-timeout");
             assert_eq!(fs::read_to_string(&path).unwrap(), before);
@@ -1606,6 +1606,7 @@ fn state_remove_waits_on_the_records_lock_a_writer_holds() {
 #[test]
 fn state_remove_keeps_a_shell_store_update_in_flight() {
     let store = Store::new();
+    support::git_checkout(store.dir.path());
     store.init(ITEM);
     store.init_fleet();
     let path = store.item_path(ITEM);
@@ -1654,9 +1655,9 @@ esac
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let fleet_dir = store.dir.path().display().to_string();
+    let archive_root = store.dir.path().join("archive").display().to_string();
     let remove = ["state", "remove", "--item", ITEM];
-    let (key, _) = refused_env(&store, &remove, &[("FLEET_DIR", &fleet_dir)]);
+    let (key, _) = refused_env(&store, &remove, &[("ORCH_ARCHIVE_ROOT", &archive_root)]);
     assert_eq!(key, "lock-timeout");
     fs::write(&release, "").unwrap();
     let status = writer.0.wait().unwrap();
@@ -1664,7 +1665,7 @@ esac
     std::io::Read::read_to_string(&mut writer.0.stderr.take().unwrap(), &mut cause).unwrap();
     assert!(status.success(), "{cause}");
     assert_eq!(store.doc(&path)["review_inflight"], "latest turn");
-    let closed = store.ok_env(&remove, &[("FLEET_DIR", &fleet_dir)]);
+    let closed = store.ok_env(&remove, &[("ORCH_ARCHIVE_ROOT", &archive_root)]);
     let archive = closed["kept"].as_str().expect("the archive");
     let held: Value = serde_json::from_str(&archived_file(archive, &path)).unwrap();
     assert_eq!(held["review_inflight"], "latest turn");
@@ -1684,6 +1685,7 @@ esac
 #[test]
 fn state_remove_leaves_a_shell_update_waiting_on_its_lock_no_record_to_write() {
     let store = Store::new();
+    support::git_checkout(store.dir.path());
     store.init(ITEM);
     store.init_fleet();
     let path = store.item_path(ITEM);
@@ -1731,7 +1733,8 @@ exec "$REAL_TAR" "$@"
         .env("REAL_TAR", real("tar"))
         .env("HOLD_READY", &ready)
         .env("HOLD_RELEASE", &release)
-        .env("FLEET_DIR", store.dir.path())
+        .env("ORCH_ARCHIVE_ROOT", store.dir.path().join("archive"))
+        .current_dir(store.dir.path())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut remove = support::Owned(remove.spawn().unwrap());
@@ -1787,6 +1790,7 @@ exec "$REAL_TAR" "$@"
 #[test]
 fn state_remove_retires_the_session_rows_of_a_pane_the_server_no_longer_holds() {
     let store = Store::new();
+    support::git_checkout(store.dir.path());
     store.init(ITEM);
     let server = support::Server::start(store.dir.path(), "rows");
     let live_pane = server.panes()[0].trim_start_matches('%').to_owned();
@@ -1806,7 +1810,7 @@ fn state_remove_retires_the_session_rows_of_a_pane_the_server_no_longer_holds() 
         .arg("--state-dir")
         .arg(store.state_dir())
         .args(["state", "remove", "--item", ITEM])
-        .env("FLEET_DIR", store.dir.path())
+        .env("ORCH_ARCHIVE_ROOT", store.dir.path().join("archive"))
         .env(
             "TMUX",
             format!("{},{},0", server.socket.display(), server.pid),
@@ -1844,6 +1848,7 @@ fn a_reinitialized_item_keeps_both_old_and_new_lock_writers() {
         return;
     }
     let store = Store::new();
+    support::git_checkout(store.dir.path());
     store.init(ITEM);
     store.init_fleet();
     let tools = store.dir.path().join("tools");
@@ -1897,11 +1902,12 @@ esac
         .arg("--state-dir")
         .arg(store.state_dir())
         .args(["state", "remove", "--item", ITEM])
-        .env("FLEET_DIR", store.dir.path())
+        .env("ORCH_ARCHIVE_ROOT", store.dir.path().join("archive"))
         .env("PATH", support::tool_path(&[&tools]))
         .env("REAL_TAR", real("tar"))
         .env("TAR_READY", at("tar.ready"))
         .env("TAR_RELEASE", at("tar.release"))
+        .current_dir(store.dir.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut remove = support::Owned(remove.spawn().unwrap());
@@ -1993,7 +1999,6 @@ exec "$REAL_TMUX" "$@"
         .arg("--state-dir")
         .arg(store.state_dir())
         .args(["state", "remove", "--item", "KEN-OTHER"])
-        .env("FLEET_DIR", store.dir.path())
         .env(
             "TMUX",
             format!("{},{},0", server.socket.display(), server.pid),
@@ -2020,6 +2025,7 @@ exec "$REAL_TMUX" "$@"
 #[test]
 fn state_remove_archives_a_relative_path_from_the_callers_directory() {
     let store = Store::new();
+    support::git_checkout(store.dir.path());
     store.init(ITEM);
     store.init_fleet();
     let caller = store.dir.path().join("caller");
@@ -2031,7 +2037,7 @@ fn state_remove_archives_a_relative_path_from_the_callers_directory() {
         .arg("--state-dir")
         .arg(store.state_dir())
         .args(["state", "remove", "--item", ITEM, "--archive", "extra"])
-        .env("FLEET_DIR", store.dir.path())
+        .env("ORCH_ARCHIVE_ROOT", store.dir.path().join("archive"))
         .current_dir(&caller);
     let out = command.output().unwrap();
     assert!(
@@ -2154,10 +2160,31 @@ fn a_relative_archive_root_refuses_the_archive_write_alone() {
     }
 }
 
+/// With no archive root set, `state remove` still removes the item's
+/// files and keeps no copy: its reply names `kept` null.
+#[test]
+fn state_remove_with_no_archive_root_removes_and_keeps_no_copy() {
+    let store = Store::new();
+    store.init(ITEM);
+    store.init_fleet();
+    let record = store.item_path(ITEM);
+    let closed = store.ok(&["state", "remove", "--item", ITEM]);
+    assert_eq!(closed["kept"], Value::Null, "{closed}");
+    assert!(
+        closed["removed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(record.display().to_string())),
+        "{closed}"
+    );
+    assert!(!record.exists());
+}
+
 /// The archive verbs a caller runs before a removal no state verb makes.
 /// `archive write` files its paths as one private tarball under
 /// `<root>/<project's name>/oversee` and answers the tarball and that
-/// directory; `archive root` answers the root a caller files under. A
+/// directory; `archive root` answers the root a caller files under. With
+/// no root set both answer null and nothing is written. A
 /// configured root the caller's removal root, the state directory or a
 /// linked worktree of the project would take refuses before anything is
 /// written there: an archive inside what is removed next is no copy. Each
@@ -2201,7 +2228,6 @@ fn the_archive_verbs_file_under_a_root_no_removal_takes() {
     fs::write(&input, "{\"id\":\"1\"}\n").unwrap();
     let elsewhere = tmp.join("elsewhere");
     fs::create_dir_all(&elsewhere).unwrap();
-    let fleet = tmp.join("fleet");
     let path = |p: &Path| p.display().to_string();
     let write = [
         "archive".to_owned(),
@@ -2222,22 +2248,16 @@ fn the_archive_verbs_file_under_a_root_no_removal_takes() {
         &'a [String],
         &'a Path,
         Option<PathBuf>,
-        Result<PathBuf, PathBuf>,
+        Result<Option<PathBuf>, PathBuf>,
     );
     let cases: Vec<Case> = vec![
-        (
-            "write, default",
-            &write,
-            &elsewhere,
-            None,
-            Ok(fleet.join("archive")),
-        ),
+        ("write, unplaced", &write, &elsewhere, None, Ok(None)),
         (
             "write, configured",
             &write,
             &elsewhere,
             Some(tmp.join("archives")),
-            Ok(tmp.join("archives")),
+            Ok(Some(tmp.join("archives"))),
         ),
         (
             "write, inside the removal root",
@@ -2260,19 +2280,13 @@ fn the_archive_verbs_file_under_a_root_no_removal_takes() {
             Some(worktree.join("archives")),
             Err(worktree.clone()),
         ),
-        (
-            "root, default",
-            &root,
-            &project,
-            None,
-            Ok(fleet.join("archive")),
-        ),
+        ("root, unplaced", &root, &project, None, Ok(None)),
         (
             "root, configured",
             &root,
             &project,
             Some(tmp.join("archives")),
-            Ok(tmp.join("archives")),
+            Ok(Some(tmp.join("archives"))),
         ),
         (
             "root, inside the state directory",
@@ -2295,7 +2309,6 @@ fn the_archive_verbs_file_under_a_root_no_removal_takes() {
             .arg("--state-dir")
             .arg(&state)
             .args(words)
-            .env("FLEET_DIR", &fleet)
             .current_dir(cwd);
         if let Some(configured) = &configured {
             command.env("ORCH_ARCHIVE_ROOT", configured);
@@ -2303,11 +2316,20 @@ fn the_archive_verbs_file_under_a_root_no_removal_takes() {
         let out = command.output().unwrap();
         let answer = reply(&out);
         match want {
-            Ok(want) if words[1] == "root" => {
+            Ok(None) => {
+                assert!(out.status.success(), "{case}: {}", support::stderr(&out));
+                let unplaced = if words[1] == "root" {
+                    json!({"root": null})
+                } else {
+                    json!({"archive": null, "dir": null})
+                };
+                assert_eq!(answer["result"], unplaced, "{case}");
+            }
+            Ok(Some(want)) if words[1] == "root" => {
                 assert!(out.status.success(), "{case}: {}", support::stderr(&out));
                 assert_eq!(answer["result"]["root"], path(&want), "{case}: {answer}");
             }
-            Ok(want) => {
+            Ok(Some(want)) => {
                 assert!(out.status.success(), "{case}: {}", support::stderr(&out));
                 let dir = want.join("project").join("oversee");
                 assert_eq!(answer["result"]["dir"], path(&dir), "{case}: {answer}");

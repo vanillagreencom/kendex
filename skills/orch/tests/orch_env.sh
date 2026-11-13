@@ -7,9 +7,10 @@
 # value falls back to the default so workflow cycle bounds always get a
 # usable number. Workflows use it to read CI_FIX_MAX_CYCLES (default 6).
 #
-# It also applies the ORCH_USER_MODE composition: under `ceo`, a composed
-# autonomy key the ladder leaves unset resolves to its unattended value rather
-# than to the caller's default. ../references/communication-modes.md § Composition
+# It also applies the ORCH_USER_MODE composition: a composed autonomy key the
+# ladder leaves unset takes the mode's value, `ask` under `engineer` (the mode
+# of a ladder that names none) and its unattended value under `ceo`, never the
+# caller's default. ../references/communication-modes.md § Composition
 # is the table; this suite pins the script that applies it. The same script
 # resolves the mode itself, so a ladder value that file does not define reads
 # back as `engineer` here rather than as itself.
@@ -116,32 +117,43 @@ cat > "$proj_engineer/kendex.settings.toml" <<'TOML'
 ORCH_USER_MODE = "engineer"
 TOML
 
-# Test 8: the package default mode composes each autonomy key.
-got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_DECISION_MODE "$ORCH_ENV" ORCH_DECISION_MODE ask)"
+# Test 8: a ladder that names no mode is in the mode that asks, whatever
+# unattended value the caller passes as its default.
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_DECISION_MODE "$ORCH_ENV" ORCH_DECISION_MODE auto-recommended)"
+assert_eq "$got" "ask" "a silent ladder asks for the decision mode"
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$ORCH_ENV" ORCH_MERGE_AUTONOMY auto)"
+assert_eq "$got" "ask" "a silent ladder asks for merge consent"
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY auto)"
+assert_eq "$got" "ask" "a silent ladder asks for issue creation"
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE ceo)"
+assert_eq "$got" "engineer" "a silent ladder reads back as engineer"
+
+# Test 8b: ceo composes each autonomy key over the caller default.
+got="$(cd "$proj_mode" && env -u ORCH_DECISION_MODE ORCH_USER_MODE=ceo "$ORCH_ENV" ORCH_DECISION_MODE ask)"
 assert_eq "$got" "auto-recommended" "ceo composes the decision mode over the caller default"
-got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$ORCH_ENV" ORCH_MERGE_AUTONOMY ask)"
+got="$(cd "$proj_mode" && env -u ORCH_MERGE_AUTONOMY ORCH_USER_MODE=ceo "$ORCH_ENV" ORCH_MERGE_AUTONOMY ask)"
 assert_eq "$got" "auto" "ceo composes merge autonomy over the caller default"
-got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
+got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=ceo "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
 assert_eq "$got" "auto" "ceo composes issue-creation autonomy over the caller default"
 
 # Test 9: composition reaches composed keys only.
-got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u CI_FIX_MAX_CYCLES "$ORCH_ENV" CI_FIX_MAX_CYCLES 6)"
+got="$(cd "$proj_mode" && env -u CI_FIX_MAX_CYCLES ORCH_USER_MODE=ceo "$ORCH_ENV" CI_FIX_MAX_CYCLES 6)"
 assert_eq "$got" "6" "an uncomposed key keeps the caller default under ceo"
 
 # Test 10: a key the settings ladder sets wins over the composed value.
 got="$(cd "$proj_override" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$ORCH_ENV" ORCH_MERGE_AUTONOMY auto)"
 assert_eq "$got" "ask" "an explicit settings value outranks the composed value"
 
-# Test 11: engineer leaves every composed key on its caller default.
-got="$(cd "$proj_engineer" && env -u ORCH_USER_MODE -u ORCH_DECISION_MODE "$ORCH_ENV" ORCH_DECISION_MODE ask)"
-assert_eq "$got" "ask" "engineer keeps the decision mode's caller default"
-got="$(cd "$proj_engineer" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
-assert_eq "$got" "ask" "engineer keeps issue-creation autonomy's caller default"
+# Test 11: engineer asks for every composed key over an unattended caller default.
+got="$(cd "$proj_engineer" && env -u ORCH_USER_MODE -u ORCH_DECISION_MODE "$ORCH_ENV" ORCH_DECISION_MODE auto-recommended)"
+assert_eq "$got" "ask" "engineer asks for the decision mode"
+got="$(cd "$proj_engineer" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY auto)"
+assert_eq "$got" "ask" "engineer asks for issue creation"
 
 # Test 12: the mode is matched exactly, so anything but `ceo` takes the engineer
 # path. The producer is a person editing kendex.settings.toml by hand, and the
 # example file offers `ceo | engineer`, so a miscased value is the reachable one.
-got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
+got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_ENV" PM_CREATE_AUTONOMY auto)"
 assert_eq "$got" "ask" "an unrecognized mode is treated as engineer"
 
 # Test 13: the same unrecognized value read directly. ../workflows/oversee.md
@@ -160,7 +172,7 @@ assert_eq "$got" "ceo" "a defined mode the ladder sets reads back unchanged"
 # hand back the caller's default where test 8 read the composed value.
 MUTANT="$(mutant_scripts mutant-scripts orch-env)/orch-env" || exit 1
 mutate_file "$MUTANT" '    composed_value "$VAR_NAME"' '    COMPOSED='
-got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$MUTANT" ORCH_MERGE_AUTONOMY ask)"
+got="$(cd "$proj_mode" && env -u ORCH_MERGE_AUTONOMY ORCH_USER_MODE=ceo "$MUTANT" ORCH_MERGE_AUTONOMY ask)"
 assert_eq "$got" "ask" "must-fail control: without the mapping ceo falls back to the caller default"
 
 # Overseer startup reads ORCH_OVERSEER_LANES through orch-env. A consumer

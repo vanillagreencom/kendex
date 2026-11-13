@@ -2083,7 +2083,10 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
     fleet["intents"] = json!([gone]);
     std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
-    let mut child = spawn_watch_run(&state_dir, &[]);
+    let mut child = watch_run_command(&state_dir, &[])
+        .env("ORCH_REPORT_EVERY_MINUTES", "120")
+        .spawn()
+        .expect("spawn watch run");
     let paths = Paths::of(&state).unwrap();
     await_claim(&mut child, &paths);
     let deadline = Instant::now() + secs(10);

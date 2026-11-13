@@ -103,7 +103,8 @@ Overseer side:
               the original first id, including after every row is removed.
               Prints `compacted item=ITEM to-lane=N to-overseer=N`.
               When rows leave, stderr names their archive as
-              `lane-mail: archived=PATH`; prune consumes this path.
+              `lane-mail: archived=PATH`; prune consumes this path. With no
+              ORCH_ARCHIVE_ROOT set, they leave with no archive and no line.
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
               append to to-lane.jsonl the answer to MSGID, or a directive that
               answers no ask. A lane's MSGID can name a notice: its inbox and
@@ -2110,15 +2111,16 @@ lm_compact_locked() {
     root="$OWN_ROOT"
     [ -n "$root" ] || root="$ROOT"
     # The runtime judges the archive root against this mailbox and the state
-    # directory, then files the dropped rows; a refusal keeps every row.
+    # directory, then files the dropped rows; a refusal keeps every row. With
+    # no root placed it answers null, and the rows leave with no copy.
     archive="$("$ORCH_SCRIPTS/orch-runtime" archive write --project "$root" --removal-root "$BOX" \
       --stem "compact-$ITEM-$COMPACT_NOW" "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" \
-      2>"$WORK_DIR/archive.err" | jq -er '.result.archive | strings' 2>/dev/null)" ||
+      2>"$WORK_DIR/archive.err" | jq -er '.result.archive | if . == null then "" else strings end' 2>/dev/null)" ||
       refuse archive-failed "$BOX" "$(cat -- "$WORK_DIR/archive.err")"
-    REFUSE_EXTRA="kept=$archive"
+    REFUSE_EXTRA="kept=${archive:-none}"
     lm_store rewrite "$BOX" "$WORK_DIR"
     REFUSE_EXTRA=""
-    lm_message archived "$archive" >&2
+    [ -z "$archive" ] || lm_message archived "$archive" >&2
   fi
   jq -r --arg item "$ITEM" '"compacted item=\($item) to-lane=\(.["to-lane"]) to-overseer=\(.["to-overseer"])"' <<<"$counts"
 }

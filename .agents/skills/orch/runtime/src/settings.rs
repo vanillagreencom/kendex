@@ -178,11 +178,9 @@ const DEFAULT_QUEUE_WAIT_CONFIRM_POLLS: u32 = 2;
 const DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS: u32 = 120;
 /// Where the prune and an item's close-out archive what they remove. A set
 /// value is an absolute path, else every archive write refuses it, while a
-/// verb that writes no archive runs; empty takes `archive/` under
-/// `FLEET_DIR`, else under `~/.fleet`.
+/// verb that writes no archive runs; empty keeps no archive, since the
+/// place is the operator's and no checkout can name it for them.
 pub const ARCHIVE_ROOT_KEY: &str = "ORCH_ARCHIVE_ROOT";
-/// The fleet directory the default archive root sits under.
-pub const FLEET_DIR_KEY: &str = "FLEET_DIR";
 const DEFAULT_RECORD_RETENTION_DAYS: u32 = 5;
 // The state verbs' keys.
 /// The fleet-log rows a successor reads whole at takeover, so the bound on
@@ -342,7 +340,6 @@ const READ_KEYS: &[&str] = &[
     REVIEW_ON_TIMEOUT_KEY,
     COPILOT_REQUESTS_KEY,
     ARCHIVE_ROOT_KEY,
-    FLEET_DIR_KEY,
     TAKEOVER_ROWS_KEY,
     FLEET_LOG_ROW_BYTES_KEY,
     PROGRESS_REPORT_DIR_KEY,
@@ -905,18 +902,7 @@ pub fn load(
     let archive_root = match get(ARCHIVE_ROOT_KEY) {
         Some(text) if Path::new(text).is_absolute() => ArchiveRoot::Configured(PathBuf::from(text)),
         Some(text) => ArchiveRoot::Invalid(text.to_owned()),
-        None => {
-            let fleet = match get(FLEET_DIR_KEY) {
-                Some(dir) => PathBuf::from(dir),
-                None => PathBuf::from(get("HOME").unwrap_or("")).join(".fleet"),
-            };
-            let fleet = if fleet.is_absolute() {
-                fleet
-            } else {
-                roots.project.join(fleet)
-            };
-            ArchiveRoot::Default(fleet.join("archive"))
-        }
+        None => ArchiveRoot::Unplaced,
     };
     let report = crate::watch::report::KEYS
         .into_iter()
@@ -1687,35 +1673,13 @@ mod tests {
 
     /// An archive root read as a bare relative path would land the
     /// archive under whatever directory the duty runs in, and a `~` taken
-    /// literally would make a directory named `~`; a default that ignored
-    /// the fleet directory would archive beside the wrong fleet. A set value is an
-    /// absolute path or held as given for the archive's write to refuse;
-    /// the default follows `FLEET_DIR`, else the home.
+    /// literally would make a directory named `~`. A set value is an
+    /// absolute path or held as given for the archive's write to refuse.
     #[test]
-    fn the_archive_root_is_absolute_or_refused_and_defaults_under_the_fleet_directory() {
+    fn the_archive_root_is_absolute_or_refused() {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
-        let settings = load(&roots, &env(&[("HOME", "/home/o")]), &FLAGS).unwrap();
-        assert_eq!(
-            settings.archive_root,
-            ArchiveRoot::Default(PathBuf::from("/home/o/.fleet/archive"))
-        );
-        let settings = load(
-            &roots,
-            &env(&[("HOME", "/home/o"), (FLEET_DIR_KEY, "/fleet")]),
-            &FLAGS,
-        )
-        .unwrap();
-        assert_eq!(
-            settings.archive_root,
-            ArchiveRoot::Default(PathBuf::from("/fleet/archive"))
-        );
-        let settings = load(
-            &roots,
-            &env(&[(FLEET_DIR_KEY, "/fleet"), (ARCHIVE_ROOT_KEY, "/archives")]),
-            &FLAGS,
-        )
-        .unwrap();
+        let settings = load(&roots, &env(&[(ARCHIVE_ROOT_KEY, "/archives")]), &FLAGS).unwrap();
         assert_eq!(
             settings.archive_root,
             ArchiveRoot::Configured(PathBuf::from("/archives"))
@@ -1750,7 +1714,7 @@ mod tests {
         assert_eq!(
             read(&[home]),
             (
-                ArchiveRoot::Default(PathBuf::from("/h/.fleet/archive")),
+                ArchiveRoot::Unplaced,
                 DEFAULT_TAKEOVER_ROWS,
                 DEFAULT_REVIEW_MAX_CYCLES
             ),

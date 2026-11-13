@@ -101,7 +101,7 @@ impl Policy {
         jiff::tz::TimeZone::get(&zone).map_err(|_| invalid(ZONE_KEY, &zone))?;
         Ok(Self {
             enabled,
-            minutes: whole(MINUTES_KEY, "120", true)?,
+            minutes: whole(MINUTES_KEY, "0", true)?,
             issues: whole(ISSUES_KEY, "0", false)?,
             upcoming: whole(UPCOMING_KEY, "5", false)?,
             quiet,

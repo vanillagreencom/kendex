@@ -271,6 +271,17 @@ pub fn isolated() -> Command {
     command
 }
 
+/// `dir` made a git checkout of its own: a configured archive root is judged
+/// against the project's worktree list, which git gives only in a checkout.
+pub fn git_checkout(dir: &Path) {
+    let out = program("git")
+        .args(["init", "-q"])
+        .arg(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git init: {}", stderr(&out));
+}
+
 /// `program` behind a wrapper that runs it with the scratch home, no global
 /// or system git configuration, no `XDG_CONFIG_HOME` (git's attributes file
 /// and cargo's git configuration default under it, so the home's own

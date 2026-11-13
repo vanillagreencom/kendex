@@ -2,8 +2,8 @@
 //! close-out and the callers of the `archive` verbs each put every path
 //! they are about to remove, and the records the prune drops, into one
 //! private tarball under the archive root first, so nothing leaves as its
-//! only copy. The root is `ORCH_ARCHIVE_ROOT`, else `archive/` under the
-//! fleet directory; a configured root is refused where a removal would take
+//! only copy. The root is `ORCH_ARCHIVE_ROOT`; with none set the removal
+//! goes ahead and keeps no copy. A configured root is refused where a removal would take
 //! the archive with it: inside the state directory, a removal root, an
 //! archived path or a linked worktree, which a merge removes. A configured
 //! value that is not absolute refuses here, at the write, so a verb that
@@ -28,9 +28,9 @@ use crate::watch::Paths;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArchiveRoot {
-    /// `${FLEET_DIR:-$HOME/.fleet}/archive`, the operator's own folder:
-    /// nothing a removal takes can hold it.
-    Default(PathBuf),
+    /// No `ORCH_ARCHIVE_ROOT`: the place is the operator's, so a removal
+    /// keeps no copy rather than file one where nobody asked.
+    Unplaced,
     /// `ORCH_ARCHIVE_ROOT`: judged against every path a removal takes
     /// before the archive is written under it.
     Configured(PathBuf),
@@ -144,15 +144,20 @@ fn oversee(project: &Path) -> PathBuf {
     PathBuf::from(name_of(project)).join("oversee")
 }
 
-/// The archive root for a destination `suffix` under it. A configured root
-/// is judged against `removed` first, the paths the caller's removal takes,
-/// and `project`'s linked worktrees.
-fn judged(root: &ArchiveRoot, suffix: &Path, project: &Path, removed: &[&Path]) -> Result<PathBuf> {
+/// The archive root for a destination `suffix` under it, `None` where none
+/// is placed. A configured root is judged against `removed` first, the
+/// paths the caller's removal takes, and `project`'s linked worktrees.
+fn judged(
+    root: &ArchiveRoot,
+    suffix: &Path,
+    project: &Path,
+    removed: &[&Path],
+) -> Result<Option<PathBuf>> {
     match root {
-        ArchiveRoot::Default(path) => Ok(path.clone()),
+        ArchiveRoot::Unplaced => Ok(None),
         ArchiveRoot::Configured(configured) => {
             check_root(configured, &configured.join(suffix), project, removed)?;
-            Ok(configured.clone())
+            Ok(Some(configured.clone()))
         }
         ArchiveRoot::Invalid(value) => {
             Err(crate::Error::from(value_refusal(ARCHIVE_ROOT_KEY, value)))
@@ -270,6 +275,7 @@ fn build(stage: &Path, tarball: &Path, records: Option<&Value>, paths: &[PathBuf
 /// where given and every path in `paths`, each as it stands on disk. A
 /// build that fails leaves no partial tarball. `removal_root` is the
 /// directory the removal acts in, which a configured root may not share.
+/// `None` where no root is placed: nothing is written.
 pub fn write(
     root: &ArchiveRoot,
     project: &Path,
@@ -277,8 +283,9 @@ pub fn write(
     stem: &str,
     records: Option<&Value>,
     paths: &[PathBuf],
-) -> Result<PathBuf> {
-    archived(root, project, &[removal_root], stem, records, paths).map(|(_, tarball)| tarball)
+) -> Result<Option<PathBuf>> {
+    archived(root, project, &[removal_root], stem, records, paths)
+        .map(|written| written.map(|(_, tarball)| tarball))
 }
 
 /// [`write`] for a removal out of each of `removal_roots`: the archive's
@@ -294,11 +301,14 @@ fn archived(
     stem: &str,
     records: Option<&Value>,
     paths: &[PathBuf],
-) -> Result<(PathBuf, PathBuf)> {
+) -> Result<Option<(PathBuf, PathBuf)>> {
     let suffix = oversee(project);
     let mut removed = removal_roots.to_vec();
     removed.extend(paths.iter().map(PathBuf::as_path));
-    let dir = judged(root, &suffix, project, &removed)?.join(suffix);
+    let Some(root) = judged(root, &suffix, project, &removed)? else {
+        return Ok(None);
+    };
+    let dir = root.join(suffix);
     std::fs::create_dir_all(&dir).map_err(|e| io("mkdir", &dir, e))?;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
         .map_err(|e| io("chmod", &dir, e))?;
@@ -310,7 +320,7 @@ fn archived(
         let _ = std::fs::remove_file(&tarball);
         return Err(e);
     }
-    Ok((dir, tarball))
+    Ok(Some((dir, tarball)))
 }
 
 /// The archive verbs, for the callers that remove files outside any state
@@ -321,7 +331,8 @@ fn archived(
 #[derive(Debug, clap::Subcommand)]
 pub enum Verb {
     /// Archive PATHS before the caller removes them from its removal root,
-    /// filed under the project's name; the reply is `{archive, dir}`.
+    /// filed under the project's name; the reply is `{archive, dir}`, both
+    /// null where no root is placed.
     Write {
         /// The checkout the archive is filed for, by its directory's name;
         /// a configured root may not sit in one of its linked worktrees.
@@ -338,7 +349,8 @@ pub enum Verb {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
-    /// The archive root a caller files under SUFFIX; the reply is `{root}`.
+    /// The archive root a caller files under SUFFIX; the reply is `{root}`,
+    /// null where none is placed.
     Root {
         #[arg(long)]
         suffix: PathBuf,
@@ -358,7 +370,7 @@ pub fn verb(verb: Verb, settings: &crate::settings::Settings) -> Result<Value> {
         } => {
             let cwd = std::env::current_dir().map_err(|e| io("cwd", Path::new("."), e))?;
             let paths: Vec<PathBuf> = paths.iter().map(|path| cwd.join(path)).collect();
-            let (dir, archive) = archived(
+            let written = archived(
                 &settings.archive_root,
                 &project,
                 &[&removal_root, state_dir],
@@ -366,6 +378,7 @@ pub fn verb(verb: Verb, settings: &crate::settings::Settings) -> Result<Value> {
                 None,
                 &paths,
             )?;
+            let (dir, archive) = written.unzip();
             Ok(serde_json::json!({"archive": archive, "dir": dir}))
         }
         Verb::Root { suffix } => {
@@ -632,14 +645,14 @@ fn close_out_held(
                 serde_json::json!({"path": relative(path), "role": role})
             })
             .collect();
-        Some(write(
+        write(
             root,
             project,
             state_dir,
             &format!("close-{item}-{now}"),
             Some(&serde_json::json!({ "members": members })),
             &evidence,
-        )?)
+        )?
     };
     if let Err(e) = remove(&targets) {
         let kept = archive

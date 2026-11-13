@@ -77,6 +77,9 @@ ORCH_MERGE_AUTONOMY = "auto"
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
 
+# Minutes between two overseer status reports.
+ORCH_REPORT_EVERY_MINUTES = "120"
+
 # Rebuild the installed CLI only when the synchronized range changes a build
 # input, with the commit it was built from in its --version. tools/harness-smoke
 # reads that commit, and its BUILD_INPUTS must name the same paths as this diff.

@@ -22,8 +22,8 @@ ORCH_APPLE_LABELS = "ios macos"
 ORCH_STATE_DIR = "tmp"
 
 # Where state pruning, item close-out, mailbox compaction and SSH lane close
-# keep archives before removing records. An empty value uses FLEET_DIR/archive,
-# or $HOME/.fleet/archive when FLEET_DIR is unset. Where to place a configured
+# keep archives before removing records. An empty value keeps no archive: each
+# removal goes ahead with no copy. Where to place a configured
 # value, what it requires, and its refusal of a relative or ~ path:
 # references/settings.md. TOML does not expand shell variables.
 # ORCH_ARCHIVE_ROOT = "/path/to/archives"
@@ -262,18 +262,18 @@ ORCH_ASK_WAIT_MINUTES = "120"
 # means, the questions that reach you and the defaults each value composes:
 # references/communication-modes.md.
 # values: ceo | engineer
-ORCH_USER_MODE = "ceo"
+ORCH_USER_MODE = "engineer"
 
 # Who chooses what happens after a pull request is opened.
 # "auto-recommended" takes the recommended course. "ask" puts each choice
 # to you.
 # values: auto-recommended | ask
-ORCH_DECISION_MODE = "auto-recommended"
+ORCH_DECISION_MODE = "ask"
 
 # Who consents to a merge. "auto" merges once every gate is green. "ask"
 # asks you each time.
 # values: auto | ask
-ORCH_MERGE_AUTONOMY = "auto"
+ORCH_MERGE_AUTONOMY = "ask"
 
 # The overseer's status report on what landed, is running, comes next and
 # waits on you, pasted into its chat and saved. "on" writes one on the
@@ -283,7 +283,7 @@ ORCH_MERGE_AUTONOMY = "auto"
 ORCH_REPORT = "on"
 
 # Minutes between two status reports. 0 or empty turns the timed report off.
-ORCH_REPORT_EVERY_MINUTES = "120"
+ORCH_REPORT_EVERY_MINUTES = "0"
 
 # Finished items that bring the next status report forward, whatever the
 # minutes above say. 0 leaves the report on its minutes alone. When a report

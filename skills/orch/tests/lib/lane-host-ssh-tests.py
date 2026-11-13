@@ -42,7 +42,7 @@ class SshHostTests(unittest.TestCase):
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_")) and k != "ORCH_ARCHIVE_ROOT"}
         self.env.update(REAL_GIT=shutil.which("git"), REAL_CHMOD=shutil.which("chmod"),
                         REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
-                        SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
+                        SSH_TEST_LOG=str(self.root / "calls"), ORCH_ARCHIVE_ROOT=str(self.root / "fleet/archive"),
                         HOME=str(self.root),
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.git_env = {key: self.env[key] for key in ("HOME", "PATH", "REAL_GIT")}
@@ -2689,10 +2689,7 @@ exit 9
 
     def test_close_records_a_dotted_state_directory_as_tar_names_it(self):
         # A relative setting such as ../lane-state resolves to a path holding
-        # .. components; the record names the member tar writes for it. The
-        # kept= path is absolute though FLEET_DIR is relative, since tempfile
-        # makes the archive's directory absolute, which oversee-cycle's read
-        # of the kept= row relies on.
+        # .. components; the record names the member tar writes for it.
         (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "../lane-state"\n')
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -2700,7 +2697,7 @@ exit 9
         state_dir = Path(self.row["clone"]).parent / "lane-state"
         state_dir.mkdir()
         (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 6}')
-        closed = self.call("close", "--item", "TEST-1", FLEET_DIR="fleet-relative")
+        closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         self.assertTrue(archive.is_absolute(), archive)
@@ -3410,7 +3407,7 @@ fi'''))
                 self.assertIn(b"close-unowned item=TEST-1", refused.stderr)
                 self.assertNotIn("worktree path TEST-1", (self.root / "calls").read_text()[len(before):])
                 self.assertEqual(private.read_text(), "keep")
-                self.assertFalse((Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1").exists())
+                self.assertFalse((Path(self.env["ORCH_ARCHIVE_ROOT"]) / "repo/TEST-1").exists())
 
     def test_existing_clone_refuses_other_repository(self):
         self.assertEqual(self.create().returncode, 0)
@@ -3445,7 +3442,7 @@ fi'''))
                 line = output.read_text().strip()
                 self.assertTrue(line.startswith("kept="), line)
                 archive = Path(line.removeprefix("kept="))
-                self.assertEqual(archive.parent, Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1")
+                self.assertEqual(archive.parent, Path(self.env["ORCH_ARCHIVE_ROOT"]) / "repo/TEST-1")
                 self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
                 with tarfile.open(archive) as saved:
                     self.assertEqual(saved.extractfile(str(clone / "tmp/clone.json").lstrip("/")).read(), b'"clone-record"\n')
@@ -3527,8 +3524,20 @@ fi'''))
             self.assertEqual(saved.extractfile(str(record).lstrip("/")).read(), b'"archive-root-record"\n')
         self.assertFalse(worktree.exists())
 
+    def unplaced_close(self):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        record = worktree / "tmp/return.json"
+        record.parent.mkdir(exist_ok=True)
+        record.write_bytes(b'"unplaced-record"\n')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertEqual(closed.stdout, b"")
+        self.assertFalse(worktree.exists())
+
     def test_close_reads_the_local_archive_root(self):
-        for source in ("settings", "private", "environment", "home-default"):
+        self.env.pop("ORCH_ARCHIVE_ROOT")
+        for source in ("settings", "private", "environment", "unplaced"):
             with self.subTest(source=source):
                 self.row["clone"] = str(self.root / source)
                 self.inventory.write_text(json.dumps([self.row]))
@@ -3538,28 +3547,30 @@ fi'''))
                 private.unlink(missing_ok=True)
                 folder = self.root / (source + " archives")
                 env = {}
-                if source == "home-default":
-                    env["FLEET_DIR"] = ""
-                    folder = self.root / ".fleet/archive"
-                else:
-                    settings.write_text(f'[env]\nORCH_ARCHIVE_ROOT = "{folder}"\n')
-                    if source in ("private", "environment"):
-                        private.write_text(f'ORCH_ARCHIVE_ROOT="{folder}-private"\n')
-                        folder = Path(str(folder) + "-private")
-                    if source == "environment":
-                        folder = self.root / (source + " environment")
-                        env["ORCH_ARCHIVE_ROOT"] = str(folder)
+                if source == "unplaced":
+                    # No root set anywhere: the close keeps no copy.
+                    self.unplaced_close()
+                    continue
+                settings.write_text(f'[env]\nORCH_ARCHIVE_ROOT = "{folder}"\n')
+                if source in ("private", "environment"):
+                    private.write_text(f'ORCH_ARCHIVE_ROOT="{folder}-private"\n')
+                    folder = Path(str(folder) + "-private")
+                if source == "environment":
+                    folder = self.root / (source + " environment")
+                    env["ORCH_ARCHIVE_ROOT"] = str(folder)
                 self.archive_root_contract(folder, **env)
 
     def test_control_close_ignoring_the_archive_root_fails_its_contract(self):
         original = self.script.read_text()
-        rule = 'directory = Path(json.loads(root.stdout)["result"]["root"])'
+        rule = 'directory = Path(placed) / suffix'
         self.assertEqual(original.count(rule), 1)
-        self.script.write_text(original.replace(rule, 'directory = Path(os.environ["FLEET_DIR"]) / "archive"'))
+        self.script.write_text(original.replace(rule, 'directory = Path(os.environ["HOME"]) / "ignored" / suffix'))
         with self.assertRaises(AssertionError):
             self.archive_root_contract(self.root / "configured", ORCH_ARCHIVE_ROOT=str(self.root / "configured"))
 
     def archive_root_read_refusal(self, setting=None):
+        # The settings file's value alone: the caller's environment outranks it.
+        self.env.pop("ORCH_ARCHIVE_ROOT", None)
         self.assertEqual(self.create().returncode, 0)
         worktree = Path(self.row["clone"] + "-worktree")
         record = worktree / "tmp/return.json"
@@ -3639,7 +3650,7 @@ fi'''))
                 else:
                     blocked = self.root / "storage-blocked"
                     blocked.write_text("file")
-                    env["FLEET_DIR"] = str(blocked)
+                    env["ORCH_ARCHIVE_ROOT"] = str(blocked)
                 closed = self.call("close", "--item", "TEST-1", **env)
                 self.assertEqual(closed.returncode, {"tar": 23, "storage": 1}[failure], closed.stderr)
                 self.assertTrue(record.exists())

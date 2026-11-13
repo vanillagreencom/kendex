@@ -221,7 +221,7 @@ for row in answer:plain directive:plain halt:plain answer:compacted directive:co
   clock_lm send --item KEN-1 --root "$LANE" --directive --file "$(text later 'Later mail.')"
   WAIT_LATER="$(jq -rs 'last.id' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")"
   if [ "${row#*:}" = compacted ]; then
-    FLEET_DIR="$TMP_ROOT/fleet" ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
+    ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
       clock_lm compact --item KEN-1 --root "$LANE"
     assert_eq "$RC" "0" "$row: compaction completes"
     assert_eq "$(wc -l < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl" | tr -d ' ')" "3" "$row: compaction removes the earlier read line"
@@ -556,7 +556,7 @@ cursor_steps() { # NAME OPS
         ;;
       t*) printf '%s\n' "${op#t}" >"$STUB_CLOCK" ;;
       x)
-        FLEET_DIR="$TMP_ROOT/fleet" ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
+        ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
           LANE_MAIL_BIN="$LANE_MAIL" clock_lm compact --item KEN-1 --root "$LANE"
         STEPS+=" x:$RC:$OUT"
         ;;

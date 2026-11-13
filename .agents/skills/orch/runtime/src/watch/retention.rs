@@ -706,7 +706,6 @@ fn archive(
         Some(&dropped.records()),
         paths,
     )
-    .map(Some)
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -950,8 +949,10 @@ mod tests {
     }
 
     fn settings_with(root: &Path, extra: &[(&str, &str)]) -> Settings {
-        let mut environment = vec![("FLEET_DIR".into(), root.join("fleet").into_os_string())];
-        environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+        let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = extra
+            .iter()
+            .map(|(k, v)| ((*k).into(), (*v).into()))
+            .collect();
         crate::settings::load(
             &agent_runtime::settings::Roots {
                 project: root.to_path_buf(),

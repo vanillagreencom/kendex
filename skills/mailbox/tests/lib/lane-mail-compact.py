@@ -24,7 +24,7 @@ class Compaction(unittest.TestCase):
         self.home.mkdir()
         self.env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "LC_ALL": "C",
                     "ORCH_RECORD_RETENTION_DAYS": "5", "SLACK_THREAD_DAYS": "5",
-                    "FLEET_DIR": str(self.home / "fleet")}
+                    "ORCH_ARCHIVE_ROOT": str(self.home / "fleet/archive")}
         # The archive is the orch runtime's, found in the cache its setup built.
         if "AGENT_RUNTIME_CACHE" in os.environ:
             self.env["AGENT_RUNTIME_CACHE"] = os.environ["AGENT_RUNTIME_CACHE"]
@@ -164,8 +164,8 @@ class Compaction(unittest.TestCase):
                              "numbers = [] + list(range(")
         with self.assertRaises(AssertionError):
             self.stable_values(mutant)
-        mutant = self.mutant("archive-pointer", "lane-mail", '    lm_message archived "$archive" >&2',
-                             '    : archived "$archive"')
+        mutant = self.mutant("archive-pointer", "lane-mail", '|| lm_message archived "$archive" >&2',
+                             '|| : archived "$archive"')
         with self.assertRaises(AssertionError):
             self.stable_values(mutant)
         mutant = self.mutant("archive-paths", "lane-mail",
@@ -173,6 +173,22 @@ class Compaction(unittest.TestCase):
                              ' "$WORK_DIR/to-lane.jsonl" \\\n')
         with self.assertRaisesRegex(AssertionError, "expired"):
             self.stable_values(mutant)
+
+    def unplaced(self, scripts):
+        repo, box = self.fixture()
+        compacted = self.run_cli(repo, "compact", scripts=scripts)
+        self.assertEqual(compacted.stdout, "compacted item=overseer to-lane=2 to-overseer=2\n")
+        self.assertNotIn("lane-mail: archived=", compacted.stderr)
+        ids = [json.loads(row)["id"] for row in self.run_cli(repo, "events", scripts=scripts).stdout.splitlines()]
+        self.assertEqual(sorted(ids), ["fresh", "open", "read-fresh", "unread-old"])
+
+    def test_unplaced_archive(self):
+        # With no archive root the expired rows leave with no copy.
+        del self.env["ORCH_ARCHIVE_ROOT"]
+        self.unplaced(SCRIPTS)
+        mutant = self.mutant("unplaced-filter", "lane-mail", 'if . == null then "" else strings end', "strings")
+        with self.assertRaises(AssertionError):
+            self.unplaced(mutant)
 
     def tracker_confirmation(self, scripts):
         repo, box = self.world()

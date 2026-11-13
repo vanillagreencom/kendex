@@ -12,9 +12,10 @@
 #   orch-env ORCH_LANE_PREFERENCE ""   (unset leaves the caller's model choice)
 #   orch-env ORCH_DELIVERY pr          (pr or push-base; unknown values refuse)
 #
-# ORCH_USER_MODE composes three autonomy keys. Under `ceo`, a composed key the
-# ladder leaves unset resolves to its unattended value instead of the supplied
-# default; a key the ladder sets wins in either mode. The keys and their
+# ORCH_USER_MODE composes three autonomy keys. A composed key the ladder leaves
+# unset takes the mode's value, `ask` under `engineer` and its unattended value
+# under `ceo`, never the supplied default; a key the ladder sets wins in either
+# mode. The keys and their
 # composed values are ../references/communication-modes.md § Composition, and this
 # is the one place that mapping is applied.
 #
@@ -31,10 +32,9 @@
 # here would be the second copy that table exists to prevent.
 set -euo pipefail
 
-# The package default for ORCH_USER_MODE, used by the resolution below when the
-# settings ladder names no mode. ../references/settings.md publishes the same value
-# for a caller passing it as DEFAULT.
-USER_MODE_DEFAULT=ceo
+# The mode a settings ladder that names none means: the one that asks, so an
+# unattended merge or decision is always a value the project committed.
+USER_MODE_DEFAULT=engineer
 
 # user_mode_effective — sets USER_MODE to the mode this run is in: the ladder's
 # value, the package default when the ladder is silent, and `engineer` for
@@ -52,14 +52,15 @@ user_mode_effective() {
 }
 
 # composed_value VAR_NAME — sets COMPOSED to the value VAR_NAME takes under
-# ORCH_USER_MODE=ceo, and to the empty string for a key the mode does not
-# compose. It writes a variable rather than printing, so the caller needs no
-# command substitution whose status would end the script under errexit.
+# USER_MODE, and to the empty string for a key the mode does not compose. It
+# writes a variable rather than printing, so the caller needs no command
+# substitution whose status would end the script under errexit.
 COMPOSED=
 composed_value() {
-  case "$1" in
-  ORCH_DECISION_MODE) COMPOSED=auto-recommended ;;
-  ORCH_MERGE_AUTONOMY | PM_CREATE_AUTONOMY) COMPOSED=auto ;;
+  case "$USER_MODE:$1" in
+  ceo:ORCH_DECISION_MODE) COMPOSED=auto-recommended ;;
+  ceo:ORCH_MERGE_AUTONOMY | ceo:PM_CREATE_AUTONOMY) COMPOSED=auto ;;
+  engineer:ORCH_DECISION_MODE | engineer:ORCH_MERGE_AUTONOMY | engineer:PM_CREATE_AUTONOMY) COMPOSED=ask ;;
   *) COMPOSED= ;;
   esac
 }
@@ -112,15 +113,13 @@ orch_env_value() { # NAME DEFAULT: settings already loaded by the caller.
   user_mode_effective
 
   local value="${!VAR_NAME-}"
-  if [[ "$VAR_NAME" == ORCH_USER_MODE && -n "$value" ]]; then
+  if [[ "$VAR_NAME" == ORCH_USER_MODE ]]; then
     # What ../workflows/oversee.md § 3 Launch selects a question template from,
     # so it is the same normalized mode the composition below tests.
     value="$USER_MODE"
   elif [[ -z "$value" ]]; then
-    if [[ "$USER_MODE" == ceo ]]; then
-      composed_value "$VAR_NAME"
-      value="$COMPOSED"
-    fi
+    composed_value "$VAR_NAME"
+    value="$COMPOSED"
   fi
   [[ -n "$value" ]] || value="$DEFAULT"
   # A consumer edits this publication setting by hand. A misspelling cannot

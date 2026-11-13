@@ -845,8 +845,16 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
 
     let mail_log = asking.state_dir().join("mail.log");
     let (command, run_dir) = validation_run(asking.state_dir());
+    git_checkout(asking.state_dir());
+    let archive_root = tempfile::tempdir().unwrap();
     let fleet = Fleet {
-        env: vec![("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string())],
+        env: vec![
+            ("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()),
+            (
+                "ORCH_ARCHIVE_ROOT".to_owned(),
+                archive_root.path().display().to_string(),
+            ),
+        ],
         ..asking
     };
     // The item's own files beside the fleet record: the close on the
@@ -871,8 +879,8 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
         std::fs::symlink_metadata(&status_file).is_err(),
         "the lane status file left with the terminal close"
     );
-    let archives = std::env::temp_dir()
-        .join("isolated-home/.fleet/archive")
+    let archives = archive_root
+        .path()
         .join(fleet.state_dir().file_name().unwrap())
         .join("oversee");
     assert!(
@@ -2396,8 +2404,16 @@ fn age(path: &Path, secs: u64) {
 /// runs it there, taking another item's expired record.
 #[test]
 fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_siblings() {
-    let fleet = Fleet::new(1);
+    let archive_root = tempfile::tempdir().unwrap();
+    let fleet = Fleet {
+        env: vec![(
+            "ORCH_ARCHIVE_ROOT".to_owned(),
+            archive_root.path().display().to_string(),
+        )],
+        ..Fleet::new(1)
+    };
     let dir = fleet.state_dir();
+    git_checkout(dir);
     let leaves = [
         plant(dir, "workflow-state-KEN-A.json"),
         plant(dir, "handoffs/KEN-A-handoff.md"),
@@ -2536,8 +2552,16 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
 /// the file still stands.
 #[test]
 fn state_remove_refuses_a_failed_removal_naming_the_archive_that_holds_the_path() {
-    let fleet = Fleet::new(1);
+    let archive_root = tempfile::tempdir().unwrap();
+    let fleet = Fleet {
+        env: vec![(
+            "ORCH_ARCHIVE_ROOT".to_owned(),
+            archive_root.path().display().to_string(),
+        )],
+        ..Fleet::new(1)
+    };
     let dir = fleet.state_dir();
+    git_checkout(dir);
     let held = plant(dir, "KEN-A.run/stdout.log");
     let run_dir = held.parent().unwrap().to_path_buf();
     std::fs::set_permissions(&run_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -5164,6 +5188,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         ("no state anywhere", None),
     ] {
         let mut fleet = Fleet::hosted(4);
+        let archive_root = tempfile::tempdir().unwrap();
         let skills = fleet.state_dir().join(".agents/skills");
         let catalog = orch_package().parent().unwrap().to_path_buf();
         std::os::unix::fs::symlink(catalog.join("github"), skills.join("github")).unwrap();
@@ -5331,6 +5356,9 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             )),
             // The item's close-out over an `--archive` tree holding another
             // copy of its record, whose path sorts before the record's.
+            // The remove runs from a checkout of its own, which a configured
+            // archive root is judged against: the lane's directory stays no
+            // repository for the cycle read.
             ("the close-out archive's declared state", Some(fix)) => {
                 let dir = fleet.state_dir();
                 std::fs::write(
@@ -5341,14 +5369,18 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                 let nested = dir.join("a-tree/tmp/workflow-state-KEN-1.json");
                 std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
                 std::fs::write(&nested, rounds_state(9).to_string()).unwrap();
-                let removed = reply(&fleet.run(&[
-                    "state",
-                    "remove",
-                    "--item",
-                    "KEN-1",
-                    "--archive",
-                    &dir.join("a-tree").display().to_string(),
-                ]));
+                let project = tempfile::tempdir().unwrap();
+                git_checkout(project.path());
+                let removed = reply(
+                    &isolated()
+                        .args(["--state-dir", &dir.display().to_string()])
+                        .args(["state", "remove", "--item", "KEN-1", "--archive"])
+                        .arg(dir.join("a-tree"))
+                        .env("ORCH_ARCHIVE_ROOT", archive_root.path())
+                        .current_dir(project.path())
+                        .output()
+                        .unwrap(),
+                );
                 let kept = removed["result"]["kept"].as_str().expect("the archive");
                 log.push(kept_row(Path::new(kept)));
             }

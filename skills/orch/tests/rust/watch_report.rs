@@ -131,7 +131,6 @@ impl World {
         // records would open no socket.
         let env: Vec<(String, String)> = [
             ("ORCH_WATCH_MAIL_INTERVAL", "5".to_owned()),
-            ("FLEET_DIR", at("fleet")),
             ("OVERSEE_WATCH_TRACKER", at("linear")),
             ("OVERSEE_WATCH_REPORT", at("oversee-report")),
             ("LANE_MAIL_CLI", mail.display().to_string()),
@@ -662,7 +661,9 @@ fn report_due_prints_once_and_file_cadence_clears_it_without_a_script_answer() {
     world.write_fleet(&report_fleet(None));
     let clock = FakeClock::new();
     let now = epoch("2026-10-02T00:00:01Z");
-    let mut body = report::body(world.report_context());
+    let mut ctx = world.report_context();
+    set_report(&mut ctx, report::MINUTES_KEY, "120");
+    let mut body = report::body(ctx);
     let mut baseline = Baseline::default();
     let due = "report-due reason=minutes since=2026-09-20T00:00:00Z";
     let produced = pass(Duty::Report, &mut body, &mut baseline, &clock, now).unwrap();
@@ -718,7 +719,9 @@ fn verification_and_report_run_with_the_controller_dead_walled_and_off() {
         );
         let shared = shared_with(vec![verifying_item("KEN-1", "1", DEADLINE_BOXES, false)]);
         let mut verifying = verifying::body(world.verifying_context(shared, Lines::default()));
-        let mut report = report::body(world.report_context());
+        let mut ctx = world.report_context();
+        set_report(&mut ctx, report::MINUTES_KEY, "120");
+        let mut report = report::body(ctx);
         let mut baseline = Baseline::default();
         let v = pass(
             Duty::Verification,
@@ -2325,7 +2328,20 @@ fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
         set_modified(path, wall - 10 * day);
     }
     set_modified(&intents.join("fresh.pane"), wall - day);
-    let pruned = world.pass(wall).unwrap();
+    git_checkout(dir);
+    let archive_root = tempfile::tempdir().unwrap();
+    let settings = world.settings_with(&[(
+        "ORCH_ARCHIVE_ROOT".to_owned(),
+        archive_root.path().display().to_string(),
+    )]);
+    let pruned = retention::pass(
+        &world.fleet_path(),
+        &world.paths(),
+        &settings,
+        Locking::FLOCK,
+        wall,
+    )
+    .unwrap();
     for path in &stands {
         assert!(
             std::fs::symlink_metadata(path).is_ok(),
@@ -2343,7 +2359,7 @@ fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
     let archive = pruned.archive.expect("the archive the pass wrote");
     let name = archive.file_name().unwrap().to_string_lossy().into_owned();
     assert!(
-        archive.starts_with(dir.join("fleet").join("archive"))
+        archive.starts_with(archive_root.path())
             && name.starts_with(&format!("prune-{wall}-"))
             && name.ends_with(".tgz"),
         "{}",
@@ -2714,10 +2730,15 @@ exec "$REAL_TAR" "${args[@]}"
         baseline: &baseline,
         clock: &clock,
     };
+    git_checkout(world.path());
+    let archive_root = tempfile::tempdir().unwrap();
     let mut body = retention::body(retention::Context {
         fleet: world.fleet_path(),
         paths: world.paths(),
-        settings: world.settings.clone(),
+        settings: world.settings_with(&[(
+            "ORCH_ARCHIVE_ROOT".to_owned(),
+            archive_root.path().display().to_string(),
+        )]),
         locking: Locking::FLOCK,
     });
     let produced = body(&tick);
@@ -2861,7 +2882,6 @@ fn retention_retires_an_ended_row_without_remaining_files() {
         .arg("--state-dir")
         .arg(world.path())
         .args(["state", "remove", "--item", "KEN-9"])
-        .env("FLEET_DIR", world.path().join("fleet"))
         .current_dir(world.path())
         .output()
         .unwrap();
@@ -3123,7 +3143,8 @@ fn retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes
 fn report_owner_notice_waits_for_quiet_end_and_keeps_the_last_sent_window() {
     let world = World::new();
     world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"}]}));
-    let ctx = world.report_context();
+    let mut ctx = world.report_context();
+    set_report(&mut ctx, report::MINUTES_KEY, "120");
     std::fs::create_dir_all(&ctx.settings.store.progress_report_dir).unwrap();
     let noise = ctx.settings.store.progress_report_dir.join("unrelated.txt");
     std::fs::write(&noise, "Another owner notice.").unwrap();
@@ -3177,7 +3198,9 @@ fn report_owner_notice_waits_for_quiet_end_and_keeps_the_last_sent_window() {
     );
     let clock = FakeClock::new();
     let mut baseline = Baseline::default();
-    let mut body = report::body(world.report_context());
+    let mut duty = world.report_context();
+    set_report(&mut duty, report::MINUTES_KEY, "120");
+    let mut body = report::body(duty);
     let produced = pass(Duty::Report, &mut body, &mut baseline, &clock, morning).unwrap();
     assert_eq!(
         rendered(&produced)[0],
@@ -3396,7 +3419,8 @@ fn report_quiet_boundaries_wrap_and_session_cadence_uses_sent_files() {
     }
     let world = World::new();
     world.write_fleet(&json!({"issue_id":"oversee","lanes":[]}));
-    let ctx = world.report_context();
+    let mut ctx = world.report_context();
+    set_report(&mut ctx, report::MINUTES_KEY, "120");
     let start = epoch("2026-10-01T06:00:00Z");
     let session = report::Session { start, fleet: None };
     assert_eq!(
@@ -3414,6 +3438,18 @@ fn report_quiet_boundaries_wrap_and_session_cadence_uses_sent_files() {
         report::due(&ctx, start + 10800, None).unwrap(),
         Some("report-due reason=minutes since=2026-10-01T06:00:00Z".to_owned())
     );
+}
+
+/// A fleet that sets no cadence gets no timed report: three hours after
+/// its last landing, the input a set cadence of 120 minutes answers due
+/// above, nothing is due.
+#[test]
+fn report_with_no_cadence_set_is_never_due_on_minutes() {
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"}]}));
+    let ctx = world.report_context();
+    let start = epoch("2026-10-01T06:00:00Z");
+    assert_eq!(report::due(&ctx, start + 10800, None).unwrap(), None);
 }
 
 #[test]
