@@ -192,8 +192,7 @@ fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
         )
     );
     let silent = root.join("silent");
-    fs::write(&silent, "#!/bin/sh\nexit 2\n").unwrap();
-    fs::set_permissions(&silent, fs::Permissions::from_mode(0o755)).unwrap();
+    support::write_executable(&silent, "#!/bin/sh\nexit 2\n");
     let (lines, code) = watch(&silent, &lane_mail);
     assert_eq!(code, 1, "{lines:?}");
     let [line] = lines.as_slice() else {

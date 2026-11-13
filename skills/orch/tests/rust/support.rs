@@ -33,6 +33,29 @@ pub use account_planters::*;
 mod isolation;
 pub use isolation::*;
 
+/// A copy of the executable `from` at `to`, made by a child `cp`, for the
+/// reason [`write_executable`] writes through a child: a copy this test
+/// process makes holds `to` open for writing, every other test thread's child
+/// holds that descriptor too between its fork and its exec, and running `to`
+/// meanwhile fails `ETXTBSY`. A new `to` takes `from`'s mode bits.
+pub fn copy_executable(from: &Path, to: &Path) {
+    let out = Command::new("cp")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .arg("--")
+        .arg(from)
+        .arg(to)
+        .output()
+        .expect("cp");
+    assert!(
+        out.status.success(),
+        "copy-executable {} {}: {}",
+        from.display(),
+        to.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// The one injected clock as a test drives it: time
 /// moves only when the test passes it, and a `sleep` blocks its thread
 /// until the clock has reached its wake time. Shared by the runner's two

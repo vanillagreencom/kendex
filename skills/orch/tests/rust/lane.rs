@@ -4800,7 +4800,7 @@ fn the_cycle_verbs_print_the_rollup_and_a_running_lanes_stages() {
     let scripts = fleet.state_dir().join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     let shim = scripts.join("oversee-cycle");
-    std::fs::copy(orch_package().join("scripts/oversee-cycle"), &shim).unwrap();
+    copy_executable(&orch_package().join("scripts/oversee-cycle"), &shim);
     std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
     let state_dir = fleet.state_dir().display().to_string();
     let cycle = |args: &[&str]| -> Output {

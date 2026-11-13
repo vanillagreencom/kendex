@@ -473,8 +473,6 @@ fn prepare_trust(
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
 
     /// A launch whose opener names no setup runs none, though its directory
@@ -487,8 +485,7 @@ mod tests {
         std::fs::create_dir_all(&scripts).unwrap();
         let ran = dir.path().join("ran");
         let setup = scripts.join("setup");
-        std::fs::write(&setup, format!("#!/bin/sh\n: > '{}'\n", ran.display())).unwrap();
-        std::fs::set_permissions(&setup, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::host::write_executable(&setup, format!("#!/bin/sh\n: > '{}'\n", ran.display()));
         let built = build_runtimes(dir.path(), &[]);
         assert!(!ran.exists(), "a setup ran that the opener did not name");
         built.unwrap();

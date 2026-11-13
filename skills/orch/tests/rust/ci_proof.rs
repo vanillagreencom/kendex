@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 use orch_runtime::verify::ci_proof;
 use serde_json::{Value, json};
-use support::{fixtures, isolated, isolated_row, program, stderr, tool_path, write_executable};
+use support::{
+    copy_executable, fixtures, isolated, isolated_row, program, stderr, tool_path, write_executable,
+};
 
 const CHECK: &str = "Classify the diff";
 const KENDEX: &str = "vanillagreencom/kendex";
@@ -299,11 +301,10 @@ impl World {
                 std::os::unix::fs::symlink(catalog.join(package), link).unwrap();
             }
         }
-        std::fs::copy(
-            catalog.join("harness-ci/scripts/harness-only"),
-            skills.join("harness-ci/scripts/harness-only"),
-        )
-        .unwrap();
+        copy_executable(
+            &catalog.join("harness-ci/scripts/harness-only"),
+            &skills.join("harness-ci/scripts/harness-only"),
+        );
         let library = skills.join("harness-ci/scripts/lib/change-class.sh");
         if caller {
             std::fs::copy(
@@ -815,11 +816,10 @@ fn a_repository_github_never_issues_is_refused_before_any_read() {
         std::os::unix::fs::symlink(catalog.join(package), skills.join(package)).unwrap();
     }
     for file in ["scripts/harness-only", "scripts/lib/change-class.sh"] {
-        std::fs::copy(
-            catalog.join("harness-ci").join(file),
-            skills.join("harness-ci").join(file),
-        )
-        .unwrap();
+        copy_executable(
+            &catalog.join("harness-ci").join(file),
+            &skills.join("harness-ci").join(file),
+        );
     }
     let head = "0".repeat(40);
     for repo in ["own_er/r", "o/.."] {

@@ -99,7 +99,7 @@ fn copy_tree(from: &Path, to: &Path) {
         if entry.file_type().unwrap().is_dir() {
             copy_tree(&entry.path(), &target);
         } else {
-            fs::copy(entry.path(), &target).unwrap();
+            support::copy_executable(&entry.path(), &target);
         }
     }
 }

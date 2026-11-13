@@ -4850,11 +4850,9 @@ fn a_bare_pid_is_the_run_only_under_its_own_childs_whole_argv() {
     }
     // A live child whose argv cannot be read is no other process: it is the
     // run.
-    use std::os::unix::fs::PermissionsExt;
     let blind = w.root.join("ps-refuses");
     fs::create_dir_all(&blind).unwrap();
-    fs::write(blind.join("ps"), "#!/bin/bash\nexit 1\n").unwrap();
-    fs::set_permissions(blind.join("ps"), fs::Permissions::from_mode(0o755)).unwrap();
+    support::write_executable(&blind.join("ps"), "#!/bin/bash\nexit 1\n");
     let (_group, pid) = bare_child(&dir, &["planted", run_dir.as_str()]);
     let path = support::tool_path(&[&blind]);
     let out = live(&[("PATH", &path)]);

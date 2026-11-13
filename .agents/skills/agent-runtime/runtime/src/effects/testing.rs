@@ -69,10 +69,3 @@ pub(super) fn run<'a>(
         job_words: crate::controller::run::job_words,
     }
 }
-
-/// A script at `path` with `text`, executable.
-pub(super) fn write_executable(path: &Path, text: String) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}

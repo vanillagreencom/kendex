@@ -981,19 +981,13 @@ mod tests {
     fn recorder(checkout: &Path) -> PathBuf {
         let program = checkout.join(crate::settings::LANE_MAIL_CLI_DEFAULT);
         std::fs::create_dir_all(program.parent().unwrap()).unwrap();
-        std::fs::write(
+        crate::write_executable(
             &program,
             format!(
                 "#!/bin/sh\nprintf '%s %s\\n' \"$(pwd -P)\" \"$*\" >> '{}'\nexit 2\n",
                 checkout.join("mail.log").display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(
-            &program,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .unwrap();
+        );
         program
     }
 

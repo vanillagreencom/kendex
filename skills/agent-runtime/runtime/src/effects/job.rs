@@ -2863,7 +2863,7 @@ mod tests {
         let settings = super::super::testing::settings(dir.path());
         let calls = dir.path().join("mail-calls");
         let mail = dir.path().join("lane-mail");
-        super::super::testing::write_executable(
+        crate::host::write_executable(
             &mail,
             format!(
                 "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\n",
@@ -3068,7 +3068,7 @@ mod tests {
         let settings = super::super::testing::settings(dir.path());
         let called = dir.path().join("mail-called");
         let mail = dir.path().join("lane-mail");
-        super::super::testing::write_executable(
+        crate::host::write_executable(
             &mail,
             format!("#!/bin/bash\nprintf 'called' > '{}'\n", called.display()),
         );

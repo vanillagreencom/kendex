@@ -2134,7 +2134,7 @@ fn reach_world(root: &std::path::Path) -> PathBuf {
         "macos-test-contracts.json",
         "rust-reads",
     ] {
-        fs::copy(tools.join(name), world.join("tools").join(name)).unwrap();
+        support::copy_executable(&tools.join(name), &world.join("tools").join(name));
     }
     let copied = support::program("cp")
         .arg("-R")
