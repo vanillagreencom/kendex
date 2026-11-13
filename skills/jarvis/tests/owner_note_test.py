@@ -356,11 +356,104 @@ class OwnerNote(MailWorld):
         self.assert_destination(resolution, "ssh:host.example", sides["remote"][0])
         self.assertEqual(self.mailbox_snapshot(roots), before)
 
+    def test_repository_aliases(self):
+        # Canonical names and aliases produce one candidate set. Expected
+        # side/index comes from each fixture, independently of the matcher.
+        rows = (
+            ("canonical", ".dot", {}, [], [], [(".dot", True)], False, None, ("local", 0)),
+            ("declared", "dot", {"dot": ".dot"}, [], [], [(".dot", True)], False, None, ("local", 0)),
+            ("undeclared", "dot", {}, [], [], [(".dot", True)], False, "no-overseer", None),
+            ("unknown", "dot", {"dot": ".dot"}, [], [], [], False, "no-overseer", None),
+            ("noted", "dot", {"dot": "elsewhere"}, [], [], [], False, "no-overseer", None),
+            ("collision", "dot", {"dot": ".dot"}, [], [], [("dot", True), (".dot", True)], False, "repo-ambiguous", None),
+            ("duplicate", "dot", {"dot": ".dot"}, [], [], [("a/.dot", True), ("b/.dot", True)], False, "repo-ambiguous", None),
+            ("self", "dot", {"dot": "dot"}, [], [], [("dot", True)], False, None, ("local", 0)),
+            ("direct", "dot", {"dot": "next", "next": ".dot"}, [], [], [(".dot", True)], False, "no-overseer", None),
+            ("host", "dot", {"dot": ".dot"}, ["--host", "host.example"], [(".dot", True)], [(".dot", True)], True, None, ("remote", 0)),
+            ("local", "dot", {"dot": ".dot"}, ["--local"], [(".dot", True)], [(".dot", True)], True, None, ("local", 0)),
+            ("local-missing", "dot", {"dot": ".dot"}, ["--local"], [(".dot", True)], [], True, "no-overseer", None),
+            ("host-missing", "dot", {"dot": ".dot"}, ["--host", "host.example"], [], [(".dot", True)], True, "no-overseer", None),
+            ("host-unknown", "dot", {"dot": ".dot"}, ["--host", "unknown"], [(".dot", True)], [], True, "destination-unknown", None),
+            ("fallback", "dot", {"dot": ".dot"}, [], [], [(".dot", True)], True, None, ("local", 0)),
+            ("priority", "dot", {"dot": ".dot"}, [], [(".dot", True)], [(".dot", True)], True, None, ("remote", 0)),
+        )
+        for name, repo, aliases, selector, remote, local, host, refusal, landed in rows:
+            with self.subTest(row=name):
+                base, sides = self.world("alias-" + name, remote, local)
+                # Exercise the public consumer settings route, not just a
+                # direct call with an already-decoded mapping.
+                (self.home / "kendex.settings.toml").write_text(
+                    "[env]\nJARVIS_REPO_ALIASES = '" + json.dumps(aliases) + "'\n")
+                env = dict(self.env, SSH_LOG=str(base / "ssh.log"), REMOTE_HOME=str(base / "remote-home"),
+                           REMOTE_REGISTRY=str(base / "remote-registry"), REMOTE_TMP=str(base / "remote-tmp"),
+                           JARVIS_CONTROL_HOST="host.example" if host else "")
+                before = self.mailbox_snapshot([root for roots in sides.values() for root in roots])
+                result = self.command([BASH, self.scripts / "owner-note", *selector, "--resolve", repo], self.home, env)
+                self.assertEqual(self.mailbox_snapshot([root for roots in sides.values() for root in roots]), before)
+                if refusal:
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertTrue(result.stderr.startswith("owner-note: " + refusal + "="), result.stderr)
+                    self.assertEqual(result.stdout, "")
+                else:
+                    side, index = landed
+                    self.assert_destination(result, "ssh:host.example" if side == "remote" else "local", sides[side][index])
+                sent = self.command([BASH, self.scripts / "owner-note", *selector, repo, self.note], self.home, env)
+                self.assertEqual(sent.returncode, 2 if refusal else 0, sent.stderr)
+                if refusal:
+                    self.assertTrue(sent.stderr.startswith("owner-note: " + refusal + "="), sent.stderr)
+                for side, roots in sides.items():
+                    for index, root in enumerate(roots):
+                        self.assertEqual([row["text"] for row in self.box(root, "to-lane")],
+                                         [NOTE.rstrip("\n") + "\n\n" + FOOTER] if landed == (side, index) else [])
+
+    def test_alias_settings_refuse_invalid_declarations(self):
+        # Consumer settings may supply malformed JSON or values outside the
+        # documented basename-to-basename mapping.
+        for index, value in enumerate(("{", "[]", '{"dot":null}', '{"dot":[]}',
+                                       '{"dot":"/unregistered/.dot"}', '{"":".dot"}')):
+            with self.subTest(value=value):
+                base, sides = self.world("invalid-alias-" + str(index), [], [("app", True)])
+                env = dict(self.env, JARVIS_REPO_ALIASES=value)
+                result = self.command([BASH, self.scripts / "owner-note", "--resolve", "app"], self.home, env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr.splitlines()[0], "owner-note: setting-invalid=JARVIS_REPO_ALIASES")
+                self.assertEqual(self.box(sides["local"][0], "to-lane"), [])
+
+    def test_alias_instrument_control(self):
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / "jarvis/scripts"
+            shutil.copytree(SCRIPTS, copy)
+            for name in ("mailbox", "orch"):
+                Path(folder, name).symlink_to(REPO / "skills" / name, target_is_directory=True)
+            path = copy / "lib/watch.py"
+            source = path.read_text()
+            old = '    names = {repo, aliases.get(repo, repo)}'
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, '    names = {repo}')
+            self.assertNotEqual(source, mutant)
+            compile(mutant, str(path), "exec")
+            path.write_text(mutant)
+            case = OwnerNote(methodName="test_repository_aliases")
+            case.scripts = copy
+            case.setUp()
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_repository_aliases()
+            finally:
+                case.doCleanups()
+
     def test_declared_destinations(self):
         # Each row: control/local/satellite names, selector, failed alias,
         # exit, refusal, and the only mailbox permitted to receive the note.
         rows = (
             ("satellite", "other", "other", "app", [], "", 0, None, "satellite"),
+            ("alias satellite", "other", "other", ".dot", [], "", 0, None, "satellite"),
+            ("alias collision", "app", ".dot", "other", [], "", 2, "repo-ambiguous", None),
+            ("alias remote collision", ".dot", "other", ".dot", [], "", 2, "repo-ambiguous", None),
+            ("alias selected", "app", "app", ".dot", ["--host", "satellite"], "control", 0, None, "satellite"),
+            ("alias selected local", "app", ".dot", "app", ["--local"], "satellite", 0, None, "local"),
+            ("alias unread", "other", ".dot", "other", [], "satellite", 2, "project-list-failed", None),
             ("local", "other", "app", "other", [], "", 0, None, "local"),
             ("duplicate", "app", "app", "other", [], "", 2, "repo-ambiguous", None),
             ("remote duplicate", "app", "other", "app", [], "", 2, "repo-ambiguous", None),
@@ -380,6 +473,7 @@ class OwnerNote(MailWorld):
                     'case "$1" in control) REGISTRY=$REMOTE_REGISTRY;; satellite) REGISTRY=$SATELLITE_REGISTRY;; *) exit 94;; esac\n'
                     'shift\nexport REGISTRY\nHOME=$REMOTE_HOME TMPDIR=$REMOTE_TMP exec sh -c "$*"\n')
                 env = dict(self.env, JARVIS_CONTROL_HOST="control", JARVIS_REMOTE_HOSTS="satellite satellite control",
+                           JARVIS_REPO_ALIASES='{"app":".dot"}',
                            FAIL_ALIAS=failed, REMOTE_HOME=str(base / "remote-home"),
                            REMOTE_TMP=str(base / "remote-tmp"), REMOTE_REGISTRY=str(base / "remote-registry"),
                            SATELLITE_REGISTRY=str(satellite_registry))

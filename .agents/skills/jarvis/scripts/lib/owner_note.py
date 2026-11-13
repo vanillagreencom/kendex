@@ -65,7 +65,8 @@ def deliver(bash, repo, note, settings, host=None, local=False):
 def main():
     parser = argparse.ArgumentParser(prog="owner-note", description=(
         "Send FILE, then a blank line and the verify footer, as a directive to the overseer of REPO, "
-        "the last path segment of a root `kendex project list` prints. JARVIS_REMOTE_HOSTS adds SSH aliases "
+        "the last path segment of a root `kendex project list` prints, or a name declared in "
+        "JARVIS_REPO_ALIASES (see the settings example). JARVIS_REMOTE_HOSTS adds SSH aliases "
         "to local and JARVIS_CONTROL_HOST roots; bare selection must be unique across them. With no additional "
         "alias, try JARVIS_CONTROL_HOST first, then this machine. JARVIS_CONTROL_USER names the control host "
         "account its overseers run as; listing and sending there then run as that account through `sudo -n`. "
