@@ -260,6 +260,7 @@ pub enum Said {
     Context {
         tokens: u64,
         window: Option<u64>,
+        cap: String,
         mark: u32,
         instruction: String,
     },
@@ -391,13 +392,14 @@ pub struct Routes {
 }
 
 /// A controller mark reached: its kind, the figure read and the mark it
-/// reached, the window a context reading named, and the succession that
-/// clears it.
+/// reached, the window and the token cap a context reading was judged on,
+/// and the succession that clears it.
 pub struct Reached {
     pub kind: agent_runtime::controller::views::MarkKind,
     pub value: String,
     pub mark: String,
     pub window: String,
+    pub cap: String,
     pub instruction: String,
 }
 
@@ -649,11 +651,12 @@ impl Said {
                     value,
                     mark,
                     window,
+                    cap,
                     instruction,
                 } = reached.as_ref();
                 match kind {
                 agent_runtime::controller::views::MarkKind::Context => format!(
-                    "this overseer requires handoff under the shared context rule at {value} tokens used. Handoff is required at 400000 tokens used, or strictly past {mark} percent of the printed window ({window} tokens). Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n{instruction}"
+                    "this overseer requires handoff under the shared context rule at {value} tokens used. Handoff is required at {cap} tokens used, or strictly past {mark} percent of the printed window ({window} tokens). Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n{instruction}"
                 ),
                 agent_runtime::controller::views::MarkKind::Headroom => format!(
                     "The orch runtime reads the account this overseer runs its credential out of as having {value} percent headroom left, at or below the ORCH_OVERSEER_HEADROOM_PCT mark of {mark}. Succeed this session yourself: a walled overseer runs no turn at all, so it reads no mail, handles no event and cannot hand over once the wall lands.\n{instruction}"
@@ -790,10 +793,11 @@ impl Said {
             Said::Context {
                 tokens,
                 window,
+                cap,
                 mark,
                 instruction,
             } => format!(
-                "this lane requires handoff under the shared context rule: tokens used={tokens}, effective capacity={}. Handoff is required at 400000 tokens used, or strictly past {mark} percent of the printed window. An empty capacity means unknown. No handoff record stands. Write the handoff so the next session can continue the work.\n{instruction}",
+                "this lane requires handoff under the shared context rule: tokens used={tokens}, effective capacity={}. Handoff is required at {cap} tokens used, or strictly past {mark} percent of the printed window. An empty capacity means unknown. No handoff record stands. Write the handoff so the next session can continue the work.\n{instruction}",
                 window.map(|w| w.to_string()).unwrap_or_default()
             ),
             Said::AgentLaunch { value, instruction } => format!(

@@ -281,6 +281,7 @@ fn overseer_marks(turn: &mut Turn, judge: &Judge, controller: &Controller, read:
         .get("context_decision")
         .cloned()
         .unwrap_or(Value::Null);
+    let cap = marks::decision_cap(&decision);
     let instruction = judge.instruction(turn, decision, Some(kind.word()))?;
     let window = match read {
         Read::Measured {
@@ -297,6 +298,7 @@ fn overseer_marks(turn: &mut Turn, judge: &Judge, controller: &Controller, read:
         value,
         mark,
         window,
+        cap,
         instruction,
     }));
     Err(turn.refuse(said, ""))
@@ -735,12 +737,14 @@ fn tool_mark(turn: &mut Turn, judge: &Judge, read: &Read) -> Flow<bool> {
         Some("due") => {
             let decision = marks["context_decision"].clone();
             let kind = MarkKind::Context;
+            let cap = marks::decision_cap(&decision);
             let instruction = judge.instruction(turn, decision, Some(kind.word()))?;
             let said = Said::ControllerMark(Box::new(Reached {
                 kind,
                 value: tokens.to_string(),
                 mark: pct.to_string(),
                 window: window.map(|w| w.to_string()).unwrap_or_default(),
+                cap,
                 instruction,
             }));
             turn.note(&said, "");

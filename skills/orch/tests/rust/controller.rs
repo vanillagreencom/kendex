@@ -7231,13 +7231,13 @@ fn the_installed_hook_acts_on_the_real_marks_verbs_reply_at_a_controllers_turn_e
             &runner, &hook, &hook_env, &account, &work, &overseer, &payload,
         )
     };
-    let due = stop(612_000);
+    let due = stop(650_000);
     assert_eq!(
         (
             due.status.code(),
             stderr(&due).lines().next().unwrap_or_default().to_owned()
         ),
-        (Some(2), "lane-mail-check: context=612000".to_owned()),
+        (Some(2), "lane-mail-check: context=650000".to_owned()),
         "{}",
         stderr(&due)
     );
@@ -8172,17 +8172,17 @@ fn an_overseers_own_account_under_a_failed_or_busy_accounts_read_is_unreadable()
 fn the_marks_judge_reads_the_context_mark_before_the_account_and_the_rest_below_both() {
     let mut world = MarksWorld::new();
     world.write_fleet("/home/nobody/.claude");
-    let reached = world.marks(&["--context", "520000:1000000"], &[]);
+    let reached = world.marks(&["--context", "650000:1000000"], &[]);
     assert_eq!(reached["key"], json!("mark-reached"), "{reached}");
     assert_eq!(reached["kind"], json!("context"));
-    assert_eq!(reached["value"], json!("520000"));
+    assert_eq!(reached["value"], json!("650000"));
     assert_eq!(reached["mark"], json!("90"));
     assert_eq!(reached["headroom"], json!("unreadable"));
     assert_eq!(reached["succession"], json!("on"));
     assert_eq!(
         reached["context_decision"],
-        json!({"tokens": 520000, "window": 1000000, "cap": 400000, "mark_pct": 90,
-               "cap_mark": 400000, "window_mark": 900000, "reserve_applied": false, "reserve_tokens": 0})
+        json!({"tokens": 650000, "window": 1000000, "cap": 650000, "mark_pct": 90,
+               "cap_mark": 650000, "window_mark": 900000, "reserve_applied": false, "reserve_tokens": 0})
     );
     world.plant(None, &[measured_account("eclaude", 10)]);
     world.write_fleet(&world.dir("eclaude"));

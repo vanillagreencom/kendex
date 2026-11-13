@@ -209,6 +209,8 @@ pub const OVERSEER_MEMORY_PCT_KEY: &str = "ORCH_OVERSEER_MEMORY_PCT";
 /// The share of the context window a reading is due strictly past, held
 /// to the judge's ceiling.
 pub const HANDOFF_CONTEXT_PCT_KEY: &str = "ORCH_HANDOFF_CONTEXT_PCT";
+/// The tokens used every context reading is due at, whatever its window.
+pub const HANDOFF_CONTEXT_TOKENS_KEY: &str = "ORCH_HANDOFF_CONTEXT_TOKENS";
 /// The tokens an attached launch keeps below the context mark for the
 /// returns still to come.
 pub const HANDOFF_AGENT_RESERVE_KEY: &str = "ORCH_HANDOFF_AGENT_RESERVE_TOKENS";
@@ -221,6 +223,7 @@ pub const MODEL_RECOVERY_LIMIT_KEY: &str = "ORCH_MODEL_RECOVERY_LIMIT";
 const DEFAULT_MODEL_RECOVERY_LIMIT: u32 = 3;
 const DEFAULT_OVERSEER_WALL_MINUTES: u32 = 20;
 const DEFAULT_HANDOFF_CONTEXT_PCT: u32 = 90;
+const DEFAULT_HANDOFF_CONTEXT_TOKENS: u64 = 650_000;
 // The provider's account keys.
 /// `<name>=<owner>/<repo>` pairs: the repository each account was given
 /// access to, which a `cloud-session` pick admits an account on.
@@ -298,6 +301,7 @@ const READ_KEYS: &[&str] = &[
     OVERSEER_WALL_MINUTES_KEY,
     OVERSEER_MEMORY_PCT_KEY,
     HANDOFF_CONTEXT_PCT_KEY,
+    HANDOFF_CONTEXT_TOKENS_KEY,
     HANDOFF_AGENT_RESERVE_KEY,
     HANDOFF_HEADROOM_PCT_KEY,
     MODEL_RECOVERY_LIMIT_KEY,
@@ -637,6 +641,7 @@ pub struct MarkSettings {
     pub wall_minutes: Judged<u32>,
     pub memory_pct: Judged<Option<u32>>,
     pub context_pct: Judged<u32>,
+    pub context_tokens: Judged<u64>,
     /// A lane's account mark, the headroom it hands off at.
     pub headroom_pct: Judged<u32>,
     /// The attached-launch reserve as written, unset where empty: its one
@@ -928,6 +933,14 @@ pub fn load(
                 .read
                 .and_then(|pct| match pct {
                     0 => Err((HANDOFF_CONTEXT_PCT_KEY, "0".to_owned())),
+                    n => Ok(n),
+                }),
+        },
+        context_tokens: Judged {
+            read: whole(HANDOFF_CONTEXT_TOKENS_KEY, DEFAULT_HANDOFF_CONTEXT_TOKENS)
+                .read
+                .and_then(|tokens| match tokens {
+                    0 => Err((HANDOFF_CONTEXT_TOKENS_KEY, "0".to_owned())),
                     n => Ok(n),
                 }),
         },
@@ -1463,6 +1476,8 @@ mod tests {
             (OVERSEER_MEMORY_PCT_KEY, "101"),
             (HANDOFF_CONTEXT_PCT_KEY, "0"),
             (HANDOFF_CONTEXT_PCT_KEY, "1000"),
+            (HANDOFF_CONTEXT_TOKENS_KEY, "0"),
+            (HANDOFF_CONTEXT_TOKENS_KEY, "65k"),
             (QUEUE_WAIT_ARM_GRACE_KEY, "0"),
             (QUEUE_WAIT_CONFIRM_POLLS_KEY, "02"),
             (QUEUE_WAIT_PROBE_INTERVAL_KEY, "x"),
@@ -1513,6 +1528,7 @@ mod tests {
             s.marks.wall_minutes.get().map(drop),
             s.marks.memory_pct.get().map(drop),
             s.marks.context_pct.get().map(drop),
+            s.marks.context_tokens.get().map(drop),
             s.lane_cap.get().map(drop),
             s.cloud_lane_cap.get().map(drop),
             s.retention_days.get().map(drop),

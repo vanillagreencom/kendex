@@ -1725,13 +1725,16 @@ impl World {
 
 /// The record a lane's turn end leaves, and the context mark judged on it:
 /// a reading below the mark passes and is recorded; one strictly past the
-/// share of the window, or at the token cap, is held with the commands that
-/// record the handoff; a share out of its form is held on the setting; and a
-/// reading with no verified window below the cap is reported unmeasured.
+/// share of the window, or at the token count the setting names, whichever
+/// comes first, is held with the commands that record the handoff and told
+/// that count; a share or a count out of its form is held on the setting;
+/// and a reading with no verified window below the count is reported
+/// unmeasured.
 #[test]
 fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     let world = World::launched();
     let off = ("DISABLE_AUTO_COMPACT", "1");
+    let cap = ("ORCH_HANDOFF_CONTEXT_TOKENS", "123457");
     // Below the mark the account mark is told, which no account here
     // measures: the released answer.
     let told = "lane-mail-check: account=unlisted";
@@ -1745,7 +1748,16 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
             2,
             "lane-mail-check: context=100001",
         ),
-        (400_000, &[], 2, "lane-mail-check: context=400000"),
+        (650_000, &[], 2, "lane-mail-check: context=650000"),
+        (
+            649_999,
+            &[],
+            0,
+            "lane-mail-check: window-unread=claude-haiku-5-5",
+        ),
+        (123_457, &[off, cap], 2, "lane-mail-check: context=123457"),
+        (123_456, &[off, cap], 0, told),
+        (150_000, &[off, cap], 2, "lane-mail-check: context=150000"),
         (
             1_000,
             &[],
@@ -1764,6 +1776,18 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
             2,
             "lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=0",
         ),
+        (
+            1_000,
+            &[("ORCH_HANDOFF_CONTEXT_TOKENS", "65k")],
+            2,
+            "lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_TOKENS=65k",
+        ),
+        (
+            1_000,
+            &[("ORCH_HANDOFF_CONTEXT_TOKENS", "0")],
+            2,
+            "lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_TOKENS=0",
+        ),
     ];
     for (tokens, env, code, first) in rows {
         let row = format!("{tokens} {env:?}");
@@ -1772,6 +1796,14 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
         let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], &payload, env);
         assert_eq!(out.code, *code, "{row}: {}", out.stderr);
         assert_eq!(out.first(), *first, "{row}");
+        // The refusal the session reads names the count it was judged at.
+        if *code == 2 && env.contains(&cap) {
+            assert!(
+                out.stderr.contains("123457 tokens used"),
+                "{row}: {}",
+                out.stderr
+            );
+        }
         if out.first().starts_with("lane-mail-check: setting-range") {
             continue;
         }
@@ -1810,7 +1842,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     // The refusal names the commands that record the handoff, the state
     // file's directory and the item's init on its branch, and the attached
     // agents the Stop payload's registry still names out.
-    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 400_000)]);
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 650_000)]);
     let payload = json!({"session_id": "s1", "transcript_path": transcript,
         "background_tasks": [{"type": "subagent", "id": "a1", "status": "running"},
             {"type": "shell", "id": "b1", "status": "running"}]})
@@ -1841,8 +1873,8 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
         })
         .unwrap_or_else(|| panic!("no handoff command: {}", out.stderr));
     let record: Value = serde_json::from_str(record).unwrap();
-    assert_eq!(record["context"]["decision"]["tokens"], json!(400_000));
-    assert_eq!(record["context"]["decision"]["cap_mark"], json!(400_000));
+    assert_eq!(record["context"]["decision"]["tokens"], json!(650_000));
+    assert_eq!(record["context"]["decision"]["cap_mark"], json!(650_000));
     assert_eq!(record["context"]["source"]["session_id"], json!("s1"));
 }
 
@@ -1852,7 +1884,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
 #[test]
 fn a_standing_handoff_passes_and_an_unreadable_transcript_is_held() {
     let world = World::launched();
-    let past = world.transcript("t.jsonl", &[claude_usage("m", 400_000)]);
+    let past = world.transcript("t.jsonl", &[claude_usage("m", 650_000)]);
     let state = world
         .lane
         .join("tmp")
@@ -2195,7 +2227,7 @@ fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
         ])
         .collect();
     let count = json!({"type": "event_msg", "payload": {"type": "token_count", "info": {
-        "last_token_usage": {"total_tokens": 260_000}, "model_context_window": 1_000_000}}});
+        "last_token_usage": {"total_tokens": 510_000}, "model_context_window": 1_000_000}}});
     for (lines, code) in [(spawned, 2), (listed, 0)] {
         let mut lines = lines;
         lines.push(count.clone());
@@ -2214,7 +2246,7 @@ fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
         if code == 2 {
             assert_eq!(
                 out.first(),
-                "lane-mail-check: agent-reserve=spawn_agent tokens=260000 reserve=150000"
+                "lane-mail-check: agent-reserve=spawn_agent tokens=510000 reserve=150000"
             );
             assert!(out.stderr.contains("Call list_agents"), "{}", out.stderr);
             assert!(
@@ -2349,12 +2381,12 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
     let rows: &[StatusRow] = &[
         (100_000, 1_000_000, &transcript, None, &[], told, ""),
         (
-            400_000,
+            650_000,
             1_000_000,
             &transcript,
             None,
             &[],
-            "lane-mail-check: context=400000",
+            "lane-mail-check: context=650000",
             "block",
         ),
         (
@@ -2428,7 +2460,7 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
         );
     }
     // A record the status line stopped refreshing is never read as room.
-    world.status_line(400_000, 1_000_000, Some(&transcript), None);
+    world.status_line(650_000, 1_000_000, Some(&transcript), None);
     let mut record: Value =
         serde_json::from_str(&fs::read_to_string(world.status_record()).unwrap()).unwrap();
     record["written_at"] = json!(1);
@@ -2452,8 +2484,8 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
     world.extension_reading(Some(720_001), 800_000, "s1", EXTENSION);
     let out = world.copilot_stop(&[]);
     assert_eq!(out.first(), "lane-mail-check: context=720001");
-    world.status_line(400_000, 1_000_000, Some(&transcript), None);
-    let held = "lane-mail-check: context=400000";
+    world.status_line(650_000, 1_000_000, Some(&transcript), None);
+    let held = "lane-mail-check: context=650000";
     let rows: &[(Option<u64>, &str, &str, &str)] = &[
         (
             Some(100_000),
@@ -2529,7 +2561,7 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
     fs::remove_dir(&flag).unwrap();
     // A reading still on its way: its pending marker outlasts the wait, and
     // the record past the mark is not judged in its place.
-    world.status_line(400_000, 1_000_000, Some(&transcript), None);
+    world.status_line(650_000, 1_000_000, Some(&transcript), None);
     let marker = world.usage().join("s1");
     plant(&marker);
     let out = world.copilot_stop(&[]);
@@ -3029,12 +3061,12 @@ fn the_admission_names_codex_alternate_review_and_copilot_compaction() {
     env.push(("ORCH_COMPACTION_OVERRIDES", overrides.as_str()));
     let transcript = world.root.join("r.jsonl");
     world.tool_call("codex", Some(&transcript), &env);
-    // The token cap is 400000; the reserve 150000 leaves 250000 below it.
+    // The token cap is 650000; the reserve 150000 leaves 500000 below it.
     let rows: &[(u64, &str, &str)] = &[
-        (249_999, "--attached-launch", "room"),
-        (260_000, "--attached-launch", "alternate-review"),
-        (260_000, "--checkpoint", "room"),
-        (400_000, "--attached-launch", "due"),
+        (499_999, "--attached-launch", "room"),
+        (510_000, "--attached-launch", "alternate-review"),
+        (510_000, "--checkpoint", "room"),
+        (650_000, "--attached-launch", "due"),
     ];
     for (tokens, launch, want) in rows {
         world.transcript(

@@ -271,7 +271,8 @@ fn assert_succession(world: &TurnWorld, text: &str, mark: Option<&str>) {
 
 /// The overseer past a mark is held at its turn end and handed the runtime
 /// succession for that mark, its handoff record naming this session alone:
-/// its context mark whatever the succession setting, an account mark only
+/// its context mark whatever the succession setting, at the token count the
+/// setting names and told that count, an account mark only
 /// while succession is on, and a Copilot compaction flagged for this
 /// session whatever a reading says.
 #[test]
@@ -284,18 +285,25 @@ fn an_overseer_past_a_mark_is_handed_the_runtime_succession() {
     }
     const HEADROOM: (&str, &str) = ("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "95");
     const OFF: (&str, &str) = ("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "off");
+    const CAP: (&str, &str) = ("ORCH_HANDOFF_CONTEXT_TOKENS", "123457");
     let cases = [
         Case {
             name: "the context mark",
-            tokens: 450_000,
+            tokens: 650_000,
             settings: &[],
-            held: Some("context=450000"),
+            held: Some("context=650000"),
+        },
+        Case {
+            name: "the context mark at the setting's count",
+            tokens: 150_000,
+            settings: &[CAP],
+            held: Some("context=150000"),
         },
         Case {
             name: "the context mark, succession off",
-            tokens: 450_000,
+            tokens: 650_000,
             settings: &[OFF],
-            held: Some("context=450000"),
+            held: Some("context=650000"),
         },
         Case {
             name: "the headroom mark",
@@ -335,6 +343,13 @@ fn an_overseer_past_a_mark_is_handed_the_runtime_succession() {
         };
         assert_eq!(out.code, 2, "{name}: {}", out.stderr);
         assert_eq!(out.keyed(), [held], "{name}: {}", out.stderr);
+        if case.settings.contains(&CAP) {
+            assert!(
+                out.stderr.contains("123457 tokens used"),
+                "{name}: {}",
+                out.stderr
+            );
+        }
         let kind = held.split('=').next();
         assert_succession(&world, &out.stderr, kind);
     }
@@ -499,7 +514,7 @@ fn the_overseer_tool_call_tells_a_gap_once_per_session_and_line() {
         "the overseer mailbox was made"
     );
     fs::create_dir_all(overseer_box(&world)).unwrap();
-    let reached = "context=450000".to_owned();
+    let reached = "context=650000".to_owned();
     let cached = Some(gap_told.as_str());
     type Step<'a> = (&'a str, Option<u64>, Vec<String>, Option<&'a str>);
     let steps: [Step; 6] = [
@@ -509,11 +524,11 @@ fn the_overseer_tool_call_tells_a_gap_once_per_session_and_line() {
         ("the gap back", None, vec![gap.clone()], cached),
         (
             "a reached mark",
-            Some(450_000),
+            Some(650_000),
             vec![reached.clone()],
             cached,
         ),
-        ("a reached mark again", Some(450_000), vec![reached], cached),
+        ("a reached mark again", Some(650_000), vec![reached], cached),
     ];
     for (name, tokens, want, cache) in steps {
         let out = call(tokens);
@@ -529,7 +544,7 @@ fn the_overseer_tool_call_tells_a_gap_once_per_session_and_line() {
     let mut fleet = world.fleet();
     fleet["handoff"] = json!({ "session_id": SESSION, "pane_key": caller_key(&world, PANE) });
     fs::write(world.fleet_path(), fleet.to_string()).unwrap();
-    let out = call(Some(450_000));
+    let out = call(Some(650_000));
     assert_eq!(handed(&out), Vec::<String>::new(), "{}", out.stderr);
     assert!(out.keyed().is_empty(), "{}", out.stderr);
 }
@@ -637,7 +652,8 @@ fn jarvis_on(world: &TurnWorld, state: (&str, &str)) -> (Vec<(String, String)>, 
 }
 
 /// A managed Jarvis session past its context mark is held and handed
-/// Jarvis's own succession, never the repository overseer's; below the mark
+/// Jarvis's own succession, never the repository overseer's, naming each
+/// attached agent still out for it to let finish; below the mark
 /// it passes, recording its reading only where the fleet record binds it;
 /// a transcript under another account home is said and passed. A session
 /// whose record still reads its launch, `starting`, is not yet judged as
@@ -655,7 +671,7 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
     let cases = [
         Case {
             name: "past the mark",
-            tokens: 450_000,
+            tokens: 650_000,
             home: "claude-1",
             bound: false,
             state: RUNNING,
@@ -663,7 +679,7 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
         },
         Case {
             name: "past the mark, bound as its home's overseer",
-            tokens: 450_000,
+            tokens: 650_000,
             home: "claude-1",
             bound: true,
             state: RUNNING,
@@ -687,7 +703,7 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
         },
         Case {
             name: "under another account home",
-            tokens: 450_000,
+            tokens: 650_000,
             home: "other",
             bound: false,
             state: RUNNING,
@@ -695,7 +711,7 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
         },
         Case {
             name: "past the mark, its record still starting",
-            tokens: 450_000,
+            tokens: 650_000,
             home: "claude-1",
             bound: false,
             state: ("starting", "launching"),
@@ -756,6 +772,22 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
             assert_eq!(record, None, "{name}: an unbound session recorded");
         }
     }
+    // An attached agent still out is named, as a lane's and the overseer's
+    // are, so the session lets it finish before its succession.
+    let world = TurnWorld::new();
+    let (env, account) = jarvis_on(&world, RUNNING);
+    let path = account.join(format!("projects/p/{SESSION}.jsonl"));
+    let named = transcript(&path, &[claude_usage(650_000)]);
+    let payload = json!({ "session_id": SESSION, "transcript_path": named.display().to_string(),
+        "background_tasks": [{"type": "subagent", "id": "a1", "status": "running"}] });
+    let out = world.turn(&world.checkout, "claude", &[], &payload.to_string(), &env);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("lane-mail-check: attached-agent=a1 status=running output=unknown"),
+        "{}",
+        out.stderr
+    );
 }
 
 /// A managed Jarvis session whose mark cannot be judged, on a setting out
@@ -772,7 +804,7 @@ fn a_jarvis_session_whose_mark_cannot_be_judged_is_told_and_passed() {
         }
         let path = account.join(format!("projects/p/{SESSION}.jsonl"));
         let line = if setting {
-            claude_usage(450_000)
+            claude_usage(650_000)
         } else {
             unread_usage()
         };
@@ -899,16 +931,16 @@ fn an_overseer_attached_launch_is_held_at_its_marks() {
         },
         Case {
             name: "past the mark",
-            usage: claude_usage(450_000),
+            usage: claude_usage(650_000),
             tasks: json!([]),
             home: "claude-1",
             bound: true,
             own_handoff: false,
-            held: Some("agent-launch=Agent tokens=450000"),
+            held: Some("agent-launch=Agent tokens=650000"),
         },
         Case {
             name: "a transcript under another home",
-            usage: claude_usage(450_000),
+            usage: claude_usage(650_000),
             tasks: json!([]),
             home: "other",
             bound: true,
@@ -917,7 +949,7 @@ fn an_overseer_attached_launch_is_held_at_its_marks() {
         },
         Case {
             name: "past the mark, its own handoff standing",
-            usage: claude_usage(450_000),
+            usage: claude_usage(650_000),
             tasks: running.clone(),
             home: "claude-1",
             bound: true,
@@ -926,7 +958,7 @@ fn an_overseer_attached_launch_is_held_at_its_marks() {
         },
         Case {
             name: "a session the fleet record does not bind",
-            usage: claude_usage(450_000),
+            usage: claude_usage(650_000),
             tasks: running,
             home: "claude-1",
             bound: false,
@@ -1014,7 +1046,7 @@ fn a_bound_session_outside_a_repository_meets_nothing_past_the_mark() {
     let member = world.controller(PANE, "claude", &account, SESSION);
     fs::write(&fleet, json!({ "overseer": member }).to_string()).unwrap();
     let path = account.join(format!("projects/p/{SESSION}.jsonl"));
-    let named = transcript(&path, &[claude_usage(450_000)]);
+    let named = transcript(&path, &[claude_usage(650_000)]);
     let payload = json!({ "session_id": SESSION, "transcript_path": named.display().to_string() });
     let out = world.turn(&dir, "claude", &[], &payload.to_string(), &env);
     assert_eq!(

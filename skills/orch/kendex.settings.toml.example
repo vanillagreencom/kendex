@@ -455,6 +455,8 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # Earlier context handoff percentage. Shared rule and boundary behavior:
 # references/oversee-events.md, Judgement rules.
 # ORCH_HANDOFF_CONTEXT_PCT = "90"
+# Absolute session handoff mark in whole tokens.
+# ORCH_HANDOFF_CONTEXT_TOKENS = "650000"
 # Attached agent result reserve before the earlier context mark, in
 # nonnegative whole tokens. Which launches it holds back:
 # references/oversee-events.md § Judgement rules and

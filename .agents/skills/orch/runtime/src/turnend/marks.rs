@@ -34,7 +34,7 @@ use crate::watch::overseer::{lane_marks, scripts_dir};
 /// The attached-launch reserve where the setting names none.
 const DEFAULT_RESERVE: u64 = 150_000;
 
-const AGENT_INSTRUCTION: &str = "Wait for each attached subagent this session launched to return in this turn before normal succession. Use the harness wait or result tool; another Stop refusal alone is not a wait. If the session cannot wait, name each unfinished agent, its known output path, and any unknown state in the existing handoff. The successor reads available agent output before repeating its task.";
+const AGENT_INSTRUCTION: &str = "Take no new work. Let each running command finish and return before succession. Wait for each attached subagent this session launched to return in this turn before normal succession. Use the harness wait or result tool; another Stop refusal alone is not a wait. If the session cannot wait, name each unfinished agent, its known output path, and any unknown state in the existing handoff. The successor reads available agent output before repeating its task.";
 
 const DETACHED_ROUTE: &str = "lane-mail-check: detached-route=orch-job-runner\nUse the orch job runner described in waiter-launch.md, Launch, or a separate session for work that must survive this session.";
 
@@ -143,11 +143,13 @@ pub(super) fn handoff_check(
             let marks = judge.judged_marks(turn, tokens, window, None)?;
             match marks["context"].as_str() {
                 Some("due") => {
-                    let instruction =
-                        judge.handoff_instruction(turn, marks["context_decision"].clone())?;
+                    let decision = marks["context_decision"].clone();
+                    let cap = decision_cap(&decision);
+                    let instruction = judge.handoff_instruction(turn, decision)?;
                     let said = Said::Context {
                         tokens,
                         window,
+                        cap,
                         mark: pct,
                         instruction,
                     };
@@ -423,6 +425,14 @@ pub(super) fn harness_word(harness: Harness) -> &'static str {
     }
 }
 
+/// The token cap a context decision was judged at, as a told line prints it.
+pub(super) fn decision_cap(decision: &Value) -> String {
+    decision["cap"]
+        .as_u64()
+        .map(|cap| cap.to_string())
+        .unwrap_or_default()
+}
+
 impl<'a> Judge<'a> {
     /// The fleet controller's judgement under `settings`: its reading
     /// recorded in `mailbox` under its key, its handoff the fleet item's in
@@ -549,19 +559,20 @@ impl<'a> Judge<'a> {
         }
     }
 
-    /// The context mark's share, refused on a value outside its form.
+    /// The context mark's share, refused, as its token count is, on a value
+    /// outside its form.
     pub(super) fn context_share(&self, turn: &mut Turn) -> Flow<u32> {
-        match &self.settings.marks.context_pct.read {
-            Ok(pct) => Ok(*pct),
-            Err((key, value)) => {
-                let instruction = self.handoff_instruction(turn, Value::Null)?;
-                let said = Said::SettingRange {
-                    value: format!("{key}={value}"),
-                    instruction,
-                };
-                Err(self.refuse(turn, said, ""))
-            }
-        }
+        let marks = &self.settings.marks;
+        let (key, value) = match (&marks.context_pct.read, &marks.context_tokens.read) {
+            (Ok(pct), Ok(_)) => return Ok(*pct),
+            (Err(refused), _) | (Ok(_), Err(refused)) => refused,
+        };
+        let instruction = self.handoff_instruction(turn, Value::Null)?;
+        let said = Said::SettingRange {
+            value: format!("{key}={value}"),
+            instruction,
+        };
+        Err(self.refuse(turn, said, ""))
     }
 
     /// The attached-launch reserve: the setting's whole number, the
@@ -963,15 +974,6 @@ impl<'a> Judge<'a> {
         decision: Value,
         mark: Option<&str>,
     ) -> Flow<String> {
-        if let Seat::Jarvis { home, scripts, .. } = &self.seat {
-            let package = scripts.parent().unwrap_or(scripts);
-            return Ok(format!(
-                "Reach a safe point. Follow Succession in {}/workflows/session.md. Replace the handoff as that workflow requires, then run:\n  {} succeed --home {}",
-                package.display(),
-                shell_quoted(&scripts.join("jarvis-session")),
-                shell_quoted(home)
-            ));
-        }
         let mut agent = AGENT_INSTRUCTION.to_owned();
         if turn.arm == Some(Arm::Stop) && turn.harness == Harness::Claude {
             let roster = agents::claude_roster(self.payload, &turn.deadline);
@@ -979,6 +981,15 @@ impl<'a> Judge<'a> {
         }
         if turn.arm == Some(Arm::Halt) {
             agent = format!("{DETACHED_ROUTE}\n{agent}");
+        }
+        if let Seat::Jarvis { home, scripts, .. } = &self.seat {
+            let package = scripts.parent().unwrap_or(scripts);
+            return Ok(format!(
+                "{agent}\nReach a safe point. Follow Succession in {}/workflows/session.md. Replace the handoff as that workflow requires, then run:\n  {} succeed --home {}",
+                package.display(),
+                shell_quoted(&scripts.join("jarvis-session")),
+                shell_quoted(home)
+            ));
         }
         let context = json!({
             "decision": decision,

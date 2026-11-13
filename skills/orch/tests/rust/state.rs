@@ -3075,7 +3075,7 @@ fn the_lane_marks_judge_a_reading_alone_with_the_reserve_beside_the_plain_answer
         store.ok_env(&all, env)
     };
     let judged = marks(
-        &["--context", "250000:1000000", "--agent-reserve", "150000"],
+        &["--context", "500000:1000000", "--agent-reserve", "150000"],
         &[],
     );
     assert_eq!(judged["context"], "room");
@@ -3083,12 +3083,12 @@ fn the_lane_marks_judge_a_reading_alone_with_the_reserve_beside_the_plain_answer
     assert_eq!(judged["reserve"]["context"], "due");
     assert_eq!(
         judged["reserve"]["context_decision"],
-        json!({"tokens": 250000, "window": 1000000, "cap": 400000, "mark_pct": 90, "cap_mark": 250000,
+        json!({"tokens": 500000, "window": 1000000, "cap": 650000, "mark_pct": 90, "cap_mark": 500000,
             "window_mark": 750000, "reserve_applied": true, "reserve_tokens": 150000})
     );
     assert_eq!(
         judged["context_decision"],
-        json!({"tokens": 250000, "window": 1000000, "cap": 400000, "mark_pct": 90, "cap_mark": 400000,
+        json!({"tokens": 500000, "window": 1000000, "cap": 650000, "mark_pct": 90, "cap_mark": 650000,
             "window_mark": 900000, "reserve_applied": false, "reserve_tokens": 0})
     );
     assert!(judged.get("reserve").is_some());
@@ -3108,10 +3108,10 @@ fn the_lane_marks_judge_a_reading_alone_with_the_reserve_beside_the_plain_answer
         "room"
     );
     assert_eq!(
-        marks(&["--context", "399999:"], &[])["context"],
+        marks(&["--context", "649999:"], &[])["context"],
         "unmeasured"
     );
-    assert_eq!(marks(&["--context", "400000:"], &[])["context"], "due");
+    assert_eq!(marks(&["--context", "650000:"], &[])["context"], "due");
     let beyond = marks(
         &[
             "--context",
