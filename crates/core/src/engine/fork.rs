@@ -332,15 +332,14 @@ fn capture_skill(
     let files = crate::render::skill::authored_form(files, &published.text)
         .map_err(|cause| unrestored(cause.to_string()))?;
     let files = crate::render::skill::with_skill_text(files, crate::render::skill::strip_block);
-    let (files, warnings) = match &coordinates {
-        Some(coordinates) => crate::render::skill::Located::observed(
-            files,
-            edited,
-            &coordinates.root,
-        )
-        .render_at(&coordinates.directory, false, None),
-        None => (files, Vec::new()),
+    let (captured, warnings) = match coordinates {
+        Some(coordinates) => {
+            crate::render::skill::Located::observed(files, edited, &coordinates.root)
+                .capture_at(coordinates)
+        }
+        None => (crate::render::skill::Located::new(files, None), Vec::new()),
     };
+    let (files, coordinates) = captured.into_parts();
     let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
         unreachable!("authored_form refuses a tree with no SKILL.md text")
     };

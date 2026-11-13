@@ -608,6 +608,72 @@ fn replacing_an_in_place_alias_with_a_copy_rebases_external_targets() {
 
 #[test]
 fn fork_coordinates_survive_project_moves_and_legacy_bytes_stay_untranslated() {
+    for beside in [false, true] {
+        let f = fixture();
+        let env = Env::fake(&f.env.home.join("home"), FakeOs::Linux);
+        put(&f.env.home.join("memory/x.md"), "Outside home.\n");
+        put(&env.home.join("memory/inside.md"), "Inside home.\n");
+        put(
+            &f.source.join("skills/ship/SKILL.md"),
+            "---\nname: ship\ndescription: ship\n---\n[memory](../../../../memory/x.md)\n[inside](../../../memory/inside.md)\n",
+        );
+        put(
+            &env.global_manifest_file(),
+            &format!(
+                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['codex']\nmethod = 'symlink'\n[skills.ship]\nsource = 'cat'\n",
+                source_path(&f.source)
+            ),
+        );
+        let report = audit(&env, &Scope::Global).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        let plan = if beside {
+            kendex_core::engine::fork::fork_beside(
+                &env,
+                &Scope::Global,
+                kendex_core::model::ItemKind::Skill,
+                "ship",
+                kendex_core::model::HarnessId::Codex,
+                "my-ship",
+                None,
+            )
+            .unwrap()
+        } else {
+            kendex_core::engine::fork::fork(
+                &env,
+                &Scope::Global,
+                kendex_core::model::ItemKind::Skill,
+                "ship",
+                kendex_core::model::HarnessId::Codex,
+            )
+            .unwrap()
+        };
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|warning| warning.message.starts_with("agent-link-unrepresentable:"))
+        );
+        apply::execute(&env, &plan).unwrap();
+        let name = if beside { "my-ship" } else { "ship" };
+        for _ in 0..2 {
+            let report = audit(&env, &Scope::Global).unwrap();
+            apply::execute(&env, &report.plan).unwrap();
+            let installed = env.home.join(".agents/skills").join(name);
+            let text = fs::read_to_string(installed.join("SKILL.md")).unwrap();
+            for (label, expected) in [
+                ("memory", f.env.home.join("memory/x.md")),
+                ("inside", env.home.join("memory/inside.md")),
+            ] {
+                let link = text
+                    .split(&format!("[{label}]("))
+                    .nth(1)
+                    .unwrap()
+                    .split(')')
+                    .next()
+                    .unwrap();
+                assert_eq!(fs::canonicalize(installed.join(link)).unwrap(), expected);
+            }
+        }
+    }
     for (harnesses, method) in [
         ("'antigravity'", "symlink"),
         ("'antigravity'", "copy"),

@@ -23,6 +23,32 @@ impl Located {
             }),
         )
     }
+    /// A stored tree has one interpretation, including when one link cannot
+    /// move. Partial conversion would give its files incompatible bases.
+    pub(crate) fn capture_at(self, destination: SkillCoordinates) -> (Self, Vec<RenderWarning>) {
+        let Some(source) = &self.coordinates else {
+            return (self, Vec::new());
+        };
+        let (files, warnings) = convert_links(
+            self.files.clone(),
+            BodyPaths {
+                source: &source.directory,
+                source_root: &source.root,
+                rendered: &destination.directory,
+                install_root: &destination.root,
+            },
+            false,
+            None,
+        );
+        if warnings.is_empty() {
+            (Self::new(files, Some(destination)), warnings)
+        } else {
+            (self, warnings)
+        }
+    }
+    pub(crate) fn into_parts(self) -> (Files, Option<SkillCoordinates>) {
+        (self.files, self.coordinates)
+    }
     pub(crate) fn render_at(
         self,
         destination: &Path,

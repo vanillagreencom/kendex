@@ -139,9 +139,18 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => {
     // like every other write that reaches the engine.
     install: (name, destination) =>
       writingRepo(() =>
-        write(set, get, () =>
-          commands.templateInstall(name, destination, null, null),
-        ),
+        write(set, get, async () => {
+          const answer = await commands.templateInstall(
+            name,
+            destination,
+            null,
+            null,
+          );
+          if (answer.status === "ok") {
+            for (const note of answer.data.notes) toast.message(note);
+          }
+          return answer;
+        }),
       ),
 
     clearRefusal: () => set({ refused: null }),
@@ -190,6 +199,7 @@ export async function installTemplate(
     ),
   );
   if (answer.status === "error") return { ok: false, reason: answer.error };
+  for (const note of answer.data.notes) toast.message(note);
   // A run that stopped short landed part of the template and says why it
   // went no further. Both halves, because both are true: the dialog
   // already draws a place that took some of an install and refused the
