@@ -16,16 +16,24 @@
 # merge queue with `"mergeQueue": null` (a recorded run against a
 # repository with none), and that counts as 0: nothing waits there. A failed
 # read, an answer carrying GraphQL errors, and any other shape print nothing
-# and return 1, so the caller keeps the pull request route.
-kendex_land_queue_entries() { # REPO BRANCH
+# and return 1, so the caller keeps the pull request route. An optional
+# pull-request number excludes that entry, including while its dequeue
+# settles. Only an otherwise empty queue can authorize landing, so the first
+# 100 entries suffice: a larger queue stays busy with or without that entry.
+kendex_land_queue_entries() { # REPO BRANCH [EXCLUDE_PR_NUMBER]
   local answer
   answer="$(gh api graphql -f owner="${1%%/*}" -f repo="${1#*/}" -f branch="$2" \
-    -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }')" ||
+    -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries(first: 100) { totalCount nodes { pullRequest { number } } } } } }')" ||
     return 1
-  jq -er 'if (.errors // [] | length) != 0 then error("GraphQL errors")
+  jq -er --arg exclude "${3:-}" 'if (.errors // [] | length) != 0 then error("GraphQL errors")
     else .data.repository.mergeQueue
       | if . == null then 0
-        elif (.entries.totalCount | type == "number" and . >= 0 and floor == .) then .entries.totalCount
+        elif (.entries.totalCount | type == "number" and . >= 0 and floor == .) then
+          if $exclude == "" then .entries.totalCount
+          elif (.entries.nodes | type) != "array" then error("no entries")
+          else .entries.totalCount -
+            (if any(.entries.nodes[]; .pullRequest.number == ($exclude | tonumber)) then 1 else 0 end)
+          end
         else error("no entry count") end end' <<<"$answer" 2>/dev/null
 }
 
