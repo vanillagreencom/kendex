@@ -70,7 +70,7 @@ Jarvis runs as a session of your coding assistant in your Jarvis home. You give 
 Your own files sit in the Jarvis home beside the package, and package updates leave them as they are. The [home layout](references/home-layout.md) lists every file and whether Git keeps it.
 
 - `AGENTS.md` holds your standing instructions: who decides what, and which work Jarvis may do without asking.
-- `skills/own/` holds skills you write. Create `skills/own/my-task/SKILL.md` with a frontmatter `name: my-task` and a `description` that says when to read it, then the instructions below it. Install it from your Jarvis home with `kendex add ./skills/own/my-task --skill my-task --harness codex --yes`, naming your harnesses in `--harness`.
+- `skills/NAME/` holds skills you write. Create `skills/my-task/SKILL.md` with a frontmatter `name: my-task` and a `description` that says when to read it, then the instructions below it. In your home's `kendex.toml`, declare `[sources."."]` with `path = "."`, then list the skill under `[skills.my-task]` with `source = "."`. Run `kendex refresh` from your home to install it.
 - `memory/` holds facts and preferences under [Memory](references/memory.md). Keep secrets in a password manager, never in memory.
 - `kendex.settings.toml` holds shared settings under `[env]`, such as the report cadence, quiet hours, time zone and report folder. The [settings example](kendex.settings.toml.example) lists them.
 - `.env.local` holds secrets and settings for one computer only. Its values override `kendex.settings.toml`.

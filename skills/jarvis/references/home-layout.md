@@ -7,7 +7,7 @@ Read when setting up a Jarvis home, choosing a home path, starting a continuing 
 | Path | Git status | Reason |
 |---|---|---|
 | `AGENTS.md` | Committed | Your standing instructions travel with you. |
-| `skills/own/` | Committed | You are the source. kendex installs your skills from here. |
+| `skills/NAME/` | Committed | You are the source. Follow [Customize](../README.md#customize) to declare the home source and install your skills. |
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](memory.md). |
 | `state/handoff.md` | Committed | Default current handoff. `jarvis-session succeed` saves and hands over this file only; `progress-log` and `owner-unanswered` select another through `--handoff PATH` under [Handoff](long-session.md#handoff). |
 | `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](long-session.md#handoff). `jarvis-session succeed` saves its own copy of the handoff as `handoff-<generation>-<id>.md`. |
