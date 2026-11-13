@@ -1286,6 +1286,10 @@ git -C "$repo" commit -q -m "configured allowlist"
 PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' \
   assert_class "a configured allowlist decides trivial" trivial \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
+assert_eq "a configured allowlist proves no quick change" "quick-proof: proved=false" \
+  "$(PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' "$CHANGE_SCOPE" \
+    --repo "$repo" --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null |
+    sed -n '/^quick-proof: /p')"
 PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' HARNESS_CI_TRIVIAL_MAX_LINES=1 \
   assert_class "a configured ceiling bounds the configured allowlist" micro \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
@@ -1310,6 +1314,43 @@ allowlisted-one-over-the-default-ceiling|small|runtime/product.ts:21
 docs-outside-a-configured-allowlist|standard|docs/plans/v2.md:400
 CASES
 require_rows change-scope-allowlist-table "$allowlist_rows"
+
+# The quick proof a review request may be skipped on: Markdown of the docs
+# set on a pull request proves it; a template under docs/, which the docs set
+# also takes, a micro change of Markdown outside that set, Markdown a
+# repository allowlist admits and a merge group do not. Each row run against
+# SCRIPT, or the rows LABELS names one per line, as one
+# `LABEL<TAB>WANT<TAB>GOT` line.
+quick_rows() { # SCRIPT [LABELS]
+  local script="$1" only="${2:-}" label class proved spec event allowlist err
+  while IFS='|' read -r label class proved spec event allowlist; do
+    if [ -n "$only" ] && ! grep -qxF -- "$label" <<<"$only"; then continue; fi
+    reset_case
+    set_verifier dirty
+    write_lines "$repo" "${spec%:*}" "${spec##*:}"
+    git -C "$repo" add -A || return
+    git -C "$repo" commit -q -m "$label" || return
+    [ "$allowlist" != - ] || allowlist=""
+    err="$(env -u HARNESS_CI_TRIVIAL_PATHS ${allowlist:+"HARNESS_CI_TRIVIAL_PATHS=$allowlist"} \
+      PATH="$stub_bin:$PATH" "$script" \
+      --repo "$repo" --event "$event" --base "$base" --head HEAD 2>&1 >/dev/null)" || return
+    printf '%s\t%s\t%s\n' "$label" "class=$class quick-proof: proved=$proved" \
+      "$(sed -n 's/^class: \(class=[^ ]*\).*/\1/p' <<<"$err") $(sed -n '/^quick-proof: /p' <<<"$err")"
+  done <<'QUICK'
+docs-set markdown proves a quick change|trivial|true|docs/guide.md:2|pull_request|-
+a template under docs proves none|trivial|false|docs/authoring/templates/hook.sh:2|pull_request|-
+a micro Markdown change outside the docs set proves none|micro|false|notes/plan.md:2|pull_request|-
+Markdown a repository allowlist admits proves none|trivial|false|notes/plan.md:2|pull_request|notes/*
+a merge group proves none|trivial|false|docs/guide.md:2|merge_group|-
+QUICK
+}
+quick_out="$(quick_rows "$CHANGE_SCOPE")"
+quick_row_count=0
+while IFS=$'\t' read -r label want got; do
+  quick_row_count=$((quick_row_count + 1))
+  assert_eq "$label" "$want" "$got"
+done <<<"$quick_out"
+require_rows change-scope-quick "$quick_row_count"
 
 # A ceiling that is not a whole number is a wiring error, not a skipped check:
 # without the refusal the comparison below it fails under strict mode and the
@@ -1729,7 +1770,7 @@ ROWS
 # stdout verdict, the class line and the admission line.
 settings_rows() { # SCRIPT [LABELS]
   local script="$1" only="${2:-}" label from event edits files env verifier class note
-  local spec edit status out line admission class_word
+  local spec edit status out line admission class_word quick
   while IFS='|' read -r label from event edits files env verifier class note; do
     if [ -n "$only" ] && ! grep -qxF -- "$label" <<<"$only"; then continue; fi
     case "$from" in
@@ -1771,18 +1812,61 @@ settings_rows() { # SCRIPT [LABELS]
     line=$(sed -n 's/^class: //p' "$SANDBOX/settings-err") || return
     admission=$(sed -n 's/^settings-admission: admitted=false //p' "$SANDBOX/settings-err") || return
     class_word="${class#class=}"
-    printf '%s\t%s\t%s\n' "$label" \
+    quick=$(sed -n '/^quick-proof: /p' "$SANDBOX/settings-err") || return
+    printf '%s\t%s\t%s\t%s\n' "$label" \
       "change_class=${class_word%% *} exit 0 | $class | $note" \
-      "$out exit $status | $line | ${admission:--}"
+      "$out exit $status | $line | ${admission:--}" "$quick"
   done <"$SANDBOX/settings-rows"
 }
 settings_out=$(settings_rows "$CHANGE_SCOPE")
 settings_row_count=0
-while IFS=$'\t' read -r label want got; do
+while IFS=$'\t' read -r label want got quick; do
   settings_row_count=$((settings_row_count + 1))
   assert_eq "$label" "$want" "$got"
 done <<<"$settings_out"
 require_rows change-scope-settings "$settings_row_count"
+# The quick proof of an admitted change: settings alone, or beside docs-set
+# Markdown, prove it; beside a path the repository's allowlist names, or
+# beside a script line, they do not.
+quick_settings_rows=0
+while IFS='|' read -r label proved; do
+  quick_settings_rows=$((quick_settings_rows + 1))
+  assert_eq "$label: quick proof" "quick-proof: proved=$proved" \
+    "$(awk -F '\t' -v label="$label" '$1 == label { print $4 }' <<<"$settings_out")"
+done <<'QUICK'
+an allowlisted key in .kendex/settings.toml|true
+beside docs-set markdown within the ceiling|true
+beside a path the repository's trivial set names|false
+beside one added script line|false
+QUICK
+require_rows change-scope-settings-quick "$quick_settings_rows"
+
+# Must-fail controls for the quick proof, each a copy without one of its
+# rules, red on the row that rule alone holds: QUICK rows read against their
+# own want, settings rows against the proof the real classifier printed.
+# Fields split on `~`: the source lines hold `|`.
+quick_reds() { # RUNNER ROW PLANTED
+  local want
+  if [ "$1" = quick ]; then
+    quick_rows "$3" "$2" | awk -F '\t' '$2 != $3 { print $1 }'
+    return
+  fi
+  want="$(awk -F '\t' -v label="$2" '$1 == label { print $4 }' <<<"$settings_out")"
+  settings_rows "$3" "$2" | awk -F '\t' -v want="$want" '$4 != want { print $1 }'
+}
+quick_controls=0
+while IFS='~' read -r control runner row line replacement; do
+  quick_controls=$((quick_controls + 1))
+  planted="$(mutant "quick-control-$quick_controls" change-scope "$line" "$replacement")"
+  assert_eq "must-fail: $control" "$row" "$(quick_reds "$runner" "$row" "$planted")"
+done <<'CONTROLS'
+no Markdown test~quick~a template under docs proves none~    case "$path" in *.md | *.markdown) ;; *) return 1 ;; esac~    case "$path" in *) ;; esac
+proved on micro~quick~a micro Markdown change outside the docs set proves none~  [ "$1" = trivial ] || return 1~  case "$1" in trivial | micro) ;; *) return 1 ;; esac
+no allowlist test~quick~Markdown a repository allowlist admits proves none~  [ -z "${HARNESS_CI_TRIVIAL_PATHS:-}" ] || return 1~-
+no event test~quick~a merge group proves none~  [ "$event" = pull_request ] || return 1~-
+no admitted settings~settings~an allowlisted key in .kendex/settings.toml~    case $'\n'"$SETTINGS_FILES"$'\n' in *$'\n'"$path"$'\n'*) continue ;; esac~-
+CONTROLS
+require_rows change-scope-quick-controls "$quick_controls"
 
 # Must-fail controls for the rules whose loss would admit a key that changes
 # CI behaviour, each running the rows it holds against a copy without the

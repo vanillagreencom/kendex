@@ -226,6 +226,11 @@ REVIEW_GATE_STANDARD_CHECKS_BYPASS = ""
 # queue-only (docs/decisions/D027-merge-queue-proves-every-change.md); what a
 # reason would change: skills/harness-ci/README.md.
 
+# Product content a user reads or accepts: the authoring reference the app
+# compiles in, and the Terms and Privacy Policy the first-run accept step
+# records. An edit to one answers standard at any size, never a narrow class.
+HARNESS_CI_STANDARD_PATHS = "docs/authoring/README.md docs/legal/*"
+
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
 

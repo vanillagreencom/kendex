@@ -124,6 +124,7 @@ if [ "${STUB_QUEUE_ABSENT:-false}" != true ]; then
   [ -z "${STUB_PER_PUSH:-}" ] || printf 'per-push: state=%s\n' "$STUB_PER_PUSH" >&2
   [ -z "$output" ] || printf 'queue_only=%s\n' "${STUB_QUEUE:-false}" >>"$output"
 fi
+[ -z "${STUB_QUICK+set}" ] || printf 'quick-proof: proved=%s\n' "$STUB_QUICK" >&2
 printf 'change_class=%s\n' "$STUB_CLASS"
 STUB
 cat >"$STUBS/skills/harness-ci/scripts/harness-only" <<'STUB'
@@ -354,13 +355,13 @@ refusal() { # the first refusal line's cause, or nothing
 # set, which change-class answers under a HARNESS_CI_TRIVIAL_PATHS allowlist.
 class_rows() {
   cat <<ROWS
-render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render queue_only=false docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md lanes=false lanes_cause=render lane_verdicts=
-trivial|trivial|true|docs/guide.md|change_class=trivial queue_only=false docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md lanes=false lanes_cause=trivial lane_verdicts=
-trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial queue_only=false docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt lanes=false lanes_cause=trivial lane_verdicts=
-micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro queue_only=false docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md lanes=true lanes_cause=micro lane_verdicts=
-small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small queue_only=false docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs lanes=true lanes_cause=small lane_verdicts=
-standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard queue_only=false docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs lanes=true lanes_cause=standard lane_verdicts=
-docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard queue_only=false docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md lanes=false lanes_cause=docs-only lane_verdicts=
+render|render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|change_class=render queue_only=false quick=false docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=.agents/skills/orch/SKILL.md,.claude/skills/orch/SKILL.md lanes=false lanes_cause=render lane_verdicts=
+trivial|trivial|true|docs/guide.md|change_class=trivial queue_only=false quick=false docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md lanes=false lanes_cause=trivial lane_verdicts=
+trivial-allowlisted|trivial|false|runtime/notes.txt|change_class=trivial queue_only=false quick=false docs_only=false changed_skills= changed_crates= changed_workflows= changed_paths=runtime/notes.txt lanes=false lanes_cause=trivial lane_verdicts=
+micro|micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|change_class=micro queue_only=false quick=false docs_only=false changed_skills=orch changed_crates= changed_workflows= changed_paths=skills/orch/SKILL.md,.agents/skills/orch/SKILL.md lanes=true lanes_cause=micro lane_verdicts=
+small|small|false|crates/cli/src/main.rs crates/core/src/lib.rs|change_class=small queue_only=false quick=false docs_only=false changed_skills= changed_crates=cli core changed_workflows= changed_paths=crates/cli/src/main.rs,crates/core/src/lib.rs lanes=true lanes_cause=small lane_verdicts=
+standard|standard|false|.github/workflows/ci.yml skills/github/SKILL.md crates/app/src/lib.rs|change_class=standard queue_only=false quick=false docs_only=false changed_skills=github changed_crates=app changed_workflows=ci.yml changed_paths=.github/workflows/ci.yml,skills/github/SKILL.md,crates/app/src/lib.rs lanes=true lanes_cause=standard lane_verdicts=
+docs-only-standard|standard|true|docs/guide.md changelog.d/fixed/x.md README.md|change_class=standard queue_only=false quick=false docs_only=true changed_skills= changed_crates= changed_workflows= changed_paths=docs/guide.md,changelog.d/fixed/x.md,README.md lanes=false lanes_cause=docs-only lane_verdicts=
 ROWS
 }
 
@@ -1029,6 +1030,51 @@ queue not required|false|false|queue_only=false
 classifier predates queue metadata|false|true|
 ROWS
 require_rows queue-metadata "$rows"
+
+# The quick proof: the forwarded record's literal proved=true alone writes
+# quick=true. An absent record, an empty value and any other word write
+# false, and a refused step writes none.
+# NAME|RECORD (`-` absent)|EXPECTED quick output
+quick_rows() {
+  cat <<'ROWS'
+quick proved|true|quick=true
+quick record absent|-|quick=false
+quick record empty||quick=false
+quick record another word|yes|quick=false
+ROWS
+}
+quick_answer() { # SCRIPT ROW — prints the quick output line, or crashed
+  local name record expected
+  IFS='|' read -r name record expected <<<"$(quick_rows | grep -m1 "^$2|")"
+  if [ "$record" = - ]; then
+    set -- "$1"
+  else
+    set -- "$1" STUB_QUICK="$record"
+  fi
+  if [ "$(run "$@" STUB_CLASS=trivial STUB_DOCS=true STUB_PATHS=docs/guide.md)" != 0 ]; then
+    echo crashed
+  else
+    sed -n '/^quick=/p' "$OUT"
+  fi
+}
+rows=0
+while IFS='|' read -r name record expected; do
+  rows=$((rows + 1))
+  check "$name: the step writes the quick output" "$expected" "$(quick_answer "$CLASSIFY" "$name")"
+done < <(quick_rows)
+require_rows quick "$rows"
+check "a refused step writes no quick output" "2 " \
+  "$(run "$CLASSIFY" STUB_QUICK=true STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md STUB_NO_DECLARED=1) $(sed -n '/^quick=/p' "$OUT")"
+# Must-fail: a copy that reads an absent record as proved, and one that reads
+# any recorded word as proved, each fails the row it decides.
+while IFS='@' read -r needle replacement row expected; do
+  plant classify "$needle" "$replacement"
+  check "must-fail: '$replacement' fails $row" "$expected" "$(quick_answer "$PLANTED" "$row")"
+  ROW_CLASSIFIER=""
+done <<'MUTANTS'
+quick=false@quick=true@quick record absent@quick=true
+[ "$quick_record" != true ] || quick=true@[ -z "$quick_record" ] || quick=true@quick record another word@quick=true
+MUTANTS
 
 # One copy per queue rule, the rule planted wrong and every other line kept.
 # NEEDLE@REPLACEMENT@ROW@TARGET, as the lane table above. queue_mutant says

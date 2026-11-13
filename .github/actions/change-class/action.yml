@@ -97,6 +97,15 @@ outputs:
       output, and where the step failed, whose wiring error is the answer;
       read empty as true.
     value: ${{ steps.classify.outputs.queue_only }}
+  quick:
+    description: >-
+      true where a review request may be skipped: the shipped classifier's
+      `quick-proof:` line reads proved=true, which change-scope prints only
+      for a trivial pull request whose every changed path is an admitted
+      settings file or Markdown of the docs set, with no repository
+      allowlist. false where that line is absent or reads anything else.
+      Empty where the step failed; act on the literal true alone.
+    value: ${{ steps.classify.outputs.quick }}
   docs_only:
     description: >-
       true where the shipped harness-only --mode docs accepts every changed

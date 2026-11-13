@@ -56,6 +56,13 @@
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
 # marker rather than a list of causes of its own.
+# Every verdict prints `quick-proof: proved=true|false` on stderr just before
+# its `class:` line. It is true only on --event pull_request, for a trivial
+# answer with HARNESS_CI_TRIVIAL_PATHS unset or empty, where every changed
+# path is a settings file the admission below admitted or a .md or .markdown
+# file of the docs set. A caller that skips a review on it acts on the literal
+# true alone: a wiring error prints no such line, and an absent line proves
+# nothing.
 # The render proof runs `kendex verify --scope
 # project --json` in the head revision's private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
@@ -498,12 +505,28 @@ harness_err="$work/harness-stderr"
 # its author decides otherwise, which is the way round that cannot hand a
 # waiver to a diff nothing read. stdout is unchanged: one `change_class=` line.
 #
+# The quick proof the header states, for the class answer() prints. A trivial
+# answer with no repository allowlist holds every changed path in the docs set
+# or among the admitted settings files, so each path is judged here only for
+# being one of those files or Markdown: the docs set also takes a template or
+# a script under docs/.
+quick_proof() { # CLASS
+  local path
+  [ "$1" = trivial ] || return 1
+  [ "$event" = pull_request ] || return 1
+  [ -z "${HARNESS_CI_TRIVIAL_PATHS:-}" ] || return 1
+  while IFS= read -r path; do
+    case $'\n'"$SETTINGS_FILES"$'\n' in *$'\n'"$path"$'\n'*) continue ;; esac
+    case "$path" in *.md | *.markdown) ;; *) return 1 ;; esac
+  done <<<"$changed"
+}
+
 # The configuration-source rule holding an admitted settings change read its
 # paths alone, so every answer for that change but trivial, a later read
 # failure included, is that refusal, measured, with the answer it replaced
 # on the admission line that settings_note, with the admission below, prints.
 answer() { # CLASS FIELDS [measured]
-  local rule
+  local rule quick=false
   if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
     rule="${2%% *}"
     settings_note "cause=class-$1 rule=${rule#cause=}"
@@ -512,6 +535,8 @@ answer() { # CLASS FIELDS [measured]
   measured=true
   [ "$1" != standard ] || measured=false
   [ "${3:-}" != measured ] || measured=true
+  ! quick_proof "$1" || quick=true
+  printf 'quick-proof: proved=%s\n' "$quick" >&2
   printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0

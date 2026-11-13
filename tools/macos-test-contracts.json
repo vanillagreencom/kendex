@@ -366,6 +366,7 @@
     "tools/tests/lane-setup.test.sh": "mixed",
     "tools/tests/macos-test-contracts.test.sh": "linux-duplicate",
     "tools/tests/orch-shard-partition.test.sh": "linux-duplicate",
+    "tools/tests/product-docs-class.test.sh": "linux-duplicate",
     "tools/tests/publish-aur-check-key.test.sh": "linux-duplicate",
     "tools/tests/publish-aur.test.sh": "linux-duplicate",
     "tools/tests/publish-homebrew.test.sh": "linux-duplicate",

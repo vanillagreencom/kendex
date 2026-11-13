@@ -44,7 +44,12 @@
 #                      statement is change-class's header. Absent where the
 #                      classifier root predates the output, and where the
 #                      step fails before change-class answers.
-#   docs_only          true|false, written by the shipped `harness-only --mode
+#   quick              true|false: whether a review request may be skipped,
+#                      true only where the forwarded `quick-proof:` record
+#                      reads proved=true, whose statement is change-scope's
+#                      header; false where the record is absent or reads
+#                      anything else.
+#   docs_only         true|false, written by the shipped `harness-only --mode
 #                      docs` itself. It answers false where harness-only
 #                      cannot read the diff (an unsupported event, a missing
 #                      or unresolvable endpoint, an unreadable or empty diff).
@@ -234,8 +239,17 @@ queue_only="$(sed -n 's/^queue-only: queue_only=\([^ ]*\).*/\1/p' "${work:?}/cla
   queue_inputs="$(sed -n 's/^queue-only: queue_only=[^ ]* inputs=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
   die "queue-only-unreadable path=${work:?}/class-log" \
     "could not read the queue-only record change-class wrote"
+# The quick proof is change-scope's `quick-proof:` record, which change-class
+# forwards. A caller skips a review on true alone, so anything but the
+# literal proved=true, the record absent included, writes false.
+quick_record="$(sed -n 's/^quick-proof: proved=//p' "${work:?}/class-log")" ||
+  die "quick-proof-unreadable path=${work:?}/class-log" \
+    "could not read the quick-proof record change-class forwarded"
+quick=false
+[ "$quick_record" != true ] || quick=true
 printf 'change_class=%s\n' "$class" >>"$GITHUB_OUTPUT"
 [ -z "$queue_only" ] || printf 'queue_only=%s\n' "$queue_only" >>"$GITHUB_OUTPUT"
+printf 'quick=%s\n' "$quick" >>"$GITHUB_OUTPUT"
 
 # The docs verdict and the paths, from the reader that owns the diff range for
 # every event. It appends `docs_only=` to GITHUB_OUTPUT on its own.

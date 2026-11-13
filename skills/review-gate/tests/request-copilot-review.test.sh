@@ -26,12 +26,15 @@ text = pathlib.Path(sys.argv[1]).read_text().replace('\r\n', '\n')
 job = dict(re.findall(r'^    (runs-on): (.+)$', text, re.M))
 assert job['runs-on'] == "${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"
 assert 'kendex/refresh' not in text.split('          script: |\n')[1]
+# A classifier failure must leave the required workflow green.
+assert '      - id: classify\n        continue-on-error: true\n' in text
 PY
 }
 check_declarations "$WORKFLOW"
 PASS=1
-for control in no-if no-draft no-merge-group hosted-runner no-head no-author no-type script-refresh-branch; do
+for control in no-if no-draft no-merge-group hosted-runner no-head no-author no-type script-refresh-branch classify-failure; do
   case "$control" in
+    classify-failure) needle='        continue-on-error: true'; replacement='        # continue-on-error: true' ;;
     no-if) needle='    if:'; replacement='    # if:' ;;
     no-draft) needle=' && !github.event.pull_request.draft'; replacement=$'\n    # && !github.event.pull_request.draft' ;;
     no-merge-group) needle='  merge_group:'; replacement='  # merge_group:' ;;
@@ -76,15 +79,22 @@ const original = fs.readFileSync(process.argv[2], 'utf8');
 async function check(source) {
   const run = new AsyncFunction('context', 'github', 'core', source);
   // A fork's pull_request token is read-only: GitHub's events reference.
+  // QUICK is the classify step's quick output: undefined where the workflow
+  // never set it, empty where the step failed.
   const cases = [
-    ['lanes product', 'acme/widgets', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 1, 0, 0],
-    ['dependabot pull request', 'acme/widgets', 'dependabot[bot]', 'Bot', null, 1, 0, 0],
-    ['fork pull request', 'contributor/widgets', 'contributor', 'User', null, 0, 0, 1],
-    ['request permission failure', 'acme/widgets', 'owner', 'User', 403, 1, 1, 0],
-    ['request refused', 'acme/widgets', 'owner', 'User', 422, 1, 1, 0],
-    ['request network failure', 'acme/widgets', 'owner', 'User', 'network', 1, 1, 0],
+    ['lanes product', 'acme/widgets', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 1, 0, 0, undefined, 0],
+    ['dependabot pull request', 'acme/widgets', 'dependabot[bot]', 'Bot', null, 1, 0, 0, undefined, 0],
+    ['fork pull request', 'contributor/widgets', 'contributor', 'User', null, 0, 0, 1, undefined, 0],
+    ['request permission failure', 'acme/widgets', 'owner', 'User', 403, 1, 1, 0, undefined, 0],
+    ['request refused', 'acme/widgets', 'owner', 'User', 422, 1, 1, 0, undefined, 0],
+    ['request network failure', 'acme/widgets', 'owner', 'User', 'network', 1, 1, 0, undefined, 0],
+    ['proved quick change', 'acme/widgets', 'owner', 'User', null, 0, 0, 0, 'true', 1],
+    ['change not proved quick', 'acme/widgets', 'owner', 'User', null, 1, 0, 0, 'false', 0],
+    ['classify step failed', 'acme/widgets', 'owner', 'User', null, 1, 0, 0, '', 0],
   ];
-  for (const [name, head, login, type, failure, requests, warnings, skips] of cases) {
+  for (const [name, head, login, type, failure, requests, warnings, skips, quick, quickSkips] of cases) {
+    if (quick === undefined) delete process.env.QUICK;
+    else process.env.QUICK = quick;
     const calls = [];
     const notices = [];
     const infos = [];
@@ -98,6 +108,7 @@ async function check(source) {
     assert.equal(calls.length, requests, name);
     assert.equal(notices.length, warnings, name);
     assert.equal(infos.filter(line => line === 'copilot-request: skipped=42 reason=fork-read-only-token').length, skips, name);
+    assert.equal(infos.filter(line => line === 'copilot-request: skipped=42 reason=quick-proof').length, quickSkips, name);
     if (requests) assert.deepEqual(calls[0], {owner: 'acme', repo: 'widgets', pull_number: 42, reviewers: ['copilot-pull-request-reviewer[bot]']}, name);
   }
 }
@@ -107,7 +118,9 @@ async function check(source) {
   const controls = [
     ['await github.rest.pulls.requestReviewers({', 'await Promise.resolve({'],
     ['core.warning(', 'core.info('],
-    ['return;', 'void 0;'],
+    ['pr.head.repo?.full_name !== pr.base.repo.full_name', 'false'],
+    ["process.env.QUICK === 'true'", 'process.env.QUICK'],
+    ["process.env.QUICK === 'true'", 'false'],
   ];
   for (const [needle, replacement] of controls) {
     assert.equal(original.split(needle).length - 1, 1, needle);
