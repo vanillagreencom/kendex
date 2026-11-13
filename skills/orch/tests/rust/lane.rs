@@ -526,6 +526,9 @@ fn launch(item: &str, mail_root: &Path) -> Value {
         "item": item,
         "harness": "claude",
         "mail_root": mail_root.display().to_string(),
+        "model": "claude-fable-5-1",
+        "class": CLASS,
+        "class_reason": CLASS_REASON,
     })
 }
 
@@ -1242,8 +1245,11 @@ fn a_launch_on_an_account_naming_no_model_is_refused_before_any_record() {
             request["harness"] = json!(harness);
             request["account"] = json!(account);
             request["effort"] = json!("high");
-            if let Some(model) = model {
-                request["model"] = json!(model);
+            match model {
+                Some(model) => request["model"] = json!(model),
+                None => {
+                    request.as_object_mut().unwrap().remove("model");
+                }
             }
             let answer = reply(&fleet.op(&request));
             assert_eq!(
@@ -1265,6 +1271,7 @@ fn a_launch_on_an_account_naming_no_model_is_refused_before_any_record() {
     }
     let mut unnamed = launch("KEN-N", fleet.state_dir());
     unnamed["harness"] = json!("codex");
+    unnamed.as_object_mut().unwrap().remove("model");
     let answer = reply(&fleet.op(&unnamed));
     assert_ne!(
         answer["refusal"]["key"], "launch-model-missing",
@@ -1317,6 +1324,324 @@ fn a_launch_on_an_account_naming_no_effort_is_refused_before_any_record() {
         answer["refusal"]["key"], "launch-effort-missing",
         "the level on Pi's model word names the effort: {answer}"
     );
+}
+
+/// `request` with its class and reason as `stated` names them, a member
+/// left out where it names none.
+fn stating(mut request: Value, (class, reason): (Option<&str>, Option<&str>)) -> Value {
+    let members = request.as_object_mut().unwrap();
+    for (key, value) in [("class", class), ("class_reason", reason)] {
+        match value {
+            Some(value) => members.insert(key.to_owned(), json!(value)),
+            None => members.remove(key),
+        };
+    }
+    request
+}
+
+/// Every launch states the class its assignment runs at and why. Through
+/// the real `launch-lane` on a private server with the stub harness: a
+/// first launch naming no class, no reason, one without the other, an
+/// empty reason, a word that is no class word or a Claude family name, and
+/// a relaunch naming neither over a record that names none, are each
+/// refused `launch-class-missing` naming the item and the harness, before
+/// any intent; a class word in any case is admitted and recorded as the
+/// record spells it.
+#[test]
+fn a_launch_naming_no_class_or_reason_is_refused_before_any_intent() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let refused = |request: &Value, case: &str| {
+        let before = runner.fleet();
+        let answer = reply(&runner.op_fleet(request));
+        assert_eq!(
+            answer["refusal"]["key"], "launch-class-missing",
+            "{case}: {answer}"
+        );
+        let fields = refusal_fields(&answer);
+        assert_eq!(
+            (fields["item"].as_str(), fields["harness"].as_str()),
+            (request["item"].as_str().unwrap(), "claude"),
+            "{case}"
+        );
+        assert_eq!(runner.fleet(), before, "{case}: a refusal writes nothing");
+    };
+    let rows: [(Option<&str>, Option<&str>); 7] = [
+        (None, None),
+        (Some(CLASS), None),
+        (None, Some(CLASS_REASON)),
+        (Some(CLASS), Some("")),
+        (Some(CLASS), Some("  ")),
+        (Some("medium"), Some(CLASS_REASON)),
+        (Some("opus"), Some(CLASS_REASON)),
+    ];
+    for stated in rows {
+        refused(
+            &stating(launch_request("KEN-C", &work), stated),
+            &format!("{stated:?}"),
+        );
+    }
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([record("KEN-R", "stopped", None, &work)]);
+    runner.write_fleet(&fleet);
+    refused(
+        &stating(launch_request("KEN-R", &work), (None, None)),
+        "a relaunch over a record naming none",
+    );
+    let admitted = effect_report(&runner.op_fleet(&stating(
+        launch_request("KEN-C", &work),
+        (Some("Light"), Some("a one-file rename")),
+    )));
+    assert_eq!(admitted["intent"]["outcome"], "confirmed", "{admitted}");
+    assert_eq!(
+        (
+            &admitted["lane"]["class"],
+            &admitted["lane"]["class_reason"]
+        ),
+        (&json!("light"), &json!("a one-file rename"))
+    );
+}
+
+/// An assignment keeps its class and reason through a relaunch. Through
+/// the real `launch-lane` and close over the stub harness: a relaunch
+/// naming neither runs at the record's class and reason, one naming a
+/// class without its reason is refused `launch-class-missing`, and one
+/// naming a pair replaces the record's when it confirms.
+#[test]
+fn a_relaunch_keeps_its_class_and_reason_and_a_named_pair_replaces_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let pair = |lane: &Value| (lane["class"].clone(), lane["class_reason"].clone());
+    let light = (json!("light"), json!("a one-file rename"));
+    let first = effect_report(&runner.op_fleet(&stating(
+        launch_request("KEN-K", &work),
+        (Some("light"), Some("a one-file rename")),
+    )));
+    assert_eq!(first["intent"]["outcome"], "confirmed", "{first}");
+    assert_eq!(pair(&first["lane"]), light);
+    effect_report(&runner.op_fleet(&terminal_close("KEN-K")));
+    let kept =
+        effect_report(&runner.op_fleet(&stating(launch_request("KEN-K", &work), (None, None))));
+    assert_eq!(kept["intent"]["outcome"], "confirmed", "{kept}");
+    assert_eq!(
+        pair(&kept["lane"]),
+        light,
+        "the relaunch runs at the record's"
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-K")));
+    let before = runner.fleet();
+    let answer = reply(&runner.op_fleet(&stating(
+        launch_request("KEN-K", &work),
+        (Some(CLASS), None),
+    )));
+    assert_eq!(answer["refusal"]["key"], "launch-class-missing", "{answer}");
+    assert_eq!(runner.fleet(), before, "a refusal writes nothing");
+    let replaced = effect_report(&runner.op_fleet(&launch_request("KEN-K", &work)));
+    assert_eq!(replaced["intent"]["outcome"], "confirmed", "{replaced}");
+    assert_eq!(pair(&replaced["lane"]), (json!(CLASS), json!(CLASS_REASON)));
+}
+
+/// A launch naming no model runs the harness's default, which shows no
+/// class. Through the real `launch-lane` on a private server, every harness
+/// the stub: a launch naming no account and no model, or an empty one, on
+/// each harness, and a relaunch naming neither model nor class over a
+/// record whose class is `light`, are refused `class-unverified` naming the
+/// class and the harness, before any intent; one naming an account and no
+/// model keeps its `launch-model-missing`; a Claude launch naming the
+/// class's alias is admitted.
+#[test]
+fn a_launch_whose_model_shows_no_class_is_refused_class_unverified() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    let stub = runner.stub.display().to_string();
+    runner.env.push((
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+        format!("claude={stub},codex={stub},copilot={stub},pi={stub}"),
+    ));
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let accountless = |item: &str, harness: &str, model: Option<&str>| {
+        let mut request = launch_request(item, &work);
+        let members = request.as_object_mut().unwrap();
+        members.remove("account");
+        members.remove("effort");
+        members.insert("harness".to_owned(), json!(harness));
+        match model {
+            Some(model) => members.insert("model".to_owned(), json!(model)),
+            None => members.remove("model"),
+        };
+        request
+    };
+    let refused = |request: &Value, key: &str, class: &str| {
+        let before = runner.fleet();
+        let answer = reply(&runner.op_fleet(request));
+        assert_eq!(answer["refusal"]["key"], key, "{request}: {answer}");
+        if key == "class-unverified" {
+            let fields = refusal_fields(&answer);
+            assert_eq!(
+                (fields["class"].as_str(), fields["harness"].as_str()),
+                (class, request["harness"].as_str().unwrap()),
+                "{request}"
+            );
+        }
+        assert_eq!(
+            runner.fleet(),
+            before,
+            "{request}: a refusal writes nothing"
+        );
+    };
+    for harness in ["claude", "codex", "copilot", "pi"] {
+        refused(
+            &accountless("KEN-V", harness, None),
+            "class-unverified",
+            CLASS,
+        );
+        refused(
+            &accountless("KEN-V", harness, Some("")),
+            "class-unverified",
+            CLASS,
+        );
+    }
+    let mut on_account = launch_request("KEN-V", &work);
+    on_account.as_object_mut().unwrap().remove("model");
+    refused(&on_account, "launch-model-missing", CLASS);
+    let mut fleet = runner.fleet();
+    let mut record = record("KEN-R", "stopped", None, &work);
+    record["class"] = json!("light");
+    record["class_reason"] = json!("a one-file rename");
+    fleet["lanes"] = json!([record]);
+    runner.write_fleet(&fleet);
+    refused(
+        &stating(accountless("KEN-R", "claude", None), (None, None)),
+        "class-unverified",
+        "light",
+    );
+    let admitted = effect_report(&runner.op_fleet(&accountless("KEN-V", "claude", Some("opus"))));
+    assert_eq!(admitted["intent"]["outcome"], "confirmed", "{admitted}");
+}
+
+/// A close that retires `item`'s attempt with no landing for `reason`,
+/// interrupting its harness, a park's wait where `park` is set.
+fn retire(item: &str, reason: &str, park: bool) -> Value {
+    let mut request = json!({
+        "op": "close-owned-resources",
+        "item": item,
+        "no_landing": {"reason": reason, "source": "overseer", "interrupt": true},
+    });
+    if park {
+        request["no_landing"]["park"] = json!({"pr": 12});
+    }
+    request
+}
+
+/// An attempt below `standard` retired with no landing for its outcome is
+/// the item's miss. Through the real `launch-lane` and the real close over
+/// the stub harness: a `light` or `fast` attempt the close retires for the
+/// overseer's own reason, `keep-sandbox` among them, records
+/// `class_missed` with the class, the reason and the close's time; one
+/// retired for a model switch, a usage wall or a park, and a `standard`
+/// attempt for any reason, records none.
+#[test]
+fn a_no_landing_close_below_standard_records_its_miss_unless_the_cause_is_outside_the_outcome() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let rows: [(&str, &str, &str, bool, bool); 6] = [
+        ("KEN-M1", "light", "wrong-approach", false, true),
+        ("KEN-M2", "fast", "keep-sandbox", false, true),
+        ("KEN-M3", "light", "model-switch", false, false),
+        ("KEN-M4", "light", "usage-limit", false, false),
+        ("KEN-M5", "light", "wrong-approach", true, false),
+        ("KEN-M6", "standard", "wrong-approach", false, false),
+    ];
+    for (item, class, reason, park, missed) in rows {
+        let launched = effect_report(&runner.op_fleet(&stating(
+            launch_request(item, &work),
+            (Some(class), Some("a one-file rename")),
+        )));
+        assert_eq!(
+            launched["intent"]["outcome"], "confirmed",
+            "{item}: {launched}"
+        );
+        let closed = effect_report(&runner.op_fleet(&retire(item, reason, park)));
+        assert_eq!(closed["intent"]["outcome"], "confirmed", "{item}: {closed}");
+        let lane = &closed["lane"];
+        assert_eq!(lane["status"], "stopped", "{item}");
+        if missed {
+            assert_eq!(
+                (
+                    &lane["class_missed"]["class"],
+                    &lane["class_missed"]["cause"]
+                ),
+                (&json!(class), &json!(reason)),
+                "{item}: {lane}"
+            );
+            assert_eq!(
+                lane["class_missed"]["at"], closed["intent"]["completed_at"],
+                "{item}"
+            );
+        } else {
+            assert_eq!(lane.get("class_missed"), None, "{item}: {lane}");
+        }
+    }
+}
+
+/// After its miss an item runs at `standard` or above. Through the real
+/// `launch-lane` over the stub harness: a relaunch below `standard`, the
+/// record's class kept or `fast` named, is refused `launch-class-missed`
+/// naming the item, the missed class and its cause, before any intent; one
+/// at `standard` is admitted and its confirmation clears the miss, after
+/// which a launch at `light` runs again.
+#[test]
+fn a_launch_below_standard_after_its_miss_is_refused_until_one_at_standard_confirms() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let light = (Some("light"), Some("a one-file rename"));
+    let launched = effect_report(&runner.op_fleet(&stating(launch_request("KEN-X", &work), light)));
+    assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+    effect_report(&runner.op_fleet(&retire("KEN-X", "wrong-approach", false)));
+    for stated in [(None, None), (Some("fast"), Some("a typo"))] {
+        let before = runner.fleet();
+        let answer = reply(&runner.op_fleet(&stating(launch_request("KEN-X", &work), stated)));
+        assert_eq!(
+            answer["refusal"]["key"], "launch-class-missed",
+            "{stated:?}: {answer}"
+        );
+        let fields = refusal_fields(&answer);
+        assert_eq!(
+            (
+                fields["item"].as_str(),
+                fields["class"].as_str(),
+                fields["cause"].as_str()
+            ),
+            ("KEN-X", "light", "wrong-approach"),
+            "{stated:?}"
+        );
+        assert_eq!(
+            runner.fleet(),
+            before,
+            "{stated:?}: a refusal writes nothing"
+        );
+    }
+    let standard = effect_report(&runner.op_fleet(&launch_request("KEN-X", &work)));
+    assert_eq!(standard["intent"]["outcome"], "confirmed", "{standard}");
+    assert_eq!(standard["lane"]["class"], json!(CLASS));
+    assert_eq!(standard["lane"].get("class_missed"), None, "{standard}");
+    effect_report(&runner.op_fleet(&terminal_close("KEN-X")));
+    let again = effect_report(&runner.op_fleet(&stating(launch_request("KEN-X", &work), light)));
+    assert_eq!(again["intent"]["outcome"], "confirmed", "{again}");
 }
 
 /// Through the executable: a `no-landing` disposition on a lane

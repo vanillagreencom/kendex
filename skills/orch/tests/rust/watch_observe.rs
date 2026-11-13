@@ -1027,6 +1027,8 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
         "account": spent.display().to_string(),
         "model": "opus",
         "effort": "high",
+        "class": CLASS,
+        "class_reason": CLASS_REASON,
         "permission": "--permission-mode dontAsk",
     });
     let report = effect_report(&fleet.runner.op_fleet_env(
@@ -5169,6 +5171,8 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     // the flags `main` recorded as given: its launch refused a lane on an
     // account without either.
     record["effort"] = json!("high");
+    record["class"] = json!(CLASS);
+    record["class_reason"] = json!(CLASS_REASON);
     record["recovery"]["flags"] = json!("--model opus --effort high");
     record["account"] = json!(old_account.display().to_string());
     fleet.set_lanes(vec![record]);
@@ -5278,6 +5282,8 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         // the flags `main` recorded as given: its launch refused a lane on an
         // account without either.
         record["effort"] = json!("high");
+        record["class"] = json!(CLASS);
+        record["class_reason"] = json!(CLASS_REASON);
         record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         let world = HostedWorld::new(dir.path());
@@ -5434,6 +5440,8 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         // the flags `main` recorded as given: its launch refused a lane on an
         // account without either.
         record["effort"] = json!("high");
+        record["class"] = json!(CLASS);
+        record["class_reason"] = json!(CLASS_REASON);
         record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         fleet.set_lanes(vec![record]);
@@ -6229,6 +6237,8 @@ fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() 
             "mail_root": work.display().to_string(),
             "model": "claude-opus-5.5",
             "effort": "high",
+            "class": CLASS,
+            "class_reason": CLASS_REASON,
         });
         if let Some(account) = account {
             request["account"] = json!(account.display().to_string());

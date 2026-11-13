@@ -169,7 +169,7 @@ A pi launch on a `github-copilot/` model takes steps 2 to 4 with harness `pi`: i
 4. Launch: one request per item. On this host, create the item's worktree first, the claim § 2 names: `.agents/skills/worktree/scripts/worktree create [ITEM_KEY]` prints its path, the request's `mail_root`. A hosted lane's `mail_root` is this checkout, and a cloud lane's launch creates its own claim worktree from it. Write the brief file under [lane-directive.md § Brief file](../references/lane-directive.md#brief-file), then the request with the harness file tool, and run it:
 
    ```json
-   {"op":"launch-lane","item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO]","harness":"[HARNESS]","mail_root":"[WORKTREE_PATH]","account":"[CONFIG_DIR]","model":"[MODEL]","effort":"[EFFORT]","brief_file":"[BRIEF_PATH]"}
+   {"op":"launch-lane","item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO]","harness":"[HARNESS]","mail_root":"[WORKTREE_PATH]","account":"[CONFIG_DIR]","model":"[MODEL]","effort":"[EFFORT]","class":"[CLASS]","class_reason":"[CLASS_REASON]","brief_file":"[BRIEF_PATH]"}
    ```
 
    ```bash

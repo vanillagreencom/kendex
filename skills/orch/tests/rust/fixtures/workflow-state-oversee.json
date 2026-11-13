@@ -72,6 +72,8 @@
       "surface": "tmux",
       "model": "gpt-5.5-codex",
       "effort": "high",
+      "class": "standard",
+      "class_reason": "general implementation work",
       "session_id": null,
       "session_since": "2026-10-24T18:02:11Z",
       "launched_at": "2026-10-24T18:02:11Z",

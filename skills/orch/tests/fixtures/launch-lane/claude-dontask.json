@@ -11,6 +11,8 @@
   "surface": "tmux",
   "model": "claude-fable-5-1",
   "effort": "high",
+  "class": "standard",
+  "class_reason": "general implementation work",
   "session_id": "@SESSION_ID@",
   "session_since": "@SESSION_SINCE@",
   "launched_at": "@LAUNCHED_AT@",

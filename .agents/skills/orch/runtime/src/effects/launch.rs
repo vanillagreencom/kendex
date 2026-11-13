@@ -1956,7 +1956,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::state::LaneStatus;
+    use crate::state::{LaneStatus, ModelClass};
 
     fn bound_lane(account: &str, mail_root: Option<&Path>) -> Lane {
         Lane {
@@ -1974,6 +1974,9 @@ mod tests {
             surface: None,
             model: None,
             effort: None,
+            class: Some(ModelClass::Standard),
+            class_reason: Some("general implementation work".to_owned()),
+            class_missed: None,
             session_id: Some("0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c".to_owned()),
             session_since: None,
             launched_at: None,
@@ -2000,6 +2003,8 @@ mod tests {
             account: Some(account.to_owned()),
             model: None,
             effort: None,
+            class: Some("standard".to_owned()),
+            class_reason: Some("general implementation work".to_owned()),
             kind: None,
             host: None,
             surface: None,

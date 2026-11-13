@@ -1219,7 +1219,7 @@ pub fn effect_report(out: &Output) -> Value {
 }
 
 /// A launch of `item` on an account, naming the model and effort a launch
-/// on an account must.
+/// on an account must, and the class and reason every launch states.
 pub fn launch_request(item: &str, mail_root: &Path) -> Value {
     json!({
         "op": "launch-lane",
@@ -1229,8 +1229,14 @@ pub fn launch_request(item: &str, mail_root: &Path) -> Value {
         "account": mail_root.display().to_string(),
         "model": "claude-fable-5-1",
         "effort": "high",
+        "class": CLASS,
+        "class_reason": CLASS_REASON,
     })
 }
+
+/// The class and reason a test's launch states.
+pub const CLASS: &str = "standard";
+pub const CLASS_REASON: &str = "general implementation work";
 
 /// The overseer record a succession reads: a predecessor whose harness
 /// process is `pid`, on the test's server. `harness_pid` is the string a

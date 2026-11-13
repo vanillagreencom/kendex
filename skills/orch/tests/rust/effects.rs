@@ -1054,7 +1054,8 @@ fn the_reconcile_matrix_is_total() {
                     Some(phase("window-opened", server, &pane, since, None)),
                 );
                 fleet["lanes"][0]["harness"] = json!("nosuch");
-                fleet["intents"][0]["selection"] = json!({"harness": "nosuch"});
+                fleet["intents"][0]["selection"] =
+                    json!({"harness": "nosuch", "class": CLASS, "class_reason": CLASS_REASON});
                 Planted {
                     fleet,
                     owned: vec![],
@@ -2859,6 +2860,8 @@ fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
             "account": account.display().to_string(),
             "model": "claude-fable-5-1",
             "effort": "high",
+            "class": CLASS,
+            "class_reason": CLASS_REASON,
         })
     };
     let first = effect_report(&runner.op_fleet(&request(&a)));
@@ -6109,6 +6112,8 @@ impl HostedLaunch {
             "account": self.runner.state_dir().display().to_string(),
             "model": "claude-fable-5-1",
             "effort": "high",
+            "class": CLASS,
+            "class_reason": CLASS_REASON,
             "host": PROVIDER_PATH,
             "repo": "o/r",
         })
@@ -8878,6 +8883,8 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
         "account": account.display().to_string(),
         "model": "claude-fable-5-1",
         "effort": "high",
+        "class": CLASS,
+        "class_reason": CLASS_REASON,
         "brief_file": file.display().to_string(),
     });
     let first = effect_report(&runner.op_fleet(&request));
@@ -8947,19 +8954,18 @@ fn a_lane_output_outside_its_words_refuses_the_launch_before_any_record() {
 /// Through the real `launch-lane`, on a fleet server whose environment
 /// carries an opener's own declaration, model-line hold and Codex
 /// compaction reading: a Copilot CLI or Pi session sees the model its launch
-/// pinned, a Claude Code or Codex session and a launch pinning none declare
-/// nothing, and none of the three reaches a session from its opener.
+/// pinned, a Claude Code or Codex session declares nothing, and none of the
+/// three reaches a session from its opener.
 #[test]
 fn a_lane_declares_its_pinned_model_to_the_review_and_never_its_openers() {
-    let cases: [(&str, Option<&str>, Option<&str>); 5] = [
-        ("claude", Some("claude-fable-5-1"), None),
-        ("codex", Some("gpt-5.5"), None),
-        ("copilot", Some("claude-opus-5"), Some("claude-opus-5")),
-        ("pi", Some("claude-fable-5-1"), Some("claude-fable-5-1")),
-        ("pi", None, None),
+    let cases: [(&str, &str, Option<&str>); 4] = [
+        ("claude", "claude-fable-5-1", None),
+        ("codex", "gpt-5.5", None),
+        ("copilot", "claude-opus-5", Some("claude-opus-5")),
+        ("pi", "claude-fable-5-1", Some("claude-fable-5-1")),
     ];
     for (harness, model, declared) in cases {
-        let case = format!("{harness} {model:?}");
+        let case = format!("{harness} {model}");
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         for (name, value) in [
@@ -9008,12 +9014,7 @@ fn a_lane_declares_its_pinned_model_to_the_review_and_never_its_openers() {
                 request.as_object_mut().unwrap().remove("account");
             }
         }
-        match model {
-            Some(model) => request["model"] = json!(model),
-            None => {
-                request.as_object_mut().unwrap().remove("model");
-            }
-        }
+        request["model"] = json!(model);
         let report = effect_report(&runner.op_fleet(&request));
         assert_ne!(report["intent"]["outcome"], "failed", "{case}: {report}");
         let opened = &launch_record_of(&work)["opened"];

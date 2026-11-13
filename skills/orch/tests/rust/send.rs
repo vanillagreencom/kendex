@@ -1243,6 +1243,8 @@ impl CloudWorld {
                 "host": "claude-cloud",
                 "model": "opus",
                 "effort": "high",
+                "class": CLASS,
+                "class_reason": CLASS_REASON,
                 "brief_file": self.brief.display().to_string(),
             })
             .to_string(),
@@ -1325,6 +1327,8 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
             "repo": "o/r",
             "model": "opus",
             "effort": "high",
+            "class": CLASS,
+            "class_reason": CLASS_REASON,
             "brief_file": brief.display().to_string(),
         })
         .to_string(),
@@ -1717,6 +1721,8 @@ fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
             "account": world.account.display().to_string(),
             "model": "opus",
             "effort": "high",
+            "class": CLASS,
+            "class_reason": CLASS_REASON,
         })
         .to_string(),
     )

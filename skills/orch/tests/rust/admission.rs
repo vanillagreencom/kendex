@@ -356,6 +356,9 @@ fn launch(item: &str, mail_root: &Path) -> Value {
         "tracker": "linear",
         "harness": "claude",
         "mail_root": mail_root.display().to_string(),
+        "model": "claude-fable-5-1",
+        "class": CLASS,
+        "class_reason": CLASS_REASON,
     })
 }
 
@@ -829,6 +832,9 @@ fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
                 "repo": "o/r",
                 "harness": "claude",
                 "mail_root": checkout.display().to_string(),
+                "model": "claude-fable-5-1",
+                "class": CLASS,
+                "class_reason": CLASS_REASON,
             }),
             "issue-7",
             "agent-multi",
@@ -1433,6 +1439,9 @@ fn an_item_of_another_repository_or_team_than_its_checkouts_is_refused() {
         "repo": "o/x",
         "harness": "claude",
         "mail_root": checkout.display().to_string(),
+        "model": "claude-fable-5-1",
+        "class": CLASS,
+        "class_reason": CLASS_REASON,
     });
     let before = fleet.fleet();
     let (key, fields) = refusal(&fleet.op(&github));
@@ -1563,6 +1572,9 @@ fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
             "repo": "o/r",
             "harness": "claude",
             "mail_root": checkout.display().to_string(),
+            "model": "claude-fable-5-1",
+            "class": CLASS,
+            "class_reason": CLASS_REASON,
         }),
         &[("PATH", path.as_str())],
     );

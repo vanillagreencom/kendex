@@ -37,7 +37,8 @@ use super::{
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
-    self, CloseGround, Lane, LaneMembers, LaneStatus, Reservation, Selection, TerminalVerdict,
+    self, CloseGround, Lane, LaneMembers, LaneStatus, ModelClass, Reservation, Selection,
+    TerminalVerdict,
 };
 use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::intent::Intent;
@@ -87,6 +88,13 @@ pub struct LaunchLane {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    /// The model class the assignment runs at, one of kendex's four class
+    /// words, and the reason stated for it. A first launch names both and a
+    /// relaunch both or neither; one naming neither runs at the record's.
+    #[serde(default)]
+    pub class: Option<String>,
+    #[serde(default)]
+    pub class_reason: Option<String>,
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
@@ -249,15 +257,74 @@ impl LaunchLane {
         ]
     }
 
-    /// The fields the launch writes when it confirms, and whether the
-    /// launch re-enters a standing record.
-    fn selection(&self, relaunch: bool) -> Selection {
+    /// The fields the launch writes when it confirms, with the class it
+    /// runs at, and whether the launch re-enters a standing record.
+    fn selection(&self, relaunch: bool, (class, class_reason): (ModelClass, String)) -> Selection {
         Selection {
             harness: self.harness.clone(),
             account: self.account.clone(),
             model: self.model.clone(),
             effort: self.effort.clone(),
+            class,
+            class_reason,
             relaunch,
+        }
+    }
+
+    /// The class the launch runs at and its reason: the request's pair, or
+    /// on a relaunch naming neither the record's. Anything else, a word that
+    /// is no class word included, is refused `launch-class-missing`: no
+    /// lane runs an assignment whose class nobody stated.
+    fn class_stated(&self, record: Option<&Lane>) -> Result<(ModelClass, String)> {
+        let stated = |word: &Option<String>| {
+            word.as_deref()
+                .filter(|w| !w.trim().is_empty())
+                .map(str::to_owned)
+        };
+        let pair = match (stated(&self.class), stated(&self.class_reason)) {
+            (Some(word), Some(reason)) => ModelClass::parse(&word).map(|class| (class, reason)),
+            (None, None) => record.and_then(|lane| Some((lane.class?, lane.class_reason.clone()?))),
+            (Some(_), None) | (None, Some(_)) => None,
+        };
+        pair.ok_or_else(|| {
+            Error::from(agent_runtime::Error::refused(
+                "launch-class-missing",
+                &[("item", &self.item), ("harness", &self.harness)],
+            ))
+        })
+    }
+
+    /// A launch naming no model runs the harness's default, which shows no
+    /// class: refused `class-unverified` naming the class and the harness.
+    /// A named model stands as the class's: no harness's list of the models
+    /// an account may run is read, and a Claude alias resolves in Claude
+    /// Code itself, whose model switch the turn end catches.
+    fn class_shown(&self, class: ModelClass) -> Result<()> {
+        if self.model.as_deref().is_some_and(|m| !m.is_empty()) {
+            return Ok(());
+        }
+        Err(Error::from(agent_runtime::Error::refused(
+            "class-unverified",
+            &[("class", class.word()), ("harness", &self.harness)],
+        )))
+    }
+
+    /// A launch below `standard` of an item whose attempt below it missed is
+    /// refused `launch-class-missed`, naming that miss: the work runs at
+    /// `standard` or above until such a launch confirms.
+    fn miss_held(&self, class: ModelClass, record: Option<&Lane>) -> Result<()> {
+        match record.and_then(|lane| lane.class_missed.as_ref()) {
+            Some(miss) if class.below_standard() => {
+                Err(Error::from(agent_runtime::Error::refused(
+                    "launch-class-missed",
+                    &[
+                        ("item", &self.item),
+                        ("class", miss.class.word()),
+                        ("cause", &miss.cause),
+                    ],
+                )))
+            }
+            Some(_) | None => Ok(()),
         }
     }
 }
@@ -520,8 +587,15 @@ pub struct PhaseRecorded {
 /// `null` where the launch knows no value, the order every reader of the
 /// fleet record meets. `permission` is the permission choice the line
 /// carries, `allow_all` the Copilot grant, `tier` and `tier_inputs` what
-/// the brief states of the item's tier.
-fn new_lane_record(r: &LaunchLane, at: &str, allow_all: Option<bool>, tier: &Tier) -> Value {
+/// the brief states of the item's tier, `class` and `class_reason` the
+/// class the launch stated.
+fn new_lane_record(
+    r: &LaunchLane,
+    at: &str,
+    allow_all: Option<bool>,
+    tier: &Tier,
+    (class, class_reason): (ModelClass, &str),
+) -> Value {
     json!({
         "item": r.item,
         "tracker": string_or_null(&r.tracker),
@@ -535,6 +609,8 @@ fn new_lane_record(r: &LaunchLane, at: &str, allow_all: Option<bool>, tier: &Tie
         "surface": r.surface.as_deref().unwrap_or("tmux"),
         "model": string_or_null(&r.model),
         "effort": string_or_null(&r.effort),
+        "class": class.word(),
+        "class_reason": class_reason,
         "permission": r.permission_recorded(),
         "session_id": Value::Null,
         "session_since": at,
@@ -1049,6 +1125,10 @@ pub(super) fn launch_lane(
     let lanes = lanes(path, doc)?;
     let intents = intents(path, doc)?;
     let position = lanes.iter().position(|l| l.item == r.item);
+    let record = position.map(|index| &lanes[index]);
+    let class = r.class_stated(record)?;
+    r.class_shown(class.0)?;
+    r.miss_held(class.0, record)?;
     // A record reading `done` holds no admission: the item's next phase is
     // judged as a first launch, over the record's slot; a stopped or parked
     // record's launch is the same phase, judged when it was admitted.
@@ -1291,7 +1371,7 @@ pub(super) fn launch_lane(
         }
         None => {
             let rows = record::array_mut(path, doc, "lanes")?;
-            let mut record = new_lane_record(r, &at, allow_all, &tier);
+            let mut record = new_lane_record(r, &at, allow_all, &tier, (class.0, &class.1));
             if r.refresh {
                 record["refresh"] = Value::Bool(true);
             }
@@ -1312,7 +1392,7 @@ pub(super) fn launch_lane(
     let mut intent = new_intent(EffectOp::LaunchSession, &r.item, env)?;
     LaneMembers {
         lane_since: Some(at),
-        selection: Some(r.selection(position.is_some())),
+        selection: Some(r.selection(position.is_some(), class)),
         exclude_account: r
             .exclude_account
             .as_deref()
@@ -1949,6 +2029,11 @@ pub(super) fn record_launch_outcome(
                 ] {
                     record::set(lane, key, string_or_null(value));
                 }
+                record::set(lane, "class", selection.class.word());
+                record::set(lane, "class_reason", selection.class_reason.as_str());
+                if !selection.class.below_standard() {
+                    record::delete(lane, "class_missed");
+                }
             }
             if let Some(window) = &r.window {
                 record::set(lane, "window", window.as_str());
@@ -2085,13 +2170,19 @@ fn sandbox_ended(lane: &mut Document) {
     record::delete(lane, state::PARK_OWED);
 }
 
+/// The `no_landing` reasons that retire an attempt for a cause outside its
+/// outcome, as their closers write them: the model-switch recovery and the
+/// wall route.
+const OUTSIDE_THE_OUTCOME: [&str; 2] = ["model-switch", "usage-limit"];
+
 /// The close arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` on an exited or terminal ground reads
 /// the lane done and drops the PR identities and the reservation a close
 /// ends, and records the reason the close kept the lane's worktree as
 /// `kept` where its set says it did; on a `no-landing`
 /// ground it reads the lane stopped and keeps everything else, the attempt
-/// retired with the item's work and history intact. `failed`
+/// retired with the item's work and history intact, and records an
+/// attempt below `standard` retired for its outcome as `class_missed`. `failed`
 /// and `unconfirmed` move nothing.
 pub(super) fn record_close_outcome(
     path: &Path,
@@ -2110,7 +2201,8 @@ pub(super) fn record_close_outcome(
                 "kind": "close",
                 "item": intent.target,
             });
-            let hosted = lanes(path, doc)?[index].provider_hosted();
+            let standing = lanes(path, doc)?.swap_remove(index);
+            let hosted = standing.provider_hosted();
             let lane = lane_doc_mut(path, doc, index)?;
             match &members.close {
                 Some(CloseGround::NoLanding {
@@ -2127,6 +2219,20 @@ pub(super) fn record_close_outcome(
                     }
                     if let Some(wait) = park {
                         record::set(lane, state::PARK_OWED, serde_json::to_value(wait)?);
+                    }
+                    // An attempt below `standard` retired for its outcome is
+                    // the item's miss; a model switch, a usage wall and a
+                    // park end an attempt for a cause outside it.
+                    if let Some(class) = standing.class.filter(|class| class.below_standard())
+                        && park.is_none()
+                        && !OUTSIDE_THE_OUTCOME.contains(&reason.as_str())
+                    {
+                        let miss = state::ClassMiss {
+                            class,
+                            cause: reason.clone(),
+                            at: at.to_owned(),
+                        };
+                        record::set(lane, "class_missed", serde_json::to_value(miss)?);
                     }
                     row["text"] =
                         json!(format!("attempt retired, no landing; intent {}", intent.id));
@@ -2403,6 +2509,8 @@ mod tests {
                 account: Some("/a/a1".into()),
                 model: Some("claude-opus-5-5".into()),
                 effort: Some("high".into()),
+                class: ModelClass::Standard,
+                class_reason: "general implementation work".into(),
                 relaunch: false,
             })
         );
@@ -2423,6 +2531,8 @@ mod tests {
                 "surface",
                 "model",
                 "effort",
+                "class",
+                "class_reason",
                 "permission",
                 "session_id",
                 "session_since",
@@ -3328,8 +3438,8 @@ mod tests {
             .filter(|k| k != "prepare" && k != "live_display")
             .collect();
         assert_eq!(keys(&after), expected, "kept keys keep their sequence");
-        // The confirmed launch writes the whole selection: the harness it
-        // was asked for, and null for the account, model and effort the
+        // The confirmed launch writes the whole selection: the harness and
+        // model it was asked for, and null for the account and effort the
         // request left out. A claude session after a codex one carries no
         // codex account.
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
@@ -3337,9 +3447,10 @@ mod tests {
         assert_eq!(view.status, LaneStatus::Running);
         assert_eq!(view.harness.as_deref(), Some("claude"));
         let doc = lane_doc(&path, "KEN-4437");
-        for key in ["account", "model", "effort"] {
+        for key in ["account", "effort"] {
             assert_eq!(doc.get(key), Some(&Value::Null), "{key} written null");
         }
+        assert_eq!(doc.get("model"), Some(&Value::from("claude-fable-5-1")));
         assert_eq!(keys(&doc), expected, "nulled keys keep their place");
         // A request that supplies a field writes it, at `running` too.
         fs::write(&path, &text).unwrap();

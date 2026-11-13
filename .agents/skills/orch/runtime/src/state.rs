@@ -592,6 +592,15 @@ pub struct Lane {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// The model class the lane's assignment runs at and the reason
+    /// stated for it, written by every launch: a relaunch naming neither
+    /// keeps them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<ModelClass>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_missed: Option<ClassMiss>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -749,11 +758,71 @@ impl CycleRow {
     }
 }
 
-/// The harness, account, model and effort a launch was asked for. The
-/// lane takes them when it records `running`, not `preparing`, so a
+/// The model class an assignment runs at: kendex's four class words, in
+/// descending order, ASCII case folded as kendex's `ModelClass::parse`
+/// folds them. kendex's parser also takes the Claude family names
+/// (`fable`, `opus`, `sonnet`, `haiku`); here they name no class, being
+/// the model words a launch's `model` carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelClass {
+    Top,
+    Standard,
+    Light,
+    Fast,
+}
+
+impl ModelClass {
+    const ALL: [ModelClass; 4] = [
+        ModelClass::Top,
+        ModelClass::Standard,
+        ModelClass::Light,
+        ModelClass::Fast,
+    ];
+
+    /// The class a word names, `None` for any other word.
+    pub fn parse(word: &str) -> Option<ModelClass> {
+        Self::ALL
+            .into_iter()
+            .find(|class| word.eq_ignore_ascii_case(class.word()))
+    }
+
+    /// The class word as the record holds it.
+    pub fn word(self) -> &'static str {
+        match self {
+            ModelClass::Top => "top",
+            ModelClass::Standard => "standard",
+            ModelClass::Light => "light",
+            ModelClass::Fast => "fast",
+        }
+    }
+
+    /// A class below `standard`, whose first miss moves the item's work up.
+    pub fn below_standard(self) -> bool {
+        match self {
+            ModelClass::Top | ModelClass::Standard => false,
+            ModelClass::Light | ModelClass::Fast => true,
+        }
+    }
+}
+
+/// An attempt below `standard` that a `no_landing` close retired for its
+/// outcome: the class it ran at, the close's reason and when. It stands on
+/// the lane until a launch at `standard` or above confirms, and no launch
+/// below `standard` runs the item while it stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClassMiss {
+    pub class: ModelClass,
+    pub cause: String,
+    pub at: String,
+}
+
+/// The harness, account, model, effort and class a launch was asked for.
+/// The lane takes them when it records `running`, not `preparing`, so a
 /// launch intent carries them until
 /// its outcome confirms. `account`, `model` and `effort` left out keep the
-/// record's values.
+/// record's values; the class and its reason are the launch's own or, on
+/// a relaunch naming neither, the record's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
     pub harness: String,
@@ -763,6 +832,8 @@ pub struct Selection {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    pub class: ModelClass,
+    pub class_reason: String,
     /// Whether the launch re-enters a standing record, so a provider reuses
     /// the worktree it holds.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

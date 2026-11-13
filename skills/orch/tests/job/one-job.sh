@@ -235,7 +235,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
   write_brief "$brief" "$scenario"
   request="$root/launch.json"
   jq -cn --arg item "$key" --arg wt "$wt" --arg home "$TMP_ROOT/home" --arg brief "$brief" --arg tracker "$tracker" \
-    '{op: "launch-lane", item: $item, harness: "claude", mail_root: $wt, account: $home, model: "claude-fable-5-1", effort: "high", repo: "owner/repo", brief_file: $brief}
+    '{op: "launch-lane", item: $item, harness: "claude", mail_root: $wt, account: $home, model: "claude-fable-5-1", effort: "high", class: "standard", class_reason: "general implementation work", repo: "owner/repo", brief_file: $brief}
      + (if $tracker == "github" then {tracker: "github"} else {} end)' > "$request"
   launch_lane "$name" "$root" "$request" || return 0
   fleet="$main/tmp/workflow-state-oversee.json"
