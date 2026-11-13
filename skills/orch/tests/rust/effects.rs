@@ -6211,40 +6211,68 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
 
 /// A create whose line adds `tree=unrebased`, the shipped ssh provider's
 /// answer where it kept the item's retained tree on its own head
-/// (`lane-host-ssh-tests.py`'s conflicting relaunch): the launch goes on in
-/// that tree, its observation names the tree, and the brief closes by
-/// telling the lane its restack is its own.
+/// (`lane-host-ssh-tests.py`'s conflicting relaunch), or a preparing
+/// create (`state=preparing`, exit 75) whose `wait` answers it: the launch
+/// goes on in that tree, its observation names the tree, and the brief
+/// closes by telling the lane its restack is its own.
 #[test]
 fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-    let world = HostedLaunch::new(&server, dir.path(), record);
-    let answers_path = world.scripts.join("lane-host.json");
-    let mut answers: Value =
-        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-    let account = world.runner.state_dir().display().to_string();
-    answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] = json!({
-        "stdout": format!("ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\ttree=unrebased\n", world.host())
-    });
-    std::fs::write(&answers_path, answers.to_string()).unwrap();
-    let brief = dir.path().join("brief.md");
-    std::fs::write(&brief, "/orch start KEN-H\n").unwrap();
-    let mut request = world.request();
-    request["brief_file"] = json!(brief.display().to_string());
-    let report = effect_report(&world.runner.op_fleet(&request));
-    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    assert_eq!(report["lane"]["mail_root"], world.host(), "{report}");
-    assert_eq!(
-        report["intent"]["observation"]["tree"], "unrebased",
-        "{report}"
-    );
-    let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
-    assert!(
-        ssh.contains("this tree is not rebased. The restack is yours to run."),
-        "the lane is told its tree is kept unrebased: {ssh}"
-    );
-    effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    let cases = [
+        ("on the create line", "\ttree=unrebased", 0, None),
+        (
+            "on the wait",
+            "\tstate=preparing",
+            75,
+            Some("tree=unrebased\n"),
+        ),
+    ];
+    for (case, fields, exit, waited) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let world = HostedLaunch::new(&server, dir.path(), record);
+        let answers_path = world.scripts.join("lane-host.json");
+        let mut answers: Value =
+            serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+        let account = world.runner.state_dir().display().to_string();
+        answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] = json!({
+            "exit": exit,
+            "stdout": format!("ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c{fields}\n", world.host())
+        });
+        if let Some(stdout) = waited {
+            answers["wait --item KEN-H"] = json!({"stdout": stdout});
+        }
+        std::fs::write(&answers_path, answers.to_string()).unwrap();
+        let brief = dir.path().join("brief.md");
+        std::fs::write(&brief, "/orch start KEN-H\n").unwrap();
+        let mut request = world.request();
+        request["brief_file"] = json!(brief.display().to_string());
+        let report = effect_report(&world.runner.op_fleet(&request));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+        assert_eq!(
+            report["lane"]["mail_root"],
+            world.host(),
+            "{case}: {report}"
+        );
+        assert_eq!(
+            report["intent"]["observation"]["tree"], "unrebased",
+            "{case}: {report}"
+        );
+        assert_eq!(
+            world
+                .calls()
+                .iter()
+                .any(|call| call.ends_with(" wait --item KEN-H")),
+            waited.is_some(),
+            "{case}: a wait is asked only after a preparing create"
+        );
+        let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
+        assert!(
+            ssh.contains("this tree is not rebased. The restack is yours to run."),
+            "{case}: the lane is told its tree is kept unrebased: {ssh}"
+        );
+        effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    }
 }
 
 /// Through the real `lane-host`: a launch whose `op` ends inside the
@@ -8485,7 +8513,7 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
             .filter_map(Value::as_str)
             .filter(|arg| arg.contains(words))
             .collect();
-        let expected = closed(&brief, mode);
+        let expected = armed(closed(&brief, mode), harness, "KEN-U");
         assert_eq!(
             carried,
             [expected.as_str()],
@@ -8525,7 +8553,11 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
     );
     assert_ne!(report["intent"]["outcome"], "failed", "hosted: {report}");
     let recorded = launch_record_of(&world.host_path);
-    let expected = closed("Review the hosted change.", Some("normal"));
+    let expected = armed(
+        closed("Review the hosted change.", Some("normal")),
+        "claude",
+        "KEN-H",
+    );
     assert!(
         recorded["argv"]
             .as_array()
@@ -8570,9 +8602,162 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
     ));
     assert_eq!(
         std::fs::read_to_string(&held).unwrap().trim_end(),
-        closed(continuation.trim_end(), None),
+        armed(closed(continuation.trim_end(), None), "claude", "KEN-U"),
         "resume: the brief the resumed line reads"
     );
+}
+
+/// The line a lane brief on `harness` closes with to arm the mailbox
+/// monitor of `item`, as the lane reads it: none for Codex and Pi.
+fn arm_line(harness: &str, item: &str) -> Option<String> {
+    match harness {
+        "claude" => Some(format!(
+            "As your first step, arm your mailbox monitor: a Monitor on .agents/skills/mailbox/scripts/lane-mail watch --item {item}, re-armed at each expiry; run the lane-mail inbox command each of its announcements prints."
+        )),
+        "copilot" => Some(format!(
+            "As your first step, arm your mailbox monitor: .agents/skills/mailbox/scripts/lane-mail watch --once --item {item} as a background command, re-armed after each exit once the lane-mail inbox command it printed has run."
+        )),
+        _ => None,
+    }
+}
+
+/// `closed`, a brief ending on its mode sentence, with the arm line of
+/// `harness` for `item` on the line before that sentence.
+fn armed(closed: String, harness: &str, item: &str) -> String {
+    match (arm_line(harness, item), closed.rsplit_once('\n')) {
+        (Some(line), Some((head, sentence))) => format!("{head}\n{line}\n{sentence}"),
+        (Some(_), None) | (None, _) => closed,
+    }
+}
+
+/// A launch that names no brief file opens its lane on the start brief,
+/// never on nothing, and the brief closes with its harness's arm line,
+/// once, before the mode sentence: a lane told nothing of its mailbox
+/// monitor gets its overseer's mail only at its turn ends. Through the real
+/// `launch-lane`, reading the brief the recording harness got: a fresh
+/// local launch on Claude Code, Copilot CLI and Codex (which arms nothing),
+/// and a hosted Claude relaunch over the record its first launch left, its
+/// provider keeping the tree unrebased, which the brief tells the lane.
+#[test]
+fn a_launch_with_no_brief_file_starts_its_lane_on_the_armed_start_brief() {
+    let text = |path: &str| {
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap()
+            .trim_end()
+            .to_owned()
+    };
+    let words = text("src/watch/unattended.txt");
+    let quiet = text("src/effects/lane-output-quiet.txt");
+    let prose = "Read .agents/skills/orch/SKILL.md and execute the orch start workflow for KEN-U.";
+    let cases = [
+        ("claude", format!("/orch start KEN-U {words}")),
+        ("copilot", format!("{prose} {words}")),
+        ("codex", format!("{prose} {words}")),
+    ];
+    for (harness, start) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        runner
+            .env
+            .push(("HOME".to_owned(), home.display().to_string()));
+        runner.env.push((
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!(
+                "{harness}={}",
+                fixtures().join("stub-record").join(harness).display()
+            ),
+        ));
+        let work = runner.state_dir().to_path_buf();
+        let mut request = launch_request("KEN-U", &work);
+        request["harness"] = json!(harness);
+        if harness == "copilot" {
+            let tools = dir.path().join("tools");
+            std::fs::create_dir_all(&tools).unwrap();
+            runner.tools = Some(tools.clone());
+            plant_copilot_hooks(&work.join(".github/hooks"));
+            plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+            let copilot_home = dir.path().join("copilot");
+            std::fs::create_dir_all(&copilot_home).unwrap();
+            request["account"] = json!(copilot_home.display().to_string());
+        } else if harness == "codex" {
+            request.as_object_mut().unwrap().remove("account");
+        }
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_ne!(report["intent"]["outcome"], "failed", "{harness}: {report}");
+        let recorded = launch_record_of(&work);
+        let carried: Vec<&str> = recorded["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|arg| arg.contains(words.as_str()))
+            .collect();
+        let expected = armed(format!("{start}\n{quiet}"), harness, "KEN-U");
+        assert_eq!(
+            carried,
+            [expected.as_str()],
+            "{harness}: the brief the line carries: {recorded}"
+        );
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let world = HostedLaunch::new(
+        &server,
+        dir.path(),
+        json!({
+            "identity_file": "/srv/clone/.git/lane-host-pid",
+            "runtime": "/cache/bin/orch-runtime-k"
+        }),
+    );
+    std::fs::remove_file(world.tools.join("claude")).unwrap();
+    std::os::unix::fs::symlink(
+        fixtures().join("stub-record/claude"),
+        world.tools.join("claude"),
+    )
+    .unwrap();
+    let mut fleet = world.runner.fleet();
+    let mut prior = lane("KEN-H", "stopped", &world.runner, Value::Null);
+    prior["host"] = json!(world.provider());
+    prior["kind"] = json!("ssh");
+    prior["launched_at"] = json!("2026-01-29T15:20:00Z");
+    fleet["lanes"] = json!([prior]);
+    world.runner.write_fleet(&fleet);
+    let account = world.runner.state_dir().display().to_string();
+    let answers_path = world.scripts.join("lane-host.json");
+    let mut answers: Value =
+        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+    answers[format!(
+        "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+    )] = json!({"stdout": format!(
+        "ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\ttree=unrebased\n",
+        world.host()
+    )});
+    std::fs::write(&answers_path, answers.to_string()).unwrap();
+    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "hosted: {report}");
+    let recorded = launch_record_of(&world.host_path);
+    let expected = format!(
+        "{}\nYour retained work is kept as it stands: its rebase onto the base branch conflicted and was aborted, so this tree is not rebased. The restack is yours to run.",
+        armed(
+            format!("/orch start KEN-H {words}\n{quiet}"),
+            "claude",
+            "KEN-H"
+        )
+    );
+    assert!(
+        recorded["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg == &json!(expected)),
+        "hosted relaunch: the brief the host's line carries: {recorded}"
+    );
+    effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
 /// An `ORCH_LANE_OUTPUT` the brief cannot state, a typo of either word,

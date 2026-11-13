@@ -237,21 +237,12 @@ fn lane_of(path: &Path, item: &str) -> Result<Option<Lane>> {
 }
 
 /// The line a replaced lane's session runs first: read its inbox, then go
-/// on; a Claude or Copilot lane arms its mailbox monitor again. The launch
-/// closes it with the unattended words every lane brief carries.
-fn continuation(lane: &Lane, harness: Harness) -> std::result::Result<String, String> {
+/// on. The launch closes it as it closes every lane brief, the harness's
+/// arm line among the closing lines.
+fn continuation(lane: &Lane, _harness: Harness) -> std::result::Result<String, String> {
     let item = &lane.item;
-    let rearm = match harness {
-        Harness::Claude => format!(
-            ", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --item {item} through your harness background wake"
-        ),
-        Harness::Copilot => format!(
-            ", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --once --item {item} as a background command"
-        ),
-        Harness::Codex | Harness::Pi => String::new(),
-    };
     Ok(format!(
-        "Resume the orch workflow for {item} from where this session stopped. Run .agents/skills/mailbox/scripts/lane-mail inbox --item {item} first and act on every envelope it prints, answers and directives alike, as its text directs{rearm}.\n"
+        "Resume the orch workflow for {item} from where this session stopped. Run .agents/skills/mailbox/scripts/lane-mail inbox --item {item} first and act on every envelope it prints, answers and directives alike, as its text directs.\n"
     ))
 }
 

@@ -753,12 +753,11 @@ pub fn create(
         prefix: String::new(),
         preparing: false,
         pi_root: None,
-        unrebased: false,
+        unrebased: kept_unrebased(&line),
     };
     for field in line.split('\t') {
         match field.split_once('=') {
             Some(("pi-root", v)) => created.pi_root = Some(v.to_owned()),
-            Some(("tree", "unrebased")) => created.unrebased = true,
             Some(("ssh-target", v)) => created.target = v.to_owned(),
             Some(("path", v)) => created.path = v.to_owned(),
             Some(("remote-prefix", v)) => created.prefix = v.to_owned(),
@@ -795,9 +794,16 @@ pub fn create(
     Ok(created)
 }
 
-/// After an accepted preparation: ready, the cause the provider gave, or
-/// `Asked::Unknown` for a wait that never answered.
-pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
+/// Whether a provider's answer line carries `tree=unrebased`.
+fn kept_unrebased(line: &str) -> bool {
+    line.split('\t').any(|field| field == "tree=unrebased")
+}
+
+/// After an accepted preparation: ready, with whether its answer carries
+/// `tree=unrebased` (a preparing create learns the kept tree only here),
+/// the cause the provider gave, or `Asked::Unknown` for a wait that never
+/// answered.
+pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<bool, Asked> {
     let out = call(
         scripts,
         host,
@@ -807,7 +813,7 @@ pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
         "host-wait",
     )?;
     if out.status.success() {
-        Ok(())
+        Ok(kept_unrebased(&host::stdout_text(&out)))
     } else {
         Err(Asked::Failed(format!(
             "host-wait-failed {}",

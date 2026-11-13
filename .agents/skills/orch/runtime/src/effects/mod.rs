@@ -64,6 +64,7 @@ mod launch;
 mod stop;
 
 pub use close::{Closed, Word as CloseWord, close_lane};
+pub(crate) use launch::start_brief;
 
 use std::path::{Path, PathBuf};
 

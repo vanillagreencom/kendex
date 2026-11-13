@@ -86,12 +86,73 @@ fn mode_sentence(mode: LaneOutput) -> &'static str {
     }
 }
 
-/// A local or hosted lane's brief: closed by the unattended words, then by
-/// the sentence stating `mode`. Both ride the brief, never a system-prompt
-/// flag (Pi's `--append-system-prompt` would stop it reading its own
-/// `APPEND_SYSTEM.md`).
-fn lane_brief(brief: &str, mode: LaneOutput) -> String {
-    closed_by(&closed_by(brief, UNATTENDED_TEXT), mode_sentence(mode))
+/// The line that arms the mailbox monitor of a lane on `harness`, mailbox
+/// `item`, the one place a lane is told to arm it: no program arms it, and
+/// a lane whose first message lacks it gets mail only at its turn ends.
+/// Codex has no background wake to arm, and Pi's mail wake is its carrier
+/// extension, so neither gets one.
+fn arm_line(harness: Harness, item: &str) -> Option<String> {
+    match harness {
+        Harness::Claude => Some(format!(
+            "As your first step, arm your mailbox monitor: a Monitor on .agents/skills/mailbox/scripts/lane-mail watch --item {item}, re-armed at each expiry; run the lane-mail inbox command each of its announcements prints."
+        )),
+        Harness::Copilot => Some(format!(
+            "As your first step, arm your mailbox monitor: .agents/skills/mailbox/scripts/lane-mail watch --once --item {item} as a background command, re-armed after each exit once the lane-mail inbox command it printed has run."
+        )),
+        Harness::Codex | Harness::Pi => None,
+    }
+}
+
+/// A local or hosted lane's brief, fresh or relaunched: closed by the
+/// unattended words, then by the harness's arm line for mailbox `item`,
+/// then by the sentence stating `mode`. All ride the brief, never a
+/// system-prompt flag (Pi's `--append-system-prompt` would stop it reading
+/// its own `APPEND_SYSTEM.md`).
+fn lane_brief(brief: &str, harness: Harness, item: &str, mode: LaneOutput) -> String {
+    let brief = closed_by(brief, UNATTENDED_TEXT);
+    let brief = match arm_line(harness, item) {
+        Some(line) => closed_by(&brief, &line),
+        None => brief,
+    };
+    closed_by(&brief, mode_sentence(mode))
+}
+
+/// The words a lane starts on where its launch names no brief: the start
+/// workflow for the record's harness and tracker, whose workflow reads the
+/// item's handoff record, carrying the unattended words. A GitHub record
+/// names its issue as `issue-N` beside its repository. `Err` is the cause.
+pub(crate) fn start_brief(lane: &Lane, harness: Harness) -> std::result::Result<String, String> {
+    let subject = match lane.tracker.as_deref() {
+        None | Some("linear") => lane.item.clone(),
+        Some("github") => match (lane.item.strip_prefix("issue-"), lane.repo.as_deref()) {
+            (Some(number), Some(repo)) if !number.is_empty() && !repo.is_empty() => {
+                format!("github {repo}#{number}")
+            }
+            _ => return Err("brief-unspelled tracker=github".to_owned()),
+        },
+        Some(other) => return Err(format!("tracker-unknown tracker={other}")),
+    };
+    let unattended = UNATTENDED_TEXT.trim_end_matches('\n');
+    Ok(match harness {
+        Harness::Claude => format!("/orch start {subject} {unattended}\n"),
+        Harness::Codex | Harness::Copilot => format!(
+            "Read .agents/skills/orch/SKILL.md and execute the orch start workflow for {subject}. {unattended}\n"
+        ),
+        Harness::Pi => format!("/skill:orch start {subject} {unattended}\n"),
+    })
+}
+
+/// The brief a launch of `lane` opens on: the request's file, else the
+/// start brief, so no launch opens a lane on nothing.
+fn opening_brief(
+    r: &LaunchLane,
+    lane: &Lane,
+    harness: Harness,
+) -> std::result::Result<String, Unready> {
+    match &r.brief_file {
+        Some(file) => Ok(read_brief(file)?),
+        None => start_brief(lane, harness).map_err(Unready::Gate),
+    }
 }
 
 /// A cloud session's description: the brief, then the cloud session words
@@ -359,6 +420,7 @@ fn prepare_launch(
     operation: &Operation,
     settings: &Settings,
     r: &LaunchLane,
+    lane: &Lane,
     fleet: Fleet,
     route: &Route,
 ) -> std::result::Result<LaunchPrep, Unready> {
@@ -366,16 +428,15 @@ fn prepare_launch(
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
-    // The file the line reads is the brief closed by the unattended words
-    // and the output mode, held beside the intent.
-    let brief = match &r.brief_file {
-        Some(file) => Some(
-            operation
-                .hold_brief(&lane_brief(&read_brief(file)?, settings.lane_output.get()?))
-                .map_err(Error::from)?,
-        ),
-        None => None,
-    };
+    // The file the line reads is the closed brief, held beside the intent.
+    let brief = operation
+        .hold_brief(&lane_brief(
+            &opening_brief(r, lane, harness)?,
+            harness,
+            &r.item,
+            settings.lane_output.get()?,
+        ))
+        .map_err(Error::from)?;
     let recorded = match route {
         Route::Resume { home, .. } => home.clone(),
         Route::Fresh { .. } | Route::Refuse { .. } => None,
@@ -422,7 +483,7 @@ fn prepare_launch(
             effort: r.effort.as_deref(),
             agent: Some(&r.item),
             cwd: &cwd,
-            brief: brief.as_deref(),
+            brief: Some(&brief),
             permission: None,
             question_tool: QuestionTool::Off,
             compaction: lane_compaction(harness),
@@ -624,12 +685,11 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
         .selection
         .is_some_and(|s| s.relaunch);
     let mut outcome = match surface {
-        Surface::Local(fleet) => local_launch(run, operation, r, fleet, &route)?,
+        Surface::Local(fleet) => local_launch(run, operation, r, &lane, fleet, &route)?,
         Surface::Hosted(provider) => {
-            let parked = relaunch && parked_last(&lane);
             let mut stands = false;
             let mut outcome =
-                hosted_launch(run, operation, r, provider, relaunch, parked, &mut stands)?;
+                hosted_launch(run, operation, r, &lane, provider, relaunch, &mut stands)?;
             if stands {
                 outcome.annotate(SANDBOX, json!(STANDING));
             }
@@ -767,11 +827,12 @@ fn local_launch(
     run: &Run,
     operation: Operation,
     r: &LaunchLane,
+    lane: &Lane,
     fleet: Fleet,
     route: &Route,
 ) -> Result<EffectOutcome> {
     let cwd = PathBuf::from(&r.mail_root);
-    let prep = match prepare_launch(&operation, run.settings, r, fleet, route) {
+    let prep = match prepare_launch(&operation, run.settings, r, lane, fleet, route) {
         Ok(prep) => prep,
         // A harness, session, directory, program or brief the effect cannot
         // resolve: `failed` before anything opens, never a bare refusal.
@@ -839,11 +900,12 @@ fn hosted_launch(
     run: &Run,
     mut operation: Operation,
     r: &LaunchLane,
+    lane: &Lane,
     provider: &str,
     relaunch: bool,
-    parked: bool,
     stands: &mut bool,
 ) -> Result<EffectOutcome> {
+    let parked = relaunch && parked_last(lane);
     let failed = |operation: Operation, cause: &str| {
         Ok(operation.settle(Word::Failed, json!({"cause": cause})))
     };
@@ -885,19 +947,16 @@ fn hosted_launch(
     if let Err(e) = check_directory("cwd-missing", &cwd) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
     }
-    let brief = match r
-        .brief_file
-        .as_deref()
-        .map(|file| -> Result<String> {
-            Ok(lane_brief(
-                &read_brief(file)?,
-                run.settings.lane_output.get()?,
-            ))
-        })
-        .transpose()
-    {
+    let opening = match opening_brief(r, lane, harness) {
         Ok(text) => text,
-        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
+        Err(Unready::Refused(e)) => {
+            return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
+        }
+        Err(Unready::Gate(cause)) => return failed(operation, &cause),
+    };
+    let brief = match run.settings.lane_output.get() {
+        Ok(mode) => lane_brief(&opening, harness, &r.item, mode),
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
     // A parked lane's sandbox is stopped with its disk kept: the provider's
     // start brings it back before `create --relaunch` resumes the harness on
@@ -928,11 +987,13 @@ fn hosted_launch(
         &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
     );
     *stands |= created.is_ok();
-    if let Ok(made) = &created
+    if let Ok(made) = &mut created
         && made.preparing
-        && let Err(asked) = hosted::wait(&scripts, provider, &r.item)
     {
-        created = Err(asked);
+        match hosted::wait(&scripts, provider, &r.item) {
+            Ok(unrebased) => made.unrebased |= unrebased,
+            Err(asked) => created = Err(asked),
+        }
     }
     let created = match created {
         Ok(created) => created,
@@ -960,11 +1021,12 @@ fn hosted_launch(
     if let Err(cause) = hosted_marker(&scripts, provider, &r.item, &created.path, r.refresh) {
         return failed(operation, &cause);
     }
-    let brief = match brief {
-        Some(text) if created.unrebased => Some(closed_by(&text, UNREBASED_TEXT)),
-        brief => brief,
+    let brief = if created.unrebased {
+        closed_by(&brief, UNREBASED_TEXT)
+    } else {
+        brief
     };
-    let command = match hosted_command(run.settings, r, harness, &created, brief.as_deref()) {
+    let command = match hosted_command(run.settings, r, harness, &created, &brief) {
         Ok(command) => command,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
@@ -1095,7 +1157,7 @@ fn hosted_command(
     r: &LaunchLane,
     harness: Harness,
     created: &hosted::Created,
-    brief: Option<&str>,
+    brief: &str,
 ) -> Result<LaunchCommand> {
     let remote_cwd = PathBuf::from(&created.path);
     let permission = r.permission_words();
@@ -1110,7 +1172,8 @@ fn hosted_command(
             effort: r.effort.as_deref(),
             agent: Some(&r.item),
             cwd: &remote_cwd,
-            brief: r.brief_file.as_deref(),
+            // The slot the inline brief fills: the host reads no file.
+            brief: Some(&remote_cwd),
             permission: None,
             question_tool: QuestionTool::Off,
             compaction: lane_compaction(harness),
@@ -1122,8 +1185,8 @@ fn hosted_command(
     intent.program = None;
     lane_words(&mut intent, &remote_cwd);
     let mut remote = agent_runtime::launch::build(&intent)?;
-    if let (Some(index), Some(text)) = (remote.brief_arg, brief) {
-        remote.args[index] = text.to_owned();
+    if let Some(index) = remote.brief_arg {
+        remote.args[index] = brief.to_owned();
         remote.brief_arg = None;
         remote.brief_path = None;
     }

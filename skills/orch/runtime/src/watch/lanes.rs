@@ -67,6 +67,7 @@ use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
+use crate::effects::start_brief;
 use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
@@ -1822,36 +1823,6 @@ pub(crate) struct Recovery {
     pub(crate) cwd: PathBuf,
     pub(crate) session: String,
     pub(crate) args: Vec<String>,
-}
-
-const UNATTENDED_TEXT: &str = include_str!("unattended.txt");
-
-/// The words the walled lane's successor starts on. Its route is fresh by
-/// construction, another account than the one its session was recorded
-/// under, so it holds no transcript to resume: it gets the start brief for
-/// the record's harness and tracker, whose workflow reads the item's
-/// handoff record, closed by the unattended words every lane brief carries.
-/// A GitHub record names its issue as `issue-N` beside its repository.
-/// `Err` is the cause.
-fn start_brief(lane: &Lane, harness: Harness) -> Result<String, String> {
-    let subject = match lane.tracker.as_deref() {
-        None | Some("linear") => lane.item.clone(),
-        Some("github") => match (lane.item.strip_prefix("issue-"), lane.repo.as_deref()) {
-            (Some(number), Some(repo)) if !number.is_empty() && !repo.is_empty() => {
-                format!("github {repo}#{number}")
-            }
-            _ => return Err("brief-unspelled tracker=github".to_owned()),
-        },
-        Some(other) => return Err(format!("tracker-unknown tracker={other}")),
-    };
-    let unattended = UNATTENDED_TEXT.trim_end_matches('\n');
-    Ok(match harness {
-        Harness::Claude => format!("/orch start {subject} {unattended}\n"),
-        Harness::Codex | Harness::Copilot => format!(
-            "Read .agents/skills/orch/SKILL.md and execute the orch start workflow for {subject}. {unattended}\n"
-        ),
-        Harness::Pi => format!("/skill:orch start {subject} {unattended}\n"),
-    })
 }
 
 /// The permission choice a relaunch keeps: the record's `permission`, the
