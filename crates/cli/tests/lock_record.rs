@@ -1140,10 +1140,8 @@ fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
         assert!(output.contains("lock-record: rolling-current="), "{output}");
         let log = world.gh_log();
         let asked = log.strip_prefix(&before).expect("log prefix");
-        assert!(
-            at(asked, "kendex verify ") < at(asked, "mergeQueue(branch:"),
-            "{asked}"
-        );
+        let verified = asked.rfind("kendex verify ").expect("final verification");
+        assert!(verified < at(asked, "mergeQueue(branch:"), "{asked}");
         assert_eq!(asked.matches("mergeQueue(branch:").count(), 1, "{asked}");
         assert!(!asked.contains("pr merge"), "{asked}");
         assert!(!asked.contains("pr edit"), "{asked}");
