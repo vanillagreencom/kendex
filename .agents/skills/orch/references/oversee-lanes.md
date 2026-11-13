@@ -43,11 +43,11 @@ A mailbox lane whose host declares `files=verb` needs `--root [MAIL_ROOT] --host
 Answering and directing a mailbox lane are the same two commands on every harness and every surface, inside tmux or not. Add `--root [MAIL_ROOT] --host` for a lane whose record puts it on another host, and `--root [MAIL_ROOT]` alone, run from a checkout of that repository, for a local lane whose `mail_root` is another repository's worktree.
 
 ```bash
-.agents/skills/mailbox/scripts/lane-mail send --item [ISSUE_ID] --re [MESSAGE_ID] --file [PATH] --state-dir [OVERSEE_STATE_DIR]
+.agents/skills/mailbox/scripts/lane-mail send --item [ISSUE_ID] --re [MESSAGE_ID] --file [PATH]
 ```
 
 ```bash
-.agents/skills/mailbox/scripts/lane-mail send --item [ISSUE_ID] --directive --file [PATH] --state-dir [OVERSEE_STATE_DIR]
+.agents/skills/mailbox/scripts/lane-mail send --item [ISSUE_ID] --directive --file [PATH]
 ```
 
 Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). The `--state-dir` send reads the lane's record and matches the `channel` its host kind declares, and refuses as `lane-unrecorded` where that state holds no record for the lane; a lane with no record, one the watch carries from `--item` alone, takes the same send with no `--state-dir`. A directive answers no ask and `--halt` in place of `--directive` halts the lane; the Lane mail rule in [skill-rules.md](skill-rules.md) says when each reaches it.

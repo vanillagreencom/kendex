@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# lane-mail send to a lane whose record's host kind declares channel=session,
-# a Claude cloud session: a directive goes through `claude -p --cloud SESSION
-# --output-format json` under the record's account with the text on stdin, an
-# {ok: true} answer is delivery, an error naming an archived session refuses as
-# session-archived and any other as session-send-failed, and --re and --halt
-# refuse. A session record of another repository is lane-foreign, and a send
-# naming a fleet state that holds no record for the lane refuses rather than
-# fall back to the mailbox. A local mailbox record keeps its mailbox. A hosted
-# mailbox record requires --root MAIL_ROOT --host and uses its recorded host.
-# The kind's line is the real lane-host's and the credit the built runtime's;
-# `claude` and the provider are stubs, and `curl` the runtime's usage fixture.
+# lane-mail send to a lane by the route its caller names, reading no record:
+# a session route (--session --account --root), a Claude cloud session, takes
+# a directive through `claude -p --cloud SESSION --output-format json` under
+# the route's account with the text on stdin, an {ok: true} answer is
+# delivery, an error naming an archived session refuses as session-archived
+# and any other as session-send-failed, and --re, --halt and --host refuse. A
+# session route of another repository is lane-foreign. A send naming no route
+# keeps the local mailbox. A hosted send (--root MAIL_ROOT --host) goes to the
+# provider the caller's ORCH_LANE_HOST names, and refuses where it names none
+# rather than reach the provider the checkout's settings name.
+# The credit is the built runtime's and the provider call the built
+# orch-runtime's; `claude` and the provider are stubs, and `curl` the
+# runtime's usage fixture.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 # shellcheck source=../../orch/tests/lib/git-env.sh
@@ -49,33 +51,17 @@ printf '%s\n' "$STUB_CLAUDE_OUT"
 EOF
 chmod +x "$BIN/claude"
 
-# The overseer's checkout, with the fleet state a launch recorded: CC-1 a
-# claude-cloud lane, CC-2 a lane on this host, CC-3 a claude-cloud lane of
-# another repository's checkout, SSH-1 a hosted mailbox lane. OTHER_STATE is
-# a fleet that holds CC-2 alone.
+# The overseer's checkout, whose settings name the other provider: a hosted
+# send that took the settings' provider would land there. CC-1's root is a
+# directory inside the checkout, as a cloud lane's worktree path is; FOREIGN
+# is another repository's checkout.
 CHECKOUT="$TMP_ROOT/checkout"
 mkdir -p "$CHECKOUT/tmp" "$CHECKOUT/wt/CC-1"
 git -C "$CHECKOUT" init -q
+printf '[env]\nORCH_LANE_HOST = "%s"\n' "$OTHER_HOST_PROVIDER" > "$CHECKOUT/kendex.settings.toml"
 FOREIGN="$TMP_ROOT/foreign"
 mkdir -p "$FOREIGN"
 git -C "$FOREIGN" init -q
-STATE="$TMP_ROOT/state"
-OTHER_STATE="$TMP_ROOT/other-state"
-mkdir -p "$STATE" "$OTHER_STATE"
-jq -n --arg account "$TMP_ROOT/.eclaude" --arg root "$CHECKOUT" --arg foreign "$FOREIGN" \
-  --arg host "$HOST_PROVIDER" --arg host_root "$HOST_ROOT" '{issue_id: "oversee", lanes: [
-  {item: "CC-1", harness: "claude", host: "claude-cloud", kind: "claude-cloud", account: $account,
-   session_id: "session_01CLOUD", mail_root: ($root + "/wt/CC-1"), window: null, status: "running"},
-  {item: "CC-2", harness: "claude", host: null, kind: "local", account: $account,
-   mail_root: $root, window: "stub:CC-2", status: "running"},
-  {item: "CC-3", harness: "claude", host: "claude-cloud", kind: "claude-cloud", account: $account,
-   session_id: "session_03CLOUD", mail_root: $foreign, window: null, status: "running"},
-  {item: "SSH-1", harness: "claude", host: $host, kind: "ssh", account: $account,
-   mail_root: $host_root, window: null, status: "running"}]}' > "$STATE/workflow-state-oversee.json"
-jq '.lanes |= map(select(.item == "CC-2"))' "$STATE/workflow-state-oversee.json" > "$OTHER_STATE/workflow-state-oversee.json"
-BAD_STATE="$TMP_ROOT/bad-state"
-mkdir -p "$BAD_STATE"
-printf '{"lanes": [\n' > "$BAD_STATE/workflow-state-oversee.json"
 printf 'Rebase on main, then push.\n' > "$TMP_ROOT/directive"
 
 RC=0
@@ -87,7 +73,7 @@ lm() { # [ENV=VALUE...] -- ARGS...
   shift
   rm -f -- "$TMP_ROOT/claude.log"
   RC=0
-  OUT="$(cd "${LM_CWD:-$CHECKOUT}" && env PATH="$BIN:$PATH" STUB_CLAUDE_LOG="$TMP_ROOT/claude.log" \
+  OUT="$(cd "$CHECKOUT" && env PATH="$BIN:$PATH" STUB_CLAUDE_LOG="$TMP_ROOT/claude.log" \
     LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOST_DISK" \
     LANE_HOST_OTHER_DISK="$OTHER_HOST_DISK" LANE_HOST_OTHER_LOG="$TMP_ROOT/other-host.log" \
     LANE_HOST_RECORDED_PROVIDER="$HOST_PROVIDER" \
@@ -96,64 +82,51 @@ lm() { # [ENV=VALUE...] -- ARGS...
   ERR="$(head -n 1 "$TMP_ROOT/err")"
 }
 called() { [[ -f "$TMP_ROOT/claude.log" ]] && echo yes || echo no; }
-DIRECTIVE=(send --item CC-1 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE")
+ROUTE=(--session session_01CLOUD --account "$TMP_ROOT/.eclaude" --root "$CHECKOUT/wt/CC-1")
+DIRECTIVE=(send --item CC-1 --directive --file "$TMP_ROOT/directive" "${ROUTE[@]}")
 
-echo "=== a directive reaches a session lane through the Claude CLI ==="
+echo "=== a directive reaches a session route through the Claude CLI ==="
 session_delivered() {
-  local destination=()
-  [[ "${1:-0}" == 0 ]] || destination=(--root "$CHECKOUT/wt/CC-1" --host)
-  lm -- "${DIRECTIVE[@]}" ${destination[@]+"${destination[@]}"}
+  lm -- "${DIRECTIVE[@]}"
   assert_eq "rc=$RC out=$OUT" "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD" \
     "a session root inside its checkout delivers and receipts the directive"
   if [[ -f "$TMP_ROOT/claude.log" ]]; then
     assert_eq "$(paste -sd'|' "$TMP_ROOT/claude.log")" \
       "argv=-p --cloud session_01CLOUD --output-format json|config=$TMP_ROOT/.eclaude|stdin=Rebase on main, then push." \
-      "the directive is queued into the record's session under its account, the text on stdin"
+      "the directive is queued into the route's session under its account, the text on stdin"
   else
     assert_eq "$(called)" yes "the session CLI receives the directive"
   fi
   assert_eq "mailbox=$([[ -e "$CHECKOUT/wt/CC-1/tmp/lane-mail/CC-1/to-lane.jsonl" || -e "$CHECKOUT/tmp/lane-mail/CC-1/to-lane.jsonl" ]] && echo yes || echo no)" \
     "mailbox=no" "nothing lands in a mailbox for a session lane"
 }
-for hosted in 0 1; do session_delivered "$hosted"; done
-
-echo "=== a send from a linked worktree reads the main checkout's fleet record ==="
-# The default state directory is relative, so it is the main checkout's
-# whichever worktree the sender stands in.
-git -C "$CHECKOUT" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
-git -C "$CHECKOUT" worktree add -q "$TMP_ROOT/checkout-wt" 2>/dev/null
-cp -- "$STATE/workflow-state-oversee.json" "$CHECKOUT/tmp/workflow-state-oversee.json"
-LM_CWD="$TMP_ROOT/checkout-wt" lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive"
-assert_eq "rc=$RC out=$OUT" "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD" \
-  "a send from a linked worktree finds the lane in the main checkout's fleet record"
-rm -f -- "$CHECKOUT/tmp/workflow-state-oversee.json"
+session_delivered
 
 echo "=== what a session send cannot deliver refuses, reaching no session ==="
 ARCHIVED='{"ok":false,"error":"Session session_01CLOUD is archived"}'
 MISSING='{"ok":false,"error":"Session not found"}'
-# LABEL|ENV|ITEM|OPTION|STATE|first stderr line|called, the send a --file and
-# the named --state-dir beside the option.
+# LABEL|ENV|OPTIONS|first stderr line|called, each a session send of the
+# directive file.
 for row in \
-  "a halt refuses||CC-1|--halt|$STATE|lane-mail: channel-session=--halt|no" \
-  "an answer refuses||CC-1|--re 1700000000-1-abc|$STATE|lane-mail: channel-session=--re|no" \
-  "an archived session refuses|STUB_CLAUDE_OUT=$ARCHIVED|CC-1|--directive|$STATE|lane-mail: session-archived=session_01CLOUD|yes" \
-  "a session not found is no archived one|STUB_CLAUDE_OUT=$MISSING|CC-1|--directive|$STATE|lane-mail: session-send-failed=session_01CLOUD|yes" \
-  "a session lane of another repository is foreign||CC-3|--directive|$STATE|lane-mail: lane-foreign=$FOREIGN|no" \
-  "a state holding no record for the lane refuses||CC-1|--directive|$OTHER_STATE|lane-mail: lane-unrecorded=CC-1|no" \
-  "a fleet record that does not parse refuses||CC-1|--directive|$BAD_STATE|lane-mail: state-unreadable=CC-1|no"; do
-  IFS='|' read -r label env item opt state want call <<<"$row"
+  "a halt refuses||--halt ${ROUTE[*]}|lane-mail: channel-session=--halt|no" \
+  "an answer refuses||--re 1700000000-1-abc ${ROUTE[*]}|lane-mail: channel-session=--re|no" \
+  "a hosted session route refuses||--directive ${ROUTE[*]} --host|lane-mail: option-conflict=--session,--host|no" \
+  "an archived session refuses|STUB_CLAUDE_OUT=$ARCHIVED|--directive ${ROUTE[*]}|lane-mail: session-archived=session_01CLOUD|yes" \
+  "a session not found is no archived one|STUB_CLAUDE_OUT=$MISSING|--directive ${ROUTE[*]}|lane-mail: session-send-failed=session_01CLOUD|yes" \
+  "a session route of another repository is foreign||--directive --session session_03CLOUD --account $TMP_ROOT/.eclaude --root $FOREIGN|lane-mail: lane-foreign=$FOREIGN|no"; do
+  IFS='|' read -r label env opt want call <<<"$row"
   envs=()
   [[ -z "$env" ]] || envs=("$env")
   read -r -a opts <<<"$opt"
-  for hosted in 0 1; do
-    destination=()
-    [[ "$hosted" == 0 ]] || destination=(--root "$CHECKOUT" --host)
-    lm ${envs[@]+"${envs[@]}"} -- send --item "$item" "${opts[@]}" --file "$TMP_ROOT/directive" --state-dir "$state" ${destination[@]+"${destination[@]}"}
-    assert_eq "rc=$RC err=$ERR called=$(called)" "rc=2 err=$want called=$call" "$label: host=$hosted"
-  done
+  lm ${envs[@]+"${envs[@]}"} -- send --item CC-1 "${opts[@]}" --file "$TMP_ROOT/directive"
+  assert_eq "rc=$RC err=$ERR called=$(called)" "rc=2 err=$want called=$call" "$label"
 done
+# A lane record with no account carries an empty field into the route.
+lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive" --session session_01CLOUD --account '' --root "$CHECKOUT/wt/CC-1"
+assert_eq "rc=$RC err=$ERR called=$(called)" "rc=2 err=lane-mail: session-unrecorded=CC-1 called=no" \
+  "a session route naming no account refuses"
 
-echo "=== every session send prints its result and the account's credit, and writes no fleet record ==="
+echo "=== every session send prints its result and the account's credit ==="
 # mutant NAME OLD NEW — a copy of the scripts with lane-mail's OLD replaced
 # by NEW, its path in LANE_MAIL_BIN.
 mutant() {
@@ -164,11 +137,11 @@ mutant() {
   mutate_file "$dir/lane-mail" "$2" "$3"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
-# The credit is the built runtime's roster reading the record's account: its
+# The credit is the built runtime's roster reading the route's account: its
 # usage endpoint is the runtime's measured `curl` fixture, answering from
 # USAGE_FIXTURE_DIR by the token the account's credentials hold, and logging
 # each request there. The caller's own AGENT_RUNTIME_ACCOUNT_DIRS names another account,
-# whose token has no answer, so a read not narrowed to the record's account
+# whose token has no answer, so a read not narrowed to the route's account
 # shows in that log.
 ACCOUNT="$TMP_ROOT/.eclaude"
 OTHER_ACCOUNT="$TMP_ROOT/.oclaude"
@@ -202,15 +175,6 @@ receipt() { # CLI-WORDS
   [[ -n "$record" ]] || { printf 'none'; return 0; }
   jq -c --arg cli "$1" '[.result, .credit, (.text | contains($cli))]' <<<"$record"
 }
-# The fleet record's bytes against the copy taken before the send: the
-# mailbox reads the lane's channel there and writes nothing.
-state_after() {
-  if cmp -s -- "$TMP_ROOT/state.before" "$STATE/workflow-state-oversee.json"; then
-    printf 'state=same'
-  else
-    printf 'state=changed'
-  fi
-}
 OPEN_CREDIT='{"remaining_dollars":12.5,"locked_reason":null}'
 LOCKED_CREDIT='{"remaining_dollars":0,"locked_reason":"spend_limit"}'
 # LABEL|claude answer|usage answer|send exit|CLI words|result|credit
@@ -221,13 +185,12 @@ for row in \
   "a usage answer with no credit body|{\"ok\":true}|none|0||sent|\"unread\""; do
   IFS='|' read -r label answer usage want_rc cli result credit <<<"$row"
   usage_answer "$usage"
-  cp -- "$STATE/workflow-state-oversee.json" "$TMP_ROOT/state.before"
   lm STUB_CLAUDE_OUT="$answer" "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
-  assert_eq "rc=$RC receipt=$(receipt "$cli") $(state_after)" \
-    "rc=$want_rc receipt=[\"$result\",$credit,true] state=same" \
-    "$label: the receipt holds the send's result, its words and the credit reading, and the fleet record is read, never written"
+  assert_eq "rc=$RC receipt=$(receipt "$cli")" \
+    "rc=$want_rc receipt=[\"$result\",$credit,true]" \
+    "$label: the receipt holds the send's result, its words and the credit reading"
   assert_eq "$(sort -u "$USAGE/curl.log")" "usage token-eclaude" \
-    "$label: the credit is read for the record's account alone"
+    "$label: the credit is read for the route's account alone"
 done
 # The receipt is a stderr line; stdout keeps the `sent` receipt alone.
 assert_eq "stdout=$(grep -c '^lane-mail: directive-send' <<<"$OUT") err=$(sed -n '$p' "$TMP_ROOT/err" | cut -d' ' -f1-3)" 'stdout=0 err=lane-mail: directive-send item=CC-1' 'the record is on stderr, after the refusal where there is one, never on stdout'
@@ -244,38 +207,28 @@ usage_answer "$OPEN_CREDIT"
 lm "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
 assert_eq "receipt=$(receipt "") log=$(sort -u "$USAGE/curl.log" | paste -sd, -)" \
   'receipt=["sent","unread",true] log=usage token-oclaude' \
-  "control: a read not narrowed to the record's account reads the caller's accounts"
+  "control: a read not narrowed to the route's account reads the caller's accounts"
 unset LANE_MAIL_BIN
 
-echo "=== a lane on a mailbox kind keeps its mailbox ==="
-lm ORCH_LANE_HOST="$OTHER_HOST_PROVIDER" -- send --item CC-2 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE"
+echo "=== a send naming no route keeps the local mailbox ==="
+lm ORCH_LANE_HOST="$OTHER_HOST_PROVIDER" -- send --item CC-2 --directive --file "$TMP_ROOT/directive"
 assert_eq "rc=$RC called=$(called) lines=$(wc -l < "$CHECKOUT/tmp/lane-mail/CC-2/to-lane.jsonl" | tr -d ' ')" "rc=0 called=no lines=1" \
   "a local lane's directive is appended to its mailbox"
 
-echo "=== a hosted send uses the recorded destination ==="
-# An overseer's answer, directive and halt all reach lm_send_channel. The
-# record and the provider's files=verb declaration come from hosted launch.
-# open-terminal --host can select a different provider from the sender's.
-# LABEL|caller provider|root|host flag|send option|exit|refusal key
+echo "=== a hosted send goes to the provider its caller names ==="
+# LABEL|caller provider|send option|exit|refusal key
 for row in \
-  "an answer without --host refuses|||0|--re 1700000000-1-abc|2|host-root-required" \
-  "a directive without --host refuses|||0|--directive|2|host-root-required" \
-  "a halt without --host refuses|||0|--halt|2|host-root-required" \
-  "a matching provider delivers|$HOST_PROVIDER|$HOST_ROOT|1|--directive|0|" \
-  "a different provider delivers on the recorded host|$OTHER_HOST_PROVIDER|$HOST_ROOT|1|--re 1700000000-1-abc|0|" \
-  "a local provider default delivers on the recorded host|local|$HOST_ROOT|1|--halt|0|" \
-  "an unset provider delivers on the recorded host||$HOST_ROOT|1|--directive|0|" \
-  "a different root refuses|$OTHER_HOST_PROVIDER|/srv/other/SSH-1|1|--directive|2|host-root-mismatch"; do
-  IFS='|' read -r label provider root hosted opt want_rc key <<<"$row"
+  "a named provider takes a directive|$HOST_PROVIDER|--directive|0|" \
+  "a named provider takes an answer|$HOST_PROVIDER|--re 1700000000-1-abc|0|" \
+  "a named provider takes a halt|$HOST_PROVIDER|--halt|0|" \
+  "a hosted send that names no host refuses||--directive|2|host-route-missing"; do
+  IFS='|' read -r label provider opt want_rc key <<<"$row"
   rm -rf -- "$HOST_DISK" "$OTHER_HOST_DISK" "$CHECKOUT/tmp/lane-mail/SSH-1"
   rm -f -- "$TMP_ROOT/host.log" "$TMP_ROOT/other-host.log"
   read -r -a opts <<<"$opt"
-  envs=() destination=()
+  envs=()
   [[ -z "$provider" ]] || envs=(ORCH_LANE_HOST="$provider")
-  [[ -z "$root" ]] || destination=(--root "$root")
-  [[ "$hosted" -eq 0 ]] || destination+=(--host)
-  lm ${envs[@]+"${envs[@]}"} -- send --item SSH-1 "${opts[@]}" --file "$TMP_ROOT/directive" \
-    --state-dir "$STATE" ${destination[@]+"${destination[@]}"}
+  lm ${envs[@]+"${envs[@]}"} -- send --item SSH-1 "${opts[@]}" --file "$TMP_ROOT/directive" --root "$HOST_ROOT" --host
   assert_eq "$RC" "$want_rc" "$label"
   if [[ "$want_rc" -eq 0 ]]; then
     assert_eq "${OUT%% item=*}" 'lane-mail: sent' "$label: receipt follows delivery"
@@ -284,27 +237,27 @@ for row in \
     kind=directive halt=false re=""
     case "$opt" in --re*) kind=answer re=1700000000-1-abc ;; --halt) halt=true ;; esac
     expected="$(printf '%s\t%s\t%s\t%s' 'Rebase on main, then push.' "$kind" "$halt" "$re")"
-    assert_eq "$delivered" "$expected" "$label: envelope reaches the recorded mailbox"
+    assert_eq "$delivered" "$expected" "$label: envelope reaches the named host's mailbox"
   else
     assert_eq "out=$OUT key=${ERR%%=*}" "out= key=lane-mail: $key" "$label: no sent receipt"
     assert_eq "remote=$([[ -e "$HOST_DISK" || -e "$TMP_ROOT/host.log" ]] && echo yes || echo no)" \
       "remote=no" "$label: no mailbox read or append"
   fi
   assert_eq "misdelivered=$([[ -e "$CHECKOUT/tmp/lane-mail/SSH-1" || -e "$OTHER_HOST_DISK" || -e "$TMP_ROOT/other-host.log" ]] && echo yes || echo no)" \
-    "misdelivered=no" "$label: the local mailbox and other provider stay unused"
+    "misdelivered=no" "$label: the local mailbox and the settings' provider stay unused"
 done
 
 echo "=== controls ==="
-mutant session-mailbox '    session) ;;' '    session) return 0 ;;'
+mutant session-mailbox '  if [ "$SESSION_GIVEN" -eq 0 ]; then' '  if true; then'
 lm -- "${DIRECTIVE[@]}"
-assert_eq "called=$(called)" "called=no" "control: a session lane served through the mailbox never reaches the session"
+assert_eq "called=$(called)" "called=no" "control: a session route served through the mailbox never reaches the session"
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 mutant session-halt '[ "$HALT" -eq 0 ] || refuse channel-session --halt' 'true'
-lm -- send --item CC-1 --halt --file "$TMP_ROOT/directive" --state-dir "$STATE"
+lm -- send --item CC-1 --halt --file "$TMP_ROOT/directive" "${ROUTE[@]}"
 assert_eq "rc=$RC" "rc=0" "control: a halt accepted reaches the session"
 # shellcheck disable=SC2016
 mutant session-re '[ -z "$MSGID" ] || refuse channel-session --re' 'true'
-lm -- send --item CC-1 --re 1700000000-1-abc --file "$TMP_ROOT/directive" --state-dir "$STATE"
+lm -- send --item CC-1 --re 1700000000-1-abc --file "$TMP_ROOT/directive" "${ROUTE[@]}"
 assert_eq "rc=$RC" "rc=0" "control: an answer accepted reaches the session"
 mutant session-ok 'if .ok == true then "sent"' 'if .ok != null then "sent"'
 lm STUB_CLAUDE_OUT="$ARCHIVED" -- "${DIRECTIVE[@]}"
@@ -313,44 +266,28 @@ mutant session-archived 'elif (.error // "" | tostring | test("archived"; "i")) 
 lm STUB_CLAUDE_OUT="$MISSING" -- "${DIRECTIVE[@]}"
 assert_eq "err=$ERR" "err=lane-mail: session-archived=session_01CLOUD" "control: every ok false read as archived fails the not-found row"
 # shellcheck disable=SC2016
-mutant session-foreign '  lm_root_own "$root" own' '  :'
-lm -- send --item CC-3 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE"
+mutant session-foreign '  elif [ "$VERB" = send ] || [ "$VERB" = resolve ]; then' '  elif false; then'
+lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive" --session session_03CLOUD --account "$TMP_ROOT/.eclaude" --root "$FOREIGN"
 assert_eq "called=$(called)" "called=yes" "control: without the root check another repository's session is reached"
-lm -- send --item CC-3 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE" --root "$CHECKOUT" --host
-assert_eq "called=$(called)" "called=yes" "control: without ownership a hosted send reaches another repository's session"
 # shellcheck disable=SC2016
-mutant session-host-ownership 'if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; then' \
-  'if [ "$HOST" -eq 0 ] && { [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; }; then'
-lm -- send --item CC-3 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE" --root "$CHECKOUT" --host
-assert_eq "rc=$RC called=$(called)" "rc=0 called=yes" "control: coupling ownership to the host flag admits a foreign session"
+mutant session-host '[ "$SESSION_GIVEN" -eq 0 ] || [ "$HOST" -eq 0 ] || refuse option-conflict' 'true || refuse option-conflict'
+lm -- "${DIRECTIVE[@]}" --host
+assert_eq "called=$(called)" "called=yes" "control: a hosted session route accepted reaches the session past every mailbox check"
 # shellcheck disable=SC2016
-mutant session-checkout '  lm_root_own "$root" own' '  lm_root_own "$root" checkout'
+mutant session-checkout '{ [[ "$OPTS_GIVEN" == *"--root$NL"* ]] && [ "$SESSION_GIVEN" -eq 0 ]; }' '[[ "$OPTS_GIVEN" == *"--root$NL"* ]]'
 SESSION_ASSERT_RC=0
-( FAIL=0; for hosted in 0 1; do session_delivered "$hosted"; done; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/session-root-control.out" || SESSION_ASSERT_RC=$?
+( FAIL=0; session_delivered; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/session-root-control.out" || SESSION_ASSERT_RC=$?
 assert_eq "$SESSION_ASSERT_RC" 1 "control: requiring a checkout root fails the same session delivery assertions"
 # shellcheck disable=SC2016
-mutant session-unrecorded '[ -z "$STATE_DIR" ] || refuse lane-unrecorded' 'true || refuse lane-unrecorded'
-printf 'Rebase again.\n' > "$TMP_ROOT/directive-2"
-lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive-2" --state-dir "$OTHER_STATE"
-assert_eq "rc=$RC called=$(called)" "rc=0 called=no" "control: without the record check the send falls back to a mailbox"
+mutant session-unrecorded '{ [ -n "$account" ] && [ -n "$session" ]; } || refuse session-unrecorded "$ITEM"' 'true'
+lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive" --session session_01CLOUD --account '' --root "$CHECKOUT/wt/CC-1"
+assert_eq "called=$(called)" "called=yes" "control: without the route check a session send runs with no account"
 # shellcheck disable=SC2016
-mutant hosted-mailbox 'if [ "$files" != local ]; then' 'if false && [ "$files" != local ]; then'
-lm -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" --state-dir "$STATE"
-assert_eq "rc=$RC lines=$(wc -l < "$CHECKOUT/tmp/lane-mail/SSH-1/to-lane.jsonl" | tr -d ' ')" \
-  "rc=0 lines=1" "control: without the host check a send reports delivery to the local mailbox"
-# shellcheck disable=SC2016
-mutant hosted-provider 'export ORCH_LANE_HOST="$host"' ': # export ORCH_LANE_HOST="$host"'
-lm ORCH_LANE_HOST="$OTHER_HOST_PROVIDER" -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" \
-  --state-dir "$STATE" --root "$HOST_ROOT" --host
+mutant host-route '[ "$HOST" -eq 0 ] || [ -n "${ORCH_LANE_HOST:-}" ] || refuse host-route-missing "$ITEM"' ':'
+rm -rf -- "$HOST_DISK" "$OTHER_HOST_DISK"
+lm -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" --root "$HOST_ROOT" --host
 assert_eq "rc=$RC lines=$(wc -l < "$OTHER_HOST_DISK$HOST_ROOT/tmp/lane-mail/SSH-1/to-lane.jsonl" | tr -d ' ')" \
-  "rc=0 lines=1" "control: without provider binding a sent receipt names delivery on the other host"
-# shellcheck disable=SC2016
-mutant hosted-root '[ "$ROOT" = "$root" ] || refuse host-root-mismatch "$ROOT" "mail_root=$root"' \
-  'true || [ "$ROOT" = "$root" ] || refuse host-root-mismatch "$ROOT" "mail_root=$root"'
-lm -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" \
-  --state-dir "$STATE" --root /srv/other/SSH-1 --host
-assert_eq "rc=$RC lines=$(wc -l < "$HOST_DISK/srv/other/SSH-1/tmp/lane-mail/SSH-1/to-lane.jsonl" | tr -d ' ')" \
-  "rc=0 lines=1" "control: without the root check a sent receipt names delivery to the other mailbox"
+  "rc=0 lines=1" "control: without the route check a hosted send lands at the settings' provider"
 unset LANE_MAIL_BIN
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

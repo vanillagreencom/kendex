@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Sent};
+use crate::mailbox::{Mailbox, Route, Sent};
 use crate::ops::mail::{
     Credit, DirectiveSend, DirectiveSendRecorded, DirectiveWrite, KeyedSend, RecordDirectiveSend,
     SendResult, Word, owed,
@@ -78,8 +78,8 @@ struct Receipt {
 /// Send the directive in `file` to the lane `item` of the fleet at `path`
 /// and record it: the owed stage first (refused `lane-missing`,
 /// `lane-channel` or `directive-send-owed` with nothing sent), then
-/// `lane-mail send --item --directive --file --state-dir` through the one
-/// runner, then the receipt as the mark. A refusal the program prints by its
+/// `lane-mail send --item --directive --file` with the lane's session route
+/// through the one runner, then the receipt as the mark. A refusal the program prints by its
 /// own key with no receipt (a foreign root, an unrecorded session) is a send
 /// that ran no CLI, recorded `failed` with that line, as is a program that
 /// never started, recorded `failed` with the runner's cause; a program that
@@ -159,6 +159,9 @@ fn send(
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("read-directive", file, e)))?
         .trim_end()
         .to_owned();
+    // The route is read before the owed write, so a record that cannot be
+    // read leaves no send owed that no program ran.
+    let fleet = fleet(path)?;
     let owed = apply(
         path,
         item,
@@ -180,15 +183,15 @@ fn send(
         Some((_, reach)) => (&reach.mail_program, Some(reach.mail_root.as_path())),
         None => (&settings.lane_mail_cli, None),
     };
-    let answer = Mailbox::new(program.clone()).send_directive(
-        item,
-        None,
-        false,
-        file,
-        None,
-        Some(&settings.state_dir),
-        cwd,
-    );
+    let lane = fleet
+        .lanes
+        .iter()
+        .find(|l| l.item == item)
+        .ok_or_else(|| Error::LaneMissing {
+            item: item.to_owned(),
+        })?;
+    let answer =
+        Mailbox::new(program.clone()).send_directive(item, Route::of(lane), file, None, cwd);
     let send = match answer {
         Ok(Sent::Session { send }) => send,
         Ok(Sent::Mailbox { id, .. } | Sent::Repeated { id }) => {
@@ -371,10 +374,10 @@ fn apply(
     }
 }
 
-/// The reconcile's one read of the fleet record.
+/// The send's and the reconcile's read of the fleet record.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the settle's one read of the fleet record, for the lanes whose send stands owed"
+    reason = "the fleet record read for the lane's route before its owed write, and by the settle for the lanes whose send stands owed"
 )]
 fn fleet(path: &Path) -> Result<state::FleetState> {
     use state::Record;

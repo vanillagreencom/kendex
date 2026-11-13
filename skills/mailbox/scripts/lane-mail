@@ -120,21 +120,15 @@ Overseer side:
               (cause=server) before appending. It judges the current recorded
               pane, including during succession, not whether it is taking a
               turn. Peer delivery remains advisory after its append.
-              A send to a lane first reads the lane's record in the fleet
-              state (--state-dir, else the checkout's) and matches the
-              channel its host kind declares (lane-host capabilities).
-              channel=mailbox with files=verb requires --root MAIL_ROOT --host,
-              using the record's host and mail_root instead of the configured
-              provider. Without --host it refuses as host-root-required; a
-              different root refuses as host-root-mismatch. A local mailbox sends as above, and so
-              does a lane with no
-              record when no --state-dir is given; with one, an unreadable
-              state refuses as state-unreadable and no record as
-              lane-unrecorded. channel=session, a Claude cloud session,
-              refuses as lane-foreign where the record's mail_root is no
-              checkout of this repository, and queues a --directive into the
-              record's session_id through `claude -p --cloud SESSION
-              --output-format json` under the record's account, the file on
+              A send to a lane goes where its caller's route names, read
+              from no record: the local mailbox under the root; with --host,
+              the mailbox at --root on the provider ORCH_LANE_HOST names in
+              the caller's environment, refused as host-route-missing where
+              it names none; with --session ID --account DIR, a Claude cloud
+              session. A session route refuses as lane-foreign where --root
+              is no checkout of this repository, and queues a --directive
+              into the session through `claude -p --cloud SESSION
+              --output-format json` under the account, the file on
               stdin, printing `lane-mail: sent item=ITEM channel=session
               session=ID` on an {ok: true} answer. An answer whose error
               says the session is archived refuses as session-archived, any
@@ -320,9 +314,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               judges no key
 
 Optional orch package:
-  Lane sends, --host, --state-dir, compact, notice --attach and attach-check need orch
+  --host, compact, notice --attach and attach-check need orch
   installed beside mailbox. A missing helper refuses orch-missing before
-  writing. Without --host or --state-dir, an overseer send or peer call
+  writing. Without --host, an overseer send or peer call
   without orch keeps overseer-absent because no registered session reads it.
 
 Peer side, one other repository's overseer mailbox per call:
@@ -397,8 +391,9 @@ Options:
   --ack N       inbox only: the count a --peek printed, acknowledged once its
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
-  --state-dir PATH
-                send only: the fleet state whose record names the lane
+  --session ID  send --directive to a lane only: the Claude cloud session
+                the route names
+  --account DIR with --session only: the Claude account the send runs under
   --to WHO      `owner` or `peer`: the audience field of an overseer ask or
                 notice, which a peer ask writes as `peer` itself, and the
                 filter `pending` keeps
@@ -532,8 +527,8 @@ A send writes a mailbox of the caller's own repository alone, its own lanes
 and its own overseer mailbox: a checkout whose common root is not the caller's
 refuses as `lane-foreign`. `peer` is the only cross-repository write. A hosted
 mailbox root is outside that ownership check: its path is on another host.
-A session send always checks repository ownership from the recorded mail_root,
-which can be inside its checkout.
+A session send always checks repository ownership from its --root, which can
+be inside its checkout.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
 outside the alphabet, a lock, a write or a host that failed; 69 `host-busy`, a
@@ -550,7 +545,7 @@ command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
-state-unreadable, lane-unrecorded, host-capabilities-unread, host-root-required, host-root-mismatch, channel-session,
+host-route-missing, channel-session,
 session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
 value follows ` id=` rather than `=`, so it names the earlier envelope through
 the same field the receipt above prints; `resolved-already`,
@@ -669,13 +664,9 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     overseer-only) text='resolve closes an owner ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
-    state-unreadable) text='The fleet state could not be read for the lane'"'"'s record, so which channel reaches the lane is unknown. Nothing was sent.' ;;
-    host-capabilities-unread) text='lane-host could not declare the capability line of the host the lane'"'"'s record names, or declared a channel this send has no arm for, so nothing says how to reach the lane. Nothing was sent.' ;;
-    host-root-required) text='The lane reads its mailbox on its host. Use --root MAIL_ROOT --host, with MAIL_ROOT from the lane record'"'"'s mail_root, to send through the record'"'"'s host. The record overrides the configured provider. Nothing was sent.' ;;
-    host-root-mismatch) text='The supplied root differs from the lane record'"'"'s mail_root. Use the recorded root with --host. Nothing was sent.' ;;
-    lane-unrecorded) text='The fleet state the send names holds no record for this lane, so which channel reaches it is unknown. Nothing was sent. Name the state the lane was launched into, or, for a lane with no record, such as one the watch carries from --item alone, send the same command with no --state-dir.' ;;
+    host-route-missing) text='A hosted send goes to the provider its caller names, and ORCH_LANE_HOST is empty in this environment, so nothing says which host holds the lane'"'"'s mailbox. Nothing was sent. Run it with ORCH_LANE_HOST set to the host the lane record names, as orch passes it.' ;;
     channel-session) text='The lane runs in a cloud session, which never asks and enforces no halt, so this option reaches nothing there. Send a plain --directive; a stop goes to the operator, who archives the session.' ;;
-    session-unrecorded) text='The lane'"'"'s record names no account or no session id, so no cloud session can be reached. Nothing was sent.' ;;
+    session-unrecorded) text='The session route names no account or no session id, so no cloud session can be reached. Nothing was sent.' ;;
     session-archived) text='The Claude CLI answered that the cloud session is archived, so it takes no more messages. Nothing was delivered. oversee-events.md lane-stalled names what follows.' ;;
     session-send-failed) text='The Claude CLI did not answer ok true for the cloud session, so nothing says the directive was queued. Its exit status and its own words follow; send again once they are fixed.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
@@ -748,7 +739,9 @@ THREAD_TS=""
 PARENT=""
 PARENT_JSON=null
 ONCE=0
-STATE_DIR=""
+SESSION=""
+SESSION_GIVEN=0
+ACCOUNT=""
 ISSUE=""
 OWNER_DO=""
 
@@ -804,7 +797,10 @@ while [ "$#" -gt 0 ]; do
     --thread-ts) need_val "$@"; THREAD_TS="$2"; shift 2 ;;
     --parent) need_val "$@"; PARENT="$2"; shift 2 ;;
     --once) ONCE=1; shift ;;
-    --state-dir) need_val "$@"; STATE_DIR="$2"; shift 2 ;;
+    # A route carries a lane record's fields as they stand: an empty one is
+    # judged below as an unrecorded session, not as a missing option value.
+    --session) [ "$#" -ge 2 ] || refuse missing-value --session; SESSION="$2"; SESSION_GIVEN=1; shift 2 ;;
+    --account) [ "$#" -ge 2 ] || refuse missing-value --account; ACCOUNT="$2"; shift 2 ;;
     --help | -h) usage; exit 0 ;;
     *) refuse option-unknown "$1" ;;
   esac
@@ -904,9 +900,11 @@ for given in $OPTS_GIVEN; do
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
-    --state-dir) [ "$VERB" = send ] || refuse option-unknown --state-dir ;;
+    --session) [ "$VERB" = send ] && [ "$ITEM" != overseer ] || refuse option-unknown --session ;;
+    --account) [ "$SESSION_GIVEN" -eq 1 ] || refuse option-unknown --account ;;
   esac
 done
+[ "$SESSION_GIVEN" -eq 0 ] || [ "$HOST" -eq 0 ] || refuse option-conflict '--session,--host'
 
 # An item ask supplies the short action the owner sees before the engineering body.
 if [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ]; then
@@ -955,11 +953,7 @@ lm_require_orch() { # FILE...
     [ -f "$ORCH_SCRIPTS/$file" ] || refuse orch-missing "$ORCH_SCRIPTS/$file"
   done
 }
-if [ "$HOST" -eq 1 ] || [ -n "$STATE_DIR" ]; then
-  lm_require_orch orch-runtime lib/lane-host-read.sh
-  # shellcheck source=../../orch/scripts/lib/lane-host-read.sh
-  . "$ORCH_SCRIPTS/lib/lane-host-read.sh"
-fi
+[ "$HOST" -eq 0 ] || lm_require_orch orch-runtime
 if [ "$VERB" = compact ]; then
   lm_require_orch orch-env orch-runtime
 fi
@@ -1044,7 +1038,7 @@ WORK_DIR=""
 FAST_READ=0
 case "$HOST:$VERB" in *:drain | *:drain-many | *:pending | 0:inbox) FAST_READ=1 ;; esac
 CACHED_READ=0
-if [ "$HOST:$FAST_READ" = 1:1 ] && [ -n "${LANE_HOST_READ_DIR:-}" ] && [ ! -s "$LANE_HOST_READ_DIR/failed" ]; then
+if [ "$HOST:$FAST_READ" = 1:1 ] && [ -n "${LANE_HOST_READ_DIR:-}" ]; then
   CACHED_READ=1
 fi
 if [ "$FAST_READ" -eq 0 ] || { [ "$HOST" -eq 1 ] && [ "$CACHED_READ" -eq 0 ]; }; then
@@ -1076,64 +1070,21 @@ lm_send_record() { # RESULT CAUSE
     refuse write-failed /dev/stderr
 }
 
-# A send to a lane is matched on the channel its record's host kind declares.
-# A mailbox channel goes on to the mailbox below, and so does a lane with no
-# record when the send names no
-# fleet state; a send that names one refuses an unreadable state or one with
-# no record for the lane, since either would land a cloud lane's directive in
-# a mailbox nobody reads. A session channel is a Claude cloud session of this
-# repository, judged by its record's mail_root as a mailbox send is by its
-# root: a directive is queued into the record's session through the Claude
-# CLI under the record's account, which answers {ok, session_id, url}. Such a
+# A send to a lane goes where its caller's route names; the mailbox reads no
+# record for it. A hosted mailbox is the one at --root on the provider the
+# caller's ORCH_LANE_HOST names: the settings' provider is no route, since it
+# would land the line in a mailbox the lane never reads. A session route is a
+# Claude cloud session of this repository, its --root judged as a mailbox
+# send's root is: a directive is queued into the session through the Claude
+# CLI under the route's account, which answers {ok, session_id, url}. Such a
 # lane never asks, so an answer has nothing to reach, and no hook enforces a
 # halt there.
 lm_send_channel() {
-  local rc=0 fleet record host caps fields=() field channel files account session root out answer cause
-  fleet="$(mailbox_fleet_record full . "$STATE_DIR" 2>"$WORK_DIR/state.err")" ||
-    refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
-  record='{}'
-  if [ -f "$fleet" ]; then
-    record="$(jq -r --arg item "$ITEM" '[.lanes[]? | objects | select(.item == $item)] | first // {}' \
-      -- "$fleet" 2>"$WORK_DIR/state.err")" ||
-      refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
-  fi
-  if [ "$record" = '{}' ]; then
-    [ -z "$STATE_DIR" ] || refuse lane-unrecorded "$ITEM" "state-dir=$STATE_DIR"
+  local rc=0 account="$ACCOUNT" session="$SESSION" out answer cause
+  if [ "$SESSION_GIVEN" -eq 0 ]; then
+    [ "$HOST" -eq 0 ] || [ -n "${ORCH_LANE_HOST:-}" ] || refuse host-route-missing "$ITEM"
     return 0
   fi
-  host="$(jq -r '.host // "local"' <<<"$record")" || refuse state-unreadable "$ITEM"
-  # lane-host validates the kind's line against each key's closed set, so the
-  # two keys a send acts on are read from it as they stand.
-  caps="$("$ORCH_SCRIPTS/orch-runtime" host --host "$host" capabilities 2>"$WORK_DIR/caps.err")" ||
-    refuse host-capabilities-unread "$host" "$(cat -- "$WORK_DIR/caps.err")"
-  channel="" files=""
-  IFS=$'\t' read -r -a fields <<<"$caps"
-  for field in ${fields[@]+"${fields[@]}"}; do
-    case "${field%%=*}" in
-      channel) channel=${field#*=} ;;
-      files) files=${field#*=} ;;
-    esac
-  done
-  case "$channel" in
-    mailbox)
-      # A hosted launch records a mailbox on the provider's disk. A local
-      # append would report delivery to a mailbox the lane never reads.
-      if [ "$files" != local ]; then
-        [ "$HOST" -eq 1 ] || refuse host-root-required "$host"
-        root="$(jq -r '.mail_root // ""' <<<"$record")" || refuse state-unreadable "$ITEM"
-        [ "$ROOT" = "$root" ] || refuse host-root-mismatch "$ROOT" "mail_root=$root"
-      fi
-      # Reads, append, probes and the receipt must use the same destination
-      # as the capability check, even after an explicit launch host override.
-      export ORCH_LANE_HOST="$host"
-      return 0
-      ;;
-    session) ;;
-    *) refuse host-capabilities-unread "$host" "channel=$channel" ;;
-  esac
-  IFS=$'\t' read -r _ account session root < <(jq -r '[.harness // "", .account // "", .session_id // "", .mail_root // ""] | @tsv' <<<"$record") ||
-    refuse state-unreadable "$ITEM"
-  lm_root_own "$root" own
   [ -z "$MSGID" ] || refuse channel-session --re
   [ "$HALT" -eq 0 ] || refuse channel-session --halt
   { [ -n "$account" ] && [ -n "$session" ]; } || refuse session-unrecorded "$ITEM"
@@ -1162,9 +1113,6 @@ lm_send_channel() {
   [ -z "$key" ] || exit 2
   exit 0
 }
-if [ "$VERB" = send ] && [ "$ITEM" != overseer ]; then
-  lm_require_orch orch-runtime
-fi
 
 # The caller's own repository: the main checkout behind this shell, whatever
 # worktree it sits in. It names the sender, places a peer named as a bare name,
@@ -1323,9 +1271,9 @@ fi
 # checkouts. The overseer item is judged with the rest, because a --root into
 # another repository's overseer mailbox is the cross-repository write `peer`
 # exists to be. A root that resolves to no common root at all is refused with
-# them, so an unreadable checkout is no way in. Hosted mailbox destinations
-# use the lane record's remote-root check. Session ownership is checked under
-# either host flag, including recorded paths inside a checkout.
+# them, so an unreadable checkout is no way in. A hosted mailbox root is a path
+# on its host. A session route's root holds no mailbox, so it is judged on its
+# repository alone, which a path inside a checkout names too.
 lm_root_own() { # ROOT own|checkout
   local top canonical
   if [ "$2" = checkout ]; then
@@ -1349,7 +1297,7 @@ lm_root_own() { # ROOT own|checkout
   fi
 }
 if [ "$HOST" -eq 0 ]; then
-  if [ "$VERB" = peer ] || [[ "$OPTS_GIVEN" == *"--root$NL"* ]]; then
+  if [ "$VERB" = peer ] || { [[ "$OPTS_GIVEN" == *"--root$NL"* ]] && [ "$SESSION_GIVEN" -eq 0 ]; }; then
     lm_root_own "$ROOT" checkout
   elif [ "$VERB" = send ] || [ "$VERB" = resolve ]; then
     lm_root_own "$ROOT" own
@@ -1445,8 +1393,7 @@ lm_host_busy() { # STATUS ERR_FILE
 }
 
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
-# cached batch read accepts a missing-file row and refuses any other failure
-# without a probe. A failed single read probes the host before accepting absence.
+# failed single read probes the host before accepting absence.
 LM_FETCH_ABSENT=0
 lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not there
   local rc=0
@@ -1467,16 +1414,7 @@ lm_fetch() { # REMOTE_PATH DEST — LM_FETCH_ABSENT 1 where the file was not the
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
     return 0
   fi
-  if [ -n "${LANE_HOST_READ_DIR:-}" ]; then
-    lane_host_cached_read "$LANE_HOST_READ_DIR" "$ITEM" "$1" "$2" "$WORK_DIR/host.err" || rc=$?
-    lm_host_busy "$rc" "$WORK_DIR/host.err"
-    case "$rc" in
-      0 | 2) LM_HOST_ANSWERED=1 ;;
-      *) refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")" ;;
-    esac
-  else
-    "$ORCH_SCRIPTS/orch-runtime" host cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
-  fi
+  "$ORCH_SCRIPTS/orch-runtime" host cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
   if [ "$rc" -eq 0 ]; then
     LM_HOST_ANSWERED=1
     case "$1" in
@@ -2171,6 +2109,12 @@ lm_fast_read() {
   READ_BOX="$BOX"
   READ_ARGS=("$ITEM" "$READ_VERB" "$AFTER" "$READ_RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
   if [ "$CACHED_READ" -eq 1 ]; then
+    # A failed batch says nothing of any file it asked for, whatever status
+    # it stored: refused here, never read past and never asked again.
+    if [ -s "$LANE_HOST_READ_DIR/failed" ]; then
+      lm_host_busy 1 "$LANE_HOST_READ_DIR/error"
+      refuse mail-read-failed "$ITEM" "$(cat -- "$LANE_HOST_READ_DIR/error" 2>/dev/null)"
+    fi
     READ_OUT="$(exec python3 "$SCRIPT_DIR/lib/lane-mail-store.py" read-cached "$LANE_HOST_READ_DIR" "$BOX" "${READ_ARGS[@]}")" || exit "$?"
   elif [ "$HOST" -eq 1 ]; then
     # read-many already fetched the host's files once. Copy its raw pair and

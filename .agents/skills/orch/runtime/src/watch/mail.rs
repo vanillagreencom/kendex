@@ -366,7 +366,7 @@ fn readable(lane: &Lane) -> Result<Option<(Option<String>, Drain)>> {
     let Some(root) = lane.mail_root.as_deref() else {
         return Err(invalid(&lane.item, "mail-root-unrecorded".into()));
     };
-    let hosted = lane.host.clone().filter(|h| h != "local");
+    let hosted = lane.mail_host().map(str::to_owned);
     Ok(Some((
         hosted,
         Drain {

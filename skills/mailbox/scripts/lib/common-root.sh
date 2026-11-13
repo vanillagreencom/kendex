@@ -26,8 +26,8 @@ mailbox_common_root() ( # WORKTREE
  )
 
 # The fleet record of the checkout DIR is in, by the orch store's layout:
-# <state dir>/workflow-state-oversee.json, the state directory STATE_DIR where
-# given, else ORCH_STATE_DIR, else tmp, a relative one under the main checkout.
+# <state dir>/workflow-state-oversee.json, the state directory ORCH_STATE_DIR,
+# else tmp, a relative one under the main checkout.
 # The full scope reads ORCH_STATE_DIR on the kendex ladder, the caller's
 # environment over the private env file over the settings files. The data
 # scope reads it from the settings files alone, as data, over the caller's
@@ -35,7 +35,7 @@ mailbox_common_root() ( # WORKTREE
 # the same rule for its own verbs; this one serves the mailbox's reads and
 # the turn-end hook's, which run on hosts where no runtime may be built, so
 # a read of the record that needs nothing else reads the file itself.
-mailbox_fleet_record() ( # full|data DIR [STATE_DIR]
+mailbox_fleet_record() ( # full|data DIR
     local scope="$1" lib top dir value file
     lib="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)" || return 1
     cd -- "$2" || return 1
@@ -52,7 +52,7 @@ mailbox_fleet_record() ( # full|data DIR [STATE_DIR]
             [ -z "$value" ] || ORCH_STATE_DIR="${value#=}"
         done
     fi
-    dir="${3:-${ORCH_STATE_DIR:-tmp}}"
+    dir="${ORCH_STATE_DIR:-tmp}"
     case "$dir" in
         /*) ;;
         *) dir="$(mailbox_common_root "$top" 2>/dev/null || printf '%s' "$top")/$dir" ;;

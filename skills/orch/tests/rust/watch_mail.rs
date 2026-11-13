@@ -20,7 +20,7 @@ use agent_runtime::journal::Env;
 use agent_runtime::process::Identity;
 use agent_runtime::settings::Roots;
 use orch_runtime::effects;
-use orch_runtime::mailbox::{Drain, Mailbox, Refusal, Sent};
+use orch_runtime::mailbox::{Drain, Mailbox, Refusal, Route, Sent};
 use orch_runtime::schedule::Duty;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::watch::mail::{self, Config, MailDuty};
@@ -47,6 +47,11 @@ fn real_lane_mail() -> PathBuf {
 /// to the client in-process.
 fn hold() -> PathBuf {
     isolated_program(&fixtures().join("lane-mail-hold/lane-mail"))
+}
+
+/// The local mailbox at `root`.
+fn local(root: &Path) -> Route<'_> {
+    Route::Local { root: Some(root) }
 }
 
 /// A program a row hands the client in-process inherits this test process's
@@ -494,9 +499,7 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
     std::fs::write(&text, "Rebase onto main.\n").unwrap();
     let held = Mailbox::new(holding).bounded(secs(30));
     let first = std::thread::scope(|s| {
-        let send = s.spawn(|| {
-            held.send_directive(ITEM, Some(&w.root), false, &text, Some("op-1"), None, None)
-        });
+        let send = s.spawn(|| held.send_directive(ITEM, local(&w.root), &text, Some("op-1"), None));
         let deadline = Instant::now() + secs(20);
         let pid = loop {
             if let Ok(pid) = std::fs::read_to_string(&mark)
@@ -541,15 +544,8 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
     let landed = rows(&mailbox);
     assert_eq!(landed.len(), 1, "the append landed before the death");
     assert_eq!(landed[0]["delivery_id"], "op-1");
-    let again = Mailbox::new(hold()).send_directive(
-        ITEM,
-        Some(&w.root),
-        false,
-        &text,
-        Some("op-1"),
-        None,
-        None,
-    );
+    let again =
+        Mailbox::new(hold()).send_directive(ITEM, local(&w.root), &text, Some("op-1"), None);
     assert_eq!(
         again,
         Ok(Sent::Repeated {
@@ -558,15 +554,8 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
     );
     assert_eq!(rows(&mailbox), landed, "one envelope");
     // Another operation's send lands beside it.
-    let other = Mailbox::new(hold()).send_directive(
-        ITEM,
-        Some(&w.root),
-        false,
-        &text,
-        Some("op-2"),
-        None,
-        None,
-    );
+    let other =
+        Mailbox::new(hold()).send_directive(ITEM, local(&w.root), &text, Some("op-2"), None);
     assert!(matches!(other, Ok(Sent::Mailbox { .. })), "{other:?}");
     assert_eq!(rows(&mailbox).len(), 2);
 }
@@ -1366,4 +1355,59 @@ print(json.dumps([read(r) for r in rows]))' '{log}'"#,
             "{p2}"
         );
     }
+}
+
+/// A pass whose snapshot of a host failed reads none of that host's lanes:
+/// the drain refuses the batch whatever it stored and asks the provider for
+/// no file of its own, since a failed batch is no evidence of an absent one.
+#[test]
+fn a_failed_snapshot_refuses_the_hosted_drain_with_no_provider_read() {
+    let side = tempfile::tempdir().unwrap();
+    let side = std::fs::canonicalize(side.path()).unwrap();
+    let log = side.join("provider.log");
+    let provider = side.join("provider");
+    write_executable(
+        &provider,
+        format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$1\" in\n  read-many) echo 'provider: read-many-failed' >&2; exit 1 ;;\n  touch) exit 0 ;;\n  cat) exit 2 ;;\n  *) exit 64 ;;\nesac\n",
+            log.display()
+        ),
+    );
+    let w = world(&hold(), 20);
+    let remote = w.root.join("remote");
+    std::fs::create_dir_all(&remote).unwrap();
+    let state = w.root.join(FLEET_FILE_NAME);
+    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    fleet["lanes"][0]["host"] = json!(provider.display().to_string());
+    fleet["lanes"][0]["kind"] = json!("ssh");
+    fleet["lanes"][0]["mail_root"] = json!(remote.display().to_string());
+    std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
+    let clock = FakeClock::new();
+    let mut duty = w.duty();
+    let baseline = Baseline::default();
+    let tick = Tick {
+        duty: Duty::Mail,
+        now: Instant::now(),
+        wall: WALL,
+        baseline: &baseline,
+        clock: &clock,
+    };
+    let (_, refused) = duty.turn(&tick).unwrap();
+    assert_eq!(
+        refused
+            .iter()
+            .map(|r| r.target.as_str())
+            .collect::<Vec<_>>(),
+        [ITEM],
+        "{refused:?}"
+    );
+    assert!(
+        refused[0].cause.contains("mail-read-failed="),
+        "the failed batch refused by its own key: {refused:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap_or_default(),
+        "read-many\n",
+        "no file asked for again"
+    );
 }

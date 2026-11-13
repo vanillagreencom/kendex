@@ -96,9 +96,8 @@ while IFS='|' read -r verb item flag value; do
   assert_eq "$RC" 2 "$verb $flag refuses without orch"
   assert_eq "${ERR%%=*}" 'lane-mail: orch-missing' "$verb $flag names the missing package"
 done <<ROWS
-send|TEST-1||
+send|TEST-1|--host|
 events|overseer|--host|
-send|overseer|--state-dir|$TMP_ROOT/state
 compact|overseer||
 notice|overseer|--attach|$TMP_ROOT/message
 ROWS

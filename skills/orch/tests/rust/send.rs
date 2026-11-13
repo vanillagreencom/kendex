@@ -655,18 +655,18 @@ fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refuse
 }
 
 /// The mailbox-only contract: the runtime is the one writer of orch state,
-/// so through the verb the program reads the fleet record as data and runs
-/// no `workflow-state` at all; a bare `lane-mail send` to the same lane
-/// prints the `sent` receipt on stdout and the record line on stderr and
-/// leaves the fleet file byte for byte as it was.
+/// so through the verb the program runs no `workflow-state` at all; a bare
+/// `lane-mail send` by the lane's session route prints the `sent` receipt on
+/// stdout and the record line on stderr and leaves the fleet file byte for
+/// byte as it was.
 #[test]
-fn the_mailbox_program_reads_the_fleet_and_writes_none_of_it() {
+fn the_mailbox_program_writes_none_of_the_fleet() {
     let w = world();
     let out = w.send(CLOUD, &[]);
     result(&out);
     assert!(
         w.log(&w.state_log).is_empty(),
-        "the program reads the record as data: {:?}",
+        "the program runs no state verb: {:?}",
         w.log(&w.state_log)
     );
     let before = std::fs::read(w.fleet_path()).unwrap();
@@ -674,7 +674,10 @@ fn the_mailbox_program_reads_the_fleet_and_writes_none_of_it() {
     command
         .args(["send", "--item", CLOUD, "--directive", "--file"])
         .arg(&w.directive)
-        .args(["--state-dir", &w.root.display().to_string()]);
+        .args(["--session", SESSION, "--account"])
+        .arg(&w.account)
+        .arg("--root")
+        .arg(w.root.join("wt").join(CLOUD));
     w.env(&mut command, &[]);
     let out = command.output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
@@ -698,6 +701,55 @@ fn the_mailbox_program_reads_the_fleet_and_writes_none_of_it() {
         w.cli_calls().len(),
         6,
         "the bare send reached the session once"
+    );
+}
+
+/// A directive to a lane on a provider goes to the mailbox at the lane's
+/// root on the host its record names, the route the runtime hands the
+/// program whole: never the local mailbox the lane does not read.
+#[test]
+fn a_hosted_lanes_directive_lands_on_the_host_its_record_names() {
+    let w = world();
+    let side = tempfile::tempdir().unwrap();
+    let log = side.path().join("provider.log");
+    let provider = side.path().join("provider");
+    write_executable(
+        &provider,
+        format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n  append) cat >> '{log}' ;;\n  cat) exit 2 ;;\n  touch) ;;\n  *) exit 64 ;;\nesac\n",
+            log = log.display()
+        ),
+    );
+    let lane: orch_runtime::state::Lane = serde_json::from_value(json!({
+        "item": "SSH-1",
+        "harness": "claude",
+        "host": provider.display().to_string(),
+        "kind": "ssh",
+        "mail_root": "/srv/lane/SSH-1",
+        "status": "running",
+    }))
+    .unwrap();
+    let sent = orch_runtime::mailbox::Mailbox::new(isolated_program(&w.lane_mail)).send_directive(
+        "SSH-1",
+        orch_runtime::mailbox::Route::of(&lane),
+        &w.directive,
+        None,
+        Some(&w.root),
+    );
+    assert!(
+        matches!(sent, Ok(orch_runtime::mailbox::Sent::Mailbox { .. })),
+        "{sent:?}"
+    );
+    let log = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        log.lines()
+            .any(|l| l == "append --item SSH-1 /srv/lane/SSH-1/tmp/lane-mail/SSH-1/to-lane.jsonl"),
+        "{log}"
+    );
+    assert!(log.contains("Rebase on main, then push."), "{log}");
+    assert!(
+        std::fs::metadata(w.root.join("tmp").join("lane-mail").join("SSH-1")).is_err(),
+        "nothing lands in the local mailbox"
     );
 }
 

@@ -643,6 +643,14 @@ impl Lane {
         self.kind.as_deref() == cloud || self.host.as_deref() == cloud
     }
 
+    /// The provider holding the lane's mailbox: its recorded host, where it
+    /// names one other than this machine and the lane has a mailbox at all.
+    pub fn mail_host(&self) -> Option<&str> {
+        self.host
+            .as_deref()
+            .filter(|h| *h != "local" && !self.session_channel())
+    }
+
     /// Whether the lane's sandbox is a provider's, which the provider's own
     /// close ends: a record naming a host that is not the cloud kind.
     pub fn provider_hosted(&self) -> bool {

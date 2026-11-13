@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use super::{KILL_GRACE, apply, item_of_run_dir, load};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Sent};
+use crate::mailbox::{Mailbox, Route, Sent};
 use crate::ops::mail::{KeyedSend, SendResult};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
 use crate::ops::{self, ReconcileRound, Request, job_ended};
@@ -655,7 +655,8 @@ fn send_notice(
         Ok(Some(lane)) if lane.session_channel() => {
             send_session(settings, reach, &lane, key, &path, env, locking)
         }
-        Ok(Some(_) | None) => send_directive(reach, item, key, &path),
+        Ok(Some(lane)) => send_directive(reach, item, Route::of(&lane), key, &path),
+        Ok(None) => send_directive(reach, item, Route::Local { root: None }, key, &path),
         Err(_) => NoticeSend::Held,
     };
     let _ = fs::remove_file(&path);
@@ -680,25 +681,24 @@ pub(crate) fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane
     Ok(fleet.lanes.into_iter().find(|l| l.item == item))
 }
 
-/// The mailbox's outbound directive to a non-session lane, keyed by the run:
-/// `reach`'s program run in its root, the lane's box left to the program's
-/// own lookup from there.
+/// The mailbox's outbound directive to a non-session lane by `route`, keyed
+/// by the run: `reach`'s program run in its root, a local lane's box left to
+/// the program's own lookup from there.
 #[allow(
     clippy::disallowed_methods,
     reason = "the validation job's one outbound send of the lane's end notice through the mailbox program, keyed by the run so a replay lands once"
 )]
-fn send_directive(reach: &Reach, item: &str, key: &str, file: &Path) -> NoticeSend {
+fn send_directive(
+    reach: &Reach,
+    item: &str,
+    route: Route<'_>,
+    key: &str,
+    file: &Path,
+) -> NoticeSend {
     match Mailbox::new(reach.mail_program.clone())
         .bounded(NOTICE_TIMEOUT)
-        .send_directive(
-            item,
-            None,
-            false,
-            file,
-            Some(key),
-            None,
-            Some(&reach.mail_root),
-        ) {
+        .send_directive(item, route, file, Some(key), Some(&reach.mail_root))
+    {
         Ok(Sent::Mailbox { .. } | Sent::Repeated { .. }) => NoticeSend::Marked("sent".to_owned()),
         // The program routed the lane to its session itself: the send's own
         // result marks it.

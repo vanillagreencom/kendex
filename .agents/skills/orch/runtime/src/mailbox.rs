@@ -28,6 +28,7 @@ use agent_runtime::host::{self, Place};
 use serde::Deserialize;
 
 use crate::ops::mail::DirectiveSend;
+use crate::state::Lane;
 
 /// The bound on one call: the same one the close's `lane-mail pending` runs
 /// under.
@@ -54,6 +55,48 @@ const KEYED: &str = "lane-mail: ";
 pub struct Mailbox {
     cli: PathBuf,
     bound: Duration,
+}
+
+/// Where a directive to a lane goes, handed to the program whole: it reads
+/// no record of the lane's.
+#[derive(Debug, Clone, Copy)]
+pub enum Route<'a> {
+    /// The lane's mailbox on this machine: at `root`, else where the program
+    /// finds the lane's checkout from the directory it runs in.
+    Local { root: Option<&'a Path> },
+    /// The lane's mailbox at `root` on the provider `host`.
+    Hosted {
+        host: &'a str,
+        root: Option<&'a Path>,
+    },
+    /// The lane's Claude cloud session under `account`, of the repository
+    /// `root` names.
+    Session {
+        account: &'a str,
+        session: &'a str,
+        root: Option<&'a Path>,
+    },
+}
+
+impl<'a> Route<'a> {
+    /// The route the lane's record names: its cloud session, the mailbox on
+    /// its provider, or the local mailbox the program finds itself. A
+    /// session field the record lacks goes as empty, which the program
+    /// refuses as an unrecorded session.
+    pub fn of(lane: &'a Lane) -> Route<'a> {
+        let root = lane.mail_root.as_deref().map(Path::new);
+        if lane.session_channel() {
+            Route::Session {
+                account: lane.account.as_deref().unwrap_or_default(),
+                session: lane.session_id.as_deref().unwrap_or_default(),
+                root,
+            }
+        } else if let Some(host) = lane.mail_host() {
+            Route::Hosted { host, root }
+        } else {
+            Route::Local { root: None }
+        }
+    }
 }
 
 /// Why one call did not answer: the refusals of the module doc, each
@@ -879,48 +922,47 @@ impl Mailbox {
         }
     }
 
-    /// `send --directive` to the lane `item`, the text in `file`: at `root`
-    /// where the caller names the mailbox root, else at the checkout the
-    /// program runs in, `cwd` where the caller names it; under `delivery_id` where the caller names its
-    /// delivery, so a retry after a crash between the append and the receipt
-    /// lands nothing twice; against the fleet record under `state_dir` where
-    /// the caller names one, so the program routes by the lane's recorded
-    /// channel. A session lane's receipt is handed back whatever its result.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the program's own flags, each optional, and the directory a reach's write runs in"
-    )]
+    /// `send --directive` to the lane `item` by `route`, the text in
+    /// `file`, run in `cwd` where the caller names it; under `delivery_id`
+    /// where the caller names its delivery, so a retry after a crash between
+    /// the append and the receipt lands nothing twice. A session lane's
+    /// receipt is handed back whatever its result.
     pub fn send_directive(
         &self,
         item: &str,
-        root: Option<&Path>,
-        hosted: bool,
+        route: Route<'_>,
         file: &Path,
         delivery_id: Option<&str>,
-        state_dir: Option<&Path>,
         cwd: Option<&Path>,
     ) -> Result<Sent, Refusal> {
         const VERB: &str = "send";
-        let root = root.map(|r| r.display().to_string());
-        let state_dir = state_dir.map(|d| d.display().to_string());
         let file = file.display().to_string();
-        let mut args = vec!["--item", item, "--directive", "--file", &file];
-        if let Some(root) = &root {
-            args.push("--root");
-            args.push(root);
-        }
-        if hosted {
-            args.push("--host");
+        let mut args: Vec<String> = ["--item", item, "--directive", "--file", &file]
+            .map(str::to_owned)
+            .to_vec();
+        let (root, host) = match route {
+            Route::Local { root } => (root, None),
+            Route::Hosted { host, root } => {
+                args.push("--host".to_owned());
+                (root, Some(host))
+            }
+            Route::Session {
+                account,
+                session,
+                root,
+            } => {
+                args.extend(["--session", session, "--account", account].map(str::to_owned));
+                (root, None)
+            }
+        };
+        if let Some(root) = root {
+            args.extend(["--root".to_owned(), root.display().to_string()]);
         }
         if let Some(key) = delivery_id {
-            args.push("--delivery-id");
-            args.push(key);
+            args.extend(["--delivery-id".to_owned(), key.to_owned()]);
         }
-        if let Some(dir) = &state_dir {
-            args.push("--state-dir");
-            args.push(dir);
-        }
-        let answer = self.call_on(VERB, &args, None, cwd)?;
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let answer = self.call_on(VERB, &args, host, cwd)?;
         if let Some(line) = answer
             .stderr
             .lines()
