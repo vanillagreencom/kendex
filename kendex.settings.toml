@@ -76,6 +76,7 @@ REVIEWER_SLOT_BUDGET = "0"
 # the rest itself; "engineer" keeps the package's original wording.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
+ORCH_REPORT_QUIET_HOURS = "21-8"
 
 # Post-PR choices: "auto-recommended" continues within each budget; "ask" prompts.
 ORCH_DECISION_MODE = "auto-recommended"
