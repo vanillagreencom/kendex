@@ -183,6 +183,9 @@ fn run_unsubscribe(
         // first one already on disk.
         (_, true) => {
             let plan = detach::source(env, &scope, name)?;
+            for warning in &plan.warnings {
+                crate::ui::report::warning(&format!("{}: {}", warning.name, warning.message));
+            }
             kendex_core::apply::execute(env, &plan)?;
             detach::resync_kept(env, &scope)
                 .map_err(Into::into)

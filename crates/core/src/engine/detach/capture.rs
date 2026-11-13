@@ -27,7 +27,11 @@ pub(super) fn source_form(
     item: &ClosureItem,
     commit: Option<&str>,
     in_scope: &crate::engine::ScopeSkills,
-) -> Result<(SourceFiles, Option<AgentCarry>)> {
+) -> Result<(
+    SourceFiles,
+    Option<AgentCarry>,
+    Vec<crate::render::RenderWarning>,
+)> {
     let resolved =
         crate::source::require_ready_at(env, scope, &item.decl.source, manifest, commit)?;
     let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
@@ -53,13 +57,38 @@ pub(super) fn source_form(
                         .then(|| parent.to_path_buf())
                 })
                 .collect();
-            Ok((
-                files
-                    .into_iter()
-                    .filter(|(rel, _)| !nested.iter().any(|dir| rel.starts_with(dir)))
-                    .collect(),
+            let files = files
+                .into_iter()
+                .filter(|(rel, _)| !nested.iter().any(|dir| rel.starts_with(dir)))
+                .collect();
+            let scope_root = match scope {
+                Scope::Project { root } => root,
+                Scope::Global => &env.home,
+            };
+            let local = manifest
+                .sources
+                .get(&item.decl.source)
+                .is_some_and(|source| source.path.is_some());
+            let root = if local {
+                scope_root
+                    .ancestors()
+                    .find(|root| path.starts_with(root))
+                    .unwrap_or(scope_root)
+            } else {
+                &resolved.root
+            };
+            let (files, warnings) = crate::render::skill::convert_links(
+                files,
+                crate::render::agent::BodyPaths {
+                    source: &path,
+                    rendered: &path,
+                    source_root: root,
+                    install_root: root,
+                },
+                false,
                 None,
-            ))
+            );
+            Ok((files, None, warnings))
         }
         _ => {
             let bytes = sealed.read(&path)?;
@@ -71,7 +100,7 @@ pub(super) fn source_form(
                 .file_name()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(&item.name));
-            Ok((vec![(file, bytes)], carry))
+            Ok((vec![(file, bytes)], carry, Vec::new()))
         }
     }
 }

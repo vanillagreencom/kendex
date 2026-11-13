@@ -52,6 +52,7 @@ pub fn marketplace_unsubscribe_preview(
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Unsubscribed {
+    pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub undone: Vec<String>,
 }
@@ -79,10 +80,16 @@ pub fn unsubscribe(
     discard_edits: bool,
 ) -> Result<Unsubscribed, String> {
     use kendex_core::engine::detach;
+    let mut warnings = Vec::new();
     let mut undone = if keep {
         // The conversion has no report. The resync below supplies the report
         // that repository effects need.
         let plan = detach::source(env, scope, source).map_err(|e| e.to_string())?;
+        warnings.extend(
+            plan.warnings
+                .iter()
+                .map(|warning| format!("{}: {}", warning.name, warning.message)),
+        );
         apply::execute(env, &plan).map_err(|e| e.to_string())?;
         Vec::new()
     } else {
@@ -94,7 +101,7 @@ pub fn unsubscribe(
         let resync = detach::resync_kept(env, scope).map_err(|e| e.to_string())?;
         undone.extend(crate::repo_effects::write(env, &resync)?);
     }
-    Ok(Unsubscribed { undone })
+    Ok(Unsubscribed { undone, warnings })
 }
 
 #[cfg(all(test, unix))]

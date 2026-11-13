@@ -523,6 +523,7 @@ fn rebase_for_surface(
     files: Files,
 ) -> Files {
     let files = {
+        let (legacy, coordinates) = fork_coordinates(ctx, state);
         let local = matches!(
             ctx.decl.source.as_str(),
             crate::manifest::LOCAL_SOURCE_NAME | crate::manifest::INPLACE_SOURCE_NAME
@@ -531,17 +532,32 @@ fn rebase_for_surface(
             .sources
             .get(&ctx.decl.source)
             .is_some_and(|source| source.path.is_some());
-        if let Scope::Project { root } = ctx.scope
-            && local
-            && ctx.sealed.root().starts_with(root)
+        let root = match ctx.scope {
+            Scope::Project { root } => root,
+            Scope::Global => &ctx.env.home,
+        };
+        if !legacy
+            && (coordinates.is_some()
+                || (matches!(ctx.scope, Scope::Project { .. })
+                    && local
+                    && ctx.sealed.root().starts_with(root)))
         {
-            let (files, warnings) = crate::render::skill::rebase_links(
+            let (files, warnings) = crate::render::skill::convert_links(
                 files,
-                ctx.item_path,
-                ctx.sealed,
-                &group.native,
-                root,
+                crate::render::agent::BodyPaths {
+                    source: coordinates
+                        .as_ref()
+                        .map_or(ctx.item_path, |coordinates| coordinates.directory.as_path()),
+                    rendered: &group.native,
+                    source_root: coordinates
+                        .as_ref()
+                        .map_or(root.as_path(), |coordinates| coordinates.root.as_path()),
+                    install_root: coordinates
+                        .as_ref()
+                        .map_or(root.as_path(), |coordinates| coordinates.root.as_path()),
+                },
                 effective_method(ctx.decl, ctx.manifest) != Method::Copy,
+                Some((ctx.sealed, ctx.item_path)),
             );
             state
                 .warnings
@@ -580,6 +596,46 @@ fn rebase_for_surface(
         (path, bytes)
     })
     .collect()
+}
+
+fn fork_coordinates(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+) -> (bool, Option<crate::manifest::SkillCoordinates>) {
+    let fork = ctx
+        .manifest
+        .forks
+        .get(&ItemKind::Skill)
+        .and_then(|forks| forks.get(ctx.name));
+    let coordinates = fork
+        .and_then(|fork| fork.skill_coordinates.as_ref())
+        .map(|coordinates| {
+            coordinates.in_scope(match ctx.scope {
+                Scope::Project { root } => root,
+                Scope::Global => &ctx.env.home,
+            })
+        });
+    let legacy = fork.is_some() && coordinates.is_none();
+    if legacy
+        && !state.warnings.iter().any(|warning| {
+            warning.kind == ItemKind::Skill
+                && warning.name == ctx.name
+                && warning.message.starts_with("skill-fork-legacy:")
+        })
+    {
+        state.warnings.push(super::ItemWarning {
+            kind: ItemKind::Skill,
+            name: ctx.name.to_owned(),
+            harness: None,
+            message: format!(
+                "skill-fork-legacy: {} keeps its stored links; a new fork rebases them",
+                ctx.name
+            ),
+            remediation: None,
+            detail: None,
+        });
+    }
+    (legacy, coordinates)
 }
 
 /// Nothing installs for this group, and every member is told why.

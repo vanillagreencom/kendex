@@ -245,7 +245,7 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "ok",
-      data: {},
+      data: { warnings: [] },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -262,14 +262,13 @@ describe("a Community row's Subscribed marker", () => {
     expect(rowSubscribed({ ...listed, subscribed: true }, live)).toBe(false);
   });
 
-  // The one reason marketplace_unsubscribe answers with anything at all:
-  // a package leaving with its source may have armed this repository, and
-  // its uninstaller ran. Rust proves it produces the lines; this proves
-  // the window shows them.
-  it("relays an unsubscribe's removal report when a package left", async () => {
+  // Rust produces removal reports and detach warnings; the window must present both.
+  it("relays an unsubscribe's removal reports and capture warnings", async () => {
     const rows = [
       {
         name: "uninstaller ran",
+        keep: false,
+        warnings: [],
         undone: [
           "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
@@ -277,7 +276,20 @@ describe("a Community row's Subscribed marker", () => {
           ["commit-guards: running scripts/install-git-hooks --uninstall"],
         ],
       },
-      { name: "no armed package left", undone: undefined, calls: [] },
+      {
+        name: "no armed package left",
+        keep: false,
+        warnings: [],
+        undone: undefined,
+        calls: [],
+      },
+      {
+        name: "detach could not represent a link",
+        keep: true,
+        warnings: ["skills/house-style: link target could not be represented"],
+        undone: undefined,
+        calls: [["skills/house-style: link target could not be represented"]],
+      },
     ];
     expect(rows.length).toBeGreaterThan(0);
     for (const entry of rows) {
@@ -288,7 +300,10 @@ describe("a Community row's Subscribed marker", () => {
       });
       vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
         status: "ok",
-        data: entry.undone === undefined ? {} : { undone: entry.undone },
+        data: {
+          warnings: entry.warnings,
+          ...(entry.undone === undefined ? {} : { undone: entry.undone }),
+        },
       });
       vi.mocked(commands.marketplacesOverview).mockResolvedValue({
         status: "ok",
@@ -296,7 +311,7 @@ describe("a Community row's Subscribed marker", () => {
       });
       await useMarketplacesStore
         .getState()
-        .unsubscribe({ scope: "global" }, "kit", false, false);
+        .unsubscribe({ scope: "global" }, "kit", entry.keep, false);
       expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
         entry.calls,
       );

@@ -26,6 +26,7 @@ pub fn apply(
 ) -> Result<ImportOutcome> {
     let target = registered_target(env, target)?;
     let mut resolved: Vec<(usize, ResolvedSelection, PathBuf)> = Vec::new();
+    let mut capture_warnings = Vec::new();
     for (at, selection) in selections.iter().enumerate() {
         if let Some(problem) = crate::names::item_problem(&selection.destination) {
             return Err(CoreError::Authoring {
@@ -48,6 +49,22 @@ pub fn apply(
         super::license_gate(selection, &answer.group)?;
         declare_destination(&mut answer, selection)?;
         let dest = crate::source::local_slot(&target, selection.kind, &selection.destination);
+        if let ItemBytes::Tree(files) = &mut answer.bytes
+            && let Some(source) = &answer.read_from
+        {
+            let (converted, warnings) = crate::render::skill::relocate(
+                std::mem::take(files),
+                source,
+                &dest,
+                answer.coordinates.as_ref(),
+            );
+            *files = converted;
+            capture_warnings.extend(
+                warnings
+                    .into_iter()
+                    .map(|warning| format!("{}: {}", selection.name, warning.message)),
+            );
+        }
         occupies(&resolved, selections, &dest, &answer, selection)?;
         origin_overlap(&target, &answer)?;
         resolved.push((at, answer, dest));
@@ -56,6 +73,7 @@ pub fn apply(
     let mut outcome = ImportOutcome {
         written: Vec::new(),
         already_present: Vec::new(),
+        warnings: capture_warnings,
     };
     write_all(&target, &resolved, selections, &mut outcome)?;
     Ok(outcome)

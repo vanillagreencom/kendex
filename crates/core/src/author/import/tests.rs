@@ -701,3 +701,69 @@ fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
     let here = find(&candidates, "here");
     assert!(here.origins.iter().any(|o| !o.hash.is_empty()));
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn imported_links_keep_their_physical_targets_before_destination_comparison() {
+    for (destination, expected) in [
+        ("app/vendor/catalog", "../../../../memory/x.md"),
+        ("outside", "../../../app/memory/x.md"),
+    ] {
+        let (tmp, env, scope) = seeded();
+        let Scope::Project { root } = &scope else {
+            unreachable!()
+        };
+        skill(
+            &root.join(".claude/skills"),
+            "stray",
+            "[memory](../../../memory/x.md)\n[own](./guide.md)",
+        );
+        file_item(&root.join("memory"), "x.md", "Memory.\n");
+        let scopes = [scope.clone()];
+        let chosen = selection(find(&inventory(&env, &scopes).unwrap(), "stray"), false);
+        let destination = target(&env, &tmp, destination);
+        let first = apply(&env, &scopes, &destination, std::slice::from_ref(&chosen)).unwrap();
+        assert!(first.warnings.is_empty());
+        let file = destination.join("skills/stray/SKILL.md");
+        let output = fs::read_to_string(&file).unwrap();
+        assert!(
+            output.contains(&format!("[memory]({expected})")),
+            "{output}"
+        );
+        assert!(output.contains("[own](./guide.md)"));
+        assert_eq!(
+            crate::fs::resolved(&file, Path::new(expected)).unwrap(),
+            root.join("memory/x.md")
+        );
+        let second = apply(&env, &scopes, &destination, &[chosen]).unwrap();
+        assert_eq!(second.already_present, ["skills/stray"]);
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn importing_a_detached_skill_reads_its_recorded_byte_coordinates() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    skill(
+        &root.join(".kendex-local/skills"),
+        "mine",
+        "[memory](../../memory/x.md)\n[own](./guide.md)",
+    );
+    let path = root.join("kendex.toml");
+    let mut manifest = fs::read_to_string(&path).unwrap();
+    manifest.push_str("\n[forks.skill.mine]\nsource = 'cat'\nforked-at = '2026-11-12'\nskill-coordinates = { directory = 'publisher/skills/mine', root = '.' }\n");
+    fs::write(path, manifest).unwrap();
+    let scopes = [scope.clone()];
+    let chosen = selection(find(&inventory(&env, &scopes).unwrap(), "mine"), false);
+    let target = target(&env, &tmp, "detached-import");
+    apply(&env, &scopes, &target, &[chosen]).unwrap();
+    let output = fs::read_to_string(target.join("skills/mine/SKILL.md")).unwrap();
+    assert!(
+        output.contains("[memory](../../../app/publisher/memory/x.md)"),
+        "{output}"
+    );
+    assert!(output.contains("[own](./guide.md)"));
+}

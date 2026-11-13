@@ -80,10 +80,18 @@ pub fn fork_beside(
         files,
         carry,
         read_at,
+        coordinates,
+        warnings,
         ..
     } = captured;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
-    let provenance = provenance(&manifest, &decl, read_at.clone());
+    let mut provenance = provenance(&manifest, &decl, read_at.clone());
+    provenance.skill_coordinates = coordinates.map(|coordinates| {
+        coordinates.relative_to(match scope {
+            Scope::Project { root } => root,
+            Scope::Global => &env.home,
+        })
+    });
     // An agent's configuration is keyed by its installed name, so a copy
     // under another one reads none of it: it would render without the
     // project's tool denies, without its instructions, and outside its own
@@ -135,7 +143,9 @@ pub fn fork_beside(
             manifest: Box::new(manifest),
         },
     });
-    Plan::landed(scope.clone(), ops)
+    let mut plan = Plan::landed(scope.clone(), ops)?;
+    plan.warnings = warnings;
+    Ok(plan)
 }
 
 /// The captured bytes answering to `new_name` — [`named_bytes`] over the
