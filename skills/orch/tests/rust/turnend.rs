@@ -318,7 +318,6 @@ fn a_refusal_takes_the_shape_its_harness_and_arm_read() {
 #[test]
 fn a_launched_lane_with_nothing_to_hold_passes_every_arm_with_nothing_written() {
     let world = World::launched();
-    let cwd = json!({"cwd": world.lane.display().to_string()}).to_string();
     let copilot = r#"{"sessionId":"s1","timestamp":1}"#;
     let rows: &[(&str, &[&str], &str)] = &[
         ("claude", &[], "{}"),
@@ -329,7 +328,6 @@ fn a_launched_lane_with_nothing_to_hold_passes_every_arm_with_nothing_written() 
         ("claude", &["start"], "{}"),
         ("claude", &["prompt"], "{}"),
         ("claude", &["compact"], "{}"),
-        ("claude", &["usage"], &cwd),
         ("claude", &["row", "SessionStart"], "{}"),
         ("copilot", &["start"], copilot),
     ];

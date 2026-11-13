@@ -248,6 +248,17 @@ pub enum Said {
     SessionRecord(&'static str),
     /// The stop a Copilot session's status-line record establishes.
     StopCause(&'static str),
+    /// A Copilot context reading from a session no lead record names.
+    ReadingUnowned(String),
+    /// The record a Copilot context reading could not be written to, and
+    /// whether the earlier reading standing there was removed.
+    ReadingUnkept {
+        record: PathBuf,
+        removed: bool,
+    },
+    /// The flag a Copilot lead's automatic compaction could not be written
+    /// to.
+    CompactionUnflagged(PathBuf),
     /// A context record or compaction flag that stands and cannot be read.
     RecordUnread {
         path: PathBuf,
@@ -351,6 +362,13 @@ impl Said {
             Said::ReadingUnrecorded(record) => ("reading-unrecorded", record.display().to_string()),
             Said::SessionRecord(reason) => ("session-record", (*reason).to_owned()),
             Said::StopCause(cause) => ("stop-cause", (*cause).to_owned()),
+            Said::ReadingUnowned(session) => ("session-unrecorded", session.clone()),
+            Said::ReadingUnkept { record, .. } => {
+                ("context-unrecorded", record.display().to_string())
+            }
+            Said::CompactionUnflagged(flag) => {
+                ("compaction-unrecorded", flag.display().to_string())
+            }
             Said::RecordUnread { path, .. } => ("record", path.display().to_string()),
             Said::Compacted { .. } => ("compacted", "auto".to_owned()),
         }
@@ -590,6 +608,27 @@ impl Said {
                 "this Copilot session has no context reading from the kendex-lane-context extension, so it is read from the record its statusLine command, copilot-statusline, writes under the account directory, and that record did not answer for this session: {reason}. The context mark is not judged and the gap is reported rather than held; the account mark is judged as usual. Set statusLine in the account's settings.json to run copilot-statusline with a refreshInterval under two minutes."
             ),
             Said::StopCause(_) => "this Copilot session's record reports allow_all_enabled false: enterprise managed settings, for its account or for its machine, block the allow-all mode, so every tool call waits on a permission prompt nobody answers. The orch copilot-runtime reference names the remedy".to_owned(),
+            Said::ReadingUnowned(session) => format!(
+                "this Copilot context reading's session {session} is no lead session this install recorded at a session start or at a turn end its own transcript proved, so the reading is recorded nowhere and the session's turn end reports its context unmeasured under reading-unrecorded; once a turn end whose transcript proves the session the lead's records it, its later readings are recorded"
+            ),
+            Said::ReadingUnkept {
+                record,
+                removed: true,
+            } => format!(
+                "this Copilot session's context reading could not be written to {}, and no earlier reading stands there now, so its next turn end reports the context unmeasured under reading-unrecorded, never judging an older figure as room, until a later reading is recorded. The cause follows:",
+                record.display()
+            ),
+            Said::ReadingUnkept {
+                record,
+                removed: false,
+            } => format!(
+                "this Copilot session's context reading could not be written to {}, and the earlier reading standing there could not be removed either, so its next turn end still judges that older figure, which can lie below the mark this reading crossed, until a later reading is recorded; repair the directory. The causes follow:",
+                record.display()
+            ),
+            Said::CompactionUnflagged(flag) => format!(
+                "for the operator: Copilot began compacting this fleet session automatically, the backstop handoff mark, and this hook could not flag it because {} could not be used, so no turn end of this session will hold it for the compaction. Tell the session to write its handoff record and end, or end it and relaunch the item. The cause follows:",
+                flag.display()
+            ),
             Said::RecordUnread { path, instruction } => format!(
                 "the context record {} could not be read, so whether this Copilot session is past its handoff mark is unknown; refusing rather than letting it run on. Recording the handoff ends this refusal:\n{instruction}",
                 path.display()

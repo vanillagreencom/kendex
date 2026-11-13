@@ -384,6 +384,31 @@ pub const COPILOT_COMPACTION_PCT: u64 = 80;
 pub const COPILOT_EXTENSION_SOURCE: &str =
     "80% of tokenLimit, Copilot's backgroundCompactionThreshold default";
 
+/// The reading Copilot's context extension hands over from one
+/// `session.usage_info` event of the session's root agent, as `(tokens,
+/// capacity)`: the tokens in the context, and [`COPILOT_COMPACTION_PCT`] of
+/// the token limit rounded down, the point Copilot compacts at. `Err` names
+/// the field that is no whole number, the limit also where it is 0.
+pub fn copilot_usage(
+    current_tokens: Option<&Value>,
+    token_limit: Option<&Value>,
+) -> Result<(u64, u64), &'static str> {
+    let whole = |value: Option<&Value>| {
+        let number = value?.as_number()?;
+        if let Some(n) = number.as_u64() {
+            return Some(n);
+        }
+        let f = number.as_f64()?;
+        // A float with no fraction from 0 below `u64::MAX` converts exactly.
+        (f >= 0.0 && f.fract() == 0.0 && f < u64::MAX as f64).then_some(f as u64)
+    };
+    let tokens = whole(current_tokens).ok_or("current_tokens is no whole number")?;
+    let limit = whole(token_limit)
+        .filter(|limit| *limit > 0)
+        .ok_or("token_limit is no whole number above 0")?;
+    Ok((tokens, limit.saturating_mul(COPILOT_COMPACTION_PCT) / 100))
+}
+
 /// The capacity source of a reading taken from a session's status-line
 /// record.
 pub const COPILOT_STATUS_LINE_SOURCE: &str =
@@ -720,6 +745,42 @@ mod tests {
     fn status_record(home: &Path, written: Value, status: Value) -> Value {
         serde_json::json!({"session_id": "s1", "transcript_path": "/t/s1/events.jsonl",
             "copilot_home": home.display().to_string(), "written_at": written, "status": status})
+    }
+
+    /// The extension's figures are taken only as whole numbers, a float with
+    /// no fraction among them, and the limit only above 0: a fraction, a
+    /// negative figure, a string or a missing field is never read as a
+    /// reading.
+    #[test]
+    fn a_copilot_usage_reading_takes_whole_figures_and_a_limit_above_zero() {
+        fn present(value: &Value) -> Option<&Value> {
+            (!value.is_null()).then_some(value)
+        }
+        let tokens_gap = Err("current_tokens is no whole number");
+        let limit_gap = Err("token_limit is no whole number above 0");
+        let rows = [
+            (serde_json::json!(0), serde_json::json!(1001), Ok((0, 800))),
+            (
+                serde_json::json!(5.0),
+                serde_json::json!(1000.0),
+                Ok((5, 800)),
+            ),
+            (serde_json::json!(5.5), serde_json::json!(1000), tokens_gap),
+            (serde_json::json!(-1), serde_json::json!(1000), tokens_gap),
+            (serde_json::json!("5"), serde_json::json!(1000), tokens_gap),
+            (Value::Null, serde_json::json!(1000), tokens_gap),
+            (serde_json::json!(5), serde_json::json!(0), limit_gap),
+            (serde_json::json!(5), serde_json::json!(0.5), limit_gap),
+            (serde_json::json!(5), Value::Null, limit_gap),
+        ];
+        for (tokens, limit, want) in rows {
+            let row = format!("{tokens} {limit}");
+            assert_eq!(
+                copilot_usage(present(&tokens), present(&limit)),
+                want,
+                "{row}"
+            );
+        }
     }
 
     #[test]
