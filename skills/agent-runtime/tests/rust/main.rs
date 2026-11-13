@@ -1340,6 +1340,214 @@ fn session_file_finds_the_rollout_by_its_id_and_answers_three_valued() {
     assert_eq!(reply["refusal"]["key"], "harness-unknown", "{reply}");
 }
 
+/// `rows verdict --kind KIND --file FILE`'s exit and reply, with `stdin`
+/// piped in where given.
+fn rows_verdict(
+    kind: &str,
+    file: &std::path::Path,
+    stdin: Option<&[u8]>,
+) -> (Option<i32>, serde_json::Value) {
+    use std::io::Write as _;
+    let mut child = Command::new(binary())
+        .args(["rows", "verdict", "--kind", kind, "--file"])
+        .arg(file)
+        .stdin(match stdin {
+            Some(_) => std::process::Stdio::piped(),
+            None => std::process::Stdio::null(),
+        })
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    if let Some(text) = stdin {
+        let mut pipe = child.stdin.take().unwrap();
+        pipe.write_all(text).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let reply = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
+        panic!(
+            "rows verdict --kind {kind}: no reply: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    (out.status.code(), reply)
+}
+
+/// Each verdict word of the lane and the session table, `gone` and
+/// `unreadable` with its cause, read from a planted rows file and from the
+/// same text on stdin: the reading a provider gets for rows it fetched. A
+/// last line a killed writer left half written is `unreadable`, never passed
+/// over for the row before it. A lane Stop that ended on an error reads its
+/// count first: agents still at work are `working`, an unread count
+/// `unreadable`, whatever the error says.
+#[test]
+fn rows_verdict_reads_each_word_of_both_tables_from_a_file_and_from_stdin() {
+    use serde_json::json;
+    let live = |verdict: serde_json::Value| {
+        let mut fields = verdict;
+        fields["reading"] = json!("live");
+        fields
+    };
+    let unreadable = |cause: &str| json!({"reading": "unreadable", "cause": cause});
+    let gone = json!({"reading": "gone"});
+    let earlier = r#"{"harness":"pi","event":"PreToolUse"}"#;
+    let fragment = format!("{earlier}\n{{\"harness\":\"pi\",\"event\":\"Sto\n");
+    let rows: Vec<(&str, String, serde_json::Value)> = vec![
+        (
+            "lane",
+            r#"{"harness":"pi","event":"PreToolUse"}"#.into(),
+            live(json!({"verdict": "working"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"Stop","working_agents":2}"#.into(),
+            live(json!({"verdict": "working"})),
+        ),
+        (
+            "lane",
+            format!("{earlier}\n{}", r#"{"harness":"pi","event":"Stop","working_agents":0}"#),
+            live(json!({"verdict": "idle", "cause": null})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"Stop","stop_reason":"length","working_agents":0}"#.into(),
+            live(json!({"verdict": "idle", "cause": "length"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"Stop","stop_reason":"error","message":"429 Usage limit reached for this model"}"#.into(),
+            live(json!({"verdict": "walled"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"Stop","stop_reason":"error","message":"429 Usage limit reached for this model","working_agents":1}"#.into(),
+            live(json!({"verdict": "working"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"Stop","stop_reason":"error","message":"429 Usage limit reached for this model","working_agents":null}"#.into(),
+            unreadable("working-agents-unread"),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"Stop","working_agents":null}"#.into(),
+            unreadable("working-agents-unread"),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"Stop","working_agents":2.0}"#.into(),
+            unreadable("working-agents-unread"),
+        ),
+        (
+            "lane",
+            r#"{"harness":"pi","event":"SessionStart"}"#.into(),
+            unreadable("lane-row-unjudged"),
+        ),
+        (
+            "session",
+            r#"{"harness":"copilot","event":"SessionEnd","reason":"exit"}"#.into(),
+            live(json!({"verdict": "unsupported"})),
+        ),
+        (
+            "session",
+            r#"{"harness":"claude","event":"SessionEnd","reason":"exit"}"#.into(),
+            live(json!({"verdict": "ended"})),
+        ),
+        (
+            "session",
+            r#"{"harness":"claude","event":"StopFailure","error":"authentication_failed"}"#.into(),
+            live(json!({"verdict": "walled", "kind": "auth"})),
+        ),
+        (
+            "session",
+            r#"{"harness":"claude","event":"StopFailure","error":"rate_limit","message":"You've hit your weekly limit"}"#.into(),
+            live(json!({"verdict": "walled", "kind": "usage"})),
+        ),
+        (
+            "session",
+            r#"{"harness":"claude","event":"StopFailure","error":"other","message":"Prompt is too long"}"#.into(),
+            live(json!({"verdict": "wedged"})),
+        ),
+        (
+            "session",
+            r#"{"harness":"claude","event":"Stop","session_id":"s"}"#.into(),
+            live(json!({"verdict": "live"})),
+        ),
+        ("lane", fragment.clone(), unreadable("rows-row-unparsed")),
+        ("session", fragment, unreadable("rows-row-unparsed")),
+        ("lane", String::new(), gone.clone()),
+        ("session", "\n\n".into(), gone.clone()),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("session-rows.jsonl");
+    for (kind, text, expected) in &rows {
+        std::fs::write(&file, format!("{text}\n")).unwrap();
+        for stdin in [None, Some(format!("{text}\n"))] {
+            let path = match stdin {
+                Some(_) => std::path::Path::new("-"),
+                None => file.as_path(),
+            };
+            let (code, reply) = rows_verdict(kind, path, stdin.as_deref().map(str::as_bytes));
+            assert_eq!(
+                code,
+                Some(0),
+                "{kind} {text} stdin={}: {reply}",
+                stdin.is_some()
+            );
+            assert_eq!(
+                &reply["result"],
+                expected,
+                "{kind} {text} stdin={}",
+                stdin.is_some()
+            );
+        }
+    }
+    for kind in ["lane", "session"] {
+        let (code, reply) = rows_verdict(kind, &dir.path().join("absent.jsonl"), None);
+        assert_eq!((code, &reply["result"]), (Some(0), &gone), "{kind} absent");
+        let (code, reply) = rows_verdict(kind, dir.path(), None);
+        assert_eq!(
+            (code, &reply["result"]),
+            (Some(0), &unreadable("rows-file-unreadable")),
+            "{kind} directory"
+        );
+    }
+}
+
+/// Rows that are no text are `unreadable`, from a file as from stdin, never
+/// `gone`: a read that failed says nothing of the session.
+#[test]
+fn rows_verdict_reads_rows_that_are_no_text_as_unreadable() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("session-rows.jsonl");
+    let bytes = b"{\"harness\":\"pi\",\"event\":\"Stop\"}\n\xff\xfe\n";
+    std::fs::write(&file, bytes).unwrap();
+    let unreadable = serde_json::json!({"reading": "unreadable", "cause": "rows-file-unreadable"});
+    for kind in ["lane", "session"] {
+        for (path, stdin) in [
+            (file.as_path(), None),
+            (std::path::Path::new("-"), Some(&bytes[..])),
+        ] {
+            let (code, reply) = rows_verdict(kind, path, stdin);
+            assert_eq!(
+                (code, &reply["result"]),
+                (Some(0), &unreadable),
+                "{kind} stdin={}",
+                stdin.is_some()
+            );
+        }
+    }
+}
+
+#[test]
+fn rows_verdict_refuses_a_kind_it_has_no_table_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let (code, reply) = rows_verdict("overseer", &dir.path().join("rows.jsonl"), None);
+    assert_eq!(code, Some(1), "{reply}");
+    assert_eq!(reply["refusal"]["key"], "rows-kind-unknown", "{reply}");
+    assert_eq!(refusal_field(&reply, "kind").as_deref(), Some("overseer"));
+}
+
 /// The binary's exit status and its one reply line, over `args`.
 fn reply_of(args: &[&std::ffi::OsStr]) -> (Option<i32>, serde_json::Value) {
     let out = Command::new(binary())

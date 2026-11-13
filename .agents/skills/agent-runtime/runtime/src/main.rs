@@ -31,6 +31,7 @@ use agent_runtime::process::{self, Identity};
 use agent_runtime::protocol::{self, Outcome, Reply};
 use agent_runtime::reading::{Reading, Unreadable};
 use agent_runtime::record::{self, Expect};
+use agent_runtime::rows;
 use agent_runtime::session;
 use agent_runtime::settings;
 
@@ -175,6 +176,11 @@ enum Verb {
         cwd: PathBuf,
         #[arg(long)]
         id: String,
+    },
+    /// The verdict a session rows file's last row gives.
+    Rows {
+        #[command(subcommand)]
+        op: RowsOp,
     },
     /// Process identity operations.
     Process {
@@ -930,6 +936,61 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
             now,
         ),
     }
+}
+
+#[derive(Subcommand)]
+enum RowsOp {
+    /// What the last row of the rows file says, three-valued: `live` with
+    /// the verdict, `gone` where the file is absent or holds no row,
+    /// `unreadable` with the cause where the file or its last row could not
+    /// be read or judged. `--kind lane` judges a Pi lane's rows, `session`
+    /// an overseer session's.
+    Verdict {
+        #[arg(long)]
+        kind: String,
+        /// The rows file; `-` reads its text from stdin, so rows a provider
+        /// fetched from the host they live on are judged where the runtime
+        /// is set up.
+        #[arg(long)]
+        file: PathBuf,
+    },
+}
+
+/// `rows verdict`: the reading, with the verdict's own fields beside it.
+fn rows_verdict(kind: &str, file: &Path) -> Result<serde_json::Value> {
+    let judge: fn(&rows::Row) -> Reading<serde_json::Value> = match kind {
+        "lane" => |row| rows::judge_lane(row).map(|v| serde_json::to_value(v).unwrap_or_default()),
+        "session" => {
+            |row| Reading::Live(serde_json::to_value(rows::judge_session(row)).unwrap_or_default())
+        }
+        other => return Err(Error::refused("rows-kind-unknown", &[("kind", other)])),
+    };
+    let last = if file == Path::new("-") {
+        let mut text = String::new();
+        match std::io::Read::read_to_string(&mut std::io::stdin(), &mut text) {
+            Ok(_) => rows::last_row_in(&text),
+            Err(_) => Reading::Unreadable {
+                cause: "rows-file-unreadable",
+            },
+        }
+    } else {
+        rows::last_row(file)
+    };
+    let verdict = match last {
+        Reading::Live(row) => judge(&row),
+        Reading::Gone => Reading::Gone,
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+    };
+    Ok(match verdict {
+        Reading::Live(mut fields) => {
+            fields["reading"] = "live".into();
+            fields
+        }
+        Reading::Gone => serde_json::json!({"reading": "gone"}),
+        Reading::Unreadable { cause } => {
+            serde_json::json!({"reading": "unreadable", "cause": cause})
+        }
+    })
 }
 
 #[derive(Subcommand)]
@@ -1892,6 +1953,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 }
             })
         }
+        Verb::Rows {
+            op: RowsOp::Verdict { kind, file },
+        } => rows_verdict(&kind, &file),
         // The readings print whole: `live` with the identity, `gone`, or
         // `unreadable` with its cause.
         Verb::Process { op } => match op {

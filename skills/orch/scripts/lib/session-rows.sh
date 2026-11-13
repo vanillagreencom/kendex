@@ -26,7 +26,8 @@
 # overseer judgement and `oversee register`.
 # The same hook writes the Jarvis runtime record below, never this file.
 #
-# A last row session_rows_verdict cannot judge reads `unsupported`, and its
+# A last row the session verdict (agent-runtime's `rows verdict --kind
+# session`) cannot judge reads `unsupported`, and its
 # reader takes the pane, the named fallback, reported as fallback.
 #
 # ONE OWNER, THE WRITER, for "whose facts are these": only the pane's own
@@ -42,7 +43,8 @@
 # first tool call of each turn, after a turn end or on an empty file, which is
 # all the runtime watch and `orch-runtime lane status` need to tell an idle,
 # working or walled Pi lane apart without its pane
-# (session_rows_lane_write, session_rows_lane_verdict). Claude Code and Codex
+# (session_rows_lane_write; agent-runtime's `rows verdict --kind lane` reads
+# them). Claude Code and Codex
 # lanes write none: their pane is what the watch's classifier reads.
 #
 # A session the Jarvis runtime launched writes no file here of its own: its
@@ -57,8 +59,8 @@
 # The overseer writer requires lib/file-lock.sh, lib/mailbox-append.sh,
 # lib/lane-context.sh and lib/lane-state.sh sourced by its caller, the lane
 # writer the first two, and the Jarvis stamp lib/file-lock.sh and
-# lib/lane-context.sh; the overseer readers need jq and tail alone, and the
-# overseer and lane verdicts lib/lane-state.sh besides. Sourced, never run. Bash 3.2-safe,
+# lib/lane-context.sh; the overseer readers need jq and tail alone. Sourced,
+# never run. Bash 3.2-safe,
 # like its callers.
 
 # Seconds an append waits for the file's lock before it gives up. Below the
@@ -203,79 +205,6 @@ session_rows_last() { # FILE [EVENT]
   fi
   SESSION_ROW="$(jq -cR --arg event "${2:-}" 'fromjson? | objects
     | select($event == "" or .event == $event)' <<<"$lines" | tail -n 1)" || return 2
-}
-
-# session_rows_verdict FILE — what the last row says of the session, into
-# SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
-#   none         no row, so nothing the harness said can be read
-#   unsupported  the row carries no evidence this verdict reads: it names
-#                any harness but Claude Code and Pi, or it is a Pi row that is
-#                neither a SessionEnd nor a StopFailure with a `message`. A Pi
-#                session writes a StopFailure only where its carrier dispatches
-#                one, so its SessionStart or Stop says nothing of a wall, and a
-#                StopFailure with no text tells no wall from another failure
-#   ended        SessionEnd for any reason but `clear` and `resume`, the two a
-#                SessionStart follows in the same harness; Pi's carrier says
-#                its own reasons in these words
-#   walled       Claude Code StopFailure whose `error` lib/lane-state.sh §
-#                lane_auth_failure reads as a wall on the account itself,
-#                with SESSION_ROWS_WALL_KIND `auth`; StopFailure with
-#                `rate_limit`, Claude Code's own word for a
-#                usage limit, or on Pi, which names no error kind, one whose
-#                `message` lib/lane-state.sh § lane_limit_banner reads as the
-#                account's limit, the judge a Pi lane's rows take; its
-#                `message` carries the harness's text with the reset in it
-#   wedged       StopFailure whose `message` or `error_details` names a
-#                request refused for its prompt's length, a phrase
-#                SESSION_ROWS_PROMPT_TOO_LONG lists: the session's context
-#                filled its window, so every turn it starts fails the same way
-#                while its harness stays up
-#   live         SessionEnd for `clear` or `resume` from either harness, any
-#                other Claude Code row, or a Pi StopFailure whose `message`
-#                names neither a limit nor a prompt too long
-# Exit 2 where the file could not be read, jq could not read its last row, or
-# lane_limit_banner could not scan a Pi StopFailure's `message`; the verdict is
-# then `none` and says nothing.
-#
-# The phrases are the harness's own text, lowercased and matched as a
-# substring, one table read by this judge alone. Claude Code writes
-# `Prompt is too long` as the turn's last assistant message when a request
-# outgrows the window; under DISABLE_AUTO_COMPACT=1 an overseer meets it on
-# every turn once its context fills.
-SESSION_ROWS_PROMPT_TOO_LONG='["prompt is too long"]'
-SESSION_ROWS_VERDICT=none
-SESSION_ROWS_WALL_KIND=""
-session_rows_verdict() { # FILE
-  local verdict banner auth_fields
-  SESSION_ROWS_VERDICT=none
-  SESSION_ROWS_WALL_KIND=""
-  session_rows_last "$1" || return 2
-  [ -n "$SESSION_ROW" ] || return 0
-  auth_fields="$(jq -r '[.harness, .event, (.error // "")] | join(":")' <<<"$SESSION_ROW")" || return 2
-  if [[ "$auth_fields" == claude:StopFailure:* ]] \
-    && lane_auth_failure "" "${auth_fields#claude:StopFailure:}"; then
-    SESSION_ROWS_VERDICT=walled SESSION_ROWS_WALL_KIND=auth
-    return 0
-  fi
-  # `limit-text` is a Pi StopFailure the limit judge below settles.
-  verdict="$(jq -r --argjson too_long "$SESSION_ROWS_PROMPT_TOO_LONG" '
-    if .harness != "claude" and .harness != "pi" then "unsupported"
-    elif .event == "SessionEnd" then
-      (if .reason == "clear" or .reason == "resume" then "live" else "ended" end)
-    elif .event == "StopFailure" and .harness == "claude" and .error == "rate_limit" then "walled"
-    elif .harness == "pi" and (.event != "StopFailure" or (.message // "") == "") then "unsupported"
-    elif .event == "StopFailure"
-      and ((((.message // "") + "\n" + (.error_details // "")) | ascii_downcase) as $text
-        | any($too_long[]; . as $p | $text | contains($p)))
-    then "wedged"
-    elif .harness == "pi" then "limit-text"
-    else "live" end' <<<"$SESSION_ROW")" || return 2
-  if [ "$verdict" = limit-text ]; then
-    banner="$(lane_limit_banner "$(jq -r '.message // ""' <<<"$SESSION_ROW")")" || return 2
-    verdict=live
-    [ -z "$banner" ] || verdict=walled
-  fi
-  SESSION_ROWS_VERDICT="$verdict"
 }
 
 # session_rows_start FILE [SINCE] — the last SessionStart row of FILE, at or
@@ -632,40 +561,4 @@ session_rows_lane_write() { # BOX HARNESS EVENT [TRANSCRIPT] [PAYLOAD]
   # 4 is the guard's own answer: a turn already open, which is no failure.
   [ "$rc" -eq 4 ] && return 0
   return "$rc"
-}
-
-# session_rows_lane_verdict FILE — what a Pi lane's last row says of it, into
-# SESSION_ROWS_VERDICT, with that row in SESSION_ROW:
-#   none     no row, or an unread working-agent count
-#   working  a PreToolUse row, or a Stop whose background agents still work
-#   walled   a Stop row whose turn ended on an error lib/lane-state.sh §
-#            lane_limit_banner reads as the account's limit
-#   idle     any other Stop row with a known or absent count
-# Exit 2 where the file could not be read, or its last row names an event no
-# writer above writes or an unread count; the verdict is then `none`.
-session_rows_lane_verdict() { # FILE
-  local fields banner has_count
-  SESSION_ROWS_VERDICT=none
-  session_rows_last "$1" || return 2
-  [ -n "$SESSION_ROW" ] || return 0
-  has_count="$(jq -r '.event == "Stop" and has("working_agents")' <<<"$SESSION_ROW")" || return 2
-  if [ "$has_count" = true ]; then
-    # Null is the carrier's failed task read, never evidence of an idle lane.
-    fields="$(jq -r '.working_agents | if type == "number" and . >= 0 and floor == . then . else "unknown" end' <<<"$SESSION_ROW")" || return 2
-    [ "$fields" != unknown ] || return 2
-    if [ "$fields" -gt 0 ]; then
-      SESSION_ROWS_VERDICT=working
-      return 0
-    fi
-  fi
-  fields="$(jq -r '"\(.event // "")\t\(.stop_reason // "")"' <<<"$SESSION_ROW")" || return 2
-  case "$fields" in
-    PreToolUse$'\t'*) SESSION_ROWS_VERDICT=working ;;
-    Stop$'\t'error)
-      banner="$(lane_limit_banner "$(jq -r '.message // ""' <<<"$SESSION_ROW")")" || return 2
-      SESSION_ROWS_VERDICT=idle
-      [ -z "$banner" ] || SESSION_ROWS_VERDICT=walled ;;
-    Stop$'\t'*) SESSION_ROWS_VERDICT=idle ;;
-    *) return 2 ;;
-  esac
 }

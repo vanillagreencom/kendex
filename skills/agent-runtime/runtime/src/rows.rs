@@ -2,16 +2,16 @@
 //! for what the harness itself said of its session: up, walled, gone; and
 //! the one writer of those rows and of the two stamps a Jarvis launch takes.
 //! orch's `lib/session-rows.sh` writes the same files beside this writer,
-//! under the same locks, and this reader keeps its verdict tables
-//! (`session_rows_verdict` for an overseer's rows,
-//! `session_rows_lane_verdict` for a Pi lane's); the row shapes follow
-//! Claude Code's hook inputs, Pi's carrier and Copilot's camelCase payloads
-//! as that library names them.
+//! under the same locks, and this reader holds the verdict tables, one for
+//! an overseer's rows and one for a Pi lane's, which `agent-runtime rows
+//! verdict --kind session|lane` prints; the row shapes follow Claude Code's
+//! hook inputs, Pi's carrier and Copilot's camelCase payloads as that
+//! library names them.
 //!
 //! Every read is three-valued: `Live(row)` is the last row, `Gone` a file
 //! that is absent or holds no row, `Unreadable` a file or a last row that
-//! could not be read. A verdict is read from the last row alone, as the
-//! library reads it, over the last `SPAN` lines.
+//! could not be read. A verdict is read from the last row alone, over the
+//! last `SPAN` lines.
 
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
@@ -38,8 +38,8 @@ use crate::record::{self, Locking, Wait};
 /// (`SESSION_ROWS_SPAN`).
 pub const SPAN: usize = 64;
 
-/// The harness's own text for a request refused for its prompt's length
-/// (`SESSION_ROWS_PROMPT_TOO_LONG`), matched lowercased as a substring over
+/// The harness's own text for a request refused for its prompt's length,
+/// matched lowercased as a substring over
 /// the row's `message` and `error_details`.
 const PROMPT_TOO_LONG: [&str; 1] = ["prompt is too long"];
 
@@ -70,8 +70,7 @@ pub struct Row {
     #[serde(default)]
     pub stop_reason: Option<String>,
     /// The carrier's count of working agents on a Pi Stop row; `null` is
-    /// the carrier's failed task read, kept apart from an absent key as
-    /// the library's `has("working_agents")` keeps it.
+    /// the carrier's failed task read, kept apart from an absent key.
     #[serde(default, deserialize_with = "present")]
     pub working_agents: Option<Value>,
     #[serde(default)]
@@ -87,7 +86,8 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option
     Value::deserialize(d).map(Some)
 }
 
-/// What an overseer's last row says of its session (`session_rows_verdict`).
+/// What an overseer's last row says of its session (`rows verdict --kind
+/// session`).
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "verdict", rename_all = "kebab-case")]
@@ -110,7 +110,7 @@ pub enum SessionVerdict {
     Live,
 }
 
-/// What a Pi lane's last row says (`session_rows_lane_verdict`).
+/// What a Pi lane's last row says (`rows verdict --kind lane`).
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "verdict", rename_all = "kebab-case")]
@@ -171,7 +171,7 @@ pub fn session_verdict(file: &Path) -> Reading<SessionVerdict> {
     last_row(file).map(|row| judge_session(&row))
 }
 
-/// The verdict table of `session_rows_verdict`, over one row.
+/// The overseer verdict table, over one row.
 pub fn judge_session(row: &Row) -> SessionVerdict {
     let harness = row.harness.as_deref().unwrap_or("");
     let event = row.event.as_deref().unwrap_or("");
@@ -220,7 +220,7 @@ pub fn judge_session(row: &Row) -> SessionVerdict {
 }
 
 /// The Pi lane verdict of `file`'s last row: a row the table cannot judge
-/// is `Unreadable`, as the library exits 2 on it.
+/// is `Unreadable`, never a verdict.
 pub fn lane_verdict(file: &Path) -> Reading<LaneVerdict> {
     match last_row(file) {
         Reading::Live(row) => judge_lane(&row),
@@ -229,7 +229,7 @@ pub fn lane_verdict(file: &Path) -> Reading<LaneVerdict> {
     }
 }
 
-/// The verdict table of `session_rows_lane_verdict`, over one row.
+/// The Pi lane verdict table, over one row.
 pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
     let event = row.event.as_deref().unwrap_or("");
     if event == "Stop"
@@ -1045,11 +1045,9 @@ mod tests {
         serde_json::from_str(json).unwrap()
     }
 
-    /// The overseer verdict table, one row per form the library judges:
-    /// each harness's SessionEnd and StopFailure shapes, a Pi row with and
-    /// without a limit message, a Copilot row, and the too-long prompt. The
-    /// library reads the same file for the same decision, so the two
-    /// verdicts agree.
+    /// The overseer verdict table, one row per form it judges: each
+    /// harness's SessionEnd and StopFailure shapes, a Pi row with and
+    /// without a limit message, a Copilot row, and the too-long prompt.
     #[test]
     fn the_session_verdict_follows_the_library_s_table_per_harness_form() {
         let rows: [(&str, SessionVerdict); 11] = [
