@@ -402,22 +402,25 @@ assert_eq "$got red=$red" \
 
 # The macOS lane with every hdiutil create refused, on every host. It runs
 # as a background job because errexit stays live there, as it is in the
-# suite, and waiting on it cannot end this suite. Its rows and footer are
-# the verdict; its status is 1 either way.
+# suite, and waiting on it cannot end this suite. It counts from zero, so
+# its footer holds its own rows alone: each row that needs a disk image is
+# one fixture FAIL row and skips its check, the rows that build none are
+# checked and pass, and the footer's status fails the job.
 stub_tools command
 (
   PATH="$STUB/bin:$PATH"
+  PASS=0
+  FAIL=0
   macos_lane
   footer
 ) >"$TMP/fixture-control" 2>&1 &
-wait "$!" || true
+control_rc=0
+wait "$!" || control_rc=$?
 refusal='fixture=hdiutil-create: hdiutil: create failed - stub create refusal'
-named=no
-grep -qxF -- "  FAIL  the app, its updater archive and its disk image all carry the sidecar: $refusal" "$TMP/fixture-control" &&
-  grep -qxF -- "  FAIL  $SIGNING_LABEL: $refusal" "$TMP/fixture-control" && named=yes
-footed=no
-grep -qE '^pass: [0-9]+   fail: [0-9]+$' "$TMP/fixture-control" && footed=yes
-assert_eq "named=$named footer=$footed" "named=yes footer=yes" \
-  'must-fail: a disk image hdiutil cannot create is a named FAIL row, and the suite still prints its footer'
+control_rows="$(sed -nE 's/^  (ok|FAIL) +/\1 /p' "$TMP/fixture-control" | paste -s -d ';' -)"
+control_footer="$(sed -n '/^pass: /p' "$TMP/fixture-control")"
+assert_eq "rc=$control_rc rows=$control_rows footer=$control_footer" \
+  "rc=1 rows=FAIL the app, its updater archive and its disk image all carry the sidecar: $refusal;ok an app with no sidecar;FAIL an updater archive with no sidecar: $refusal;ok no disk image at all;FAIL $UNSIGNED_LABEL: $refusal;FAIL $SIGNING_LABEL: $refusal footer=pass: 2   fail: 4" \
+  'must-fail: a disk image hdiutil cannot create is a named FAIL row in place of its check, and the suite fails at its footer'
 
 footer
