@@ -34,7 +34,7 @@
 # pull request the merge queue takes; a pull request already open on the
 # branch is disarmed and dequeued before the push, as
 # skills/orch/workflows/merge-pr-restack.md step 1 does, armed again after
-# it, and its title and body then rewritten to the head just recorded. The
+# it only while no other entry holds the queue, and its title and body then rewritten to the head just recorded. The
 # arm passes the merge method the base branch allows, read from GitHub like
 # the default branch. GitHub shows a force push on the pull request's head a
 # moment after the push lands, and refuses an arm whose --match-head-commit
@@ -114,7 +114,7 @@
 #   pushed=<remote>/<branch>    the branch reached the remote
 #   pull-request=<n> action=<opened|updated>
 #   pull-request-edit=<n> arm=<armed|unarmed>
-#                               gh could not rewrite the updated pull request's title and body to the head just recorded; the arm ran first, and arm= says whether it armed or left the pull request unarmed as the unarmed line reports (exit 1)
+#                               gh could not rewrite the updated pull request's title and body to the head just recorded; arm= says whether it armed or left the pull request unarmed (exit 1)
 #   armed=<n|already>           auto-merge enabled on it for its head, or found enabled on a stand-down
 #   head-read=<n>               gh could not read the pull request's head after the push or on the stand-down, so it was not armed (exit 1)
 #   unarmed=<n> pushed=<sha> head=<sha>
@@ -294,6 +294,32 @@ if [[ -n "$number" ]]; then
   queued="${state##*$'\t'}"
 fi
 
+# Whether the run tries the base itself: a landing token, and a merge queue
+# on the base that holds no entry, read with GH_TOKEN excluding this run's own
+# pull request, which can remain visible while a dequeue settles. The base's rulesets then
+# decide the push. Sets land_check to try, to unconfigured where the
+# workflow set neither landing name, or to unavailable:CAUSE or
+# skipped:CAUSE for the first precondition the run does not meet. The one
+# reporter below says every CAUSE, and refuses an answer it does not know,
+# so no precondition keeps the rolling pull request unsaid.
+land_check_run() {
+  local slug queued
+  land_check=""
+  if ! slug="$(cd -- "$repo" && kendex_github_resolve_gh_repo "$repo")" ||
+      ! queued="$(cd -- "$repo" && kendex_land_queue_entries "$slug" "$base" "$number")"; then
+    land_check=unavailable:queue-read
+    return 0
+  fi
+  if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi
+  if [[ -z "$land_token" ]]; then
+    # A half pair, or a mint that failed, leaves the token empty.
+    if [[ "$land_configured" == true ]]; then land_check=unavailable:token; else land_check=unconfigured; fi
+    return 0
+  fi
+  land_check=try
+}
+land_check_run
+
 if [[ -n "$rolling" && -n "$number" ]]; then
   # The open pull request judged by the one judge: its commit applied onto
   # the head, then verified. The reset returns the clean start either way;
@@ -315,10 +341,12 @@ if [[ -n "$rolling" && -n "$number" ]]; then
     git -C "$repo" reset -q --hard HEAD
     say rolling-current "$rolling pull-request=$number" \
       "pull request $number's commit, merged onto $head, is the record this tree writes; the queue merges it, so nothing was pushed"
-    if [[ "$armed" == true ]]; then
-      say armed already
-    else
-      arm "$number" "$rolling"
+    if [[ "$land_check" != skipped:queued ]]; then
+      if [[ "$armed" == true ]]; then
+        say armed already
+      else
+        arm "$number" "$rolling"
+      fi
     fi
     exit 0
   fi
@@ -357,7 +385,7 @@ body="tools/lock-record re-recorded .kendex-lock.json on $base after the merges 
 
 # An armed pull request re-enters the queue the moment its checks pass,
 # and a push onto a queued one ejects it: disarm first, then dequeue, then
-# push, then arm the pushed head.
+# push, then arm the pushed head only if no other entry holds the queue.
 if [[ "$armed" == true ]]; then
   if ! reason="$(cd -- "$repo" && kendex_merge_queue_mutation disablePullRequestAutoMerge "$node_id")"; then
     say disarm "$number" "auto-merge could not be disabled on pull request $number, so a push would let it re-enter the queue: $reason" >&2
@@ -373,31 +401,6 @@ if [[ "$queued" == true ]]; then
   say dequeued "$number"
 fi
 
-# Whether the run tries the base itself: a landing token, and a merge queue
-# on the base that holds no entry, read with GH_TOKEN after the dequeue
-# above took this run's own pull request out. The base's rulesets then
-# decide the push. Sets land_check to try, to unconfigured where the
-# workflow set neither landing name, or to unavailable:CAUSE or
-# skipped:CAUSE for the first precondition the run does not meet. The one
-# reporter below says every CAUSE, and refuses an answer it does not know,
-# so no precondition keeps the rolling pull request unsaid.
-land_check_run() {
-  local slug queued
-  land_check=""
-  if [[ -z "$land_token" ]]; then
-    # A half pair, or a mint that failed, leaves the token empty.
-    if [[ "$land_configured" == true ]]; then land_check=unavailable:token; else land_check=unconfigured; fi
-    return 0
-  fi
-  if ! slug="$(cd -- "$repo" && kendex_github_resolve_gh_repo "$repo")" ||
-      ! queued="$(cd -- "$repo" && kendex_land_queue_entries "$slug" "$base")"; then
-    land_check=unavailable:queue-read
-    return 0
-  fi
-  if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi
-  land_check=try
-}
-land_check_run
 case "$land_check" in
   try | unconfigured) ;;
   unavailable:token)
@@ -457,9 +460,9 @@ else
 fi
 say pull-request "$number action=$action"
 
-arm "$number" "$recorded"
+if [[ "$land_check" != skipped:queued ]]; then arm "$number" "$recorded"; fi
 
-# The title and body follow the arm, so a failed edit leaves the arm's
+# The title and body follow the arm decision, so a failed edit leaves its
 # outcome as it was with only the description stale.
 if [[ "$action" == updated ]] && ! (cd -- "$repo" && gh pr edit "$number" --title "$title" --body "$body"); then
   if [[ -n "$armed_on" ]]; then
@@ -467,7 +470,7 @@ if [[ "$action" == updated ]] && ! (cd -- "$repo" && gh pr edit "$number" --titl
     arm_note="it is armed on the record"
   else
     arm_state=unarmed
-    arm_note="it was left unarmed, as the unarmed line above reports, and the next run arms it"
+    arm_note="it was left unarmed, and a run with no other queued entry can arm it"
   fi
   say pull-request-edit "$number arm=$arm_state" \
     "gh could not rewrite pull request $number's title and body to $head; $arm_note; the next re-record rewrites them" >&2

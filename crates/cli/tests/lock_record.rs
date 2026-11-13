@@ -244,7 +244,7 @@ case \"$1 $2\" in
     case \"$*\" in
       *'mergeQueue(branch'*)
         [ \"$GH_FAIL\" != queue ] || { echo 'gh stub: queue refused' >&2; exit 1; }
-        printf '{\"data\":{\"repository\":{\"mergeQueue\":{\"entries\":{\"totalCount\":%s}}}}}\\n' \"${GH_QUEUED:-0}\"; exit 0 ;;
+        printf '{\"data\":{\"repository\":{\"mergeQueue\":{\"entries\":{\"totalCount\":%s,\"nodes\":%s}}}}}\\n' \"${GH_QUEUED:-0}\" \"${GH_QUEUE_NODES:-[]}\"; exit 0 ;;
       *isInMergeQueue*)
         [ \"$GH_FAIL\" != state ] || { echo 'gh stub: state refused' >&2; exit 1; }
         if [ -f \"$GH_STATE/armed\" ]; then a=true; else a=false; fi
@@ -984,15 +984,12 @@ fn assert_landed(world: &World, head: &str, before: &str, output: &str) {
             .any(|line| line.starts_with("land-token ") || line.starts_with("land-env ")),
         "{tokens}"
     );
-    let queue: Vec<&str> = tokens
+    let queue = tokens
         .lines()
-        .filter(|line| line.contains("mergeQueue"))
-        .collect();
-    assert!(!queue.is_empty(), "{tokens}");
-    assert!(
-        queue.iter().all(|line| line.starts_with("lanes-token ")),
-        "{tokens}"
-    );
+        .rev()
+        .find(|line| line.contains("mergeQueue"))
+        .unwrap_or_else(|| panic!("no queue read: {tokens}"));
+    assert!(queue.starts_with("lanes-token "), "{tokens}");
     let pushes = world.pushes();
     let landing_push: Vec<&str> = pushes
         .lines()
@@ -1062,6 +1059,99 @@ fn a_landed_record_closes_the_open_rolling_pull_request() {
     assert_eq!(world.rolling_head(), rolling, "{output}");
     assert!(!world.gh_state.join("open").exists(), "{output}");
     world.fresh_clone_verifies_clean();
+}
+
+/// Queue reads can still contain this run's own rolling entry. It must
+/// neither hold up landing nor hide another entry. A busy update stays
+/// unarmed on a repeat run, then a later merged head lands its current record.
+#[test]
+#[allow(clippy::expect_used)]
+fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
+    for (count, nodes) in [
+        (1, r#"[{"pullRequest":{"number":41}}]"#),
+        (
+            2,
+            r#"[{"pullRequest":{"number":41}},{"pullRequest":{"number":42}}]"#,
+        ),
+    ] {
+        let world = world();
+        world.branch("a", "ship");
+        world.branch("b", "roll");
+        assert!(world.queue_merge("a").status.success());
+        assert!(world.lock_record().status.success());
+        write(&world.gh_state.join("queued"), "");
+        assert!(world.queue_merge("b").status.success());
+        let head = world.main_head();
+        let before = world.gh_log();
+        let count = count.to_string();
+        let busy = [
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_TOKEN", "land-token"),
+            ("GH_QUEUED", count.as_str()),
+            ("GH_QUEUE_NODES", nodes),
+        ];
+        let run = world.lock_record_with("", &busy);
+        let output = said(&run);
+        assert_eq!(run.status.code(), Some(0), "{output}");
+        if count == "1" {
+            assert_landed(&world, &head, &before, &output);
+            assert!(!world.gh_state.join("open").exists(), "{output}");
+            continue;
+        }
+        assert!(
+            output.contains("lock-record: land-skipped=queued"),
+            "{output}"
+        );
+        assert!(
+            output.contains("lock-record: pull-request=41 action=updated"),
+            "{output}"
+        );
+        let log = world.gh_log();
+        let asked = log.strip_prefix(&before).expect("log prefix");
+        assert!(asked.contains("dequeuePullRequest"), "{asked}");
+        assert!(asked.contains("pr edit 41"), "{asked}");
+        assert!(!asked.contains("pr merge"), "{asked}");
+        assert!(!world.gh_state.join("armed").exists(), "{output}");
+        assert_eq!(world.origin_main(), head, "{output}");
+        let before = world.gh_log();
+        git_ok(&world.home, &world.main, &["checkout", "-q", "main"]);
+        let repeated = world.lock_record_with("", &busy);
+        let output = said(&repeated);
+        assert_eq!(repeated.status.code(), Some(0), "{output}");
+        assert!(output.contains("lock-record: rolling-current="), "{output}");
+        let log = world.gh_log();
+        let asked = log.strip_prefix(&before).expect("log prefix");
+        assert!(!asked.contains("pr merge"), "{asked}");
+        assert!(!asked.contains("pr edit"), "{asked}");
+        assert!(!world.gh_state.join("armed").exists(), "{output}");
+        world.branch("c", "ship");
+        assert!(world.queue_merge("c").status.success());
+        let head = world.main_head();
+        let before = world.gh_log();
+        let landed = world.lock_record_with("", ADMITTED);
+        let output = said(&landed);
+        assert_eq!(landed.status.code(), Some(0), "{output}");
+        assert_landed(&world, &head, &before, &output);
+        assert!(!world.gh_state.join("open").exists(), "{output}");
+        world.fresh_clone_verifies_clean();
+    }
+}
+
+/// Restoring the unconditional arm must make the busy-queue guarantee fail.
+#[test]
+#[allow(clippy::expect_used)]
+fn a_busy_queue_arm_control_reaches_the_arm() {
+    let row = LANDING_ROWS
+        .iter()
+        .find(|row| row.name == "queue-busy")
+        .expect("busy row");
+    let (world, _, run) = row.run(Some((
+        "if [[ \"$land_check\" != skipped:queued ]]; then arm \"$number\" \"$recorded\"; fi",
+        "arm \"$number\" \"$recorded\"",
+    )));
+    assert_eq!(run.status.code(), Some(0), "{}", said(&run));
+    assert!(world.gh_log().contains("pr merge 41"));
+    assert!(world.gh_state.join("armed").exists());
 }
 
 /// One run the landing reporter answers: `GH_FAIL`, the `gh` stub's
@@ -1226,7 +1316,7 @@ fn script_copy(world: &World, edits: &[(&str, &str)]) -> PathBuf {
 /// `esac`.
 #[allow(clippy::expect_used)]
 fn reporter_arms(source: &str) -> Vec<(String, String)> {
-    let start = "land_check_run\ncase \"$land_check\" in\n";
+    let start = "case \"$land_check\" in\n";
     assert_eq!(
         source.matches(start).count(),
         1,
@@ -1306,7 +1396,14 @@ fn a_landing_precondition_the_run_does_not_meet_says_its_line() {
             "{}: {pushes}",
             row.name
         );
-        if row.code == 0 {
+        if row.name == "queue-busy" {
+            assert!(
+                output.contains("lock-record: pull-request=41 action=opened"),
+                "{output}"
+            );
+            assert!(!world.gh_log().contains("pr merge"), "{output}");
+            assert!(!world.gh_state.join("armed").exists(), "{output}");
+        } else if row.code == 0 {
             assert_recorded_and_opened(&world, &output, 41);
         } else {
             assert!(
@@ -1554,7 +1651,7 @@ fn a_merge_that_moves_no_record_leaves_the_open_rolling_pull_request_untouched()
     assert!(output.contains("lock-record: armed=already\n"), "{output}");
     let asked = world.gh_log();
     let asked = asked.strip_prefix(&before).unwrap_or(&asked);
-    assert_eq!(asked.lines().count(), 4, "{asked}");
+    assert!(!asked.contains("pr merge"), "{asked}");
 
     // The same, with the arm gone (a cancelled run, or a queue removal) and
     // GitHub a read behind on the pull request's head: the stand-down reads
