@@ -161,6 +161,10 @@ name = "turnend_model"
 path = "../tests/rust/turnend_model.rs"
 
 [[test]]
+name = "lane_model"
+path = "../tests/rust/lane_model.rs"
+
+[[test]]
 name = "tier"
 path = "../tests/rust/tier.rs"
 

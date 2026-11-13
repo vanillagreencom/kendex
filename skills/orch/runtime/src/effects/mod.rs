@@ -54,6 +54,7 @@
 
 mod close;
 mod coverage;
+pub mod lane_model;
 #[allow(
     clippy::disallowed_methods,
     reason = "the lane operation is orch's one opener of the engine's handle and the owner of a close's worktree, validation and lane store acts"
@@ -263,7 +264,9 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::RecordQueueWatch(_)
         | Request::RecordPush(_)
         | Request::PruneRound(_)
-        | Request::RecordQaDecision(_) => false,
+        | Request::RecordQaDecision(_)
+        | Request::RecoverLaneModel(_)
+        | Request::StopModelPredecessor(_) => false,
     }
 }
 
@@ -389,7 +392,9 @@ fn live_effect(report: &Report) -> Option<&Effect> {
         | Report::AdmitPaths(_)
         | Report::PruneRecords(_)
         | Report::Validate(_)
-        | Report::RecordQueueWatch(_) => return None,
+        | Report::RecordQueueWatch(_)
+        | Report::RecoverLaneModel(_)
+        | Report::StopModelPredecessor(_) => return None,
     })
 }
 
@@ -461,7 +466,9 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::RecordQueueWatch(_)
                     | Request::RecordPush(_)
                     | Request::PruneRound(_)
-                    | Request::RecordQaDecision(_) => {
+                    | Request::RecordQaDecision(_)
+                    | Request::RecoverLaneModel(_)
+                    | Request::StopModelPredecessor(_) => {
                         unreachable!("a request without a live effect reports no effect")
                     }
                 };
@@ -516,7 +523,9 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::RecordQueueWatch(_)
         | Request::RecordPush(_)
         | Request::PruneRound(_)
-        | Request::RecordQaDecision(_) => {
+        | Request::RecordQaDecision(_)
+        | Request::RecoverLaneModel(_)
+        | Request::StopModelPredecessor(_) => {
             unreachable!("a request without a live effect reports no effect")
         }
     }?;
@@ -884,7 +893,9 @@ fn hand_over_request(request: &Request) -> Option<agent_runtime::controller::tra
         | Request::RecordQueueWatch(_)
         | Request::RecordPush(_)
         | Request::PruneRound(_)
-        | Request::RecordQaDecision(_) => None,
+        | Request::RecordQaDecision(_)
+        | Request::RecoverLaneModel(_)
+        | Request::StopModelPredecessor(_) => None,
     }
 }
 

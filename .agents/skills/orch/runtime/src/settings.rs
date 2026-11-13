@@ -215,6 +215,10 @@ pub const HANDOFF_AGENT_RESERVE_KEY: &str = "ORCH_HANDOFF_AGENT_RESERVE_TOKENS";
 /// The headroom percent of a lane's account its turn end hands off at.
 pub const HANDOFF_HEADROOM_PCT_KEY: &str = "ORCH_HANDOFF_HEADROOM_PCT";
 const DEFAULT_HANDOFF_HEADROOM_PCT: u32 = 3;
+/// The model recoveries a lane is relaunched by since its last reset; the
+/// one that would reach it is refused and logged instead.
+pub const MODEL_RECOVERY_LIMIT_KEY: &str = "ORCH_MODEL_RECOVERY_LIMIT";
+const DEFAULT_MODEL_RECOVERY_LIMIT: u32 = 3;
 const DEFAULT_OVERSEER_WALL_MINUTES: u32 = 20;
 const DEFAULT_HANDOFF_CONTEXT_PCT: u32 = 90;
 // The provider's account keys.
@@ -299,6 +303,7 @@ const READ_KEYS: &[&str] = &[
     HANDOFF_CONTEXT_PCT_KEY,
     HANDOFF_AGENT_RESERVE_KEY,
     HANDOFF_HEADROOM_PCT_KEY,
+    MODEL_RECOVERY_LIMIT_KEY,
     WATCH_TAIL_LINES_KEY,
     WATCH_PREPARE_SECS_KEY,
     DIRECTIVE_UNREAD_SECS_KEY,
@@ -530,6 +535,7 @@ pub struct Settings {
     pub agent_runtime: PathBuf,
     /// The controller's own marks.
     pub marks: MarkSettings,
+    pub model_recovery_limit: Judged<u32>,
     pub lane_cap: Judged<u32>,
     pub cloud_lane_cap: Judged<u32>,
     /// The claim store under the watch's state directory, whose parent its
@@ -1050,6 +1056,7 @@ pub fn load(
         worktree_cli,
         agent_runtime,
         marks,
+        model_recovery_limit: count(MODEL_RECOVERY_LIMIT_KEY, DEFAULT_MODEL_RECOVERY_LIMIT),
         lane_cap,
         cloud_lane_cap,
         claim_store,

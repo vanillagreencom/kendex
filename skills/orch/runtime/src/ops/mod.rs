@@ -32,6 +32,7 @@ pub mod copilot_wait;
 pub mod cycle;
 mod item;
 mod lane;
+pub mod lane_model;
 pub mod mail;
 mod occupancy;
 pub mod proof;
@@ -183,6 +184,12 @@ pub enum Request {
     /// The review's QA routing; the `qa` module runs it, since the diff
     /// reads come before its write.
     RecordQaDecision(qa::RecordQaDecision),
+    /// A fleet lane's model recovery; `effects::lane_model` runs it, since
+    /// its claim comes before the job it starts and the job's marks.
+    RecoverLaneModel(Box<lane_model::RecoverLaneModel>),
+    /// A hosted lane's predecessor stop; `effects::lane_model` runs it,
+    /// since its stop comes before the failure it keeps.
+    StopModelPredecessor(Box<lane_model::StopModelPredecessor>),
 }
 
 impl Request {
@@ -224,6 +231,8 @@ impl Request {
             Request::RecordPush(_) => "record-push",
             Request::PruneRound(_) => "prune-round",
             Request::RecordQaDecision(_) => "record-qa-decision",
+            Request::RecoverLaneModel(_) => "recover-lane-model",
+            Request::StopModelPredecessor(_) => "stop-model-predecessor",
         }
     }
 
@@ -245,7 +254,8 @@ impl Request {
             | Request::RecordQueueWatch(_)
             | Request::RecordPush(_)
             | Request::PruneRound(_)
-            | Request::RecordQaDecision(_) => Kind::Item,
+            | Request::RecordQaDecision(_)
+            | Request::StopModelPredecessor(_) => Kind::Item,
             Request::LaunchLane(_)
             | Request::CloseLane(_)
             | Request::AdoptSession(_)
@@ -265,7 +275,8 @@ impl Request {
             | Request::RecordDirectiveSend(_)
             | Request::RecordWallPauses(_)
             | Request::AdmitPaths(_)
-            | Request::PruneRecords(_) => Kind::Fleet,
+            | Request::PruneRecords(_)
+            | Request::RecoverLaneModel(_) => Kind::Fleet,
         }
     }
 }
@@ -359,6 +370,8 @@ pub enum Report {
     /// The validation run's step reports, tagged by `step`.
     Validate(Box<validate::Validated>),
     RecordQueueWatch(queue_watch::QueueWatchRecorded),
+    RecoverLaneModel(Box<lane_model::RecoveryRecorded>),
+    StopModelPredecessor(Box<lane_model::StopFailureRecorded>),
 }
 
 /// What `apply` returns: the report of the transition the write committed.
@@ -413,6 +426,9 @@ fn reread_on_record_changed(request: &Request) -> bool {
         Request::RecordLaneProgress(r) => r.while_owner.is_some(),
         Request::RecordOutcome(r) => r.while_owner.is_some(),
         Request::ClaimIntent(_) => true,
+        // A claim and a mark judge the record they commit against, so a
+        // snapshot another writer moved is judged again.
+        Request::RecoverLaneModel(_) | Request::StopModelPredecessor(_) => true,
         Request::LaunchLane(_)
         | Request::AdoptSession(_)
         | Request::BeginRound(_)
@@ -562,10 +578,18 @@ pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<(
             Ok(())
         }
         Request::CloseOwnedResources(_) => effect(false, false),
+        // The claim is spent where the replacement's launch could not run:
+        // the limit it counts against and every key that launch reads.
+        Request::RecoverLaneModel(_) => {
+            settings.model_recovery_limit.get()?;
+            effect(false, false)?;
+            settings.lane_output.get()?;
+            Ok(())
+        }
         Request::RequestTransfer(_) => effect(true, true),
         Request::StartController(_) => effect(true, false),
         Request::StopController(_) => effect(false, true),
-        Request::CloseLane(_) => {
+        Request::CloseLane(_) | Request::StopModelPredecessor(_) => {
             settings.close_grace.get()?;
             Ok(())
         }
@@ -675,6 +699,9 @@ pub fn item_transition(
             path, doc, r, env,
         )?))),
         Request::RecordQueueWatch(r) => Ok(Report::RecordQueueWatch(queue_watch::record(doc, r)?)),
+        Request::StopModelPredecessor(r) => Ok(Report::StopModelPredecessor(Box::new(
+            lane_model::record_stop_failure(doc, r, env)?,
+        ))),
         Request::VerifyHead(_)
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
@@ -701,7 +728,8 @@ pub fn item_transition(
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
         | Request::CloseLane(_)
-        | Request::PruneRecords(_) => Err(kind_error(request, path, Kind::Item)),
+        | Request::PruneRecords(_)
+        | Request::RecoverLaneModel(_) => Err(kind_error(request, path, Kind::Item)),
     }
 }
 
@@ -789,6 +817,9 @@ pub fn fleet_transition(
         Request::PruneRecords(r) => Ok(Report::PruneRecords(prune::prune_records(
             path, doc, r, env,
         )?)),
+        Request::RecoverLaneModel(r) => Ok(Report::RecoverLaneModel(Box::new(
+            lane_model::recover_lane_model(path, doc, r, env)?,
+        ))),
         Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
         | Request::AcceptResult(_)
@@ -804,7 +835,8 @@ pub fn fleet_transition(
         | Request::RecordQueueWatch(_)
         | Request::RecordPush(_)
         | Request::PruneRound(_)
-        | Request::RecordQaDecision(_) => Err(kind_error(request, path, Kind::Fleet)),
+        | Request::RecordQaDecision(_)
+        | Request::StopModelPredecessor(_) => Err(kind_error(request, path, Kind::Fleet)),
     }
 }
 

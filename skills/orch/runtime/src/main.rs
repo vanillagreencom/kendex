@@ -1612,6 +1612,18 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             if let Request::RecordQaDecision(r) = &request {
                 return ops::qa::run(&path, r, &settings, locking);
             }
+            // A lane's model recovery claims, composes and hands its relaunch
+            // to a detached job, or writes that job's mark; a hosted lane's
+            // predecessor stop hands the stop to a job, or is that job. Each
+            // through its one entry, the turn end's too.
+            if let Request::RecoverLaneModel(r) = &request {
+                return effects::lane_model::run(&path, r, &settings, &env, locking);
+            }
+            if let Request::StopModelPredecessor(r) = &request {
+                return effects::lane_model::stop_predecessor_run(
+                    &path, r, &settings, &env, locking,
+                );
+            }
             // A verification reads GitHub first and makes its one
             // transition through record-verification itself.
             if let Request::VerifyHead(r) = &request {

@@ -905,6 +905,43 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     );
 }
 
+/// A walled lane whose record names an empty session is relaunched under
+/// the watch's session, as one whose record names none.
+#[test]
+fn a_walled_lanes_relaunch_under_an_empty_recorded_session_runs_under_the_watchs() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+    let mut record = relaunchable(
+        lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        ),
+        dir.path(),
+    );
+    record["recovery"]["session"] = json!("");
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+    let first = driver.pass(&state);
+    assert_eq!(
+        lines(&first).first().map(String::as_str),
+        Some("EVENT lane-relaunched KEN-4 lane=/home/me/.bclaude from=/home/me/.eclaude"),
+        "{:?}",
+        lines(&first)
+    );
+    let started = driver.relaunches.borrow();
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0].session, server.session);
+}
+
 /// A `claude` the launch rows start that hits a weekly wall: it draws
 /// Claude's composer, echoes the first turn it reads, then draws the banner
 /// and the composer again and holds; the path to run it as.

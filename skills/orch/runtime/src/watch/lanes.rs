@@ -1906,31 +1906,49 @@ fn recorded_permission(lane: &Lane, harness: Harness) -> Result<Option<String>, 
     Ok(None)
 }
 
+/// What a relaunch from a lane record is composed with: the files' `stem`
+/// beside the state, the account it lands on and the one it excludes, where
+/// either is named, the brief it starts on and the `no_landing` ground the
+/// close that retires the predecessor carries.
+pub(crate) struct Composition<'a> {
+    pub(crate) stem: &'a str,
+    pub(crate) account: Option<&'a str>,
+    pub(crate) exclude: Option<&'a str>,
+    pub(crate) brief: fn(&Lane, Harness) -> Result<String, String>,
+    pub(crate) ground: Value,
+}
+
+/// A composed relaunch: the checkout it runs from, the tmux session an
+/// earlier launcher recorded, and its two request files in the order the
+/// runtime's entry applies them.
+pub(crate) struct Composed {
+    pub(crate) cwd: PathBuf,
+    pub(crate) session: Option<String>,
+    pub(crate) close: PathBuf,
+    pub(crate) launch: PathBuf,
+}
+
 /// The record's own relaunch as two requests the runtime's entry applies in
 /// order from the lane's checkout: the predecessor retired through the
-/// close route on the `no-landing` ground (its harness idle under its
-/// recorded identity, the item's work kept), then `launch-lane` on the
-/// picked account with the record's harness, model, effort, host, tracker
-/// and repository, its refresh word and permission choice
-/// ([`recorded_permission`]), the spent account excluded and the start
-/// brief. The checkout is the one the launch ran from
-/// (`checkout` on a hosted record, whose `mail_root` is its host's; the
-/// `recovery.cwd` an earlier launcher recorded; else `mail_root`). A
+/// close route on the composition's `no-landing` ground (its harness idle
+/// under its recorded identity, the item's work kept), then `launch-lane`
+/// with the record's harness, model, effort, host, tracker and repository,
+/// its refresh word and permission choice ([`recorded_permission`]), the
+/// composition's accounts and brief. The checkout is the one the launch ran
+/// from (`checkout` on a hosted record, whose `mail_root` is its host's;
+/// the `recovery.cwd` an earlier launcher recorded; else `mail_root`). A
 /// record whose checkout is gone, or whose provider is spelled relative to
 /// nothing, refuses before anything is stopped. `Err` is the cause word.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the wall relaunch's request and brief files, the watch's own files beside the state, written before the detached relaunch starts"
+    reason = "a relaunch's request and brief files, beside the state, written before the detached relaunch starts"
 )]
-pub(crate) fn relaunch_request(
+pub(crate) fn compose_relaunch(
     lane: &Lane,
     harness: Harness,
-    to: &str,
-    spent: &str,
+    how: &Composition,
     state_dir: &Path,
-    scripts: &Path,
-    session: Option<&str>,
-) -> Result<Recovery, String> {
+) -> Result<Composed, String> {
     let recovery = lane.extra.get("recovery").and_then(Value::as_object);
     let field = |key: &str| recovery.and_then(|r| r.get(key));
     let cwd = lane
@@ -1955,17 +1973,17 @@ pub(crate) fn relaunch_request(
         .unwrap_or(false);
     let permission = recorded_permission(lane, harness)?;
     let stem = state_dir
-        .join(format!("wall-relaunch-{}", lane.item))
+        .join(format!("{}-{}", how.stem, lane.item))
         .display()
         .to_string();
     let brief = PathBuf::from(format!("{stem}.md"));
-    std::fs::write(&brief, start_brief(lane, harness)?)
+    std::fs::write(&brief, (how.brief)(lane, harness)?)
         .map_err(|e| format!("brief-unwritten path={} cause={e}", brief.display()))?;
     let close = PathBuf::from(format!("{stem}.close.json"));
     let retire = json!({
         "op": "close-owned-resources",
         "item": lane.item,
-        "no_landing": {"reason": "usage-limit", "source": "wall-route"},
+        "no_landing": how.ground.clone(),
     });
     std::fs::write(&close, retire.to_string())
         .map_err(|e| format!("request-unwritten path={} cause={e}", close.display()))?;
@@ -1974,11 +1992,14 @@ pub(crate) fn relaunch_request(
         "item": lane.item,
         "harness": harness.name(),
         "mail_root": cwd.display().to_string(),
-        "account": to,
-        "exclude_account": spent,
         "refresh": refresh,
         "brief_file": brief.display().to_string(),
     });
+    for (key, value) in [("account", how.account), ("exclude_account", how.exclude)] {
+        if let Some(value) = value {
+            request[key] = json!(value);
+        }
+    }
     for (key, value) in [
         ("tracker", &lane.tracker),
         ("repo", &lane.repo),
@@ -1997,6 +2018,47 @@ pub(crate) fn relaunch_request(
     let file = PathBuf::from(format!("{stem}.json"));
     std::fs::write(&file, request.to_string())
         .map_err(|e| format!("request-unwritten path={} cause={e}", file.display()))?;
+    Ok(Composed {
+        cwd,
+        session: field("session")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
+        close,
+        launch: file,
+    })
+}
+
+/// The wall's relaunch: the record's own relaunch ([`compose_relaunch`])
+/// on the picked account with the spent account excluded, the start brief
+/// and the `usage-limit` ground, run as one shell line; the session is the
+/// one an earlier launcher recorded, else the watch's.
+pub(crate) fn relaunch_request(
+    lane: &Lane,
+    harness: Harness,
+    to: &str,
+    spent: &str,
+    state_dir: &Path,
+    scripts: &Path,
+    session: Option<&str>,
+) -> Result<Recovery, String> {
+    let Composed {
+        cwd,
+        session: recorded,
+        close,
+        launch: file,
+    } = compose_relaunch(
+        lane,
+        harness,
+        &Composition {
+            stem: "wall-relaunch",
+            account: Some(to),
+            exclude: Some(spent),
+            brief: start_brief,
+            ground: json!({"reason": "usage-limit", "source": "wall-route"}),
+        },
+        state_dir,
+    )?;
     // The two requests in order through the one shell word, each exiting by
     // its effect's outcome, never by its admission alone: the launch is
     // asked only once the close's effect did not fail (an unconfirmed close
@@ -2016,12 +2078,9 @@ pub(crate) fn relaunch_request(
     ];
     Ok(Recovery {
         cwd,
-        session: field("session")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .or(session)
-            .unwrap_or("")
-            .to_owned(),
+        session: recorded
+            .or_else(|| session.map(str::to_owned))
+            .unwrap_or_default(),
         args,
     })
 }
