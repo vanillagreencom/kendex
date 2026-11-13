@@ -890,14 +890,30 @@ fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
     );
 }
 
-/// An overseer's entry the judge could not judge, a provider nothing bills
-/// or a pool nobody measured, is passed over with the judge's word and
-/// listed unread, as a lane's is, and the walk goes on to its next entry.
+#[test]
+fn an_overseer_entry_spending_no_account_the_judge_measures_is_chosen_unpicked() {
+    let mut pi = World::new(&[(
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+        "pi:openai/gpt-5:high",
+    )]);
+    pi.plant_listing(&[codex("codex", 20)]);
+    let result = pi.answered(&["--controller", "--source-harness", "pi"]);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("pi:openai/gpt-5:high"),
+        "{result}"
+    );
+    assert_eq!(result["chosen"]["account"], Value::Null);
+}
+
+/// An overseer's entry on a pool nobody measured is passed over with the
+/// judge's word and listed unread, as a lane's is, and the walk goes on to
+/// its next entry.
 #[test]
 fn an_overseer_entry_the_judge_could_not_judge_is_skipped_and_the_walk_goes_on() {
     let mut pi = World::new(&[(
         "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-        "pi:openai/gpt-5:high,pi:github-copilot/gpt-6.1-sol:high,pi:pi-claude/claude-fable-5-1:high",
+        "pi:github-copilot/gpt-6.1-sol:high,pi:pi-claude/claude-fable-5-1:high",
     )]);
     pi.plant_listing(&[measured("aclaude", 20, 5)]);
     let result = pi.answered(&["--controller", "--source-harness", "pi"]);
@@ -909,14 +925,11 @@ fn an_overseer_entry_the_judge_could_not_judge_is_skipped_and_the_walk_goes_on()
     assert_eq!(result["chosen"]["account"], json!(pi.dir("aclaude")));
     assert_eq!(
         skipped(&result),
-        [
-            "pi:openai/gpt-5:high unmeasured none",
-            "pi:github-copilot/gpt-6.1-sol:high unmeasured none"
-        ]
+        ["pi:github-copilot/gpt-6.1-sol:high unmeasured none"]
     );
     assert_eq!(
         strings(&result["unread"]),
-        ["pi:openai/gpt-5:high", "pi:github-copilot/gpt-6.1-sol:high"]
+        ["pi:github-copilot/gpt-6.1-sol:high"]
     );
 }
 
@@ -1214,12 +1227,9 @@ fn a_walk_that_judged_no_entry_for_want_of_evidence_refuses_by_name() {
             pair("harness", "codex")
         ]
     );
-    let mut unbilled = World::new(&[(
-        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-        "pi:openai/gpt-5:high",
-    )]);
+    let mut unbilled = World::new(&[(PREFERENCE, "pi:openai/gpt-5:high")]);
     unbilled.plant_listing(&[measured("aclaude", 20, 5)]);
-    let (key, fields) = unbilled.refused(&["--controller", "--source-harness", "pi"]);
+    let (key, fields) = unbilled.refused(&args);
     assert_eq!(key, "account-unjudged");
     assert_eq!(
         fields,

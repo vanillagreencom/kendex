@@ -862,6 +862,13 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 kept_unmeasured,
             }))
         };
+        if req.scope == Scope::Overseer && billed.is_none() {
+            // An entry spending no account the judge measures: nothing to
+            // pick or refuse and no provider to read for it, its first turn
+            // the one reading of its room.
+            walked.answer = chosen(None, None, None, false);
+            return Ok(walked);
+        }
         // The host the entry is judged under, as the caller reads it.
         let (judge_host, launch) = match hosted(req.scope, host.as_deref(), harness)? {
             Hosted::Judge { host, launch } => (host, launch),
@@ -919,8 +926,9 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             PickAnswer::Lane(j) => Some((j.row.config_dir.clone(), j.record(), false)),
             PickAnswer::Unjudged { cause } => return Err(unjudged(&text, "pick", cause)),
             // An entry the judge could not judge (no record, unmeasured, a
-            // provider nothing bills, no repository access) is no answer of
-            // room in either walk: carried as unread, and the walk moves on.
+            // lane's provider nothing bills, no repository access) is no
+            // answer of room in either walk: carried as unread, and the walk
+            // moves on.
             PickAnswer::NoRecord
             | PickAnswer::Unmeasured(_)
             | PickAnswer::ProviderUnmeasured { .. }
