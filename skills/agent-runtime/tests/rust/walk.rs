@@ -437,17 +437,6 @@ fn an_explicit_model_is_taken_as_named_and_a_class_resolves_through_kendex() {
             json!([]),
             "tier-model claude --model standard --json",
         ),
-        (
-            "codex:standard:high",
-            "codex",
-            "",
-            json!("standard"),
-            json!(
-                "model-resolution: requested=standard selected=native-default causes=model-availability-unknown source=orch-launch detail=model list interface is unavailable"
-            ),
-            json!([]),
-            "tier-model codex --model standard --json --runtime-context-json",
-        ),
     ] {
         let mut world = World::new(&[(PREFERENCE, preference)]);
         world.plant_listing(&[measured("aclaude", 20, 5), codex("codex", 20)]);
@@ -667,7 +656,7 @@ fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_
 fn a_succession_walk_moves_past_a_no_candidate_entry_and_ends_where_every_entry_refused() {
     let mut world = World::new(&[(
         "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-        "claude:standard:high,codex:standard:high",
+        "claude:standard:high,codex:gpt-6.1-sol:high",
     )]);
     world.plant_listing(&[
         measured("aclaude", 96, 5),
@@ -678,10 +667,9 @@ fn a_succession_walk_moves_past_a_no_candidate_entry_and_ends_where_every_entry_
     let args = ["--controller", "--source-harness", "claude"];
     let result = world.answered(&args);
     assert_eq!(result["answer"], json!("lane"), "{result}");
-    assert_eq!(result["chosen"]["entry"], json!("codex:standard:high"));
+    assert_eq!(result["chosen"]["entry"], json!("codex:gpt-6.1-sol:high"));
     assert_eq!(result["chosen"]["account"], json!(world.dir("codex")));
-    assert_eq!(result["chosen"]["model"], json!(""));
-    assert_eq!(result["chosen"]["class"], json!("standard"));
+    assert_eq!(result["chosen"]["model"], json!("gpt-6.1-sol"));
     assert_eq!(
         skipped(&result),
         [
@@ -706,8 +694,8 @@ fn a_succession_walk_moves_past_a_no_candidate_entry_and_ends_where_every_entry_
         [
             format!("claude:standard:high walled {}", world.dir("aclaude")),
             format!("claude:standard:high unmeasured {}", world.dir("bclaude")),
-            format!("codex:standard:high walled {}", world.dir("codex")),
-            format!("codex:standard:high walled {}", world.dir("1codex"))
+            format!("codex:gpt-6.1-sol:high walled {}", world.dir("codex")),
+            format!("codex:gpt-6.1-sol:high walled {}", world.dir("1codex"))
         ]
     );
     assert_eq!(result["walled"], json!(3));
@@ -719,7 +707,7 @@ fn the_overseer_walk_judges_at_the_trigger_and_a_seat_as_an_ordinary_account() {
     let mut world = World::new(&[
         (
             "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-            "claude:standard:high,codex:standard:high",
+            "claude:standard:high,codex:gpt-6.1-sol:high",
         ),
         (PREFERENCE, "claude:fable:high,codex:gpt-6.1-sol:high"),
         ("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "50"),
@@ -749,7 +737,7 @@ fn the_overseer_walk_judges_at_the_trigger_and_a_seat_as_an_ordinary_account() {
         let result = world.answered(&args);
         assert_eq!(
             result["chosen"]["entry"],
-            json!("codex:standard:high"),
+            json!("codex:gpt-6.1-sol:high"),
             "{trigger:?}: {result}"
         );
         assert_eq!(
@@ -785,7 +773,7 @@ fn the_controller_walk_chooses_no_account_the_owner_excluded() {
     let mut world = World::new(&[
         (
             "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-            "claude:standard:high,codex:standard:high",
+            "claude:standard:high,codex:gpt-6.1-sol:high",
         ),
         ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "aclaude"),
     ]);
@@ -793,7 +781,7 @@ fn the_controller_walk_chooses_no_account_the_owner_excluded() {
     let result = world.answered(&["--controller", "--source-harness", "claude"]);
     assert_eq!(
         result["chosen"]["entry"],
-        json!("codex:standard:high"),
+        json!("codex:gpt-6.1-sol:high"),
         "{result}"
     );
     assert_eq!(skipped(&result), ["claude:standard:high no-candidate none"]);
@@ -883,36 +871,53 @@ fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
     );
     // A judgement handed no words asks the source harness's row alone: a
     // Claude source writes a full bypass, a Pi source none.
-    let mut rows = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "codex:standard:high")]);
+    let mut rows = World::new(&[(
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+        "codex:gpt-6.1-sol:high",
+    )]);
     rows.plant_listing(&[codex("codex", 20)]);
     let result = rows.answered(&["--controller", "--source-harness", "claude"]);
     assert_eq!(
         result["chosen"]["entry"],
-        json!("codex:standard:high"),
+        json!("codex:gpt-6.1-sol:high"),
         "{result}"
     );
     let result = rows.answered(&["--controller", "--source-harness", "pi"]);
     assert_eq!(result["answer"], json!("none"), "{result}");
     assert_eq!(
         skipped(&result),
-        ["codex:standard:high entry-permission-untransferable none"]
+        ["codex:gpt-6.1-sol:high entry-permission-untransferable none"]
     );
 }
 
+/// An overseer's entry the judge could not judge, a provider nothing bills
+/// or a pool nobody measured, is passed over with the judge's word and
+/// listed unread, as a lane's is, and the walk goes on to its next entry.
 #[test]
-fn an_overseer_entry_spending_no_account_the_judge_measures_is_chosen_unpicked() {
+fn an_overseer_entry_the_judge_could_not_judge_is_skipped_and_the_walk_goes_on() {
     let mut pi = World::new(&[(
         "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-        "pi:openai/gpt-5:high",
+        "pi:openai/gpt-5:high,pi:github-copilot/gpt-6.1-sol:high,pi:pi-claude/claude-fable-5-1:high",
     )]);
-    pi.plant_listing(&[codex("codex", 20)]);
+    pi.plant_listing(&[measured("aclaude", 20, 5)]);
     let result = pi.answered(&["--controller", "--source-harness", "pi"]);
     assert_eq!(
         result["chosen"]["entry"],
-        json!("pi:openai/gpt-5:high"),
+        json!("pi:pi-claude/claude-fable-5-1:high"),
         "{result}"
     );
-    assert_eq!(result["chosen"]["account"], Value::Null);
+    assert_eq!(result["chosen"]["account"], json!(pi.dir("aclaude")));
+    assert_eq!(
+        skipped(&result),
+        [
+            "pi:openai/gpt-5:high unmeasured none",
+            "pi:github-copilot/gpt-6.1-sol:high unmeasured none"
+        ]
+    );
+    assert_eq!(
+        strings(&result["unread"]),
+        ["pi:openai/gpt-5:high", "pi:github-copilot/gpt-6.1-sol:high"]
+    );
 }
 
 #[test]
@@ -942,13 +947,13 @@ fn a_kept_caller_entry_is_chosen_on_its_own_lane_without_a_pick() {
     assert_eq!(chosen["account"], json!(world.dir("aclaude")));
     assert_eq!(chosen["kept"], json!(true));
     assert_eq!(chosen["record"], Value::Null);
-    // The default preference's two entries were asked (and refused); the
-    // caller was not.
+    // The default preference's two entries were passed over, its Codex class
+    // with no listed model; the caller was not.
     assert_eq!(
         skipped(&result),
         [
             format!("claude:standard:high walled {lane}"),
-            "codex:standard:high no-candidate none".to_owned()
+            "codex:standard:high class-unverified none".to_owned()
         ]
     );
 }
@@ -1058,6 +1063,197 @@ fn an_unread_hosts_entries_are_passed_over_and_a_walk_judging_none_refuses() {
         ]
     );
     assert_eq!(strings(&result["unread"]), ["claude@vm:fable:high"]);
+}
+
+/// A class kendex leaves on a Codex or Copilot harness's default, where
+/// nothing lists the models the account may run, is passed over by name with
+/// its class and harness, in either walk and as a numeric entry's default
+/// class, and the walk goes on; it holds no `:last` entry back, since no
+/// reading would answer it.
+#[test]
+fn a_class_no_listed_model_verifies_is_skipped_class_unverified_and_the_walk_goes_on() {
+    let lane = ["--source-harness", "claude", "--source-flags", BYPASS];
+    let controller = ["--controller", "--source-harness", "claude"];
+    for (preference, args, entry, word, class, harness) in [
+        (
+            "codex:standard:high,claude:standard:high",
+            &lane[..],
+            "codex:standard:high",
+            "standard",
+            "standard",
+            "codex",
+        ),
+        (
+            "copilot:fast:high,claude:standard:high",
+            &lane[..],
+            "copilot:fast:high",
+            "fast",
+            "fast",
+            "copilot",
+        ),
+        (
+            "codex:standard:high,claude:standard:high:last",
+            &lane[..],
+            "codex:standard:high",
+            "standard",
+            "standard",
+            "codex",
+        ),
+        (
+            "codex:standard:high,claude:standard:high",
+            &controller[..],
+            "codex:standard:high",
+            "standard",
+            "standard",
+            "codex",
+        ),
+        (
+            "codex:2:high,claude:standard:high",
+            &controller[..],
+            "codex:2:high",
+            "standard",
+            "standard",
+            "codex",
+        ),
+    ] {
+        let key = if args.contains(&"--controller") {
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE"
+        } else {
+            PREFERENCE
+        };
+        let mut world = World::new(&[(key, preference)]);
+        world.plant_listing(&[measured("aclaude", 20, 5), codex("codex", 20)]);
+        let result = world.answered(args);
+        assert_eq!(result["answer"], json!("lane"), "{preference}: {result}");
+        let chosen = &result["chosen"];
+        assert_eq!(
+            chosen["entry"],
+            json!(
+                preference
+                    .split(',')
+                    .nth(1)
+                    .unwrap()
+                    .trim_end_matches(":last")
+            ),
+            "{preference}: {result}"
+        );
+        assert_eq!(chosen["model"], json!("opus"), "{preference}");
+        assert_eq!(
+            skipped(&result),
+            [format!("{entry} class-unverified none")],
+            "{preference}"
+        );
+        let row = &result["skipped"][0];
+        assert_eq!(
+            (&row["class"], &row["harness"]),
+            (&json!(class), &json!(harness)),
+            "{preference}"
+        );
+        assert_eq!(result["unread"], json!([]), "{preference}");
+        let calls = world.kendex_calls();
+        assert!(
+            calls[0].starts_with(&format!(
+                "tier-model {harness} --model {word} --json --runtime-context-json"
+            )),
+            "{preference}: {calls:?}"
+        );
+    }
+}
+
+/// A walk that judged no entry because none it reached had evidence, a class
+/// no listed model verifies or a provider nobody here reads, refuses naming
+/// each under its step, where `none` would read as no room; an entry judged
+/// and refused for room keeps `none`, the class skip beside it.
+#[test]
+fn a_walk_that_judged_no_entry_for_want_of_evidence_refuses_by_name() {
+    let args = ["--source-harness", "claude", "--source-flags", BYPASS];
+    let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+    let mut classes = World::new(&[(PREFERENCE, "codex:standard:high,copilot:fast:high")]);
+    classes.plant_listing(&[codex("codex", 20)]);
+    let (key, fields) = classes.refused(&args);
+    assert_eq!(key, "account-unjudged");
+    assert_eq!(
+        fields,
+        [
+            pair("step", "class"),
+            pair("entry", "codex:standard:high"),
+            pair("class", "standard"),
+            pair("harness", "codex"),
+            pair("entry", "copilot:fast:high"),
+            pair("class", "fast"),
+            pair("harness", "copilot")
+        ]
+    );
+    let mut overseer =
+        World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "codex:standard:high")]);
+    overseer.plant_listing(&[codex("codex", 20)]);
+    let (key, fields) = overseer.refused(&["--controller", "--source-harness", "claude"]);
+    assert_eq!(key, "account-unjudged");
+    assert_eq!(
+        fields,
+        [
+            pair("step", "class"),
+            pair("entry", "codex:standard:high"),
+            pair("class", "standard"),
+            pair("harness", "codex")
+        ]
+    );
+    let mut mixed = World::new(&[(PREFERENCE, "claude@vm:fable:high,codex:standard:high")]);
+    mixed.plant_listing(&[measured("aclaude", 10, 5), codex("codex", 20)]);
+    let (key, fields) = mixed.refused(&args);
+    assert_eq!(key, "account-unjudged");
+    assert_eq!(
+        fields,
+        [
+            pair("step", "host"),
+            pair("host", "vm"),
+            pair("cause", "no-provider"),
+            pair("step", "class"),
+            pair("entry", "codex:standard:high"),
+            pair("class", "standard"),
+            pair("harness", "codex")
+        ]
+    );
+    let mut unbilled = World::new(&[(
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+        "pi:openai/gpt-5:high",
+    )]);
+    unbilled.plant_listing(&[measured("aclaude", 20, 5)]);
+    let (key, fields) = unbilled.refused(&["--controller", "--source-harness", "pi"]);
+    assert_eq!(key, "account-unjudged");
+    assert_eq!(
+        fields,
+        [
+            pair("step", "pick"),
+            pair("entry", "pi:openai/gpt-5:high"),
+            pair("cause", "unmeasured")
+        ]
+    );
+    let mut unlisted = World::new(&[(PREFERENCE, "codex:gpt-6.1-sol:high")]);
+    unlisted.plant_listing(&[measured("aclaude", 20, 5)]);
+    let mut named = args.to_vec();
+    named.extend(["--account", "aclaude"]);
+    let (key, fields) = unlisted.refused(&named);
+    assert_eq!(key, "account-unjudged");
+    assert_eq!(
+        fields,
+        [
+            pair("step", "pick"),
+            pair("entry", "codex:gpt-6.1-sol:high"),
+            pair("cause", "no-record")
+        ]
+    );
+    let mut walled = World::new(&[(PREFERENCE, "codex:standard:high,claude:fable:high")]);
+    walled.plant_listing(&[measured("aclaude", 96, 5)]);
+    let result = walled.answered(&args);
+    assert_eq!(result["answer"], json!("none"), "{result}");
+    assert_eq!(
+        skipped(&result),
+        [
+            "codex:standard:high class-unverified none".to_owned(),
+            format!("claude:fable:high walled {}", walled.dir("aclaude"))
+        ]
+    );
 }
 
 /// The pick replies `tests/overseer-walk.sh` plants for the walk it runs,

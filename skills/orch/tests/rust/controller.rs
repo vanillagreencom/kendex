@@ -10664,77 +10664,6 @@ fn an_overseers_walk_under_an_unparsed_line_refuses_naming_the_host_and_the_caus
     }
 }
 
-/// An overseer's entry spending no account the judge measures is chosen
-/// before any provider is asked for it: under a provider nobody can read,
-/// the Pi entry billed to the API before it is passed over with the host
-/// and the cause, and the unbilled Pi entry is the walk's choice.
-#[test]
-fn an_overseers_unbilled_entry_is_chosen_past_an_unread_provider() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let (_, bin, env, work) = walk_world_on(&runner, Some("vm"), &[]);
-    let planted = runner.state_dir().join("accounts");
-    let answers = planted.join("lane-host.json");
-    let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
-    map["vm capabilities"] = json!({"exit": 1, "stderr": "lane-host-fixture: refused\n"});
-    std::fs::write(&answers, map.to_string()).unwrap();
-    runner.tools = Some(bin);
-    runner.env.extend(env);
-    let root = work.join("custom-pi-root");
-    pi_root_marked(&root);
-    runner.env.push((
-        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
-        "pi:anthropic/claude-fable-5-1:high,pi:openrouter/anthropic/claude-fable-5-1:high"
-            .to_owned(),
-    ));
-    let _predecessor = walled_on(&runner, &server, "pi", &work.join("unused"), &root);
-    let mut fleet = runner.fleet();
-    fleet["overseer"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
-    fleet["overseer"].as_object_mut().unwrap().remove("account");
-    runner.write_fleet(&fleet);
-    let pane = fleet["overseer"]["pane"].as_str().unwrap().to_owned();
-    let out = runner.run(&[
-        "successor",
-        "--fleet",
-        "--cwd",
-        &work.display().to_string(),
-        "--predecessor",
-        &pane,
-    ]);
-    let answer = reply(&out);
-    let walk = &answer["result"]["walk"];
-    assert_eq!(
-        walk["chosen"]["entry"], "pi:openrouter/anthropic/claude-fable-5-1:high",
-        "{answer}"
-    );
-    let skipped = walk["skipped"].as_array().unwrap();
-    assert_eq!(skipped.len(), 1, "{answer}");
-    assert_eq!(
-        (
-            &skipped[0]["entry"],
-            &skipped[0]["reason"],
-            &skipped[0]["host"]
-        ),
-        (
-            &json!("pi:anthropic/claude-fable-5-1:high"),
-            &json!("host-unread"),
-            &json!("vm")
-        ),
-        "{answer}"
-    );
-    assert!(
-        skipped[0]["cause"]
-            .as_str()
-            .unwrap()
-            .starts_with("host-capabilities-unread host=vm cause=exit=1 "),
-        "{answer}"
-    );
-    let log = std::fs::read_to_string(planted.join("lane-host.log")).unwrap();
-    assert_eq!(log, "ORCH_LANE_HOST=vm capabilities\n");
-}
-
 #[test]
 fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
     let dir = tempfile::tempdir().unwrap();
@@ -10753,10 +10682,6 @@ fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
     runner
         .env
         .push(("HOME".to_owned(), home.display().to_string()));
-    runner.env.push((
-        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
-        "pi:openrouter/anthropic/claude-fable-5-1:high".to_owned(),
-    ));
     let predecessor = walled_on(&runner, &server, "pi", &work.join("unused"), &root);
     let mut fleet = runner.fleet();
     fleet["overseer"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
@@ -10770,9 +10695,10 @@ fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
         &work.display().to_string(),
         "--predecessor",
         &pane,
+        "--recover",
     ]));
     let result = &answer["result"];
-    assert_eq!(result["walk"]["answer"], "lane", "{answer}");
+    assert_eq!(answer["ok"], true, "{answer}");
     assert!(result["successor"]["account"].is_null(), "{answer}");
     runner.transfer_started_env(
         &json!({
@@ -10923,7 +10849,7 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
         (
             "context, caller at its trigger",
             vec![measured_account("eclaude", 97), codex],
-            None,
+            Some("claude:standard:high,codex:gpt-6.1-sol:high"),
             "950000:1000000",
             "ccodex",
         ),

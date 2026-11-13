@@ -220,6 +220,9 @@ struct Classified {
     warning: Option<String>,
     /// Claude's answer named an old exact id.
     old_id: bool,
+    /// A class kendex left on the harness default because nothing lists the
+    /// models the account may run: no model the launch would run is known.
+    unverified: bool,
 }
 
 /// The class of `word` on `harness` through `kendex tier-model`, the one
@@ -295,11 +298,19 @@ fn classify(
     }
     let class = answer["request"]["class"].as_str().map(str::to_owned);
     if !managed {
+        let unverified = answer["resolution"]["tag"] == json!("harness-default")
+            && answer["resolution"]["diagnostics"]
+                .as_array()
+                .is_some_and(|d| {
+                    d.iter()
+                        .any(|c| c["code"] == json!("model-availability-unknown"))
+                });
         return Ok(Classified {
             model: String::new(),
             class,
             warning,
             old_id: false,
+            unverified,
         });
     }
     let selector = answer["resolution"]["native_selector"]
@@ -311,6 +322,7 @@ fn classify(
         class,
         warning,
         old_id: false,
+        unverified: false,
     })
 }
 
@@ -326,6 +338,7 @@ struct Resolved {
     /// A numeric entry running the caller's own model, spelled for the
     /// caller's harness.
     callers_model: bool,
+    unverified: bool,
 }
 
 /// The harness's entry of the default overseer preference, whose class a
@@ -349,6 +362,7 @@ fn resolve(entry: &Entry, caller_model: &str) -> std::result::Result<Resolved, S
                 .old_id
                 .then(|| json!({"entry": entry.text, "form": "model-class"})),
             callers_model: false,
+            unverified: read.unverified,
         });
     }
     let form = "harness:model:effort";
@@ -365,6 +379,7 @@ fn resolve(entry: &Entry, caller_model: &str) -> std::result::Result<Resolved, S
                 "replacement": format!("{}:{class}:{}", entry.harness, entry.effort),
             })),
             callers_model: false,
+            unverified: read.unverified,
         });
     }
     let read = classify(entry.harness, caller_model, true)?;
@@ -387,6 +402,7 @@ fn resolve(entry: &Entry, caller_model: &str) -> std::result::Result<Resolved, S
             "model": if caller_model.is_empty() { "harness-default" } else { caller_model },
         })),
         callers_model: !caller_model.is_empty(),
+        unverified: false,
     })
 }
 
@@ -649,8 +665,10 @@ pub type PickUnder<'a> = dyn FnMut(&PickRequest, Option<&str>) -> PickAnswer + '
 /// The walk over the preference, the caller's entry last where one is
 /// named. Each entry's account is the judge's answer under the entry's
 /// host; an answer the judge could not give ends the walk as a refusal, and
-/// so does a walk that judged no entry because every provider it asked
-/// went unread: that is no answer of room, and `none` would read as one.
+/// so does a walk that judged no entry because the entries it reached had
+/// no evidence (a provider unread, a class no listed model verifies, an
+/// account the judge could not judge): that is no answer of room, and
+/// `none` would read as one.
 pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Result<Walked> {
     let accounts = settings.accounts.get()?;
     let text = req.preference.clone().unwrap_or_else(|| match req.scope {
@@ -702,6 +720,8 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
     let mut room: Option<String> = None;
     let mut judged = false;
     let mut unread_hosts: Vec<(String, String)> = Vec::new();
+    let mut unverified_classes: Vec<(String, String, &'static str)> = Vec::new();
+    let mut unpicked: Vec<(String, &'static str)> = Vec::new();
     let last = preference.entries.len().saturating_sub(1);
     let caller = req.caller.iter().map(|c| Step::Caller(c.clone()));
     let steps = preference
@@ -722,6 +742,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             };
             return Ok(walked);
         }
+        let mut unverified = false;
         let (text, harness, host, model, pick_model, class, effort, warning, callers_model) =
             match &step {
                 Step::Caller(c) => {
@@ -777,6 +798,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                         )
                     })?;
                     walked.deprecated.extend(resolved.deprecated.clone());
+                    unverified = resolved.unverified;
                     (
                         entry.text.clone(),
                         entry.harness,
@@ -807,6 +829,18 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             walked.skipped.push(row);
             continue;
         }
+        // No model this entry would run is known, so no judgement of its
+        // account answers for it. It is no reading to repair either, so it
+        // holds no `:last` entry back.
+        if unverified {
+            let class = class.clone().unwrap_or_default();
+            let mut row = skip(&text, "class-unverified", None);
+            row["class"] = json!(class);
+            row["harness"] = json!(harness);
+            walked.skipped.push(row);
+            unverified_classes.push((text, class, harness.name()));
+            continue;
+        }
         let billed = harness.billed(&pick_model);
         let chosen = |launch: Option<&'static str>,
                       account: Option<String>,
@@ -828,13 +862,6 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 kept_unmeasured,
             }))
         };
-        if req.scope == Scope::Overseer && billed.is_none() {
-            // An entry spending no account the judge measures: nothing to
-            // pick or refuse and no provider to read for it, its first turn
-            // the one reading of its room.
-            walked.answer = chosen(None, None, None, false);
-            return Ok(walked);
-        }
         // The host the entry is judged under, as the caller reads it.
         let (judge_host, launch) = match hosted(req.scope, host.as_deref(), harness)? {
             Hosted::Judge { host, launch } => (host, launch),
@@ -887,41 +914,24 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         };
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
         let mut pick = |pr: &PickRequest| judge(pr, Some(&judge_host));
-        judged = true;
         let answer = pick(&request(None, named.clone(), req.exclude.clone()));
-        // An entry the judge could not judge (no record, unmeasured, no
-        // repository access): a lane's walk carries it as unread and moves
-        // on; an overseer's walk ends on it, as its callers read it.
-        let unread = matches!(
-            answer,
-            PickAnswer::NoRecord
-                | PickAnswer::Unmeasured(_)
-                | PickAnswer::ProviderUnmeasured { .. }
-                | PickAnswer::Unbilled { .. }
-                | PickAnswer::CloudRepoUnset(_)
-        );
         let picked = match &answer {
             PickAnswer::Lane(j) => Some((j.row.config_dir.clone(), j.record(), false)),
             PickAnswer::Unjudged { cause } => return Err(unjudged(&text, "pick", cause)),
-            _ if unread && req.scope == Scope::Lane => {
+            // An entry the judge could not judge (no record, unmeasured, a
+            // provider nothing bills, no repository access) is no answer of
+            // room in either walk: carried as unread, and the walk moves on.
+            PickAnswer::NoRecord
+            | PickAnswer::Unmeasured(_)
+            | PickAnswer::ProviderUnmeasured { .. }
+            | PickAnswer::Unbilled { .. }
+            | PickAnswer::CloudRepoUnset(_) => {
                 walked
                     .skipped
                     .push(skip(&text, word(&answer), named.as_deref()));
                 walked.unread.push(text.clone());
+                unpicked.push((text.clone(), word(&answer)));
                 continue;
-            }
-            PickAnswer::ProviderUnmeasured { .. } | PickAnswer::Unbilled { .. } => {
-                return Err(refused(
-                    "account-unmeasured",
-                    &[
-                        ("entry", &text),
-                        ("harness", harness.name()),
-                        ("model", &pick_model),
-                    ],
-                ));
-            }
-            PickAnswer::NoRecord | PickAnswer::Unmeasured(_) | PickAnswer::CloudRepoUnset(_) => {
-                return Err(unjudged(&text, "pick", word(&answer)));
             }
             PickAnswer::None {
                 walled,
@@ -972,6 +982,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 None
             }
         };
+        judged = true;
         let Some((account, record, kept_unmeasured)) = picked else {
             // A refused entry before the marked one: whether it has room at
             // the full bound, the one question the hold asks.
@@ -998,10 +1009,31 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         walked.answer = chosen(launch, Some(account), Some(record), kept_unmeasured);
         return Ok(walked);
     }
-    if !judged && !unread_hosts.is_empty() {
-        let mut fields = vec![("step", "host")];
+    if !judged
+        && (!unread_hosts.is_empty() || !unverified_classes.is_empty() || !unpicked.is_empty())
+    {
+        let mut fields = Vec::new();
+        if !unread_hosts.is_empty() {
+            fields.push(("step", "host"));
+        }
         for (host, cause) in &unread_hosts {
             fields.extend([("host", host.as_str()), ("cause", cause.as_str())]);
+        }
+        if !unverified_classes.is_empty() {
+            fields.push(("step", "class"));
+        }
+        for (entry, class, harness) in &unverified_classes {
+            fields.extend([
+                ("entry", entry.as_str()),
+                ("class", class.as_str()),
+                ("harness", *harness),
+            ]);
+        }
+        if !unpicked.is_empty() {
+            fields.push(("step", "pick"));
+        }
+        for (entry, cause) in &unpicked {
+            fields.extend([("entry", entry.as_str()), ("cause", *cause)]);
         }
         return Err(refused("account-unjudged", &fields));
     }

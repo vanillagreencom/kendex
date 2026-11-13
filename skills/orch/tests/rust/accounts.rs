@@ -3340,7 +3340,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                 overseer(
                     "pi",
                     pi_entry(api_model),
-                    "account-unmeasured",
+                    "account-unjudged",
                     Some(3),
                     vec![],
                 ),
