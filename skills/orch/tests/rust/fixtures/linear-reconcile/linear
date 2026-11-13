@@ -36,6 +36,10 @@ case "${1:-} ${2:-}" in
     export PATH="$here:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=T LINEAR_RETRY_BASE_DELAY=0
     exec /bin/bash "$real/linear.sh" "$@"
     ;;
+  'comments create')
+    # The delivery mark under the owner's answer: the call log is its record.
+    printf '{"success":true}\n'
+    ;;
   'statuses list')
     format_states_list '{"workflowStates":{"nodes":[{"id":"todo","name":"Todo","type":"unstarted"}]}}'
     ;;

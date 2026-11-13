@@ -942,6 +942,71 @@ fn a_due_owner_ask_is_closed_with_its_recommendation_and_announced_from_the_box(
     );
 }
 
+/// Where the owner tracker is configured, a due ask posted to the tracker
+/// is the tracker duty's, which reads the owner's answers on the item
+/// first: the mail duty closes the chat ask beside it and leaves it open.
+#[test]
+fn the_mail_duty_leaves_a_due_tracker_posted_ask_to_the_tracker_duty() {
+    let w = world_with(
+        &hold(),
+        20,
+        &[ITEM],
+        &[
+            ("ORCH_OWNER_EMAIL", "owner@example.com"),
+            ("ORCH_OWNER_ASK_LABEL", "owner-gated"),
+        ],
+    );
+    for (id, issue) in [("a-1", None), ("a-2", Some("KEN-7"))] {
+        let mut ask = json!({"id": id, "kind": "ask", "at": "2026-01-29T12:00:00Z", "from": "overseer:kendex",
+            "to": "owner", "text": "Cut the scanner?", "options": ["cut", "keep"], "recommend": "cut",
+            "wait": 120, "deadline": "2026-01-29T14:00:00Z"});
+        if let Some(issue) = issue {
+            ask["issue"] = json!(issue);
+            ask["do"] = json!("Answer on the item.");
+        }
+        w.plant("overseer", "to-overseer.jsonl", &ask);
+    }
+    w.plant(
+        "overseer",
+        "to-overseer.jsonl",
+        &json!({"id": "a-2-tracker", "kind": "tracker-posted", "at": "2026-01-29T12:00:01Z",
+            "from": "overseer:kendex", "re": "a-2", "issue": "KEN-7", "tracker_label": "owner-gated",
+            "tracker_comment": "question-1", "text": ""}),
+    );
+    let clock = FakeClock::new();
+    let identity = me();
+    let ended = run_driven(w.runner(&clock), &clock, &w.paths, &identity, || {
+        clock.await_sleepers(2);
+    });
+    assert!(ended.is_ok(), "{ended:?}");
+    let log = w.log();
+    assert!(
+        log.contains(&"EVENT owner-ask-closed a-1 by=default".to_owned())
+            && !log.iter().any(|l| l.contains(" a-2 ")),
+        "{log:?}"
+    );
+    let pending = w.lane_mail(&[
+        "pending",
+        "--item",
+        "overseer",
+        "--root",
+        w.root.to_str().unwrap(),
+        "--to",
+        "owner",
+    ]);
+    let open: Vec<Value> = String::from_utf8_lossy(&pending.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        open.iter()
+            .map(|a| a["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["a-2"],
+        "the tracker-posted ask stays open for the tracker duty"
+    );
+}
+
 /// The wake's slot. The real program on the fixture: a directive in the
 /// lane's box and a note in the lead's set one row each with the newest id
 /// on the first turn; a poll and a full turn with no news change nothing; a

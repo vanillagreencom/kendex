@@ -8,8 +8,9 @@
 //!
 //! One body runs the reads in order: the tracker's own (the team's
 //! statuses, its open items once, the lane items' terminal states, the
-//! owner's tracker answers and the due tracker asks through the mailbox,
-//! the comments the triage key needs), the GitHub-tracked lane items' ends
+//! owner's tracker answers, the due tracker asks and the closed asks'
+//! tracker marks through the mailbox, the comments the triage key needs),
+//! the GitHub-tracked lane items' ends
 //! (the tracker of those items is GitHub), then the closes the terminal
 //! verdicts call for, last so a refused read never discards a close's
 //! line. The GitHub inventories are the GitHub duty's (`github`): its
@@ -20,7 +21,9 @@
 //!
 //! Baselines: the triage row keys an item on its state and its newest
 //! comment time; an item whose key is unchanged since the line that raised
-//! it prints nothing, and a moved key raises it once more.
+//! it prints nothing, and a moved key raises it once more. An owner ask's
+//! marks row keeps each tracker mark landed or its standing cause, so a
+//! failed mark is said once per cause and tried again.
 //!
 //! The results the heartbeat and verification duties read (the owed
 //! items, the Verifying items, the open unblocked items no lane holds) are
@@ -46,6 +49,7 @@ use crate::ops::{self, CloseOwnedResources, Delivery, Request, Terminal};
 use crate::settings::Settings;
 use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, TerminalVerdict};
 use crate::verify::wire::Nullable;
+use crate::watch::events::OwnerMark;
 use crate::watch::{Body, Change, Event, Produced, Tick};
 use agent_runtime::journal::Env;
 
@@ -64,6 +68,9 @@ const TAG: &str = "tracker";
 pub const QUOTA_ROW: &str = "tracker-quota";
 pub const TRIAGE_ROW: &str = "triage";
 pub const TERMINAL_CLOSE_ROW: &str = "terminal-close";
+/// An owner ask's tracker marks, keyed by the ask's id; its `fleet` row is
+/// the floor the first mailbox read set.
+pub const OWNER_MARK_ROW: &str = "owner-ask-mark";
 
 /// A refused close's `terminal-close` value as its key and its cause:
 /// `<state word>|<session_since>|<cause>`. The row's other form,
@@ -779,9 +786,9 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         }
     };
     let mut tracker = None;
-    let mut ask_failed = None;
+    let mut owner = OwnerPass::default();
     if let (Some(team), None) = (&ctx.settings.linear_team, &held) {
-        match read_tracker(&linear, team, &fleet, ctx, tick, &mut ask_failed)? {
+        match read_tracker(&linear, team, &fleet, ctx, tick, &mut owner)? {
             Answered::Value(read) => tracker = Some(read),
             Answered::Quota(quota) => {
                 // The one limit event: printed when the receipt is taken,
@@ -798,6 +805,8 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
             }
         }
     }
+    produced.events.append(&mut owner.events);
+    produced.changes.append(&mut owner.changes);
     let mut terminal: BTreeMap<String, TerminalState> = BTreeMap::new();
     if let Some(read) = &tracker {
         terminal.extend(read.terminal.iter().map(|(k, v)| (k.clone(), *v)));
@@ -841,10 +850,11 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     let closes = close_terminal_lanes(ctx, tick, &fleet, &terminal)?;
     produced.events.extend(closes.events);
     produced.changes.extend(closes.changes);
-    // A refused terminal read or due-ask close is the pass's partial
-    // failure, counted and said by the runner under its one rule, as the
-    // mail duty's refused turn is; the pass's own lines stand.
-    failed.extend(ask_failed);
+    // A refused terminal read, due-ask close or owner-ask mailbox read is
+    // the pass's partial failure, counted and said by the runner under its
+    // one rule, as the mail duty's refused turn is; the pass's own lines
+    // stand.
+    failed.append(&mut owner.failed);
     produced.failed = (!failed.is_empty()).then(|| failed.join("\n"));
     {
         let mut latest = ctx.shared.lock().unwrap_or_else(|p| p.into_inner());
@@ -898,15 +908,15 @@ pub(super) fn verifying_read(
 
 /// The tracker's own reads, in order, each once: the team's open items
 /// (`read_list`), the lane items' terminal states, the owner's tracker
-/// answers and the due tracker asks, and the newest comment of each
-/// triage candidate.
+/// answers, the due tracker asks and the closed asks' marks, and the
+/// newest comment of each triage candidate.
 fn read_tracker(
     linear: &Linear,
     team: &str,
     fleet: &FleetState,
     ctx: &Context,
     tick: &Tick,
-    ask_failed: &mut Option<String>,
+    owner: &mut OwnerPass,
 ) -> Result<Answered<TrackerRead>> {
     let (items, inventory) = quota!(read_list(linear, team, fleet, tick.wall)?);
     // The lane items' terminal states, one batch (`close-lane`'s
@@ -966,10 +976,24 @@ fn read_tracker(
         linear,
         ctx,
         &mailbox,
-        &reach.mail_root
+        &reach.mail_root,
+        tick,
+        owner
     )?);
     if owner_read == OwnerRead::Read {
-        *ask_failed = resolve_due_tracker_asks(&mailbox, &reach.mail_root);
+        owner
+            .failed
+            .extend(resolve_due_tracker_asks(&mailbox, &reach.mail_root));
+    }
+    if let Some(configured) = &ctx.settings.reads.owner_tracker {
+        quota!(mark_closed_owner_asks(
+            linear,
+            &mailbox,
+            &reach.mail_root,
+            &configured.label,
+            tick,
+            owner
+        )?);
     }
     // The triage candidates: open items created at or after the floor
     // whose verdict is not kept or canceled, keyed on state and newest
@@ -1319,13 +1343,17 @@ fn write_answer(path: &Path, text: &str) -> Result<()> {
 /// item whose posted ask has an action and whose description lost its
 /// action line, the comments of those items in one batch, and each owner
 /// comment after the posted question handed back as the ask's answer under
-/// the comment's delivery id. A quota receipt is the answer; a read that
-/// fails is named once and ends the read as unread.
+/// the comment's delivery id, then marked delivered by a reply under it. A
+/// quota receipt is the answer; a read that fails is named once and ends
+/// the read as unread. A repair or a delivery mark that did not land is an
+/// `owner-ask-unmarked` line and stops nothing.
 fn read_owner_tracker_answers(
     linear: &Linear,
     ctx: &Context,
     mailbox: &Mailbox,
     root: &Path,
+    tick: &Tick,
+    owner_pass: &mut OwnerPass,
 ) -> Result<Answered<OwnerRead>> {
     let Some(owner) = &ctx.settings.reads.owner_tracker else {
         return Ok(Answered::Value(OwnerRead::Disabled));
@@ -1386,6 +1414,7 @@ fn read_owner_tracker_answers(
             Nullable::Absent | Nullable::Null => "",
         };
         if has_action_line(description) {
+            owner_pass.line_outcome(tick, ask, &item.id, None)?;
             continue;
         }
         let Some(repaired) = owner_action_line(
@@ -1407,23 +1436,17 @@ fn read_owner_tracker_answers(
         // holds none of the owner's answers; the next pass reads the
         // description again and repairs only one still missing.
         let variables = serde_json::json!({ "id": item.id }).to_string();
-        let landed = match linear.json::<OwnerReadBack>(
+        let unlanded = match linear.json::<OwnerReadBack>(
             "owner-repair-read-back",
             &["graphql", "--query", OWNER_ITEM, "--variables", &variables],
         ) {
-            Ok(Answered::Value(OwnerReadBack { issue })) => {
-                issue.identifier == item.id && issue.description.as_ref() == Some(&repaired)
-            }
+            Ok(Answered::Value(OwnerReadBack { issue })) => (issue.identifier != item.id
+                || issue.description.as_ref() != Some(&repaired))
+            .then(|| "unlanded".to_owned()),
             Ok(Answered::Quota(quota)) => return Ok(Answered::Quota(quota)),
-            Err(_) => false,
+            Err(e) => Some(e.key().to_owned()),
         };
-        if !landed {
-            let _ = writeln!(
-                std::io::stderr(),
-                "lane-mail: tracker-unwritten issue={} cause=description",
-                item.id
-            );
-        }
+        owner_pass.line_outcome(tick, ask, &item.id, unlanded)?;
     }
     if items.is_empty() {
         return Ok(Answered::Value(OwnerRead::Read));
@@ -1468,7 +1491,34 @@ fn read_owner_tracker_answers(
             write_answer(&answer_file, &comment.body)?;
             let delivery = format!("linear:{}", comment.id);
             match mailbox.send_answer(root, ask.id(), &delivery, &answer_file) {
-                Ok(Replied::Sent { .. } | Replied::Repeated { .. }) => {}
+                Ok(Replied::Sent { .. }) => {
+                    let marked = linear.call(
+                        "owner-delivered",
+                        &[
+                            "comments",
+                            "create",
+                            issue,
+                            "--parent",
+                            &comment.id,
+                            "--body",
+                            DELIVERED,
+                        ],
+                    );
+                    // The answer is handed over once: a mark that did not
+                    // land is said, never tried again.
+                    let cause = match &marked {
+                        Ok(Answered::Value(_)) => continue,
+                        Ok(Answered::Quota(_)) => "quota",
+                        Err(e) => e.key(),
+                    };
+                    owner_pass
+                        .events
+                        .push(unmarked(ask.id(), issue, OwnerMark::Delivery, cause));
+                    if let Ok(Answered::Quota(quota)) = marked {
+                        return Ok(Answered::Quota(quota));
+                    }
+                }
+                Ok(Replied::Repeated { .. }) => {}
                 Err(_) => return unread("delivery"),
             }
         }
@@ -1502,6 +1552,379 @@ fn resolve_due_tracker_asks(mailbox: &Mailbox, root: &Path) -> Option<String> {
         }
     }
     (!failed.is_empty()).then(|| failed.join("\n"))
+}
+
+// --- the owner asks' tracker marks ----------------------------------------------
+
+/// The reply under a delivered owner comment. Ids stay in the mailbox: the
+/// comment it replies to names the answer.
+const DELIVERED: &str = "Delivered to the overseer that asked.";
+
+/// The item a closed ask's write reads: its description, assignee name and
+/// label names, the label page closed (`linear.sh graphql` refuses one left
+/// open, and the write sends the whole set).
+const OWNER_ASK_ITEM: &str = "query OwnerAskItem($id: String!) { issue(id: $id) { description assignee { name } labels(first: 250) { pageInfo { hasNextPage } nodes { name } } } }";
+
+#[derive(Debug, Deserialize)]
+struct OwnerAskItem {
+    issue: OwnerAskIssue,
+}
+
+#[derive(Debug, Deserialize)]
+struct OwnerAskIssue {
+    description: Option<String>,
+    assignee: Option<AssigneeName>,
+    labels: LabelNodes,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssigneeName {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LabelNodes {
+    nodes: Vec<LabelName>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LabelName {
+    name: String,
+}
+
+/// What the owner-ask work of one pass hands back beside the tracker read:
+/// its lines, its rows and its partial failures.
+#[derive(Default)]
+struct OwnerPass {
+    events: Vec<Event>,
+    changes: Vec<Change>,
+    failed: Vec<String>,
+}
+
+/// One close step as the ask's row keeps it: landed, or standing with the
+/// cause it was said under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Mark {
+    Landed,
+    Standing(String),
+}
+
+/// One owner ask's marks as its row keeps them, space-separated
+/// `step=state` words: each close step `ok` or its standing cause, absent
+/// while untried, and the line repair's standing cause.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Marks {
+    ruling: Option<Mark>,
+    item: Option<Mark>,
+    line: Option<String>,
+}
+
+impl Marks {
+    fn of_marks_row(value: Option<&str>) -> Result<Marks> {
+        let mut marks = Marks::default();
+        for word in value.unwrap_or("").split_whitespace() {
+            let mark = |state: &str| match state {
+                "ok" => Mark::Landed,
+                cause => Mark::Standing(cause.to_owned()),
+            };
+            match word.split_once('=') {
+                Some(("ruling", state)) if !state.is_empty() => marks.ruling = Some(mark(state)),
+                Some(("item", state)) if !state.is_empty() => marks.item = Some(mark(state)),
+                Some(("line", cause)) if !cause.is_empty() && cause != "ok" => {
+                    marks.line = Some(cause.to_owned());
+                }
+                _ => return Err(invalid("owner-mark-row", "value", value.unwrap_or(""))),
+            }
+        }
+        Ok(marks)
+    }
+
+    fn marks_row(&self) -> String {
+        let mut words = Vec::new();
+        for (step, mark) in [("ruling", &self.ruling), ("item", &self.item)] {
+            match mark {
+                Some(Mark::Landed) => words.push(format!("{step}=ok")),
+                Some(Mark::Standing(cause)) => words.push(format!("{step}={cause}")),
+                None => {}
+            }
+        }
+        if let Some(cause) = &self.line {
+            words.push(format!("line={cause}"));
+        }
+        words.join(" ")
+    }
+}
+
+fn unmarked(ask: &str, issue: &str, step: OwnerMark, cause: &str) -> Event {
+    Event::OwnerAskUnmarked {
+        ask: ask.to_owned(),
+        issue: issue.to_owned(),
+        step,
+        cause: cause.to_owned(),
+    }
+}
+
+impl OwnerPass {
+    /// The row of `ask` moved from what the tick's baseline holds to
+    /// `marks`: set, cleared when nothing stands, untouched when unchanged.
+    fn keep_marks(&mut self, tick: &Tick, ask: &str, marks: &Marks) {
+        let before = tick.baseline.get(OWNER_MARK_ROW, ask);
+        let after = marks.marks_row();
+        if before == Some(after.as_str()) || (before.is_none() && after.is_empty()) {
+            return;
+        }
+        self.changes.push(if after.is_empty() {
+            Change::Clear {
+                kind: OWNER_MARK_ROW.to_owned(),
+                identity: ask.to_owned(),
+            }
+        } else {
+            Change::Set {
+                kind: OWNER_MARK_ROW.to_owned(),
+                identity: ask.to_owned(),
+                value: after,
+            }
+        });
+    }
+
+    /// The line repair's outcome for `ask` on `issue`: a cause not standing
+    /// before is said; a landed or unneeded repair ends a standing one.
+    fn line_outcome(
+        &mut self,
+        tick: &Tick,
+        ask: &Envelope,
+        issue: &str,
+        cause: Option<String>,
+    ) -> Result<()> {
+        let mut marks = Marks::of_marks_row(tick.baseline.get(OWNER_MARK_ROW, ask.id()))?;
+        if let Some(cause) = &cause
+            && marks.line.as_ref() != Some(cause)
+        {
+            self.events
+                .push(unmarked(ask.id(), issue, OwnerMark::Line, cause));
+        }
+        marks.line = cause;
+        self.keep_marks(tick, ask.id(), &marks);
+        Ok(())
+    }
+}
+
+/// The tracker marks of every owner ask posted to an item and closed by any
+/// route: the ruling comment, a reply under the question where its comment
+/// id is recorded, and one item write of labels, assignee and action line.
+/// The two steps run alone, so a refused one stops neither; a refused step
+/// is said once per cause and tried again at every pass. The first pass
+/// that reads the mailbox records the asks closed before it as marked and
+/// writes nothing. A refused mailbox read is the pass's partial failure.
+fn mark_closed_owner_asks(
+    linear: &Linear,
+    mailbox: &Mailbox,
+    root: &Path,
+    configured: &str,
+    tick: &Tick,
+    owner: &mut OwnerPass,
+) -> Result<Answered<()>> {
+    let envelopes = match mailbox.events(root) {
+        Ok(envelopes) => envelopes,
+        Err(refusal) => {
+            owner
+                .failed
+                .push(format!("owner-asks-unread cause={refusal}"));
+            return Ok(Answered::Value(()));
+        }
+    };
+    let asks: Vec<&Envelope> = envelopes
+        .iter()
+        .filter(|e| e.kind() == "ask" && e.to.as_deref() == Some("owner") && !e.id().is_empty())
+        .collect();
+    let closes: BTreeMap<&str, &Envelope> = envelopes
+        .iter()
+        .filter(|e| e.kind() == "resolution")
+        .filter_map(|e| Some((e.re.as_deref()?, e)))
+        .collect();
+    // A row of an ask no longer in the mailbox leaves with it.
+    let held: BTreeSet<&str> = asks.iter().map(|a| a.id()).collect();
+    for id in tick.baseline.identities(OWNER_MARK_ROW) {
+        if id != FLEET && !held.contains(id.as_str()) {
+            owner.changes.push(Change::Clear {
+                kind: OWNER_MARK_ROW.to_owned(),
+                identity: id,
+            });
+        }
+    }
+    let posted = |a: &&&Envelope| a.tracker_posted == Some(true) && a.issue.is_some();
+    let closed: Vec<(&Envelope, &Envelope)> = asks
+        .iter()
+        .filter(posted)
+        .filter_map(|a| Some((*a, *closes.get(a.id())?)))
+        .collect();
+    let landed = Marks {
+        ruling: Some(Mark::Landed),
+        item: Some(Mark::Landed),
+        line: None,
+    };
+    if tick.baseline.get(OWNER_MARK_ROW, FLEET).is_none() {
+        owner.changes.push(Change::Set {
+            kind: OWNER_MARK_ROW.to_owned(),
+            identity: FLEET.to_owned(),
+            value: "floor".to_owned(),
+        });
+        for (ask, _) in closed {
+            owner.keep_marks(tick, ask.id(), &landed);
+        }
+        return Ok(Answered::Value(()));
+    }
+    let open: Vec<&Envelope> = asks
+        .iter()
+        .filter(posted)
+        .filter(|a| !closes.contains_key(a.id()))
+        .copied()
+        .collect();
+    for (ask, close) in closed {
+        let mut marks = Marks::of_marks_row(tick.baseline.get(OWNER_MARK_ROW, ask.id()))?;
+        if marks == landed {
+            continue;
+        }
+        let issue = ask.issue.as_deref().unwrap_or("");
+        marks.line = None;
+        if marks.ruling != Some(Mark::Landed) {
+            let ruling = envelopes
+                .iter()
+                .rfind(|e| e.kind() == "answer" && e.re.as_deref() == Some(ask.id()))
+                .and_then(|e| e.text.as_deref())
+                .unwrap_or("");
+            let body = format!(
+                "ask={} closed ({}): {ruling}",
+                ask.id(),
+                close.by.as_deref().unwrap_or("")
+            );
+            let mut args = vec!["comments", "create", issue, "--body", &body];
+            if let Some(question) = &ask.tracker_comment {
+                args.extend(["--parent", question.as_str()]);
+            }
+            let written = linear.call("owner-ruling", &args).map(|a| match a {
+                Answered::Value(_) => Answered::Value(()),
+                Answered::Quota(quota) => Answered::Quota(quota),
+            });
+            marks.ruling = Some(quota!(settle_mark(
+                written,
+                &marks.ruling,
+                ask,
+                issue,
+                OwnerMark::Ruling,
+                owner
+            )?));
+        }
+        if marks.item != Some(Mark::Landed) {
+            let written = clear_owner_item(linear, ask, issue, &open, configured);
+            marks.item = Some(quota!(settle_mark(
+                written,
+                &marks.item,
+                ask,
+                issue,
+                OwnerMark::Item,
+                owner
+            )?));
+        }
+        owner.keep_marks(tick, ask.id(), &marks);
+    }
+    Ok(Answered::Value(()))
+}
+
+/// One close step's outcome as its mark: a refusal whose cause was not the
+/// one standing before is said.
+fn settle_mark(
+    written: Result<Answered<()>>,
+    before: &Option<Mark>,
+    ask: &Envelope,
+    issue: &str,
+    step: OwnerMark,
+    owner: &mut OwnerPass,
+) -> Result<Answered<Mark>> {
+    match written {
+        Ok(Answered::Value(())) => Ok(Answered::Value(Mark::Landed)),
+        Ok(Answered::Quota(quota)) => Ok(Answered::Quota(quota)),
+        Err(e) => {
+            let mark = Mark::Standing(e.key().to_owned());
+            if before.as_ref() != Some(&mark) {
+                owner.events.push(unmarked(ask.id(), issue, step, e.key()));
+            }
+            Ok(Answered::Value(mark))
+        }
+    }
+}
+
+/// The closed `ask`'s item write: its label dropped unless an `open` ask on
+/// the same item was posted under it, the assignee cleared once no open
+/// ask stands there, and its action line removed, or replaced by the
+/// latest open ask's, only where the description still opens with it.
+fn clear_owner_item(
+    linear: &Linear,
+    ask: &Envelope,
+    issue: &str,
+    open: &[&Envelope],
+    configured: &str,
+) -> Result<Answered<()>> {
+    let variables = serde_json::json!({ "id": issue }).to_string();
+    let item = quota!(linear.json::<OwnerAskItem>(
+        "owner-ask-item",
+        &[
+            "graphql",
+            "--query",
+            OWNER_ASK_ITEM,
+            "--variables",
+            &variables
+        ],
+    )?)
+    .issue;
+    let label_of = |a: &Envelope| {
+        a.tracker_label
+            .clone()
+            .unwrap_or_else(|| configured.to_owned())
+    };
+    let remaining: Vec<&Envelope> = open
+        .iter()
+        .filter(|a| a.issue.as_deref() == Some(issue))
+        .copied()
+        .collect();
+    let closing = label_of(ask);
+    let labels: BTreeSet<String> = item
+        .labels
+        .nodes
+        .into_iter()
+        .map(|l| l.name)
+        .filter(|l| *l != closing)
+        .chain(remaining.iter().copied().map(label_of))
+        .collect();
+    let name = item.assignee.map(|a| a.name).unwrap_or_default();
+    let mut description = item.description.unwrap_or_default();
+    if let Some(action) = ask.action.as_deref().filter(|d| !d.is_empty())
+        && let Some(prefix) = owner_action_line(&name, action, "")
+        && let Some(body) = description.strip_prefix(&prefix)
+    {
+        description = match remaining
+            .last()
+            .and_then(|next| next.action.as_deref())
+            .filter(|d| !d.is_empty())
+            .and_then(|next| owner_action_line(&name, next, ""))
+        {
+            Some(line) => format!("{line}{body}"),
+            None => body.to_owned(),
+        };
+    }
+    let joined = labels.into_iter().collect::<Vec<_>>().join(",");
+    let mut args = vec!["issues", "update", issue];
+    if joined.is_empty() {
+        args.push("--clear-labels");
+    } else {
+        args.extend(["--labels", joined.as_str()]);
+    }
+    if remaining.is_empty() {
+        args.push("--clear-assignee");
+    }
+    args.extend(["--description", description.as_str()]);
+    quota!(linear.call("owner-ask-close", &args)?);
+    Ok(Answered::Value(()))
 }
 
 // --- the closes ---------------------------------------------------------------
@@ -1807,8 +2230,8 @@ fn close_one(
     Ok(Closed::Failed(note.to_owned()))
 }
 
-pub fn row_kinds() -> [&'static str; 3] {
-    [QUOTA_ROW, TRIAGE_ROW, TERMINAL_CLOSE_ROW]
+pub fn row_kinds() -> [&'static str; 4] {
+    [QUOTA_ROW, TRIAGE_ROW, TERMINAL_CLOSE_ROW, OWNER_MARK_ROW]
 }
 
 #[cfg(test)]

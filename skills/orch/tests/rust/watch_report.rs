@@ -3299,6 +3299,8 @@ fn report_owner_notice_waits_for_quiet_end_and_keeps_the_last_sent_window() {
             "yes,no",
             "--recommend",
             "yes",
+            "--effect",
+            "none",
             "--file",
             question.to_str().unwrap(),
         ]);

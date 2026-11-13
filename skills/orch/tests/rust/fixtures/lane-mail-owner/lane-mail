@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# The mailbox CLI as the tracker duty's owner-tracker rows run it: the four
-# verbs the owner's tracker answers and the due tracker asks use, answered
+# The mailbox CLI as the tracker duty's owner-tracker rows run it: the verbs
+# the owner's tracker answers, the due tracker asks and the marks use, answered
 # from files beside the path this was invoked as (the rows symlink the
 # fixture into their world as `lane-mail`), every call logged as one argv
 # line to `lane-mail.log` there.
 #   pending ... --to owner         prints `owner-asks.jsonl`, one row per line
 #   pending ... --to owner --due   prints `owner-due.jsonl`
+#   events --item overseer         prints `owner-events.jsonl`, both boxes
 #   resolve --id ID --default      prints the resolved receipt
 #   send --re ASK --delivery-id K --file F
 #                                  prints the sent receipt and appends
@@ -49,6 +50,8 @@ case "$verb" in
     else
       [ ! -f "$here/owner-asks.jsonl" ] || cat "$here/owner-asks.jsonl"
     fi ;;
+  events)
+    [ ! -f "$here/owner-events.jsonl" ] || cat "$here/owner-events.jsonl" ;;
   resolve)
     printf 'lane-mail: resolved id=%s by=default answer=close-%s\n' "$id" "$id" ;;
   send)

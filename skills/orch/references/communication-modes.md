@@ -51,7 +51,7 @@ An overseer's question to the owner is one owner ask: communication's [question 
 An ask sent during the owner's night gets no reply before morning. An ask's recorded recommendation is the safe choice. Its deadline (`--wait`) falls after the owner's morning unless the ask can stand on that option.
 
 ```bash
-.agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH] --issue [ITEM] --do [ACTION_AND_CLOSING_EVIDENCE]
+.agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --effect none --file [PATH] --issue [ITEM] --do [ACTION_AND_CLOSING_EVIDENCE]
 ```
 
 For an item ask, set `ORCH_OWNER_ASK_LABEL` and the owner email to enable the Linear route. `ORCH_OWNER_EMAIL` names the person and defaults to `KENDEX_USER_EMAIL`. The item supplies its own team. The overseer assigns that person, adds the label without replacing other labels, and posts the question as one plain comment. Its first line mentions that person by the Linear profile URL, built from the workspace key the tracker reports and the person's display name, so Linear notifies them. Then come the question text, its options, the recommendation or the reserved note with the deadline, the draft on a draft ask, the reply instruction, and a last line `Requested by` naming the asking overseer. The comment carries no ask header, ask id or Slack id: the posting record keeps the comment's id, and the watch finds replies after that comment. Linear sends the assignment notification. After the complete tracker question is confirmed, Slack posts one line: the owner mention, `Question from <sender>:`, the question's first line, the item link and its deadline, if any. A failed tracker write keeps the full chat question, options and deadline, and the pending ask names the failed operation as `tracker_cause`. It retains the item binding for cleanup and uses the chat deadline route. Unset settings report `lane-mail: tracker-unwritten issue=<ID> cause=settings-unset`. A failed settings read reports `cause=settings-unreadable`. An ask with no item stays on the chat route and creates no issue.
@@ -84,7 +84,7 @@ For a delivered owner request, `--ref` binds the reply to that request's deliver
 A session that starts with no item to work, no handoff file, no owner note and no pending owner ask (`lane-mail pending --item overseer --to owner`) asks this as an owner ask:
 
 ```bash
-.agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options idle,tracker --recommend idle --file [PATH]
+.agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options idle,tracker --recommend idle --effect none --file [PATH]
 ```
 
 Use communication's [opening question](../../communication/references/questions.md#opening-question).

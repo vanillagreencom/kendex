@@ -72,7 +72,7 @@ ASK=""
 owner_ask() {
   local args=(ask --item overseer --to owner --file "$(text q "$1")")
   [[ -z "${2:-}" ]] || args+=(--options "$2")
-  [[ -z "${3:-}" ]] || args+=(--recommend "$3")
+  [[ -z "${3:-}" ]] || args+=(--recommend "$3" --effect none)
   [[ -z "${4:-}" ]] || args+=(--wait "$4")
   lm "${args[@]}"
   ASK="${OUT#id=}"
@@ -191,7 +191,7 @@ ROWS
 # consumes these ask envelopes, so no second envelope means no second thread.
 while IFS='|' read -r name retry_key words want; do
   new_repo "ask_delivery_$name"
-  lm ask --item overseer --to owner --options yes,no --recommend yes \
+  lm ask --item overseer --to owner --options yes,no --recommend yes --effect none \
     --delivery-id ask:restart --file "$(text q 'Retry?')"
   FIRST_ASK="${OUT#id=}"
   FIRST_LINE="$(cat -- "$BOX/to-overseer.jsonl")"
@@ -200,7 +200,7 @@ while IFS='|' read -r name retry_key words want; do
   sleep 61
   key_args=()
   [[ -z "$retry_key" ]] || key_args=(--delivery-id "$retry_key")
-  lm ask --item overseer --to owner --options yes,no --recommend yes \
+  lm ask --item overseer --to owner --options yes,no --recommend yes --effect none \
     ${key_args[@]+"${key_args[@]}"} --file "$(text q "$words")"
   control_rc=0
   # The first line of the keyed refusal is lane-mail's machine-read contract.
@@ -283,7 +283,7 @@ OWNER_REPEAT_ROWS='attach|210|overseer|Report.|notice --item overseer --to owner
 day-old|90000|overseer|Report.|notice --item overseer --to owner --attach @A --file @F|0==2
 changed-text|210|overseer|Report two.|notice --item overseer --to owner --attach @A --file @F|0==2
 lane-notice|210|KEN-1|Report.|notice --item KEN-1 --file @F|0==2
-owner-ask|210|overseer|Report.|ask --item overseer --to owner --options yes,no --recommend yes --file @F|0==2
+owner-ask|210|overseer|Report.|ask --item overseer --to owner --options yes,no --recommend yes --effect none --file @F|0==2
 peer-ask|210|overseer|Report.|peer ask --repo repeat_peer --options yes,no --file @F|0==2'
 new_repo repeat_peer
 REPEAT=""
@@ -341,7 +341,7 @@ race_repeats() { # NAME MODE ACTION LIB
   new_repo "repeat-$name-sender"; sender="$LANE"
   new_repo "repeat-$name-receiver"; receiver="$LANE"
   case "$action" in
-    ask) args=(ask --item overseer --to owner --options keep,stop --recommend keep); box="$sender/tmp/lane-mail/overseer/to-overseer.jsonl" ;;
+    ask) args=(ask --item overseer --to owner --options keep,stop --recommend keep --effect none); box="$sender/tmp/lane-mail/overseer/to-overseer.jsonl" ;;
     notice) args=(notice --item overseer --to owner); box="$sender/tmp/lane-mail/overseer/to-overseer.jsonl" ;;
     send) args=(send --item overseer --directive --root "$sender"); box="$sender/tmp/lane-mail/overseer/to-lane.jsonl" ;;
     send-peer | ask-peer) args=(peer "${action%-peer}" --repo "$receiver"); box="$receiver/tmp/lane-mail/overseer/to-lane.jsonl" ;;
@@ -447,20 +447,25 @@ ask --item overseer --file $F|2=lane-mail: option-required=--to
 ask --item KEN-1 --to owner --file $F|2=lane-mail: option-unknown=--to
 ask --item overseer --to peer --file $F|2=lane-mail: to-invalid=peer
 ask --item overseer --to nobody --file $F|2=lane-mail: to-invalid=nobody
-ask --item overseer --to owner --options a,b --recommend c --file $F|2=lane-mail: recommend-invalid=c
-ask --item overseer --to owner --options a,b --recommend a,b --file $F|2=lane-mail: recommend-invalid=a,b
+ask --item overseer --to owner --options a,b --recommend c --effect none --file $F|2=lane-mail: recommend-invalid=c
+ask --item overseer --to owner --options a,b --recommend a,b --effect none --file $F|2=lane-mail: recommend-invalid=a,b
 ask --item overseer --to owner --file $F|2=lane-mail: recommend-required=owner
 ask --item overseer --to owner --options a,b --wait 5 --file $F|2=lane-mail: recommend-required=owner
-ask --item overseer --to owner --recommend a --file $F|2=lane-mail: option-required=--options
-ask --item overseer --to owner --options a,b --recommend a --wait 5m --file $F|2=lane-mail: minutes-invalid=--wait
+ask --item overseer --to owner --recommend a --effect none --file $F|2=lane-mail: option-required=--options
+ask --item overseer --to owner --options a,b --recommend a --effect none --wait 5m --file $F|2=lane-mail: minutes-invalid=--wait
 ask --item overseer --to owner --options a,b --recommend a --reserved --file $F|2=lane-mail: option-conflict=--reserved,--recommend
+ask --item overseer --to owner --options a,b --recommend a --file $F|2=lane-mail: effect-required=--effect
+ask --item overseer --to owner --options a,b --recommend a --effect cheap --file $F|2=lane-mail: effect-required=cheap
+ask --item overseer --to owner --options a,b --recommend a --effect spend --file $F|2=lane-mail: ask-reserved-effect=spend
+ask --item overseer --to owner --options a,b --recommend a --effect as-owner --file $F|2=lane-mail: ask-reserved-effect=as-owner
+ask --item KEN-1 --options a,b --effect none --file $F|2=lane-mail: option-unknown=--effect
 ask --item overseer --to owner --reserved --file $F|2=lane-mail: option-required=--options
 ask --item KEN-1 --options a,b --reserved --file $F|2=lane-mail: option-unknown=--reserved
 notice --item KEN-1 --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--ref
 notice --item overseer --to owner --progress --file $F|2=lane-mail: progress-needs-ref=--progress
 notice --item KEN-1 --progress --file $F|2=lane-mail: option-unknown=--progress
 notice --item overseer --progress --ref $OWNER_NOTE --file $F|2=lane-mail: option-unknown=--progress
-ask --item overseer --to owner --ref $OWNER_NOTE --progress --options a,b --recommend a --file $F|2=lane-mail: option-unknown=--progress
+ask --item overseer --to owner --ref $OWNER_NOTE --progress --options a,b --recommend a --effect none --file $F|2=lane-mail: option-unknown=--progress
 send --item overseer --directive --progress --file $F|2=lane-mail: option-unknown=--progress
 notice --item overseer --to owner --ref no/such --file $F|2=lane-mail: ref-invalid=no/such
 notice --item overseer --to owner --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
@@ -469,8 +474,8 @@ notice --item overseer --to owner --ref $ASK_TO_OWNER --file $F|0=
 notice --item overseer --to owner --ref $PEER_ASK --file $F|2=lane-mail: ref-unknown=$PEER_ASK
 notice --item overseer --to owner --ref $INBOUND_PEER --file $F|2=lane-mail: ref-unknown=$INBOUND_PEER
 notice --item overseer --to owner --ref $RESOLUTION --file $F|2=lane-mail: ref-unknown=$RESOLUTION
-ask --item overseer --to owner --options a,b --recommend a --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
-ask --item overseer --to owner --options a,b --recommend a --attach x --file $F|2=lane-mail: option-unknown=--attach
+ask --item overseer --to owner --options a,b --recommend a --effect none --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
+ask --item overseer --to owner --options a,b --recommend a --effect none --attach x --file $F|2=lane-mail: option-unknown=--attach
 notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
 send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: ask-unknown=$OWNER_NOTE
 send --item overseer --directive --host --root $LANE --delivery-id k --file $F|2=lane-mail: option-conflict=--host,--delivery-id
@@ -527,7 +532,7 @@ ASK_BINDING='select(.kind == "ask") | [.ref // "", .re_delivery_id // ""] | join
 new_repo reply_ask
 lm send --item overseer --directive --file "$(text d 'Voice request.')" --delivery-id voice:request-1
 OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
-lm ask --item overseer --to owner --options approve,deny --recommend deny --ref "$OWNER_NOTE" --file "$(text q 'Approve?')"
+lm ask --item overseer --to owner --options approve,deny --recommend deny --effect none --ref "$OWNER_NOTE" --file "$(text q 'Approve?')"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" "$ASK_BINDING")" "0=$OWNER_NOTE|voice:request-1" \
   "an owner ask names the voice request and copies its delivery id"
 
@@ -755,7 +760,8 @@ default_answers() {
   if [[ -f "$BOX/to-lane.jsonl" ]]; then jq -rs '[.[] | select(.by == "default")] | length' "$BOX/to-lane.jsonl"; else echo 0; fi
 }
 new_repo reserved
-reserved_ask --wait 0
+# A release refused beside --recommend takes this route, its effect named.
+reserved_ask --wait 0 --effect release
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '[.reserved, has("recommend"), has("deadline")] | map(tostring) | join(" ")')" \
   "0=true false true" "a reserved ask records reserved and a deadline, and no recommendation"
 lm pending --item overseer --to owner --due
@@ -1025,7 +1031,7 @@ new_repo control_progress_scope
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Voice request.')"
 OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
 mutant progress-anywhere '[ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress' ': # [ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress'
-lm ask --item overseer --to owner --ref "$OWNER_NOTE" --progress --options a,b --recommend a --file "$(text q 'Which?')"
+lm ask --item overseer --to owner --ref "$OWNER_NOTE" --progress --options a,b --recommend a --effect none --file "$(text q 'Which?')"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.progress')" "0=true" \
   "control: removing the scope guard permits progress on an owner ask"
 
@@ -1205,7 +1211,7 @@ CONTROL_OUT="$(
   [[ "$FAIL" -eq 0 ]]
 )" || CONTROL_RC=$?
 assert_eq "$RC=$CONTROL_RC" "0=1" "control: the reply-binding assertion fails without the copied field"
-lm ask --item overseer --to owner --options approve,deny --recommend deny --ref "$OWNER_NOTE" --file "$(text q 'Approve?')"
+lm ask --item overseer --to owner --options approve,deny --recommend deny --effect none --ref "$OWNER_NOTE" --file "$(text q 'Approve?')"
 CONTROL_RC=0
 CONTROL_OUT="$(
   FAIL=0

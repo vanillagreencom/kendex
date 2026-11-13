@@ -140,7 +140,7 @@ sk_poll "$ROOT"
 POINTER="$(jq -r --arg d "$CH:$POINTER_TS" 'select(.delivery_id == $d) | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
 sk_event_filter "$ROOT" "if .id == \"$POINTER\" then del(.delivery_id) else . end"
 
-sk_lm "$ROOT" ask --item overseer --to owner --options yes,no --recommend no --file "$(sk_text ask 'Proceed?')" >/dev/null
+sk_lm "$ROOT" ask --item overseer --to owner --options yes,no --recommend no --effect none --file "$(sk_text ask 'Proceed?')" >/dev/null
 ASK="$(jq -r 'select(.kind == "ask") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
 sk_poll "$ROOT"
 ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Proceed?\")) | .ts")"

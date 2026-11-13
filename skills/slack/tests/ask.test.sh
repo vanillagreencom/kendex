@@ -38,7 +38,7 @@ draft_ask() {
   root="$(sk_tracker_root "$1" Team '')"
   sk_bind "$root"
   draft="$(jq -cn --arg text "$2" '{recipient: "release-list@example.com", medium: "email", text: $text, text_hash: "sha256:0f"}')"
-  ASK="$(sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$1" 'Send this email for KEN-1?')" --options approve,deny --recommend deny)"
+  ASK="$(sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$1" 'Send this email for KEN-1?')" --options approve,deny --recommend deny --effect none)"
   ASK="${ASK#id=}"
   sk_event_filter "$root" "if .kind == \"ask\" then .draft = $draft else . end"
   sk_poll "$root"
@@ -93,7 +93,7 @@ STUB
   ASK="$(cd "$root" && env ORCH_OWNER_EMAIL=owner@example.com ORCH_OWNER_ASK_LABEL=owner-gated LINEAR_TEAM=KEN \
     TRACKER_FAILURE="$phase" "$scripts/lane-mail" ask --item overseer --to owner \
     --issue KEN-1 --do 'Approve the action. Your reply closes this ask.' --file "$(sk_text "$1" 'Approve action?
-Details on the item.')" --options approve,hold --recommend approve --wait 60 2>"$root/tracker.err")" || ask_rc=$?
+Details on the item.')" --options approve,hold --recommend approve --effect none --wait 60 2>"$root/tracker.err")" || ask_rc=$?
   assert_eq "$ask_rc" 0 "$1 creates the owner ask"
   case "$ASK" in
     id=?*) ok "$1 returns its owner ask id" ;;
@@ -148,13 +148,13 @@ referenced_ask() {
   REF_TS="$(sk_inject "$CH" U001 'Earlier conversation.')"
   sk_poll "$ROOT"
   REF="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
-  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" 'Approve referenced action?')" --options approve,hold --recommend hold)"
+  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" 'Approve referenced action?')" --options approve,hold --recommend hold --effect none)"
   ASK="${ASK#id=}"
   if [ -n "${2:-}" ]; then
     if [ -n "${3:-}" ]; then
-      sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1-other" 'Other referenced action?')" --options approve,hold --recommend hold >/dev/null
+      sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1-other" 'Other referenced action?')" --options approve,hold --recommend hold --effect none >/dev/null
     fi
-    sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "$1-later" 'Later question?')" --options approve,hold --recommend hold >/dev/null
+    sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "$1-later" 'Later question?')" --options approve,hold --recommend hold --effect none >/dev/null
     sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "$1-notice" 'Later notice.')" >/dev/null
     sk_ctl /_test/fault "$2" >/dev/null
     if [ -n "${3:-}" ]; then sk_ctl /_test/fault "$3" >/dev/null; fi

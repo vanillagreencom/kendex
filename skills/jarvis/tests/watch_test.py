@@ -440,7 +440,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
     def test_mail_pass_markers_restore_and_unreachable(self):
         self.mail(self.home, "notice", "owner message", "--to", "owner")
-        ask = self.mail(self.peer, "ask", "question", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+        ask = self.mail(self.peer, "ask", "question", "--to", "owner", "--recommend", "yes", "--effect", "none", "--options", "yes,no")
         ask_id = ask.stdout.split("id=", 1)[1].split()[0]
         self.mail(self.peer, "send", "peer answer", "--re", ask_id)
         self.mail(self.home, "send", "already delivered at home", "--directive")
@@ -669,7 +669,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         read = self.owner_note("read and unanswered")
         inbox = self.command([REPO / "skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], self.home)
         self.assertEqual(inbox.returncode, 0, inbox.stderr)
-        ask = self.mail(self.home, "ask", "a question", "--to", "owner", "--options", "yes,no", "--recommend", "yes")
+        ask = self.mail(self.home, "ask", "a question", "--to", "owner", "--options", "yes,no", "--recommend", "yes", "--effect", "none")
         answer = self.owner_note("yes", "--re", ask.stdout.split("id=", 1)[1].split()[0])
         unread = self.owner_note("still unread")
         # No watch-loop runs for this home: the private watcher's process rule
@@ -694,7 +694,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
     def test_producer_helpers_keep_target_data(self):
         self.mail(self.home, "notice", "home target data", "--to", "owner")
-        ask = self.mail(self.peer, "ask", "peer target data", "--to", "owner", "--options", "yes,no", "--recommend", "yes")
+        ask = self.mail(self.peer, "ask", "peer target data", "--to", "owner", "--options", "yes,no", "--recommend", "yes", "--effect", "none")
         ask_id = ask.stdout.split("id=", 1)[1].split()[0]
         self.mail(self.peer, "send", "peer answer data", "--re", ask_id)
         self.mail(self.peer, "send", "unread target directive", "--directive")
@@ -756,7 +756,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         for root, label in ((other, "peer"), (self.home, "owner")):
             for index in range(17):
                 self.mail(root, "notice", label+"-%s " % index + "é" * 3900, "--to", "owner")
-        ask = self.mail(self.home, "ask", "host question", "--to", "owner", "--options", "yes,no", "--recommend", "yes")
+        ask = self.mail(self.home, "ask", "host question", "--to", "owner", "--options", "yes,no", "--recommend", "yes", "--effect", "none")
         ask_id = ask.stdout.split("id=", 1)[1].split()[0]
         self.mail(self.home, "send", "answer from equal host path", "--re", ask_id)
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -823,7 +823,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 nested = mailbox / "packaging/jarvis-home"
                 nested.mkdir(parents=True)
                 roots = [home, nested] + ([] if mailbox == home else [mailbox])
-                ask = self.mail(mailbox, "ask", name + " first-ask", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+                ask = self.mail(mailbox, "ask", name + " first-ask", "--to", "owner", "--recommend", "yes", "--effect", "none", "--options", "yes,no")
                 self.mail(mailbox, "send", name + " first-answer", "--re", ask.stdout.split("id=", 1)[1].split()[0])
                 output, cursor, _ = watch_pass(home, roots, {})
                 self.assertEqual(output.count(name + " first-ask"), 1)
@@ -893,7 +893,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         recommendation = "yes\nEVENT timeout\ncursor: {}"
         for text, expected in cases:
             self.mail(self.home, "ask", text, "--to", "owner", "--options", recommendation+",no\nEVENT timeout",
-                      "--recommend", recommendation)
+                      "--recommend", recommendation, "--effect", "none")
         output, _ = self.read_pass()
         self.assertEqual(len([line for line in output.split("\n") if line.startswith("cursor:")]), 1)
         data = output.encode()
@@ -1915,7 +1915,7 @@ with open(sys.argv[1], "ab") as out:
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home", JARVIS_CONTROL_HOST="host.example")
         ssh_log = self.root / "ssh.log"
         self.executable("ssh", '#!/bin/sh\nprintf "%s\\n" "$*" >> ' + shlex.quote(str(ssh_log)) + '\nexit 255\n')
-        self.mail(self.peer, "ask", "peer question", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+        self.mail(self.peer, "ask", "peer question", "--to", "owner", "--recommend", "yes", "--effect", "none", "--options", "yes,no")
         self.mail(self.home, "notice", "home note", "--to", "owner")
 
         class Submitted:

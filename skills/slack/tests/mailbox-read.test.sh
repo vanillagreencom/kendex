@@ -105,7 +105,7 @@ for format in current historical; do
   NOTICE_FILE="$(sk_text "notice-$format" "Mailbox notice $format.")"
   ASK_FILE="$(sk_text "ask-$format" "Mailbox ask $format?")"
   (cd "$ROOT" && "$WRITER" notice --item overseer --to owner --file "$NOTICE_FILE") >/dev/null || exit 1
-  (cd "$ROOT" && "$WRITER" ask --item overseer --to owner --file "$ASK_FILE" --options yes,no --recommend no) >/dev/null || exit 1
+  (cd "$ROOT" && "$WRITER" ask --item overseer --to owner --file "$ASK_FILE" --options yes,no --reserved) >/dev/null || exit 1
   sk_poll "$ROOT"
   assert_eq "$RC=$(asks "$CH" "Mailbox notice $format.")=$(asks "$CH" "Mailbox ask $format?")" \
     '0=1=1' "$format: the relay posts the actual writer's owner notice and ask"

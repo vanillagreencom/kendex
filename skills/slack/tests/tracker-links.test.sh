@@ -14,7 +14,7 @@ SLACK_LINK='<https://linear.app/workspace/issue/KEN-1|KEN-1>'
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text notice 'Notice KEN-1')" >/dev/null
 sk_poll "$ROOT"
 assert_eq "$RC=$(sk_state ".messages.${CH}[-1].text")" "0=Notice $LINK" 'a notice links at the relay edge'
-sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text ask 'Ask KEN-1?')" --options yes,no --recommend no > "$SK_TMP/ask.out"
+sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text ask 'Ask KEN-1?')" --options yes,no --recommend no --effect none > "$SK_TMP/ask.out"
 ASK="$(sed 's/^id=//' "$SK_TMP/ask.out")"
 sk_poll "$ROOT"
 assert_has "$(sk_state ".messages.${CH}[-1].text")" "Ask $LINK?" 'an ask links at the relay edge'

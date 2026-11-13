@@ -89,6 +89,10 @@ pub struct Config {
     pub interval: Duration,
     pub mark_repeat: u32,
     pub unread: Duration,
+    /// The owner tracker is configured: a due ask posted to the tracker is
+    /// the tracker duty's, closed only after its whole read of the owner's
+    /// answers on the item.
+    pub tracker_asks: bool,
 }
 
 impl Config {
@@ -103,6 +107,7 @@ impl Config {
             interval: watch.mail_interval,
             mark_repeat: watch.mark_repeat,
             unread: watch.directive_unread,
+            tracker_asks: settings.reads.owner_tracker.is_some(),
         })
     }
 
@@ -807,7 +812,8 @@ impl MailDuty {
     }
 
     /// Close the owner asks whose deadline has passed with their
-    /// recommendation; another close winning the
+    /// recommendation, but a tracker-posted one where the owner tracker is
+    /// configured; another close winning the
     /// lock is no failure, any other refusal names the ask and the box is
     /// still read. The next read reports each close.
     fn resolve_due_asks(&self, turn: &mut Turn) {
@@ -817,7 +823,7 @@ impl MailDuty {
         };
         for ask in asks {
             let id = ask.id();
-            if id.is_empty() {
+            if id.is_empty() || (self.config.tracker_asks && ask.tracker_posted == Some(true)) {
                 continue;
             }
             match self.mailbox.resolve_default(&self.config.common_root, id) {

@@ -173,7 +173,7 @@ while read -r mode; do
   CH="$(sk_channel "$ROOT")"
   sk_poll "$ROOT"
   RECORD="$ROOT/tmp/workflow-state-oversee.json"
-  sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "question-$mode" 'Proceed with this task?')" --options yes,no --recommend no > "$SK_TMP/ask-receipt" || exit 1
+  sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "question-$mode" 'Proceed with this task?')" --options yes,no --recommend no --effect none > "$SK_TMP/ask-receipt" || exit 1
   ASK="$(jq -r 'select(.kind == "ask") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
   sk_poll "$ROOT"
   ROOT_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Proceed with this task?\")) | .ts")"

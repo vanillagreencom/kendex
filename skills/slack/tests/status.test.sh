@@ -29,7 +29,7 @@ assert_eq "$RC=$OUT" "0=slack: slack-relay=$ROOT state=never fix=start the relay
   "a root no relay has polled is never, with the command to start one, and nothing else is printed"
 
 sk_poll "$ROOT"
-sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Open?')" --options a,b --recommend a >/dev/null
+sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Open?')" --options a,b --recommend a --effect none >/dev/null
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text s 'xoxb-0123456789-abcdefghij')" >/dev/null
 sk_poll "$ROOT"
 row

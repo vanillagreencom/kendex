@@ -215,7 +215,7 @@ Overseer side:
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
   ask --item overseer --to owner --file PATH --options a,b
-              (--recommend a | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM --do TEXT]
+              (--recommend a --effect none | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM --do TEXT]
               --issue requires --do: plain words saying what the
               person does and what evidence closes it. It adds the configured
               Linear assignment, label, opening action line and comment.
@@ -228,6 +228,11 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               the option that stands there where nobody answers, one of
               --options: pending --due lists the ask once its deadline
               passes, and resolve --default closes it with that option.
+              --effect names what that option does if it stands, one of
+              none, irreversible, spend, commitment, as-owner or release;
+              --recommend requires it, missing or another word is refused
+              `effect-required`, and any word but none is refused
+              `ask-reserved-effect`: that decision is sent --reserved.
               --reserved marks an owner-reserved decision, which no default
               closes: the record carries `reserved: true` and no
               recommendation, pending --due never lists it, resolve
@@ -402,6 +407,7 @@ Options:
   --progress    notice --to owner with --ref only: mark a step report
   --attach PATH notice --to owner only: the file carried beside the text
   --recommend a ask --to owner only: the option that stands at the deadline
+  --effect WORD ask --to owner only: what the recommended option does
   --wait N      ask --to owner only: minutes until the ask's deadline
   --draft PATH  ask --to owner only: the message the owner approves
   --reserved    ask --to owner only: a decision no deadline closes
@@ -455,8 +461,7 @@ outcome by its re and issue. Posted records carry the question comment's id in
 tracker_comment. Failure records carry the failed operation in cause.
 Reads fold the outcome into that ask and clear tracker_pending before cursor filtering. They never emit it as an
 ordinary event. Line counts include it. Without confirmation, an item ask
-keeps the full chat presentation and chat deadline route. Closure changes
-tracker contents only after a confirmed post. A tracker-unwritten cause=label
+keeps the full chat presentation and chat deadline route. A tracker-unwritten cause=label
 notice includes error-file, the retained tracker stderr in the mailbox directory.
 Full event snapshots, including the Slack relay's imported mailbox reader,
 hold pending tracker asks for 300 seconds from at. An outcome releases the ask.
@@ -537,7 +542,7 @@ call `orch-runtime host` refused at the per-home bound on provider calls; 124
 keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid, box-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress-needs-ref,
-recommend-invalid, recommend-missing, recommend-required, draft-field,
+recommend-invalid, recommend-missing, recommend-required, effect-required, ask-reserved-effect, draft-field,
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
 overseer-only,
@@ -650,6 +655,8 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     draft-field) text='A draft is a JSON object of exactly recipient, medium and text, each a string holding a non-blank character. lane-mail computes text_hash itself, so a draft that names it is refused too.' ;;
     draft-medium) text='A draft medium is slack-channel, slack-thread or email.' ;;
     recommend-required) text='An owner ask names what its deadline does by its form, --recommend, --reserved or --draft; the owner-channel ask help states each. The owner can still answer outside the choices, through send --re.' ;;
+    effect-required) text='--recommend names an option that stands when nobody answers, so --effect says what it does: none, irreversible, spend, commitment, as-owner or release.' ;;
+    ask-reserved-effect) text='A recommendation that is irreversible, spends, commits outside, is sent as the owner or is a release waits for the owner: send the ask with --reserved, which no deadline closes.' ;;
     owner-action-missing) text='Use --do with the action and the evidence that closes it.' ;;
     box-invalid) text='--box takes to-lane or to-overseer, the one mailbox file events reads.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
@@ -728,6 +735,7 @@ REF=""
 PROGRESS=0
 ATTACH=""
 RECOMMEND=""
+EFFECT=""
 WAIT=""
 WAIT_GIVEN=0
 DUE=0
@@ -786,6 +794,7 @@ while [ "$#" -gt 0 ]; do
       [ -z "$ATTACH" ] || refuse attach-repeated --attach
       ATTACH="$2"; shift 2 ;;
     --recommend) need_val "$@"; RECOMMEND="$2"; shift 2 ;;
+    --effect) need_val "$@"; EFFECT="$2"; shift 2 ;;
     --wait) need_val "$@"; WAIT="$2"; WAIT_GIVEN=1; shift 2 ;;
     --draft) need_val "$@"; DRAFT="$2"; shift 2 ;;
     --reserved) RESERVED=1; shift ;;
@@ -866,7 +875,7 @@ for given in $OPTS_GIVEN; do
       [ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress
       [ -n "$REF" ] || refuse progress-needs-ref --progress ;;
     --attach) case "$VERB:$ITEM" in notice:overseer | attach-check:) ;; *) refuse option-unknown --attach ;; esac ;;
-    --recommend | --wait | --draft | --reserved) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
+    --recommend | --effect | --wait | --draft | --reserved) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
     --after)
       case "$VERB" in
@@ -2291,6 +2300,20 @@ case "$VERB" in
         RECOMMEND=deny
         lm_draft
       fi
+      # A recommendation stands when nobody answers, so silence must never
+      # authorize an owner-reserved action through it: its sender names what
+      # it does, and a reserved effect takes --reserved, the approval route.
+      case "$EFFECT" in
+        '' | none | irreversible | spend | commitment | as-owner | release) ;;
+        *) refuse effect-required "$EFFECT" ;;
+      esac
+      if [ "$RESERVED" -eq 0 ] && [ -z "$DRAFT" ]; then
+        case "$EFFECT" in
+          none) ;;
+          '') [ -z "$RECOMMEND" ] || refuse effect-required --effect ;;
+          *) refuse ask-reserved-effect "$EFFECT" ;;
+        esac
+      fi
       [ -n "$RECOMMEND" ] || [ "$RESERVED" -eq 1 ] || refuse recommend-required "$TO"
       [ -n "$OPTIONS" ] || refuse option-required --options
       # The envelope records --options split on commas, so a value holding a
@@ -2471,13 +2494,6 @@ case "$VERB" in
     CLOSE_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
     if lm_append_local "$TO_LANE" "$LINE" lm_guard_close; then
       lm_resolved "$MSGID" "$BY" "$CLOSE_ID"
-      if [ "$(jq -r '.issue // empty' <<<"$ASK_JSON")" != "" ]; then
-        if owner_tracker_settings "$SCRIPT_DIR" "$ASK_JSON"; then
-          owner_tracker_close "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$ASK_JSON" "$CLOSE_ID" "$WORK_DIR"
-        else
-          owner_tracker_unwritten "$(jq -r '.issue' <<<"$ASK_JSON")" "$OWNER_TRACKER_SETTINGS_CAUSE"
-        fi
-      fi
     else
       read -r EARLIER_ID EARLIER_BY EARLIER_KEY <"$WORK_DIR/resolved.earlier" ||
         refuse file-unreadable "$WORK_DIR/resolved.earlier"

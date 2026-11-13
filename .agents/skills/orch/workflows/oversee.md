@@ -344,9 +344,9 @@ A fix, take-over or closure of a contribution follows only the owner's answer to
    A pull request's ask offers four options, an issue's two, since merge-as-is and request-changes act only on a pull request. A pull request in any watched repository but the first gets only request-changes and close, both carried out with `--repo [REPO]`, since every other option runs from the first repository's checkout:
 
    ```bash
-   .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options merge-as-is,request-changes,take-over,close --recommend [OPTION] --wait 10080 --file [PATH]
-   .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options request-changes,close --recommend [OPTION] --wait 10080 --file [PATH]
-   .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options take-over,close --recommend [OPTION] --wait 10080 --file [PATH]
+   .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options merge-as-is,request-changes,take-over,close --recommend [OPTION] --effect none --wait 10080 --file [PATH]
+   .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options request-changes,close --recommend [OPTION] --effect none --wait 10080 --file [PATH]
+   .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options take-over,close --recommend [OPTION] --effect none --wait 10080 --file [PATH]
    ```
 
    For a pull request reported on a new head, repeat step 1 and ask once for that head. First close its earlier ask for `[REPO]#[N]` if `lane-mail pending --item overseer --to owner` lists it. Send the reason as a separate notice:

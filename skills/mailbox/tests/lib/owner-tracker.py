@@ -94,7 +94,7 @@ else exec '{shutil.which("date")}' "$@"; fi
             release_fd = os.open(release, os.O_RDWR)
             writer = subprocess.Popen([*mail, "ask", "--item", "overseer", "--to", "owner",
                 "--issue", "KEN-7", "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
-                "--recommend", "approve", "--file", str(message)], cwd=root, env=env,
+                "--recommend", "approve", "--effect", "none", "--file", str(message)], cwd=root, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             def read(verb, *args):

@@ -983,7 +983,7 @@ fn repair_passes(mode: &str) {
     let clock = SystemClock;
     for pass in [1, 2] {
         fs::write(world.dir.path().join("linear.log"), "").unwrap();
-        duty(&Tick {
+        let produced = duty(&Tick {
             duty: Duty::Tracker,
             now: clock.now(),
             wall: NOW,
@@ -991,6 +991,20 @@ fn repair_passes(mode: &str) {
             clock: &clock,
         })
         .unwrap();
+        // An unconfirmed repair is the asking overseer's line; the baseline
+        // here holds no standing cause, so each pass says it.
+        let unmarked: Vec<String> = produced
+            .events
+            .iter()
+            .map(|e| e.render())
+            .filter(|l| l.starts_with("EVENT owner-ask-unmarked "))
+            .collect();
+        let said: &[&str] = if landed || quota {
+            &[]
+        } else {
+            &["EVENT owner-ask-unmarked 1780000000-12-34 issue=T-7 step=line cause=unlanded"]
+        };
+        assert_eq!(unmarked, said, "{mode} pass {pass}");
         let calls = fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
         assert_eq!(
             calls.contains("issues update T-7 --description"),
@@ -1011,6 +1025,12 @@ fn repair_passes(mode: &str) {
             "{mode} pass {pass}: {calls}"
         );
         assert_eq!(delivered(), usize::from(!quota), "{mode} pass {pass}");
+        // The answer handed over is marked once, under the owner's comment.
+        assert_eq!(
+            calls.contains("comments create T-7 --parent answer-1 --body "),
+            !quota && pass == 1,
+            "{mode} pass {pass}: {calls}"
+        );
     }
 }
 
@@ -1021,14 +1041,9 @@ fn an_owner_answer_is_delivered_once_whatever_its_description_repair_did() {
         repair_passes(&mode.to_string_lossy());
         return;
     }
-    // The duty says an unconfirmed repair on this process's stderr: the
-    // passes run in a child whose stderr the row reads.
-    for (mode, said) in [
-        ("write.drop", 2),
-        ("", 0),
-        ("write.lost", 0),
-        ("write.quota", 0),
-    ] {
+    // Each mode's passes run in a child, which moves into the world's
+    // checkout as the watch runs there.
+    for mode in ["write.drop", "", "write.lost", "write.quota"] {
         let out = support::program(std::env::current_exe().unwrap())
             .args(["--exact", ROW, "--nocapture"])
             .env("REPAIR_CHILD", mode)
@@ -1039,13 +1054,6 @@ fn an_owner_answer_is_delivered_once_whatever_its_description_repair_did() {
         assert!(
             out.status.success() && stdout.contains("1 passed"),
             "{mode}: {stdout}{stderr}"
-        );
-        assert_eq!(
-            stderr
-                .matches("lane-mail: tracker-unwritten issue=T-7 cause=description\n")
-                .count(),
-            said,
-            "{mode}: {stderr}"
         );
     }
 }

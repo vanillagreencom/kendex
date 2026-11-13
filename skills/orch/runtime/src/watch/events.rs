@@ -31,6 +31,28 @@ pub enum Takeover {
     Replace,
 }
 
+/// Which of an owner ask's tracker marks did not land: the ruling comment
+/// and the item write of its close, the action line restored while it is
+/// open, the reply marking an answer delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerMark {
+    Ruling,
+    Item,
+    Line,
+    Delivery,
+}
+
+impl OwnerMark {
+    fn word(self) -> &'static str {
+        match self {
+            OwnerMark::Ruling => "ruling",
+            OwnerMark::Item => "item",
+            OwnerMark::Line => "line",
+            OwnerMark::Delivery => "delivery",
+        }
+    }
+}
+
 impl Takeover {
     fn word(self) -> &'static str {
         match self {
@@ -249,6 +271,14 @@ pub enum Event {
     OwnerAskClosed {
         re: String,
         by: String,
+    },
+    /// An owner ask's tracker mark that did not land on `issue`, said once
+    /// per cause; `cause` is the refusal's key.
+    OwnerAskUnmarked {
+        ask: String,
+        issue: String,
+        step: OwnerMark,
+        cause: String,
     },
     OwnerNote {
         id: String,
@@ -594,6 +624,15 @@ impl Event {
                 format!("EVENT owner-ask-resolved {re} by={by} id={id}")
             }
             Event::OwnerAskClosed { re, by } => format!("EVENT owner-ask-closed {re} by={by}"),
+            Event::OwnerAskUnmarked {
+                ask,
+                issue,
+                step,
+                cause,
+            } => format!(
+                "EVENT owner-ask-unmarked {ask} issue={issue} step={} cause={cause}",
+                step.word()
+            ),
             Event::OwnerNote { id } => format!("EVENT owner-note {id}"),
             Event::PeerNote {
                 repository,

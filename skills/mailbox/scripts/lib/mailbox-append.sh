@@ -176,8 +176,8 @@ mailbox_warn_legacy() { # FILE
 # The mailbox owns the ask. Tracker writes are advisory: a failed write must
 # leave that ask available on its existing chat route.
 
-owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY [ASK TO CLOSE]
-  local root configured=0 recorded_label=""
+owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY
+  local root configured=0
   OWNER_TRACKER_SETTINGS_CAUSE=settings-unreadable
   OWNER_TRACKER_EMAIL=""
   OWNER_TRACKER_LABEL=""
@@ -192,14 +192,6 @@ owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY [ASK TO CLOSE]
     [[ -z "$OWNER_TRACKER_LABEL" || -z "$OWNER_TRACKER_EMAIL" ]] || configured=1
   fi
   [[ "$configured" -eq 1 ]] || OWNER_TRACKER_LABEL=""
-  # Saved evidence enables close without settings. Keep the configured
-  # label unchanged: it is the fallback for other, older asks only.
-  if [[ -n "${2:-}" ]]; then
-    recorded_label="$(jq -r 'select(.tracker_posted == true) | .tracker_label // empty' <<<"$2")" || return 1
-    if [[ -n "$recorded_label" ]]; then
-      return 0
-    fi
-  fi
   [[ "$configured" -eq 1 ]]
 }
 
@@ -230,13 +222,9 @@ def owner_tracker_record($outcomes):
 def owner_tracker_release_at:
   (.at | at_epoch) + 300;
 def owner_tracker_snapshot($now):
-  select(.tracker_pending != true or owner_tracker_release_at <= $now) | del(.tracker_pending);
-def owner_tracker_label($configured):
-  .tracker_label // (if $configured != "" then $configured else error("owner-tracker-label-unavailable") end);
-def owner_tracker_open_labels($configured):
-  map(select(.tracker_posted == true) | owner_tracker_label($configured)) | unique;'
+  select(.tracker_pending != true or owner_tracker_release_at <= $now) | del(.tracker_pending);'
 
-# One description format serves the ask, its close and the watch's existing read.
+# One description format serves the ask and the watch's read and close.
 # The Linear file reader trims trailing newlines. Use --description and keep
 # a sentinel during shell capture so the existing body retains those bytes.
 OWNER_ACTION_JQ='def owner_action_body:
@@ -245,7 +233,7 @@ def owner_action_line($name; $action):
   "**" + ($name | [splits("\\s+") | select(length > 0)] | first)
   + ", what you do:** " + $action + "\n\n" + owner_action_body;'
 
-# The item as the ask and its close read it: description, assignee name and
+# The item as the ask reads it: description, assignee name and
 # label names. `linear.sh graphql` refuses a label page left open, which the
 # label write needs, since it sends the whole set.
 owner_tracker_item() { # TRACKER ISSUE
@@ -255,12 +243,10 @@ owner_tracker_item() { # TRACKER ISSUE
   jq -ce '.issue | {description: (.description // ""), assignee: (.assignee.name // ""), labels: [.labels.nodes[].name]}' <<<"$answer"
 }
 
-owner_tracker_labels() { # ITEM JSON ADD|REMOVE [CLOSING LABEL] [REMAINING POSTED ASKS]
-  jq -r --arg label "${3:-$OWNER_TRACKER_LABEL}" --arg configured "$OWNER_TRACKER_LABEL" \
-    --arg action "$2" --argjson remaining "${4:-[]}" "$OWNER_TRACKER_JQ"'
-    .labels | if $action == "ADD" then . + [$label] | unique
-      else ($remaining | owner_tracker_open_labels($configured)) as $kept
-        | map(select(. != $label)) + $kept | unique end | join(",")' <<<"$1"
+owner_tracker_labels() { # ITEM JSON ADD|REMOVE
+  jq -r --arg label "$OWNER_TRACKER_LABEL" --arg action "$2" '
+    .labels | if $action == "ADD" then . + [$label] else map(select(. != $label)) end
+    | unique | join(",")' <<<"$1"
 }
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
@@ -332,7 +318,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   original_description="$(jq -r '(.description // "") + "."' <<<"$current")" || return 1
   original_description="${original_description%.}"
   if [[ "$added_label" == true ]]; then
-    rollback_labels="$(owner_tracker_labels "$latest" REMOVE "$OWNER_TRACKER_LABEL" 2>"$work/tracker-rollback.err")" || {
+    rollback_labels="$(owner_tracker_labels "$latest" REMOVE 2>"$work/tracker-rollback.err")" || {
       owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
     }
     rollback_label_args=(--clear-labels)
@@ -342,63 +328,4 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
     >"$work/tracker-rollback.out" 2>"$work/tracker-rollback.err" ||
     owner_tracker_unwritten "$issue" rollback-update "$work/tracker-rollback.err"
   return 0
-}
-
-owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
-  local tracker="$1" ask="$2" close="$3" work="$4" issue labels ask_id current description remaining closing_label posted
-  # An item reference alone does not grant ownership of its tracker contents.
-  posted="$(jq -r '.tracker_posted == true' <<<"$ask")" || return 1
-  [[ "$posted" == true ]] || return 0
-  issue="$(jq -r '.issue // empty' <<<"$ask")" || return 1
-  [[ -n "$issue" ]] || return 0
-  closing_label="$(jq -r --arg configured "$OWNER_TRACKER_LABEL" "$OWNER_TRACKER_JQ"'
-    owner_tracker_label($configured)' <<<"$ask" 2>"$work/tracker.err")" || {
-    owner_tracker_unwritten "$issue" "$OWNER_TRACKER_SETTINGS_CAUSE"; return 0;
-  }
-  # The close guard supplies the ruling from the owner's last answer or the
-  # default. Read that record, rather than computing another ruling here.
-  ask_id="$(jq -r '.id' <<<"$ask")" || return 1
-  jq -rs --arg id "$close" --arg ask "$ask_id" '
-    ([.[] | select(.kind == "answer" and .re == $ask)] | last | .text // "") as $ruling
-    | .[] | select(.id == $id) | "ask=" + .re + " closed (" + .by + "): " + $ruling' \
-    "$TO_LANE" >"$work/tracker-comment" || return 1
-  "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    owner_tracker_unwritten "$issue" close-comment; return 0;
-  }
-  current="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker.err")" || {
-    owner_tracker_unwritten "$issue" labels-read; return 0;
-  }
-  # Distinct owner asks can share an issue. The locked pending reader owns
-  # closure and posting evidence; a closed ask cannot clear another open ask.
-  "${BASH_SOURCE[0]%/lib/mailbox-append.sh}/lane-mail" pending --item overseer --root "$ROOT" --to owner \
-    >"$work/tracker-remaining" 2>"$work/tracker.err" || {
-    owner_tracker_unwritten "$issue" asks-read; return 0;
-  }
-  remaining="$(jq -cs --arg issue "$issue" '[.[] | select(.tracker_posted == true and .issue == $issue)]' \
-    "$work/tracker-remaining")" || return 1
-  # A remaining legacy ask needs configured evidence. Another ask's saved
-  # label cannot identify it, even when that other ask is closing.
-  labels="$(owner_tracker_labels "$current" REMOVE "$closing_label" "$remaining" 2>"$work/tracker.err")" || {
-    owner_tracker_unwritten "$issue" "$OWNER_TRACKER_SETTINGS_CAUSE"; return 0;
-  }
-  local owner_args=(--clear-assignee)
-  if [[ "$remaining" != '[]' ]]; then
-    owner_args=()
-  fi
-  # Keep a line another ask or a later edit owns, even if its format matches.
-  description="$(jq -r --argjson closed "$ask" --argjson asks "$remaining" "$OWNER_ACTION_JQ"'
-    .assignee as $name | (.description // "")
-    | if ($closed.do // "") != "" then
-        ("" | owner_action_line($name; $closed.do)) as $prefix
-        | if startswith($prefix) then
-            ltrimstr($prefix) as $body | ($asks | last) as $next
-            | if ($next.do // "") != "" then ("" | owner_action_line($name; $next.do)) + $body else $body end
-          else . end
-      else . end
-    | . + "."' <<<"$current")" || return 1
-  description="${description%.}"
-  local label_args=(--clear-labels)
-  [[ -z "$labels" ]] || label_args=(--labels "$labels")
-  "$tracker" issues update "$issue" "${label_args[@]}" ${owner_args[@]+"${owner_args[@]}"} --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" ||
-    owner_tracker_unwritten "$issue" close-update
 }

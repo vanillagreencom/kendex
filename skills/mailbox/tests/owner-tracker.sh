@@ -41,10 +41,10 @@ assert_eq "$(jq '.delivery' <<<"$FACTS")" true 'the real relay holds pending ask
 assert_eq "$(jq '.bound' <<<"$FACTS")" true 'a missing outcome releases at the fixed bound and preserves later delivery'
 CLOSE_FACTS="$(python3 "$ROOT/skills/mailbox/tests/lib/owner-tracker-close.py" \
   "${MAILBOX_UNDER_TEST:-$ROOT/skills/mailbox}" "$TMP_ROOT" "$BASH")"
-assert_eq "$(jq '.unposted' <<<"$CLOSE_FACTS")" true 'failed tracker writes preserve description and labels after close'
+assert_eq "$(jq '.unposted' <<<"$CLOSE_FACTS")" true 'failed tracker writes preserve description and labels'
 assert_eq "$(jq '.notice' <<<"$CLOSE_FACTS")" true 'failed tracker writes retain their failure notice'
-assert_eq "$(jq '.posted' <<<"$CLOSE_FACTS")" true 'posted tracker asks release only their description and labels'
-assert_eq "$(jq '.edited' <<<"$CLOSE_FACTS")" true 'close preserves an action line changed after posting'
+assert_eq "$(jq '.posted' <<<"$CLOSE_FACTS")" true 'a confirmed tracker post projects as posted'
+assert_eq "$(jq '.close_untracked' <<<"$CLOSE_FACTS")" true 'a close calls no tracker'
 assert_eq "$(jq '.retained_error' <<<"$CLOSE_FACTS")" true 'a refused label retains tracker error bytes after close'
 assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'only successful tracker posts leave a question comment'
 assert_eq "$(jq '.rollback_owned' <<<"$CLOSE_FACTS")" true 'failed comments restore the exact description the ask replaced'
@@ -54,7 +54,7 @@ assert_eq "$(jq '.comment_refused' <<<"$CLOSE_FACTS")" true 'refused comment ack
 assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes only the added owner label from fresh labels'
 assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed cause comment-id mention unposted exact-action retained-error rollback-owner comment-refused rollback-label; do
+  for rule in pending failed bound private-failed cause comment-id mention close-untracked retained-error rollback-owner comment-refused rollback-label; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -86,16 +86,11 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         '"https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri), "",' ''
       assertion='the question comment mentions the owner and carries no ask id'
-    elif [[ "$rule" == unposted ]]; then
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        '[[ "$posted" == true ]] || return 0' '[[ "$posted" == true ]] || :'
-      assertion='failed tracker writes preserve description and labels after close'
-    elif [[ "$rule" == exact-action ]]; then
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'if startswith($prefix) then' 'if startswith("**") then'
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'ltrimstr($prefix) as $body' 'owner_action_body as $body'
-      assertion='close preserves an action line changed after posting'
+    elif [[ "$rule" == close-untracked ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
+        'lm_resolved "$MSGID" "$BY" "$CLOSE_ID"' \
+        'lm_resolved "$MSGID" "$BY" "$CLOSE_ID"; "$SCRIPT_DIR/../../linear/scripts/linear.sh" issues update KEN-7 --clear-labels >/dev/null 2>&1 || :'
+      assertion='a close calls no tracker'
     elif [[ "$rule" == retained-error ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"' \

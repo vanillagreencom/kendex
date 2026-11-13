@@ -86,7 +86,7 @@ sk_poll "$ROOT"
 assert_eq "$(directives "$ROOT" | wc -l | tr -d ' ')" "1" "a second poll delivers nothing twice"
 
 # --- an ask: every reply answers, until the asker closes ---------------------
-sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Cut the scanner?')" --options cut,keep --recommend cut --wait 30 >"$SK_TMP/ask.out"
+sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Cut the scanner?')" --options cut,keep --recommend cut --effect none --wait 30 >"$SK_TMP/ask.out"
 ASK="$(sed 's/^id=//' "$SK_TMP/ask.out")"
 sk_poll "$ROOT"
 ASK_TS="$(sk_state '.messages.C001[] | select(.text | startswith("<@U001> <@U002> Question")) | .ts')"
@@ -124,7 +124,7 @@ sk_poll "$ROOT"
 assert_eq "$(jq -s --arg id "$ASK" '[.[] | select(.t == "resolved" and .id == $id)] | length' "$(sk_journal "$ROOT")")" "1" "restart consumes the close once"
 
 # --- a chat answer and a deadline default appear in the thread ------------------
-sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q2 'Merge now?')" --options yes,no --recommend no >"$SK_TMP/ask2.out"
+sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q2 'Merge now?')" --options yes,no --recommend no --effect none >"$SK_TMP/ask2.out"
 ASK2="$(sed 's/^id=//' "$SK_TMP/ask2.out")"
 sk_poll "$ROOT"
 ASK2_TS="$(sk_state '.messages.C001[] | select(.text | contains("Merge now?")) | .ts')"
@@ -204,7 +204,7 @@ answer_origins assert_eq "$ROOT" C001 origin || exit 1
 program_answers() { # ASSERTION ROOT CHANNEL PREFIX
   local assertion="$1" root="$2" channel="$3" prefix="$4" name choice expected ask ts text
   while IFS='|' read -r name choice expected; do
-    sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$prefix-$name" "Program answer $prefix-$name?")" --options approve,cancel --recommend cancel >"$SK_TMP/$prefix-$name.out"
+    sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$prefix-$name" "Program answer $prefix-$name?")" --options approve,cancel --recommend cancel --effect none >"$SK_TMP/$prefix-$name.out"
     ask="$(sed 's/^id=//' "$SK_TMP/$prefix-$name.out")"
     sk_poll "$root"
     ts="$(sk_state ".messages.${channel}[] | select(.text | contains(\"Program answer $prefix-$name?\")) | .ts")"
@@ -223,7 +223,7 @@ PROGRAM_ANSWERS
 }
 program_answers assert_eq "$ROOT" C001 program
 
-sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q3 'Rotate the key?')" --options yes,no --recommend yes >"$SK_TMP/ask3.out"
+sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q3 'Rotate the key?')" --options yes,no --recommend yes --effect none >"$SK_TMP/ask3.out"
 ASK3="$(sed 's/^id=//' "$SK_TMP/ask3.out")"
 sk_poll "$ROOT"
 ASK3_TS="$(sk_state '.messages.C001[] | select(.text | contains("Rotate the key?")) | .ts')"
@@ -415,7 +415,7 @@ sk_poll "$GAMMA"
 LONG_ID="$(notice_id "$GAMMA" "$LONG")"
 assert_eq "$RC=$(refused_line "$GAMMA" "$LONG_ID")=$(sk_state '[.messages.C002[] | select(.body_arg == "markdown_text" and (.text | test("^[^\\n]*[0-9]+/[0-9]+\\n\\n"))) | .body_arg] | unique | join(" ")')" \
   "0=resolved =markdown_text" "a notice past the cap lands as standard Markdown continuations"
-sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text s7 "q$LONG")" --options a,b --recommend a >"$SK_TMP/ask-long.out"
+sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text s7 "q$LONG")" --options a,b --recommend a --effect none >"$SK_TMP/ask-long.out"
 LONG_ASK="$(sed 's/^id=//' "$SK_TMP/ask-long.out")"
 LONG_ASK_POSTS="$(sk_state '[.calls[] | select(. == "chat.postMessage")] | length')"
 sk_poll "$GAMMA"
@@ -457,7 +457,7 @@ sk_poll "$GAMMA" SLACK_OWNERS="$OWNER"
 assert_has "$(posts C002)" "$X1 | Only the channel's owners steer this session" "a removed owner loses routing at that poll"
 
 # --- a post Slack refuses fails the poll and is made again on the next -----------------------
-sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q5 'Refused once?')" --options a,b --recommend a >"$SK_TMP/ask5.out"
+sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q5 'Refused once?')" --options a,b --recommend a --effect none >"$SK_TMP/ask5.out"
 ASK5="$(sed 's/^id=//' "$SK_TMP/ask5.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null
 sk_poll "$GAMMA"
@@ -474,7 +474,7 @@ sk_poll "$GAMMA"
 assert_eq "$RC=$(asks C002 'Refused once?')" "0=1" "the next poll posts the ask and exits 0"
 
 # --- a post the network refused is made again; a lost response is journaled unknown ----------
-sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q6 'Refused connection?')" --options a,b --recommend a >"$SK_TMP/ask6.out"
+sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q6 'Refused connection?')" --options a,b --recommend a --effect none >"$SK_TMP/ask6.out"
 ASK6="$(sed 's/^id=//' "$SK_TMP/ask6.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}' >/dev/null
 sk_poll "$GAMMA"
@@ -487,7 +487,7 @@ assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK6\") | .state" "$(sk_j
   "a request Slack never received records its in-flight and retry lines"
 sk_poll "$GAMMA"
 assert_eq "$RC=$(asks C002 'Refused connection?')" "0=1" "the next poll posts the ask"
-sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q7 'Lost response?')" --options a,b --recommend a >"$SK_TMP/ask7.out"
+sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text q7 'Lost response?')" --options a,b --recommend a --effect none >"$SK_TMP/ask7.out"
 ASK7="$(sed 's/^id=//' "$SK_TMP/ask7.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "drop": true, "times": 1}' >/dev/null
 sk_poll "$GAMMA"
@@ -515,7 +515,7 @@ sk_lm "$DELTA" notice --item overseer --to owner --file "$(sk_text n5 'Old notic
 mkdir -p "$DELTA/tmp/progress-reports"
 printf '# Old report\n' > "$DELTA/tmp/progress-reports/old.md"
 sk_lm "$DELTA" notice --item overseer --to owner --attach "$DELTA/tmp/progress-reports/old.md" --file "$(sk_text n6 'Old report.')" >/dev/null
-sk_lm "$DELTA" ask --item overseer --to owner --file "$(sk_text q8 'Still open?')" --options a,b --recommend a >/dev/null
+sk_lm "$DELTA" ask --item overseer --to owner --file "$(sk_text q8 'Still open?')" --options a,b --recommend a --effect none >/dev/null
 sk_run -- setup --root "$DELTA" --take C777
 assert_eq "$RC" 0 "a channel with history is adopted"
 sk_poll "$DELTA"
@@ -574,7 +574,7 @@ assert_has "$(posts C002)" "$OLD | Late ruling." "it lands in that message's thr
 while read -r mode close; do
   LATE="$(sk_new_root "late-$mode-$close")"
   sk_bind "$LATE"
-  sk_lm "$LATE" ask --item overseer --to owner --file "$(sk_text late 'Late close?')" --options a,b --recommend a >"$SK_TMP/late.out"
+  sk_lm "$LATE" ask --item overseer --to owner --file "$(sk_text late 'Late close?')" --options a,b --recommend a --effect none >"$SK_TMP/late.out"
   LATE_ASK="$(sed 's/^id=//' "$SK_TMP/late.out")"
   sk_poll "$LATE"
   LATE_CH="$(sk_channel "$LATE")"
@@ -732,7 +732,7 @@ assert_eq "$(sk_state '[.calls[] | select(startswith("reactions."))] | length')"
 # reply's ts and ANSWER_SEEN to its journaled kind and its reactions before the read.
 answer_read() {
   local ask_ts
-  sk_lm "$1" ask --item overseer --to owner --file "$(sk_text "$3" "Answer $3?")" --options a,b --recommend a >/dev/null
+  sk_lm "$1" ask --item overseer --to owner --file "$(sk_text "$3" "Answer $3?")" --options a,b --recommend a --effect none >/dev/null
   sk_poll "$1"
   ask_ts="$(sk_state "[.messages.${2}[] | select(.text | contains(\"Answer $3?\")) | .ts][0]")"
   ANSWER="$(sk_inject "$2" U001 'a' "$ask_ts")"
@@ -870,7 +870,7 @@ sk_bin_reset
 sk_mutant resolve relay.py 'outcome, answer_id = self.mail.answer\(thread.envelope, text, delivery\)' 'outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)\n            self.mail._run("resolve", "--item", "overseer", "--id", thread.envelope)'
 EPS="$(sk_new_root eps)"
 sk_bind "$EPS"
-sk_lm "$EPS" ask --item overseer --to owner --file "$(sk_text q4 'Which?')" --options a,b --recommend a >/dev/null
+sk_lm "$EPS" ask --item overseer --to owner --file "$(sk_text q4 'Which?')" --options a,b --recommend a --effect none >/dev/null
 sk_poll "$EPS"
 EPS_CH="$(sk_channel "$EPS")"
 ASK4_TS="$(sk_state ".messages.${EPS_CH}[] | select(.text | contains(\"Which?\")) | .ts")"
@@ -891,7 +891,7 @@ sk_bin_reset
 sk_mutant closure-journal relay.py 'self\.journal\.append\(t="resolved", id=str\(envelope\["re"\]\), source=str\(envelope\["id"\]\)\)' 'None if True else self.journal.append(t="resolved", id=str(envelope["re"]), source=str(envelope["id"]))'
 CLOSE_ROOT="$(sk_new_root closure-journal)"
 sk_bind "$CLOSE_ROOT"
-sk_lm "$CLOSE_ROOT" ask --item overseer --to owner --file "$(sk_text closure 'Close?')" --options a,b --recommend a >"$SK_TMP/close.out"
+sk_lm "$CLOSE_ROOT" ask --item overseer --to owner --file "$(sk_text closure 'Close?')" --options a,b --recommend a --effect none >"$SK_TMP/close.out"
 CLOSE_ASK="$(sed 's/^id=//' "$SK_TMP/close.out")"
 sk_poll "$CLOSE_ROOT"
 sk_lm "$CLOSE_ROOT" resolve --item overseer --id "$CLOSE_ASK" >/dev/null
@@ -920,7 +920,7 @@ sk_bin_reset
 sk_mutant late-closure relay.py 'if thread_ts in state\.threads and env_id not in state\.resolutions:' 'if thread_ts in state.threads and env_id not in state.resolutions and at_epoch(str(envelope["at"])) >= self.settings.horizon(self.clock()):'
 LATE_CONTROL="$(sk_new_root late-control)"
 sk_bind "$LATE_CONTROL"
-sk_lm "$LATE_CONTROL" ask --item overseer --to owner --file "$(sk_text late-control 'Delayed?')" --options a,b --recommend a >"$SK_TMP/late-control.out"
+sk_lm "$LATE_CONTROL" ask --item overseer --to owner --file "$(sk_text late-control 'Delayed?')" --options a,b --recommend a --effect none >"$SK_TMP/late-control.out"
 LATE_CONTROL_ASK="$(sed 's/^id=//' "$SK_TMP/late-control.out")"
 sk_poll "$LATE_CONTROL"
 sk_lm "$LATE_CONTROL" resolve --item overseer --id "$LATE_CONTROL_ASK" >/dev/null
@@ -1134,14 +1134,14 @@ assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text == \"Plain again.\"
 sk_bin_reset
 
 sk_mutant deadline relay.py 'It stands at \{local_time\(str\(envelope\[.deadline.\]\)\)\}' 'It stands at {envelope["deadline"]}'
-sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q11 'Zulu deadline?')" --options a,b --recommend a >/dev/null
+sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q11 'Zulu deadline?')" --options a,b --recommend a --effect none >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text | contains(\"Zulu deadline?\")) | .text | contains(\"<!date^\")")" "false" \
   "control: the deadline as its raw stamp, the ask posts with no date token"
 sk_bin_reset
 
 sk_mutant swallow relay.py 'if self\.post_failed is not None:\n            raise self\.post_failed(?=\n        self\.last_ok = self\.clock\(\))' 'if self.post_failed is not None:\n            self.post_failed = None'
-sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q9 'Swallowed?')" --options a,b --recommend a >/dev/null
+sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q9 'Swallowed?')" --options a,b --recommend a --effect none >/dev/null
 sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null
 sk_poll "$ZETA"
 assert_eq "$RC=$(jq -r '.last_poll_ok' "$ZETA/tmp/slack/status.json")" "0=true" "control: the post failure swallowed, a refused post reads as a clean poll"
@@ -1159,7 +1159,7 @@ sk_bin_reset
 # One binding owns adoption, repeat setup and delivery progress independently.
 while read -r mode want; do
   LIFE="$(sk_new_root "lifetime-$mode")"
-  sk_lm "$LIFE" ask --item overseer --to owner --file "$(sk_text lifetime 'Lifetime ask?')" --options yes,no --recommend no >/dev/null
+  sk_lm "$LIFE" ask --item overseer --to owner --file "$(sk_text lifetime 'Lifetime ask?')" --options yes,no --recommend no --effect none >/dev/null
   case "$mode" in seed) sk_mutant seed relay.py 'self\.journal\.append\(t="seen", ts=self\.binding\.bound_at\)' 'self.journal.append(t="seen", ts="0")' ;; floor) sk_mutant floor relay.py 'oldest = max\(thread.seen, self.binding.bound_at, key=float\)' 'oldest = thread.seen' ;; esac
   sk_run -- setup --root "$LIFE" --take C777
   sk_poll "$LIFE"
@@ -1188,7 +1188,7 @@ NET="$(sk_new_root network)"
 sk_bind "$NET"
 sk_poll "$NET"
 sk_mutant network api.py 'raise Refusal\("slack-unreachable", ' 'raise Refusal("slack-response-lost", '
-sk_lm "$NET" ask --item overseer --to owner --file "$(sk_text q10 'Never sent?')" --options a,b --recommend a >"$SK_TMP/ask10.out"
+sk_lm "$NET" ask --item overseer --to owner --file "$(sk_text q10 'Never sent?')" --options a,b --recommend a --effect none >"$SK_TMP/ask10.out"
 ASK10="$(sed 's/^id=//' "$SK_TMP/ask10.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}' >/dev/null
 sk_poll "$NET"

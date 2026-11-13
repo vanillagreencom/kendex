@@ -295,7 +295,7 @@ done
 # a directive. The wrapper leaves the ask read and all envelope writes real.
 SCAN="$(sk_new_root closure-scan)"
 sk_bind "$SCAN"
-sk_lm "$SCAN" ask --item overseer --to owner --file "$(sk_text scan 'Scan?')" --options a,b --recommend a >/dev/null
+sk_lm "$SCAN" ask --item overseer --to owner --file "$(sk_text scan 'Scan?')" --options a,b --recommend a --effect none >/dev/null
 sk_poll "$SCAN"
 SCAN_CH="$(sk_channel "$SCAN")"
 SCAN_TS="$(sk_state ".messages.${SCAN_CH}[-1].ts")"

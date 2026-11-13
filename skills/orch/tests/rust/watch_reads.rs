@@ -1948,7 +1948,12 @@ fn containers_and_github_tracked_items_are_read_in_their_batches() {
 fn the_duty_owns_its_row_kinds() {
     assert_eq!(
         tracker::row_kinds(),
-        ["tracker-quota", "triage", "terminal-close"]
+        [
+            "tracker-quota",
+            "triage",
+            "terminal-close",
+            "owner-ask-mark"
+        ]
     );
     assert_eq!(
         github::row_kinds(),
@@ -3441,6 +3446,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         json!({"body": [{"id": "KEN-7", "labels": ["skills", "owner-gated"], "description": body, "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-7"}]}),
     );
     world.linear("issues update", json!({"body": {}}));
+    world.linear("comments create", json!({"body": {"success": true}}));
     world.linear(
         "comments bulk-list",
         json!({"body": {"KEN-7": [
@@ -3492,6 +3498,13 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         "{linear_log}"
     );
     assert_eq!(
+        linear_log
+            .matches("comments create KEN-7 --parent owner-comment --body ")
+            .count(),
+        1,
+        "the answer handed over is marked under the owner's comment: {linear_log}"
+    );
+    assert_eq!(
         world.mail_calls(),
         vec![
             format!("pending --item overseer --root {root} --to owner"),
@@ -3506,8 +3519,9 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
             "sent linear:owner-comment OK re=ask-1".to_owned(),
             format!("pending --item overseer --root {root} --to owner --due"),
             format!("resolve --item overseer --root {root} --id ask-1 --default"),
+            format!("events --item overseer --root {root}"),
         ],
-        "the owner's comment after the question is the answer; the other author's, the question's and the older one are not; the due ask closes after the whole read"
+        "the owner's comment after the question is the answer; the other author's, the question's and the older one are not; the due ask closes after the whole read; the marks read the mailbox last"
     );
     // The second pass: the description now opens with its action line, so
     // no repair; the answer landed before under its delivery id, which the
@@ -3523,6 +3537,11 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         linear_log.matches("issues update").count(),
         1,
         "the line is restored once: {linear_log}"
+    );
+    assert_eq!(
+        linear_log.matches("comments create").count(),
+        1,
+        "a repeated answer is marked no second time: {linear_log}"
     );
     let calls = world.mail_calls();
     assert_eq!(calls.iter().filter(|c| c.starts_with("send ")).count(), 2);
@@ -3561,6 +3580,180 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         linear_log.matches("issues list --assignee").count(),
         3,
         "a refused ask read reads no tracker item: {linear_log}"
+    );
+}
+
+/// A posted owner ask closed by any route gets its tracker marks from the
+/// asking overseer's watch, on the real mailbox program: the asks closed
+/// before the first pass are the floor and are never written; a later
+/// close, here Jarvis's typed answer through `resolve --text`, gets its
+/// ruling comment under the question and its item write, the other open
+/// ask on the item keeping its label, assignee and line; a refused comment
+/// stops not the item write, is said once per cause, and is tried again
+/// until it lands.
+#[test]
+fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_they_land() {
+    let mut world = World::new();
+    let root = std::fs::canonicalize(world.dir.path()).unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "gc.auto", "0"],
+        vec!["config", "maintenance.auto", "false"],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(&root)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    }
+    let real = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/scripts/lane-mail")
+        .canonicalize()
+        .unwrap();
+    let mail = |args: &[&str]| {
+        let out = program(&real)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "lane-mail {args:?}: {}", stderr(&out));
+    };
+    let ask = |id: &str, issue: &str, action: &str| {
+        json!({"id": id, "kind": "ask", "at": "2026-10-01T00:00:00Z", "from": "overseer:test",
+            "to": "owner", "issue": issue, "do": action, "text": "Approve?", "options": ["yes", "no"],
+            "recommend": "yes", "wait": 120, "deadline": "2099-01-01T00:00:00Z"})
+    };
+    let posted = |id: &str, issue: &str, label: &str, comment: &str| {
+        json!({"id": format!("{id}-tracker"), "kind": "tracker-posted", "at": "2026-10-01T00:00:01Z",
+            "from": "overseer:test", "re": id, "issue": issue, "tracker_label": label,
+            "tracker_comment": comment, "text": ""})
+    };
+    let mailbox = root.join("tmp/lane-mail/overseer");
+    std::fs::create_dir_all(&mailbox).unwrap();
+    let lines = [
+        ask("ask-1", "KEN-7", "Approve one."),
+        posted("ask-1", "KEN-7", "owner-gated", "question-1"),
+        ask("ask-2", "KEN-7", "Do two."),
+        posted("ask-2", "KEN-7", "owner-other", "question-2"),
+        ask("ask-3", "KEN-8", "Approve three."),
+        posted("ask-3", "KEN-8", "owner-gated", "question-3"),
+    ];
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    std::fs::write(mailbox.join("to-overseer.jsonl"), text).unwrap();
+    let answer = root.join("answer.txt");
+    std::fs::write(&answer, "Approved.\n").unwrap();
+    let root_text = root.display().to_string();
+    let answer_text = answer.display().to_string();
+    let resolve = |id: &str| {
+        mail(&[
+            "resolve",
+            "--item",
+            "overseer",
+            "--root",
+            &root_text,
+            "--id",
+            id,
+            "--text",
+            &answer_text,
+        ]);
+    };
+    // Closed before the watch's first pass: the floor.
+    resolve("ask-3");
+    let body = "Body.\n\n";
+    world.linear("statuses list", statuses());
+    world.linear("issues list", json!({"body": []}));
+    world.linear(
+        "issues bulk-get",
+        json!({"body": {"issues": {"nodes": []}}}),
+    );
+    world.linear(
+        "issues list --assignee",
+        json!({"body": [{"id": "KEN-7", "description": format!("**Maya, what you do:** Approve one.\n\n{body}"), "assignee": "Maya Owner"}]}),
+    );
+    world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
+    world.linear(
+        "graphql OwnerAskItem",
+        json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
+            "assignee": {"name": "Maya Owner"},
+            "labels": {"pageInfo": {"hasNextPage": false},
+                "nodes": [{"name": "skills"}, {"name": "owner-gated"}, {"name": "owner-other"}]}}}}),
+    );
+    world.linear("issues update", json!({"body": {}}));
+    world.linear(
+        "comments create",
+        json!({"exit": 1, "stderr": "linear: request-failed status=500"}),
+    );
+    let cli = isolated_program(&fixtures().join("lane-mail-hold/lane-mail"));
+    let cli = cli.display().to_string();
+    let settings = world.settings(&[
+        ("LANE_MAIL_CLI", &cli),
+        ("ORCH_OWNER_EMAIL", "owner@example.com"),
+        ("ORCH_OWNER_ASK_LABEL", "owner-gated"),
+    ]);
+    let clock = FakeClock::new();
+    let mut body_fn = tracker::body(world.context(settings, None));
+    let mut baseline = Baseline::default();
+    let marks = |log: &str| -> (usize, usize) {
+        (
+            log.matches("comments create ").count(),
+            log.matches("issues update ").count(),
+        )
+    };
+    let first = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert_eq!(rendered(&first), Vec::<String>::new());
+    assert_eq!(first.failed, None);
+    assert_eq!(
+        marks(&world.linear_calls().join("\n")),
+        (0, 0),
+        "an ask closed before the first pass is never written"
+    );
+    // Jarvis's typed answer closes ask-1 through the real program.
+    resolve("ask-1");
+    let second = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+    assert_eq!(
+        rendered(&second),
+        ["EVENT owner-ask-unmarked ask-1 issue=KEN-7 step=ruling cause=tracker-list-failed"],
+        "the refused ruling comment is said with its cause"
+    );
+    let log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
+    assert!(
+        log.contains("comments create KEN-7 --body ask=ask-1 closed (text): Approved.")
+            && log.contains("--parent question-1\n"),
+        "the ruling, a reply under the question: {log}"
+    );
+    assert!(
+        log.contains(&format!(
+            "issues update KEN-7 --labels owner-other,skills --description **Maya, what you do:** Do two.\n\n{body}"
+        )),
+        "a refused comment stops not the item write; the open ask keeps its label, assignee and line: {log}"
+    );
+    assert!(
+        !log.contains("KEN-8"),
+        "the floor's ask is never written: {log}"
+    );
+    assert_eq!(marks(&log), (1, 1));
+    let third = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
+    assert_eq!(
+        rendered(&third),
+        Vec::<String>::new(),
+        "a standing cause is said once"
+    );
+    assert_eq!(
+        marks(&world.linear_calls().join("\n")),
+        (2, 1),
+        "the refused comment is tried again, the landed write is not"
+    );
+    world.linear("comments create", json!({"body": {"success": true}}));
+    let fourth = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1720).unwrap();
+    assert_eq!(rendered(&fourth), Vec::<String>::new());
+    let fifth = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1960).unwrap();
+    assert_eq!(rendered(&fifth), Vec::<String>::new());
+    assert_eq!(
+        marks(&world.linear_calls().join("\n")),
+        (3, 1),
+        "a landed comment ends the retries"
     );
 }
 

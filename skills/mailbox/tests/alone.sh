@@ -64,7 +64,7 @@ if [ "${1:-}" = --reader-row ]; then
   exit
 fi
 
-lm ask --item overseer --to owner --wait 0 --options proceed,hold --recommend hold --file "$TMP_ROOT/message"
+lm ask --item overseer --to owner --wait 0 --options proceed,hold --recommend hold --effect none --file "$TMP_ROOT/message"
 assert_eq "$RC" 0 'owner ask works alone'
 ASK="${OUT#id=}"
 lm notice --item overseer --to owner --file "$TMP_ROOT/message"
