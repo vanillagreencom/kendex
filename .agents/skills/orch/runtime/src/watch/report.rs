@@ -1,6 +1,7 @@
 //! The report cadence and owner report share one snapshot window. Files
 //! advance cadence; only mailbox attachment receipts advance the owner window.
 
+use agent_runtime::intent::{EffectOp, Intent};
 use agent_runtime::record::Document;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -12,8 +13,9 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::mailbox::{Envelope, Mailbox, Refusal};
-use crate::settings::Settings;
+use crate::settings::{LINEAR_TEAM_KEY, Settings};
 use crate::state::{self, Lane, LaneStatus};
+use crate::watch::tracker::{Answered, TrackerInventory};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
 pub const DUE_ROW: &str = "report-due";
@@ -204,6 +206,46 @@ fn load_fleet(path: &Path) -> Result<Document> {
 fn lanes(doc: &Document) -> Result<Vec<Lane>> {
     serde_json::from_value(doc.get("lanes").cloned().unwrap_or_else(|| json!([])))
         .map_err(|e| unjudged(&[("cause", &e.to_string())]))
+}
+
+fn intents(doc: &Document) -> Result<Vec<Intent>> {
+    serde_json::from_value(doc.get("intents").cloned().unwrap_or_else(|| json!([])))
+        .map_err(|e| unjudged(&[("cause", &e.to_string())]))
+}
+
+/// The hold the watch keeps on `item`'s close, as the report words it: the
+/// tracker duty's `terminal-close` row (a landing it could not record, or a
+/// close it was refused), else the item's open `close-resources` intent.
+fn hold(baseline: &super::Baseline, intents: &[Intent], item: &str) -> Option<String> {
+    if let Some(value) = baseline.get(super::tracker::TERMINAL_CLOSE_ROW, item) {
+        return Some(match value.strip_prefix("held|") {
+            Some(cause) => format!("landing unrecorded ({cause})"),
+            None => format!(
+                "close refused ({})",
+                super::tracker::refused_close(value).map_or("unread", |(_, cause)| cause)
+            ),
+        });
+    }
+    // An open intent of another operation leaves no close in flight.
+    let Ok(Some(intent)) =
+        agent_runtime::journal::open_intent(intents, EffectOp::CloseResources, item)
+    else {
+        return None;
+    };
+    let seen = |key: &str| {
+        intent
+            .observation
+            .as_ref()
+            .and_then(|o| o.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or("unread")
+            .to_owned()
+    };
+    Some(format!(
+        "close unconfirmed (host_close={} cause={})",
+        seen("host_close"),
+        seen("cause")
+    ))
 }
 
 struct Window {
@@ -642,6 +684,20 @@ fn cell(text: &str) -> String {
         .replace('|', "\\|")
 }
 
+/// The Verifying list where no tracker duty filled the slot, as in the
+/// report verb's own process: the duty's list read for the configured
+/// team, or the cause it did not answer.
+fn verifying_read(ctx: &Context, now: u64) -> std::result::Result<TrackerInventory, String> {
+    let Some(team) = &ctx.settings.linear_team else {
+        return Err(format!("{LINEAR_TEAM_KEY} unset"));
+    };
+    match super::tracker::verifying_read(&ctx.settings, team, &ctx.fleet, now) {
+        Ok(Answered::Value(inventory)) => Ok(inventory),
+        Ok(Answered::Quota(quota)) => Err(quota.line(now)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 pub fn render(ctx: &Context, now: u64) -> Result<String> {
     let policy = Policy::of(&ctx.settings)?;
     let doc = load_fleet(&ctx.fleet)?;
@@ -697,18 +753,22 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         }
         out.push('\n');
     }
-    let tracker = ctx
+    let slot = ctx
         .shared
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .tracker
         .clone();
+    let tracker = match slot {
+        Some(inventory) => Ok(inventory),
+        None => verifying_read(ctx, now),
+    };
     let verifying: BTreeSet<String> = tracker
         .iter()
         .flat_map(|inventory| inventory.verifying.iter().map(|item| item.id.clone()))
         .collect();
     match tracker {
-        Some(inventory) => {
+        Ok(inventory) => {
             out.push_str(&format!(
                 "\nPost-merge items waiting: {}; source: tracker duty; read at {}.\n",
                 inventory.verifying.iter().filter(|i| !i.container).count(),
@@ -723,8 +783,8 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
                 ));
             }
         }
-        None => out.push_str(&format!(
-            "\nPost-merge checks waiting: unread; source: the tracker duty's verifying read, which this process has not made; as of {}.\n",
+        Err(cause) => out.push_str(&format!(
+            "\nPost-merge checks waiting: unread ({cause}); source: the tracker duty's verifying read; as of {}.\n",
             clock::iso_utc(now)
         )),
     }
@@ -878,29 +938,32 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     }
     out.push_str(&format!("\n{}\n", escapes::line(ctx, now)));
     out.push_str("\n```\nIn progress\n```\n\n");
-    for lane in lanes.iter().filter(|l| {
-        matches!(
-            l.status,
-            LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Parked
-        )
-    }) {
+    let baseline = super::Baseline::load(&super::Paths::of(&ctx.fleet)?.baseline)?;
+    let intents = intents(&doc)?;
+    for lane in lanes.iter().filter(|l| l.status != LaneStatus::Done) {
+        // A lane out of flight is listed only while the watch holds its
+        // close.
+        let held = hold(&baseline, &intents, &lane.item);
+        if held.is_none()
+            && !matches!(
+                lane.status,
+                LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Parked
+            )
+        {
+            continue;
+        }
         // The pull request the lane record names: its open one, else the
         // one its park judged.
         let pull = ["pending_pr", "parked"]
             .iter()
-            .find_map(|key| lane.extra.get(*key)?.get("pr")?.as_u64());
-        match pull {
-            Some(number) => out.push_str(&format!(
-                "- {}: {:?}, #{number}.\n",
-                cell(&lane.item),
-                lane.status
-            )),
-            None => out.push_str(&format!(
-                "- {}: {:?}, no pull request.\n",
-                cell(&lane.item),
-                lane.status
-            )),
-        }
+            .find_map(|key| lane.extra.get(*key)?.get("pr")?.as_u64())
+            .map_or("no pull request".to_owned(), |number| format!("#{number}"));
+        let held = held.map_or(String::new(), |held| format!("; held: {}", cell(&held)));
+        out.push_str(&format!(
+            "- {}: {:?}, {pull}{held}.\n",
+            cell(&lane.item),
+            lane.status
+        ));
     }
     let launched: BTreeSet<_> = lanes.iter().map(|l| l.item.as_str()).collect();
     let queue = doc

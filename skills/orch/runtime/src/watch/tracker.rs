@@ -65,6 +65,15 @@ pub const QUOTA_ROW: &str = "tracker-quota";
 pub const TRIAGE_ROW: &str = "triage";
 pub const TERMINAL_CLOSE_ROW: &str = "terminal-close";
 
+/// A refused close's `terminal-close` value as its key and its cause:
+/// `<state word>|<session_since>|<cause>`. The row's other form,
+/// `held|<cause>`, is told apart by its first field, which no state word is.
+pub(crate) fn refused_close(value: &str) -> Option<(&str, &str)> {
+    let first = value.find('|')?;
+    let second = first + 1 + value[first + 1..].find('|')?;
+    Some((&value[..second], &value[second + 1..]))
+}
+
 /// The row identity the quota receipt is held under.
 const FLEET: &str = "fleet";
 
@@ -856,10 +865,26 @@ fn completed_containers<'a>(
         .collect()
 }
 
-/// The tracker's own reads, in order, each once: the team's statuses, its
-/// open items, the children of the container candidates, the lane items'
-/// terminal states, the owner's tracker answers and the due tracker asks,
-/// and the newest comment of each triage candidate.
+/// The Verifying list of a process that runs no tracker duty: the duty's
+/// own list read for `team` over the fleet record at `fleet`.
+pub(super) fn verifying_read(
+    settings: &Settings,
+    team: &str,
+    fleet: &Path,
+    now: u64,
+) -> Result<Answered<TrackerInventory>> {
+    let fleet = load_fleet(fleet)?;
+    let linear = Linear {
+        cli: &settings.reads.tracker_cli,
+    };
+    let (_, inventory) = quota!(read_list(&linear, team, &fleet, now)?);
+    Ok(Answered::Value(inventory))
+}
+
+/// The tracker's own reads, in order, each once: the team's open items
+/// (`read_list`), the lane items' terminal states, the owner's tracker
+/// answers and the due tracker asks, and the newest comment of each
+/// triage candidate.
 fn read_tracker(
     linear: &Linear,
     team: &str,
@@ -868,90 +893,7 @@ fn read_tracker(
     tick: &Tick,
     ask_failed: &mut Option<String>,
 ) -> Result<Answered<TrackerRead>> {
-    let statuses: Vec<StatusRow> = quota!(linear.json(
-        "statuses",
-        &["statuses", "list", "--team", team, "--format=safe"]
-    )?);
-    if statuses.is_empty() {
-        return Err(invalid("statuses", "statuses", "[]"));
-    }
-    let open_states: Vec<&str> = statuses
-        .iter()
-        .filter(|s| s.kind != "completed" && s.kind != "canceled")
-        .map(|s| s.name.as_str())
-        .collect();
-    let mut items: Vec<OpenItem> = Vec::new();
-    if !open_states.is_empty() {
-        let states = open_states.join(",");
-        items = quota!(linear.json(
-            "issues",
-            &[
-                "issues",
-                "list",
-                "--team",
-                team,
-                "--state",
-                &states,
-                "--select",
-                "owed",
-                "--max",
-                "--format=safe",
-            ]
-        )?);
-    }
-    for item in &items {
-        if !is_word(&item.id) {
-            return Err(invalid("issues", "id", &item.id));
-        }
-        if stamp_epoch(&item.created_at).is_none() {
-            return Err(invalid("issues", "created_at", &item.created_at));
-        }
-        if item.state_type.is_empty() {
-            return Err(invalid("issues", "state_type", &item.state_type));
-        }
-    }
-    let candidates: Vec<&str> = items
-        .iter()
-        .filter(|i| !i.in_pr_bundle)
-        .map(|i| i.id.as_str())
-        .collect();
-    let mut state_types: BTreeMap<String, (String, String)> = items
-        .iter()
-        .map(|i| (i.id.clone(), (i.parent_id.clone(), i.state_type.clone())))
-        .collect();
-    if !candidates.is_empty() {
-        let mut args = vec!["issues", "bulk-get"];
-        args.extend(candidates.iter().copied());
-        args.push("--format=raw");
-        let reply: BulkReply = quota!(linear.json("children", &args)?);
-        for node in reply.issues.nodes {
-            if !is_word(&node.identifier) {
-                return Err(invalid("children", "identifier", &node.identifier));
-            }
-            let children = match node.children {
-                Nullable::Present(children) => children.nodes,
-                Nullable::Absent | Nullable::Null => {
-                    return Err(invalid("children", "children", &node.identifier));
-                }
-            };
-            for child in children {
-                if !is_word(&child.identifier) || child.state.kind.is_empty() {
-                    return Err(invalid("children", "child", &child.identifier));
-                }
-                state_types
-                    .entry(child.identifier)
-                    .or_insert((node.identifier.clone(), child.state.kind));
-            }
-        }
-    }
-    let containers = completed_containers(
-        items
-            .iter()
-            .map(|i| (i.id.as_str(), i.state_type.as_str(), i.in_pr_bundle)),
-        state_types
-            .values()
-            .map(|(parent, kind)| (parent.as_str(), kind.as_str())),
-    );
+    let (items, inventory) = quota!(read_list(linear, team, fleet, tick.wall)?);
     // The lane items' terminal states, one batch (`close-lane`'s
     // `terminal-state`), for every parked or stopped linear-tracked lane.
     let lane_items: Vec<&str> = fleet
@@ -1044,12 +986,108 @@ fn read_tracker(
             }
         }
     }
-    let inventory = inventory_of(&items, &containers, fleet, tick.wall);
     Ok(Answered::Value(TrackerRead {
         inventory,
         triage,
         terminal,
     }))
+}
+
+/// The team's open items and the inventory they make, read at `read_at`:
+/// the team's statuses, its items in every open state, and the children of
+/// the container candidates.
+fn read_list(
+    linear: &Linear,
+    team: &str,
+    fleet: &FleetState,
+    read_at: u64,
+) -> Result<Answered<(Vec<OpenItem>, TrackerInventory)>> {
+    let statuses: Vec<StatusRow> = quota!(linear.json(
+        "statuses",
+        &["statuses", "list", "--team", team, "--format=safe"]
+    )?);
+    if statuses.is_empty() {
+        return Err(invalid("statuses", "statuses", "[]"));
+    }
+    let open_states: Vec<&str> = statuses
+        .iter()
+        .filter(|s| s.kind != "completed" && s.kind != "canceled")
+        .map(|s| s.name.as_str())
+        .collect();
+    let mut items: Vec<OpenItem> = Vec::new();
+    if !open_states.is_empty() {
+        let states = open_states.join(",");
+        items = quota!(linear.json(
+            "issues",
+            &[
+                "issues",
+                "list",
+                "--team",
+                team,
+                "--state",
+                &states,
+                "--select",
+                "owed",
+                "--max",
+                "--format=safe",
+            ]
+        )?);
+    }
+    for item in &items {
+        if !is_word(&item.id) {
+            return Err(invalid("issues", "id", &item.id));
+        }
+        if stamp_epoch(&item.created_at).is_none() {
+            return Err(invalid("issues", "created_at", &item.created_at));
+        }
+        if item.state_type.is_empty() {
+            return Err(invalid("issues", "state_type", &item.state_type));
+        }
+    }
+    let candidates: Vec<&str> = items
+        .iter()
+        .filter(|i| !i.in_pr_bundle)
+        .map(|i| i.id.as_str())
+        .collect();
+    let mut state_types: BTreeMap<String, (String, String)> = items
+        .iter()
+        .map(|i| (i.id.clone(), (i.parent_id.clone(), i.state_type.clone())))
+        .collect();
+    if !candidates.is_empty() {
+        let mut args = vec!["issues", "bulk-get"];
+        args.extend(candidates.iter().copied());
+        args.push("--format=raw");
+        let reply: BulkReply = quota!(linear.json("children", &args)?);
+        for node in reply.issues.nodes {
+            if !is_word(&node.identifier) {
+                return Err(invalid("children", "identifier", &node.identifier));
+            }
+            let children = match node.children {
+                Nullable::Present(children) => children.nodes,
+                Nullable::Absent | Nullable::Null => {
+                    return Err(invalid("children", "children", &node.identifier));
+                }
+            };
+            for child in children {
+                if !is_word(&child.identifier) || child.state.kind.is_empty() {
+                    return Err(invalid("children", "child", &child.identifier));
+                }
+                state_types
+                    .entry(child.identifier)
+                    .or_insert((node.identifier.clone(), child.state.kind));
+            }
+        }
+    }
+    let containers = completed_containers(
+        items
+            .iter()
+            .map(|i| (i.id.as_str(), i.state_type.as_str(), i.in_pr_bundle)),
+        state_types
+            .values()
+            .map(|(parent, kind)| (parent.as_str(), kind.as_str())),
+    );
+    let inventory = inventory_of(&items, &containers, fleet, read_at);
+    Ok(Answered::Value((items, inventory)))
 }
 
 /// Whether every Done-when box of `description` is checked, through the
@@ -1488,7 +1526,12 @@ fn close_terminal_lanes(
             state.word(),
             lane.session_since.as_deref().unwrap_or("-")
         );
-        if tick.baseline.get(TERMINAL_CLOSE_ROW, &lane.item) == Some(key.as_str()) {
+        if tick
+            .baseline
+            .get(TERMINAL_CLOSE_ROW, &lane.item)
+            .and_then(refused_close)
+            .is_some_and(|(held, _)| held == key)
+        {
             continue;
         }
         // Read before the close removes the lane-side state it is read
@@ -1555,7 +1598,8 @@ fn close_terminal_lanes(
             }
             Err(cause) => {
                 // The cause is said once, here, for the launcher's record
-                // of this run's stderr; the line carries the item alone.
+                // of this run's stderr, and kept in the row for the report;
+                // the line carries the item alone.
                 let _ = writeln!(
                     std::io::stderr(),
                     "lane-close-refused item={} cause={cause}",
@@ -1567,7 +1611,7 @@ fn close_terminal_lanes(
                 produced.changes.push(Change::Set {
                     kind: TERMINAL_CLOSE_ROW.to_owned(),
                     identity: lane.item.clone(),
-                    value: key,
+                    value: format!("{key}|{cause}"),
                 });
             }
         }

@@ -200,7 +200,12 @@ pub(super) fn command(
         args,
         host::Place {
             cwd: Some(root),
-            env: &[("GIT_TERMINAL_PROMPT", std::ffi::OsStr::new("0"))],
+            // A partial clone's missing object is never fetched from its
+            // promisor: the history read answers from the objects on disk.
+            env: &[
+                ("GIT_TERMINAL_PROMPT", std::ffi::OsStr::new("0")),
+                ("GIT_NO_LAZY_FETCH", std::ffi::OsStr::new("1")),
+            ],
         },
         Duration::from_secs(seconds),
     )

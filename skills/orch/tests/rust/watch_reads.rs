@@ -1181,9 +1181,14 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     let writable = Writable(world.dir.path());
     let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
     assert_eq!(rendered(&third), vec!["EVENT lane-close-refused KEN-2"]);
-    assert_eq!(
-        baseline.get(tracker::TERMINAL_CLOSE_ROW, "KEN-2"),
-        Some("canceled|2026-10-09T00:00:00Z")
+    // The row keeps the refusal's cause after its key.
+    let row = baseline
+        .get(tracker::TERMINAL_CLOSE_ROW, "KEN-2")
+        .unwrap_or_default();
+    assert!(
+        row.strip_prefix("canceled|2026-10-09T00:00:00Z|create-temp on ")
+            .is_some_and(|cause| cause.ends_with("Permission denied (os error 13)")),
+        "{row}"
     );
     let fourth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1720).unwrap();
     assert_eq!(
@@ -1442,7 +1447,7 @@ fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
             baseline.apply(set(
                 tracker::TERMINAL_CLOSE_ROW,
                 "KEN-1",
-                "completed|2026-09-20T08:50:00Z",
+                "completed|2026-09-20T08:50:00Z|close-failed cause=boxes-unsettled",
             ));
         }
         let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();

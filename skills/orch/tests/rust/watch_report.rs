@@ -3749,6 +3749,99 @@ esac
         escapes(&render(&untracked, true)),
         "Escapes: unread (git log origin/main failed)"
     );
+    // A partial clone whose remote-tracking tip is missing on disk, its
+    // promisor origin a local file:// URL that holds it: origin's main is
+    // another commit and no fetch refspec moves the tracking ref, so the
+    // fetch answers and the log alone needs the missing tip. A git that
+    // knows the fence reads the unread line; one that does not reads as it
+    // does without it.
+    let partial_origin = world.path().join("partial-origin");
+    std::fs::create_dir(&partial_origin).unwrap();
+    git(&partial_origin, &["init", "--quiet", "-b", "history"], None);
+    for (key, value) in [
+        ("gc.auto", "0"),
+        ("uploadpack.allowFilter", "true"),
+        ("uploadpack.allowAnySHA1InWant", "true"),
+    ] {
+        git(&partial_origin, &["config", key, value], None);
+    }
+    let at = clock::iso_utc(last + 3600);
+    for subject in ["Work (#70)", "Revert #70 (#71)"] {
+        git(
+            &partial_origin,
+            &["commit", "--quiet", "--allow-empty", "-m", subject],
+            Some(&at),
+        );
+    }
+    git(
+        &partial_origin,
+        &["checkout", "--quiet", "--orphan", "main"],
+        None,
+    );
+    git(
+        &partial_origin,
+        &["commit", "--quiet", "--allow-empty", "-m", "elsewhere"],
+        Some(&at),
+    );
+    let partial = project("partial-project", true);
+    let partial_libs = partial.join(".agents/skills/github/scripts/lib");
+    std::fs::create_dir_all(&partial_libs).unwrap();
+    std::os::unix::fs::symlink(
+        actual
+            .join("github/scripts/lib/gh-repo.sh")
+            .canonicalize()
+            .unwrap(),
+        partial_libs.join("gh-repo.sh"),
+    )
+    .unwrap();
+    git(
+        &partial,
+        &[
+            "-c",
+            "fetch.unpackLimit=100000",
+            "fetch",
+            "--quiet",
+            partial_origin.to_str().unwrap(),
+            "history",
+        ],
+        None,
+    );
+    git(
+        &partial,
+        &["update-ref", "refs/remotes/origin/main", "FETCH_HEAD"],
+        None,
+    );
+    let tip = program("git")
+        .arg("-C")
+        .arg(&partial)
+        .args(["rev-parse", "refs/remotes/origin/main"])
+        .output()
+        .unwrap();
+    let tip = String::from_utf8(tip.stdout).unwrap();
+    let tip = tip.trim();
+    let promisor = format!("file://{}", partial_origin.display());
+    for (key, value) in [
+        ("remote.origin.url", promisor.as_str()),
+        ("core.repositoryformatversion", "1"),
+        ("extensions.partialClone", "origin"),
+        ("remote.origin.promisor", "true"),
+        ("remote.origin.partialclonefilter", "blob:none"),
+    ] {
+        git(&partial, &["config", key, value], None);
+    }
+    std::fs::remove_file(partial.join(".git/objects").join(&tip[..2]).join(&tip[2..])).unwrap();
+    let fenced = program("git")
+        .args(["--no-lazy-fetch", "version"])
+        .output()
+        .unwrap()
+        .status
+        .success();
+    let line = escapes(&render(&partial, true));
+    if fenced {
+        assert_eq!(line, "Escapes: unread (git log origin/main failed)");
+    } else {
+        assert!(line.starts_with("Escapes: this week "), "{line}");
+    }
     assert!(
         body.contains("- Queued KEN-2: launch admission pending."),
         "{body}"
@@ -3759,7 +3852,7 @@ esac
         "{body}"
     );
     for line in [
-        "Post-merge checks waiting: unread; source: the tracker duty's verifying read, which this process has not made; as of ",
+        r#"Post-merge checks waiting: unread (refused tracker-list-failed: [("read", "statuses"), ("exit", "exit status: 1"), ("cause", "")]); source: the tracker duty's verifying read; as of "#,
         "Blocked\n```\n\n- None; source: lane status of every active lane and each lane's post-PR stop; as of ",
         "Linked issues created\n```\n\n- None; source: Linear, all teams; window: 2026-09-29T06:00:00Z to ",
     ] {
@@ -3932,9 +4025,17 @@ fn report_counts_issues_created_and_linked_across_all_teams() {
         ),
         "{body}"
     );
+    // The Verifying list's read asks for the team first, which this curl
+    // refuses; every other request is the created read's.
     let requests: Vec<Value> = lines(&tracker.join("linear-created.log"))
         .iter()
-        .map(|l| serde_json::from_str(l).unwrap())
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|r| {
+            !r["payload"]["query"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("query GetTeam(")
+        })
         .collect();
     assert_eq!(
         requests
@@ -3964,6 +4065,55 @@ fn report_counts_issues_created_and_linked_across_all_teams() {
     unread(&render_body(&world, &linear, &[]));
     std::fs::rename(&linear, tracker.join("linear.moved")).unwrap();
     unread(&render_body(&world, &linear, &[]));
+}
+
+/// The verb's process runs no tracker duty, so its render reads the
+/// Verifying list through the duty's own list read for the configured team:
+/// the Verifying item is listed, the item in another open state is not.
+#[test]
+fn report_render_lists_the_verifying_items_its_own_tracker_read_finds() {
+    let world = World::new();
+    let _ = world.report_context();
+    world.plant("gh.json", &json!({}));
+    let item = |id: &str, state: &str| {
+        json!({"id": id, "title": id, "description": "", "in_pr_bundle": false, "priority": 2,
+            "state": state, "state_type": "started", "parent_id": "",
+            "created_at": "2026-09-20T00:00:00Z", "blocked_by_open": []})
+    };
+    world.plant(
+        "linear.json",
+        &json!({
+            "statuses list": {"body": [
+                {"name": "In Progress", "type": "started"}, {"name": "Verifying", "type": "started"},
+                {"name": "Done", "type": "completed"}
+            ]},
+            "issues list": {"body": [item("KEN-21", "Verifying"), item("KEN-22", "In Progress")]},
+            "issues bulk-get": {"body": {"issues": {"nodes": [
+                {"identifier": "KEN-21", "state": {"type": "started"}, "children": {"nodes": []}},
+                {"identifier": "KEN-22", "state": {"type": "started"}, "children": {"nodes": []}}
+            ]}}}
+        }),
+    );
+    let body = render_body(&world, &world.path().join("linear"), &[]);
+    let line = body
+        .lines()
+        .find(|l| l.starts_with("Post-merge "))
+        .unwrap_or_default();
+    assert!(
+        line.starts_with("Post-merge items waiting: 1; source: tracker duty; read at "),
+        "{body}"
+    );
+    assert!(
+        body.contains(
+            "- KEN-21: post-merge checks; issue stage age=unread (no stage-entry reader, as of "
+        ),
+        "{body}"
+    );
+    assert!(!body.contains("- KEN-22: post-merge"), "{body}");
+    assert!(
+        lines(&world.path().join("linear.log"))
+            .contains(&"statuses list --team kendex --format=safe".to_owned())
+    );
 }
 
 /// Blocked reads none only when every active lane's status was judged and
@@ -4039,6 +4189,62 @@ fn report_blocked_reads_none_only_when_every_active_lane_was_read() {
             "{body}"
         );
     }
+}
+
+/// A lane the watch holds over its landing or its close is listed under In
+/// progress with the hold's cause, whatever its status but done: the
+/// tracker duty's `terminal-close` row, held or refused, and an open
+/// `close-resources` intent. A stopped lane with no hold, or whose close
+/// ended, stays unlisted, and so does a done lane under a stale row.
+#[test]
+fn report_lists_a_lane_held_over_its_landing_or_close_with_its_cause() {
+    let world = World::new();
+    world.plant("gh.json", &json!({}));
+    let lane = |item: &str, status: &str| json!({"item":item,"status":status,"launched_at":"2026-09-29T06:00:00Z"});
+    let close = |item: &str, outcome: &str| {
+        json!({"id":format!("close-{item}"),"op":"close-resources","target":item,
+            "created_at":"2026-09-30T06:00:00Z","outcome":outcome,
+            "observation":{"host_close":"unanswered","cause":"ssh exit 255"}})
+    };
+    let mut parked = lane("KEN-13", "parked");
+    parked["parked"] = json!({"pr": 7});
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[
+        lane("KEN-11", "stopped"), lane("KEN-12", "stopped"), parked,
+        lane("KEN-14", "stopped"), lane("KEN-15", "done")
+    ],"intents":[close("KEN-13", "unconfirmed"), close("KEN-14", "confirmed")]}));
+    let ctx = world.report_context();
+    let mut baseline = Baseline::default();
+    for (item, value) in [
+        ("KEN-11", "held|merged-read-failed"),
+        (
+            "KEN-12",
+            "canceled|2026-09-29T06:00:00Z|close-failed cause=boxes-unsettled",
+        ),
+        ("KEN-15", "held|merged-read-failed"),
+    ] {
+        baseline.apply(watch::Change::Set {
+            kind: orch_runtime::watch::tracker::TERMINAL_CLOSE_ROW.to_owned(),
+            identity: item.to_owned(),
+            value: value.to_owned(),
+        });
+    }
+    baseline
+        .store(&Paths::of(&ctx.fleet).unwrap().baseline)
+        .unwrap();
+    let body = report::render(&ctx, epoch("2026-10-01T14:00:00Z")).unwrap();
+    let listed: Vec<&str> = section(&body, "In progress")
+        .lines()
+        .filter(|l| l.starts_with("- KEN-"))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            "- KEN-11: Stopped, no pull request; held: landing unrecorded (merged-read-failed).",
+            "- KEN-12: Stopped, no pull request; held: close refused (close-failed cause=boxes-unsettled).",
+            "- KEN-13: Parked, #7; held: close unconfirmed (host_close=unanswered cause=ssh exit 255).",
+        ],
+        "{body}"
+    );
 }
 
 /// A fleet named by `--state` has its lanes' facts read from its own record,
