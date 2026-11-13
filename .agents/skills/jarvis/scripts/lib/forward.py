@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import sys
 import time
 
@@ -55,8 +56,10 @@ cd -- "$1"
 # the operation's own cause.
 HOST_CAUSES = ("mailbox-missing", "overseer-absent", "overseer-unreadable")
 # Causes no retry clears: the drain reports each once as an event.
-TERMINAL = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen")
+TERMINAL = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen", "stop")
 UNREACHABLE = "main-unreachable"
+SESSION_ID = re.compile(r"vgs-voice:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.ASCII)
+BOOT_ID = None
 
 
 class Refusal(Exception):
@@ -102,19 +105,34 @@ def checked_record(path):
         if not valid:
             raise Refusal("record-invalid", "field=" + field)
 
-    invalid("record", set(record) == {"v", "request", "confirmation"}
+    scoped = "session" in record
+    invalid("record", set(record) == ({"v", "request", "confirmation", "session"} if scoped
+                                      else {"v", "request", "confirmation"})
             and type(record["v"]) is int and record["v"] == 1)
     # VGS records modality, not identity; its legacy records need no caller field.
     confirmation = record["confirmation"]
     form = "method" if isinstance(confirmation, dict) and "method" in confirmation else "words"
     caller = ("caller",) if isinstance(confirmation, dict) and "caller" in confirmation else ()
-    fields = {"request": ("ref", "at", "text"), "confirmation": ("ref", "at", form, *caller)}
+    fields = {"request": ("ref", "at", "text"),
+              "confirmation": ("ref", "at", form, *caller, *(("scope",) if scoped else ()))}
     for part, keys in fields.items():
         invalid(part, isinstance(record[part], dict) and set(record[part]) == set(keys))
         for key in keys:
             invalid(part + "." + key, isinstance(record[part][key], str))
     invalid("confirmation.caller", confirmation.get("caller", "unproved") == "unproved")
     invalid("confirmation.method", form == "words" or confirmation["method"] in METHODS)
+    if scoped:
+        session = record["session"]
+        invalid("session", isinstance(session, dict) and set(session) == {"id", "name", "main", "lease"})
+        for field in session:
+            invalid("session." + field, isinstance(session[field], str))
+        identity = SESSION_ID.fullmatch(session["id"])
+        invalid("session.id", identity)
+        invalid("session.name", session["name"] == "Jarvis Voice " + identity[1])
+        invalid("session.main", bool(session["main"]))
+        invalid("session.lease", Path(session["lease"]).is_absolute()
+                and Path(session["lease"]).name == identity[1] + ".json")
+        invalid("confirmation.scope", confirmation["scope"] == "session" and form == "method")
     for part in fields:
         invalid(part + ".ref", REFERENCE.fullmatch(record[part]["ref"]))
     for part in fields:
@@ -122,11 +140,58 @@ def checked_record(path):
     invalid("request.text", record["request"]["text"].strip())
     invalid("confirmation.words", form == "method" or confirmation["words"].strip())
     # One record row may hold both turns, so the references may match and the times be equal.
-    if nanoseconds(confirmation["at"]) < nanoseconds(record["request"]["at"]):
+    if not scoped and nanoseconds(confirmation["at"]) < nanoseconds(record["request"]["at"]):
         raise Refusal("confirmation-early", "")
     if form == "words" and not confirms(confirmation["words"]):
         raise Refusal("confirmation-unclear", "")
     return record
+
+
+def live_session(session, main):
+    """VGS's private lease admits this send; revocation cannot recall an admitted send.
+
+    One lease content read and one process stat read per attempt. The boot
+    identity is cached once per command; metadata checks cover only the file
+    and its immediate parent, so a fresh grant's path cannot revive old work.
+    """
+    global BOOT_ID
+    try:
+        if session["main"] != main:
+            return False
+        path = Path(session["lease"])
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            mode = os.fstat(directory)
+            if mode.st_uid != os.geteuid() or stat.S_IMODE(mode.st_mode) != 0o700:
+                return False
+            descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(descriptor, "rb") as source:
+                mode = os.fstat(source.fileno())
+                if (not stat.S_ISREG(mode.st_mode) or mode.st_uid != os.geteuid()
+                        or stat.S_IMODE(mode.st_mode) != 0o600):
+                    return False
+                lease = json.loads(source.read(RECORD_BYTES + 1))
+        finally:
+            os.close(directory)
+        if not isinstance(lease, dict) or type(lease.get("v")) is not int or lease["v"] != 1:
+            return False
+        if lease.get("id") != session["id"] or lease.get("main") != session["main"]:
+            return False
+        owner = lease.get("owner")
+        if (not isinstance(owner, dict) or type(owner.get("pid")) is not int or owner["pid"] <= 0
+                or not isinstance(owner.get("start"), str) or not re.fullmatch(r"[0-9]+", owner["start"])):
+            return False
+        if BOOT_ID is None:
+            boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            if not SESSION_ID.fullmatch("vgs-voice:" + boot):
+                return False
+            BOOT_ID = boot
+        if owner.get("boot") != BOOT_ID:
+            return False
+        fields = Path("/proc/%d/stat" % owner["pid"]).read_text().rsplit(")", 1)[1].split()
+        return fields[0] not in ("Z", "X") and fields[19] == owner["start"]
+    except (OSError, ValueError, AttributeError, IndexError):
+        return False
 
 
 def confirms(words):
@@ -286,21 +351,35 @@ class Forwarder:
     def send(self, keys=None):
         """Deliver each queued entry, oldest first, stopping at an unreachable main."""
         queued = [entry for entry in self.outbox.read()["entries"]
-                  if entry_state(entry) == "queued" and (keys is None or entry["key"] in keys)]
+                  if entry_state(entry) == "queued" and (keys is None or entry["key"] in keys)
+                  and (entry.get("last_attempt") is None
+                       or watch.epoch() - entry["last_attempt"]["at"] >= watch.FORWARD_EVERY_SECS)]
         if not queued:
             return
         fresh = {entry["key"] for entry in queued if entry.get("after") is None}
         stopped = self.take_cursor(fresh) if fresh else None
-        if stopped is not None:
-            self.record(queued, *stopped)
-            return
+        unreachable = False
         for entry in queued:
+            if entry.get("session") and not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"]):
+                with self.outbox.locked() as state:
+                    current = find(state, entry["key"])
+                    if current is not None and entry_state(current) == "queued":
+                        close(current, watch.epoch(), "stop")
+                continue
+            # Cursor failure and an earlier unreachable send must not bypass
+            # revocation of any later entry. Each lease is checked once, here
+            # at its own send boundary, after any blocking cursor read.
+            if stopped is not None:
+                self.record([entry], *stopped)
+                continue
+            if unreachable:
+                continue
             outcome, result = self.host(owner_note.HOST_SEND, ["--delivery-id", entry["key"]], entry["text"])
             self.probe(outcome)
             if outcome != "ok":
                 self.record([entry], outcome, result)
                 if outcome == UNREACHABLE:
-                    return
+                    unreachable = True
                 continue
             receipt = watch.send_receipt(result, entry["key"])
             if receipt:
@@ -376,7 +455,12 @@ class Forwarder:
                     if latest is None or place > latest[0]:
                         latest = (place, {"request": entry["request"], "forwarded": entry.get("forwarded"),
                                           "answer": answer["id"], "at": answer["at"]})
+                    retained = {"request": entry["request"], "request_at": canonical_at(entry["request_at"]),
+                                "key": entry["key"], "forwarded": entry.get("forwarded"),
+                                "answer": answer["id"], "at": answer["at"], "text": answer["text"],
+                                "closed_at": iso(now), "expires_at": iso(now + CLOSED_KEEP_DAYS * 86400)}
                     close(entry, now)
+                    entry["answer"] = retained
                     continue
                 entry["after"] = header[0]
                 if entry_state(entry) == "queued":
@@ -406,6 +490,9 @@ class Forwarder:
         now = watch.epoch()
         blocks = []
         for entry in state["entries"]:
+            if kept(entry, now) and entry.get("answer"):
+                blocks.append(watch.event("forward-answer", request=entry["request"], key=entry["key"],
+                                          answer=entry["answer"]["answer"]))
             if kept(entry, now) and entry.get("cause") in TERMINAL:
                 fields = {"request": entry["request"], "key": entry["key"], "cause": entry["cause"]}
                 if entry.get("detail"):
@@ -470,9 +557,15 @@ class Forwarder:
                     "queued_at": now, "attempts": 0,
                     "last_attempt": None, "cause": None, "detail": None, "forwarded": None,
                     "delivered_at": None, "read": False, "after": None, "closed_at": None})
+                if "session" in record:
+                    state["entries"][-1]["session"] = record["session"]
         self.send([key])
         entry = find(self.outbox.read(), key)
+        if entry_state(entry) == "closed":
+            raise Refusal(entry.get("cause") or "answered-already", request["ref"])
         delivered = entry_state(entry) != "queued"
+        if delivered:
+            watch.forward_ready(self.settings, key, entry["delivered_at"])
         return {"v": 1, "request": request["ref"], "key": key, "state": "delivered" if delivered else "queued",
                 "forwarded": entry.get("forwarded"), "cause": None if delivered else entry.get("cause")}
 
@@ -485,10 +578,13 @@ class Forwarder:
                      "cause": entry.get("cause"), "forwarded": entry.get("forwarded"),
                      "queued_at": iso(entry.get("queued_at")), "attempts": entry.get("attempts", 0)}
                     for entry in state["entries"] if entry_state(entry) != "closed"]
+        answers = sorted((entry["answer"] for entry in state["entries"]
+                          if entry.get("answer") and kept(entry, watch.epoch())),
+                         key=lambda answer: (answer["closed_at"], answer["key"]))
         return {"v": 1, "role": "satellite", "main": self.role.dest,
                 "reachable": probe.get("reachable"), "checked_at": iso(probe.get("at")),
                 "cause": "setting-invalid" if self.role.kind == "invalid" else probe.get("cause"),
-                "last_answer": state.get("last_answer"), "requests": requests}
+                "last_answer": state.get("last_answer"), "requests": requests, "answers": answers}
 
 
 def main(args, home_state):

@@ -127,9 +127,9 @@ The satellite's watch-loop runs the [forward drain](../workflows/session.md#sess
 1. Ask in the originating conversation, without a mailbox ask. Quote the exact request, name Jarvis main and say that the request and answer will appear in the owner's Slack channel. Ask for `forward` or `yes`, last and alone, so the confirmation names one question. Otherwise keep the request local. This consent authorizes forwarding, not the actions in the request; [On Jarvis main](#on-jarvis-main) owns action authorization. For a console request, ask with `lane-mail notice --item overseer --to owner --ref R --file PATH`, where `R` is its envelope id.
 2. Write one record under the home's `tmp/`. Run `.agents/skills/jarvis/scripts/jarvis-session forward --home HOME --record PATH`. Remove that file only after exit 0 or 75.
 3. Read the JSON result's request reference, delivery key, state, `forwarded` directive id and cause. Exit 0 means delivered. Exit 75 means queued in the local outbox for watch-loop retry. Tell the owner which and that the answer will be in Slack. Answer a console confirmation with `notice --ref` on its envelope id.
-4. A refusal prints `jarvis-session: forward=refused cause=KEY`, plus `field=PATH` for `record-invalid`, and exits 2. It enqueued and sent nothing.
+4. A refusal prints `jarvis-session: forward=refused cause=KEY`, plus `field=PATH` for `record-invalid`, and exits 2. Record refusals enqueue and send nothing. A `stop` refusal closes unsent session work without sending it.
 
-The [record validator](../scripts/lib/forward.py) owns the machine shape. Supply one JSON object, at most 65,536 bytes, with these required fields and only the optional `confirmation.caller` field below:
+The [record validator](../scripts/lib/forward.py) owns the machine shape. Supply one JSON object, at most 65,536 bytes. The individual-request shape has the fields below and only the optional `confirmation.caller` field. The named-session shape adds `session` and `confirmation.scope: session` as described under [Named-session consent](#named-session-consent).
 
 ```json
 {"v":1,
@@ -154,10 +154,22 @@ The key binds the home, request reference and request time. Reusing the same rec
 | `setting-invalid` | Fix `JARVIS_MAIN_HOST`. |
 | `record-unreadable`, `record-invalid` | Fix the missing, oversized, non-UTF-8 or malformed record, including the named field. Do not ask the owner again. |
 | `confirmation-early`, `confirmation-unclear` | Ask again and cite the new answer. |
-| `answered-already` | Tell the owner that Jarvis already answered in Slack. It retains this refusal for 30 days. `status --main` shows only the most recent answer in `last_answer.request`. |
+| `answered-already` | Read the retained answer from `status --main` or its Slack thread. It retains this refusal for 30 days. |
 | `answer-unseen` | Tell the owner to check the request's Slack thread. The retained request closed after seven days without a read answer; do not forward it again. The refusal lasts 30 days after closure. |
 | `request-conflict` | An open forward uses this request reference with another text or time. Wait for it, or cite the request's own reference. |
 | `outbox-unreadable` | Report the cause. Never reset the outbox. |
+
+### Named-session consent
+
+One explicit confirmation may cover forwarding within one named live session to its stated Jarvis main. In the originating conversation, identify the session, destination and forwarding scope. Explain that requests and answers appear in the owner's Slack channel and answer text stays locally under the retention policy below. Keep the confirmation reference, time and voice or physical modality on each admitted request. The confirmation can precede later requests in that same session. It grants transmission only; Main Jarvis remains the instruction owner and caller identity stays unproved.
+
+Use the existing forward command with the session-scoped record only after the receiving package carries this support; older validators reject its additional fields. Individual-request records remain unchanged on every version. Session records use `confirmation.method` and `confirmation.scope: session`, plus a `session` object with `id: vgs-voice:<lowercase UUID>`, `name: Jarvis Voice <UUID>`, `main` equal to the complete main setting, and `lease` holding an absolute path ending in `<UUID>.json`. No `scope: request` or null lease form is supported.
+
+The consumer keeps that id for one live conversation. Close, New conversation, a changed home or main, and restart end its grant. Saved history restores none. Stop revokes it; starting again needs a new explicit confirmation and fresh grant directory. A main-session hand-over within the same main home does not end the satellite's grant.
+
+The consumer writes the lease shape declared by `live_session` in the forwarding owner. Its owner fields bind a live Linux process by pid, `/proc/<pid>/stat` field 22 and boot id. The lease file is user-owned mode 0600; its immediate parent is user-owned mode 0700. Neither may be a symlink. The consumer supplies the complete path and uses a new private parent directory for every grant; no fixed ancestor is checked. Stop removes both file and parent so a new grant cannot revive old queued requests.
+
+Before every queued send attempt or retry, the forwarding owner checks the lease and its live process. Missing, changed, dead or unprovable leases close unsent work with cause `stop`. Hosts without `/proc` refuse session grants while individual requests keep working. An attempted send with no receipt still counts as unsent. Delivered work is not recalled; its answer can still be read and retained. A successful admission check cannot recall a send that follows it. Session consent neither proves the caller nor approves destructive work, money or external commitments.
 
 ### On Jarvis main
 
@@ -187,6 +199,12 @@ The provenance cites satellite records Jarvis main cannot check. The owner or re
 `jarvis-session status --home HOME --main` reads the local outbox and settings. Reachability is the last call's observation, not a new probe. The [session command](../workflows/session.md#session-command) owns its detailed fields, states and delivery/read causes.
 
 A read answer closes the forward and can appear as `last_answer`, the most recent answer from Jarvis that the satellite read. With no answer read within seven days of delivery, the forward closes as `answer-unseen`: compaction can have dropped the answer, or Jarvis answered without `--ref`. Drain prints its `EVENT forward-failed` for 30 days after closure and reads Jarvis main no more for that request.
+
+For a satellite, status keeps `v: 1` and adds `answers`, a collection of each retained forward's first matched final answer. The [forwarding owner](../scripts/lib/forward.py) declares its fields. Match by `key` and `answer`, not by request reference or array position: a reused reference can have several closed forwards. Each row keeps the complete answer `text`, canonical `request_at`, request reference, forward key, nullable forwarded directive id, final notice id and time, and local `closed_at` and `expires_at`. Rows sort by closure time then key. Old metadata-only records supply no row.
+
+Text stays on its forward record for 30 days after closure. Reads and repetitions do not renew expiry or acknowledge answers. Status excludes expired rows before physical cleanup. `last_answer` remains metadata only. Answer content grants neither instructions nor caller identity.
+
+The existing serialized forward pass reads every five seconds while a delivered forward waits. A successful external forward appends a scheduler cursor with its delivery key and instant to the same locked event log. The existing log reader advances its forward deadline, including after an idle pass; the cursor creates no user event or mailbox send. Idle passes and queued delivery retries keep their 60-second cadence, measured from completed passes. A matched answer emits `EVENT forward-answer` with request, key and final answer id only; the existing local event/session carrier delivers it. On that event the satellite consumer reads text through `status --main`. Healthy-path delay includes up to one five-second interval, read time, the configured event settle (15 seconds by default) and consumer handling. Failures and backlog can extend it. Speaking, repetition and installed acceptance belong to the consumer.
 
 ## Transcript fallback
 

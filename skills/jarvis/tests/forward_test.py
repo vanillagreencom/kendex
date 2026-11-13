@@ -1,13 +1,17 @@
 """A satellite's forward, outbox drain and main status against a real main mailbox over an ssh shim."""
 import hashlib
+from concurrent.futures import Future
 import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
+import uuid
 from unittest.mock import patch
 
 from mail_world import BASH, LANE_MAIL, REPO, SCRIPTS, MailWorld, make_project
@@ -15,7 +19,7 @@ from mail_world import BASH, LANE_MAIL, REPO, SCRIPTS, MailWorld, make_project
 WORKFLOW_STATE = REPO / "skills/orch/scripts/workflow-state"
 
 # Independent of the producer: the status --main shape a consumer validates.
-SATELLITE_KEYS = {"v", "role", "main", "reachable", "checked_at", "cause", "last_answer", "requests"}
+SATELLITE_KEYS = {"v", "role", "main", "reachable", "checked_at", "cause", "last_answer", "requests", "answers"}
 REQUEST_KEYS = {"request", "key", "state", "cause", "forwarded", "queued_at", "attempts"}
 STATES = {"queued", "delivered", "read"}
 SSH = r'''#!/bin/sh
@@ -97,6 +101,46 @@ class Forward(MailWorld):
         result = self.jarvis("status", "--main")
         self.assertEqual(result.returncode, 0, result.stderr)
         return satellite_status(result.stdout)
+
+    def drain_failures(self):
+        """Existing failure tests inspect failure blocks; answer delivery has its own rows below."""
+        result = self.jarvis("forward-drain")
+        result.stdout = "".join(line for line in result.stdout.splitlines(keepends=True)
+                                if not line.startswith("EVENT forward-answer "))
+        return result
+
+    def retry_due(self):
+        state = self.outbox()
+        for entry in state["entries"]:
+            if entry.get("last_attempt"):
+                entry["last_attempt"]["at"] -= 60
+        self.outbox_path().write_text(json.dumps(state))
+
+    def session_record(self, session=None):
+        if session is None:
+            identity = str(uuid.uuid4())
+            folder = self.root / str(uuid.uuid4())
+            folder.mkdir(mode=0o700)
+            session = {"id": "vgs-voice:" + identity, "name": "Jarvis Voice " + identity,
+                       "main": self.env["JARVIS_MAIN_HOST"], "lease": str(folder / (identity + ".json"))}
+        return self.record(confirmation={"method": "voice", "scope": "session", "at": "2026-11-01T00:00:00Z"},
+                           session=session)
+
+    def write_lease(self, record):
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+        def cleanup():
+            process.terminate()
+            process.wait()
+        self.addCleanup(cleanup)
+        self.lease_process = process
+        path = Path(record["session"]["lease"])
+        lease = {"v": 1, "id": record["session"]["id"], "main": record["session"]["main"],
+                 "owner": {"pid": process.pid,
+                           "start": Path("/proc/%d/stat" % process.pid).read_text().rsplit(")", 1)[1].split()[19],
+                           "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}}
+        path.write_text(json.dumps(lease))
+        path.chmod(0o600)
+        return path, lease
 
     def ssh_calls(self):
         return self.ssh_log.read_text().splitlines() if self.ssh_log.exists() else []
@@ -298,7 +342,8 @@ class Forward(MailWorld):
                 refused = self.forward(changed)
                 self.assertEqual(refused.stderr.split("\n")[0], "jarvis-session: forward=refused cause=request-conflict")
         self.mode.write_text("up")
-        self.assertEqual(self.jarvis("forward-drain").returncode, 0)
+        self.retry_due()
+        self.assertEqual(self.drain_failures().returncode, 0)
         self.assertEqual([row.get("delivery_id") for row in self.directives()], [self.key(record)])
 
     def test_legacy_queue_keeps_its_payload_and_first_confirmation(self):
@@ -324,7 +369,8 @@ class Forward(MailWorld):
             self.assertEqual(queued[field], entry[field], field)
         self.assertEqual(queued["attempts"], 5)
         self.mode.write_text("up")
-        drained = self.jarvis("forward-drain")
+        self.retry_due()
+        drained = self.drain_failures()
         self.assertEqual((drained.returncode, drained.stdout), (0, ""), drained.stderr)
         self.assertEqual([(row.get("delivery_id"), row["text"]) for row in self.directives()], [(key, legacy)])
         delivered = self.outbox()["entries"][0]
@@ -363,7 +409,8 @@ class Forward(MailWorld):
                                   if row["request"] == record["request"]["ref"]], [("queued", cause)])
         # No retry clears a missing mailbox: the drain reports every request
         # it now holds, each as one event block the watch loop appends.
-        drained = self.jarvis("forward-drain")
+        self.retry_due()
+        drained = self.drain_failures()
         self.assertEqual((drained.returncode, drained.stdout), (0, "".join(
             "EVENT forward-failed request=%s key=%s cause=mailbox-missing detail=forward:\\u0020mailbox-missing=%s\n"
             % (record["request"]["ref"], self.key(record), self.main) for record in records)), drained.stderr)
@@ -395,7 +442,8 @@ class Forward(MailWorld):
             # An answer older than the send never counts.
             self.answer(self.mail(self.main, "send", "older owner note", "--directive"), "older reply")
             self.mode.write_text("up")
-            drained = self.jarvis("forward-drain")
+            self.retry_due()
+            drained = self.drain_failures()
             self.assertEqual((drained.returncode, drained.stdout), (0, ""), drained.stderr)
             rows = self.directives()
             self.assertEqual([(row["from"], row.get("delivery_id"), row["text"]) for row in rows[1:]],
@@ -407,7 +455,8 @@ class Forward(MailWorld):
             self.mode.write_text("drop-receipt")
             self.assertEqual(self.forward(record).returncode, 75)
             self.mode.write_text("up")
-            self.assertEqual(self.jarvis("forward-drain").returncode, 0)
+            self.retry_due()
+            self.assertEqual(self.drain_failures().returncode, 0)
             landed = [row for row in self.directives() if row.get("delivery_id") == self.key(record)]
             self.assertEqual(len(landed), 1)
             entry = next(entry for entry in self.outbox()["entries"] if entry["request"] == record["request"]["ref"])
@@ -427,7 +476,7 @@ class Forward(MailWorld):
                 if not registered:
                     self.unregister(self.main)
                 self.mode.write_text("up")
-                drained = self.jarvis("forward-drain")
+                drained = self.drain_failures()
                 self.assertEqual((drained.returncode, drained.stdout), (0, ""), drained.stderr)
                 status = self.status()
                 self.assertEqual(([row["request"] for row in status["requests"]
@@ -440,13 +489,13 @@ class Forward(MailWorld):
                                  {"ref": "lane-mail:1793628729-58414-2", "words": "forward"})
             forwarded = self.delivered(record)["forwarded"]
             self.answer(forwarded, "Renewed.")
-            drained = self.jarvis("forward-drain")
+            drained = self.drain_failures()
             self.assertEqual((drained.returncode, drained.stdout), (0, ""), drained.stderr)
             status = self.status()
             self.assertEqual((status["requests"], status["last_answer"]["request"], status["last_answer"]["forwarded"]),
                              ([], record["request"]["ref"], forwarded))
             calls = self.ssh_calls()
-            self.assertEqual(self.jarvis("forward-drain").stdout, "")
+            self.assertEqual(self.drain_failures().stdout, "")
             self.assertEqual(self.ssh_calls(), calls)
             again = self.forward(record)
             self.assertEqual(again.stderr.split("\n")[0], "jarvis-session: forward=refused cause=answered-already")
@@ -457,16 +506,16 @@ class Forward(MailWorld):
             # The main reader takes the request, so its receipt reads it.
             self.assertEqual(self.command([LANE_MAIL, "inbox", "--item", "overseer"], self.main).returncode, 0)
             self.answer(forwarded, "Working on it.", "--progress")
-            self.assertEqual(self.jarvis("forward-drain").stdout, "")
+            self.assertEqual(self.drain_failures().stdout, "")
             self.assertEqual([row["state"] for row in self.status()["requests"]], ["read"])
             self.answer(forwarded, "Done.")
-            self.assertEqual(self.jarvis("forward-drain").stdout, "")
+            self.assertEqual(self.drain_failures().stdout, "")
             self.assertEqual(self.status()["requests"], [])
         with self.subTest(row="reused reference, later request"):
             record = self.record()
             forwarded = self.delivered(record)["forwarded"]
             self.answer(forwarded, "First done.")
-            self.assertEqual(self.jarvis("forward-drain").returncode, 0)
+            self.assertEqual(self.drain_failures().returncode, 0)
             self.age_closed(31)
             later = json.loads(json.dumps(record))
             later["request"].update(at="2026-11-03T09:00:00Z", text="Renew it again.")
@@ -489,7 +538,7 @@ class Forward(MailWorld):
                     forwarded["B"] = self.delivered(second)["forwarded"]
                     for request in order:
                         self.answer(forwarded[request], "Done: " + forwarded[request])
-                drained = self.jarvis("forward-drain")
+                drained = self.drain_failures()
                 self.assertEqual((drained.returncode, drained.stdout), (0, ""), drained.stderr)
                 status = self.status()
                 refs = {"A": first["request"]["ref"], "B": second["request"]["ref"]}
@@ -508,7 +557,7 @@ class Forward(MailWorld):
                 if compacted:
                     self.compact_all(self.main)
                 self.age("delivered_at", 7, record)
-                drained = self.jarvis("forward-drain")
+                drained = self.drain_failures()
                 expected = ("EVENT forward-failed request=%s key=%s cause=answer-unseen\n"
                             % (record["request"]["ref"], self.key(record)) if compacted else "")
                 self.assertEqual((drained.returncode, drained.stdout), (0, expected), drained.stderr)
@@ -516,14 +565,14 @@ class Forward(MailWorld):
                 self.assertEqual([row for row in status["requests"] if row["request"] == record["request"]["ref"]], [])
                 self.assertEqual(status["last_answer"]["request"], last["request"] if compacted else record["request"]["ref"])
                 if compacted:
-                    self.assertEqual(self.jarvis("forward-drain").stdout, expected)
+                    self.assertEqual(self.drain_failures().stdout, expected)
                     calls = self.ssh_calls()
                     again = self.forward(record)
                     self.assertEqual(again.stderr.split("\n")[0], "jarvis-session: forward=refused cause=answer-unseen")
                     self.assertEqual(self.ssh_calls(), calls)
                     # The block prints until the closed entry's keep ends, though no forward prunes it.
                     self.age_closed(30)
-                    self.assertEqual(self.jarvis("forward-drain").stdout, "")
+                    self.assertEqual(self.drain_failures().stdout, "")
 
     def test_reused_reference_failures_report_once(self):
         # Two forwards of one reference, the later at a new request time, each
@@ -535,7 +584,7 @@ class Forward(MailWorld):
         watch = module.Watch(self.satellite, BASH, settings)
 
         def watch_pass():
-            drained = self.jarvis("forward-drain")
+            drained = self.drain_failures()
             self.assertEqual(drained.returncode, 0, drained.stderr)
             watch.accept_forward(drained.stdout)
             log = [line for line in watch.log.read_text().splitlines() if line.startswith("EVENT forward-failed")]
@@ -554,6 +603,189 @@ class Forward(MailWorld):
             appended.append(log)
         self.assertEqual([len(log) for log in appended], [1, 2, 2])
         self.assertEqual(appended[-1], printed)
+
+    def test_retained_answers(self):
+        first, second = self.record(), self.record()
+        text = "Complete answer\n" + "x" * 5000
+        ids = [self.delivered(record)["forwarded"] for record in (first, second)]
+        for forwarded in ids:
+            self.answer(forwarded, text + forwarded)
+        drained = self.jarvis("forward-drain")
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        rows = self.status()["answers"]
+        self.assertEqual({row["key"] for row in rows}, {self.key(first), self.key(second)})
+        for row in rows:
+            self.assertEqual(set(row), {"request", "request_at", "key", "forwarded", "answer", "at", "text",
+                                        "closed_at", "expires_at"})
+            self.assertEqual(row["text"], text + row["forwarded"])
+            self.assertEqual(row["request_at"], canonical(REQUEST_AT))
+            self.assertEqual(self.status()["answers"], rows)
+            self.assertIn("key=" + row["key"] + " answer=" + row["answer"], drained.stdout)
+        self.assertNotIn(text, drained.stdout)
+        self.assertEqual(self.jarvis("forward-drain").stdout, drained.stdout)
+        later = json.loads(json.dumps(first))
+        later["request"]["at"] = "2026-11-03T09:00:00Z"
+        later["confirmation"]["at"] = "2026-11-03T09:00:05Z"
+        self.answer(self.delivered(later)["forwarded"], "Later answer")
+        self.jarvis("forward-drain")
+        self.assertEqual(len([row for row in self.status()["answers"] if row["request"] == first["request"]["ref"]]), 2)
+        self.age_closed(30)
+        self.assertEqual(self.status()["answers"], [])
+        self.assertIn(text, self.outbox_path().read_text().replace("\\n", "\n"))
+        self.forward(self.record())
+        self.assertNotIn(text, self.outbox_path().read_text().replace("\\n", "\n"))
+
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "session grants require /proc")
+    def test_session_grant_and_stop_isolation(self):
+        first = self.session_record()
+        path, _ = self.write_lease(first)
+        self.delivered(first)
+        second = self.session_record(first["session"])
+        second["confirmation"] = dict(first["confirmation"])
+        self.delivered(second)
+        # The same confirmation can precede both requests in one live session.
+        self.assertEqual(len(self.directives()), 2)
+        self.mode.write_text("drop-receipt")
+        queued = self.session_record(first["session"])
+        self.assertEqual(self.forward(queued).returncode, 75)
+        path.unlink()
+        path.parent.rmdir()
+        # A fresh grant in a fresh directory cannot revive the old queued path.
+        fresh = self.session_record()
+        fresh["session"].update(id=first["session"]["id"], name=first["session"]["name"])
+        fresh["session"]["lease"] = str(Path(fresh["session"]["lease"]).parent / path.name)
+        self.write_lease(fresh)
+        self.retry_due()
+        self.mode.write_text("up")
+        self.jarvis("forward-drain")
+        stopped = next(entry for entry in self.outbox()["entries"] if entry["key"] == self.key(queued))
+        self.assertEqual(stopped["cause"], "stop")
+        self.assertEqual(len(self.directives()), 3)
+        self.delivered(fresh)
+        self.answer(self.landed(first), "Delivered work still answers after Stop")
+        self.jarvis("forward-drain")
+        self.assertIn(self.key(first), {row["key"] for row in self.status()["answers"]})
+
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "session grants require /proc")
+    def test_session_lease_refusals(self):
+        for defect in ("missing", "main", "start", "boot", "dead", "file-mode", "directory-mode", "symlink", "parent-symlink"):
+            with self.subTest(defect=defect):
+                record = self.session_record()
+                path, lease = self.write_lease(record)
+                if defect == "missing":
+                    path.unlink()
+                elif defect == "dead":
+                    self.lease_process.terminate()
+                    # Keep ownership of the exited child until the production
+                    # check sees it; cleanup alone reaps it afterwards.
+                    os.waitid(os.P_PID, self.lease_process.pid, os.WEXITED | os.WNOWAIT)
+                elif defect in ("main", "start", "boot"):
+                    if defect == "main":
+                        lease["main"] = "another.example:/other"
+                    else:
+                        lease["owner"][defect] = "changed"
+                    path.write_text(json.dumps(lease))
+                elif defect == "file-mode":
+                    path.chmod(0o644)
+                elif defect == "directory-mode":
+                    path.parent.chmod(0o755)
+                elif defect == "symlink":
+                    other = path.with_suffix(".original")
+                    path.rename(other)
+                    path.symlink_to(other)
+                else:
+                    other = path.parent.with_suffix(".original")
+                    path.parent.rename(other)
+                    path.parent.symlink_to(other, target_is_directory=True)
+                result = self.forward(record)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stderr.splitlines()[0], "jarvis-session: forward=refused cause=stop")
+        self.assertEqual(self.directives(), [])
+
+    def test_session_record_shapes(self):
+        for defect in ("request-scope", "null-lease", "missing-session", "wrong-basename"):
+            with self.subTest(defect=defect):
+                record = self.session_record()
+                if defect == "request-scope":
+                    record["confirmation"]["scope"] = "request"
+                elif defect == "null-lease":
+                    record["session"]["lease"] = None
+                elif defect == "missing-session":
+                    del record["session"]
+                else:
+                    record["session"]["lease"] = str(self.root / "other.json")
+                result = self.forward(record)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("cause=record-invalid", result.stderr.splitlines()[0])
+        self.assertEqual(self.ssh_calls(), [])
+
+    def test_fast_reads_keep_queued_retry_at_sixty_seconds(self):
+        self.mode.write_text("down")
+        record = self.record()
+        self.forward(record)
+        calls = self.ssh_calls()
+        self.mode.write_text("up")
+        self.jarvis("forward-drain")
+        self.assertEqual(self.ssh_calls(), calls)
+        self.retry_due()
+        self.jarvis("forward-drain")
+        self.assertEqual(len(self.directives()), 1)
+
+    def test_external_delivery_advances_completed_idle_pass(self):
+        self.env["JARVIS_LOG_DIR"] = str(self.root / "log")
+        spec = importlib.util.spec_from_file_location("forward_watch", self.scripts / "lib/watch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        class Submitted:
+            def __init__(self):
+                self.names = []
+            def submit(self, work, *args):
+                self.names.append(work.__name__)
+                return Future()
+        settings = {"JARVIS_LOG_DIR": self.env["JARVIS_LOG_DIR"], "JARVIS_MAIN_HOST": self.env["JARVIS_MAIN_HOST"]}
+        with patch.dict(os.environ, self.env, clear=True):
+            watch = module.Watch(self.satellite, BASH, settings)
+            watch.next_relay = 10 ** 12
+            watch.forward_pending = Future()
+            watch.forward_pending.set_result(("", 60))
+            before = int(time.time())
+            passes = Submitted()
+            watch._poll(passes, Future(), before)
+            self.assertEqual(watch.next_forward, before + 60)
+            self.delivered(self.record())
+            at = self.outbox()["entries"][0]["delivered_at"]
+            self.assertNotIn("EVENT ", watch.log.read_text())
+            # Existing batch ingestion reads the scheduler cursor, including
+            # while a previously launched pass is completing.
+            watch._poll(passes, Future(), at + 1)
+            watch._poll(passes, Future(), at + 2)
+            self.assertLessEqual(watch.next_forward, at + 5)
+            self.assertEqual(passes.names, [])
+            watch._poll(passes, Future(), at + 5)
+            self.assertEqual(passes.names, ["forward"])
+
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "session grants require /proc")
+    def test_offline_queue_stops_every_revoked_grant(self):
+        for initial_mode in ("down", "drop-receipt"):
+            with self.subTest(initial_mode=initial_mode):
+                if initial_mode == "drop-receipt":
+                    self.mode.write_text("up")
+                    self.jarvis("forward-drain")
+                live = self.session_record()
+                self.write_lease(live)
+                stopped = self.session_record()
+                path, _ = self.write_lease(stopped)
+                self.mode.write_text(initial_mode)
+                for record in (live, stopped):
+                    self.assertEqual(self.forward(record).returncode, 75)
+                self.mode.write_text("down")
+                path.unlink()
+                self.retry_due()
+                self.jarvis("forward-drain")
+                entries = {entry["key"]: entry for entry in self.outbox()["entries"]}
+                self.assertIsNone(entries[self.key(live)]["closed_at"])
+                self.assertEqual(entries[self.key(stopped)]["cause"], "stop")
+                self.assertIsNotNone(entries[self.key(stopped)]["closed_at"])
 
     def test_role_refusals(self):
         record = self.write(self.record())
@@ -599,6 +831,14 @@ class Forward(MailWorld):
     def test_instrument_control(self):
         # Each planted defect, in a disposable copy, turns its row red.
         rows = (
+            ("test_external_delivery_advances_completed_idle_pass", "lib/forward.py",
+             'watch.forward_ready(self.settings, key, entry["delivered_at"])', 'pass'),
+            ("test_offline_queue_stops_every_revoked_grant", "lib/forward.py",
+             'unreachable = False\n        for entry in queued:',
+             'unreachable = False\n        if stopped is not None:\n            self.record(queued, *stopped)\n            return\n        for entry in queued:'),
+            ("test_retained_answers", "lib/forward.py", 'entry["answer"] = retained', 'entry["answer"] = dict(retained, text="")'),
+            ("test_session_grant_and_stop_isolation", "lib/forward.py",
+             'not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"])', 'False'),
             # A send that drops the delivery key lands a lost-receipt retry twice.
             ("test_retry_recovery", "lib/owner_note.py", ' --file "$note" ${1+"$@"}\n', ' --file "$note"\n'),
             # A key from the reference alone never lands a reused reference's later request.
@@ -608,6 +848,8 @@ class Forward(MailWorld):
             ("test_reused_reference_failures_report_once", "lib/forward.py",
              '"key": entry["key"], "cause": entry["cause"]', '"cause": entry["cause"]'))
         for name, relative, old, new in rows:
+            if getattr(getattr(Forward, name), "__unittest_skip__", False):
+                continue
             with self.subTest(row=name), tempfile.TemporaryDirectory() as folder:
                 copy = Path(folder) / "jarvis/scripts"
                 shutil.copytree(SCRIPTS, copy)
