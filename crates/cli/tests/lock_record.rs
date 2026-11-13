@@ -1079,6 +1079,18 @@ fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
         world.branch("b", "roll");
         assert!(world.queue_merge("a").status.success());
         assert!(world.lock_record().status.success());
+        // Log the real judge calls only in this timing scenario: queue
+        // eligibility must be read after verification and queue removal.
+        let wrapper = KENDEX_WRAPPER.replace("REAL", env!("CARGO_BIN_EXE_kendex"));
+        executable(
+            &world.home.join("bin/kendex"),
+            &format!(
+                "#!/bin/sh\nprintf 'kendex %s\\n' \"$*\" >> \"$GH_LOG\"\n{}",
+                wrapper
+                    .strip_prefix("#!/bin/sh\n")
+                    .expect("wrapper shebang")
+            ),
+        );
         write(&world.gh_state.join("queued"), "");
         assert!(world.queue_merge("b").status.success());
         let head = world.main_head();
@@ -1093,6 +1105,13 @@ fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
         let run = world.lock_record_with("", &busy);
         let output = said(&run);
         assert_eq!(run.status.code(), Some(0), "{output}");
+        let log = world.gh_log();
+        let asked = log.strip_prefix(&before).expect("log prefix");
+        let queue = at(asked, "mergeQueue(branch:");
+        let verified = asked.rfind("kendex verify ").expect("final verification");
+        assert!(verified < queue, "{asked}");
+        assert!(at(asked, "dequeuePullRequest") < queue, "{asked}");
+        assert_eq!(asked.matches("mergeQueue(branch:").count(), 1, "{asked}");
         if count == "1" {
             assert_landed(&world, &head, &before, &output);
             assert!(!world.gh_state.join("open").exists(), "{output}");
@@ -1121,6 +1140,11 @@ fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
         assert!(output.contains("lock-record: rolling-current="), "{output}");
         let log = world.gh_log();
         let asked = log.strip_prefix(&before).expect("log prefix");
+        assert!(
+            at(asked, "kendex verify ") < at(asked, "mergeQueue(branch:"),
+            "{asked}"
+        );
+        assert_eq!(asked.matches("mergeQueue(branch:").count(), 1, "{asked}");
         assert!(!asked.contains("pr merge"), "{asked}");
         assert!(!asked.contains("pr edit"), "{asked}");
         assert!(!world.gh_state.join("armed").exists(), "{output}");

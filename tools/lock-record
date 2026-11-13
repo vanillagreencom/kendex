@@ -318,7 +318,6 @@ land_check_run() {
   fi
   land_check=try
 }
-land_check_run
 
 if [[ -n "$rolling" && -n "$number" ]]; then
   # The open pull request judged by the one judge: its commit applied onto
@@ -341,6 +340,7 @@ if [[ -n "$rolling" && -n "$number" ]]; then
     git -C "$repo" reset -q --hard HEAD
     say rolling-current "$rolling pull-request=$number" \
       "pull request $number's commit, merged onto $head, is the record this tree writes; the queue merges it, so nothing was pushed"
+    land_check_run
     if [[ "$land_check" != skipped:queued ]]; then
       if [[ "$armed" == true ]]; then
         say armed already
@@ -401,6 +401,8 @@ if [[ "$queued" == true ]]; then
   say dequeued "$number"
 fi
 
+# Another lane can enqueue without moving the base during refresh or verify.
+land_check_run
 case "$land_check" in
   try | unconfigured) ;;
   unavailable:token)
