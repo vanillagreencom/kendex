@@ -67,6 +67,9 @@ pub const VALIDATE_MEMORY_MAX_KEY: &str = "ORCH_VALIDATE_MEMORY_MAX";
 /// `pr`, the default, or `push-base`: direct delivery keeps every ci
 /// request on local validation.
 pub const DELIVERY_KEY: &str = "ORCH_DELIVERY";
+/// The consumer's publication order: `review-first`, `open-first` or
+/// `push-first`; unset follows the repository's visibility.
+pub const PR_ORDER_KEY: &str = "ORCH_PR_ORDER";
 /// The disk use percent at or past which `prune-round` reclaims the lane
 /// worktree's Cargo output; the op judges it.
 pub const ROUND_PRUNE_KEY: &str = "ORCH_ROUND_PRUNE_DISK_PCT";
@@ -287,6 +290,7 @@ const READ_KEYS: &[&str] = &[
     DEV_VALIDATE_TIMEOUT_SECS_KEY,
     VALIDATE_MEMORY_MAX_KEY,
     DELIVERY_KEY,
+    PR_ORDER_KEY,
     crate::policy::STAGES_KEY,
     ROUND_PRUNE_KEY,
     QA_KEYS[0],
@@ -486,6 +490,12 @@ pub struct ValidateSettings {
     pub timeout: Option<String>,
     pub delivery: Option<String>,
     pub memory_max: Option<String>,
+    /// `ORCH_PR_ORDER` as written; the publication order judges it.
+    pub pr_order: Option<String>,
+    /// The delivery and order keys the private env file sets in a form
+    /// only a shell reads, with no caller value over them: the order a
+    /// consumer chose there is unknown, so the order refuses.
+    pub order_unread: Vec<String>,
 }
 
 /// What `queue-watch` reads beside its request: the arming grace, the
@@ -864,6 +874,13 @@ pub fn load(
         timeout: get(DEV_VALIDATE_TIMEOUT_SECS_KEY).map(str::to_owned),
         delivery: get(DELIVERY_KEY).map(str::to_owned),
         memory_max: get(VALIDATE_MEMORY_MAX_KEY).map(str::to_owned),
+        pr_order: get(PR_ORDER_KEY).map(str::to_owned),
+        order_unread: passed_over
+            .iter()
+            .filter(|key| [DELIVERY_KEY, PR_ORDER_KEY].contains(&key.as_str()))
+            .filter(|key| values.raw(key).is_none())
+            .cloned()
+            .collect(),
     };
     let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
     let lane_preference = get(LANE_PREFERENCE_KEY).map(str::to_owned);

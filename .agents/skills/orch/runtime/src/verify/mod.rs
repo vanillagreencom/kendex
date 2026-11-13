@@ -381,6 +381,92 @@ pub(crate) fn pull_request(
     read().map_err(Unreadable::from)
 }
 
+/// What `gh pr view` answered for a checkout: the object it printed, or
+/// that the branch has no pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PullRequestRead {
+    Printed(Vec<u8>),
+    Missing,
+}
+
+/// The pull request of the checkout `gh` runs in, or pull request
+/// `number` there, through one `gh pr view [N] --json FIELDS`. gh's words
+/// that it found none (`no pull requests found for branch "B"`, gh's
+/// `NotFoundError`, and the open-state and singular forms) are `Missing`,
+/// never a failure; any other failed call, and an answer that is no JSON
+/// object, is `Unreadable`, never `Missing`.
+pub(crate) fn pull_request_view(
+    gh: &Gh<'_>,
+    number: Option<u64>,
+    fields: &str,
+) -> std::result::Result<PullRequestRead, Unreadable> {
+    let endpoint = Endpoint::PullRequest;
+    let number = number.map(|n| n.to_string());
+    let mut args = vec!["pr", "view"];
+    args.extend(number.as_deref());
+    args.extend(["--json", fields]);
+    let read = || -> Read<PullRequestRead> {
+        match gh.call(endpoint, &args)? {
+            Answer::Printed { stdout, .. } => {
+                match serde_json::from_slice::<serde_json::Value>(&stdout) {
+                    Ok(serde_json::Value::Object(_)) => Ok(PullRequestRead::Printed(stdout)),
+                    _ => Err(Cause::ResponseInvalid(endpoint)),
+                }
+            }
+            Answer::Failed(failed) => {
+                let said = format!(
+                    "{}\n{}",
+                    failed.stderr,
+                    String::from_utf8_lossy(&failed.stdout)
+                )
+                .to_ascii_lowercase();
+                let none = said.contains("no pull request found")
+                    || said.contains("no open pull requests found")
+                    || said
+                        .find("no pull requests")
+                        .is_some_and(|at| said[at..].contains("found"));
+                if none {
+                    return Ok(PullRequestRead::Missing);
+                }
+                Err(Cause::ReadFailed {
+                    endpoint,
+                    detail: failed.detail(),
+                })
+            }
+        }
+    };
+    read().map_err(Unreadable::from)
+}
+
+/// The visibility of `repo` through one `gh repo view O/R --json
+/// visibility --jq .visibility` (`wire::Visibility`); a failed call or a
+/// word outside GitHub's set is `Unreadable`.
+pub(crate) fn visibility(
+    gh: &Gh<'_>,
+    repo: &str,
+) -> std::result::Result<wire::Visibility, Unreadable> {
+    let endpoint = Endpoint::Visibility;
+    let read = || -> Read<wire::Visibility> {
+        let bytes = gh
+            .call(
+                endpoint,
+                &[
+                    "repo",
+                    "view",
+                    repo,
+                    "--json",
+                    "visibility",
+                    "--jq",
+                    ".visibility",
+                ],
+            )?
+            .printed(endpoint)?;
+        wire::Visibility::printed(&String::from_utf8_lossy(&bytes))
+            .ok_or(Cause::ResponseInvalid(endpoint))
+    };
+    read().map_err(Unreadable::from)
+}
+
 /// The base as a URL path segment: every byte outside the unreserved set is
 /// percent-encoded, so a branch with `/` reaches the rules and branch
 /// endpoints as one segment.
@@ -433,8 +519,11 @@ pub(crate) enum Endpoint {
     /// `repos/{owner}/{name}`: a source proof's repository, for its id.
     SourceRepository,
     /// `gh pr view {number}`: the one read that names a pull request, for
-    /// the head `verify-pr` then pins every other read to.
+    /// the head `verify-pr` then pins every other read to; and a
+    /// checkout's own pull request (`pull_request_view`).
     PullRequest,
+    /// `gh repo view {owner}/{name}`, read for its visibility.
+    Visibility,
     /// `pulls/{number}`: the pull request object, for the refresh route's
     /// author and branch and the draft flag.
     Pull,
@@ -469,6 +558,7 @@ impl Endpoint {
             Endpoint::WorkflowFiles => "workflow-files",
             Endpoint::SourceRepository => "source-repository",
             Endpoint::PullRequest => "pull-request",
+            Endpoint::Visibility => "visibility",
             Endpoint::Pull => "pull",
             Endpoint::Reviews => "reviews",
             Endpoint::Timeline => "timeline",
@@ -483,6 +573,7 @@ impl Endpoint {
     fn operation(self) -> &'static str {
         match self {
             Endpoint::PullRequest | Endpoint::Ready => "pr",
+            Endpoint::Visibility => "repo",
             Endpoint::CheckRuns
             | Endpoint::CheckSuites
             | Endpoint::Statuses

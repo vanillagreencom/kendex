@@ -265,7 +265,7 @@ Its reply's `verdict` is `below` or `at-cap`, with `count` and `limit`, counting
 Group the `fix set` by `agent`. Before stamping each group's round, read the target PR and bind `[PR_OPEN]` by [dev-fix.md § 2](dev-fix.md#2-delegate) step 4:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] [PR_NUMBER] --json state
+.agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] [PR_NUMBER] --json state
 ```
 
 Run [dev-fix.md § 2's base-freshness gate](dev-fix.md#2-delegate) before stamping this direct fix round. Apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this group's proposed fix classes, writing its requests as `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from the original review items or exact receipt-origin check names:

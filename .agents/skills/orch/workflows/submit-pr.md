@@ -130,7 +130,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` bou
 2. **Check for an existing PR**:
 
    ```bash
-   .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state
+   .agents/skills/orch/scripts/orch-runtime pr view "[WORKTREE_PATH]" --json number,state
    ```
 
    `status` of `no_pr` means create one in step 4. Stop and report auth, token, timeout, or parse errors.

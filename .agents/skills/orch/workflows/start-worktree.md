@@ -101,7 +101,7 @@ With `ORCH_DELIVERY=push-base`, `pr-order` returns `review-first`. Continue thro
 Read the consumer's publication order through `pr-order --help`:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-order [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime pr order [WORKTREE_PATH]
 ```
 
 Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
@@ -122,7 +122,7 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
 - `open-first` → `⤵ workflows/submit-pr.md § 1-2` with context `worktree`, `lifecycle: "managed"`, `issue_id`. It pushes the commit § 2 validated and opens a pull request, not a draft, so Copilot can review it while the review step runs; the `open-first` recorded above keeps its § 2 step 5 from arming it. Then confirm the pull request exists:
 
   ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state
+  .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] --json number,state
   ```
 
   An open pull request → the review step, which reviews the pushed head; its fix round commits stay local until § 4 pushes them. A failed submit return, a `no_pr` status or a read error opened nothing to review on. Record the review-first order:

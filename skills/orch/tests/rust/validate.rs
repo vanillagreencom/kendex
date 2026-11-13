@@ -5350,3 +5350,223 @@ fn a_detached_start_whose_tmux_server_cannot_be_read_launches_naming_the_fleets_
     assert_eq!(w.mail_calls(&w.worktree), Vec::<String>::new());
     assert_eq!(w.mail_calls(&other), Vec::<String>::new());
 }
+
+/// `orch-runtime pr ARGS` over the fake `gh` answering `replies`, run from
+/// outside the worktree with the private env file read and no caller value
+/// of either order key, so the settings it acts on are the worktree's own
+/// files (`settings`, the `[env]` lines of its `kendex.settings.toml`, and
+/// `private`, its `.env.local`). The output and every `gh` call, one line
+/// each.
+fn pr_verb(
+    w: &World,
+    args: &[&str],
+    settings: &str,
+    private: &str,
+    replies: &Value,
+) -> (Output, String) {
+    fs::write(
+        w.worktree.join("kendex.settings.toml"),
+        format!("[env]\n{settings}"),
+    )
+    .unwrap();
+    fs::write(w.worktree.join(".env.local"), private).unwrap();
+    let file = w.root.join("gh.json");
+    fs::write(&file, replies.to_string()).unwrap();
+    let log = w.root.join("gh.log");
+    let _ = fs::remove_file(&log);
+    let out = program(support::binary())
+        .current_dir(&w.root)
+        .env("HOME", &w.root)
+        .env("PATH", tool_path(&[&fixtures().join("validate-gh")]))
+        .env("GH_FAKE_REPLIES", &file)
+        .env("GH_FAKE_LOG", &log)
+        .env_remove("KENDEX_ENV_FILE")
+        .env_remove("ORCH_PR_ORDER")
+        .env_remove("ORCH_DELIVERY")
+        .env_remove("GH_REPO")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .arg("pr")
+        .args(args)
+        .output()
+        .unwrap();
+    (out, fs::read_to_string(&log).unwrap_or_default())
+}
+
+/// The fake's answers for a checkout of `o/r` whose visibility gh prints
+/// as `visibility`.
+fn visible(visibility: &str) -> Value {
+    json!({"repo view": {"text": "o/r\n"}, "repo view o/r": {"text": format!("{visibility}\n")}})
+}
+
+#[test]
+fn the_publication_order_follows_visibility_only_where_unset() {
+    let w = World::new();
+    let wt = w.worktree.display().to_string();
+    for (visibility, want) in [
+        ("PRIVATE", "open-first"),
+        ("PUBLIC", "review-first"),
+        ("INTERNAL", "review-first"),
+        ("private", "open-first"),
+    ] {
+        let (out, calls) = pr_verb(&w, &["order", &wt], "", "", &visible(visibility));
+        assert_eq!(
+            text(&out),
+            format!("pr-order={want}"),
+            "{visibility}: {}",
+            stderr(&out)
+        );
+        assert_eq!(
+            calls.lines().last(),
+            Some("repo view o/r --json visibility --jq .visibility"),
+            "{visibility}: {calls}"
+        );
+    }
+}
+
+#[test]
+fn an_explicit_publication_order_wins_with_no_github_read() {
+    let w = World::new();
+    let wt = w.worktree.display().to_string();
+    for order in ["review-first", "open-first", "push-first"] {
+        for visibility in ["PRIVATE", "PUBLIC"] {
+            let setting = format!("ORCH_PR_ORDER = \"{order}\"\n");
+            let (out, calls) = pr_verb(&w, &["order", &wt], &setting, "", &visible(visibility));
+            assert_eq!(text(&out), format!("pr-order={order}"), "{}", stderr(&out));
+            assert_eq!(calls, "", "{order} {visibility}");
+        }
+    }
+    // Direct delivery reviews before publication, whatever the order.
+    for order in ["", "open-first", "push-first"] {
+        let mut setting = "ORCH_DELIVERY = \"push-base\"\n".to_owned();
+        if !order.is_empty() {
+            setting.push_str(&format!("ORCH_PR_ORDER = \"{order}\"\n"));
+        }
+        let (out, calls) = pr_verb(&w, &["order", &wt], &setting, "", &visible("PRIVATE"));
+        assert_eq!(
+            text(&out),
+            "pr-order=review-first",
+            "{order}: {}",
+            stderr(&out)
+        );
+        assert_eq!(calls, "", "push-base {order}");
+    }
+}
+
+#[test]
+fn an_unreadable_or_unknown_publication_order_refuses() {
+    let w = World::new();
+    let wt = w.worktree.display().to_string();
+    for (setting, private, key, named) in [
+        (
+            "ORCH_PR_ORDER = \"bogus\"\n",
+            "",
+            "setting-invalid",
+            "key=ORCH_PR_ORDER",
+        ),
+        (
+            "",
+            "ORCH_PR_ORDER=$(echo open-first)\n",
+            "setting-unread",
+            "key=ORCH_PR_ORDER",
+        ),
+        (
+            "",
+            "ORCH_DELIVERY=$(echo push-base)\n",
+            "setting-unread",
+            "key=ORCH_DELIVERY",
+        ),
+    ] {
+        let (out, calls) = pr_verb(&w, &["order", &wt], setting, private, &visible("PRIVATE"));
+        assert_eq!(refusal(&out), key, "{setting}{private}");
+        assert!(stderr(&out).contains(named), "{}", stderr(&out));
+        assert_eq!(calls, "", "{setting}{private}");
+    }
+}
+
+#[test]
+fn an_unread_visibility_reviews_first() {
+    let w = World::new();
+    let wt = w.worktree.display().to_string();
+    for (replies, cause) in [
+        (
+            json!({"repo view": {"text": "o/r\n"}}),
+            "cause=visibility-read-failed repo=o/r",
+        ),
+        (
+            visible("SECRET"),
+            "cause=visibility-response-invalid repo=o/r",
+        ),
+        (json!({}), "cause=repo-unresolved"),
+    ] {
+        let (out, _) = pr_verb(&w, &["order", &wt], "", "", &replies);
+        assert_eq!(
+            text(&out),
+            "pr-order=review-first",
+            "{cause}: {}",
+            stderr(&out)
+        );
+        assert!(
+            stderr(&out).contains(&format!("pr-order-visibility-unread {cause}")),
+            "{cause}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn a_missing_pull_request_is_told_apart_from_a_failed_read() {
+    let w = World::new();
+    let wt = w.worktree.display().to_string();
+    let open = json!({"number": 7, "state": "OPEN", "baseRefName": "main"});
+    let (out, calls) = pr_verb(
+        &w,
+        &["view", &wt, "--json", "number,state"],
+        "",
+        "",
+        &json!({"pr view --json": {"body": open}}),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        serde_json::from_str::<Value>(&text(&out)).unwrap(),
+        json!({"number": 7, "state": "OPEN"})
+    );
+    assert_eq!(calls.lines().last(), Some("pr view --json number,state"));
+    let (out, calls) = pr_verb(
+        &w,
+        &["view", &wt, "42", "--json", "state"],
+        "",
+        "",
+        &json!({"pr view 42": {"body": open}}),
+    );
+    assert_eq!(text(&out), r#"{"state":"OPEN"}"#, "{}", stderr(&out));
+    assert_eq!(calls.lines().last(), Some("pr view 42 --json state"));
+    // gh's words for a branch with no pull request, and for a read that
+    // failed.
+    let (out, _) = pr_verb(
+        &w,
+        &["view", &wt, "--json", "number"],
+        "",
+        "",
+        &json!({"pr view --json": {"exit": 1, "stderr": "no pull requests found for branch \"main\""}}),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        serde_json::from_str::<Value>(&text(&out)).unwrap(),
+        json!({"status": "no_pr", "number": null})
+    );
+    let (out, _) = pr_verb(
+        &w,
+        &["view", &wt, "--json", "number"],
+        "",
+        "",
+        &json!({"pr view --json": {"exit": 1, "stderr": "HTTP 502: Bad Gateway"}}),
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(text(&out), "");
+    assert!(
+        stderr(&out).starts_with("pr-view: cause=pull-request-read-failed"),
+        "{}",
+        stderr(&out)
+    );
+}

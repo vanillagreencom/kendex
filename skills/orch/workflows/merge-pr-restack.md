@@ -36,7 +36,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
 
    ```bash
    RESTACK_MODE_ARGS=()
-   if ! PR_ORDER="$([MAIN_REPO_ROOT]/.agents/skills/orch/scripts/pr-order [WT_PATH])"; then
+   if ! PR_ORDER="$([MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime pr order [WT_PATH])"; then
      PR_ORDER=pr-order=review-first
    fi
    [[ "$PR_ORDER" != pr-order=push-first ]] || RESTACK_MODE_ARGS=(--base origin/[BASE_BRANCH])

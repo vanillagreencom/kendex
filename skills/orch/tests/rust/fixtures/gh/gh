@@ -36,7 +36,10 @@
 # GraphQL reply does, and a cursor with no page planted refuses. `gh repo view --json nameWithOwner -q
 # .nameWithOwner`, the admission's read of a checkout's repository, answers
 # from the map's `repo view` entry; with none it fails as gh does in a
-# checkout whose remotes name no GitHub host (exit 1). `gh pr view N --repo
+# checkout whose remotes name no GitHub host (exit 1); `gh repo view O/R
+# --json visibility --jq .visibility`, the publication order's read, answers
+# from `repo view O/R` (its `text`, gh's one word and newline), with none
+# failing as gh does for a repository it cannot see. `gh pr view N --repo
 # R --json F`, the verify-pr rows' read of a pull request, answers from the
 # map's `pr view N` entry; with none it fails as gh does for a number the
 # repository lacks (exit 1, the GraphQL message on stderr). The review
@@ -117,7 +120,13 @@ act() {
   now=$(jq -c "$@" "$filter" <<<"$was") || { echo "gh-fake: acts-unreadable" >&2; exit 65; }
   printf '%s\n' "$now" > "$acts"
 }
-if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then
+if [ "${1:-}" = repo ] && [ "${2:-}" = view ] && [ -n "${3:-}" ] && [ "${3#-}" = "${3:-}" ]; then
+  reply=$(jq -c --arg k "repo view $3" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  if [ -z "$reply" ]; then
+    echo "GraphQL: Could not resolve to a Repository with the name '$3'. (repository)" >&2
+    exit 1
+  fi
+elif [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then
   reply=$(jq -c '."repo view" // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   if [ -z "$reply" ]; then
     echo "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use \`gh auth login\`" >&2

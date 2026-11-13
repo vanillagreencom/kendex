@@ -692,21 +692,19 @@ mod dev_artifacts {
         w.plant_receipt("r1", &ci);
         assert_eq!(w.check("r1")["reason"], "mode_mismatch");
         let ordered = |order: &str| {
-            result(
-                &w.command()
-                    .env("ORCH_PR_ORDER", order)
-                    .args(["dev-return", "check"])
-                    .args(w.identity("r1"))
-                    .arg("--expect-items-from-round")
-                    .output()
-                    .unwrap(),
-            )
+            w.command()
+                .env("ORCH_PR_ORDER", order)
+                .args(["dev-return", "check"])
+                .args(w.identity("r1"))
+                .arg("--expect-items-from-round")
+                .output()
+                .unwrap()
         };
-        let push_first = ordered("push-first");
+        let push_first = result(&ordered("push-first"));
         assert_eq!(push_first["verdict"], "accept", "{push_first}");
-        // An order `pr-order` refuses is no order: the round runs review-first.
-        let refused = ordered("bogus");
-        assert_eq!(refused["reason"], "mode_mismatch", "{refused}");
+        // An order outside the three words is a choice the check cannot
+        // read: it refuses rather than judge the round under a default.
+        refused(&ordered("bogus"), "setting-invalid");
         result(&w.call(
             &["round", "stamp"],
             "open",

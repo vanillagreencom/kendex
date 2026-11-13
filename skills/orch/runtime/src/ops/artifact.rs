@@ -1944,7 +1944,7 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
             None => {
                 recorded != ValidateMode::Ci
                     || round["pr_open"] == true
-                    || crate::validate::pr_order(settings, &id.worktree, &mut String::new())
+                    || crate::validate::pr_order(settings, &id.worktree, &mut String::new())?
                         == "push-first"
             }
         };

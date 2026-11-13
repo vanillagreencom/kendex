@@ -14,7 +14,7 @@
       "Bash(.agents/skills/orch/scripts/dev-round-write *)",
       "Bash(.agents/skills/orch/scripts/git-context *)",
       "Bash(.agents/skills/orch/scripts/orch-env *)",
-      "Bash(.agents/skills/orch/scripts/pr-view-json *)",
+      "Bash(.agents/skills/orch/scripts/orch-runtime pr view *)",
       "Bash(.agents/skills/orch/scripts/resolve-base-branch *)",
       "Bash(.agents/skills/orch/scripts/lanes *)",
       "Bash(.agents/skills/github/scripts/github.sh pr-threads *)",

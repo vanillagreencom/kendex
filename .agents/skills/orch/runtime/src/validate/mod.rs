@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use agent_runtime::host::{self, Place};
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::error::{Error, Result};
 use crate::ops::validate::{
@@ -653,7 +652,8 @@ enum CiAdmission {
     Fallback(String),
 }
 
-/// The pull request's base and state as `pr-view-json` answers them.
+/// The worktree's pull request: open on its base, closed or merged, or
+/// none for its branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PrView {
     Open { base: String },
@@ -661,68 +661,122 @@ enum PrView {
     None,
 }
 
-fn pr_view(settings: &Settings, worktree: &Path, log: &mut String) -> Result<Option<PrView>> {
-    let script = sibling(settings, "pr-view-json");
-    let wt = worktree.display().to_string();
-    let Some(text) = run_in(
-        "pr-view-json",
-        &script,
-        "pr-view",
-        &[&wt, "--json", "baseRefName,state"],
-        at(worktree, &[]),
-        READ_TIMEOUT,
-        log,
-    )?
-    else {
-        return Ok(None);
+/// The worktree's pull request read under `gh`; `None` where the read
+/// failed or an open pull request names no base, the cause in the log.
+fn pr_view(gh: &Gh<'_>, log: &mut String) -> Option<PrView> {
+    let printed = match crate::verify::pull_request_view(gh, None, "baseRefName,state") {
+        Ok(crate::verify::PullRequestRead::Missing) => return Some(PrView::None),
+        Ok(crate::verify::PullRequestRead::Printed(bytes)) => bytes,
+        Err(unread) => {
+            log.push_str(&unread.reason);
+            if let Some(detail) = unread.detail {
+                log.push_str(": ");
+                log.push_str(&detail);
+            }
+            log.push('\n');
+            return None;
+        }
     };
-    let Ok(json) = serde_json::from_str::<Value>(&text) else {
-        return Ok(None);
+    let Ok(view) = serde_json::from_slice::<crate::verify::wire::PullRequestBase>(&printed) else {
+        log.push_str("pull-request-response-invalid\n");
+        return None;
     };
-    if json.get("status").and_then(Value::as_str) == Some("no_pr") {
-        return Ok(Some(PrView::None));
+    match view.state {
+        crate::verify::wire::PullRequestState::Open => {
+            (!view.base.is_empty()).then_some(PrView::Open { base: view.base })
+        }
+        _ => Some(PrView::NotOpen),
     }
-    Ok(match json.get("state").and_then(Value::as_str) {
-        Some("OPEN") => json
-            .get("baseRefName")
-            .and_then(Value::as_str)
-            .filter(|b| !b.is_empty())
-            .map(|b| PrView::Open { base: b.to_owned() }),
-        Some("CLOSED" | "MERGED") => Some(PrView::NotOpen),
-        _ => None,
+}
+
+/// The checkout's own pull request, or pull request `number`, as `gh pr
+/// view [N] --json FIELDS` prints it, read under the credential pair
+/// gh-auth-ladder selects, `GH_REPO` emptied so the worktree's branch and
+/// repository decide; the cause where the ladder or the read gave no
+/// answer.
+pub fn pull_request(
+    settings: &Settings,
+    worktree: &Path,
+    number: Option<u64>,
+    fields: &str,
+) -> std::result::Result<crate::verify::PullRequestRead, String> {
+    let mut log = String::new();
+    let Some(gh) = ladder_gh(settings, worktree, &mut log) else {
+        return Err(format!("credentials-unread {}", log.trim()));
+    };
+    crate::verify::pull_request_view(&checkout_gh(&gh), number, fields).map_err(|unread| {
+        match unread.detail {
+            Some(detail) => format!("{} {detail}", unread.reason),
+            None => unread.reason,
+        }
     })
 }
 
-/// The publication order `pr-order` names; review-first on a failed read.
-pub(crate) fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> String {
-    let script = sibling(settings, "pr-order");
-    let wt = worktree.display().to_string();
-    run_in(
-        "pr-order",
-        &script,
-        "pr-order",
-        &[&wt],
-        at(worktree, &[]),
-        READ_TIMEOUT,
-        log,
-    )
-    .ok()
-    .flatten()
-    .and_then(|line| line.trim().strip_prefix("pr-order=").map(str::to_owned))
-    .unwrap_or_else(|| "review-first".to_owned())
+/// `gh` with `GH_REPO` and `GITHUB_REPOSITORY` set empty, so a read that
+/// names no repository answers the checkout it runs in.
+fn checkout_gh<'a>(gh: &Gh<'a>) -> Gh<'a> {
+    gh.adding_env(vec![
+        ("GH_REPO".into(), "".into()),
+        ("GITHUB_REPOSITORY".into(), "".into()),
+    ])
 }
 
-/// The contexts the base branch requires and whether a merge queue rule
-/// stands, from the one reader of that fact (`verify::required_contexts`),
-/// run in the worktree under the credential pair gh-auth-ladder selects;
-/// `None` where the ladder or the read gave no answer, the read's cause in
-/// the log.
-fn required_contexts_under_ladder(
-    settings: &Settings,
-    worktree: &Path,
-    base: &str,
-    log: &mut String,
-) -> Option<(Vec<String>, bool)> {
+/// The publication order: direct delivery reviews first; an explicit
+/// `ORCH_PR_ORDER` wins with no GitHub read; unset, a private repository
+/// opens first and any other reviews first, as does a repository or
+/// visibility that cannot be read, its cause in the log. A delivery or
+/// order key the load could not read, or an order outside the three
+/// words, refuses: a consumer's choice is never replaced by a default.
+pub fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Result<&'static str> {
+    let validate = &settings.validate;
+    let unread = |key: &str| -> Result<()> {
+        match validate.order_unread.iter().any(|k| k == key) {
+            true => Err(agent_runtime::Error::refused("setting-unread", &[("key", key)]).into()),
+            false => Ok(()),
+        }
+    };
+    unread(crate::settings::DELIVERY_KEY)?;
+    if validate.delivery.as_deref() == Some("push-base") {
+        return Ok("review-first");
+    }
+    unread(crate::settings::PR_ORDER_KEY)?;
+    if let Some(word) = validate.pr_order.as_deref() {
+        return ["review-first", "open-first", "push-first"]
+            .into_iter()
+            .find(|order| *order == word)
+            .ok_or_else(|| {
+                agent_runtime::settings::value_refusal(crate::settings::PR_ORDER_KEY, word).into()
+            });
+    }
+    let repo = match crate::repo::of(&crate::repo::resolver(&settings.roots.project), worktree) {
+        Ok(repo) => repo,
+        Err(unread) => {
+            log.push_str(&format!(
+                "pr-order-visibility-unread cause=repo-unresolved {unread}\n"
+            ));
+            return Ok("review-first");
+        }
+    };
+    let gh = Gh::new(Path::new("gh"))
+        .tagged("validate")
+        .in_dir(worktree)
+        .bounded(READ_TIMEOUT);
+    Ok(match crate::verify::visibility(&gh, &repo) {
+        Ok(crate::verify::wire::Visibility::Private) => "open-first",
+        Ok(_) => "review-first",
+        Err(unread) => {
+            log.push_str(&format!(
+                "pr-order-visibility-unread cause={} repo={repo}\n",
+                unread.reason
+            ));
+            "review-first"
+        }
+    })
+}
+
+/// `gh` in the worktree under the credential pair gh-auth-ladder selects;
+/// `None` where the ladder gave no pair, its words in the log.
+fn ladder_gh(settings: &Settings, worktree: &Path, log: &mut String) -> Option<Gh<'static>> {
     let ladder = sibling(settings, "../../github/scripts/gh-auth-ladder");
     let wt = worktree.display().to_string();
     let selected = match run_in(
@@ -754,10 +808,25 @@ fn required_contexts_under_ladder(
     if credentials.len() != 2 {
         return None;
     }
-    let gh = Gh::with_env(Path::new("gh"), credentials)
-        .tagged("validate")
-        .in_dir(worktree)
-        .bounded(READ_TIMEOUT);
+    Some(
+        Gh::with_env(Path::new("gh"), credentials)
+            .tagged("validate")
+            .in_dir(worktree)
+            .bounded(READ_TIMEOUT),
+    )
+}
+
+/// The contexts the base branch requires and whether a merge queue rule
+/// stands, from the one reader of that fact (`verify::required_contexts`),
+/// read under `gh`; `None` where the read gave no answer, its cause in the
+/// log.
+fn required_contexts_under(
+    settings: &Settings,
+    worktree: &Path,
+    gh: &Gh<'_>,
+    base: &str,
+    log: &mut String,
+) -> Option<(Vec<String>, bool)> {
     let repo = match crate::repo::of(&crate::repo::resolver(&settings.roots.project), worktree) {
         Ok(repo) => repo,
         Err(unread) => {
@@ -765,7 +834,7 @@ fn required_contexts_under_ladder(
             return None;
         }
     };
-    match crate::verify::required_contexts(&gh, &repo, base) {
+    match crate::verify::required_contexts(gh, &repo, base) {
         Ok(read) => Some(read),
         Err(unread) => {
             log.push_str(&unread.reason);
@@ -813,7 +882,10 @@ fn ci_admission(
     let Some(context) = &settings.validate.ci_context else {
         return Ok(CiAdmission::Fallback("setting-empty".to_owned()));
     };
-    let Some(view) = pr_view(settings, worktree, log)? else {
+    let Some(gh) = ladder_gh(settings, worktree, log) else {
+        return Ok(CiAdmission::Fallback("base-unresolved".to_owned()));
+    };
+    let Some(view) = pr_view(&checkout_gh(&gh), log) else {
         return Ok(CiAdmission::Fallback("base-unresolved".to_owned()));
     };
     let push_first = order == "push-first";
@@ -838,7 +910,7 @@ fn ci_admission(
         }
         PrView::Open { base } => base,
     };
-    let Some((contexts, queue)) = required_contexts_under_ladder(settings, worktree, &base, log)
+    let Some((contexts, queue)) = required_contexts_under(settings, worktree, &gh, &base, log)
     else {
         return Ok(CiAdmission::Fallback("rules-unread".to_owned()));
     };
@@ -1047,7 +1119,7 @@ fn settle(
         class_base.clear();
         base_sha.clear();
     }
-    let order = pr_order(settings, worktree, &mut log);
+    let order = pr_order(settings, worktree, &mut log)?;
     let mut ci_fallback: Option<String> = None;
     let mut ci_event = String::new();
     let mut ci_attempted = false;
@@ -1068,7 +1140,7 @@ fn settle(
         if requested != ValidateMode::Full {
             mode = ValidateMode::Range;
         }
-        match ci_admission(settings, worktree, &branch, &order, &mut log)? {
+        match ci_admission(settings, worktree, &branch, order, &mut log)? {
             CiAdmission::Admitted { event } => {
                 ci_event = event;
                 if req.restack || settings.validate.selection_cmd.is_none() {
@@ -1160,7 +1232,7 @@ fn settle(
                 // cause (`class-uncovered` among them) is the fallback;
                 // Admitted clears it.
                 let branch = read("", &mut log)?;
-                match ci_admission(settings, worktree, &branch, &order, &mut log)? {
+                match ci_admission(settings, worktree, &branch, order, &mut log)? {
                     CiAdmission::Admitted { event } => {
                         ci_event = event;
                         mode = ValidateMode::Ci;

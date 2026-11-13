@@ -169,7 +169,7 @@ if [ "$TIER" = micro ]; then
 else
   # --- skills/orch/workflows/start-worktree.md § 2.1: publication order ---
   step pr-order
-  order="$(env -u GH_REPO -u GITHUB_REPOSITORY "$ORCH/pr-order" "$WT")" || fail pr-order
+  order="$("$ORCH/orch-runtime" pr order "$WT")" || fail pr-order
   [ "$order" = "pr-order=review-first" ] || fail pr-order-value
   "$ORCH/workflow-state" set "$ITEM" pr_order review-first || fail pr-order-set
 

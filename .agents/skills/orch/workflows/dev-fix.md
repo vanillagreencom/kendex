@@ -106,7 +106,7 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
 4. Read the pull request state before stamping the round:
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json state
+   .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] --json state
    ```
 
    Set `[PR_OPEN]` to `true` when `state` is `OPEN`, and `false` for `status=no_pr`, `CLOSED` or `MERGED`. An unknown state or a failed read stops delegation. `[PR_OPEN]` is recorded on the round record as a fact ([dev-round.md](../schemas/dev-round.md) `pr_open`); the mode of a run the runtime starts is resolved by `validate start`, below.

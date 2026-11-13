@@ -240,7 +240,7 @@ Read the structurally valid artifact passed by the caller, including a failing-v
 After all rules are stored, resolve the PR from the worktree:
 
 ```bash
-.agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,body
+.agents/skills/orch/scripts/orch-runtime pr view "[WORKTREE_PATH]" --json number,body
 ```
 
 `status: no_pr` ends this step. Normal PR creation reads the stored list. When a PR exists, read the complete stored list from workflow state:

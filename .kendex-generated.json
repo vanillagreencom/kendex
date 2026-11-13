@@ -931,8 +931,6 @@
   ".agents/skills/orch/scripts/overseer-host",
   ".agents/skills/orch/scripts/overseer-host-tmux",
   ".agents/skills/orch/scripts/post-merge",
-  ".agents/skills/orch/scripts/pr-order",
-  ".agents/skills/orch/scripts/pr-view-json",
   ".agents/skills/orch/scripts/resolve-base-branch",
   ".agents/skills/orch/scripts/restack-skip",
   ".agents/skills/orch/scripts/setup",

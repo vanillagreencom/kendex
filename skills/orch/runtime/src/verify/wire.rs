@@ -1116,6 +1116,40 @@ impl PullRequestState {
     }
 }
 
+/// A checkout's pull request as `gh pr view --json baseRefName,state`
+/// exports it, the base and state of `PullRequestView`, each required.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PullRequestBase {
+    #[serde(rename = "baseRefName")]
+    pub base: String,
+    pub state: PullRequestState,
+}
+
+// --- gh repo view: the repository's visibility -------------------------------------
+
+/// A repository's visibility as `gh repo view O/R --json visibility --jq
+/// .visibility` prints it: GitHub's `RepositoryVisibility`
+/// (docs.github.com/en/graphql/reference/enums#repositoryvisibility:
+/// `PRIVATE`, `PUBLIC`, `INTERNAL`), one word on one line, read without
+/// case; any other answer refuses the reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Private,
+    Public,
+    Internal,
+}
+
+impl Visibility {
+    pub(crate) fn printed(text: &str) -> Option<Visibility> {
+        match text.trim().to_ascii_uppercase().as_str() {
+            "PRIVATE" => Some(Visibility::Private),
+            "PUBLIC" => Some(Visibility::Public),
+            "INTERNAL" => Some(Visibility::Internal),
+            _ => None,
+        }
+    }
+}
+
 // --- the review gate: gh pr view, pulls, reviews, the timeline, threads -------------
 
 /// A pull request as `gh pr view N --repo O/R --json

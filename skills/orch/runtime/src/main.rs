@@ -417,6 +417,12 @@ enum Verb {
     /// estimate=N|- delta=N|- paths=N` at exit 0, else one keyed stderr line
     /// at exit 1 for a body to refile or 2 for an environment failure.
     Tier(ops::tier::Args),
+    /// A worktree's publication order and pull request, read with the
+    /// worktree's settings.
+    Pr {
+        #[command(subcommand)]
+        op: PrOp,
+    },
     /// Wait while Copilot's work on a pull request's current head is in
     /// flight, bounded by `ORCH_COPILOT_HOLD_SECS` from the wait's start:
     /// `none`, `settled` or `expired`, a read that requests and writes
@@ -743,6 +749,29 @@ enum LaneOp {
         /// The item of a lane a relaunch replaces, left out of the count.
         #[arg(long)]
         replaces: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PrOp {
+    /// One stdout line `pr-order=review-first|open-first|push-first`. A
+    /// visibility that cannot be read answers review-first, its cause on
+    /// stderr; an `ORCH_DELIVERY` or `ORCH_PR_ORDER` the settings cannot
+    /// read, or an order outside the three words, refuses.
+    Order {
+        #[arg(default_value = ".")]
+        worktree: PathBuf,
+    },
+    /// The worktree's pull request, or pull request NUMBER, as `gh pr view
+    /// --json FIELDS` prints it, at exit 0; no pull request for the branch
+    /// prints `{"status":"no_pr","number":null}` at exit 0; a failed read
+    /// prints `pr-view: cause=…` on stderr and nothing on stdout, exit 1.
+    View {
+        #[arg(default_value = ".")]
+        worktree: PathBuf,
+        number: Option<u64>,
+        #[arg(long, value_name = "FIELDS")]
+        json: String,
     },
 }
 
@@ -2010,6 +2039,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let settings = resolve_settings(&flags)?;
             std::process::exit(ops::tier::run(&settings.scope_paths_cli, &args));
         }
+        Verb::Pr { op } => pr_verb(op, &flags)?,
         Verb::CiProof { pr, head, repo } => {
             let settings = resolve_settings(&flags)?;
             ready::admit(ready::Duty::CiProof, &settings)?;
@@ -2583,6 +2613,51 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             let paths = watch::Paths::of(&target_path(&target, &settings))?;
             let lines = watch::events::read_since(&paths.log, since)?;
             Ok(serde_json::json!({ "lines": lines }))
+        }
+    }
+}
+
+/// The publication order and the pull request of a worktree, each read with
+/// the worktree's own settings, the answer printed and the process ended.
+fn pr_verb(op: PrOp, flags: &Flags) -> Result<serde_json::Value> {
+    let mut out = std::io::stdout().lock();
+    let mut err = std::io::stderr().lock();
+    match op {
+        PrOp::Order { worktree } => {
+            let settings = orch_runtime::validate::entry::resolve_at(&worktree, flags)?;
+            let mut log = String::new();
+            let order = orch_runtime::validate::pr_order(&settings, &worktree, &mut log)?;
+            let _ = err.write_all(log.as_bytes());
+            let _ = writeln!(out, "pr-order={order}");
+            std::process::exit(0);
+        }
+        PrOp::View {
+            worktree,
+            number,
+            json,
+        } => {
+            let settings = orch_runtime::validate::entry::resolve_at(&worktree, flags)?;
+            match orch_runtime::validate::pull_request(&settings, &worktree, number, &json) {
+                Ok(verify::PullRequestRead::Printed(bytes)) => {
+                    let _ = out.write_all(&bytes);
+                    if !bytes.ends_with(b"\n") {
+                        let _ = writeln!(out);
+                    }
+                    std::process::exit(0);
+                }
+                Ok(verify::PullRequestRead::Missing) => {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        serde_json::json!({"status": "no_pr", "number": null})
+                    );
+                    std::process::exit(0);
+                }
+                Err(cause) => {
+                    let _ = writeln!(err, "pr-view: cause={cause}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }
