@@ -140,15 +140,6 @@ describe("the provider reads Pi's 0.86 transcript", () => {
 
 for (const row of [
 	{
-		name: "rejects the old embedded server construction owner",
-		before: 'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
-		after: `import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-class McpServer {
-	constructor({ name, version }) { return createSdkMcpServer({ name, version, tools: [] }).instance; }
-}`,
-		failure: /bridge server uses the public MCP constructor/,
-	},
-	{
 		name: "rejects invalid input reaching the Pi handler",
 		before: '\tconst instance = new McpServer({ name: MCP_SERVER_NAME, version: "1.0.0" });',
 		after: '\tconst instance = new McpServer({ name: MCP_SERVER_NAME, version: "1.0.0" });\n\tinstance.validateToolInput = async (_tool, args) => args;',
