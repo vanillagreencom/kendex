@@ -36,6 +36,8 @@ yay -S kendex-bin
 
 Windows: the installer at [kendex.ai/download](https://kendex.ai/download). The script installs the app and the CLI on Linux, and the CLI on macOS, where Homebrew installs the app. The other channels, including the deb and rpm downloads and a Nix flake for the CLI, are in [packaging](packaging/README.md).
 
+Set `KENDEX_GITHUB_TOKEN` for authenticated release downloads. The installer accepts GitHub App installation tokens, including `-` and `.`, and refuses quotes, backslashes and control bytes.
+
 kendex reads a remote package with git; a package on a local path needs no git. On Windows, `kendex guard` runs the commit guards through the `sh` that Git for Windows ships.
 
 ## Supported tools
