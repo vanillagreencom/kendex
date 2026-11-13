@@ -86,9 +86,9 @@ case "$verb" in
   *) echo "unexpected gh call: $verb" >&2; exit 1 ;;
 esac
 EOF
-# The Linear CLI: `issues get ID` answers linear-ID.json in the safe shape
-# under --format=safe, and nested as {issue: ...} otherwise, the raw shape a
-# project's LINEAR_FORMAT=raw gives a call that names no format. A
+# The Linear CLI: a `graphql` read of issue ID answers linear-ID.json, held
+# flat as {title, description, state, url}, as Linear's issue node with the
+# state's name nested; an ID with no file is Linear's missing entity. A
 # merge-on-read-ID.json file is a pull request that merges while ID is read:
 # it joins merged.json, once, mid-render. The Escapes line's label list holds
 # bug and its bug read answers bugs.json.
@@ -99,13 +99,15 @@ case "$*" in
   "issues list --label bug --created-since "[0-9]*d" --max --format=safe" | \
     "issues list --label bug --created-since "[0-9]*d" --max --team "?*" --format=safe") cat "$CASE/bugs.json"; exit ;;
 esac
-[[ "$1 $2" == "issues get" && -f "$CASE/linear-$3.json" ]] || { echo "Issue not found: $3" >&2; exit 1; }
-if [[ -f "$CASE/merge-on-read-$3.json" ]]; then
-  jq -c --slurpfile pr "$CASE/merge-on-read-$3.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
+[[ "$1 $2 ${4:-}" == "graphql --query --variables" ]] || { echo "unexpected linear call: $*" >&2; exit 1; }
+id="$(jq -r '.id' <<<"$5")" || exit 1
+[[ -f "$CASE/linear-$id.json" ]] || { echo '{"error":"Entity not found: Issue"}' >&2; exit 2; }
+if [[ -f "$CASE/merge-on-read-$id.json" ]]; then
+  jq -c --slurpfile pr "$CASE/merge-on-read-$id.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
   mv -- "$CASE/merged.next" "$CASE/merged.json" || exit 1
-  rm -f -- "${CASE:?}/merge-on-read-$3.json"
+  rm -f -- "${CASE:?}/merge-on-read-$id.json"
 fi
-if [[ "${4:-}" == --format=safe ]]; then cat "$CASE/linear-$3.json"; else jq -c '{issue: .}' "$CASE/linear-$3.json"; fi
+jq -c '{issue: (. + {state: {name: .state}})}' "$CASE/linear-$id.json"
 EOF
 # github.sh: `pr-list-failing --all` answers failing.<SLUG>.json for the
 # GH_REPO it runs under, else failing.json, [] without either. It picks its

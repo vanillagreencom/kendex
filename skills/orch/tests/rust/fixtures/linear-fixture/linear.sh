@@ -2,8 +2,9 @@
 # The fake linear CLI for the watch_reads rows. It answers each read from
 # the JSON map at $LINEAR_FAKE_REPLIES, keyed by the verb words joined by a
 # space ("statuses list", "issues list", "issues list --assignee", "issues
-# update", "issues bulk-get", "comments bulk-list"): {exit?, body?, text?,
-# stderr?}. `body` is printed as JSON,
+# update", "issues bulk-get", "comments bulk-list"), a `graphql --query DOC`
+# read by `graphql` and the document's operation name ("graphql Children"):
+# {exit?, body?, text?, stderr?}. `body` is printed as JSON,
 # `text` as raw bytes, `stderr` to stderr, `exit` is the status, 0 when
 # absent; a key with no entry is a failed call (exit 1, as the CLI exits on
 # a refused request). A `done-when` read is the real linear CLI's own,
@@ -20,17 +21,20 @@ here="$(dirname "${BASH_SOURCE[0]}")"
 : "${LINEAR_FAKE_REPLIES:=$here/linear.json}"
 : "${LINEAR_FAKE_LOG:=$here/linear.log}"
 printf '%s\n' "$*" >> "$LINEAR_FAKE_LOG"
-if [ "${1:-} ${2:-}" = 'issues get' ] && [ -f "$here/owner-repair.json" ]; then
-  real="$(python3 -B -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parents[5] / "linear/scripts")' "${BASH_SOURCE[0]}")"
-  source "$real/lib/formatters.sh"
-  format_issue_single "$(cat "$here/owner-repair.json")"
-  exit 0
-fi
 if [ "${1:-}" = done-when ]; then
   real="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../../../linear/scripts" && pwd)/linear.sh"
   exec "$real" "$@"
 fi
 key="${1:-} ${2:-}"
+if [ "${1:-}" = graphql ]; then
+  [ "${2:-}" = --query ] && [[ "${3:-}" =~ ^query\ ([_A-Za-z][_A-Za-z0-9]*) ]] || { echo "linear-fake: unnamed graphql read" >&2; exit 64; }
+  key="graphql ${BASH_REMATCH[1]}"
+  # The repaired description the last `issues update` wrote, read back.
+  if [ "$key" = 'graphql OwnerItem' ] && [ -f "$here/owner-repair.json" ]; then
+    jq -c . "$here/owner-repair.json"
+    exit 0
+  fi
+fi
 # The owner-tracker read's `issues list --assignee …` is keyed apart from
 # the team's open-items list, which shares its first two words.
 [ "${3:-}" != --assignee ] || key="issues list --assignee"

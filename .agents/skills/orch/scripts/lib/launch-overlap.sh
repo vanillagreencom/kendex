@@ -32,7 +32,9 @@ OVERLAP_SET=""
 # overlap_body TRACKER KEY REPO LINEAR_CLI — prints the item's description.
 overlap_body() {
   case "$1" in
-    linear) "$4" issues get "$2" --format=safe | jq -er '.description // "" | strings' ;;
+    linear)
+      "$4" graphql --query 'query OverlapBody($id: String!) { issue(id: $id) { description } }' \
+        --variables "$(jq -cn --arg id "$2" '{id: $id}')" | jq -er '.issue.description // "" | strings' ;;
     github)
       [[ "$2" =~ ^issue-([0-9]+)$ && -n "$3" ]] || return 1
       gh issue view "${BASH_REMATCH[1]}" --repo "$3" --json body | jq -er '.body // "" | strings' ;;

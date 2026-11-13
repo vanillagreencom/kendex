@@ -29,11 +29,15 @@ if args[:2] == ["users", "list"]:
                        "display_name": "owner.person"}]))
 elif args[:2] == ["teams", "keys"]:
     print(json.dumps({"urlKey": "workspace", "keys": ["KEN"]}))
-elif args[:2] == ["issues", "get"]:
+elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTracker("):
     if row == "rollback-read" and (root / "comment-attempted").exists():
         print("tracker: refused=rollback-read", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps(item))
+    print(json.dumps({"issue": {
+        "description": item["description"],
+        "assignee": {"name": item["assignee"]} if item["assignee"] else None,
+        "labels": {"pageInfo": {"hasNextPage": False},
+                   "nodes": [{"name": label} for label in item["labels"]]}}}))
 elif args[:2] == ["comments", "create"]:
     if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()

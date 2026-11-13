@@ -50,7 +50,10 @@ pub struct Merged<'a> {
     pub pr: u64,
 }
 
-/// `issues get --format=raw`: the fields the completion reads.
+/// The item read the completion judges: its description and state.
+const BOX_ITEM: &str =
+    "query BoxItem($id: String!) { issue(id: $id) { description state { name type } } }";
+
 #[derive(Deserialize)]
 struct Got {
     issue: GotIssue,
@@ -196,7 +199,15 @@ fn settle(
     cause: Cause,
 ) -> Option<Outcome> {
     let unsettled = |note: &str| Some(Outcome::Unsettled(note.to_owned()));
-    let got = match run_linear(settings, "get", &["issues", "get", item, "--format=raw"]) {
+    let variables = serde_json::json!({ "id": item }).to_string();
+    let read = [
+        "graphql",
+        "--query",
+        BOX_ITEM,
+        "--variables",
+        variables.as_str(),
+    ];
+    let got = match run_linear(settings, "get", &read) {
         Ok(out) if out.status.success() => serde_json::from_slice::<Got>(&out.stdout).ok(),
         Ok(_) | Err(_) => None,
     };

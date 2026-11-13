@@ -6,7 +6,8 @@
 # `___HTTP_CODE___<code>` as `curl -s -w` prints them. The world is the JSON
 # at $LINEAR_API_WORLD, `{identifier, team, description, state: {name,
 # type}, codes?}`. It answers only the operations the package's issue read,
-# completion and comment send, each named as the package names it, and
+# completion and comment send and the close's own item read (`BoxItem`),
+# each named as its sender names it, and
 # checks each one's target against the world as Linear does: an issue id,
 # or a comment's `issueId`, that is neither the world's identifier nor its
 # id answers Linear's `Entity not found: Issue` error; an `IssueRefs`
@@ -125,7 +126,7 @@ IssueRefs)
     '{data: {issues: {pageInfo: {hasNextPage: false, endCursor: null},
       nodes: [$issue | select(.identifier as $i | .id as $u | $refs | index($i) or index($u))]}}}'
   ;;
-GetIssue | IssueTeam)
+GetIssue | IssueTeam | BoxItem)
   if held "$(jq -r '.variables.id' <<<"$payload")"; then
     jq -cjn --argjson issue "$(issue)" '{data: {issue: $issue}}'
   else

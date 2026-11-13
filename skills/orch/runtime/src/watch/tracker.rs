@@ -443,6 +443,21 @@ struct OwnerItem {
     description: Nullable<String>,
 }
 
+/// The repaired item read back: whether its description carries the repair.
+const OWNER_ITEM: &str =
+    "query OwnerItem($id: String!) { issue(id: $id) { identifier description } }";
+
+#[derive(Debug, Deserialize)]
+struct OwnerReadBack {
+    issue: OwnerReadBackIssue,
+}
+
+#[derive(Debug, Deserialize)]
+struct OwnerReadBackIssue {
+    identifier: String,
+    description: Option<String>,
+}
+
 /// `done-when parse`: the boxes of a description's Done-when section.
 #[derive(Debug, Deserialize)]
 struct DoneWhen {
@@ -1391,13 +1406,13 @@ fn read_owner_tracker_answers(
         // tracker write is advisory, so one that did not land is said and
         // holds none of the owner's answers; the next pass reads the
         // description again and repairs only one still missing.
-        let landed = match linear.json::<OwnerItem>(
+        let variables = serde_json::json!({ "id": item.id }).to_string();
+        let landed = match linear.json::<OwnerReadBack>(
             "owner-repair-read-back",
-            &["issues", "get", &item.id, "--format=safe"],
+            &["graphql", "--query", OWNER_ITEM, "--variables", &variables],
         ) {
-            Ok(Answered::Value(read)) => {
-                read.id == item.id
-                    && matches!(&read.description, Nullable::Present(text) if text == &repaired)
+            Ok(Answered::Value(OwnerReadBack { issue })) => {
+                issue.identifier == item.id && issue.description.as_ref() == Some(&repaired)
             }
             Ok(Answered::Quota(quota)) => return Ok(Answered::Quota(quota)),
             Err(_) => false,

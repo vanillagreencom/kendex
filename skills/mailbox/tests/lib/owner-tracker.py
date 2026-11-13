@@ -36,14 +36,15 @@ if [[ "$1:$2" == users:list ]]; then
   read -r release < "$TRACKER_CASE/release"
 fi
 case "$TRACKER_ROW:$1:$2:${4:-}" in
-  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
+  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
 esac
 case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
   users:list) printf '[{"id":"person","name":"Owner Person","email":"owner@example.test","display_name":"owner"}]\n' ;;
-  issues:get)
-    if [[ "$TRACKER_ROW" == prepare ]]; then printf '{"labels":"invalid"}\n'
-    else printf '{"labels":["skills"],"description":"Item body"}\n'; fi ;;
+  graphql:--query)
+    [[ "$3" == "query OwnerTracker("* ]] || exit 1
+    if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
+    printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;
   comments:create) printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
   issues:update) printf '{}\n' ;;
   *) exit 1 ;;

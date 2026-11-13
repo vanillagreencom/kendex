@@ -47,7 +47,7 @@ Resolve `TRACKER` and `ISSUE_REF` from `[ISSUE_ID]` per [SKILL.md § Tracker Res
 Its output is `[MAIN_REPO_ROOT]`. Read a tracker item. Linear:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
 ```bash

@@ -670,6 +670,9 @@ linear_http_post() {
     done
 }
 
+# A document that opens with the `query` keyword: the one test of a read.
+LINEAR_READ_PATTERN='^[[:space:]]*query[^_[:alnum:]]'
+
 # One GraphQL request, as the transport every read and write goes through.
 # linear_http_post owns which answers are sent again; a document that opens
 # with the `query` keyword is its `read`, and every other document, a mutation
@@ -687,14 +690,13 @@ graphql_request() {
         variables='{}'
     fi
     local authorization auth_renewed=0 payload reply http_code response kind=write
-    local read_pattern='^[[:space:]]*query[^_[:alnum:]]'
     local _LJ_REQUEST_ID="$BASHPID-$RANDOM-$RANDOM" _LJ_PHASE=0
     local _LJ_TRANSPORT=graphql _LJ_METHOD=POST _LJ_OPERATION=unnamed _LJ_CAUSE=request
     local operation_pattern='^[[:space:]]*(query|mutation)[[:space:]]+([_A-Za-z][_A-Za-z0-9]*)'
     if [[ "$query" =~ $operation_pattern ]]; then
         _LJ_OPERATION="${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
     fi
-    if [[ "$query" =~ $read_pattern ]]; then
+    if [[ "$query" =~ $LINEAR_READ_PATTERN ]]; then
         kind=read
     fi
 
@@ -745,10 +747,15 @@ graphql_request() {
                     return 2
                     ;;
                 *"relation"*"exist"* | *"already exist"* | *"duplicate"*"relation"*)
-                    # Idempotent: relation/dependency already exists — not an error
-                    echo '{"already_exists": true}' >&2
-                    echo '{"already_exists": true}'
-                    return 0
+                    # Idempotent: a relation or dependency write that already
+                    # holds is not an error. A read has nothing to hold, so its
+                    # error stays one.
+                    if [[ "$kind" == write ]]; then
+                        echo '{"already_exists": true}' >&2
+                        echo '{"already_exists": true}'
+                        return 0
+                    fi
+                    echo "$response" | jq -c '{error: .errors[0].message}' >&2
                     ;;
                 *)
                     echo "$response" | jq -c '{error: .errors[0].message}' >&2

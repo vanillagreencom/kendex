@@ -11,6 +11,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)" || exit 1
 source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd -P)" || exit 1
 
-for name in projects-list projects-get projects-dependencies project-labels-list milestones-list cycles-list initiatives-list initiatives-get; do
+for name in projects-list projects-dependencies project-labels-list milestones-list cycles-list initiatives-list initiatives-get; do
     recorded_read_case "$name"
 done

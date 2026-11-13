@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The linear CLI's stand-in for the admission rows: it answers
-# `issues get ID --with-bundle --format=safe`, the item read the admission
+# `issues get ID --format=safe`, the item read the admission
 # makes, by running the package's real bundle formatter
 # (`format_issue_with_bundle` of the `lib/formatters.sh` that
 # $LINEAR_FORMATTERS names) over the GraphQL-shaped answer planted at
@@ -28,7 +28,7 @@ if [ "${1:-} ${2:-} ${4:-}" = "teams get --format=safe" ]; then
   format_team_single "$(cat -- "$file")"
   exit
 fi
-if [ "${1:-} ${2:-} ${4:-} ${5:-}" != "issues get --with-bundle --format=safe" ]; then
+if [ "${1:-} ${2:-} ${4:-} ${5:-}" != "issues get --format=safe " ]; then
   echo "linear-items: unexpected-call args=[$*]" >&2
   exit 1
 fi

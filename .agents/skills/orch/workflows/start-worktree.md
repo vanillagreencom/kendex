@@ -24,7 +24,7 @@ The full session from inside a worktree: implement → publication and review in
 4. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+   .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
    ```
 
    A Verifying item stops development preparation here. Its live readings belong to the overseer. A container or a blocked item STOPS here without leasing or initializing anything. A container: list its unblocked children and say this worktree should not exist for it. A blocked item: name the live blockers.

@@ -689,6 +689,7 @@
   ".agents/skills/linear/scripts/commands/comments.sh",
   ".agents/skills/linear/scripts/commands/cycles.sh",
   ".agents/skills/linear/scripts/commands/documents.sh",
+  ".agents/skills/linear/scripts/commands/graphql.sh",
   ".agents/skills/linear/scripts/commands/initiatives.sh",
   ".agents/skills/linear/scripts/commands/issues.sh",
   ".agents/skills/linear/scripts/commands/labels.sh",

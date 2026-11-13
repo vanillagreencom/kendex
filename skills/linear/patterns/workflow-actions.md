@@ -35,7 +35,7 @@ An `activate` or `complete` that answers with a quota refusal is held:
 
 Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings only; never use heredocs.
 
-After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
+After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID]`), preserving sections that are still valid.
 
 ## Hierarchy and Relations
 

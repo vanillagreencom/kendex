@@ -121,24 +121,19 @@ a 503 lookup fails the read without missing|DOWN-1 KEN-404|rc=1 out= requests=4 
 not a reference refuses before any request|KEN-1 KEN2|rc=1 out= requests=0 missing=[]
 ROWS
 
-# Coding agents execute the command in a Hint line after a failed read.
-# Execute the suggested bulk read to check its arguments, not its prose.
+# get reads one issue and takes only --format: any other argument is refused
+# before a request, so a caller passing one is told rather than answered.
 while IFS='|' read -r label extra; do
     rc=0
-    out=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CALLS="$TMP_ROOT/calls" \
+    : >"$TMP_ROOT/calls"
+    (cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CALLS="$TMP_ROOT/calls" \
         LINEAR_API_KEY_OVERRIDE=test-key LINEAR_RETRY_BASE_DELAY=0 "$BASH" .agents/skills/linear/scripts/linear.sh \
-        issues get KEN-1 "$extra" 2>"$TMP_ROOT/get-err") || rc=$?
-    assert_eq "$label: get succeeds" "$rc" 0
-    hint=$(sed -n 's/^Hint: .*\(linear.sh issues bulk-get .*\)$/\1/p' "$TMP_ROOT/get-err")
-    read -r -a argv <<<"$hint"
-    assert_eq "$label: bulk-get accepts the hint" "$(bulk_summary "${argv[@]:3}")" \
-        'rc=0 out=KEN-1 requests=1 missing=[]'
-    bundle_hint=$(sed -n 's/^Hint: .*\(linear.sh issues get .*\)$/\1/p' "$TMP_ROOT/get-err")
-    read -r -a argv <<<"$bundle_hint"
-    assert_eq "$label: bundle command uses the supported option" "${argv[*]}" \
-        'linear.sh issues get KEN-1 --with-bundle'
+        issues get KEN-1 "$extra" >/dev/null 2>"$TMP_ROOT/get-err") || rc=$?
+    assert_eq "$label: get refuses" "$rc" 1
+    assert_eq "$label: get sends no request" "$(wc -l <"$TMP_ROOT/calls" | tr -d ' ')" 0
 done <<'ROWS'
-get with --bundle|--bundle
+get with --with-bundle|--with-bundle
+get with a second issue|KEN-2
 ROWS
 
 # Session routing reads flat compact rows without issue descriptions.

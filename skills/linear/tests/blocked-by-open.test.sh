@@ -60,7 +60,7 @@ case "$query" in
 *"ListIssues"*|*"IssueRefs"*)
   response="$(jq -cn --argjson issue "$FIXTURE_MAIN" '{data:{issues:{nodes:[$issue],pageInfo:{hasNextPage:false,endCursor:null}}}}')"
   ;;
-*"GetIssueWithBundle"*|*"GetChildrenRecursive"*)
+*"GetIssueWithBundle"*)
   response="$(jq -cn --argjson issue "$FIXTURE_BUNDLE" '{data:{issue:$issue}}')"
   ;;
 *"GetRelations"*|*"GetIssue"*|*"issue(id:"*)
@@ -91,7 +91,6 @@ assert_issue() {
   assert_jq "$1" "$2" "$3 | .blocked_by == [\"KEN-2\", \"KEN-3\", \"KEN-4\"] and .blocked_by_open == [\"KEN-2\"]"
 }
 
-assert_issue "live get safe filters by state type" "$(run_live issues get KEN-1 --format=safe)" '.'
 
 # Verifying remains open to existing readers. Only the launch field differs.
 while IFS='|' read -r state state_type expected_launch; do
@@ -108,24 +107,19 @@ In Progress|started|["KEN-2"]
 Backlog|backlog|["KEN-2"]
 ROWS
 
-assert_issue "live get compact filters by state type" "$(run_live issues get KEN-1 --format=compact)" '.'
 assert_issue "live list safe filters by state type" "$(run_live issues list --format=safe)" '.[0]'
 assert_issue "live list compact filters by state type" "$(run_live issues list --format=compact)" '.[0]'
 assert_jq "live relation analysis filters by state type" "$(run_live issues list --with-relations --format=raw)" \
   '.blocked[0].blocked_by == ["KEN-2"]'
 assert_issue "live bulk-get filters by state type" "$(run_live issues bulk-get KEN-1 --format=safe)" '.[0]'
 
-live_bundle="$(run_live issues get KEN-1 --with-bundle --format=safe)"
+live_bundle="$(run_live issues get KEN-1 --format=safe)"
 assert_issue "live bundle root filters by state type" "$live_bundle" '.'
 assert_issue "live bundle child filters by state type" "$live_bundle" '.children[0]'
 # The launch gate reads the bundle: the root and every bundled node name
 # their launch blockers from the one classifier, as the single read does.
 assert_jq "live bundle root names launch blockers" "$live_bundle" '.blocked_by_launch == ["KEN-2"]'
 assert_jq "live bundle child names launch blockers" "$live_bundle" '.children[0].blocked_by_launch == ["KEN-2"]'
-live_bundle_compact="$(run_live issues get KEN-1 --with-bundle --format=compact)"
-assert_issue "live compact bundle root filters by state type" "$live_bundle_compact" '.'
-assert_issue "live compact bundle child filters by state type" "$live_bundle_compact" '.children[0]'
-assert_issue "live recursive children filter by state type" "$(run_live issues children KEN-1 --recursive --format=safe)" '.[0]'
 
 live_relations="$(run_live issues list-relations KEN-1 --format=safe)"
 assert_jq "live relations keep history and filter open blockers" "$live_relations" \

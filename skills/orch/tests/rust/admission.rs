@@ -623,7 +623,7 @@ fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_r
     let fleet = Fleet::new();
     fleet.init_fleet();
     let reads_since = |after: usize| fleet.linear_log()[after..].to_vec();
-    let read = |item: &str| format!("issues get {item} --with-bundle --format=safe");
+    let read = |item: &str| format!("issues get {item} --format=safe");
     fleet.item_under("CC-1", "CC-2", &[]);
     fleet.item_under("CC-2", "CC-3", &["CC-9"]);
     fleet.item_under("CC-3", "", &[]);
@@ -1491,7 +1491,7 @@ fn an_item_of_another_repository_or_team_than_its_checkouts_is_refused() {
         fleet
             .linear_log()
             .iter()
-            .any(|line| line == "issues get KEN-1 --with-bundle --format=safe"),
+            .any(|line| line == "issues get KEN-1 --format=safe"),
         "the fleet's own team's item is read"
     );
     // A relaunch over the stopped record of a GitHub item admitted from its

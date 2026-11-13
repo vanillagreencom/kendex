@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
-# Surface: initiatives/projects create, update, get and list.
+# Surface: initiatives/projects create, update and list; initiatives get.
 # Inputs: scripts/commands/{initiatives,projects}.sh, scripts/lib/{common,formatters,pages}.sh.
 # curl models Linear's user filter and entity links; the CLI owns every write.
 set -euo pipefail
@@ -210,7 +210,9 @@ ROWS
 
 printf '[{"id":"link-id","label":"Plan","url":"https://example.com/plan"}]\n' >"$TMP_ROOT/links.json"
 for resource in initiatives projects; do
-    for action in get list; do
+    actions="get list"
+    [[ "$resource" != projects ]] || actions=list
+    for action in $actions; do
         name="$resource-$action"
         args=("$resource" "$action")
         [[ "$action" != get ]] || args+=(11111111-2222-3333-4444-555555555555)
@@ -235,7 +237,9 @@ for resource in initiatives projects; do
 done
 
 for resource in initiatives projects; do
-    for action in get list; do
+    actions="get list"
+    [[ "$resource" != projects ]] || actions=list
+    for action in $actions; do
         args=("$resource" "$action")
         if [[ "$action" == get ]]; then args+=(11111111-2222-3333-4444-555555555555); else args+=(--max); fi
         name="$resource-$action-paged"

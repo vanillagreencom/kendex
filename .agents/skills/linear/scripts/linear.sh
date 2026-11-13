@@ -16,9 +16,9 @@ Linear GraphQL API CLI
 Usage: ./linear.sh <resource> <action> [options]
 
 Resources:
-  issues          Issue operations (list, get, create, update, children, list-relations, add-relation)
+  issues          Issue operations (list, get, create, update, list-relations, add-relation)
   comments        Comment operations (list, create/update; supports --body-file)
-  projects        Project operations (list, get, create, update, list-dependencies, add-dependency, post-update, list-updates)
+  projects        Project operations (list, create, update, list-dependencies, add-dependency, post-update, list-updates)
   initiatives     Initiative operations (list, get, create, add-project)
   milestones      Project milestone operations (list, get, create)
   labels          Issue label operations (list, create, update, delete, audit)
@@ -28,7 +28,8 @@ Resources:
   cycles          Cycle operations (list, create, update)
   statuses        Workflow state operations (list, get)
   documents       Document operations (list, get)
-  attachments     Files an issue references, read live (list), and one download (fetch)
+  graphql         One read document as written (--query DOC [--variables JSON])
+  attachments    Files an issue references, read live (list), and one download (fetch)
   session-status  Aggregated session status for /start workflow
   auth-check      Credential, actor and team preflight (--strict fails with no team)
   auth-mint       Mint app token JSON from the client pair without writing files
@@ -45,8 +46,7 @@ Examples:
   ./linear.sh issues create --title "Task" --parent PROJ-42 --labels "agent:rust" --description-file body.md
   ./linear.sh issues list-relations PROJ-42
   ./linear.sh issues add-relation PROJ-42 --blocks PROJ-43
-  ./linear.sh issues children PROJ-42              # Direct children
-  ./linear.sh issues children PROJ-42 --recursive  # All descendants (3 levels)
+  ./linear.sh issues get PROJ-42                   # The issue and its children (3 levels)
 
   # Projects with dependencies and health updates
   ./linear.sh projects list --state started
@@ -204,7 +204,7 @@ case "$resource" in
         esac
         exit 1
         ;;
-    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|attachments|session-status|auth-check|auth-mint)
+    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|graphql|attachments|session-status|auth-check|auth-mint)
         script="$SCRIPT_DIR/commands/${resource}.sh"
         if [ -f "$script" ]; then
             exec "$BASH" "$script" "$@"

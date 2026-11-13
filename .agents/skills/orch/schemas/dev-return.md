@@ -106,7 +106,7 @@ A round whose item permits ending it with no change, and whose comparison finds 
 - The key is a Linear identifier. A GitHub issue's key, `issue-N`, refuses `no-change-tracker`. A key with no tracker item, such as an ad-hoc `local-` key or a `directive-` key, refuses `no-change-unverifiable`.
 - `--commit`, the worktree's HEAD and the item's recorded `pre_delegate_sha` are one commit, and `git status --porcelain` reports nothing.
 - No `--validate-run-dir` or `--validate-record` is named, and a summary is: the comparison, which the acceptance posts as the item's Completion Summary.
-- The item's live description holds `TEXT`, runs of whitespace folded. The writer reads it through the tracker CLI's `issues get --with-bundle --format=safe`, the launch gate's read. A read that fails refuses `item-unread`, never `no-change-unpermitted`.
+- The item's live description holds `TEXT`, runs of whitespace folded. The writer reads it through the tracker CLI's `issues get --format=safe`, the launch gate's read. A read that fails refuses `item-unread`, never `no-change-unpermitted`.
 
 The writer proves only that the sentence is the item's. Whether it permits the end is the acceptance's judgement in [dev-start.md § 3](../workflows/dev-start.md#3-accept-the-round). The check answers `no-change` for a valid receipt, and `retry` with reason `head_moved` where the receipt's `commit` is no longer the worktree's HEAD.
 

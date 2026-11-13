@@ -1106,7 +1106,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// The runner tag the admission's reads are counted under.
 const TAG: &str = "admission";
 
-/// The linear package's `issues get ID --with-bundle --format=safe`
+/// The linear package's `issues get ID --format=safe`
 /// (`lib/formatters.sh` `format_issue_with_bundle`): the description, the
 /// label names, the flattened children, the in-PR bundle mark, the
 /// container's id and the launch blockers its one classifier judges.
@@ -1190,7 +1190,7 @@ pub(super) fn read_item(
                 "linear",
                 &clis.tracker,
                 "issue-read",
-                &["issues", "get", item, "--with-bundle", "--format=safe"],
+                &["issues", "get", item, "--format=safe"],
             )?;
             let issue: LinearIssue =
                 serde_json::from_slice(&stdout).map_err(|e| format!("issue-read: {e}"))?;

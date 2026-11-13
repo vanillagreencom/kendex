@@ -62,7 +62,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 **Linear** — read live:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
 Verifying → stop development preparation. Its post-merge readings belong to the verification pass in [verify.md](verify.md).

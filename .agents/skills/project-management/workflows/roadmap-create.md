@@ -144,7 +144,7 @@ Use `blocked_by` for a real dependency and `related` for an informational link. 
 ## 5. Verify and Report
 
 ```bash
-.agents/skills/linear/scripts/linear.sh projects get [PROJECT_ID]
+.agents/skills/linear/scripts/linear.sh graphql --query 'query { project(id: "[PROJECT_ID]") { name state targetDate description } }'
 .agents/skills/linear/scripts/linear.sh projects list-dependencies [PROJECT_ID]
 .agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT_NAME]" --max
 ```

@@ -21,7 +21,7 @@ Resolve `TRACKER` first. `github` skips the Linear-only launch preflight.
 **Launch preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle`:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A blocked item stops with its live blockers named. A parent whose read reports `in_pr_bundle` takes the gate's in-PR bundle rule and the § 2 Bundled issue delegation. That rule does not bypass the blocker check.
@@ -50,7 +50,7 @@ Select the agent through [dev § Implementer selection](../../dev/SKILL.md#imple
 
 ```bash
 # Linear
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --format=compact
+.agents/skills/linear/scripts/linear.sh graphql --query 'query { issue(id: "[ISSUE_ID]") { labels { pageInfo { hasNextPage } nodes { name } } } }'
 # GitHub
 gh issue view [N] --repo [OWNER/REPO] --json labels --jq '.labels[].name'
 ```
@@ -62,7 +62,7 @@ Apply [Delegation](../references/skill-rules.md#delegation) for the target workt
 Before every implementation delegation, managed entry at § 1 and each group's delegation in bundled mode included, repeat the Linear launch preflight from current facts:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)), with its in-PR bundle rule when this read reports `in_pr_bundle`. Complete any further reads the gate requires. Stop on refusal before stamping or delegating. Use this read for the bundle's pending work and parent title. An earlier caller preflight does not replace this read. GitHub skips this Linear-only step.

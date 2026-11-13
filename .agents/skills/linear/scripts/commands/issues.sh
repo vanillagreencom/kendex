@@ -16,7 +16,7 @@ Usage: issues.sh <action> [options]
 
 Actions:
   list           List issues with filters
-  get            Get a single issue by ID (--with-bundle for recursive children + pending_count)
+  get            Get an issue with its children to three levels and pending_count
   bulk-get       Get several issues with full relations, by identifier or UUID
   bulk-update    Update multiple issues with the same changes
   create         Create a new issue
@@ -24,7 +24,6 @@ Actions:
   archive        Archive an issue (soft delete, restorable via UI)
   trash          Move issue to trash (recoverable for 30 days)
   delete         Alias for trash
-  children       List sub-issues of a parent issue (--recursive for nested, --pending to filter)
   list-relations List issue relations (blocking/blocked-by)
   add-relation   Create a relation between issues
   remove-relation Delete an issue relation
@@ -364,9 +363,6 @@ Examples:
 
   # Parent/sub-issues
   issues.sh create --title "Sub-task" --parent PROJ-42 --description-file body.md
-  issues.sh children PROJ-42                    # Direct children only
-  issues.sh children PROJ-42 --recursive        # All descendants (3 levels deep)
-  issues.sh children PROJ-42 --recursive --pending  # Pending only: drops completed/canceled rows, keeps an open grandchild of a closed child
   issues.sh update PROJ-43 --parent PROJ-42
   issues.sh update PROJ-43 --remove-parent
 
@@ -402,7 +398,6 @@ Examples:
   issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # Container close facts (container-close decides)
 
   # Bundle operations (single API call)
-  issues.sh get PROJ-42 --with-bundle            # Issue + recursive children + pending_count
 
   # Search/filter
   issues.sh list --state Todo --search "market_data|order_book"  # Title/description contains either term (server-side)
@@ -945,18 +940,81 @@ bulk_update_issues() {
     fi
 }
 
+# One issue read by QUERY, refused when Linear answers no issue for ID.
+# Usage: result=$(issue_read "$query" "$issue_id")
+issue_read() {
+    local variables result
+    variables=$(jq -cn --arg id "$2" '{id: $id}') || return 1
+    result=$(graphql_query "$1" "$variables") || return 1
+    if ! jq -e '.issue.id | strings | select(length > 0)' <<<"$result" >/dev/null; then
+        jq -cn --arg id "$2" '{error: ("Issue not found: " + $id)}' >&2
+        return 1
+    fi
+    printf '%s\n' "$result"
+}
+
+# The commands' own read of the issue they act on: its fields, direct
+# children and relations, raw or safe.
+# Usage: get_issue ID [--format=raw|safe]
 get_issue() {
     # Read by lib/pages.sh when a children connection is left open.
     local LINEAR_ISSUE_CHILD_MODE=brief LINEAR_CHILD_DEPTH=1
-    local issue_id=""
-    local with_bundle="false"
-    local extra_args=()
+    local issue_id="$1" result
+    FORMAT="${DEFAULT_FORMAT}"
+    shift
+    case "${1:-}" in
+    --format=*) FORMAT="${1#--format=}" ;;
+    esac
+    linear_require_format "$FORMAT" safe raw || return 1
+
+    result=$(issue_read '
+        query GetIssue($id: String!) {
+            issue(id: $id) {
+                id
+                identifier
+                title
+                description
+                state { name type }
+                assignee { name email }
+                project { id name }
+                projectMilestone { id name }
+                cycle { id name number }
+                team { id name }
+                labels { pageInfo { hasNextPage endCursor } nodes { name } }
+                priority
+                estimate
+                sortOrder
+                url
+                branchName
+                createdAt
+                updatedAt
+                archivedAt
+                trashed
+                parent { id identifier title }
+                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name } } }
+'"$ISSUE_RELATION_FIELDS"'
+            }
+        }' "$issue_id") || return 1
+
+    case "$FORMAT" in
+    raw) linear_public_result "$result" ;;
+    safe) format_issue_single "$result" ;;
+    esac
+}
+
+# `issues get ID`: the item and its children to three levels, each with its
+# own fields and relations; safe flattens the children with their depth and
+# counts the open ones.
+get_issue_bundle() {
+    # Read by lib/pages.sh when a children connection is left open.
+    local LINEAR_ISSUE_CHILD_MODE=bundle LINEAR_CHILD_DEPTH=3
+    local issue_id="" result
     FORMAT="${DEFAULT_FORMAT}"
 
-    # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --format)
+            linear_require_option_value "$@" || return 1
             FORMAT="$2"
             shift 2
             ;;
@@ -964,43 +1022,24 @@ get_issue() {
             FORMAT="${1#--format=}"
             shift
             ;;
-        --with-bundle)
-            with_bundle="true"
-            shift
+        -*)
+            echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2
+            return 1
             ;;
         *)
-            if [ -z "$issue_id" ]; then
-                issue_id="$1"
-            else
-                extra_args+=("$1")
+            if [ -n "$issue_id" ]; then
+                echo '{"error": "issues get reads one issue; read several with issues bulk-get"}' >&2
+                return 1
             fi
+            issue_id="$1"
             shift
             ;;
         esac
     done
 
-    if [ -z "$issue_id" ]; then
-        echo '{"error": "Issue ID required"}' >&2
-        return 1
-    fi
+    linear_require_format "$FORMAT" safe raw || return 1
 
-    linear_require_format "$FORMAT" safe raw compact || return 1
-
-    # Warn about extra arguments (common mistake: use bulk-get for multiple)
-    if [ ${#extra_args[@]} -gt 0 ]; then
-        echo "Warning: 'get' accepts only one issue. Ignored: ${extra_args[*]}" >&2
-        echo "Hint: Use 'bulk-get' for multiple issues: linear.sh issues bulk-get ${issue_id}" >&2
-        if [[ " ${extra_args[*]} " == *" --bundle "* ]]; then
-            echo "Hint: Read the bundle: linear.sh issues get ${issue_id} --with-bundle" >&2
-        fi
-    fi
-
-    local query
-    if [ "$with_bundle" = "true" ]; then
-        LINEAR_ISSUE_CHILD_MODE=bundle
-        LINEAR_CHILD_DEPTH=3
-        # Extended query with 3-level recursive children for bundle analysis
-        query='
+    result=$(issue_read '
         query GetIssueWithBundle($id: String!) {
             issue(id: $id) {
                 id
@@ -1062,67 +1101,11 @@ get_issue() {
                     }
                 }
             }
-        }'
-    else
-        query='
-        query GetIssue($id: String!) {
-            issue(id: $id) {
-                id
-                identifier
-                title
-                description
-                state { name type }
-                assignee { name email }
-                project { id name }
-                projectMilestone { id name }
-                cycle { id name number }
-                team { id name }
-                labels { pageInfo { hasNextPage endCursor } nodes { name } }
-                priority
-                estimate
-                sortOrder
-                url
-                branchName
-                createdAt
-                updatedAt
-                archivedAt
-                trashed
-                parent { id identifier title }
-                children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name } } }
-                syncedWith { metadata { ... on ExternalEntityInfoGithubMetadata { owner repo number } } }
-'"$ISSUE_RELATION_FIELDS"'
-            }
-        }'
-    fi
+        }' "$issue_id") || return 1
 
-    local variables="{\"id\": \"$issue_id\"}"
-    local result
-    result=$(graphql_query "$query" "$variables") || return 1
-
-    if ! jq -e '.issue.id | strings | select(length > 0)' <<<"$result" >/dev/null; then
-        jq -cn --arg id "$issue_id" '{error: ("Issue not found: " + $id)}' >&2
-        return 1
-    fi
-
-    # Apply output format
     case "$FORMAT" in
-    raw)
-        linear_public_result "$result"
-        ;;
-    compact)
-        if [ "$with_bundle" = "true" ]; then
-            format_issue_with_bundle_compact "$result"
-        else
-            format_issue_compact "$result"
-        fi
-        ;;
-    safe)
-        if [ "$with_bundle" = "true" ]; then
-            format_issue_with_bundle "$result"
-        else
-            format_issue_single "$result"
-        fi
-        ;;
+    raw) linear_public_result "$result" ;;
+    safe) format_issue_with_bundle "$result" ;;
     esac
 }
 
@@ -2536,108 +2519,15 @@ trash_issue() {
     confirm_archive_mutation "$result" "issueDelete" '.trashed == true' "trash" "$issue_ref" "$issue_id"
 }
 
+# The direct children of an issue with their states, raw: the supersession
+# walks a superseded issue's subtree one level at a time.
+# Usage: list_children ID
 list_children() {
     # Read by lib/pages.sh when a children connection is left open.
     local LINEAR_ISSUE_CHILD_MODE=direct LINEAR_CHILD_DEPTH=1
-    local issue_id=""
-    local recursive="false"
-    local pending_only="false"
-    FORMAT="${DEFAULT_FORMAT}"
-
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-        --format)
-            FORMAT="$2"
-            shift 2
-            ;;
-        --format=*)
-            FORMAT="${1#--format=}"
-            shift
-            ;;
-        --recursive | -r)
-            recursive="true"
-            shift
-            ;;
-        --pending)
-            pending_only="true"
-            shift
-            ;;
-        *)
-            issue_id="$1"
-            shift
-            ;;
-        esac
-    done
-
-    if [ -z "$issue_id" ]; then
-        echo '{"error": "Issue ID required"}' >&2
-        return 1
-    fi
-
-    linear_require_format "$FORMAT" safe raw ids || return 1
-
-    local query
-    if [ "$recursive" = "true" ]; then
-        LINEAR_ISSUE_CHILD_MODE=recursive
-        LINEAR_CHILD_DEPTH=3
-        # Fetch 3 levels deep (covers nearly all real-world nesting)
-        # Includes relations for blocking info between sub-issues
-        query='
-        query GetChildrenRecursive($id: String!) {
-            issue(id: $id) {
-                id
-                identifier
-                title
-                children {
-                    pageInfo { hasNextPage endCursor }
-                    nodes {
-                        id
-                        identifier
-                        title
-                        state { name type }
-                        assignee { name }
-                        labels { pageInfo { hasNextPage endCursor } nodes { name } }
-                        priority
-                        estimate
-                        parent { identifier }
-'"$ISSUE_RELATION_FIELDS"'
-                        children {
-                            pageInfo { hasNextPage endCursor }
-                            nodes {
-                                id
-                                identifier
-                                title
-                                state { name type }
-                                assignee { name }
-                                labels { pageInfo { hasNextPage endCursor } nodes { name } }
-                                priority
-                                estimate
-                                parent { identifier }
-'"$ISSUE_RELATION_FIELDS"'
-                                children {
-                                    pageInfo { hasNextPage endCursor }
-                                    nodes {
-                                        id
-                                        identifier
-                                        title
-                                        state { name type }
-                                        assignee { name }
-                                        labels { pageInfo { hasNextPage endCursor } nodes { name } }
-                                        priority
-                                        estimate
-                                        parent { identifier }
-'"$ISSUE_RELATION_FIELDS"'
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }'
-    else
-        query='
+    local variables result
+    variables=$(jq -cn --arg id "$1" '{id: $id}') || return 1
+    result=$(graphql_query '
         query GetChildren($id: String!) {
             issue(id: $id) {
                 id
@@ -2657,58 +2547,8 @@ list_children() {
                     }
                 }
             }
-        }'
-    fi
-
-    local variables
-    variables=$(jq -cn --arg id "$issue_id" '{id: $id}') || return 1
-    local result
-    result=$(graphql_query "$query" "$variables") || return 1
-
-    # --pending drops completed and canceled rows. A flat read drops each such
-    # row alone, so an open grandchild under a Done child stays listed. The
-    # nested raw shape keeps a closed issue only as the container of an open
-    # one beneath it. A raw row carries state.type, a flat row state_type.
-    local open='def open: ((.state | objects | .type) // .state_type) | . != "completed" and . != "canceled";'
-    if [ "$pending_only" = "true" ]; then
-        if [ "$recursive" = "true" ]; then
-            if [ "$FORMAT" = raw ]; then
-                result=$(jq -c "$open"'
-                    def prune: map(if (.children | type) == "object" then .children.nodes |= prune else . end
-                        | select(open or ((.children.nodes // []) | length > 0)));
-                    .issue.children.nodes |= prune' <<<"$result") || return 1
-            fi
-        else
-            result=$(jq -c "$open"'.issue.children.nodes |= map(select(open))' <<<"$result") || return 1
-        fi
-    fi
-
-    local rows
-    case "$FORMAT" in
-    raw)
-        linear_public_result "$result"
-        return
-        ;;
-    ids | safe)
-        if [ "$recursive" = "true" ]; then
-            rows=$(format_children_recursive "$result") || return 1
-            if [ "$pending_only" = "true" ]; then
-                rows=$(jq -c "$open"'map(select(open))' <<<"$rows") || return 1
-            fi
-        else
-            rows=$(format_children_list "$result") || return 1
-        fi
-        ;;
-    *)
-        jq -cn --arg format "$FORMAT" '{error: ("issues children: unvalidated format " + $format)}' >&2
-        return 1
-        ;;
-    esac
-    if [ "$FORMAT" = ids ]; then
-        jq -r '.[].id' <<<"$rows"
-    else
-        jq '.' <<<"$rows"
-    fi
+        }' "$variables") || return 1
+    linear_public_result "$result"
 }
 
 list_relations() {
@@ -3395,7 +3235,7 @@ complete_superseded_issues() {
         while [ -n "$frontier" ]; do
             next_frontier=""
             while IFS= read -r child_parent; do
-                children=$(list_children "$child_parent" --format=raw) || return 1
+                children=$(list_children "$child_parent") || return 1
                 children=$(jq -c --argjson seen "$seen" \
                     '.issue.children.nodes | map({id: .identifier, state_type: .state.type})
                     | unique_by(.id) | map(select(.id as $id | $seen | index($id) | not))' <<<"$children") || return 1
@@ -3823,12 +3663,10 @@ validate_completion() {
     # child can also carry verified branch work into post-merge verification.
     # Only CANCELED children are excluded: abandoned work can never be "Done",
     # is not a pending gap, and including it would permanently fail any bundle
-    # that legitimately canceled a sub-issue. This mirrors the `children
-    # --pending` filter, which likewise treats completed vs canceled distinctly
-    # from still-pending work.
+    # that legitimately canceled a sub-issue.
     if [ -n "$include_children_of" ]; then
         local bundle
-        if ! bundle=$(get_issue "$include_children_of" --with-bundle --format=safe); then
+        if ! bundle=$(get_issue_bundle "$include_children_of" --format=safe); then
             echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
             return 1
         fi
@@ -3935,7 +3773,7 @@ main() {
         ;;
     get)
         require_issue_ref get "${1:-}"
-        get_issue "$@"
+        get_issue_bundle "$@"
         ;;
     bulk-get)
         bulk_get_issues "$@"
@@ -3958,10 +3796,6 @@ main() {
     trash | delete)
         require_issue_ref trash "${1:-}"
         trash_issue "$@"
-        ;;
-    children)
-        require_issue_ref children "${1:-}"
-        list_children "$@"
         ;;
     list-relations | relations)
         require_issue_ref list-relations "${1:-}"

@@ -31,11 +31,7 @@ case "${1:-} ${2:-}" in
     done
     format_issues_list "$raw"
     ;;
-  'issues get')
-    raw="$(jq -c --arg id "$3" '{issue:(.issues.nodes[] | select(.identifier == $id))}' "$here/issues.json")"
-    format_issue_single "$raw"
-    ;;
-  'issues update' | 'issues complete')
+  'graphql --query' | 'issues update' | 'issues complete')
     cd -- "$here"
     export PATH="$here:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=T LINEAR_RETRY_BASE_DELAY=0
     exec /bin/bash "$real/linear.sh" "$@"

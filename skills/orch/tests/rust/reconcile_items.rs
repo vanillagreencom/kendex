@@ -946,7 +946,10 @@ fn repair_passes(mode: &str) {
             "{mode} pass {pass}: {calls}"
         );
         assert_eq!(
-            calls.contains("issues get T-7 --format=safe"),
+            calls
+                .lines()
+                .any(|call| call.starts_with("graphql --query query OwnerItem(")
+                    && call.ends_with(r#"--variables {"id":"T-7"}"#)),
             !quota && (pass == 1 || !landed),
             "{mode} pass {pass}: {calls}"
         );

@@ -48,7 +48,7 @@ Read the time an issue entered a state from its history: the matching `toState` 
 
 ```bash
 linear.sh issues list --project "Phase 2" --state "Todo,In Progress" --max
-linear.sh issues get ABC-100 --with-bundle
+linear.sh issues get ABC-100
 linear.sh labels list --max --format=safe
 ```
 

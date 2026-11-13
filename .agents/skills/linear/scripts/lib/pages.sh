@@ -205,9 +205,8 @@ linear_children_fields() {
     case "${LINEAR_ISSUE_CHILD_MODE:-brief}" in
     brief) fields='id identifier title state { name type }' ;;
     direct) fields='id identifier title state { name type } assignee { name } priority estimate createdAt' ;;
-    bundle|recursive)
-        fields="id identifier title state { name type } assignee { name } labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } } priority estimate parent { identifier } $ISSUE_RELATION_FIELDS"
-        if [[ "$LINEAR_ISSUE_CHILD_MODE" == bundle ]]; then fields="description $fields"; fi
+    bundle)
+        fields="description id identifier title state { name type } assignee { name } labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } } priority estimate parent { identifier } $ISSUE_RELATION_FIELDS"
         if (( depth > 1 )); then
             descendants=$(linear_children_fields "$((depth - 1))") || return 1
             fields="$fields children(first: 1) { pageInfo { hasNextPage endCursor } nodes { $descendants } }"

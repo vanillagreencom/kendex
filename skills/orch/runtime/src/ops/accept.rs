@@ -731,20 +731,70 @@ type Closing<T> = std::result::Result<T, ContainerRefused>;
 /// bare `deferred`.
 const CONTAINER_LOCK_WAIT: Duration = Duration::from_secs(120);
 
-/// The parent's read (`issues get`): its state type and whether it is an
-/// in-PR bundle root, a work item its own PR completes.
+/// The parent's read (`issues bulk-get ID --format=safe`, one row): its state
+/// type and whether it is an in-PR bundle root, a work item its own PR
+/// completes, by the linear package's one rule for that mark.
 #[derive(Debug, Deserialize)]
 struct ParentRead {
     state_type: String,
     in_pr_bundle: bool,
 }
 
-/// One child (`issues children --recursive`).
+/// The parent's children to the three levels the package's items nest; the
+/// read refuses an answer with a page left open, so the set is whole.
+const CHILDREN: &str = "query Children($id: String!) { issue(id: $id) { children { \
+    pageInfo { hasNextPage } nodes { identifier title state { type } children { \
+    pageInfo { hasNextPage } nodes { identifier title state { type } children { \
+    pageInfo { hasNextPage } nodes { identifier title state { type } } } } } } } } }";
+
 #[derive(Debug, Deserialize)]
+struct ChildrenAnswer {
+    issue: ChildrenOf,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChildrenOf {
+    children: ChildPage,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChildPage {
+    nodes: Vec<ChildNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChildNode {
+    identifier: String,
+    title: String,
+    state: ChildState,
+    children: Option<ChildPage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChildState {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+/// One child at any depth, each before its own children.
+#[derive(Debug)]
 struct ChildRead {
     id: String,
     title: String,
     state_type: String,
+}
+
+fn flatten_children(nodes: Vec<ChildNode>, into: &mut Vec<ChildRead>) {
+    for node in nodes {
+        into.push(ChildRead {
+            id: node.identifier,
+            title: node.title,
+            state_type: node.state.kind,
+        });
+        if let Some(page) = node.children {
+            flatten_children(page.nodes, into);
+        }
+    }
 }
 
 impl ChildRead {
@@ -1030,21 +1080,30 @@ fn close_held(tracker_cli: &Path, root: &Path, id: &str) -> Closing<ContainerClo
             TrackerRead::Failed => refuse(failed),
         })
     };
-    let bytes = linear("parent", &["issues", "get", id], "parent-unreadable")?;
-    let parent: ParentRead =
-        serde_json::from_slice(&bytes).map_err(|_| refuse("parent-response"))?;
+    let bytes = linear(
+        "parent",
+        &["issues", "bulk-get", id, "--format=safe"],
+        "parent-unreadable",
+    )?;
+    let [parent]: [ParentRead; 1] = serde_json::from_slice::<Vec<ParentRead>>(&bytes)
+        .ok()
+        .and_then(|rows| rows.try_into().ok())
+        .ok_or_else(|| refuse("parent-response"))?;
     let mut children: Option<Vec<ChildRead>> = None;
     let mut validation: Option<Vec<Value>> = None;
     let decision = loop {
         match decide(id, &parent, children.as_deref(), validation.as_deref()) {
             Decision::ReadChildren => {
+                let variables = serde_json::json!({ "id": id }).to_string();
                 let bytes = linear(
                     "children",
-                    &["issues", "children", id, "--recursive"],
+                    &["graphql", "--query", CHILDREN, "--variables", &variables],
                     "children-unreadable",
                 )?;
-                let read: Vec<ChildRead> =
+                let answer: ChildrenAnswer =
                     serde_json::from_slice(&bytes).map_err(|_| refuse("children-response"))?;
+                let mut read = Vec::new();
+                flatten_children(answer.issue.children.nodes, &mut read);
                 if read.iter().any(|c| c.id.is_empty()) {
                     return Err(refuse("children-response"));
                 }

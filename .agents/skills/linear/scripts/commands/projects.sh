@@ -24,7 +24,6 @@ Usage: projects.sh <action> [options]
 
 Actions:
   list             List projects with filters
-  get              Get a single project by ID or name
   create           Create a new project
   update           Update an existing project
   delete           Delete a project
@@ -47,9 +46,6 @@ List Options:
   --max                 Read every page; a chain that fails partway refuses
   --first               Output just the first project's name (useful for scripts)
   --include-archived    Include archived projects
-
-Get:
-  projects.sh get <id-or-name>
 
 Audit Options:
   --team <ref>          Team key or name (default: LINEAR_TEAM)
@@ -96,7 +92,6 @@ Examples:
   # Basic operations
   projects.sh list --state started
   projects.sh list --state started --first     # Just the name of first active project
-  projects.sh get "Market Data Pipeline"
   projects.sh create --name "New Project"
   projects.sh update <id> --state completed
   projects.sh delete <id>
@@ -252,105 +247,6 @@ list_projects() {
         ;;
     safe | *)
         format_projects_list "$result"
-        ;;
-    esac
-}
-
-get_project() {
-    local project_ref=""
-    FORMAT="${DEFAULT_FORMAT}"
-
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-        --format)
-            FORMAT="$2"
-            shift 2
-            ;;
-        --format=*)
-            FORMAT="${1#--format=}"
-            shift
-            ;;
-        *)
-            project_ref="$1"
-            shift
-            ;;
-        esac
-    done
-
-    if [ -z "$project_ref" ]; then
-        echo '{"error": "Project ID or name required"}' >&2
-        return 1
-    fi
-
-    # Resolve name to ID if not a UUID
-    local project_id
-    if ! project_id=$(resolve_project_id "$project_ref"); then
-        return 1
-    fi
-
-    local query='
-    query GetProject($id: String!) {
-        project(id: $id) {
-            id
-            name
-            description
-            content
-            state
-            progress
-            health
-            healthUpdatedAt
-            priority
-            sortOrder
-            startDate
-            targetDate
-            url
-            teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
-            labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
-            externalLinks(first: 10) { pageInfo { hasNextPage endCursor } nodes { id label url } }
-            lead { name email }
-            createdAt
-            updatedAt
-            lastUpdate {
-                id
-                body
-                health
-                createdAt
-            }
-            relations {
-                pageInfo { hasNextPage endCursor }
-                nodes {
-                    id
-                    type
-                    anchorType
-                    relatedAnchorType
-                    relatedProject { id name state progress }
-                }
-            }
-            inverseRelations {
-                pageInfo { hasNextPage endCursor }
-                nodes {
-                    id
-                    type
-                    anchorType
-                    relatedAnchorType
-                    project { id name state progress }
-                }
-            }
-        }
-    }'
-
-    local variables="{\"id\": \"$project_id\"}"
-    local result
-    result=$(graphql_query "$query" "$variables") || return 1
-
-    # Apply output format
-    case "$FORMAT" in
-    raw)
-        linear_public_result "$result"
-        ;;
-    safe | *)
-        format_project_single "$result"
         ;;
     esac
 }
@@ -1316,13 +1212,6 @@ linear_guard_write_action "$action" "update delete add-dependency remove-depende
 case "$action" in
 list)
     list_projects "$@"
-    ;;
-get)
-    if [ -z "${1:-}" ]; then
-        echo '{"error": "Usage: projects.sh get <id-or-name>"}' >&2
-        exit 1
-    fi
-    get_project "$@"
     ;;
 create)
     create_project "$@"

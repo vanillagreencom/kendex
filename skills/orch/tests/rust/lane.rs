@@ -2649,7 +2649,7 @@ impl Fleet {
             "issues bulk-get": {"body": {"issues": {"nodes": [
                 {"identifier": item, "state": {"type": state}, "description": "", "children": {"nodes": []}}
             ]}}},
-            "issues get": {"body": {"issue": {"description": "", "state": {"name": name, "type": state}}}},
+            "graphql BoxItem": {"body": {"issue": {"description": "", "state": {"name": name, "type": state}}}},
         });
         std::fs::write(self.state_dir().join("linear.json"), reply.to_string()).unwrap();
     }
@@ -4453,19 +4453,26 @@ fn container_replies(state: &str, children: Value, summarized: bool) -> Value {
         "errors": [], "child_box": 3, "unmet_branch_boxes": [3]}),
     ];
     for child in children.as_array().unwrap() {
-        results.push(json!({"id": child["id"], "ok": true, "state_ok": true, "has_summary": true}));
+        results.push(
+            json!({"id": child["identifier"], "ok": true, "state_ok": true, "has_summary": true}),
+        );
     }
     json!({
-        "issues get": {"body": {"state_type": state, "in_pr_bundle": false}},
-        "issues children": {"body": children},
+        "issues bulk-get": {"body": [{"state_type": state, "in_pr_bundle": false}]},
+        "graphql Children": {"body": {"issue": {"children": child_page(children)}}},
         "issues validate-completion": {"body": {"results": results}},
         "issues complete": {"body": {}},
         "issues update": {"body": {}},
     })
 }
 
+/// One closed page of children, as the children document answers it.
+fn child_page(nodes: Value) -> Value {
+    json!({"pageInfo": {"hasNextPage": false}, "nodes": nodes})
+}
+
 fn child(id: &str, state: &str) -> Value {
-    json!({"id": id, "title": format!("work {id}"), "state_type": state})
+    json!({"identifier": id, "title": format!("work {id}"), "state": {"type": state}})
 }
 
 /// A container closes only when its last child ends, by one decision table
@@ -4495,7 +4502,9 @@ fn a_container_closes_only_when_its_children_end() {
     let mut invalid = container_replies("started", done.clone(), false);
     invalid["issues validate-completion"]["body"]["results"][0]["errors"] = json!([{"box": 4}]);
     let mut bundle = container_replies("started", done.clone(), false);
-    bundle["issues get"]["body"]["in_pr_bundle"] = json!(true);
+    bundle["issues bulk-get"]["body"][0]["in_pr_bundle"] = json!(true);
+    let mut nested = child("KEN-1", "completed");
+    nested["children"] = child_page(json!([child("KEN-3", "started")]));
     let mut unread = container_replies("started", done.clone(), false);
     unread["issues validate-completion"] = json!({"body": {"results": []}});
     let rows: Vec<Case> = vec![
@@ -4507,6 +4516,13 @@ fn a_container_closes_only_when_its_children_end() {
                 false,
             ),
             "deferred KEN-2\n",
+            None,
+            None,
+        ),
+        (
+            "a grandchild open",
+            container_replies("started", json!([nested]), false),
+            "deferred KEN-3\n",
             None,
             None,
         ),
@@ -4764,7 +4780,7 @@ fn a_rate_limited_container_close_holds_and_resumes_once() {
 #[test]
 fn a_container_close_infers_no_cascade() {
     let mut replies = container_replies("completed", json!([child("KEN-1", "completed")]), true);
-    replies["issues get"]["body"]["parent"] = json!({"id": "KEN-G"});
+    replies["issues bulk-get"]["body"][0]["parent_id"] = json!("KEN-G");
     let container = Container::new(replies, None);
     let out = container.close("KEN-C");
     assert_eq!(stdout_of(&out), "closed KEN-C\n", "{}", stderr(&out));
@@ -5010,27 +5026,27 @@ fn a_container_close_refuses_each_read_by_its_key() {
     for (case, replies, key, mutations) in [
         (
             "a parent read that fails",
-            with("issues get", json!({"exit": 1})),
+            with("issues bulk-get", json!({"exit": 1})),
             "parent-unreadable",
             0,
         ),
         (
             "a parent that does not type",
-            with("issues get", json!({"body": {"state_type": 5}})),
+            with("issues bulk-get", json!({"body": [{"state_type": 5}]})),
             "parent-response",
             0,
         ),
         (
             "children that fail",
-            with("issues children", json!({"exit": 1})),
+            with("graphql Children", json!({"exit": 1})),
             "children-unreadable",
             0,
         ),
         (
             "a child with no id",
             with(
-                "issues children",
-                json!({"body": [{"id": "", "title": "t", "state_type": "completed"}]}),
+                "graphql Children",
+                json!({"body": {"issue": {"children": child_page(json!([child("", "completed")]))}}}),
             ),
             "children-response",
             0,

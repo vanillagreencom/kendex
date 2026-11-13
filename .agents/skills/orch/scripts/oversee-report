@@ -835,9 +835,11 @@ issue_cells() {
       fi ;;
     linear)
       [[ -x "$TRACKER" ]] || refuse tracker-missing "$TRACKER"
-      # --format=safe pins the shape: LINEAR_FORMAT from the project's settings
-      # would otherwise nest the issue or drop its description.
-      if ! json="$("$TRACKER" issues get "$item" --format=safe 2>"$WORK_DIR/tracker.err")"; then
+      if ! json="$("$TRACKER" graphql --query 'query ReportItem($id: String!) { issue(id: $id) { title description state { name } } }' \
+        --variables "$(jq -cn --arg id "$item" '{id: $id}')" 2>"$WORK_DIR/tracker.err")"; then
+        refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
+      fi
+      if ! json="$(jq -c '.issue | {title, description, state: .state.name}' <<<"$json" 2>"$WORK_DIR/tracker.err")"; then
         refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
       fi
       ITEM_STATE="$(jq -r '.state // "" | select(. == "Done" or . == "Verifying")' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
@@ -1160,9 +1162,10 @@ render() {
   tracker_count="$(jq -s '[.[] | select(.tracker_posted == true)] | length' <<<"$list")" || refuse owner-asks overseer
   while IFS= read -r tracker_issue; do
     [[ -n "$tracker_issue" ]] || continue
-    tracker_url="$("$TRACKER" issues get "$tracker_issue" --format=safe 2>"$WORK_DIR/tracker.err")" ||
+    tracker_url="$("$TRACKER" graphql --query 'query OwnerAskUrl($id: String!) { issue(id: $id) { url } }' \
+      --variables "$(jq -cn --arg id "$tracker_issue" '{id: $id}')" 2>"$WORK_DIR/tracker.err")" ||
       refuse owner-asks overseer "$(cat "$WORK_DIR/tracker.err")"
-    tracker_url="$(jq -r '.url' <<<"$tracker_url")" || refuse owner-asks overseer
+    tracker_url="$(jq -r '.issue.url' <<<"$tracker_url")" || refuse owner-asks overseer
     tracker_links+="${tracker_links:+, }[$tracker_issue]($tracker_url)"
   done <<<"$(jq -r 'select(.tracker_posted == true) | .issue' <<<"$list")"
   if ! list="$(jq -r -R --argjson now "$NOW" --argjson answered "$OWNER_ANSWERED" 'fromjson? | objects | select(.tracker_posted != true)

@@ -232,8 +232,12 @@ create_comment() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
         local issue_result
-        issue_result=$(bash "$SCRIPT_DIR/issues.sh" get "$issue_id" --format=raw) || return 1
-        comment_issue_id=$(jq -r '.issue.id' <<<"$issue_result") || return 1
+        issue_result=$(graphql_query 'query GetIssue($id: String!) { issue(id: $id) { id } }' \
+            "$(jq -cn --arg id "$issue_id" '{id: $id}')") || return 1
+        comment_issue_id=$(jq -er '.issue.id | strings | select(length > 0)' <<<"$issue_result") || {
+            jq -cn --arg id "$issue_id" '{error: ("Issue not found: " + $id)}' >&2
+            return 1
+        }
     fi
 
     if [ -z "$body" ] && [ ${#attach_paths[@]} -eq 0 ]; then

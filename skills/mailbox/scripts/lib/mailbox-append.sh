@@ -245,6 +245,16 @@ def owner_action_line($name; $action):
   "**" + ($name | [splits("\\s+") | select(length > 0)] | first)
   + ", what you do:** " + $action + "\n\n" + owner_action_body;'
 
+# The item as the ask and its close read it: description, assignee name and
+# label names. `linear.sh graphql` refuses a label page left open, which the
+# label write needs, since it sends the whole set.
+owner_tracker_item() { # TRACKER ISSUE
+  local answer
+  answer="$("$1" graphql --query 'query OwnerTracker($id: String!) { issue(id: $id) { description assignee { name } labels(first: 250) { pageInfo { hasNextPage } nodes { name } } } }' \
+    --variables "$(jq -cn --arg id "$2" '{id: $id}')")" || return 1
+  jq -ce '.issue | {description: (.description // ""), assignee: (.assignee.name // ""), labels: [.labels.nodes[].name]}' <<<"$answer"
+}
+
 owner_tracker_labels() { # ITEM JSON ADD|REMOVE [CLOSING LABEL] [REMAINING POSTED ASKS]
   jq -r --arg label "${3:-$OWNER_TRACKER_LABEL}" --arg configured "$OWNER_TRACKER_LABEL" \
     --arg action "$2" --argjson remaining "${4:-[]}" "$OWNER_TRACKER_JQ"'
@@ -275,7 +285,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   "$tracker" issues update "$issue" --assignee "$(jq -r '.id' <<<"$owner")" >"$work/tracker.out" 2>"$work/tracker.err" || {
     OWNER_TRACKER_CAUSE=assign; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
-  current="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker.err")" || {
+  current="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker.err")" || {
     OWNER_TRACKER_CAUSE=labels-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   labels="$(owner_tracker_labels "$current" ADD)" || return 1
@@ -308,7 +318,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   fi
   OWNER_TRACKER_CAUSE=comment
   owner_tracker_unwritten "$issue" comment "$comment_error"
-  latest="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker-rollback.err")" || {
+  latest="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker-rollback.err")" || {
     owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
   }
   # Restore only while the fresh read still contains this ask's exact write.
@@ -355,7 +365,7 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
   "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
     owner_tracker_unwritten "$issue" close-comment; return 0;
   }
-  current="$("$tracker" issues get "$issue" --format=safe 2>"$work/tracker.err")" || {
+  current="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker.err")" || {
     owner_tracker_unwritten "$issue" labels-read; return 0;
   }
   # Distinct owner asks can share an issue. The locked pending reader owns

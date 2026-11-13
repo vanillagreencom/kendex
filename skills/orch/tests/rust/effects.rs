@@ -4783,7 +4783,7 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
         "issues bulk-get": {"body": {"issues": {"nodes": [
             {"identifier": "KEN-W", "state": {"type": "started"}, "description": "", "children": {"nodes": []}}
         ]}}},
-        "issues get": {"body": {"issue": {"description": "", "state": {"name": "Verifying", "type": "started"}}}},
+        "graphql BoxItem": {"body": {"issue": {"description": "", "state": {"name": "Verifying", "type": "started"}}}},
     });
     std::fs::write(&replies, open.to_string()).unwrap();
     runner.env = vec![
