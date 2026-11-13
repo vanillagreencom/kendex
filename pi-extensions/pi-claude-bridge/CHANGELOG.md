@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 5.0.6
+
+- A turn that carries no Pi tools no longer gets Claude Code's own file, shell and web tools. Since 4.0.4, an ordinary or embedding-host session that asked for a tool-free answer ran the child with those tools enabled and permission checks bypassed. Such a turn now has no tools, and the bridge shows no notice for it. Sessions with Pi tools, Pi's own one-shot calls and connectors sessions keep their existing restrictions.
+
 ### 5.0.5
 
 - Bundle the Agent SDK through its supported core entry so tool validation uses the patched package-owned Zod and URI dependencies. Update the installed HTTP server dependency to @hono/node-server 2.1.8.

@@ -45716,16 +45716,14 @@ function denyAllOutput(toolName) {
     }
   };
 }
-function connectorQueryOptions(connectorsEnabled, writeMode = "deny", applyBuiltinIsolation = true) {
-  const isolation = toolIsolationForQuery(connectorsEnabled, writeMode, applyBuiltinIsolation);
+function connectorQueryOptions(connectorsEnabled, writeMode = "deny") {
+  const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
   if (!connectorsEnabled) return isolation;
   const hooks = writeMode === "allow" ? [connectorBuiltinAllowlistHook()] : [connectorBuiltinAllowlistHook(), connectorWriteDenyHook()];
   return { ...isolation, hooks: { PreToolUse: [{ hooks }] } };
 }
-function toolIsolationForQuery(connectorsEnabled, writeMode = "deny", applyBuiltinIsolation = true) {
-  if (!connectorsEnabled) {
-    return applyBuiltinIsolation ? CLAUDE_BRIDGE_TOOL_ISOLATION : { disallowedTools: ALWAYS_DENIED_BUILTIN_TOOLS };
-  }
+function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
+  if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
   const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t2) => !CONNECTOR_DISCOVERY_TOOL_NAMES.has(t2));
   if (writeMode !== "allow") disallowedTools.push(...CONNECTOR_WRITE_TOOLS);
   return {
@@ -52339,13 +52337,12 @@ function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
   return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
 }
 function buildClaudeQueryOptions(input2) {
-  const { cwd, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, piOneShot } = input2;
+  const { cwd, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable } = input2;
   const providerSettings = bridgeConfig.provider ?? {};
   const accountScope = accountSessionScope(account);
   const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
   const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
   const bridgedToolsPresent = Boolean(mcpServers?.[MCP_SERVER_NAME]);
-  const builtinIsolationApplied = bridgedToolsPresent || piOneShot === true || enableCloudMcp;
   const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
   const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
   const settingSources = settingSourcesForQuery(
@@ -52372,7 +52369,7 @@ function buildClaudeQueryOptions(input2) {
     cwd,
     model: queryModel.id,
     env: childEnv,
-    ...connectorQueryOptions(enableCloudMcp, connectorWriteMode, builtinIsolationApplied),
+    ...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
     permissionMode: "bypassPermissions",
     includePartialMessages: true,
     // Filesystem settings.env overrides the inherited child environment.
@@ -52400,7 +52397,6 @@ function buildClaudeQueryOptions(input2) {
   return {
     queryOptions,
     bridgedToolsPresent,
-    builtinIsolationApplied,
     enableCloudMcp,
     appendSystemPrompt,
     promptContextLabels: promptContextAppend.labels,
@@ -52513,15 +52509,11 @@ function resolveMcpTools(context, excludeToolName) {
   return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
 var reportedToolBridgeGap = false;
-function reportToolBridgeGap(messageCount, builtinIsolationApplied) {
-  debug(`provider: no bridged custom-tools server for a ${messageCount}-message context; built-in isolation ${builtinIsolationApplied ? "kept" : "dropped"}`);
+function reportToolBridgeGap(messageCount) {
+  debug(`provider: no bridged custom-tools server for a ${messageCount}-message context`);
   if (reportedToolBridgeGap) return;
   reportedToolBridgeGap = true;
-  appendIntegrityEntry("bridged_tools_absent", { messageCount, builtinIsolationApplied });
-  safeNotify(
-    (builtinIsolationApplied ? "Pi Claude found no pi tools to bridge. Claude Code's own file and shell tools stay disabled in a connectors session, so this turn has only the account's connector tools. " : "Pi Claude found no pi tools to bridge, so this session uses Claude Code's own file and shell tools instead. ") + "Usually a pi version whose provider contract the bridge has not adopted yet; update @vanillagreen/pi-claude-bridge.",
-    "warning"
-  );
+  appendIntegrityEntry("bridged_tools_absent", { messageCount });
 }
 function buildMcpServers(tools, queryCtx) {
   if (!tools.length) return void 0;
@@ -52993,11 +52985,10 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     reasoning: options?.reasoning,
     resumeSessionId,
     mcpServers,
-    claudeExecutable,
-    piOneShot
+    claudeExecutable
   });
   const { queryOptions } = built;
-  if (!built.bridgedToolsPresent && !piOneShot) reportToolBridgeGap(context.messages.length, built.builtinIsolationApplied);
+  if (!built.bridgedToolsPresent && !piOneShot) reportToolBridgeGap(context.messages.length);
   debug(
     "provider: fresh query",
     `model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
