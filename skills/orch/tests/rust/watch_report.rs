@@ -4549,6 +4549,7 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
     world.write_fleet(&json!({"issue_id":"oversee","lanes":[
         {"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"},
         {"item":"KEN-5","status":"done","launched_at":"2026-10-01T06:00:00Z"},
+        {"item":"KEN-20","status":"done","launched_at":"2026-10-01T06:00:00Z","cycle":{"pr":13,"repo":"Owner/Repo"}},
         {"item":"KEN-5","status":"parked","launched_at":"2026-10-01T06:00:00Z","parked":{"pr":14,"head":"abc","repo":"Owner/Repo","at":"2026-10-01T06:30:00Z"}},
         {"item":"KEN-6","status":"running","launched_at":"2026-10-01T06:00:00Z","mail_root":root,"pending_pr":{"pr":15,"head":"def"}},
         {"item":"KEN-7","status":"running","launched_at":"2026-10-01T06:00:00Z","mail_root":root}
@@ -4561,8 +4562,7 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
     ]}));
     let pull = |number, branch, owner: &str, at| json!({"body":{"number":number,"state":"closed","title":"Report actual completed work","body":"","merged_at":at,"merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":branch,"repo":{"full_name":format!("{owner}/repo"),"owner":{"login":owner,"type":"User"}}}}});
     let search = "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-10-01T06%3A00%3A00Z&per_page=100&page=1";
-    let items: Vec<Value> = (1..=12)
-        .chain([14])
+    let items: Vec<Value> = (1..=14)
         .map(|n| json!({"number":n,"pull_request":{}}))
         .collect();
     let total = items.len() as u64;
@@ -4576,7 +4576,8 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
     });
     // A cloud session's branch names no item: its pull request is the
     // item's by the title's conventional-commit scope or a Closes line, and
-    // a parked record's by its number in the repository the record names.
+    // a parked or closed lane's by the number its record names in that
+    // record's repository.
     let titled = |number, branch, title: &str, body: &str, at: &str| json!({"body":{"number":number,"state":"closed","title":title,"body":body,"merged_at":at,"merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":branch,"repo":{"full_name":"owner/repo","owner":{"login":"owner","type":"User"}}}}});
     for (n, branch, title, body, at) in [
         (
@@ -4635,6 +4636,7 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
             "",
             "2026-10-01T09:35:00Z",
         ),
+        (13, "claude/fix-f", "f", "", "2026-10-01T09:38:00Z"),
         (14, "claude/fix-e", "e", "", "2026-10-01T09:40:00Z"),
     ] {
         planted[format!("repos/owner/repo/pulls/{n}")] = titled(n, branch, title, body, at);
@@ -4713,6 +4715,7 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
         "- KEN-1: fix(KEN-1): a ([owner/repo#5]",
         "- KEN-1: chore: b ([owner/repo#6]",
         "- KEN-5: e ([owner/repo#14]",
+        "- KEN-20: f ([owner/repo#13]",
     ] {
         assert!(body.contains(line), "{line}\n{body}");
     }

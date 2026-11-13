@@ -184,7 +184,7 @@ pub fn record(
     };
     let pauses = waits_of(lane, state.as_ref().ok().and_then(Option::as_ref))?;
     notes.extend(negative_notes(item, &timeline));
-    let cycle = compute(&Inputs {
+    let mut cycle = compute(&Inputs {
         lane,
         timeline: &timeline,
         rounds,
@@ -194,6 +194,13 @@ pub fn record(
         tier: tier.as_deref(),
         escaped,
     });
+    // The pull request's number names it only beside its repository, which
+    // may be a connected one rather than the lane's.
+    if let (Delivery::Pr { .. }, Some(repo), Some(fields)) =
+        (delivery, &repo, cycle.as_object_mut())
+    {
+        fields.insert("repo".to_owned(), Value::from(repo.clone()));
+    }
     let line = line_of(item, &cycle);
     let mut lines = vec![line];
     if let Some(cause) = &class.cause {

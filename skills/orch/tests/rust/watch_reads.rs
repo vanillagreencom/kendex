@@ -1062,6 +1062,149 @@ fn the_merged_index_matches_the_released_recorded_lines() {
     );
 }
 
+/// The Verifying items no live lane carries, through the real tracker,
+/// GitHub and verification duties over the `gh` fixture: a bundle child
+/// named only by its parent pull request's indented `Closes` line is found
+/// by the key search floored at its creation, a prose mention passed over;
+/// an item whose lane closed is read by the number and repository its cycle
+/// recorded, with no search for it. Each joins the merged index with no
+/// `merged` line or row, and its box counts from that merge.
+#[test]
+fn a_verifying_item_no_live_lane_carries_reads_its_landing() {
+    const NOW: u64 = 1_790_899_201;
+    const BOX: &str = "## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Deadline: +72h";
+    let mut world = World::new();
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [{"item": "KEN-3", "tracker": "linear", "repo": "owner/repo", "harness": "claude", "window": null, "host": null,
+            "mail_root": "/w/KEN-3", "launched_at": "2026-09-20T00:00:00Z", "status": "done",
+            "cycle": {"pr": 7, "repo": "Owner/Repo"}}]}));
+    world.linear("statuses list", statuses());
+    let verifying = |id: &str| {
+        let mut item = item(
+            id,
+            "2026-09-20T00:00:00Z",
+            "Verifying",
+            "started",
+            json!(1),
+            &[],
+        );
+        item["description"] = json!(BOX);
+        item
+    };
+    world.linear(
+        "issues list",
+        json!({"body": [verifying("KEN-2"), verifying("KEN-3")]}),
+    );
+    world.linear(
+        "issues bulk-get",
+        json!({"body": {"issues": {"nodes": [
+            {"identifier": "KEN-2", "state": {"type": "started"}, "children": {"nodes": []}},
+            {"identifier": "KEN-3", "state": {"type": "started"}, "children": {"nodes": []}}
+        ]}}}),
+    );
+    quiet_github(&mut world);
+    let pull = |number: u64, branch: &str, title: &str, body: &str, merged_at: &str| {
+        json!({"body": {"number": number, "state": "closed", "title": title, "body": body, "merged_at": merged_at, "merge_commit_sha": null,
+            "author_association": "NONE", "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
+            "head": {"sha": "0000000000000000000000000000000000000000", "ref": branch, "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}}})
+    };
+    let search = "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20T00%3A00%3A00Z%20%28%28head%3Aken-2%20OR%20%22KEN-2%22%29%29%20in%3Atitle%2Cbody&per_page=100&page=1";
+    world.gh(
+        search,
+        json!({"body": {"total_count": 2, "incomplete_results": false, "items": [
+            {"number": 9, "pull_request": {}}, {"number": 8, "pull_request": {}}]}}),
+    );
+    world.gh(
+        "repos/owner/repo/pulls/9",
+        pull(
+            9,
+            "ken-1",
+            "feat(KEN-1): bundle",
+            "## Completed Issues\n  - Closes KEN-2 - child\n",
+            "2026-10-01T00:00:00Z",
+        ),
+    );
+    world.gh(
+        "repos/owner/repo/pulls/8",
+        pull(
+            8,
+            "claude/notes",
+            "chore: notes",
+            "Follow-up to KEN-2.",
+            "2026-10-01T06:00:00Z",
+        ),
+    );
+    world.gh(
+        "repos/owner/repo/pulls/7",
+        pull(7, "claude/descriptive", "work", "", "2026-09-30T00:00:00Z"),
+    );
+    let clock = FakeClock::new();
+    let settings = world.settings(&[]);
+    let ctx = world.context(settings.clone(), None);
+    let shared = ctx.shared.clone();
+    let mut tracker = tracker::body(ctx);
+    let mut github =
+        github::body(world.github_context(settings.clone(), None, &["owner/repo"], shared.clone()));
+    let lines_slot = verifying::Lines::default();
+    let mut verification = verifying::body(verifying::Context {
+        settings,
+        gh: world.dir.path().join("gh"),
+        shared: shared.clone(),
+        lines: lines_slot.clone(),
+    });
+    let mut baseline = Baseline::default();
+    pass(&mut tracker, &mut baseline, &clock, NOW).unwrap();
+    let read = pass_as(Duty::GitHub, &mut github, &mut baseline, &clock, NOW).unwrap();
+    assert_eq!(rendered(&read), Vec::<String>::new());
+    assert_eq!(
+        baseline.identities(github::MERGED_ROW),
+        Vec::<String>::new()
+    );
+    let merged = shared
+        .lock()
+        .unwrap()
+        .github
+        .as_ref()
+        .unwrap()
+        .merged
+        .clone();
+    assert_eq!(
+        (merged.get("KEN-2"), merged.get("KEN-3")),
+        (
+            Some(&vec!["owner/repo#9".to_owned()]),
+            Some(&vec!["owner/repo#7".to_owned()])
+        ),
+        "{merged:?}"
+    );
+    let calls = world.gh_calls();
+    assert_eq!(
+        calls.iter().filter(|c| c.contains("search/issues")).count(),
+        1,
+        "{calls:?}"
+    );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW,
+    )
+    .unwrap();
+    let said = lines_slot.lock().unwrap().clone();
+    // The deadline counts 72 hours from each merge.
+    for (id, deadline) in [
+        ("KEN-2", "2026-10-04T00:00:00Z"),
+        ("KEN-3", "2026-10-03T00:00:00Z"),
+    ] {
+        assert!(
+            said.iter()
+                .any(|l| l.starts_with(&format!("verifying {id} box=1 "))
+                    && l.contains(&format!(" deadline={deadline} "))),
+            "{id}: {said:?}"
+        );
+    }
+}
+
 /// A stopped lane whose item is Done with every box checked gets one
 /// `close-owned-resources` request, its line prints and the record reads
 /// done; one whose item is Done with an open box stays open; a canceled one
@@ -1473,6 +1616,7 @@ fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
         );
         assert_eq!(said[1], "EVENT lane-closed KEN-1", "{case}: {said:?}");
         assert_eq!(lane["cycle"]["pr"], json!(7), "{case}: {lane}");
+        assert_eq!(lane["cycle"]["repo"], json!("owner/repo"), "{case}: {lane}");
         assert_eq!(lane["status"], "done", "{case}: {lane}");
         let fleet = world.fleet();
         assert!(

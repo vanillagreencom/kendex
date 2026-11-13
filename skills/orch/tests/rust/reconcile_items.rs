@@ -96,6 +96,37 @@ impl World {
             .output()
             .unwrap()
     }
+
+    /// The world as a checkout of `owner/repo`: the github package's real
+    /// resolver installed, which names the repository by the origin remote
+    /// where gh answers nothing. A row that calls this runs in its isolated
+    /// child, whose `gh` on `PATH` refuses.
+    fn checkout(&self) {
+        let libs = self.dir.path().join(".agents/skills/github/scripts/lib");
+        fs::create_dir_all(&libs).unwrap();
+        std::os::unix::fs::symlink(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../github/scripts/lib/gh-repo.sh")
+                .canonicalize()
+                .unwrap(),
+            libs.join("gh-repo.sh"),
+        )
+        .unwrap();
+        assert!(
+            support::program("git")
+                .arg("-C")
+                .arg(self.dir.path())
+                .args([
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/owner/repo.git"
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
 }
 
 fn issue(id: &str, state: &str, kind: &str, desc: &str, parent: Option<&str>) -> Value {
@@ -466,16 +497,21 @@ fn release_item(id: &str) -> Value {
     )
 }
 
-/// A `gh pr list --json state,mergedAt,isCrossRepository,url` row.
-fn merged_pull(number: u64, at: &str) -> Value {
-    json!({"state":"MERGED", "mergedAt":at, "isCrossRepository":false,
-        "url":format!("https://github.com/owner/repo/pull/{number}")})
+/// GitHub's search reply listing the pull requests `numbers`.
+fn search(numbers: &[u64]) -> Value {
+    let items: Vec<Value> = numbers
+        .iter()
+        .map(|n| json!({"number":n, "pull_request":{}}))
+        .collect();
+    json!({"total_count":items.len(), "incomplete_results":false, "items":items})
 }
 
-/// GitHub's `GET /repos/owner/repo/pulls/N` reply, the fields of it the judge reads.
+/// GitHub's `GET /repos/owner/repo/pulls/N` reply, the fields of it the
+/// judge reads: a bundle's pull request on a branch no item names, whose
+/// body closes the child `T-<N>` on an indented line.
 fn rest_pull(number: u64, at: &str, oid: &str) -> Value {
-    json!({"number":number, "state":"closed", "title":"merged work", "body":null, "merged":true, "merged_at":at, "merge_commit_sha":oid,
-        "author_association":"NONE", "head":{"sha":"0000000000000000000000000000000000000000", "ref":"merged-work", "repo":null}, "base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"}, "user":null})
+    json!({"number":number, "state":"closed", "title":"merged work", "body":format!("## Completed Issues\n  - Closes T-{number} - child\n"), "merged":true, "merged_at":at, "merge_commit_sha":oid,
+        "author_association":"NONE", "head":{"sha":"0000000000000000000000000000000000000000", "ref":"bundle", "repo":{"full_name":"owner/repo", "owner":{"login":"owner", "type":"User"}}}, "base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"}, "user":null})
 }
 
 fn release(tag: &str, at: &str) -> Value {
@@ -484,8 +520,8 @@ fn release(tag: &str, at: &str) -> Value {
 
 const OID: &str = "1111111111111111111111111111111111111111";
 
-/// One release world: its items, the files its `gh` answers from
-/// (`pulls.json`, or `pulls-<branch>.json` for one branch; `pull-<number>.json`;
+/// One release world, a checkout of `owner/repo`: its items, the files its
+/// `gh` answers from (`search.json`; `pull-<number>.json`;
 /// `releases-<page>.json`; `compare-<tag>.json`; a missing file is a failed
 /// call), the verb's answer
 /// and the `gh` calls it made.
@@ -503,11 +539,12 @@ fn release_world_named(
     merged: &[&str],
 ) -> (orch_runtime::Result<reconcile::Report>, Vec<String>) {
     let world = World::new(items);
+    world.checkout();
     let dir = world.dir.path();
     let gh = dir.join("gh");
     support::write_executable(
         &gh,
-        "#!/bin/sh\nd=\"${0%/*}\"\nprintf '%s\\n' \"$*\" >>\"$d/gh.log\"\ncase \"$1 $2\" in\n'pr list') f=\"$d/pulls-$6.json\"; [ -f \"$f\" ] || f=\"$d/pulls.json\" ;;\n'api repos/owner/repo/pulls/'*) f=\"$d/pull-${2##*/}.json\" ;;\n'api repos/owner/repo/releases?'*) f=\"$d/releases-${2##*page=}.json\" ;;\n'api repos/owner/repo/compare/'*) f=\"$d/compare-${2##*...}.json\" ;;\n*) exit 1 ;;\nesac\n[ -f \"$f\" ] || { echo 'gh-stub: HTTP 502' >&2; exit 1; }\ncat \"$f\"\n",
+        "#!/bin/sh\nd=\"${0%/*}\"\nprintf '%s\\n' \"$*\" >>\"$d/gh.log\"\ncase \"$1 $2\" in\n'api search/issues?'*) f=\"$d/search.json\" ;;\n'api repos/owner/repo/pulls/'*) f=\"$d/pull-${2##*/}.json\" ;;\n'api repos/owner/repo/releases?'*) f=\"$d/releases-${2##*page=}.json\" ;;\n'api repos/owner/repo/compare/'*) f=\"$d/compare-${2##*...}.json\" ;;\n*) exit 1 ;;\nesac\n[ -f \"$f\" ] || { echo 'gh-stub: HTTP 502' >&2; exit 1; }\ncat \"$f\"\n",
     );
     for (name, value) in files {
         fs::write(dir.join(name), value.to_string()).unwrap();
@@ -522,14 +559,20 @@ fn release_world_named(
     (report, calls)
 }
 
-/// The released release reads, each through the real probe and the shared
-/// judge: the publication that fires the box, the unfired box, a blocker,
-/// every page of the list, a draft, a publication before the merge, a tag
-/// behind the merge commit, one release history shared by every item, and
-/// each read that cannot answer.
+/// The released release reads, each item's merge found by the key search
+/// in the checkout's repository (a bundle child's, closed on its parent's
+/// indented line) and judged by the shared judge: the publication that
+/// fires the box, the unfired box, a blocker, every page of the list, a
+/// draft, a publication before the merge, a tag behind the merge commit,
+/// one release history shared by every item, and each read that cannot
+/// answer.
 #[test]
 fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
-    let pulls = json!([merged_pull(1, "2026-10-01T00:00:00.123Z")]);
+    if !support::isolated_row("release_merge_evidence_from_the_real_probe_reaches_the_shared_judge")
+    {
+        return;
+    }
+    let pulls = search(&[1]);
     let rest = rest_pull(1, "2026-10-01T00:00:00Z", OID);
     let ahead = json!({"status":"ahead"});
     let line = |report: &reconcile::Report, id: &str| {
@@ -540,11 +583,13 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
             .cloned()
             .unwrap_or_default()
     };
-    // A publication after the merge fires the box: its deadline counts from it.
-    let (report, _) = release_world(
+    // A publication after the merge fires the box: its deadline counts from
+    // it. The merge is found by one key search in the checkout's repository
+    // floored at the item's creation, with no branch probe.
+    let (report, calls) = release_world(
         vec![release_item("T-1")],
         &[
-            ("pulls.json", pulls.clone()),
+            ("search.json", pulls.clone()),
             ("pull-1.json", rest.clone()),
             (
                 "releases-1.json",
@@ -563,11 +608,22 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
         "status=due deadline=2026-10-05T00:00:00Z merged=2026-10-01T00:00:00Z blocked_by=-"
     ));
     assert!(report.findings.is_empty(), "{report:?}");
+    let searches: Vec<&String> = calls
+        .iter()
+        .filter(|c| c.starts_with("api search/issues?"))
+        .collect();
+    assert_eq!(searches.len(), 1, "{calls:?}");
+    assert!(
+        searches[0].contains("repo%3Aowner%2Frepo%20")
+            && searches[0].contains("merged%3A%3E%3D2026-09-01T00%3A00%3A00Z"),
+        "{calls:?}"
+    );
+    assert!(!calls.iter().any(|c| c.starts_with("pr ")), "{calls:?}");
     // No release yet: waiting with no deadline, never overdue, the merge kept.
     let (report, _) = release_world(
         vec![release_item("T-1")],
         &[
-            ("pulls.json", pulls.clone()),
+            ("search.json", pulls.clone()),
             ("pull-1.json", rest.clone()),
             ("releases-1.json", json!([])),
         ],
@@ -584,7 +640,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     let (report, _) = release_world(
         vec![blocked],
         &[
-            ("pulls.json", pulls.clone()),
+            ("search.json", pulls.clone()),
             ("pull-1.json", rest.clone()),
             (
                 "releases-1.json",
@@ -605,7 +661,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     let (report, calls) = release_world(
         vec![release_item("T-1")],
         &[
-            ("pulls.json", pulls.clone()),
+            ("search.json", pulls.clone()),
             ("pull-1.json", rest.clone()),
             ("releases-1.json", json!(full)),
             (
@@ -626,7 +682,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     let (report, _) = release_world(
         vec![release_item("T-1")],
         &[
-            ("pulls.json", pulls.clone()),
+            ("search.json", pulls.clone()),
             ("pull-1.json", rest.clone()),
             (
                 "releases-1.json",
@@ -648,7 +704,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     let (report, _) = release_world(
         vec![release_item("T-1")],
         &[
-            ("pulls.json", pulls.clone()),
+            ("search.json", pulls.clone()),
             ("pull-1.json", rest.clone()),
             (
                 "releases-1.json",
@@ -666,15 +722,8 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     let (report, calls) = release_world(
         vec![release_item("T-1"), release_item("T-2")],
         &[
-            (
-                "pulls-t-1.json",
-                json!([merged_pull(1, "2026-10-02T00:00:00Z")]),
-            ),
+            ("search.json", search(&[1, 2])),
             ("pull-1.json", rest_pull(1, "2026-10-02T00:00:00Z", OID)),
-            (
-                "pulls-t-2.json",
-                json!([merged_pull(2, "2026-10-01T00:00:00Z")]),
-            ),
             ("pull-2.json", rest_pull(2, "2026-10-01T00:00:00Z", OID)),
             (
                 "releases-1.json",
@@ -706,16 +755,13 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
         (
             "merged pull",
             "verifying-merge-unread",
-            vec![("pulls.json", pulls.clone())],
+            vec![("search.json", pulls.clone())],
         ),
         (
             "merge commit",
             "verifying-release-unread",
             vec![
-                (
-                    "pulls.json",
-                    json!([merged_pull(1, "2026-10-01T00:00:00Z")]),
-                ),
+                ("search.json", search(&[1])),
                 ("pull-1.json", rest_pull(1, "2026-10-01T00:00:00Z", "abc")),
                 (
                     "releases-1.json",
@@ -727,13 +773,16 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
         (
             "release page",
             "verifying-release-unread",
-            vec![("pulls.json", pulls.clone()), ("pull-1.json", rest.clone())],
+            vec![
+                ("search.json", pulls.clone()),
+                ("pull-1.json", rest.clone()),
+            ],
         ),
         (
             "release fields",
             "verifying-release-unread",
             vec![
-                ("pulls.json", pulls.clone()),
+                ("search.json", pulls.clone()),
                 ("pull-1.json", rest.clone()),
                 (
                     "releases-1.json",
@@ -745,7 +794,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
             "comparison",
             "verifying-release-unread",
             vec![
-                ("pulls.json", pulls.clone()),
+                ("search.json", pulls.clone()),
                 ("pull-1.json", rest.clone()),
                 (
                     "releases-1.json",
@@ -757,7 +806,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
             "comparison status",
             "verifying-release-unread",
             vec![
-                ("pulls.json", pulls.clone()),
+                ("search.json", pulls.clone()),
                 ("pull-1.json", rest.clone()),
                 (
                     "releases-1.json",
@@ -775,9 +824,9 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
             "{case}"
         );
     }
-    // A merge on another branch, which the branch probe cannot find, named
-    // by the reader: the boxes count from the latest named merge, read from
-    // GitHub, and the probe is not asked.
+    // A merge the key search cannot find, named by the reader: the boxes
+    // count from the latest named merge, read from GitHub, and no search is
+    // made.
     let releases = (
         "releases-1.json",
         json!([release("v1", "2026-10-02T00:00:00Z")]),
@@ -785,7 +834,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     let (report, calls) = release_world_named(
         vec![release_item("T-1")],
         &[
-            ("pulls.json", json!([])),
+            ("search.json", search(&[])),
             ("pull-7.json", rest_pull(7, "2026-09-30T00:00:00Z", OID)),
             ("pull-8.json", rest_pull(8, "2026-10-01T00:00:00Z", OID)),
             releases.clone(),
@@ -801,11 +850,14 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
         "{report:?}"
     );
     assert!(report.findings.is_empty(), "{report:?}");
-    assert!(!calls.iter().any(|c| c.starts_with("pr list")), "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.starts_with("api search/")),
+        "{calls:?}"
+    );
     // A named pull request whose read fails refuses, its item named.
     let (report, _) = release_world_named(
         vec![release_item("T-1")],
-        &[("pulls.json", pulls.clone())],
+        &[("search.json", pulls.clone())],
         &["T-1=owner/repo#9"],
     );
     let err = report.unwrap_err();
@@ -829,7 +881,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     ] {
         let (report, calls) = release_world_named(
             vec![release_item("T-1"), started.clone()],
-            &[("pulls.json", pulls.clone())],
+            &[("search.json", pulls.clone())],
             &[merged],
         );
         let err = report.expect_err(merged);
@@ -1056,6 +1108,11 @@ fn completed_checklists_from_the_real_completion_owner_leave_no_findings() {
 
 #[test]
 fn a_missing_merge_stays_a_finding_but_a_failed_verification_read_refuses() {
+    if !support::isolated_row(
+        "a_missing_merge_stays_a_finding_but_a_failed_verification_read_refuses",
+    ) {
+        return;
+    }
     let world = World::new(vec![issue(
         "T-1",
         "Verifying",
@@ -1063,8 +1120,12 @@ fn a_missing_merge_stays_a_finding_but_a_failed_verification_read_refuses() {
         "## Done when\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: +24h",
         None,
     )]);
+    world.checkout();
     let gh = world.dir.path().join("gh");
-    support::write_executable(&gh, "#!/bin/sh\nprintf '[]\\n'\n");
+    support::write_executable(
+        &gh,
+        "#!/bin/sh\nprintf '{\"total_count\":0,\"incomplete_results\":false,\"items\":[]}\\n'\n",
+    );
     let report = reconcile::run(&world.settings(&[]), None, &[], Some(&gh), NOW).unwrap();
     assert!(kinds(&report).contains(&("verifying-merge-unread", "T-1")));
     assert!(report.lines.is_empty());

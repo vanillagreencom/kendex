@@ -1,6 +1,7 @@
 //! The GitHub read duty, one
 //! body on `Duty::GitHub` on the long cadence after the tracker: the
-//! merged index of every lane item, the parked dependency's state, the
+//! merged index of every lane item and Verifying item, the parked
+//! dependency's state, the
 //! refresh workflow's last runs, the main branch's push and nightly runs
 //! and their budget warnings, the reducer pass (`pr_watch`), the outside
 //! contributions (`outside`) and the security alerts (`security`), each
@@ -50,7 +51,7 @@ use crate::verify::{
 use crate::watch::{Baseline, Body, Change, Event, Produced, Tick};
 
 use super::owner_alert::{self, Word};
-use super::tracker::{Shared, TerminalState};
+use super::tracker::{Shared, TerminalState, VerifyingItem};
 use super::{outside, pr_watch, security};
 
 /// The start-counter tag every GitHub call is counted under.
@@ -133,6 +134,9 @@ pub struct Inputs<'a> {
     /// The tracker's terminal state of each lane item it answered for on
     /// its last pass, which the parked-merged hand consults.
     pub terminal: &'a BTreeMap<String, TerminalState>,
+    /// The tracker's Verifying items of its last pass: the merged index
+    /// also holds the landing of each one no live lane carries.
+    pub verifying: &'a [VerifyingItem],
     /// The merged search's floor as an epoch second and its ISO form.
     pub since: Option<u64>,
     pub since_iso: Option<&'a str>,
@@ -666,6 +670,96 @@ fn merge_items(lanes: &[Lane]) -> Vec<MergeItem> {
     out
 }
 
+/// A lane's recorded pull request as `(repo, number)`: its park, else its
+/// pending pull request, else its cycle's, the first record naming both.
+fn recorded(lane: &Lane) -> Option<(String, u64)> {
+    ["parked", "pending_pr", "cycle"].iter().find_map(|key| {
+        let record = lane.extra.get(*key)?;
+        let repo = record.get("repo")?.as_str()?;
+        Some((repo.to_ascii_lowercase(), record.get("pr")?.as_u64()?))
+    })
+}
+
+/// An item whose landing [`landings`] reads: the floor its merges are
+/// judged at (its creation; `None` is unbounded) and the pull request a
+/// lane record names for it.
+pub(crate) struct Landing<'a> {
+    pub item: &'a str,
+    pub floor: Option<u64>,
+    pub recorded: Option<(String, u64)>,
+}
+
+/// The items one key search names: GitHub's search rate limit is shared
+/// with every other search of the pass.
+const LANDING_BATCH: usize = 3;
+
+/// Each item's merged pull requests at or after its floor as `<repo>#<n>`
+/// keys, an item with none absent. A recorded pull request is read by
+/// number and no search is made for its item; the others are searched per
+/// repository, three items to a query naming each by its head branch or
+/// its key in title or body, floored at the earliest of their floors, each
+/// hit read by number and judged by the lane-own rule.
+pub(crate) fn landings(
+    gh: &Gh,
+    repos: &[String],
+    items: &[Landing],
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut take = |landing: &Landing, repo: &str, pull: &Pull, pr: Option<u64>| {
+        let owner = repo.split('/').next().unwrap_or(repo);
+        if lane_own(pull, landing.item, owner, pr) && merged_at(pull, landing.floor).is_some() {
+            let key = format!("{repo}#{}", pull.number);
+            let keys = out.entry(landing.item.to_owned()).or_default();
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    };
+    let read = |repo: &str, number: u64| -> Result<Pull> {
+        let path = format!("repos/{repo}/pulls/{number}");
+        gh.object::<Pull>("merged", &path)?
+            .ok_or_else(|| refused("github-read-failed", &[("read", "merged"), ("path", &path)]))
+    };
+    let mut searched = Vec::new();
+    for landing in items {
+        match &landing.recorded {
+            Some((repo, pr)) => take(landing, repo, &read(repo, *pr)?, Some(*pr)),
+            None => searched.push(landing),
+        }
+    }
+    for repo in repos {
+        for batch in searched.chunks(LANDING_BATCH) {
+            let floor = batch
+                .iter()
+                .map(|l| l.floor)
+                .collect::<Option<Vec<u64>>>()
+                .and_then(|floors| floors.into_iter().min())
+                .map(|at| format!("merged:>={} ", clock::iso_utc(at)))
+                .unwrap_or_default();
+            let terms: Vec<String> = batch
+                .iter()
+                .map(|l| format!("(head:{} OR \"{}\")", l.item.to_ascii_lowercase(), l.item))
+                .collect();
+            let query = format!(
+                "repo:{repo} is:pr is:merged {floor}({}) in:title,body",
+                terms.join(" OR ")
+            );
+            let path = format!("search/issues?q={}", verify::segment(&query));
+            let names: Vec<&str> = batch.iter().map(|l| l.item).collect();
+            for hit in search(gh, &path, repo, &names.join(","))? {
+                if hit.pull_request.present().is_none() {
+                    continue;
+                }
+                let pull = read(repo, hit.number)?;
+                for &landing in batch {
+                    take(landing, repo, &pull, None);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// The repositories the lane inventories read: the caller's, the lanes'
 /// and the connected ones, lowercased, in that order, once each.
 fn repositories(inputs: &Inputs) -> Vec<String> {
@@ -868,18 +962,22 @@ fn sign_in_text(words: &str) -> String {
 
 fn pass_reads(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
     let (fleet, verdicts) = load_fleet(&ctx.fleet)?;
-    let terminal = ctx
-        .shared
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .terminal
-        .clone();
+    let (terminal, verifying) = {
+        let latest = ctx.shared.lock().unwrap_or_else(|p| p.into_inner());
+        let verifying = latest
+            .tracker
+            .as_ref()
+            .map(|t| t.verifying.clone())
+            .unwrap_or_default();
+        (latest.terminal.clone(), verifying)
+    };
     let gh = handle(&ctx.gh);
     let inputs = Inputs {
         repos: &ctx.repos,
         settings: &ctx.settings,
         lanes: &fleet.lanes,
         terminal: &terminal,
+        verifying: &verifying,
         since: ctx.since,
         since_iso: ctx.since_iso.as_deref(),
         now: tick.wall,
@@ -1037,6 +1135,7 @@ pub(super) fn merged_keys(
         settings,
         lanes: std::slice::from_ref(lane),
         terminal: &terminal,
+        verifying: &[],
         since,
         since_iso,
         now,
@@ -1175,8 +1274,25 @@ fn merged(
             parked_merged(&entry.item, parked_key, produced);
         }
     }
-    // The rows pruned to the items carried and the refresh row.
+    // A Verifying item no live lane carries has its landing in the index the
+    // verification pass reads, with no line and no row: no lane waits on it.
     let carried: BTreeSet<&str> = items.iter().map(|e| e.item.as_str()).collect();
+    let uncarried: Vec<Landing> = inputs
+        .verifying
+        .iter()
+        .filter(|v| !carried.contains(v.id.as_str()))
+        .map(|v| Landing {
+            item: &v.id,
+            floor: super::tracker::stamp_epoch(&v.created_at),
+            recorded: inputs
+                .lanes
+                .iter()
+                .rfind(|l| l.item == v.id)
+                .and_then(recorded),
+        })
+        .collect();
+    inventory.merged.extend(landings(gh, repos, &uncarried)?);
+    // The rows pruned to the items carried and the refresh row.
     for identity in baseline.identities(MERGED_ROW) {
         if !carried.contains(identity.as_str()) && identity != REFRESH_ITEM {
             produced.changes.push(Change::Clear {
@@ -1278,8 +1394,8 @@ pub(super) struct Completion {
 /// The lane items' own pull requests merged at or after `since` and before
 /// `until`, oldest first: one search per repository for its merges since
 /// the floor, bounded by the search endpoint's cap, each hit read by number
-/// and judged by the lane-own rule for every item, its parked pull request
-/// counted where the park names this repository.
+/// and judged by the lane-own rule for every item, the lane's recorded pull
+/// request ([`recorded`]) counted where its record names this repository.
 pub(super) fn report_merges(
     gh: &Gh,
     repos: &[String],
@@ -1308,16 +1424,9 @@ pub(super) fn report_merges(
                 continue;
             };
             for lane in lanes {
-                let parked = lane
-                    .extra
-                    .get("parked")
-                    .filter(|p| {
-                        p.get("repo")
-                            .and_then(Value::as_str)
-                            .is_some_and(|r| r.eq_ignore_ascii_case(repo))
-                    })
-                    .and_then(|p| p.get("pr"))
-                    .and_then(Value::as_u64);
+                let pr = recorded(lane)
+                    .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
+                    .map(|(_, number)| number);
                 let row = Completion {
                     item: lane.item.clone(),
                     repo: repo.clone(),
@@ -1325,7 +1434,7 @@ pub(super) fn report_merges(
                     at,
                     title: pull.title.clone(),
                 };
-                if lane_own(&pull, &lane.item, owner, parked) && !rows.contains(&row) {
+                if lane_own(&pull, &lane.item, owner, pr) && !rows.contains(&row) {
                     rows.push(row);
                 }
             }

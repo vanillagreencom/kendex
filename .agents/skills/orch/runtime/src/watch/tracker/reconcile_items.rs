@@ -4,6 +4,7 @@ use super::{Answered, Linear, TRACKER_TIMEOUT, invalid, is_word, refused, stamp_
 use crate::error::Result;
 use crate::settings::Settings;
 use crate::verify::{Answer, Gh};
+use crate::watch::github::{self, Landing};
 use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::verifying::{self, Item};
 use agent_runtime::host;
@@ -33,7 +34,6 @@ struct Pull {
     merged_at: Option<String>,
     #[serde(rename = "isCrossRepository")]
     cross_repository: bool,
-    url: Option<String>,
 }
 
 struct Pulls {
@@ -41,7 +41,6 @@ struct Pulls {
     merged: usize,
     unmerged: usize,
     latest: Option<String>,
-    keys: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,7 +99,7 @@ fn pulls(gh: &Path, cwd: &Path, id: &str) -> std::result::Result<Pulls, String> 
             "--head",
             &id.to_ascii_lowercase(),
             "--json",
-            "state,mergedAt,isCrossRepository,url",
+            "state,mergedAt,isCrossRepository",
         ],
         None,
     )
@@ -115,7 +114,6 @@ fn pulls(gh: &Path, cwd: &Path, id: &str) -> std::result::Result<Pulls, String> 
         merged: 0,
         unmerged: 0,
         latest: None,
-        keys: Vec::new(),
     };
     let mut latest = None;
     let mut rows: Vec<Pull> = rows
@@ -133,21 +131,6 @@ fn pulls(gh: &Path, cwd: &Path, id: &str) -> std::result::Result<Pulls, String> 
                 if latest.is_none_or(|at| epoch > at) {
                     latest = Some(epoch);
                     found.latest = Some(stamp.to_owned());
-                }
-                if let Some((repo, number)) = row
-                    .url
-                    .as_deref()
-                    .and_then(|url| url.strip_prefix("https://github.com/"))
-                    .and_then(|tail| tail.split_once("/pull/"))
-                    .filter(|(repo, number)| {
-                        repo.split('/').count() == 2 && number.parse::<u64>().is_ok()
-                    })
-                {
-                    // The judge reads the pull request's own reply for its
-                    // merge and merge commit.
-                    found
-                        .keys
-                        .push(format!("{}#{number}", repo.to_ascii_lowercase()));
                 }
             }
             "CLOSED" => found.unmerged += 1,
@@ -182,9 +165,9 @@ pub fn repository(project: &Path) -> Result<()> {
 }
 
 /// The merged pull requests a reader names, `ITEM=OWNER/REPO#N` each, by
-/// item: that item's merge evidence in place of the branch probe's, for a
-/// merge the probe cannot find (a pull request on another branch or in
-/// another repository).
+/// item: that item's merge evidence in place of the key search's, for a
+/// merge the search cannot find (a pull request that names no item, or one
+/// in a repository the fleet does not connect).
 fn named_merges(merged: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
     let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for value in merged {
@@ -202,6 +185,21 @@ fn named_merges(merged: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
         named.entry(item).or_default().push(key);
     }
     Ok(named)
+}
+
+/// The merges of `items` in the checkout's repository and the connected
+/// ones ([`github::landings`]); a failed read is its cause, which refuses
+/// only an item whose boxes need its merge.
+fn landed(
+    settings: &Settings,
+    gh: &Path,
+    items: &[Landing],
+) -> std::result::Result<BTreeMap<String, Vec<String>>, String> {
+    let project = &settings.roots.project;
+    let own = crate::repo::of(&crate::repo::resolver(project), project)
+        .map_err(|unread| format!("repo-unread {unread}"))?;
+    let repos = settings.reads.watched([own.as_str()]);
+    github::landings(&github::handle(gh), &repos, items).map_err(|e| e.to_string())
 }
 
 pub fn run(
@@ -279,6 +277,21 @@ pub fn run(
         shared: Shared::default(),
         lines: verifying::Lines::default(),
     };
+    let unnamed: Vec<Landing> = items
+        .iter()
+        .filter(|i| containers.contains(&i.id) || i.state == "Verifying")
+        .filter(|i| !named.contains_key(&i.id))
+        .map(|i| Landing {
+            item: &i.id,
+            floor: stamp_epoch(&i.created_at),
+            recorded: None,
+        })
+        .collect();
+    let landings = if unnamed.is_empty() {
+        Ok(BTreeMap::new())
+    } else {
+        landed(settings, gh, &unnamed)
+    };
     let mut report = Report::default();
     let mut read = BTreeMap::new();
     for item in &items {
@@ -303,11 +316,9 @@ pub fn run(
         let started = item.state_type == "started"
             && item.state != "Verifying"
             && (item.state == "In Review" || age.is_some_and(|h| h >= i128::from(stale_hours)));
-        let named_keys = named.get(&item.id);
-        let prs = (started || (verifying && named_keys.is_none()))
-            .then(|| pulls(gh, &settings.roots.project, &item.id));
         if started {
-            let evidence = match prs.as_ref().expect("a probed item") {
+            let prs = pulls(gh, &settings.roots.project, &item.id);
+            let evidence = match &prs {
                 Ok(prs) => Some(prs),
                 Err(cause) => {
                     report.note("pr-probe-failed", item, json!({"cause":cause}));
@@ -334,12 +345,14 @@ pub fn run(
         }
         if verifying {
             report.counts.items += 1;
-            let probe = named_keys.is_none().then_some(prs.as_ref()).flatten();
+            let named_keys = named.get(&item.id);
+            let searched = named_keys.is_none().then_some(&landings);
             let keys = match named_keys {
                 Some(keys) => Some(keys.as_slice()),
-                None => probe
-                    .and_then(|p| p.as_ref().ok())
-                    .map(|p| p.keys.as_slice()),
+                None => landings
+                    .as_ref()
+                    .ok()
+                    .map(|found| found.get(&item.id).map_or(&[][..], Vec::as_slice)),
             };
             let verifying_item = VerifyingItem {
                 id: item.id.clone(),
@@ -362,7 +375,7 @@ pub fn run(
                 Item::Unread { key, cause } => {
                     // A read that failed has its cause; a merge no read
                     // found has none and is a finding.
-                    let failed = probe.and_then(|p| p.as_ref().err());
+                    let failed = searched.and_then(|s| s.as_ref().err());
                     if !cause.is_empty() || failed.is_some() {
                         let cause = failed.unwrap_or(&cause);
                         return Err(refused(key, &[("issue", &item.id), ("cause", cause)]));
