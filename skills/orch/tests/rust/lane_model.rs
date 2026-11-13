@@ -622,12 +622,18 @@ fn item_record(runner: &Runner, handoff_session: &str, bound: &Value) -> std::pa
     path
 }
 
-fn predecessor_stop(file: &Path, launch_identity: &Value, job: bool) -> Value {
+/// The leader a gone predecessor's group record names.
+fn gone_leader() -> Value {
+    json!({"pid": GONE_PID, "start": "ticks:1"})
+}
+
+fn predecessor_stop(file: &Path, launch_identity: &Value, leader: &Value, job: bool) -> Value {
     let mut request = json!({
         "op": "stop-model-predecessor",
         "session": "current",
         "launch_identity": launch_identity,
         "file": file.display().to_string(),
+        "leader": leader,
     });
     if job {
         request["job"] = json!(true);
@@ -690,7 +696,11 @@ fn a_failed_predecessor_stop_is_kept_on_the_handoff_bound_to_its_launch() {
         let file = runner.state_dir().join("lane-host-pid");
         std::fs::write(&file, group).unwrap();
         let request = runner.state_dir().join("stop.json");
-        std::fs::write(&request, predecessor_stop(&file, &bound, true).to_string()).unwrap();
+        std::fs::write(
+            &request,
+            predecessor_stop(&file, &bound, &gone_leader(), true).to_string(),
+        )
+        .unwrap();
         let out = runner.run(&[
             "op",
             "--file",
@@ -763,7 +773,11 @@ fn a_predecessor_stop_that_cannot_start_is_refused_to_its_caller() {
         plant(runner.state_dir());
         let file = runner.state_dir().join("lane-host-pid");
         let request = runner.state_dir().join("stop.json");
-        std::fs::write(&request, predecessor_stop(&file, &bound, false).to_string()).unwrap();
+        std::fs::write(
+            &request,
+            predecessor_stop(&file, &bound, &gone_leader(), false).to_string(),
+        )
+        .unwrap();
         let out = runner.run_env(
             &[
                 "op",
@@ -815,10 +829,10 @@ fn the_predecessor_stopper_runs_outside_the_group_it_stops() {
     let path = item_record(&runner, "current", &bound);
     let file = work.join("lane-host-pid");
     let request = work.join("stop.json");
-    std::fs::write(&request, predecessor_stop(&file, &bound, false).to_string()).unwrap();
     let mut bystander = program("sleep").arg("60").spawn().unwrap();
     let member = work.join("member.pid");
     let answer = work.join("reply.json");
+    let go = work.join("go");
     let mut command = program(agent_runtime());
     runner.apply_env(&mut command);
     let mut group = command
@@ -832,10 +846,11 @@ fn the_predecessor_stopper_runs_outside_the_group_it_stops() {
         .args([
             "bash",
             "-c",
-            "sleep 60 & printf '%s' \"$!\" > \"$1\"; shift; \"$@\" > \"$0\"; wait",
+            "sleep 60 & printf '%s' \"$!\" > \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.05; done; shift 2; \"$@\" > \"$0\"; wait",
         ])
         .arg(&answer)
         .arg(&member)
+        .arg(&go)
         .arg(binary())
         .args([
             "--no-private-env",
@@ -847,6 +862,27 @@ fn the_predecessor_stopper_runs_outside_the_group_it_stops() {
         .current_dir(&work)
         .spawn()
         .unwrap();
+    // The caller's request names the leader its member read answered: the
+    // one the group's record names once the lead wrote it.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let leader: Value = loop {
+        if let Ok(text) = std::fs::read_to_string(&file)
+            && let Ok(leader) = serde_json::from_str(&text)
+        {
+            break leader;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the group's record was never written"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    std::fs::write(
+        &request,
+        predecessor_stop(&file, &bound, &leader, false).to_string(),
+    )
+    .unwrap();
+    std::fs::write(&go, "").unwrap();
     let deadline = Instant::now() + Duration::from_secs(60);
     let status = loop {
         if let Some(status) = group.try_wait().unwrap() {
@@ -886,6 +922,59 @@ fn the_predecessor_stopper_runs_outside_the_group_it_stops() {
     }
     let doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert!(doc["handoff"]["stop_failure"].is_null(), "{doc}");
+}
+
+/// The stop job's own run where the group's record names another leader
+/// than the one the switch read, as a replacement's launch writes it once
+/// the predecessor's group is gone: it stops nothing, and the failure is
+/// `identity-stale`, kept on the handoff.
+#[test]
+fn a_predecessor_stop_whose_record_names_another_leader_stops_nothing() {
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-record");
+    let bound =
+        json!({"launch": {"pid": 41, "start": "ticks:41"}, "launched_at": "2026-11-12T10:00:00Z"});
+    let path = item_record(&runner, "current", &bound);
+    let replacement = Owned(
+        program("sleep")
+            .arg("600")
+            .process_group(0)
+            .spawn()
+            .unwrap(),
+    );
+    let file = runner.state_dir().join("lane-host-pid");
+    std::fs::write(
+        &file,
+        json!({"pid": replacement.pid(), "start": start_of(replacement.pid())}).to_string(),
+    )
+    .unwrap();
+    let request = runner.state_dir().join("stop.json");
+    std::fs::write(
+        &request,
+        predecessor_stop(&file, &bound, &gone_leader(), true).to_string(),
+    )
+    .unwrap();
+    let out = runner.run(&[
+        "op",
+        "--file",
+        &path.display().to_string(),
+        "--request",
+        &request.display().to_string(),
+    ]);
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "model-predecessor-unstopped", "{}", stderr(&out));
+    assert_eq!(field(&fields, "cause"), "identity-stale");
+    assert!(
+        live(replacement.pid()),
+        "the replacement's group was stopped"
+    );
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        doc["handoff"]["stop_failure"]["cause"], "identity-stale",
+        "{doc}"
+    );
 }
 
 /// The runtime's entry a recovery's job runs, as a stand-in installed
@@ -1109,7 +1198,11 @@ fn a_predecessor_stop_whose_item_record_is_gone_is_refused_unrecorded() {
     let file = runner.state_dir().join("lane-host-pid");
     std::fs::write(&file, "not a group record").unwrap();
     let request = runner.state_dir().join("stop.json");
-    std::fs::write(&request, predecessor_stop(&file, &bound, true).to_string()).unwrap();
+    std::fs::write(
+        &request,
+        predecessor_stop(&file, &bound, &gone_leader(), true).to_string(),
+    )
+    .unwrap();
     let out = runner.run(&[
         "op",
         "--file",

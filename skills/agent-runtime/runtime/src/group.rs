@@ -189,8 +189,8 @@ fn lead_checked(
 
 /// The recorded group's reading: `live` with the leader's identity and the
 /// count of its members, `gone`, or `unreadable` with the cause; with
-/// `member`, whether that pid is in the recorded group. No record reads
-/// `gone`.
+/// `member`, whether that pid is the group's ([`descends_into`]). No record
+/// reads `gone`.
 pub fn reading(path: &Path, member: Option<u32>) -> Result<Value> {
     let Some(leader) = read(path)? else {
         return Ok(with_member(
@@ -198,19 +198,40 @@ pub fn reading(path: &Path, member: Option<u32>) -> Result<Value> {
             member.map(|_| false),
         ));
     };
-    Ok(match process::group_members(&leader) {
+    Ok(match process::group_table(&leader) {
         Reading::Live(rows) => with_member(
             json!({
                 "reading": "live",
                 "pid": leader.pid,
                 "start": leader.start,
-                "members": rows.len(),
+                "members": rows.iter().filter(|row| row.pgrp == leader.pid).count(),
             }),
-            member.map(|pid| rows.iter().any(|row| row.pid == pid)),
+            member.map(|pid| descends_into(&rows, pid, leader.pid)),
         ),
         Reading::Gone => with_member(json!({"reading": "gone"}), member.map(|_| false)),
         Reading::Unreadable { cause } => json!({"reading": "unreadable", "cause": cause}),
     })
+}
+
+/// Whether `pid` is the group `group`'s, read from one table: it or one of
+/// its ancestors is a member. A hook is a child its harness waits for, and
+/// the harness is the member, so the answer holds whether a harness runs its
+/// hook in its own group or in a new one. The walk ends at pid 1 or at a
+/// process the table does not hold, either of which is no member.
+fn descends_into(rows: &[process::Row], pid: u32, group: u32) -> bool {
+    let by_pid: std::collections::HashMap<u32, &process::Row> =
+        rows.iter().map(|row| (row.pid, row)).collect();
+    let mut next = pid;
+    for _ in 0..=rows.len() {
+        let Some(row) = by_pid.get(&next).filter(|_| next > 1) else {
+            return false;
+        };
+        if row.pgrp == group {
+            return true;
+        }
+        next = row.ppid;
+    }
+    false
 }
 
 fn with_member(mut value: Value, member: Option<bool>) -> Value {

@@ -106,6 +106,9 @@ fn jarvis_marks(
         gap(turn, reason);
         return Ok(());
     }
+    // The setting is judged before the reading, so a value out of its form
+    // is told in the one form every seat is told, never as a reading's fault.
+    judge.context_share(turn)?;
     match judge.read_and_record(turn, &judge.mailbox)? {
         Reading::Measured {
             tokens,

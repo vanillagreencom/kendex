@@ -5,9 +5,11 @@
 //! unavailable model is handed to the session once per session. The
 //! controller's acquired switch is marked started before its recovery, then
 //! recovered on its own launch's model: the successor, the handoff snapshot
-//! and the transfer's job. A lane's acquired switch waits for its own
-//! recovery start, and a lane no fleet record names for the member read of
-//! its process group.
+//! and the transfer's job. A fleet lane's acquired switch writes the handoff
+//! its replacement resumes from and starts its recovery in process. A
+//! hosted lane, which no fleet record names, is judged only where its turn
+//! end is its recorded process group's: the check, the start mark and the
+//! handoff on its item record, then its predecessor stop's job.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -24,15 +26,17 @@ use agent_runtime::record::{self, Locking};
 use serde_json::{Value, json};
 
 use super::agents;
-use super::answer::{self, Harness, Hosted, Said};
+use super::answer::{self, Harness, Hosted, Recovered, Said};
 use super::identity::Lane;
 use super::marks;
 use super::payload::Payload;
 use super::role::{Binding, Kind};
 use super::{Answer, Flow, Turn, Vars};
 use crate::marker;
+use crate::ops::lane_model::{RecoverLaneModel, StopModelPredecessor};
 use crate::ops::store::{self, ModelCheck, Write};
 use crate::ops::successor;
+use crate::ops::{self, Request};
 use crate::protocol::Reply;
 use crate::settings::Settings;
 use crate::state;
@@ -75,6 +79,9 @@ struct Switch<'a> {
     item: String,
     session: &'a str,
     observed: &'a str,
+    /// Whether the switch's own settings read the private env file, which
+    /// a program it starts of this binary reads alike.
+    private_env: bool,
 }
 
 /// The switch a lead's `PostModelSwitch` names (a subagent's passed before
@@ -115,8 +122,9 @@ pub(super) fn switch(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payloa
         item,
         session: &payload.session,
         observed: &payload.observed,
+        private_env: vars.private_env,
     };
-    judged.judge(turn, vars, payload, &seat)
+    judged.judge(turn, vars, lane, payload, &seat)
 }
 
 /// A replacement's first Stop: a native resume keeps the session id, so no
@@ -293,6 +301,23 @@ pub(super) fn account_mark(
 /// native identity file a hosted provider records; `None` for a local lane,
 /// and the cause where the record stands and cannot be read.
 fn hosted(lane: &Lane, harness: Harness, model: &str) -> Result<Option<Hosted>, String> {
+    let Some(record) = launch_record(lane)? else {
+        return Ok(None);
+    };
+    if identity_file(&record).is_none() {
+        return Ok(None);
+    }
+    Ok(Some(match harness {
+        Harness::Pi if model.starts_with("anthropic/") => Hosted::PiGrant,
+        Harness::Pi => Hosted::Pi,
+        Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Unlisted => Hosted::Claude,
+    }))
+}
+
+/// The lane's launch record where one stands as a regular file, not a
+/// link; `None` for a lane with no launch directory or none for its item,
+/// and the cause, naming the record, where it stands and cannot be read.
+fn launch_record(lane: &Lane) -> Result<Option<serde_json::Map<String, Value>>, String> {
     let (Some(common), Some(item)) = (&lane.common, &lane.item) else {
         return Ok(None);
     };
@@ -307,15 +332,27 @@ fn hosted(lane: &Lane, harness: Harness, model: &str) -> Result<Option<Hosted>, 
     let Value::Object(record) = record else {
         return Err(unread(&"no launch record object"));
     };
-    let identity = record.get("identity_file").and_then(Value::as_str);
-    if !identity.is_some_and(|file| file.starts_with('/')) {
-        return Ok(None);
-    }
-    Ok(Some(match harness {
-        Harness::Pi if model.starts_with("anthropic/") => Hosted::PiGrant,
-        Harness::Pi => Hosted::Pi,
-        Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Unlisted => Hosted::Claude,
-    }))
+    Ok(Some(record))
+}
+
+/// The absolute identity file a launch record names: the process group a
+/// hosted provider's launch recorded, which makes the lane a hosted one.
+fn identity_file(record: &serde_json::Map<String, Value>) -> Option<&str> {
+    record
+        .get("identity_file")
+        .and_then(Value::as_str)
+        .filter(|file| file.starts_with('/'))
+}
+
+/// A hosted lane's switch as its member read found it: the launch record
+/// with the session and the leader's launch, the item record the switch is
+/// kept on, the handoff standing there, the group record and its leader.
+struct Hosting {
+    entry: Value,
+    record: PathBuf,
+    prior: Option<Value>,
+    file: PathBuf,
+    leader: agent_runtime::process::Identity,
 }
 
 /// The account a Pi lane spends, by the provider its model names; the cause
@@ -498,36 +535,50 @@ impl Switch<'_> {
         record::fleet_path(&self.settings.state_dir)
     }
 
-    fn judge(&self, turn: &mut Turn, vars: &Vars, payload: &Payload, seat: &Seat) -> Flow {
+    fn judge(
+        &self,
+        turn: &mut Turn,
+        vars: &Vars,
+        lane: &Lane,
+        payload: &Payload,
+        seat: &Seat,
+    ) -> Flow {
         let fleet = self.fleet();
-        if matches!(seat, Seat::Lane(_)) && std::fs::symlink_metadata(&fleet).is_err() {
-            return Ok(());
-        }
-        let doc = match store::read(&fleet) {
-            Ok(doc) => doc,
-            Err(_) => return self.unavailable(turn, "launch-unread", ""),
-        };
-        let (entry, place) = match seat {
-            Seat::Lane(item) => {
-                let entry = doc
-                    .get("lanes")
-                    .and_then(Value::as_array)
-                    .and_then(|lanes| {
-                        lanes
-                            .iter()
-                            .find(|l| l.get("item").and_then(Value::as_str) == Some(item))
-                    })
-                    .cloned();
-                (entry, Place::Lane(item.clone()))
-            }
-            Seat::Controller => (
-                doc.get(MEMBER).filter(|m| m.is_object()).cloned(),
-                Place::Controller,
-            ),
-        };
-        let Some(entry) = entry else {
-            return self.unavailable(turn, "launch-missing", "");
-        };
+        let (entry, place, record, hosting) =
+            if matches!(seat, Seat::Lane(_)) && std::fs::symlink_metadata(&fleet).is_err() {
+                let Some(hosting) = self.hosting(turn, lane)? else {
+                    return Ok(());
+                };
+                let entry = hosting.entry.clone();
+                (entry, Place::Item, hosting.record.clone(), Some(hosting))
+            } else {
+                let doc = match store::read(&fleet) {
+                    Ok(doc) => doc,
+                    Err(_) => return self.unavailable(turn, "launch-unread", ""),
+                };
+                let (entry, place) = match seat {
+                    Seat::Lane(item) => {
+                        let entry = doc
+                            .get("lanes")
+                            .and_then(Value::as_array)
+                            .and_then(|lanes| {
+                                lanes
+                                    .iter()
+                                    .find(|l| l.get("item").and_then(Value::as_str) == Some(item))
+                            })
+                            .cloned();
+                        (entry, Place::Lane(item.clone()))
+                    }
+                    Seat::Controller => (
+                        doc.get(MEMBER).filter(|m| m.is_object()).cloned(),
+                        Place::Controller,
+                    ),
+                };
+                let Some(entry) = entry else {
+                    return self.unavailable(turn, "launch-missing", "");
+                };
+                (entry, place, fleet.clone(), None)
+            };
         if let Place::Lane(_) = place {
             let server = match vars.tmux_pane {
                 None => String::new(),
@@ -589,7 +640,7 @@ impl Switch<'_> {
                     check: check.clone(),
                     expected: expected.0.clone(),
                 });
-                store::run_write(&fleet, Locking::FLOCK, &self.settings.store, &env, &write)
+                store::run_write(&record, Locking::FLOCK, &self.settings.store, &env, &write)
                     .map_err(|e| e.to_string())
             }
         };
@@ -605,8 +656,271 @@ impl Switch<'_> {
         }
         match place {
             Place::Controller => self.recover(turn, payload, &entry, &check, &env),
-            Place::Lane(_) | Place::Item => Ok(()),
+            Place::Lane(item) => {
+                self.recover_lane(turn, lane, payload, &item, &entry, &check, &env)
+            }
+            Place::Item => match hosting {
+                Some(hosting) => self.recover_item(turn, lane, payload, hosting, &check, &env),
+                None => unreachable!("a check at the item place is a hosted switch's"),
+            },
         }
+    }
+
+    /// A fleet lane's acquired switch: the handoff its replacement resumes
+    /// from, then its recovery started in process, once whatever it answers.
+    /// A handoff that cannot be written is told and the recovery still
+    /// starts, since the replacement resumes the item's workflow state either
+    /// way; a recovery that refuses is told in one form with its key line,
+    /// under the handoff's notice where both failed. Each is told once per
+    /// session through the item's slot.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the switch's own judgement and the turn, lane, payload, check and environment it was taken under"
+    )]
+    fn recover_lane(
+        &self,
+        turn: &mut Turn,
+        lane: &Lane,
+        payload: &Payload,
+        item: &str,
+        entry: &Value,
+        check: &Check,
+        env: &Env,
+    ) -> Flow {
+        let handoff = match self.handoff_place() {
+            Ok((path, prior)) => self
+                .handoff_request(turn, lane, payload, prior, &check.launched)?
+                .and_then(|request| apply_handoff(&path, self.root, &self.settings, &request, env)),
+            Err(words) => Err(words),
+        };
+        let request = RecoverLaneModel {
+            item: item.to_owned(),
+            session: self.session.to_owned(),
+            launch_identity: rule::launch_of(&Place::Lane(item.to_owned()), entry),
+            mark: None,
+            limit: None,
+        };
+        let started = crate::effects::lane_model::start(
+            &self.settings,
+            &self.fleet(),
+            &request,
+            env,
+            Locking::FLOCK,
+        );
+        let refused = match started {
+            Ok(_) => {
+                turn.note(&switched(check, Recovered::Lane), "");
+                None
+            }
+            Err(e) => Some(key_line(&e)),
+        };
+        match (handoff, refused) {
+            (Ok(()), None) => Ok(()),
+            (Ok(()), Some(line)) => self.unavailable(turn, "recovery-unstarted", &line),
+            (Err(words), refused) => {
+                if let Some(line) = refused {
+                    turn.note(&Said::ModelUnavailable("recovery-unstarted"), &line);
+                }
+                self.unavailable(turn, "handoff-unwritten", &words)
+            }
+        }
+    }
+
+    /// A lane no fleet record names, read before anything is written: a
+    /// hosted lane on its host, whose launch record names the group its
+    /// launch recorded, judged only where this turn end is that group's
+    /// (`group::reading`'s member rule), with the item record its check,
+    /// start mark, handoff and stop are kept on. `None` for a lane whose
+    /// launch record names no identity file, which nothing here recovers;
+    /// each read that fails is told once through the item's slot.
+    fn hosting(&self, turn: &mut Turn, lane: &Lane) -> Flow<Option<Hosting>> {
+        let unread = |cause: String| ("launch-unread", cause);
+        let read = launch_record(lane).and_then(|record| {
+            let Some(record) = record else {
+                return Ok(None);
+            };
+            let Some(file) = identity_file(&record) else {
+                return Ok(None);
+            };
+            let file = PathBuf::from(file);
+            if !std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.is_file()) {
+                return Err(format!("{}: no regular identity file", file.display()));
+            }
+            let reading = agent_runtime::group::reading(&file, Some(std::process::id()))
+                .map_err(|e| e.to_string())?;
+            let leader = match (&reading["reading"], &reading["member"]) {
+                (Value::String(live), Value::Bool(true)) if live == "live" => {
+                    serde_json::from_value::<agent_runtime::process::Identity>(reading.clone())
+                        .map_err(|e| e.to_string())?
+                }
+                _ => {
+                    return Err(format!(
+                        "{}: this turn end is no member of the recorded group: {reading}",
+                        file.display()
+                    ));
+                }
+            };
+            Ok(Some((record, file, leader)))
+        });
+        let (record, file, leader) = match read.map_err(unread) {
+            Ok(Some(read)) => read,
+            Ok(None) => return Ok(None),
+            Err((cause, words)) => return self.unavailable(turn, cause, &words).map(|()| None),
+        };
+        if self.session.is_empty() {
+            return self.unavailable(turn, "launch-unbound", "").map(|()| None);
+        }
+        let place = self.handoff_place().and_then(|(path, prior)| {
+            item_record(&path, self.root).map_err(|e| e.to_string())?;
+            Ok((path, prior))
+        });
+        let (path, prior) = match place {
+            Ok(place) => place,
+            Err(words) => {
+                return self
+                    .unavailable(turn, "state-unread", &words)
+                    .map(|()| None);
+            }
+        };
+        let mut entry = record;
+        entry.insert("session_id".to_owned(), json!(self.session));
+        entry.insert(
+            "launch".to_owned(),
+            json!({"pid": leader.pid.to_string(), "start": leader.start}),
+        );
+        Ok(Some(Hosting {
+            entry: Value::Object(entry),
+            record: path,
+            prior,
+            file,
+            leader,
+        }))
+    }
+
+    /// A hosted lane's acquired switch, after its check on the item record:
+    /// the start mark, so a lost answer is acquired again and a started
+    /// recovery is not; the handoff the controller relaunches from; then the
+    /// stop of the predecessor's group by its own job, whose TERM can reach
+    /// this turn end before it tells the switch. The acquired check holds the
+    /// item's once-only slot, so each failure is handed directly, and nothing
+    /// stops where the mark or the handoff was not written.
+    fn recover_item(
+        &self,
+        turn: &mut Turn,
+        lane: &Lane,
+        payload: &Payload,
+        hosting: Hosting,
+        check: &Check,
+        env: &Env,
+    ) -> Flow {
+        let unavailable = |turn: &mut Turn, cause: &'static str, words: &str| {
+            Err(handed(turn, &Said::ModelUnavailable(cause), words))
+        };
+        let mark = Write::ModelStart {
+            place: Place::Item,
+            session: self.session.to_owned(),
+        };
+        let path = &hosting.record;
+        if let Err(e) = store::run_write(path, Locking::FLOCK, &self.settings.store, env, &mark) {
+            return unavailable(turn, "recovery-unstarted", &e.to_string());
+        }
+        let written = self
+            .handoff_request(turn, lane, payload, hosting.prior, &check.launched)?
+            .and_then(|request| apply_handoff(path, self.root, &self.settings, &request, env));
+        if let Err(words) = written {
+            return unavailable(turn, "handoff-unwritten", &words);
+        }
+        let request = StopModelPredecessor {
+            session: self.session.to_owned(),
+            launch_identity: rule::launch_of(&Place::Item, &hosting.entry),
+            file: hosting.file,
+            leader: hosting.leader,
+            job: false,
+            failure: None,
+        };
+        match crate::effects::lane_model::stop_predecessor(&self.settings, path, &request, env) {
+            Ok(_) => {
+                turn.note(&switched(check, Recovered::Hosted), "");
+                Ok(())
+            }
+            Err(e) => unavailable(turn, "recovery-unstarted", &key_line(&e)),
+        }
+    }
+
+    /// The item record a lane's handoff is kept on and the record standing
+    /// there: the place the item's standing handoff is read from, else the
+    /// state directory's own record with none.
+    fn handoff_place(&self) -> Result<(PathBuf, Option<Value>), String> {
+        let standing =
+            store::handoff_standing(&self.settings.state_dir, &self.item, Some(self.root))
+                .map_err(|e| e.to_string())?;
+        Ok(
+            match (standing["standing"].as_str(), standing["file"].as_str()) {
+                (Some("stands"), Some(file)) => {
+                    (PathBuf::from(file), Some(standing["record"].clone()))
+                }
+                _ => (state::item_path(&self.settings.state_dir, &self.item), None),
+            },
+        )
+    }
+
+    /// The `record-handoff` a recovered lane resumes from, superseding the
+    /// standing record `prior`: its work, or the default a model recovery
+    /// resumes from on the lane's branch and checkout; the attached agents'
+    /// rows among its traps; no stop failure or resume stamp of an earlier
+    /// life; and the session, caller key, cause and launched model the
+    /// relaunch reads. A branch git cannot read stalls the turn before
+    /// anything is written, so the next switch is acquired again.
+    fn handoff_request(
+        &self,
+        turn: &mut Turn,
+        lane: &Lane,
+        payload: &Payload,
+        prior: Option<Value>,
+        launched: &str,
+    ) -> Flow<Result<Request, String>> {
+        let mut record = match prior {
+            Some(Value::Object(prior)) => prior,
+            _ => {
+                let branch = lane.branch(turn)?;
+                let mut fresh = serde_json::Map::new();
+                fresh.insert("merged".to_owned(), json!([]));
+                fresh.insert(
+                    "remaining".to_owned(),
+                    json!(["Resume durable workflow state after model recovery."]),
+                );
+                fresh.insert("branch".to_owned(), json!(branch));
+                fresh.insert(
+                    "worktree".to_owned(),
+                    json!(self.root.display().to_string()),
+                );
+                fresh.insert("open_pr".to_owned(), Value::Null);
+                fresh
+            }
+        };
+        let mut traps: Vec<Value> = record
+            .get("traps")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        traps.push(json!(agents::claude_roster(payload, &turn.deadline).rows));
+        traps.sort_by_key(Value::to_string);
+        traps.dedup();
+        record.insert("traps".to_owned(), Value::Array(traps));
+        record.remove("stop_failure");
+        record.remove("resumed_at");
+        let key = turn.role.key.as_ref().map(super::controller::caller_key);
+        for (field, value) in [
+            ("session_id", json!(self.session)),
+            ("pane_key", json!(key.unwrap_or_default())),
+            ("cause", json!("model-switched")),
+            ("model", json!(launched)),
+            ("op", json!("record-handoff")),
+            ("supersede", json!(true)),
+        ] {
+            record.insert(field.to_owned(), value);
+        }
+        Ok(serde_json::from_value(Value::Object(record)).map_err(|e| e.to_string()))
     }
 
     /// The controller's recovery, marked started before it starts, so a
@@ -662,6 +976,7 @@ impl Switch<'_> {
             return self.unavailable(turn, "handoff-unwritten", &e.to_string());
         }
         let request = json!({
+            "op": "request-transfer",
             "cause": "live",
             "successor": answer["successor"],
             "expected": answer["expected"],
@@ -670,13 +985,9 @@ impl Switch<'_> {
         let Ok(request) = Scratch::create(dir, "model-recovery", &request.to_string()) else {
             return self.unavailable(turn, "recovery-unstarted", "");
         };
-        match self.transfer(&fleet, &request.0) {
+        match self.transfer(&request.0) {
             Transferred::Confirmed => {
-                let said = Said::ModelSwitched {
-                    launched: check.launched.clone(),
-                    observed: check.observed.clone(),
-                };
-                turn.note(&said, "");
+                turn.note(&switched(check, Recovered::Controller), "");
                 Ok(())
             }
             Transferred::Failed(note) => self.unavailable(turn, "recovery-failed", &note),
@@ -687,44 +998,56 @@ impl Switch<'_> {
         }
     }
 
-    /// agent-runtime's `controller transfer` on the request file, exiting
-    /// by the effect's outcome, in a process group of its own so a signal
-    /// that ends this turn end leaves the transfer to finish: 0 confirmed or
-    /// the successor up and waiting for this session to end; 3 failed and
+    /// The fleet's `request-transfer` on the request file through this
+    /// binary's own `op --fleet --effect-exit`, from the root under the
+    /// switch's state directory, so the overseer's takeover brief and session
+    /// are added and the hand-over runs as the command runs it; exiting by
+    /// the effect's outcome, in a process group of its own so a signal that
+    /// ends this turn end leaves the transfer to finish: 0 confirmed or the
+    /// successor up and waiting for this session to end; 3 failed and
     /// closed, this session still the controller; 75, a refusal naming its
     /// persisted intent, or no answer within the bound, open with the
     /// outcome unknown, the intent's reconcile its owner; any other refusal
     /// started nothing.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the model recovery's one transfer, agent-runtime's own verb through the one runner, since the hand-over's run takes settings only orch's effect module builds"
+        reason = "the model recovery's one transfer, this binary's own fleet entry through the one runner, since the hand-over's run takes settings only orch's effect module builds"
     )]
-    fn transfer(&self, fleet: &Path, request: &Path) -> Transferred {
-        let reach = match crate::effects::fleet_reach(&self.settings) {
-            Ok(reach) => reach,
-            Err(e) => return Transferred::Unstarted(e.to_string()),
-        };
+    fn transfer(&self, request: &Path) -> Transferred {
         let bound = match controller::run::job_bound(&self.settings.engine) {
             Ok(bound) => bound + TRANSFER_MARGIN,
             Err(e) => return Transferred::Unstarted(e.to_string()),
         };
-        let mut words = vec![
-            "transfer".to_owned(),
-            "--record".to_owned(),
-            fleet.display().to_string(),
-            "--request".to_owned(),
-            request.display().to_string(),
-            "--effect-exit".to_owned(),
-        ];
-        words.extend(controller::run::reach_words(&reach));
-        let args: Vec<&str> = words.iter().map(String::as_str).collect();
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => return Transferred::Unstarted(e.to_string()),
+        };
+        let state_dir = self.settings.state_dir.display().to_string();
+        let request = request.display().to_string();
+        let mut args = Vec::new();
+        if !self.private_env {
+            args.push("--no-private-env");
+        }
+        args.extend([
+            "--state-dir",
+            &state_dir,
+            "op",
+            "--fleet",
+            "--effect-exit",
+            "--request",
+            &request,
+        ]);
+        let place = host::Place {
+            cwd: Some(self.root),
+            env: &[],
+        };
         let output = match host::run_tagged_in_own_group(
             "model-switch",
-            "agent-runtime",
-            &self.settings.agent_runtime,
-            "controller",
+            "orch-runtime",
+            &exe,
+            "request-transfer",
             &args,
-            host::Place::default(),
+            place,
             bound,
         ) {
             Ok(output) => output,
@@ -785,6 +1108,44 @@ enum Transferred {
     Failed(String),
     Unconfirmed(String),
     Unstarted(String),
+}
+
+/// The switch `check` names, told as recovering by `recovered`.
+fn switched(check: &Check, recovered: Recovered) -> Said {
+    Said::ModelSwitched {
+        launched: check.launched.clone(),
+        observed: check.observed.clone(),
+        recovered,
+    }
+}
+
+/// The keyed line of a refusal, as the runtime's diagnostic writes it,
+/// without the program's prefix.
+fn key_line(e: &crate::Error) -> String {
+    let line = crate::protocol::diagnostic_line(e);
+    line.strip_prefix("orch-runtime: ")
+        .unwrap_or(&line)
+        .to_owned()
+}
+
+/// One `record-handoff` admitted and applied to the item record at `path`,
+/// made first where a launch predates it; `Err` is the step's words.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a switch's handoff: the one `record-handoff` the command's `op --item` applies, admitted and applied as the command applies it"
+)]
+fn apply_handoff(
+    path: &Path,
+    root: &Path,
+    settings: &Settings,
+    request: &Request,
+    env: &Env,
+) -> Result<(), String> {
+    item_record(path, root).map_err(|e| e.to_string())?;
+    ops::admit(request, settings).map_err(|e| e.to_string())?;
+    ops::apply(path, request, env, Locking::FLOCK)
+        .map(drop)
+        .map_err(|e| e.to_string())
 }
 
 /// The item's record made where a launch predates it, through the store's

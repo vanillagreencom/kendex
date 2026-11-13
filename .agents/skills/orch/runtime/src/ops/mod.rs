@@ -1739,6 +1739,10 @@ mod tests {
             session: "current".to_owned(),
             launch_identity: bound,
             file: dir.path().join("lane-host-pid"),
+            leader: agent_runtime::process::Identity {
+                pid: 41,
+                start: "ticks:41".to_owned(),
+            },
             job: true,
             failure: Some(lane_model::StopFailure {
                 cause: "timeout".to_owned(),

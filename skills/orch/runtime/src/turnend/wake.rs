@@ -190,43 +190,12 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Whether a process other than this one runs a command line `pattern`
-/// matches, the line's words joined by spaces. A process that exits while
-/// it is read is left out; a table that cannot be read is the cause.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the wake check's one process table read: which processes run, matched by command line, nothing signalled"
-)]
+/// matches, the line's words joined by spaces; a table that cannot be read
+/// is the cause.
 fn running(pattern: &Regex) -> Result<bool, String> {
     let own = std::process::id();
-    #[cfg(target_os = "linux")]
-    {
-        let rows = agent_runtime::process::table().map_err(|e| e.cause.to_owned())?;
-        Ok(rows.iter().filter(|row| row.pid != own).any(|row| {
-            std::fs::read(format!("/proc/{}/cmdline", row.pid)).is_ok_and(|bytes| {
-                let line = String::from_utf8_lossy(&bytes);
-                let line = line.trim_end_matches('\0').replace('\0', " ");
-                !line.is_empty() && pattern.is_match(&line)
-            })
-        }))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let output = agent_runtime::host::run(
-            "ps",
-            Path::new("ps"),
-            "wake-processes",
-            &["-A", "-ww", "-o", "pid=", "-o", "args="],
-            std::time::Duration::from_secs(15),
-        )
-        .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(agent_runtime::host::stderr_text(&output));
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
-        Ok(text.lines().any(|line| {
-            let line = line.trim_start();
-            let (pid, args) = line.split_once(' ').unwrap_or((line, ""));
-            pid.parse::<u32>().is_ok_and(|pid| pid != own) && pattern.is_match(args.trim_start())
-        }))
-    }
+    let lines = agent_runtime::process::command_lines().map_err(|e| e.cause.to_owned())?;
+    Ok(lines
+        .iter()
+        .any(|(pid, words)| *pid != own && pattern.is_match(&words.join(" "))))
 }

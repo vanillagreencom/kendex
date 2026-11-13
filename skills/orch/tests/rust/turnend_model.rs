@@ -112,32 +112,118 @@ fn lane_turn(world: &TurnWorld, lane: &Path, harness: &str, payload: &str, pane:
     world.turn(lane, harness, &[], payload, &world.on_pane(pane))
 }
 
+/// The lane's fleet entry as a launch records it, with what a recovery
+/// relaunches from: its harness, model class and reason, status and
+/// checkout `lane`.
+fn launched_entry(world: &TurnWorld, model: &str, lane: &Path) -> Value {
+    let mut entry = entry(world, model);
+    entry["launch"]["server"] = json!(world.server_pid());
+    for (key, value) in [
+        ("harness", "claude"),
+        ("class", CLASS),
+        ("class_reason", CLASS_REASON),
+        ("status", "running"),
+    ] {
+        entry[key] = json!(value);
+    }
+    entry["mail_root"] = json!(lane.display().to_string());
+    entry
+}
+
+/// The item's record under the lane's state directory.
+fn item_path(lane: &Path) -> PathBuf {
+    lane.join("tmp").join(format!("workflow-state-{ITEM}.json"))
+}
+
+/// The recovery's job record beside the fleet record, which its launcher
+/// writes once the job is started.
+fn recovery_job(lane: &Path) -> PathBuf {
+    lane.join("tmp").join(format!("model-recovery-{ITEM}.unit"))
+}
+
+/// The keyed lines of the switch's answer: its stderr and the context it
+/// handed the session.
+fn told(out: &TurnOut) -> Vec<String> {
+    let mut lines: Vec<String> = out.keyed().into_iter().map(str::to_owned).collect();
+    if !out.stdout.is_empty() {
+        let answer: Value = serde_json::from_str(out.stdout.trim_end()).unwrap();
+        let context = answer["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_default();
+        lines.extend(
+            context
+                .lines()
+                .filter_map(|line| line.strip_prefix("lane-mail-check: "))
+                .map(str::to_owned),
+        );
+    }
+    lines
+}
+
 /// A lane's switch on the pane and session its launch recorded is recorded
-/// once for that launch, its log row kept single when the same switch is
-/// told again; a switch inside the launch's own family, and one told by a
-/// session or a pane the launch does not run, record nothing.
+/// once for that launch and its recovery started once: the handoff its
+/// replacement resumes from superseding a record a resume consumed, the
+/// recovery's job started and the switch told; the same switch told again
+/// starts and tells nothing, its log row kept single. A switch inside the
+/// launch's own family, and one told by a session or a pane the launch does
+/// not run, record nothing.
 #[test]
-fn a_lanes_switch_is_recorded_once_per_launch_and_a_repeat_or_a_moved_launch_records_nothing() {
+fn a_lanes_switch_is_recovered_once_per_launch_and_a_repeat_or_a_moved_launch_records_nothing() {
     let world = TurnWorld::new();
     let lane = lane_in(&world);
-    plant_lanes(&lane, json!([entry(&world, "opus")]));
+    plant_lanes(&lane, json!([launched_entry(&world, "opus", &lane)]));
+    let init = isolated()
+        .args(["--state-dir", &lane.join("tmp").display().to_string()])
+        .args(["state", "init", "--item", ITEM])
+        .current_dir(&lane)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let mut record = read(&item_path(&lane));
+    record["handoff"] = json!({"remaining": ["old"], "merged": [], "open_pr": null,
+                               "traps": [], "resumed_at": "2026-11-11T09:00:00Z"});
+    fs::write(item_path(&lane), record.to_string()).unwrap();
     let payload = switched(SESSION, Some("claude-sonnet-4-5"));
-    for told in ["first", "again"] {
+    for (told_now, recovered) in [("first", true), ("again", false)] {
         let out = lane_turn(&world, &lane, "claude", &payload, PANE);
-        assert_eq!(out.code, 0, "{told}: {}", out.stderr);
-        assert_eq!(out.stdout, "", "{told}: handed");
+        assert_eq!(out.code, 0, "{told_now}: {}", out.stderr);
+        assert_eq!(out.stdout, "", "{told_now}: handed");
+        let said: Vec<String> = told(&out)
+            .into_iter()
+            .filter(|line| line.starts_with("model-"))
+            .collect();
+        let want: Vec<String> = if recovered {
+            vec!["model-switched=opus observed=claude-sonnet-4-5".to_owned()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(said, want, "{told_now}: {}", out.stderr);
         let fleet = read(&fleet_path(&lane));
         let check = &fleet["lanes"][0]["model_check"];
-        assert_eq!(check["outcome"], "switched", "{told}: {fleet}");
-        assert_eq!(check["recovery_started"], false, "{told}: {fleet}");
-        assert_eq!(check["observed"], "claude-sonnet-4-5", "{told}");
+        assert_eq!(check["outcome"], "switched", "{told_now}: {fleet}");
+        assert_eq!(check["recovery_started"], true, "{told_now}: {fleet}");
+        assert_eq!(check["observed"], "claude-sonnet-4-5", "{told_now}");
         let rows: Vec<&Value> = fleet["fleet_log"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|row| row["kind"] == "model-switched")
             .collect();
-        assert_eq!(rows.len(), 1, "{told}: {fleet}");
+        assert_eq!(rows.len(), 1, "{told_now}: {fleet}");
+        assert!(recovery_job(&lane).exists(), "{told_now}: no job started");
+        let handoff = &read(&item_path(&lane))["handoff"];
+        assert_eq!(handoff["cause"], "model-switched", "{told_now}: {handoff}");
+        assert_eq!(handoff["session_id"], SESSION, "{told_now}");
+        assert_eq!(handoff["model"], "opus", "{told_now}");
+        // A consumed record stands as none, so the recovery's own default
+        // replaces it whole.
+        assert_eq!(
+            handoff["remaining"],
+            json!(["Resume durable workflow state after model recovery."]),
+            "{told_now}"
+        );
+        assert_eq!(handoff["branch"], ITEM, "{told_now}");
+        assert!(handoff["resumed_at"].is_null(), "{told_now}: {handoff}");
     }
 
     for (case, model, to, session, pane) in [
@@ -153,7 +239,7 @@ fn a_lanes_switch_is_recorded_once_per_launch_and_a_repeat_or_a_moved_launch_rec
     ] {
         let world = TurnWorld::new();
         let lane = lane_in(&world);
-        plant_lanes(&lane, json!([entry(&world, model)]));
+        plant_lanes(&lane, json!([launched_entry(&world, model, &lane)]));
         let out = lane_turn(&world, &lane, "claude", &switched(session, Some(to)), pane);
         assert_eq!(out.code, 0, "{case}: {}", out.stderr);
         assert_eq!(out.stdout, "", "{case}: handed");
@@ -163,6 +249,82 @@ fn a_lanes_switch_is_recorded_once_per_launch_and_a_repeat_or_a_moved_launch_rec
             "{case}: {fleet}"
         );
         assert!(fleet["fleet_log"].is_null(), "{case}: {fleet}");
+        assert!(!recovery_job(&lane).exists(), "{case}: a job started");
+    }
+}
+
+/// A lane's acquired switch whose recovery refuses, on a record no
+/// relaunch can be composed from or a limit the lane has reached, is handed
+/// to the session once in one form with the refusal's key line, and the
+/// same switch told again hands nothing; a handoff that cannot be written
+/// is handed and the recovery still starts.
+#[test]
+fn a_lanes_acquired_switch_tells_a_refused_recovery_once_with_its_key_line() {
+    let replaced = |session: &str| {
+        json!({"kind": "model-switched", "item": ITEM, "session_id": session,
+               "recovery": "replaced", "launch_identity": {"launch": {"pane": "%2"}}})
+    };
+    type Plant = fn(&Path, &mut Value);
+    let cases: [(&str, Plant, &str, Option<&str>, bool); 3] = [
+        (
+            "unprepared",
+            |_, entry| {
+                entry.as_object_mut().unwrap().remove("harness");
+            },
+            "recovery-unstarted",
+            Some("model-recovery-unprepared item=ken-1 cause=harness-unrecorded"),
+            false,
+        ),
+        (
+            "limit",
+            |_, _| {},
+            "recovery-unstarted",
+            Some("model-recovery-limit item=ken-1 recoveries=2 limit=3"),
+            false,
+        ),
+        (
+            "handoff unwritten",
+            |lane, _| fs::write(item_path(lane), "{").unwrap(),
+            "handoff-unwritten",
+            None,
+            true,
+        ),
+    ];
+    for (case, plant, cause, line, started) in cases {
+        let world = TurnWorld::new();
+        let lane = lane_in(&world);
+        let mut entry = launched_entry(&world, "opus", &lane);
+        plant(&lane, &mut entry);
+        let mut fleet = json!({ "lanes": [entry] });
+        if case == "limit" {
+            fleet["fleet_log"] = json!([replaced("earlier"), replaced("before")]);
+        }
+        fs::write(fleet_path(&lane), fleet.to_string()).unwrap();
+        let payload = switched(SESSION, Some("claude-sonnet-4-5"));
+        let out = lane_turn(&world, &lane, "claude", &payload, PANE);
+        assert_eq!(out.code, 0, "{case}: {}", out.stderr);
+        assert_eq!(
+            handed(&out),
+            format!("lane-mail-check: model-unavailable={cause}"),
+            "{case}: {}",
+            out.stderr
+        );
+        let answer: Value = serde_json::from_str(out.stdout.trim_end()).unwrap();
+        let context = answer["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if let Some(line) = line {
+            assert!(context.lines().any(|l| l == line), "{case}: {context}");
+        }
+        let switched_told = told(&out).iter().any(|l| l.starts_with("model-switched="));
+        assert_eq!(switched_told, started, "{case}: {}", out.stderr);
+        assert_eq!(recovery_job(&lane).exists(), started, "{case}");
+        let again = lane_turn(&world, &lane, "claude", &payload, PANE);
+        assert_eq!(again.code, 0, "{case} again: {}", again.stderr);
+        assert_eq!(handed(&again), "", "{case} again: handed twice");
+        let check = &read(&fleet_path(&lane))["lanes"][0]["model_check"];
+        assert_eq!(check["recovery_started"], true, "{case}: {check}");
     }
 }
 
@@ -940,4 +1102,285 @@ fn settings_that_do_not_load_pass_a_lanes_stop_unanswered() {
         out.stderr
     );
     assert_eq!(account_line(&out), None, "{}", out.stderr);
+}
+
+/// The runtime's entry a hosted switch's stop job runs, installed where the
+/// lane's checkout names it.
+fn install_entry(lane: &Path) {
+    let scripts = lane.join(".agents/skills/orch/scripts");
+    fs::create_dir_all(&scripts).unwrap();
+    write_executable(
+        &scripts.join("orch-runtime"),
+        format!(
+            "#!/bin/bash\nexec '{}' --no-private-env \"$@\"\n",
+            binary().display()
+        ),
+    );
+}
+
+/// A hosted lane with no fleet record: its launch record naming the group
+/// record `file`, launched on `opus`, and the stop job's entry installed.
+fn hosted_lane(world: &TurnWorld, file: &Path) -> PathBuf {
+    let lane = lane_in(world);
+    let record = json!({"identity_file": file, "model": "opus",
+                        "launched_at": "2026-11-12T00:00:00Z"});
+    plant_launch_record(&lane, record.to_string().as_bytes());
+    install_entry(&lane);
+    lane
+}
+
+/// A process group this row made and recorded, stopped through the verb
+/// under test and its leader reaped on the way out, past a failed assertion
+/// too.
+struct Group {
+    file: PathBuf,
+    leader: std::process::Child,
+}
+
+impl Drop for Group {
+    fn drop(&mut self) {
+        let _ = program(agent_runtime())
+            .args(["process", "stop", "--grace-secs", "1", "--file"])
+            .arg(&self.file)
+            .output();
+        let _ = self.leader.kill();
+        let _ = self.leader.wait();
+    }
+}
+
+/// The verb run as [`TurnWorld::turn`] runs it on `payload`, inside a group
+/// a lead made and recorded at `file`, as a harness runs its hook in its own
+/// group: the leader is `bash`, with a member beside the verb, which writes
+/// its answer under the root and marks it done, then waits on the member.
+fn turn_in_group(world: &TurnWorld, lane: &Path, file: &Path, payload: &str) -> Group {
+    let input = world.root.join("payload.json");
+    fs::write(&input, payload).unwrap();
+    let line = r#"sleep 600 >/dev/null 2>&1 & printf '%s\n' "$!" > "$1/member"; shift; "$@" < "$TURN_PAYLOAD" > "$TURN_OUT" 2> "$TURN_ERR"; printf 'done\n' > "$TURN_DONE"; wait"#;
+    let leader = program(agent_runtime())
+        .args(["process", "lead", "--file"])
+        .arg(file)
+        .args(["--", "bash", "-c", line, "lane"])
+        .arg(&world.root)
+        .arg(binary())
+        .args(["--no-private-env", "turn-end", "--hook-dir"])
+        .arg(world.hooks("claude"))
+        .current_dir(lane)
+        .env("PWD", lane)
+        .env("HOME", &world.home)
+        .env("XDG_STATE_HOME", world.root.join("state"))
+        .env("PATH", tool_path(&[&world.stand_ins()]))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("TURN_PAYLOAD", &input)
+        .env("TURN_OUT", world.root.join("turn.out"))
+        .env("TURN_ERR", world.root.join("turn.err"))
+        .env("TURN_DONE", world.root.join("turn.done"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    Group {
+        file: file.to_path_buf(),
+        leader,
+    }
+}
+
+/// What the verb inside the group answered, once it marked itself done.
+fn group_answer(world: &TurnWorld) -> TurnOut {
+    let done = world.root.join("turn.done");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !done.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the turn end inside the group never finished"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    TurnOut {
+        code: 0,
+        stdout: fs::read_to_string(world.root.join("turn.out")).unwrap_or_default(),
+        stderr: fs::read_to_string(world.root.join("turn.err")).unwrap_or_default(),
+    }
+}
+
+/// The member the group's leader started beside the verb.
+fn group_member(world: &TurnWorld) -> u32 {
+    let path = world.root.join("member");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if let Ok(text) = fs::read_to_string(&path)
+            && text.ends_with('\n')
+        {
+            return text.trim().parse().unwrap();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the member was never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// The predecessor stop's job log beside the item's record.
+fn stop_log(lane: &Path) -> PathBuf {
+    lane.join("tmp")
+        .join(format!("workflow-state-{ITEM}.predecessor-stop.log"))
+}
+
+/// A hosted lane's switch whose turn end runs in the group its launch
+/// recorded is checked, marked started and handed off on the item's record,
+/// and its predecessor stopped by its own job: the whole group ends and a
+/// process outside it lives. A switch whose turn end is outside the
+/// recorded group is told `launch-unread` once and stops nothing.
+#[test]
+fn a_hosted_lanes_switch_stops_only_a_predecessor_whose_group_holds_this_turn_end() {
+    use std::os::unix::process::CommandExt;
+    let payload = switched(SESSION, Some("claude-sonnet-4-5"));
+    let world = TurnWorld::new();
+    let file = world.root.join("lane-host-pid");
+    let lane = hosted_lane(&world, &file);
+    let bystander = Owned(
+        program("sleep")
+            .arg("600")
+            .process_group(0)
+            .spawn()
+            .unwrap(),
+    );
+    let mut group = turn_in_group(&world, &lane, &file, &payload);
+    let member = group_member(&world);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while group.leader.try_wait().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the group was never stopped"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while live(member) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a member outlived the stop"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        live(bystander.pid()),
+        "a process outside the group was stopped"
+    );
+    assert!(stop_log(&lane).exists(), "the stop ran as its own job");
+    let record = read(&item_path(&lane));
+    let check = &record["model_checks"][SESSION];
+    assert_eq!(check["outcome"], "switched", "{record}");
+    assert_eq!(check["recovery_started"], true, "{record}");
+    assert_eq!(record["handoff"]["cause"], "model-switched", "{record}");
+    assert_eq!(record["handoff"]["session_id"], SESSION, "{record}");
+    assert!(record["handoff"]["stop_failure"].is_null(), "{record}");
+    // The stop can end the turn end before it tells the switch: where it
+    // told anything, it told the switch.
+    let told_lines = told(&TurnOut {
+        code: 0,
+        stdout: fs::read_to_string(world.root.join("turn.out")).unwrap_or_default(),
+        stderr: fs::read_to_string(world.root.join("turn.err")).unwrap_or_default(),
+    });
+    let said: Vec<&String> = told_lines
+        .iter()
+        .filter(|l| l.starts_with("model-"))
+        .collect();
+    assert!(
+        said.is_empty() || said == ["model-switched=opus observed=claude-sonnet-4-5"],
+        "{said:?}"
+    );
+
+    let world = TurnWorld::new();
+    let file = world.root.join("lane-host-pid");
+    let lane = hosted_lane(&world, &file);
+    let outside = Owned(
+        program("sleep")
+            .arg("600")
+            .process_group(0)
+            .spawn()
+            .unwrap(),
+    );
+    fs::write(
+        &file,
+        json!({"pid": outside.pid(), "start": start_of(outside.pid())}).to_string(),
+    )
+    .unwrap();
+    for (told_now, want) in [
+        ("first", "lane-mail-check: model-unavailable=launch-unread"),
+        ("again", ""),
+    ] {
+        let out = world.turn(&lane, "claude", &[], &payload, &[]);
+        assert_eq!(out.code, 0, "outside {told_now}: {}", out.stderr);
+        assert_eq!(handed(&out), want, "outside {told_now}: {}", out.stderr);
+    }
+    assert!(
+        live(outside.pid()),
+        "the recorded group was stopped from outside it"
+    );
+    assert!(
+        !stop_log(&lane).exists(),
+        "a stop job started from outside the group"
+    );
+    assert!(read(&item_path(&lane))["handoff"].is_null());
+}
+
+/// A hosted lane's switch inside its group whose handoff cannot be written,
+/// or whose stop's job cannot start, is handed to the session with the
+/// step's words, and the group stands.
+#[test]
+fn a_hosted_lanes_switch_whose_handoff_or_stop_cannot_start_stops_nothing() {
+    type Plant = fn(&Path);
+    let cases: [(&str, Plant, &str, &str); 2] = [
+        (
+            "handoff unwritten",
+            |lane| {
+                let mut record = read(&item_path(lane));
+                record["handoff"] = json!({"round_id": "r-unknown", "merged": [],
+                    "remaining": ["work"], "open_pr": null, "traps": []});
+                fs::write(item_path(lane), record.to_string()).unwrap();
+            },
+            "handoff-unwritten",
+            "round",
+        ),
+        (
+            "stopper refused",
+            |lane| {
+                fs::create_dir(
+                    lane.join("tmp")
+                        .join(format!("workflow-state-{ITEM}.predecessor-stop.unit")),
+                )
+                .unwrap();
+            },
+            "recovery-unstarted",
+            "model-predecessor-unstarted",
+        ),
+    ];
+    for (case, plant, cause, words) in cases {
+        let world = TurnWorld::new();
+        let file = world.root.join("lane-host-pid");
+        let lane = hosted_lane(&world, &file);
+        let init = isolated()
+            .args(["--state-dir", &lane.join("tmp").display().to_string()])
+            .args(["state", "init", "--item", ITEM])
+            .current_dir(&lane)
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{case}: init: {}", stderr(&init));
+        plant(&lane);
+        let payload = switched(SESSION, Some("claude-sonnet-4-5"));
+        let _group = turn_in_group(&world, &lane, &file, &payload);
+        let member = group_member(&world);
+        let out = group_answer(&world);
+        assert_eq!(
+            handed(&out),
+            format!("lane-mail-check: model-unavailable={cause}"),
+            "{case}: {}",
+            out.stderr
+        );
+        assert!(out.stdout.contains(words), "{case}: {}", out.stdout);
+        assert!(live(member), "{case}: the group was stopped");
+        assert!(!stop_log(&lane).exists(), "{case}: a stop job started");
+    }
 }

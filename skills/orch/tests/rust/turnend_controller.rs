@@ -781,10 +781,9 @@ fn a_jarvis_session_whose_mark_cannot_be_judged_is_told_and_passed() {
         assert_eq!(out.code, 0, "setting {setting}: {}", out.stderr);
         let keyed = out.keyed();
         if setting {
-            assert_eq!(keyed.len(), 1, "{}", out.stderr);
-            assert!(
-                keyed[0].starts_with("setting-range=")
-                    && keyed[0].contains("ORCH_HANDOFF_CONTEXT_PCT"),
+            assert_eq!(
+                keyed,
+                ["setting-range=ORCH_HANDOFF_CONTEXT_PCT=most"],
                 "{}",
                 out.stderr
             );

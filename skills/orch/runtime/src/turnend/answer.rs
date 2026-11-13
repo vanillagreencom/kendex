@@ -323,11 +323,12 @@ pub enum Said {
     /// A model switch the turn end could not judge, record or recover, by
     /// the cause it names.
     ModelUnavailable(&'static str),
-    /// A controller's switch recovered: the model its launch named and the
-    /// one the switch named.
+    /// A switch whose recovery started: the model its launch named, the one
+    /// the switch named and whose recovery it is.
     ModelSwitched {
         launched: String,
         observed: String,
+        recovered: Recovered,
     },
     // A lane's account mark (`model`).
     /// The account mark unjudged, by the word naming why: `unlisted`,
@@ -352,6 +353,16 @@ pub enum Said {
         need: String,
         instruction: String,
     },
+}
+
+/// Whose model recovery started, as the explanation of a switch names what
+/// follows it: the controller's transfer, a fleet lane's relaunch, or a
+/// hosted lane's stop on its host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recovered {
+    Controller,
+    Lane,
+    Hosted,
 }
 
 /// What a hosted lane's account is, as its explanation names it.
@@ -497,9 +508,9 @@ impl Said {
             Said::RecordUnread { path, .. } => ("record", path.display().to_string()),
             Said::Compacted { .. } => ("compacted", "auto".to_owned()),
             Said::ModelUnavailable(cause) => ("model-unavailable", (*cause).to_owned()),
-            Said::ModelSwitched { launched, observed } => {
-                ("model-switched", format!("{launched} observed={observed}"))
-            }
+            Said::ModelSwitched {
+                launched, observed, ..
+            } => ("model-switched", format!("{launched} observed={observed}")),
             Said::Account(word) => ("account", (*word).to_owned()),
             Said::HostMeasured(_) => ("account", "host-measured".to_owned()),
             Said::Headroom {
@@ -842,7 +853,18 @@ impl Said {
                 "this lane requires handoff: Copilot began compacting this session automatically, its preCompact hook naming trigger auto, before a context reading past the handoff mark reached a turn end. Nothing after that compaction is trusted, so start no new work and write the handoff from durable state, the workflow state, git and the PR, never from the conversation the compaction summarised. No handoff record stands. Then end the session, so the next one continues the work.\n{instruction}"
             ),
             Said::ModelUnavailable(_) => "this session's model switch was not judged or recovered for the cause named above, and the session runs on as it is; a later switch is judged again. The words of the step that failed follow where it wrote any:".to_owned(),
-            Said::ModelSwitched { .. } => "this controller's model is no longer the one its launch named: a successor on the launch's own model takes over, and this session ends once the transfer completes".to_owned(),
+            Said::ModelSwitched {
+                recovered: Recovered::Controller,
+                ..
+            } => "this controller's model is no longer the one its launch named: a successor on the launch's own model takes over, and this session ends once the transfer completes".to_owned(),
+            Said::ModelSwitched {
+                recovered: Recovered::Lane,
+                ..
+            } => "this lane's model is no longer the one its launch named: its recovery closes this session and launches a replacement on the launch's own model, which resumes from the handoff recorded for it".to_owned(),
+            Said::ModelSwitched {
+                recovered: Recovered::Hosted,
+                ..
+            } => "this hosted lane's model is no longer the one its launch named: this session's process group is stopped on its host, and the controller relaunches the lane on the launch's own model from the handoff recorded for it".to_owned(),
             Said::Account("unlisted") => "the directory this lane's credential lives in is no lane the account judge keeps an inventory for, so the account mark is not judged and this gap is reported rather than held; the context mark is judged as usual:".to_owned(),
             Said::Account("excluded" | "reserved" | "retired" | "cloud-repo-unset") => "the account judge refuses every launch on the account this lane runs its credential out of by the owner's own setting, its verdict naming which, whatever the account's figures, so the account mark is not judged and this gap is reported rather than held; the context mark is judged as usual. The judge's detail follows:".to_owned(),
             Said::Account("timeout") => "the account read did not finish inside this hook's ceiling, so whether the account is about to wall is unknown; the gap is reported rather than held, because a lane whose account nothing can measure must still be able to end a turn. The account is not read as room:".to_owned(),

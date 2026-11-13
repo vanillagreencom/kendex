@@ -541,6 +541,52 @@ fn table_of(readings: Vec<(u32, Reading<Stat>)>) -> std::result::Result<Vec<Row>
     Ok(rows)
 }
 
+/// Every live process's argument words, by pid, from one read: on Linux the
+/// table's pids, each `/proc/<pid>/cmdline` split at its NUL bytes; elsewhere
+/// `ps`'s `args` column, which joins the words with spaces, split again at
+/// them. A process that exits while it is read, a zombie and a kernel thread
+/// carry no words and are left out; a table that cannot be read is the cause.
+pub fn command_lines() -> std::result::Result<Vec<(u32, Vec<String>)>, Unreadable> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(table()?
+            .into_iter()
+            .filter_map(|row| {
+                let bytes = fs::read(format!("/proc/{}/cmdline", row.pid)).ok()?;
+                let words: Vec<String> = bytes
+                    .split(|byte| *byte == 0)
+                    .filter(|word| !word.is_empty())
+                    .map(|word| String::from_utf8_lossy(word).into_owned())
+                    .collect();
+                (!words.is_empty()).then_some((row.pid, words))
+            })
+            .collect())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output =
+            ps("ps-commands", &["-A", "-ww", "-o", "pid=", "-o", "args="]).map_err(|_| {
+                Unreadable {
+                    cause: "ps-unavailable",
+                }
+            })?;
+        if !output.status.success() {
+            return Err(Unreadable {
+                cause: status_cause(output.status),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut words = line.split_whitespace();
+                let pid = words.next()?.parse().ok()?;
+                let words: Vec<String> = words.map(str::to_owned).collect();
+                (!words.is_empty()).then_some((pid, words))
+            })
+            .collect())
+    }
+}
+
 /// The pids at or below `root` whose name `matches`, nearest first, from one
 /// table read. `root` itself is included when it matches.
 pub fn below(rows: &[Row], root: u32, matches: &dyn Fn(&str) -> bool) -> Vec<(u32, u32)> {
@@ -775,6 +821,17 @@ pub fn stop_tree(root: &Identity, matches: &dyn Fn(&str) -> bool, grace: Duratio
 /// group or its session, so a process that took the number, one that leads a
 /// group of its own included, proves no member of the leader's group runs.
 pub fn group_members(leader: &Identity) -> Reading<Vec<Row>> {
+    group_table(leader).map(|rows| {
+        rows.into_iter()
+            .filter(|row| row.pgrp == leader.pid)
+            .collect()
+    })
+}
+
+/// The whole table [`group_members`] reads its members from, `Live` while
+/// the group stands, so a reader that judges a process by its ancestors
+/// reads them from the same table.
+pub(crate) fn group_table(leader: &Identity) -> Reading<Vec<Row>> {
     let leader_runs = match still_runs(leader) {
         Reading::Live(_) => true,
         Reading::Gone => false,
@@ -787,12 +844,8 @@ pub fn group_members(leader: &Identity) -> Reading<Vec<Row>> {
     if !leader_runs && rows.iter().any(|row| row.pid == leader.pid) {
         return Reading::Gone;
     }
-    let members: Vec<Row> = rows
-        .into_iter()
-        .filter(|row| row.pgrp == leader.pid)
-        .collect();
-    if leader_runs || !members.is_empty() {
-        Reading::Live(members)
+    if leader_runs || rows.iter().any(|row| row.pgrp == leader.pid) {
+        Reading::Live(rows)
     } else {
         Reading::Gone
     }
@@ -1094,6 +1147,17 @@ mod tests {
         assert_eq!(row.name, "sleep");
         assert_eq!(row.ppid, std::process::id());
         assert_eq!(row.pgrp, child.pid(), "a new group led by the child");
+    }
+
+    #[test]
+    fn the_command_lines_name_a_child_this_test_owns_by_its_words() {
+        let child = Held::spawn(Command::new("sleep").arg("30"));
+        let lines = command_lines().expect("a readable table");
+        let words = lines
+            .iter()
+            .find(|(pid, _)| *pid == child.pid())
+            .map(|(_, words)| words.clone());
+        assert_eq!(words, Some(vec!["sleep".to_owned(), "30".to_owned()]));
     }
 
     /// A child that exited and stands unreaped holds its pid as a zombie:

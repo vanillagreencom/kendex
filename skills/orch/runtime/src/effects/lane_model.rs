@@ -9,8 +9,9 @@
 //!
 //! A hosted lane's predecessor stop is the item's own, on its host, where
 //! no fleet record stands: its job stops the process group the launch
-//! recorded and, where that group still stands, keeps the failure on the
-//! item's handoff.
+//! recorded while the record still names the leader the switch read and,
+//! where that group still stands or another leads it, keeps the failure on
+//! the item's handoff.
 
 use std::path::{Path, PathBuf};
 
@@ -294,19 +295,27 @@ pub fn stop_predecessor_run(
         )?)?);
     }
     let file = request.file.display().to_string();
-    let failure = match agent_runtime::group::stop(&request.file, settings.close_grace.get()?) {
-        Ok(value) => match serde_json::from_value::<Stop>(value["stop"].clone()) {
-            Ok(Stop::Stopped { .. } | Stop::AlreadyGone) => return Ok(value),
-            Ok(Stop::Timeout { pid }) => failed("timeout", Some(pid)),
-            Ok(Stop::IdentityStale) => failed("identity-stale", None),
-            Ok(Stop::Unreadable { pid, .. }) => failed("unreadable", Some(pid)),
-            Err(e) => failed(&format!("stop-unread {e}"), None),
+    let grace = settings.close_grace.get()?;
+    let unread = |e: agent_runtime::Error| StopFailure {
+        cause: e.key().to_owned(),
+        pid: None,
+        exit: 1,
+    };
+    let failure = match agent_runtime::group::read(&request.file) {
+        Ok(Some(recorded)) if recorded != request.leader => {
+            failed("identity-stale", Some(request.leader.pid))
+        }
+        Ok(_) => match agent_runtime::group::stop(&request.file, grace) {
+            Ok(value) => match serde_json::from_value::<Stop>(value["stop"].clone()) {
+                Ok(Stop::Stopped { .. } | Stop::AlreadyGone) => return Ok(value),
+                Ok(Stop::Timeout { pid }) => failed("timeout", Some(pid)),
+                Ok(Stop::IdentityStale) => failed("identity-stale", None),
+                Ok(Stop::Unreadable { pid, .. }) => failed("unreadable", Some(pid)),
+                Err(e) => failed(&format!("stop-unread {e}"), None),
+            },
+            Err(e) => unread(e),
         },
-        Err(e) => StopFailure {
-            cause: e.key().to_owned(),
-            pid: None,
-            exit: 1,
-        },
+        Err(e) => unread(e),
     };
     let pid = failure
         .pid

@@ -6981,6 +6981,152 @@ fn a_model_switch_whose_transfer_job_never_claims_is_handed_over_unconfirmed() {
     stop_live_watch(&runner, &state);
 }
 
+/// The native turn end's `PostModelSwitch` for the overseer `record` names,
+/// run as the installed hook runs it ([`run_hook`]'s environment, from
+/// `work` under `home`, inside the record's pane on the runner's server),
+/// with the hook directory [`install_hook`] made.
+fn native_switch(
+    runner: &Runner,
+    env: &[(String, String)],
+    home: &Path,
+    work: &Path,
+    record: &Value,
+) -> std::process::Output {
+    use std::io::Write;
+    let session = record["session_id"].as_str().unwrap();
+    let payload = json!({
+        "session_id": session,
+        "hook_event_name": "PostModelSwitch",
+        "to_model": "claude-sonnet-5-5",
+        "transcript_path": project_dir(home, work).join(format!("{session}.jsonl")),
+    });
+    let mut child = program(binary());
+    for (name, value) in env {
+        child.env(name, value);
+    }
+    let mut child = child
+        .args(["--no-private-env", "turn-end", "--hook-dir"])
+        .arg(work.join(".claude/hooks"))
+        .current_dir(work)
+        .env("PWD", work)
+        .env("ORCH_STATE_DIR", runner.state_dir())
+        .env("CLAUDE_CONFIG_DIR", home)
+        .env("TMUX", format!("{},0,0", runner.server_socket.display()))
+        .env("TMUX_PANE", record["pane"].as_str().unwrap())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// The switch's handoff bodies left in the state directory.
+fn handoff_bodies(runner: &Runner) -> Vec<String> {
+    std::fs::read_dir(runner.state_dir())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("model-handoff."))
+        .collect()
+}
+
+/// A controller's switch through the native turn end, past its successor:
+/// the body it writes reaches the snapshot the successor is admitted on and
+/// is removed, the transfer recovers the launched model and the switch is
+/// told; on the recovered controller, a snapshot that cannot be written is
+/// handed to the session, its body removed and no transfer asked.
+#[test]
+fn a_controllers_native_switch_past_its_successor_writes_its_body_and_tells_the_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, mut env) = watch_world(runner.state_dir());
+    let work = runner.state_dir().join("work");
+    let account = runner.state_dir().join("claude-account");
+    std::fs::create_dir(&work).unwrap();
+    github_skill_under(&work);
+    std::fs::create_dir(&account).unwrap();
+    let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "claude");
+    let launch = workflow_launch(
+        &runner,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-confirm"),
+    );
+    let launched = launch.run();
+    let started = launched.started();
+    assert_eq!(
+        started["outcome"],
+        "confirmed",
+        "{started}\n{}",
+        stderr(launched.op())
+    );
+    install_hook(&scripts, &work);
+    let overseer = runner.fleet()["overseer"].clone();
+    let out = native_switch(&runner, &launch.env, &account, &work, &overseer);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out).lines().next().unwrap_or_default(),
+        MODEL_SWITCHED,
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr(&out)
+    );
+    assert_eq!(handoff_bodies(&runner), Vec::<String>::new());
+    recovered(&runner, &work, 1, "fable", &overseer["account"]);
+    let controller = runner.fleet()["overseer"].clone();
+    let home = controller["home"]
+        .as_str()
+        .map_or_else(|| account.clone(), std::path::PathBuf::from);
+    let snapshot = work.join("tmp/handoffs/OVERSEER-HANDOFF.md");
+    std::fs::remove_file(&snapshot).unwrap();
+    std::fs::create_dir(&snapshot).unwrap();
+    let out = native_switch(&runner, &launch.env, &home, &work, &controller);
+    let context: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    assert_eq!(
+        context["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .and_then(|text| text.lines().next())
+            .unwrap_or_default(),
+        "lane-mail-check: model-unavailable=handoff-unwritten",
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr(&out)
+    );
+    assert_eq!(handoff_bodies(&runner), Vec::<String>::new());
+    let asked = runner.fleet()["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| {
+            i["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("request-transfer:overseer:2:"))
+        });
+    assert!(!asked, "a transfer was asked past an unwritten snapshot");
+    assert_eq!(
+        runner.fleet()["overseer"]["session_id"],
+        controller["session_id"],
+        "the controller stands"
+    );
+    let state = runner
+        .state_dir()
+        .join(agent_runtime::record::FLEET_FILE_NAME);
+    stop_live_watch(&runner, &state);
+}
+
 /// The real `marks` verb through the real installed hook: at a launched
 /// controller's turn end the hook asks the runtime's judge on the reading
 /// it took off the session's transcript and acts on the reply's key. A

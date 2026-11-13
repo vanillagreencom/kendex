@@ -191,6 +191,10 @@ pub struct StopModelPredecessor {
     pub session: String,
     pub launch_identity: Value,
     pub file: PathBuf,
+    /// The group's leader as the switch's member read answered it: the job
+    /// stops the group only while `file` still names this leader, since a
+    /// replacement may lead a group recorded there before the job runs.
+    pub leader: agent_runtime::process::Identity,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub job: bool,
     /// What the job's stop met, kept by its transition: set by the job

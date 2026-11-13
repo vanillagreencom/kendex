@@ -1946,3 +1946,80 @@ exec sleep 600"#,
         );
     }
 }
+
+/// A process is the recorded group's where it or one of its ancestors is a
+/// member, so a hook its harness runs in a group of its own still reads as
+/// the harness's: a member, a child that leads a group of its own under a
+/// member, and a process outside the group whose ancestry never meets it,
+/// each in the group this row made.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_process_is_the_recorded_groups_where_it_or_an_ancestor_is_a_member() {
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("lane-host-pid");
+    let lane = Command::new("sh")
+        .args([
+            "-c",
+            r#"sleep 600 >/dev/null 2>&1 & printf '%s\n' "$!" > "$1/member"
+setsid sleep 600 >/dev/null 2>&1 & printf '%s\n' "$!" > "$1/own"
+wait"#,
+            "lane",
+        ])
+        .arg(dir.path())
+        .process_group(0)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let leader = lane.id();
+    let bystander = Command::new("sleep")
+        .arg("600")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let bystander_pid = bystander.id();
+    let member = pids_at(&dir.path().join("member"))[0];
+    let own = pids_at(&dir.path().join("own"))[0];
+    let _world = GroupWorld {
+        record: record.clone(),
+        session: Some(own),
+        children: vec![lane, bystander],
+    };
+    let identity = identity_reading(leader);
+    std::fs::write(
+        &record,
+        serde_json::json!({"pid": leader, "start": identity["start"]}).to_string(),
+    )
+    .unwrap();
+    let stat = std::fs::read_to_string(format!("/proc/{own}/stat")).unwrap();
+    let pgrp: u32 = stat[stat.rfind(')').unwrap() + 1..]
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(pgrp, own, "the child leads a group of its own");
+    for (case, pid, want) in [
+        ("a member", member, true),
+        ("a child in a group of its own under a member", own, true),
+        ("neither", bystander_pid, false),
+    ] {
+        let pid = pid.to_string();
+        let (code, reply) = reply_of(&[
+            "process".as_ref(),
+            "group".as_ref(),
+            "--file".as_ref(),
+            record.as_os_str(),
+            "--member".as_ref(),
+            pid.as_ref(),
+        ]);
+        assert_eq!(code, Some(0), "{case}: {reply}");
+        assert_eq!(
+            (&reply["result"]["reading"], &reply["result"]["member"]),
+            (&serde_json::json!("live"), &serde_json::json!(want)),
+            "{case}: {reply}"
+        );
+    }
+}

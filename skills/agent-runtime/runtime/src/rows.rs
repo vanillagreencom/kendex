@@ -980,7 +980,11 @@ pub fn top_level_here(server: u32) -> Result<bool, Unwritten> {
 
 /// Whether `pid` is the installed `@openai/codex` Node launcher.
 fn codex_launcher(pid: u32) -> bool {
-    argv(pid).is_some_and(|words| is_codex_launcher(&words))
+    process::command_lines().is_ok_and(|lines| {
+        lines
+            .iter()
+            .any(|(p, words)| *p == pid && is_codex_launcher(words))
+    })
 }
 
 /// Whether a process's argument words are the installed `@openai/codex`
@@ -1002,41 +1006,6 @@ fn is_codex_launcher(words: &[String]) -> bool {
         .is_ok_and(|real| real.is_file() && real.ends_with("@openai/codex/bin/codex.js"))
 }
 
-/// The argument words process `pid` was started with.
-#[cfg(target_os = "linux")]
-fn argv(pid: u32) -> Option<Vec<String>> {
-    let bytes = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    Some(
-        bytes
-            .split(|byte| *byte == 0)
-            .filter(|word| !word.is_empty())
-            .map(|word| String::from_utf8_lossy(word).into_owned())
-            .collect(),
-    )
-}
-
-/// The argument words process `pid` was started with, as `ps` prints them.
-#[cfg(not(target_os = "linux"))]
-fn argv(pid: u32) -> Option<Vec<String>> {
-    let env: [(&str, &std::ffi::OsStr); 1] = [("LC_ALL", std::ffi::OsStr::new("C"))];
-    let pid = pid.to_string();
-    let output = crate::host::run_with(
-        "ps",
-        "ps-args",
-        &["-o", "args=", "-p", &pid],
-        &env,
-        None,
-        Duration::from_secs(15),
-    )
-    .ok()?;
-    output.status.success().then(|| {
-        String::from_utf8_lossy(&output.stdout)
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1049,7 +1018,7 @@ mod tests {
     /// harness's SessionEnd and StopFailure shapes, a Pi row with and
     /// without a limit message, a Copilot row, and the too-long prompt.
     #[test]
-    fn the_session_verdict_follows_the_library_s_table_per_harness_form() {
+    fn the_session_verdict_reads_each_harness_s_end_failure_and_stop_forms() {
         let rows: [(&str, SessionVerdict); 11] = [
             (
                 r#"{"harness":"claude","event":"SessionEnd","reason":"exit"}"#,
