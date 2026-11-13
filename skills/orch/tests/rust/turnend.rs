@@ -38,6 +38,20 @@ impl Out {
         self.stderr.lines().last().unwrap_or("")
     }
 
+    /// The keyed line after the account mark's, asserted to be
+    /// `account=<account>`: a lane's Stop in a world planting no account
+    /// tells its account mark first, as the released hook's idle rows read
+    /// it (`hooks/tests/lane-mail-check.test.sh:1462`).
+    fn after(&self, account: &str) -> &str {
+        let mut keyed = self
+            .stderr
+            .lines()
+            .filter(|l| l.starts_with("lane-mail-check: "));
+        let told = format!("lane-mail-check: account={account}");
+        assert_eq!(keyed.next(), Some(told.as_str()), "{}", self.stderr);
+        keyed.next().unwrap_or("")
+    }
+
     /// The JSON answer on stdout.
     fn json(&self) -> Value {
         serde_json::from_str(self.stdout.trim_end())
@@ -319,23 +333,35 @@ fn a_refusal_takes_the_shape_its_harness_and_arm_read() {
 fn a_launched_lane_with_nothing_to_hold_passes_every_arm_with_nothing_written() {
     let world = World::launched();
     let copilot = r#"{"sessionId":"s1","timestamp":1}"#;
-    let rows: &[(&str, &[&str], &str)] = &[
-        ("claude", &[], "{}"),
-        ("claude", &[], r#"{"stop_hook_active":true}"#),
-        ("claude", &[], r#"{"hook_event_name":"PostModelSwitch"}"#),
-        ("claude", &["halt"], r#"{"tool_input":{"command":"ls"}}"#),
-        ("claude", &["deliver"], "{}"),
-        ("claude", &["start"], "{}"),
-        ("claude", &["prompt"], "{}"),
-        ("claude", &["compact"], "{}"),
-        ("claude", &["row", "SessionStart"], "{}"),
-        ("copilot", &["start"], copilot),
+    // A Stop tells the account mark, which no account here measures.
+    let told = "lane-mail-check: account=unlisted";
+    let rows: &[(&str, &[&str], &str, &str)] = &[
+        ("claude", &[], "{}", told),
+        ("claude", &[], r#"{"stop_hook_active":true}"#, told),
+        (
+            "claude",
+            &[],
+            r#"{"hook_event_name":"PostModelSwitch"}"#,
+            "",
+        ),
+        (
+            "claude",
+            &["halt"],
+            r#"{"tool_input":{"command":"ls"}}"#,
+            "",
+        ),
+        ("claude", &["deliver"], "{}", ""),
+        ("claude", &["start"], "{}", ""),
+        ("claude", &["prompt"], "{}", ""),
+        ("claude", &["compact"], "{}", ""),
+        ("claude", &["row", "SessionStart"], "{}", ""),
+        ("copilot", &["start"], copilot, ""),
     ];
-    for (harness, args, payload) in rows {
+    for (harness, args, payload, keys) in rows {
         let out = world.turn(harness, args, payload);
         assert_eq!(
-            (out.code, out.stdout.as_str(), out.stderr.as_str()),
-            (0, "", ""),
+            (out.code, out.stdout.as_str(), keyed(&out).as_str()),
+            (0, "", *keys),
             "{harness} {args:?} {payload}"
         );
     }
@@ -1030,7 +1056,7 @@ fn unread_mail_holds_a_lanes_turn_end_and_is_marked_read_once_the_refusal_is_wri
     assert_eq!(world.cursor(), "2");
     let out = world.mail("claude", &[], "{}");
     assert_eq!(
-        out.first(),
+        out.after("unlisted"),
         format!("lane-mail-check: idle={ITEM}"),
         "read once"
     );
@@ -1360,7 +1386,10 @@ fn an_idle_turn_end_is_held_once_then_told_to_the_overseer() {
     let world = World::launched();
     let out = world.mail("claude", &[], "{}");
     assert_eq!(out.code, 2, "{}", out.stderr);
-    assert_eq!(out.first(), format!("lane-mail-check: idle={ITEM}"));
+    assert_eq!(
+        out.after("unlisted"),
+        format!("lane-mail-check: idle={ITEM}")
+    );
     let (reader, root) = (
         lane_mail().display().to_string(),
         world.lane.display().to_string(),
@@ -1383,7 +1412,10 @@ fn an_idle_turn_end_is_held_once_then_told_to_the_overseer() {
 
     let out = world.mail("claude", &[], r#"{"stop_hook_active":true}"#);
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
-    assert_eq!(out.first(), format!("lane-mail-check: idle-notice={ITEM}"));
+    assert_eq!(
+        out.after("unlisted"),
+        format!("lane-mail-check: idle-notice={ITEM}")
+    );
     assert_eq!(world.sent_count(), "1\n");
     let sent = fs::read_to_string(world.lane_box().join("to-overseer.jsonl")).unwrap();
     assert!(
@@ -1393,11 +1425,17 @@ fn an_idle_turn_end_is_held_once_then_told_to_the_overseer() {
 
     // The told notice is the lane's last report: the next turn end is held.
     let out = world.mail("claude", &[], "{}");
-    assert_eq!(out.first(), format!("lane-mail-check: idle={ITEM}"));
+    assert_eq!(
+        out.after("unlisted"),
+        format!("lane-mail-check: idle={ITEM}")
+    );
     // A turn another hook continued is held as a fresh one.
     fs::write(world.lane_box().join("sent-count"), "1\n").unwrap();
     let out = world.mail("claude", &[], r#"{"stop_hook_active":true}"#);
-    assert_eq!(out.first(), format!("lane-mail-check: idle={ITEM}"));
+    assert_eq!(
+        out.after("unlisted"),
+        format!("lane-mail-check: idle={ITEM}")
+    );
 }
 
 #[test]
@@ -1405,12 +1443,16 @@ fn a_report_since_the_last_judged_turn_end_passes_it() {
     let world = World::launched();
     let stop = |world: &World| world.mail("claude", &[], "{}");
     assert_eq!(
-        stop(&world).first(),
+        stop(&world).after("unlisted"),
         format!("lane-mail-check: idle={ITEM}")
     );
     world.report("n1", "notice");
     let out = stop(&world);
-    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "a notice sent");
+    assert_eq!(
+        (out.code, keyed(&out).as_str()),
+        (0, "lane-mail-check: account=unlisted"),
+        "a notice sent"
+    );
     assert_eq!(world.sent_count(), "1\n", "the hold clears");
     world.report("a1", "ask");
     assert_eq!((stop(&world).code, world.sent_count().as_str()), (0, "2\n"));
@@ -1424,8 +1466,8 @@ fn a_report_since_the_last_judged_turn_end_passes_it() {
     fs::write(&status, "waiting on CI\n").unwrap();
     let out = stop(&world);
     assert_eq!(
-        (out.code, out.stderr.as_str()),
-        (0, ""),
+        (out.code, keyed(&out).as_str()),
+        (0, "lane-mail-check: account=unlisted"),
         "a status file update"
     );
     assert_eq!(stop(&world).code, 2, "the same state again");
@@ -1448,7 +1490,11 @@ fn a_report_since_the_last_judged_turn_end_passes_it() {
         .unwrap();
     assert!(read.status.success(), "{}", stderr(&read));
     let out = stop(&world);
-    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "a halt standing");
+    assert_eq!(
+        (out.code, keyed(&out).as_str()),
+        (0, "lane-mail-check: account=unlisted"),
+        "a halt standing"
+    );
     assert!(
         !world.sent_count().contains("held"),
         "{}",
@@ -1457,7 +1503,7 @@ fn a_report_since_the_last_judged_turn_end_passes_it() {
     world.direct("d2", "go on", false);
     assert_eq!(stop(&world).first(), "lane-mail-check: unread=1");
     assert_eq!(
-        stop(&world).first(),
+        stop(&world).after("unlisted"),
         format!("lane-mail-check: idle={ITEM}"),
         "a later directive lifts the halt"
     );
@@ -1468,7 +1514,10 @@ fn a_continued_pi_turn_end_tells_the_overseer_instead_of_holding() {
     let world = World::launched();
     let out = world.mail("pi", &[], r#"{"stop_hook_active":true}"#);
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
-    assert_eq!(out.first(), format!("lane-mail-check: idle-notice={ITEM}"));
+    assert_eq!(
+        out.after("unmeasured"),
+        format!("lane-mail-check: idle-notice={ITEM}")
+    );
     assert_eq!(world.sent_count(), "1\n");
 }
 
@@ -1492,7 +1541,7 @@ fn a_record_or_listing_the_idle_judge_cannot_read_passes_the_turn_end_reported()
             out.stderr
         );
         assert_eq!(
-            out.first(),
+            out.after("unlisted"),
             format!("lane-mail-check: idle-record={}", record.display()),
             "{text:?}"
         );
@@ -1510,6 +1559,7 @@ fn a_record_or_listing_the_idle_judge_cannot_read_passes_the_turn_end_reported()
     assert_eq!(
         lines,
         [
+            "lane-mail-check: account=unlisted".to_owned(),
             format!("lane-mail-check: idle-record={}", record.display()),
             format!("lane-mail-check: idle-unrecorded={}", record.display())
         ]
@@ -1529,7 +1579,7 @@ fn a_record_or_listing_the_idle_judge_cannot_read_passes_the_turn_end_reported()
     std::os::unix::fs::symlink(world.root.join("elsewhere"), &status).unwrap();
     let out = world.mail("claude", &[], "{}");
     assert_eq!(
-        out.first(),
+        out.after("unlisted"),
         format!("lane-mail-check: idle-status={}", status.display())
     );
     assert!(
@@ -1547,7 +1597,7 @@ fn a_record_or_listing_the_idle_judge_cannot_read_passes_the_turn_end_reported()
     fs::create_dir(world.lane_box().join("to-overseer.jsonl")).unwrap();
     let out = world.mail("claude", &[], "{}");
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
-    assert_eq!(out.first(), "lane-mail-check: events=2");
+    assert_eq!(out.after("unlisted"), "lane-mail-check: events=2");
     assert!(
         out.stderr.contains("lane-mail: mailbox-unsafe="),
         "{}",
@@ -1564,7 +1614,10 @@ fn an_idle_notice_the_mailbox_or_the_record_cannot_take_is_reported_and_the_turn
     let out = world.mail("pi", &[], r#"{"stop_hook_active":true}"#);
     fs::set_permissions(&outbox, fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
-    assert_eq!(out.first(), "lane-mail-check: idle-notice-unsent=2");
+    assert_eq!(
+        out.after("unmeasured"),
+        "lane-mail-check: idle-notice-unsent=2"
+    );
     assert!(
         out.stderr.contains("lane-mail: write-failed="),
         "{}",
@@ -1586,6 +1639,7 @@ fn an_idle_notice_the_mailbox_or_the_record_cannot_take_is_reported_and_the_turn
     assert_eq!(
         lines,
         [
+            "lane-mail-check: account=unmeasured".to_owned(),
             format!(
                 "lane-mail-check: idle-notice-unrecorded={}",
                 dir.join("sent-count").display()
@@ -1607,7 +1661,7 @@ fn a_hold_the_record_cannot_take_is_not_made() {
     fs::set_permissions(&dir, mode).unwrap();
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
     assert_eq!(
-        out.first(),
+        out.after("unlisted"),
         format!(
             "lane-mail-check: idle-hold-unrecorded={}",
             dir.join("sent-count").display()
@@ -1679,9 +1733,12 @@ impl World {
 fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     let world = World::launched();
     let off = ("DISABLE_AUTO_COMPACT", "1");
+    // Below the mark the account mark is told, which no account here
+    // measures: the released answer.
+    let told = "lane-mail-check: account=unlisted";
     let rows: &[(u64, Env, i32, &str)] = &[
-        (1_000, &[off], 0, ""),
-        (180_000, &[off], 0, ""),
+        (1_000, &[off], 0, told),
+        (180_000, &[off], 0, told),
         (180_001, &[off], 2, "lane-mail-check: context=180001"),
         (
             100_001,
@@ -1988,7 +2045,7 @@ fn a_pi_reading_takes_its_window_from_the_payload_or_its_own_record() {
             Some(2000),
             true,
             0,
-            "",
+            "lane-mail-check: account=unmeasured",
         ),
         (
             r#"{"compaction":{"enabled":false}}"#,
@@ -2277,7 +2334,7 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
     let world = World::launched();
     let gap = |reason: &str| {
         format!(
-            "lane-mail-check: reading-unrecorded={}\nlane-mail-check: session-record={reason}",
+            "lane-mail-check: reading-unrecorded={}\nlane-mail-check: session-record={reason}\nlane-mail-check: account=unmeasured",
             world.mail_root().join(ITEM).join("context.json").display()
         )
     };
@@ -2288,8 +2345,10 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
     let other = world.root.join("session-state/s2/events.jsonl");
     let grant: Env = &[("COPILOT_ALLOW_ALL", "true")];
     let policy = "lane-mail-check: stop-cause=allow-all-blocked-by-policy";
+    // Below the mark the account mark is told, which nothing here measures.
+    let told = "lane-mail-check: account=unmeasured";
     let rows: &[StatusRow] = &[
-        (100_000, 1_000_000, &transcript, None, &[], "", ""),
+        (100_000, 1_000_000, &transcript, None, &[], told, ""),
         (
             400_000,
             1_000_000,
@@ -2308,7 +2367,7 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
             "lane-mail-check: context=150000",
             "block",
         ),
-        (140_000, 200_000, &transcript, None, &[], "", ""),
+        (140_000, 200_000, &transcript, None, &[], told, ""),
         (
             100_000,
             1_000_000,
@@ -2327,7 +2386,7 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
             policy,
             "",
         ),
-        (100_000, 1_000_000, &transcript, Some(false), &[], "", ""),
+        (100_000, 1_000_000, &transcript, Some(false), &[], told, ""),
     ];
     for (tokens, window, bound, allow_all, env, first, decision) in rows {
         let row = format!("{tokens} {window} {bound:?} {allow_all:?} {env:?}");
@@ -2397,7 +2456,12 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
     world.status_line(400_000, 1_000_000, Some(&transcript), None);
     let held = "lane-mail-check: context=400000";
     let rows: &[(Option<u64>, &str, &str, &str)] = &[
-        (Some(100_000), "s1", EXTENSION, ""),
+        (
+            Some(100_000),
+            "s1",
+            EXTENSION,
+            "lane-mail-check: account=unmeasured",
+        ),
         (
             Some(720_001),
             "s1",
@@ -2431,8 +2495,8 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
     let flag = world.mail_root().join(ITEM).join("compaction.json");
     let flags = [
         (json!("s1"), "lane-mail-check: compacted=auto"),
-        (json!("s0"), ""),
-        (Value::Null, ""),
+        (json!("s0"), "lane-mail-check: account=unmeasured"),
+        (Value::Null, "lane-mail-check: account=unmeasured"),
     ];
     for (session, first) in flags {
         let planted = json!({"harness": "copilot", "trigger": "auto", "session_id": session,
@@ -2441,7 +2505,7 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
         let out = world.copilot_stop(&[]);
         assert_eq!(out.code, 0, "{session}: {}", out.stderr);
         assert_eq!(out.first(), first, "{session}");
-        if !first.is_empty() {
+        if first == "lane-mail-check: compacted=auto" {
             assert!(
                 out.stderr.contains(r#""compacted":true"#),
                 "{session}: {}",

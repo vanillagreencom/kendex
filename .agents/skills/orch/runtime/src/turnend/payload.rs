@@ -49,6 +49,9 @@ pub struct Payload {
     pub cwd: String,
     /// Claude's `PostModelSwitch` reaches the turn-end arm.
     pub model_switch: bool,
+    /// The model id a `PostModelSwitch` names its session switched to
+    /// (`to_model`).
+    pub observed: String,
     value: Value,
 }
 
@@ -120,6 +123,7 @@ impl Payload {
         };
         let model_switch =
             value.get("hook_event_name").and_then(Value::as_str) == Some("PostModelSwitch");
+        let observed = text_of("to_model")?;
         Ok(Payload {
             active,
             caller: if subagent {
@@ -136,6 +140,7 @@ impl Payload {
             ack_by_caller,
             cwd,
             model_switch,
+            observed,
             value,
         })
     }

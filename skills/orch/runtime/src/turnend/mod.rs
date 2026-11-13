@@ -11,6 +11,7 @@ mod copilot;
 pub mod identity;
 pub mod mail;
 mod marks;
+mod model;
 pub mod payload;
 mod role;
 mod rows;
@@ -485,7 +486,7 @@ fn judged(
         controller::overseer_tool_check(turn, vars, lane, payload)?;
     }
     if *arm == Arm::ModelSwitch {
-        return model_switch();
+        return model::switch(turn, vars, lane, payload);
     }
     if !continued {
         mail::check(turn, vars, arm, lane, payload)?;
@@ -498,9 +499,4 @@ fn judged(
     }
     marks::handoff_check(turn, arm, lane, vars, payload)?;
     mail::idle_check(turn, vars, arm, lane, continued)
-}
-
-/// Where a model switch is recorded or handed off; it records nothing.
-fn model_switch() -> Flow {
-    Ok(())
 }

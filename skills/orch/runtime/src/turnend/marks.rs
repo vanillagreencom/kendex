@@ -20,6 +20,7 @@ use super::agents::{self, Deadline, Roster, State};
 use super::answer::{Harness, Said};
 use super::controller;
 use super::identity::{Lane, shell_quoted};
+use super::model;
 use super::payload::{Caller, Leads, Payload};
 use super::{Answer, Arm, Flow, Turn, Vars};
 use crate::marker::CONTEXT_RECORD;
@@ -104,10 +105,10 @@ enum Gate<'a> {
     Stands,
 }
 
-/// The lane's own context mark at its turn end. A session that is no
-/// launched lane's lead, and a lane whose handoff record stands, meets no
-/// mark here; the overseer's marks and the account mark are judged
-/// elsewhere.
+/// The lane's own context mark at its turn end, then its account mark
+/// where the context mark held nothing. A session that is no launched
+/// lane's lead, and a lane whose handoff record stands, meets no mark here;
+/// the overseer's marks are judged elsewhere.
 pub(super) fn handoff_check(
     turn: &mut Turn,
     arm: &Arm,
@@ -121,14 +122,18 @@ pub(super) fn handoff_check(
     if lane.item.is_none() {
         return controller::turn_end(turn, lane, vars, payload);
     }
-    let judge = match mark_gate(turn, lane, vars, payload)? {
+    let gate = mark_gate(turn, lane, vars, payload)?;
+    if !matches!(gate, Gate::NoMark) {
+        model::reset(turn, vars, lane, payload);
+    }
+    let judge = match gate {
         Gate::Judge(judge) => judge,
         Gate::NoMark => return Ok(()),
         Gate::Stands => return Err(turn.pass()),
     };
     let pct = judge.context_share(turn)?;
     let mailbox = judge.mailbox.clone();
-    match judge.read_and_record(turn, &mailbox)? {
+    let model = match judge.read_and_record(turn, &mailbox)? {
         Reading::Measured {
             tokens,
             window,
@@ -152,20 +157,24 @@ pub(super) fn handoff_check(
                     let named = if model.is_empty() {
                         harness_word(turn.harness).to_owned()
                     } else {
-                        model
+                        model.clone()
                     };
                     turn.note(&Said::WindowUnread(named), "");
                 }
             }
+            model
         }
-        Reading::Unread => turn.note(&Said::UsageUnread(payload.transcript.clone()), ""),
-        Reading::None(_) => {}
+        Reading::Unread => {
+            turn.note(&Said::UsageUnread(payload.transcript.clone()), "");
+            String::new()
+        }
+        Reading::None(_) => String::new(),
         Reading::Compacted => {
             let instruction = judge.handoff_instruction(turn, Value::Null)?;
             return Err(turn.refuse(Said::Compacted { instruction }, ""));
         }
-    }
-    Ok(())
+    };
+    model::account_mark(turn, &judge, lane, vars, &model)
 }
 
 /// The harness and tool names an attached launch is made with. Codex

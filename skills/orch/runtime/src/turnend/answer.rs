@@ -319,6 +319,48 @@ pub enum Said {
     Compacted {
         instruction: String,
     },
+    // The model switch's lines (`model`).
+    /// A model switch the turn end could not judge, record or recover, by
+    /// the cause it names.
+    ModelUnavailable(&'static str),
+    /// A controller's switch recovered: the model its launch named and the
+    /// one the switch named.
+    ModelSwitched {
+        launched: String,
+        observed: String,
+    },
+    // A lane's account mark (`model`).
+    /// The account mark unjudged, by the word naming why: `unlisted`,
+    /// `excluded`, `reserved`, `retired`, `cloud-repo-unset`, `timeout` or
+    /// `unmeasured`.
+    Account(&'static str),
+    /// A hosted lane, whose account the controller measures.
+    HostMeasured(Hosted),
+    /// The lane's account at its headroom mark: the binding bucket's
+    /// headroom, the bucket and the mark.
+    Headroom {
+        headroom: String,
+        bucket: String,
+        mark: u32,
+        instruction: String,
+    },
+    /// The lane's account an overseer's seat, held to the room the seat
+    /// keeps.
+    SeatReserve {
+        headroom: String,
+        bucket: String,
+        need: String,
+        instruction: String,
+    },
+}
+
+/// What a hosted lane's account is, as its explanation names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hosted {
+    Claude,
+    Pi,
+    /// A Pi lane on an `anthropic/` model, spending the API grant.
+    PiGrant,
 }
 
 /// The commands a lane is told to route a question or a report through,
@@ -454,6 +496,30 @@ impl Said {
             }
             Said::RecordUnread { path, .. } => ("record", path.display().to_string()),
             Said::Compacted { .. } => ("compacted", "auto".to_owned()),
+            Said::ModelUnavailable(cause) => ("model-unavailable", (*cause).to_owned()),
+            Said::ModelSwitched { launched, observed } => {
+                ("model-switched", format!("{launched} observed={observed}"))
+            }
+            Said::Account(word) => ("account", (*word).to_owned()),
+            Said::HostMeasured(_) => ("account", "host-measured".to_owned()),
+            Said::Headroom {
+                headroom,
+                bucket,
+                mark,
+                ..
+            } => (
+                "headroom",
+                format!("{headroom} bucket={bucket} mark={mark}"),
+            ),
+            Said::SeatReserve {
+                headroom,
+                bucket,
+                need,
+                ..
+            } => (
+                "seat-reserve",
+                format!("{headroom} bucket={bucket} need={need}"),
+            ),
         }
     }
 
@@ -774,6 +840,31 @@ impl Said {
             ),
             Said::Compacted { instruction } => format!(
                 "this lane requires handoff: Copilot began compacting this session automatically, its preCompact hook naming trigger auto, before a context reading past the handoff mark reached a turn end. Nothing after that compaction is trusted, so start no new work and write the handoff from durable state, the workflow state, git and the PR, never from the conversation the compaction summarised. No handoff record stands. Then end the session, so the next one continues the work.\n{instruction}"
+            ),
+            Said::ModelUnavailable(_) => "this session's model switch was not judged or recovered for the cause named above, and the session runs on as it is; a later switch is judged again. The words of the step that failed follow where it wrote any:".to_owned(),
+            Said::ModelSwitched { .. } => "this controller's model is no longer the one its launch named: a successor on the launch's own model takes over, and this session ends once the transfer completes".to_owned(),
+            Said::Account("unlisted") => "the directory this lane's credential lives in is no lane the account judge keeps an inventory for, so the account mark is not judged and this gap is reported rather than held; the context mark is judged as usual:".to_owned(),
+            Said::Account("excluded" | "reserved" | "retired" | "cloud-repo-unset") => "the account judge refuses every launch on the account this lane runs its credential out of by the owner's own setting, its verdict naming which, whatever the account's figures, so the account mark is not judged and this gap is reported rather than held; the context mark is judged as usual. The judge's detail follows:".to_owned(),
+            Said::Account("timeout") => "the account read did not finish inside this hook's ceiling, so whether the account is about to wall is unknown; the gap is reported rather than held, because a lane whose account nothing can measure must still be able to end a turn. The account is not read as room:".to_owned(),
+            Said::Account(_) => "the account this lane runs its credential out of could not be measured, so whether it is about to wall is unknown; the gap is reported rather than held, and an account nothing measured is never read as room:".to_owned(),
+            Said::HostMeasured(Hosted::PiGrant) => "the controller measures this hosted Pi lane's account, its Anthropic API grant, and directs it to hand off at the account mark; this sandbox judges the context mark from the transcript".to_owned(),
+            Said::HostMeasured(Hosted::Pi) => "the controller measures this hosted Pi lane's account and directs it to hand off at the account mark; this sandbox judges the context mark from the transcript".to_owned(),
+            Said::HostMeasured(Hosted::Claude) => "the controller measures this hosted Claude lane's account and directs it to hand off at the account mark; this sandbox judges the context mark from the transcript".to_owned(),
+            Said::Headroom {
+                headroom,
+                bucket,
+                mark,
+                instruction,
+            } => format!(
+                "The binding bucket {bucket} has {headroom} percent headroom left. This is at or below the ORCH_HANDOFF_HEADROOM_PCT mark of {mark}. No handoff record stands. Hand this lane off at the next safe point before the account reaches its limit.\n{instruction}"
+            ),
+            Said::SeatReserve {
+                headroom,
+                bucket,
+                need,
+                instruction,
+            } => format!(
+                "The account judge requires handoff from this overseer seat. The binding bucket {bucket} has {headroom} percent headroom left, and the seat keeps {need} percent of its window for the overseer, the room under min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT). No handoff record stands. Hand this lane off at the next safe point.\n{instruction}"
             ),
         }
     }

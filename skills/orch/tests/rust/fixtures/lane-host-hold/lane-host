@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# The provider's `lane-host` for the account mark's ceiling row: it answers
+# an SSH host's capability line, and its `accounts` read appends its argv to
+# `$LANE_HOST_HOLD_FIFO.log` and holds on the FIFO $LANE_HOST_HOLD_FIFO. The
+# read-write open never blocks and the read gives up after HOLD_BOUND_SECS,
+# so a held read nobody kills still ends on its own. Bash 3.2.
+set -u
+case "${1:-}" in
+  capabilities)
+    printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n'
+    ;;
+  accounts)
+    [ -p "${LANE_HOST_HOLD_FIFO:-}" ] || { echo "lane-host-hold: hold-not-fifo path=${LANE_HOST_HOLD_FIFO:-}" >&2; exit 2; }
+    printf '%s\n' "$*" >> "$LANE_HOST_HOLD_FIFO.log"
+    exec 9<>"$LANE_HOST_HOLD_FIFO"
+    read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+      || { echo "lane-host-hold: hold-unreleased path=$LANE_HOST_HOLD_FIFO bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+    ;;
+  *)
+    printf 'lane-host-hold: unplanned argv=[%s]\n' "$*" >&2
+    exit 64
+    ;;
+esac

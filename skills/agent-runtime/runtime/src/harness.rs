@@ -375,6 +375,70 @@ impl Harness {
     }
 }
 
+/// The Claude model families a launch may name by their alias alone, which
+/// Claude Code resolves to a concrete id only once the session runs.
+const CLAUDE_FAMILIES: [&str; 4] = ["sonnet", "haiku", "opus", "fable"];
+
+/// Which side of a model check a Claude model word stands on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelWord<'a> {
+    /// The word a launch recorded: a family alias stays the alias, since
+    /// it is the launch's intent and no id it resolved to was recorded.
+    Recorded,
+    /// The id a session reports it runs (`PostModelSwitch`'s `to_model`),
+    /// beside the word its launch recorded.
+    Observed { launched: &'a str },
+}
+
+/// A Claude model word as a model check compares it: lowercased, its
+/// `[1m]` window suffix dropped, a bare `<family>-<version>` id under its
+/// `claude-` prefix, every version field kept. An observed id compares as
+/// the alias its launch recorded only inside that alias's own family, so a
+/// switch to another family under an alias launch still reads as a switch.
+/// `None` where the word names no Claude model id: an unresolved alias, or
+/// any word that is not `claude-` and a version, never compares equal.
+pub fn claude_model_id(word: &str, side: ModelWord<'_>) -> Option<String> {
+    fn plain(word: &str) -> String {
+        let lowered = word.to_ascii_lowercase();
+        lowered
+            .strip_suffix("[1m]")
+            .map_or_else(|| lowered.clone(), str::to_owned)
+    }
+    fn versioned(id: &str, family: &str) -> bool {
+        id.strip_prefix(family)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|c| c.is_ascii_digit())
+    }
+    let model = plain(word);
+    if side == ModelWord::Recorded && CLAUDE_FAMILIES.contains(&model.as_str()) {
+        return Some(model);
+    }
+    let model = if CLAUDE_FAMILIES
+        .iter()
+        .any(|family| versioned(&model, family))
+    {
+        format!("claude-{model}")
+    } else {
+        model
+    };
+    let id = model
+        .strip_prefix("claude-")
+        .is_some_and(|rest| rest.contains(|c: char| c.is_ascii_digit()))
+        && !model.contains(char::is_whitespace);
+    if !id {
+        return None;
+    }
+    if let ModelWord::Observed { launched } = side {
+        let launched = plain(launched);
+        let bare = model.strip_prefix("claude-").unwrap_or(&model);
+        if CLAUDE_FAMILIES.contains(&launched.as_str()) && versioned(bare, &launched) {
+            return Some(launched);
+        }
+    }
+    Some(model)
+}
+
 /// What a row of Claude Code's capacity table matches a lowercased model
 /// on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -621,6 +685,51 @@ mod tests {
             Harness::Pi.model_words("github-copilot/claude-opus-5.5", Some("high")),
             vec!["--model", "github-copilot/claude-opus-5.5:high"]
         );
+    }
+
+    /// The answers the adapter's shell rule gave for the same words, run
+    /// once: an alias stands for its own family only, `[1m]` and case are
+    /// spelling, a bare family id takes its prefix, and anything that is no
+    /// `claude-` id with a version names nothing.
+    #[test]
+    fn a_claude_model_id_matches_an_alias_only_in_its_own_family_and_keeps_every_version_field() {
+        let recorded = ModelWord::Recorded;
+        let observed = |launched| ModelWord::Observed { launched };
+        for (word, side, want) in [
+            ("opus", recorded, Some("opus")),
+            ("Opus[1m]", recorded, Some("opus")),
+            ("claude-opus-5-5[1m]", recorded, Some("claude-opus-5-5")),
+            ("opus-5-5", recorded, Some("claude-opus-5-5")),
+            ("Claude-Sonnet-4-5", recorded, Some("claude-sonnet-4-5")),
+            ("gpt-5", recorded, None),
+            ("claude-opus", recorded, None),
+            ("claude-opus 5", recorded, None),
+            ("", recorded, None),
+            ("claude-opus-5-5", observed("opus"), Some("opus")),
+            ("claude-opus-5-5[1m]", observed("opus[1m]"), Some("opus")),
+            (
+                "claude-sonnet-4-5",
+                observed("opus"),
+                Some("claude-sonnet-4-5"),
+            ),
+            ("opus", observed("opus"), None),
+            ("opus-5-5", observed("opus"), Some("opus")),
+            (
+                "claude-opus-5-5",
+                observed("claude-opus-5-1"),
+                Some("claude-opus-5-5"),
+            ),
+            ("claude-fable-5-2", observed("fable"), Some("fable")),
+            ("claude-haiku-5-5", observed(""), Some("claude-haiku-5-5")),
+            ("gpt-5", observed("opus"), None),
+            ("claude-opus-x5", observed("opus"), Some("claude-opus-x5")),
+        ] {
+            assert_eq!(
+                claude_model_id(word, side).as_deref(),
+                want,
+                "{word} {side:?}"
+            );
+        }
     }
 
     #[test]

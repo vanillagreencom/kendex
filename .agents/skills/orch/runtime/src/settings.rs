@@ -212,6 +212,9 @@ pub const HANDOFF_CONTEXT_PCT_KEY: &str = "ORCH_HANDOFF_CONTEXT_PCT";
 /// The tokens an attached launch keeps below the context mark for the
 /// returns still to come.
 pub const HANDOFF_AGENT_RESERVE_KEY: &str = "ORCH_HANDOFF_AGENT_RESERVE_TOKENS";
+/// The headroom percent of a lane's account its turn end hands off at.
+pub const HANDOFF_HEADROOM_PCT_KEY: &str = "ORCH_HANDOFF_HEADROOM_PCT";
+const DEFAULT_HANDOFF_HEADROOM_PCT: u32 = 3;
 const DEFAULT_OVERSEER_WALL_MINUTES: u32 = 20;
 const DEFAULT_HANDOFF_CONTEXT_PCT: u32 = 90;
 // The provider's account keys.
@@ -295,6 +298,7 @@ const READ_KEYS: &[&str] = &[
     OVERSEER_MEMORY_PCT_KEY,
     HANDOFF_CONTEXT_PCT_KEY,
     HANDOFF_AGENT_RESERVE_KEY,
+    HANDOFF_HEADROOM_PCT_KEY,
     WATCH_TAIL_LINES_KEY,
     WATCH_PREPARE_SECS_KEY,
     DIRECTIVE_UNREAD_SECS_KEY,
@@ -612,6 +616,8 @@ pub struct MarkSettings {
     pub wall_minutes: Judged<u32>,
     pub memory_pct: Judged<Option<u32>>,
     pub context_pct: Judged<u32>,
+    /// A lane's account mark, the headroom it hands off at.
+    pub headroom_pct: Judged<u32>,
     /// The attached-launch reserve as written, unset where empty: its one
     /// consumer, the attached-launch check, judges it.
     pub agent_reserve: Option<String>,
@@ -904,6 +910,7 @@ pub fn load(
                     n => Ok(n),
                 }),
         },
+        headroom_pct: pct(HANDOFF_HEADROOM_PCT_KEY, DEFAULT_HANDOFF_HEADROOM_PCT),
         agent_reserve: get(HANDOFF_AGENT_RESERVE_KEY).map(str::to_owned),
     };
     // A cloud repository entry names an account and an `owner/repo` in
