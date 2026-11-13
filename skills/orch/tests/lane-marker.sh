@@ -98,7 +98,7 @@ while IFS='|' read -r name recorded_harness recorded_session harness session ret
   CONTEXT="$WT/tmp/lane-mail/KEN-1/context.json"
   mkdir -p "${CONTEXT%/*}"
   RECORD="$(jq -nc --arg h "$recorded_harness" --arg s "$recorded_session" \
-    '{harness:$h,session_id:(if $s=="" then null else $s end),tokens:400000,window:1000000}')"
+    '{harness:$h,session_id:(if $s=="" then null else $s end),tokens:650000,window:1000000}')"
   printf '%s\n' "$RECORD" > "$CONTEXT"
   ARGS=()
   [[ -z "$harness" ]] || ARGS=("$harness" "$session")
@@ -137,7 +137,7 @@ mutate_file "$CONTEXT_CONTROL/lane-marker" '    1) ;;' '    1) KEEP_CONTEXT=true
 new_tree context-control
 CONTEXT="$WT/tmp/lane-mail/KEN-1/context.json"
 mkdir -p "${CONTEXT%/*}"
-printf '%s\n' '{"harness":"codex","session_id":"previous","tokens":400000}' > "$CONTEXT"
+printf '%s\n' '{"harness":"codex","session_id":"previous","tokens":650000}' > "$CONTEXT"
 RC=0
 ERR="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" "$CONTEXT_CONTROL/lane-marker" "$WT" KEN-1 codex selected 2>&1)" || RC=$?
 assert_eq "rc=$RC error=$ERR context=$([[ -f "$CONTEXT" ]] && echo present || echo absent)" \

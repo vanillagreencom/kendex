@@ -95,10 +95,10 @@ turn_end s1 "$MARK90"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
   "RC=0 first=lane-mail-check: context=195841 decision=block" \
   "a reading past it, 72 percent of the token limit, holds the turn end"
-usage 400000 1000000
+usage 650000 1000000
 turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=400000" \
-  "400000 tokens hold the turn end whatever the limit"
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=650000" \
+  "650000 tokens hold the turn end whatever the limit"
 # A successor session in the same mailbox is not judged on its predecessor's
 # reading: it is unmeasured until its own is recorded.
 cop_lead_start "$JUDGE" s0

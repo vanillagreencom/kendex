@@ -266,7 +266,7 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 #             mode, which sends the session continuation messages of its own,
 #             as many as `--max-autopilot-continues <count>` allows, 5 by
 #             default. `--context long_context` selects the 1M window where
-#             the default is about 200K, so the handoff's 400000-token cap
+#             the default is about 200K, so the handoff's default 650000-token cap
 #             comes before the automatic compaction Copilot starts at about 80
 #             percent of the window, and `--no-auto-update` keeps a newer CLI
 #             from installing itself under a running lane. All are launch

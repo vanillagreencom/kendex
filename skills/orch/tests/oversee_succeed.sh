@@ -150,8 +150,8 @@ SERVER_START="$(tm display-message -p '#{start_time}')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
 UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
-UNDER_CONTEXT_FIELD='context_decision={"tokens":100000,"window":1000000,"cap":400000,"mark_pct":50,"cap_mark":400000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}'
-MARK_CONTEXT_FIELD='context_decision={"tokens":520000,"window":1000000,"cap":400000,"mark_pct":50,"cap_mark":400000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}'
+UNDER_CONTEXT_FIELD='context_decision={"tokens":100000,"window":1000000,"cap":650000,"mark_pct":50,"cap_mark":650000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}'
+MARK_CONTEXT_FIELD='context_decision={"tokens":520000,"window":1000000,"cap":650000,"mark_pct":50,"cap_mark":650000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}'
 # A codex caller, whose account's reset is parsed from a Unix epoch.
 CODEX_SCREEN='  Context 48% left'
 # A codex caller at exactly 90 percent of the 258400 window its rollout names.
@@ -188,8 +188,8 @@ screen_reading() { # SCREEN
     "$UNDER_MARK") echo 'claude 100000 1000000 claude-fable-5-1' ;;
     "$CODEX_SCREEN") echo 'codex 100000 258400 gpt-6-astra' ;;
     "$CODEX_AT_MARK") echo 'codex 232560 258400 gpt-6-astra' ;;
-    "$NO_TABLE_TIER") echo 'claude 399999 - claude-sonnet-4-5' ;;
-    *'Sonnet 4.5 52%'*) echo 'claude 399999 - claude-sonnet-4-5' ;;
+    "$NO_TABLE_TIER") echo 'claude 649999 - claude-sonnet-4-5' ;;
+    *'Sonnet 4.5 52%'*) echo 'claude 649999 - claude-sonnet-4-5' ;;
     *'Opus 5 (200k context) 41%'*) echo 'claude 82000 200000 claude-opus-5' ;;
     *) ;;
   esac
@@ -2315,29 +2315,29 @@ while IFS='|' read -r pane reading mark decision expected; do
   assert_eq "$(jq -c 'if . == null then null else [.tokens,.window,.cap,.mark_pct,.cap_mark,.window_mark,.reserve_applied,.reserve_tokens] end' <<<"$actual_decision")" \
     "$decision" "native context decision for $pane $reading at $mark"
 done <<'ROWS'
-record|520000:1000000|60|[520000,1000000,400000,60,400000,600000,false,0]|0|oversee-succeed: mark-reached kind=context value=520000 mark=60 succession=on headroom=unreadable window=1000000
-record|520000:1000000|40|[520000,1000000,400000,40,400000,400000,false,0]|0|oversee-succeed: mark-reached kind=context value=520000 mark=40 succession=on headroom=unreadable window=1000000
-record|520000:1000000|percent|[520000,1000000,400000,90,400000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=520000 mark=90 succession=on headroom=unreadable window=1000000
+record|520000:1000000|60|null|0|oversee-succeed: context-below-mark tokens=520000 window=1000000 mark=60 headroom=80
+record|520000:1000000|40|[520000,1000000,650000,40,650000,400000,false,0]|0|oversee-succeed: mark-reached kind=context value=520000 mark=40 succession=on headroom=unreadable window=1000000
+record|520000:1000000|percent|null|0|oversee-succeed: context-below-mark tokens=520000 window=1000000 mark=90 headroom=80
 record|520000:1000000|050|null|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=050
 record|520000:1000000|101|null|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=101
-record|399999:1000000|90|null|0|oversee-succeed: context-below-mark tokens=399999 window=1000000 mark=90 headroom=80
-record|400000:1000000|90|[400000,1000000,400000,90,400000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
-record|400000:|90|[400000,null,400000,90,400000,null,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
-record|399999:|90|null|0|oversee-succeed: mark-unmeasured kind=context reason=window-unnamed succession=on
+record|649999:1000000|90|null|0|oversee-succeed: context-below-mark tokens=649999 window=1000000 mark=90 headroom=80
+record|650000:1000000|90|[650000,1000000,650000,90,650000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=650000 mark=90 succession=on headroom=unreadable window=1000000
+record|650000:|90|[650000,null,650000,90,650000,null,false,0]|0|oversee-succeed: mark-reached kind=context value=650000 mark=90 succession=on headroom=unreadable window=
+record|649999:|90|null|0|oversee-succeed: mark-unmeasured kind=context reason=window-unnamed succession=on
 record|180000:200000|100|null|0|oversee-succeed: context-below-mark tokens=180000 window=200000 mark=90 headroom=80
-record|180001:200000|100|[180001,200000,400000,90,400000,180000,false,0]|0|oversee-succeed: mark-reached kind=context value=180001 mark=90 succession=on headroom=unreadable window=200000
+record|180001:200000|100|[180001,200000,650000,90,650000,180000,false,0]|0|oversee-succeed: mark-reached kind=context value=180001 mark=90 succession=on headroom=unreadable window=200000
 record|160000:200000|80|null|0|oversee-succeed: context-below-mark tokens=160000 window=200000 mark=80 headroom=80
-record|160001:200000|80|[160001,200000,400000,80,400000,160000,false,0]|0|oversee-succeed: mark-reached kind=context value=160001 mark=80 succession=on headroom=unreadable window=200000
-node|400000:1000000|90|[400000,1000000,400000,90,400000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
-node|400000:|90|[400000,null,400000,90,400000,null,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
-node|232561:258400|90|[232561,258400,400000,90,400000,232560,false,0]|0|oversee-succeed: mark-reached kind=context value=232561 mark=90 succession=on headroom=unreadable window=258400
+record|160001:200000|80|[160001,200000,650000,80,650000,160000,false,0]|0|oversee-succeed: mark-reached kind=context value=160001 mark=80 succession=on headroom=unreadable window=200000
+node|650000:1000000|90|[650000,1000000,650000,90,650000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=650000 mark=90 succession=on headroom=unreadable window=1000000
+node|650000:|90|[650000,null,650000,90,650000,null,false,0]|0|oversee-succeed: mark-reached kind=context value=650000 mark=90 succession=on headroom=unreadable window=
+node|232561:258400|90|[232561,258400,650000,90,650000,232560,false,0]|0|oversee-succeed: mark-reached kind=context value=232561 mark=90 succession=on headroom=unreadable window=258400
 node|232560:258400|90|null|1|oversee-succeed: harness-unnamed pane=PANE
-node|399999:|90|null|1|oversee-succeed: harness-unnamed pane=PANE
+node|649999:|90|null|1|oversee-succeed: harness-unnamed pane=PANE
 foreign|100000:1000000|50|null|1|oversee-succeed: harness-unnamed pane=PANE
 ROWS
 
 # The turn-end judge (--check-marks) and a succession judge by the plain mark
-# alone, 400000 tokens or strictly past the percentage, whatever the
+# alone, 650000 tokens or strictly past the percentage, whatever the
 # attached-result reserve setting and even with an agent out: the reserve
 # protects only a new launch, and a succession waits for every attached child
 # or names each unfinished one in the handoff.
@@ -2349,20 +2349,20 @@ while IFS='|' read -r reading reserve expected_rc verdict; do
 done <<'ROWS'
 250000:1000000|150000|0|context-below-mark
 260000:1000000|default|0|context-below-mark
-399999:1000000|default|0|context-below-mark
-400000:1000000|default|0|mark-reached
+649999:1000000|default|0|context-below-mark
+650000:1000000|default|0|mark-reached
 30000:200000|150000|0|context-below-mark
 180000:200000|default|0|context-below-mark
 180001:200000|default|0|mark-reached
 300000:1000000|nope|0|context-below-mark
 ROWS
-# Control: main's unconditional reserve hands over at 260000.
+# Control: main's unconditional reserve hands over at 510000.
 RESERVECTL="$(mutant_scripts agent-reserve-always oversee-succeed)" || exit 1
 mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT")" || due_rc' '"$CONTEXT_PCT" 150000)" || due_rc'
 new_caller "$UNDER_MARK"
-AGENT_RESERVE=default CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 260000:1000000
+AGENT_RESERVE=default CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 510000:1000000
 assert_eq "$RC|$(keyed --summary mark-reached "$OUT" | cut -d' ' -f2)" '0|mark-reached' \
-  'control: an unconditional reserve hands over at 260000 of 1000000'
+  'control: an unconditional reserve hands over at 510000 of 1000000'
 # A room judgement leaves nothing a later refusal prints as its dependency's
 # own words.
 new_caller "$UNDER_MARK"

@@ -334,18 +334,18 @@ record_handoff() { # ITEM [RESUMED_AT] [STATE_DIR]
 TRANSCRIPT="$TMP_ROOT/transcript.jsonl"
 
 new_handoff_lane handoff_context KEN-50
-write_transcript "$TRANSCRIPT" 399999
+write_transcript "$TRANSCRIPT" 499999
 stop_at "$TRANSCRIPT" false
 expect 0 "$GAP" "a lane under the context mark ends its turn"
-write_transcript "$TRANSCRIPT" 500000
+write_transcript "$TRANSCRIPT" 650000
 stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: context=500000" "a lane at the context mark is refused with the figure it reached"
+expect 2 "lane-mail-check: context=650000" "a lane at the context mark is refused with the figure it reached"
 assert_eq "$(grep -cF -- " set KEN-50 handoff " "$ERR_FILE")" "1" \
   "the refusal names the one command that writes the record"
 assert_eq "$(template_fields)" "$HANDOFF_FIELDS,context" \
   "the record template it names carries every field a relaunch reads"
 assert_eq "$(template_record | jq -cS .)" \
-  "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:"[PR_NUMBER_OR_NULL]",traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:50,cap_mark:400000,window_mark:500000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
+  "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:"[PR_NUMBER_OR_NULL]",traps:["[TRAP]"],context:{decision:{tokens:650000,window:1000000,cap:650000,mark_pct:50,cap_mark:650000,window_mark:500000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
   "the parsed record preserves recovery fields and the actual plain decision and source"
 assert_eq "$(template_record '[STEP]' 'run the tests' | jq -c .remaining)" '["run the tests"]' \
   "a placeholder the lane replaces in the printed word with free text stays one argument"
@@ -354,7 +354,7 @@ assert_eq "$(template_omits_written_at && echo yes || echo no)" "yes" \
 assert_eq "$(grep -cF -- "lane-mail notice --item KEN-50 --file" "$ERR_FILE")" "1" \
   "the refusal names the handoff notice beside it"
 stop_at "$TRANSCRIPT" true
-expect 2 "lane-mail-check: context=500000" \
+expect 2 "lane-mail-check: context=650000" \
   "the refusal repeats on the continued turn, where the mailbox check does not"
 record_handoff KEN-50
 stop_at "$TRANSCRIPT" false
@@ -363,7 +363,7 @@ stop_at "$TMP_ROOT/absent.jsonl" false
 expect 0 - "the record is judged before every read the marks rest on, so no failed read traps a lane that recorded one"
 record_handoff KEN-50 2026-09-18T09:00:00Z
 stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: context=500000" \
+expect 2 "lane-mail-check: context=650000" \
   "a record a relaunch resumed belongs to an earlier life and does not clear the mark"
 
 # A lane in a worktree whose orch commands all pass `--state-dir <worktree>/tmp`,
@@ -376,7 +376,7 @@ worktree_handoff_lane() { # NAME ITEM
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" --state-dir "$LANE/tmp" init "$2" >/dev/null)
   REPORT_ITEM="$2"
   CALL_DIR="$MAIN"
-  write_transcript "$TRANSCRIPT" 500000
+  write_transcript "$TRANSCRIPT" 650000
 }
 worktree_set_named() { # ITEM — the set line naming the worktree tmp, and any init line
   printf 'set=%s init=%s' "$(grep -cF -- " --state-dir $LANE/tmp set $1 handoff " "$ERR_FILE")" \
@@ -386,7 +386,7 @@ worktree_set_named() { # ITEM — the set line naming the worktree tmp, and any 
 worktree_handoff_lane handoff_worktree_state KEN-441
 stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-441
 assert_eq "RC=$RC first=$(first_line) $(worktree_set_named KEN-441)" \
-  "RC=2 first=lane-mail-check: context=500000 set=1 init=0" \
+  "RC=2 first=lane-mail-check: context=650000 set=1 init=0" \
   "a worktree lane with its record in neither place is refused, told to write it in its worktree's tmp with no init"
 record_handoff KEN-441 "" "$LANE/tmp"
 stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-441
@@ -429,17 +429,17 @@ expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is
 # make the percentage rows cross their mark; omitting them leaves room.
 #
 #   HOOK DIR|SPELLING|TOKENS|PAYLOAD WINDOW|FIRST LINE|RECORDED
-ADAPTER_ROWS='.claude/hooks|claude|399999||GAP|claude 399999 1000000
-.claude/hooks|claude|400000||context=400000|claude 400000 1000000
-.claude/hooks|claude|500000||context=500000|claude 500000 1000000
+ADAPTER_ROWS='.claude/hooks|claude|649999||GAP|claude 649999 1000000
+.claude/hooks|claude|650000||context=650000|claude 650000 1000000
+.claude/hooks|claude|650000||context=650000|claude 650000 1000000
 .claude/hooks|sonnet|180000||GAP|claude 180000 200000
 .claude/hooks|sonnet|180001||context=180001|claude 180001 200000
 .codex/hooks|codex|232560||GAP|codex 232560 258400
 .codex/hooks|codex|232561||context=232561|codex 232561 258400
 .pi/kendex/hooks|pi|180000|200000|GAP|pi 180000 200000
 .pi/kendex/hooks|pi|180001|200000|context=180001|pi 180001 200000
-.pi/kendex/hooks|pi|399999||window-unread=pi-claude/m|pi 399999 null
-.pi/kendex/hooks|pi|400000||context=400000|pi 400000 null'
+.pi/kendex/hooks|pi|649999||window-unread=pi-claude/m|pi 649999 null
+.pi/kendex/hooks|pi|650000||context=650000|pi 650000 null'
 new_handoff_lane handoff_adapters KEN-90
 while IFS='|' read -r ROW_DIR ROW_SPELLING ROW_TOKENS ROW_WINDOW ROW_FIRST ROW_RECORDED; do
   install_hook "$HOOK" "$LANE/$ROW_DIR/lane-mail-check.sh"
@@ -462,11 +462,11 @@ done <<<"$ADAPTER_ROWS"
 # exposes the cause beside the retained reading instead of calling it room.
 install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 printf 'not-json\n' > "$OFFLINE_HOME/.pi/agent/settings.json"
-usage_line pi 400000 > "$TRANSCRIPT"
+usage_line pi 650000 > "$TRANSCRIPT"
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
   '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')"
-assert_eq "$RC|$(first_line)|$(grep -c '^lane-mail-check: context=400000$' "$ERR_FILE")|$(jq -c '[.tokens,.window]' "$LANE/tmp/lane-mail/KEN-90/context.json")" \
-  '2|lane-mail-check: compaction-unread=pi|1|[400000,null]' \
+assert_eq "$RC|$(first_line)|$(grep -c '^lane-mail-check: context=650000$' "$ERR_FILE")|$(jq -c '[.tokens,.window]' "$LANE/tmp/lane-mail/KEN-90/context.json")" \
+  '2|lane-mail-check: compaction-unread=pi|1|[650000,null]' \
   'a broken Pi configuration retains the cap reading and reports the settings failure'
 printf '%s\n' '{"compaction":{"enabled":false}}' > "$OFFLINE_HOME/.pi/agent/settings.json"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -486,11 +486,11 @@ assert_eq "$(grep -cx "$GAP" "$ERR_FILE")" "1" \
   "and the account mark beside it is judged as it is on any other turn end"
 
 new_handoff_lane handoff_setting KEN-51
-write_transcript "$TRANSCRIPT" 500000
+write_transcript "$TRANSCRIPT" 650000
 stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_PCT=90
-expect 2 "lane-mail-check: context=500000" "a raised percentage keeps the independent absolute cap"
+expect 2 "lane-mail-check: context=650000" "a raised percentage keeps the independent absolute cap"
 CONTEXT_PCT_ENV='' stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: context=500000" "the package default keeps the independent absolute cap"
+expect 2 "lane-mail-check: context=650000" "the package default keeps the independent absolute cap"
 # orch-env falls back to its default only on a NON-numeric value, so a value
 # in a shape no comparison can take reaches the hook and is named here.
 for VALUE in 050 101 0; do
@@ -1707,12 +1707,12 @@ context_rule_row() { # ROLE NAME [HOOK]
   local role="$1" CONTEXT_PCT_ENV=''
   if [ "$role" = overseer ]; then
     new_overseer "$2"
-    judge_says 'oversee-succeed: mark-reached kind=context value=405000 mark=90 succession=on headroom=80'
+    judge_says 'oversee-succeed: mark-reached kind=context value=655000 mark=90 succession=on headroom=80'
   else
     new_handoff_lane "$2" KEN-3920
   fi
   [ -z "${3:-}" ] || install_hook "$3" "$LANE/.claude/hooks/lane-mail-check.sh"
-  write_transcript "$TRANSCRIPT" 405000
+  write_transcript "$TRANSCRIPT" 655000
   if [ "$role" = overseer ]; then
     # shellcheck disable=SC2046
     stop_at "$TRANSCRIPT" false $(overseer_env)
@@ -1720,8 +1720,8 @@ context_rule_row() { # ROLE NAME [HOOK]
     stop_at "$TRANSCRIPT" false
   fi
   assert_eq "RC=$RC first=$(first_line)" \
-    'RC=2 first=lane-mail-check: context=405000' \
-    "$role at 405000 tokens is refused on the cap of a 1000000-token window"
+    'RC=2 first=lane-mail-check: context=655000' \
+    "$role at 655000 tokens is refused on the cap of a 1000000-token window"
 }
 for context_role in overseer lane; do
   context_rule_row "$context_role" "${context_role}_context_rule"
@@ -2111,7 +2111,7 @@ REALTMUX
   CODEX_TRANSCRIPT="$CODEX_OVERSEER_HOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s1.jsonl"
   mkdir -p "$(dirname "$CODEX_TRANSCRIPT")"
   record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$CODEX_OVERSEER_HOME"
-  usage_line codex 400000 > "$CODEX_TRANSCRIPT"
+  usage_line codex 650000 > "$CODEX_TRANSCRIPT"
   REAL_SUCCEED="$LANE/.claude/skills/orch/scripts/oversee-succeed"
   REAL_MV="$(command -v mv)"
   cat > "$REAL_TMUX_BIN/mv" <<'FAILWRITE'
@@ -2136,8 +2136,8 @@ FAILWRITE
     assert_eq "$RC|$(grep -E '^lane-mail-check: (context=[0-9]+|marks=unjudged)$' "$ERR_FILE")|$(grep -c '^fixture context write failed$' "$ERR_FILE")|$(grep -c '^oversee-succeed: harness-unnamed ' "$ERR_FILE")|$(grep -cFx "lane-mail-check: context-unrecorded=$LANE/tmp/lane-mail/overseer/context.json" "$ERR_FILE")|$record" \
       "$expected" "actual marks: writer=$writer judge=${judge##*/} preserves the live due reading"
   done <<ROWS
-kept|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|0|0|0|400000 258400 $OVERSEER_SERVER $OVERSEER_PANE
-failed|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|1|0|1|none
+kept|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=650000|0|0|0|650000 258400 $OVERSEER_SERVER $OVERSEER_PANE
+failed|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=650000|1|0|1|none
 ROWS
   write_transcript "$TRANSCRIPT" 600000
 

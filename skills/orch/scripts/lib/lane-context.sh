@@ -354,7 +354,8 @@ lane_context_handoff_pct() { # PCT
 }
 
 # lane_context_handoff_due TOKENS WINDOW PCT [AGENT_RESERVE] — one context
-# reading: `due` at 400000 used tokens or strictly past PCT percent of WINDOW,
+# reading: `due` at ORCH_HANDOFF_CONTEXT_TOKENS (default 650000) used tokens
+# or strictly past PCT percent of WINDOW,
 # with PCT capped at 90. WINDOW is the effective capacity before compaction,
 # or the actual window when compaction is disabled. Exit 1 below the token cap
 # where WINDOW is empty or 0, which is unmeasured and never room. Exit 2 where
@@ -363,7 +364,7 @@ lane_context_handoff_pct() { # PCT
 # would read as octal. Every reader of a reading asks here, so a lane, the
 # overseer and the report cannot judge one reading two ways.
 lane_context_handoff_due() { # TOKENS WINDOW PCT [AGENT_RESERVE]
-  local pct cap_mark window_mark
+  local pct cap cap_mark window_mark
   lane_context_marks "$@" || return 2
   if [ "$1" -ge "$cap_mark" ]; then printf 'due\n'; return 0; fi
   case "$window_mark" in '') return 1 ;; invalid) return 2 ;; esac
@@ -380,7 +381,7 @@ lane_context_handoff_due() { # TOKENS WINDOW PCT [AGENT_RESERVE]
 
 # The marks lane_context_handoff_due and lane_context_handoff_decision judge
 # and record for the same arguments, computed once, into the CALLER's locals
-# pct, cap_mark and window_mark. cap_mark is the token count due at or past.
+# pct, cap, cap_mark and window_mark. cap_mark is the token count due at or past.
 # window_mark is the whole token count the window percentage leaves after any
 # reserve: due strictly past it without a reserve and at or past it with one,
 # which is exact for whole token counts. It is empty where WINDOW is empty or
@@ -390,17 +391,19 @@ lane_context_handoff_due() { # TOKENS WINDOW PCT [AGENT_RESERVE]
 lane_context_marks() { # TOKENS WINDOW PCT [AGENT_RESERVE]
   pct=$(lane_context_handoff_pct "${3:-}") || return 2
   case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-  cap_mark=400000
+  cap=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_CONTEXT_TOKENS 650000) || return 2
+  case "$cap" in *[!0-9]* | 0*) return 2 ;; esac
+  cap_mark=$cap
   window_mark=""
   if [ "$#" -ge 4 ]; then
     case "$4" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-    # No arithmetic uses an unbounded setting: any reserve this large leaves
-    # no room below the absolute mark, even if the capacity is unknown.
-    if [ "${#4}" -gt 6 ] || [ "$4" -ge 400000 ]; then
+    # A reserve at least as large as the absolute mark leaves no room below
+    # it, even if the capacity is unknown.
+    if [ "${#4}" -gt "${#cap}" ] || [ "$4" -ge "$cap" ]; then
       cap_mark=0
       return 0
     fi
-    cap_mark=$((400000 - $4))
+    cap_mark=$((cap - $4))
   fi
   case "${2:-}" in
     '' | 0) ;;
@@ -423,7 +426,7 @@ lane_context_marks() { # TOKENS WINDOW PCT [AGENT_RESERVE]
 # measured is null. Exit 2, printing nothing, where that judge exits 2. Only
 # a caller that records the decision asks for it.
 lane_context_handoff_decision() { # TOKENS WINDOW PCT [AGENT_RESERVE]
-  local pct cap_mark window_mark window=null applied=false reserve=0
+  local pct cap cap_mark window_mark window=null applied=false reserve=0
   lane_context_marks "$@" || return 2
   case "$window_mark" in
     '') window_mark=null ;;
@@ -437,8 +440,8 @@ lane_context_handoff_decision() { # TOKENS WINDOW PCT [AGENT_RESERVE]
     applied=true
     reserve=$4
   fi
-  printf '{"tokens":%s,"window":%s,"cap":400000,"mark_pct":%s,"cap_mark":%s,"window_mark":%s,"reserve_applied":%s,"reserve_tokens":%s}\n' \
-    "$1" "$window" "$pct" "$cap_mark" "$window_mark" "$applied" "$reserve"
+  printf '{"tokens":%s,"window":%s,"cap":%s,"mark_pct":%s,"cap_mark":%s,"window_mark":%s,"reserve_applied":%s,"reserve_tokens":%s}\n' \
+    "$1" "$window" "$cap" "$pct" "$cap_mark" "$window_mark" "$applied" "$reserve"
 }
 
 # lane_context_handoff_context DECISION HARNESS SESSION TRANSCRIPT PANE_KEY

@@ -238,12 +238,12 @@ fi
 # below its plain handoff mark, where succession would refuse.
 overseer_transcript
 new_overseer codex_unknown_route
-write_transcript "$TRANSCRIPT" 300000
+write_transcript "$TRANSCRIPT" 450000
 ARM_ARGS=(halt)
 # shellcheck disable=SC2046
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,tool_name:"Agent",
   background_tasks:[{type:"workflow",id:"w1",status:"running"}]}')" $(overseer_env)
-expect 2 'lane-mail-check: agent-unobserved=Agent tokens=300000 reserve=150000' 'the overseer has an unknown roster below the plain mark'
+expect 2 'lane-mail-check: agent-unobserved=Agent tokens=450000 reserve=150000' 'the overseer has an unknown roster below the plain mark'
 assert_eq "$(sed -n 's/^lane-mail-check: detached-route=//p' "$ERR_FILE")" orch-job-runner 'the overseer refusal names the installed detached route'
 ARM_ARGS=()
 

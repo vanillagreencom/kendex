@@ -221,26 +221,26 @@ done <<'ROWS'
 plain|below the context mark|100000|false|s1||0|-
 plain|at the percentage mark|180000|false|s1||0|-
 plain|past the percentage mark|180001|false|s1||2|lane-mail-check: context=@TOKENS@
-plain|at the absolute context mark|400000|false|s1||2|lane-mail-check: context=@TOKENS@
-plain|a continued turn retains its succession mark|400000|true|s1||2|lane-mail-check: context=@TOKENS@
-missing-pane|a managed Jarvis without TMUX_PANE receives its mark|400000|false|s1||2|lane-mail-check: context=@TOKENS@
-missing-pane|a managed Jarvis without TMUX_PANE is judged again|400000|true|s1||2|lane-mail-check: context=@TOKENS@
-missing-pane-default|the runtime default identifies Jarvis without launch bindings|400000|false|s1||2|lane-mail-check: context=@TOKENS@
-missing-pane-default|the runtime default identifies Jarvis at its next Stop|400000|true|s1||2|lane-mail-check: context=@TOKENS@
-missing-pane-foreign|a missing-pane Jarvis native id must match its controller|400000|false|s2||0|NO_MARK
-plain|another native session gets no Jarvis mark|400000|false|s2||0|-
-plain|a subagent gets no Jarvis mark|400000|false|s1|child|0|-
-absent|the same session with no record gets no mark|400000|false|s1||0|NO_MARK
-plain|the restored record restores the Jarvis succession mark|400000|false|s1||2|lane-mail-check: context=@TOKENS@
-setting-range|an invalid setting passes as a named gap|400000|false|s1||0|lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=101
-setting|an unreadable setting passes as a named gap|400000|false|s1||0|lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_PCT
-script|an absent context command passes as a named gap|400000|false|s1||0|SCRIPT_KEY
-transcript|a missing native transcript passes as a named gap|400000|false|s1||0|lane-mail-check: transcript=unreadable
+plain|at the absolute context mark|650000|false|s1||2|lane-mail-check: context=@TOKENS@
+plain|a continued turn retains its succession mark|650000|true|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane|a managed Jarvis without TMUX_PANE receives its mark|650000|false|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane|a managed Jarvis without TMUX_PANE is judged again|650000|true|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane-default|the runtime default identifies Jarvis without launch bindings|650000|false|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane-default|the runtime default identifies Jarvis at its next Stop|650000|true|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane-foreign|a missing-pane Jarvis native id must match its controller|650000|false|s2||0|NO_MARK
+plain|another native session gets no Jarvis mark|650000|false|s2||0|-
+plain|a subagent gets no Jarvis mark|650000|false|s1|child|0|-
+absent|the same session with no record gets no mark|650000|false|s1||0|NO_MARK
+plain|the restored record restores the Jarvis succession mark|650000|false|s1||2|lane-mail-check: context=@TOKENS@
+setting-range|an invalid setting passes as a named gap|650000|false|s1||0|lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=101
+setting|an unreadable setting passes as a named gap|650000|false|s1||0|lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_PCT
+script|an absent context command passes as a named gap|650000|false|s1||0|SCRIPT_KEY
+transcript|a missing native transcript passes as a named gap|650000|false|s1||0|lane-mail-check: transcript=unreadable
 copilot-empty|an empty Copilot lead marker leaves context unmeasured|100000|false|s1||allow|READING_KEY
 copilot-sdk|an SDK reading below the mark passes|100000|false|s1||allow|-
-copilot-sdk|an SDK-only managed Copilot session receives succession|400000|false|s1||block|lane-mail-check: context=@TOKENS@
-copilot-missing-pane|an SDK-only Jarvis without TMUX_PANE receives succession|400000|false|s1||block|lane-mail-check: context=@TOKENS@
-copilot-absent|the same SDK session with no controller record gets no mark|400000|false|s1||allow|NO_MARK
+copilot-sdk|an SDK-only managed Copilot session receives succession|650000|false|s1||block|lane-mail-check: context=@TOKENS@
+copilot-missing-pane|an SDK-only Jarvis without TMUX_PANE receives succession|650000|false|s1||block|lane-mail-check: context=@TOKENS@
+copilot-absent|the same SDK session with no controller record gets no mark|650000|false|s1||allow|NO_MARK
 registered|a managed registered overseer retains its wake refusal|100000|false|s1||2|lane-mail-check: wake=unarmed
 ROWS
 

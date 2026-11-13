@@ -2528,6 +2528,7 @@ load_context_lib() { # [reserve]
       . "$1" && declare -F lane_context_handoff_due >/dev/null &&
       declare -F context_read_and_record >/dev/null &&
       { [ "$2" != reserve ] || {
+        export ORCH_HANDOFF_CONTEXT_TOKENS=400000
         [ "$(lane_context_handoff_due 250000 1000000 90 150000)" = due ] &&
         [ "$(lane_context_handoff_due 249999 1000000 90 150000)" = room ] &&
         [ "$(lane_context_handoff_due 249999 1000000 90 200000)" = due ]

@@ -190,8 +190,8 @@ def run(script, name, extra=None, args=(), check=True):
     return status, (root / (name + '.out')).read_bytes(), (root / (name + '.err')).read_bytes(), count, caller_cost(trace, list(external.values()), str(proc.pid)), pane_cost
 
 # The hook consumes this additive field; all other bytes retain KEN-3907's contract.
-CONTEXT_DECISION = {'tokens': 950, 'window': 1000, 'cap': 400000, 'mark_pct': 90,
-                    'cap_mark': 400000, 'window_mark': 900, 'reserve_applied': False,
+CONTEXT_DECISION = {'tokens': 950, 'window': 1000, 'cap': 650000, 'mark_pct': 90,
+                    'cap_mark': 650000, 'window_mark': 900, 'reserve_applied': False,
                     'reserve_tokens': 0}
 
 def without_context_decision(stdout):
