@@ -68,42 +68,28 @@
 #
 #   - On every measured class (`micro`, `small`, `standard`) two Linux lanes
 #     always run: cargo_linux and bot_instructions.
-#   - The shell shards run per package. A package is a skill
-#     (`skills/<name>/`, its render under `.agents/skills/<name>/` included),
-#     `tools/`, `hooks/` (its renders under `.claude/hooks/`, `.codex/hooks/`
-#     and `.pi/kendex/hooks/` included), or a Pi package under
-#     `pi-extensions/`. A changed package selects the shards whose steps run
-#     its suites. A changed skill also selects the shards that run the
-#     tools/ and hooks/ suites, which read skills' scripts, some by glob.
-#   - Who reads a change is searched for, not listed. Every tracked file a
-#     shard runs, as consumers() maps it to a package, is searched for each
-#     changed skill's name and for the path of each changed file outside
-#     skills/, save a root file of prose. A suite that names one selects its
-#     own shard. A skill's script that names a skill, or a skill declaring
-#     it under `dependencies.required` in its SKILL.md, carries the change
-#     on: that skill counts as changed and is searched for in turn, until no
-#     search finds a new one. A reference the search cannot see, a path a
-#     script assembles at run time, is outside this rule, save the two
-#     want_package states: pi-hooks runs hooks by name, so hooks/ also
-#     selects `node`, and harness-smoke reads hooks/*.sh by glob, so
-#     hooks/ also selects `guards-tools-tail`.
-#   - A changed file citing a shard by name in backticks selects
-#     `guards-tools-tail`, whose orch-shard-partition suite holds every
-#     citation to the roster.
-#   - A measured diff whose every path is Markdown of a skill package,
-#     under skills/<name>/ or its render under .agents/skills/<name>/, and
-#     that selects no build lane, takes the narrowed row: the row its paths
-#     select, the same shards save an orch shard that keeps no suite on
-#     either runner, with `skipped_suites=` listing each
-#     suite tools/guard --note-skips names, whose own `# Inputs:` note covers
-#     no changed document. A suite with no note runs. Each shell suite step
-#     runs only the candidates --suite-list keeps. Where --note-skips
-#     refuses, a suite's code naming a document its note leaves out among
-#     its causes, the row skips no suite. Every other row skips none.
-#   - `guards-scans` runs where a path under skills/, hooks/ or tools/
-#     changed, the trees its scans read. The CHECKOUT_KENDEX_SHARDS
-#     also run where a build input changed, because their consumer rows use
-#     kendex-cli built from the checkout. A diff that reaches no package selects no shard.
+#   - The suites and Rust targets a measured diff runs are its reach, the one
+#     reach local validation selects by: `tools/guard --suite-reach` over the
+#     changed paths, whose mapped_suites header states which suites and
+#     skill runtime targets can depend on each path. The shards are the
+#     reach's projection: each reached suite selects the shards whose steps
+#     run it (want_package; orch's suites the shard run-all.sh --shard-of
+#     gives on either runner), a reached Pi-package tree its package's
+#     shards, and a reached Rust target `orch-rest`, whose Linux leg runs
+#     them. `skipped_suites=` lists every other shell suite, so each shard
+#     step runs only the reach's candidates. `rust_targets=` lists the
+#     targets. A reach that cannot be read runs every shard, suite and
+#     target.
+#   - Beside the reach, four reads its text scan cannot see select a shard
+#     whole: a changed hook selects `node`, whose pi-hooks suite runs hooks by
+#     name, and harness-smoke, which reads hooks/*.sh by glob; a changed file
+#     citing a shard by name in backticks selects orch-shard-partition, which
+#     holds every citation to the roster; `.bun-version` selects `node`; and
+#     a build input selects the CHECKOUT_KENDEX_SHARDS whole, whose consumer
+#     rows run kendex-cli built from the checkout.
+#   - `guards-scans` runs where a path under skills/, hooks/, refresh/ or
+#     tools/ changed, the trees its scans read. A diff that reaches no suite
+#     and no target selects no shard.
 #   - The platform selections (the macOS shell bit, cargo_macos,
 #     cargo_windows) are false on a diff whose every path is prose,
 #     whose content no platform reads differently, and true on any other
@@ -124,11 +110,11 @@
 #     ui/package.json script, and nothing under ui/ imports or configures a
 #     path outside ui/.
 #   - A diff to what defines the lanes, a path under .github/workflows/ or
-#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate,
-#     tools/rust-reads or tools/lib/skill-requirements.awk, runs every
-#     lane, so a change to a lane or to its selection runs every lane in
-#     the merge group that lands it. Any path under .github/ selects every
-#     shard.
+#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate, tools/guard,
+#     tools/rust-reads or the macOS contracts, runs every lane, so a change
+#     to a lane or to its selection runs every lane in the merge group that
+#     lands it. Any path under .github/ and either runner (RUNNERS) selects
+#     every shard whole.
 #   - A `render` or `trivial` diff runs bot_instructions, the one
 #     seconds-long verify job, whose steps its lane entry below lists. The
 #     classifier proved a `render` diff by re-rendering it, and a `trivial`
@@ -166,15 +152,14 @@
 #   ui                  the vitest, tsc and biome lane.
 #   catalog             the released engine's strict check and catalog render.
 #   smoke               the rendered sample trees read by real harness CLIs.
-#   skipped_suites      the narrowed row's JSON list of suites, `[]` on
-#                       every other row; each shell suite step leaves the
-#                       listed suites out of its own.
-#   runtimes            the Rust targets of the orch and agent-runtime
-#                       runtimes, run by one step of the orch-rest Linux leg:
-#                       true where a path other than prose under either
-#                       package, source or render, or a lane source changed,
-#                       or a changed path other than prose that one of their
-#                       tests/rust/*.rs files names.
+#   skipped_suites      the JSON list of shell suites outside the reach, `[]`
+#                       where every shard runs whole; each shell suite step
+#                       leaves the listed suites out of its own.
+#   rust_targets        the JSON list of skill runtime Rust targets the
+#                       reach holds, each `<package>/<target>` (`lib` or a
+#                       [[test]] name), run by one step of the orch-rest Linux
+#                       leg; every target of every skill runtime where a
+#                       lane source changed or the reach could not be read.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
 #                       shell bit is false. Merge groups run these on macOS,
@@ -192,7 +177,7 @@
 # table does not name is one of those: the step goes red, every lane's status
 # function runs it, and the required contexts refuse the skip, which is the
 # loud way to learn a sixth class shipped. A read set tools/rust-reads could
-# not derive is another.
+# not derive is another. An unread reach is no refusal: it runs everything.
 set -euo pipefail
 
 # --suite-list CANDIDATE... prints, one per line in argument order, the
@@ -311,16 +296,17 @@ esac
 # and the macOS shard list, JSON in roster order; shell_os names each runner
 # whose list is non-empty and shell_shards is true where it names one, so a
 # merge group and a main push read alike. The JOB=VALUE words of a class row
-# follow, and RUNTIMES, a class row's `runtimes=` value, comes last; the push
-# route selects no job, skips no suite and passes no RUNTIMES.
-emit() { # SHARDS QUEUE SKIPPED RUNTIMES [JOB=VALUE ...]
-  local shards="$1" queue="$2" skipped="$3" runtimes="$4" legs="" shell=false
+# follow, and RUST, a class row's `rust_targets=` value, comes last; the push
+# route selects no job, skips no suite and passes no RUST, which the
+# workflow's Rust step reads as every target.
+emit() { # SHARDS QUEUE SKIPPED RUST [JOB=VALUE ...]
+  local shards="$1" queue="$2" skipped="$3" rust="$4" legs="" shell=false
   shift 4
   [ "$shards" = "[]" ] || legs='"ubuntu-latest"'
   [ "$queue" = "[]" ] || legs="${legs:+$legs,}\"macos-latest\""
   [ -z "$legs" ] || shell=true
   set -- "shell_shards=$shell" "shell_os=[$legs]" "$@" "shards=$shards" "queue_macos_shards=$queue" "skipped_suites=$skipped"
-  [ -z "$runtimes" ] || set -- "$@" "runtimes=$runtimes"
+  [ -z "$rust" ] || set -- "$@" "rust_targets=$rust"
   printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
   printf '%s\n' "$@" >&2
 }
@@ -414,28 +400,21 @@ any_outside() { # REGEX — is some changed path NOT inside it?
 
 # Prose, the one input the platform and compile lanes stand down on.
 PROSE='\.(md|markdown)$'
-# Whether a path other than prose lies under the orch or agent-runtime
-# package, source or render: what the runtimes' Rust targets read.
-runtime_input() {
-  local hits
-  hits="$(printf '%s\n' "$paths" | grep -E -- '^(\.agents/)?skills/(orch|agent-runtime)/' | grep -Evc -- "$PROSE")" || hits=0
-  [ "$hits" -gt 0 ]
-}
 # What defines the lanes: the workflows and actions that run them, and the
-# scripts that select them.
-LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads|macos-test-contracts|macos-test-contracts\.json)$|tools/lib/skill-requirements\.awk$)'
+# scripts that select them, tools/guard's reach among them.
+LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|guard|rust-reads|macos-test-contracts|macos-test-contracts\.json)$)'
+# The runners every shell shard runs its battery through.
+RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # kendex.toml uses the explicit default layout in source/config.rs and
 # source/layout.rs. The release check also reads Git ignore rules. Smoke
 # builds its own catalog in cli_smoke.rs; its compiled inputs come from
 # rust-reads below. Both jobs use this union, including catalog prose.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
-# A skill package's Markdown, source or render: a diff of these alone takes
-# the narrowed row.
-SKILL_PROSE='^(\.agents/)?skills/[^/]+/.+\.(md|markdown)$'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
-# What selects every shell shard: the lane sources and the rest of .github/.
-ALL_SHARDS="^\\.github/|$LANE_SOURCES"
+# What selects every shell shard whole: the lane sources, the rest of
+# .github/ and the runners.
+ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
 
 # Which changed paths tools/rust-reads rows name: named=1 where
 # an include or manifest row other than `.` names one, build=1 where a path
@@ -465,135 +444,12 @@ reads() {
   ' <<<"$rows"
 }
 
-# `SKILL<tab>NAME` for each name a skill's SKILL.md declares under
-# `dependencies.required`, and `?<tab>FILE` for a dependencies block the
-# reader cannot take, read from the checkout this script runs in by
-# lib/skill-requirements.awk, whose header states the grammar.
-requirements() {
-  local f
-  set --
-  for f in skills/*/SKILL.md; do
-    [ ! -f "$f" ] || set -- "$@" "$f"
-  done
-  [ "$#" -gt 0 ] || return 0
-  awk -f "$TOOLS_DIR/lib/skill-requirements.awk" "$@"
-}
-
-# One extended regex per path on stdin, matching it where it stands whole, as
-# consumers() states.
-whole_path() {
-  awk '{
-    end = /\/$/ ? "" : "([^A-Za-z0-9_.-]|$)"
-    gsub(/[][\\.*^$+?(){}|]/, "\\\\&")
-    print "(^|[^A-Za-z0-9_.-])" $0 end
-  }'
-}
-
-# Whether a Rust target of the runtimes, a tests/rust/*.rs file of orch or
-# agent-runtime, names a changed path other than prose, as consumers() names
-# one, a skill's file also as `../<name>/<file>`: those targets run the hook,
-# the scripts and the tools they name. Only the changed paths themselves are
-# searched, never a skill reached through them, since every one of those
-# targets names its own package. Exit 2 where the search failed.
-RUST_TARGETS='skills/orch/tests/rust/*.rs skills/agent-runtime/tests/rust/*.rs'
-rust_named() {
-  local path needles="" exact files status=0
-  set --
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    [[ ! $path =~ $PROSE ]] || continue
-    needles="$needles$path
-"
-    case "$path" in
-      skills/*/* | .agents/skills/*/*)
-        path="../${path#.agents/}"
-        path="../${path#../skills/}"
-        needles="$needles$path
-"
-        ;;
-    esac
-  done <<<"$paths"
-  [ -n "$needles" ] || return 1
-  while IFS= read -r path; do
-    [ -z "$path" ] || set -- "$@" -e "$path"
-  done <<<"$needles"
-  # shellcheck disable=SC2086 # the targets are pathspecs
-  files="$(git -c core.quotePath=false grep -l -I -F "$@" -- $RUST_TARGETS)" || status=$?
-  case "$status" in
-    0) ;;
-    1) return 1 ;;
-    *) return 2 ;;
-  esac
-  exact="$(printf '%s' "$needles" | whole_path)" || return 2
-  local IFS='
-'
-  set -f
-  set --
-  for path in $exact; do
-    set -- "$@" -e "$path"
-  done
-  # shellcheck disable=SC2086 # one file per line
-  set -- "$@" -- $files
-  set +f
-  status=0
-  grep -qE "$@" || status=$?
-  return "$status"
-}
-
-# Who reads a path: `<package> <how>` for each tracked file naming one of the
-# paths on stdin. The package is the one a shard runs the file in:
-# `skills/<name>` for its scripts/ and tests/, `tools`, `hooks`, and
-# `pi-extensions/pi-claude-bridge` or `pi-extensions` for a Pi package; a
-# tracked file anywhere else is no shard's and is not read. <how> is `suite`
-# for a file under a tests/ directory or a Pi package, which reads the path
-# when its own shard runs, and `script` for any other, whose behaviour now
-# depends on it. A path is named where it stands whole: no path character
-# touches either end, save a `/` before it or a path ending in one, so
-# `install.sh` is not read out of `atomic-install.sh`. A skill is also named as
-# `skills/<name>` or `../<name>/`. A file under a skill's tests/rust/ is a
-# Rust target, no shell suite: rust_named answers for it. Exit 2 where the
-# search failed.
-consumers() {
-  local path paths="" exact candidates files status=0
-  set --
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    set -- "$@" -e "$path"
-    paths="$paths$path
-"
-  done
-  [ "$#" -gt 0 ] || return 0
-  # git grep's fixed-string pass narrows every tracked file present in the
-  # working tree to the few holding a path at all, at one speed on every
-  # platform; the bounded match then reads those few alone, since BSD grep
-  # runs a long -E alternation over many files far slower than GNU grep.
-  candidates="$(git -c core.quotePath=false grep -l -I -F "$@")" || status=$?
-  case "$status" in
-    0) ;;
-    1) return 0 ;;
-    *) return 2 ;;
-  esac
-  candidates="$(printf '%s\n' "$candidates" | awk -v mode=path "$PACKAGE_AWK")" || return 2
-  [ -n "$candidates" ] || return 0
-  exact="$(printf '%s' "$paths" | whole_path)" || return 2
-  local IFS='
-'
-  set -f
-  set --
-  for path in $exact; do
-    set -- "$@" -e "$path"
-  done
-  # shellcheck disable=SC2086 # one file per line
-  set -- "$@" -- $candidates
-  set +f
-  files="$(grep -lE "$@")" || status=$?
-  [ "$status" -le 1 ] || return 2
-  [ -n "$files" ] || return 0
-  printf '%s\n' "$files" | awk -v mode=package "$PACKAGE_AWK" | sort -u
-}
-# The one mapping from a tracked file to the package a shard runs it in, as
-# consumers() above states it. mode=path prints each file that has one,
-# mode=package its `<package> <how>`.
+# The one mapping from a tracked file to the package a shard runs it in:
+# `skills/<name>` for its scripts/ and tests/, `refresh`, `tools`, `hooks`,
+# and `pi-extensions/pi-claude-bridge` or `pi-extensions` for a Pi package;
+# a skill's tests/rust/ file is no shell suite's. mode=path prints each file
+# that has one, mode=package its `<package> <how>`, <how> `suite` under a
+# tests/ directory or in a Pi package and `script` elsewhere.
 PACKAGE_AWK='
   /^skills\/[^\/]+\/(scripts|tests)\// { split($0, part, "/"); package = "skills/" part[2] }
   /^refresh\// { package = "refresh" }
@@ -652,10 +508,7 @@ want_package() { # PACKAGE
       done ;;
     skills/*) want_shard rest ;;
     tools) want_shard guards-tools guards-tools-tail ;;
-    # pi-hooks' suite runs real hooks by a path it builds from each hook's
-    # name, and tools/tests/harness-smoke.test.sh reads every hooks/*.sh by
-    # glob; no search for the path can find either.
-    hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;
+    hooks) want_shard guards-hooks guards-hooks-tail ;;
     pi-extensions/pi-claude-bridge) want_shard node pi-claude-bridge ;;
     pi-extensions) want_shard node ;;
   esac
@@ -681,72 +534,100 @@ if [ -n "$suite_path" ]; then
   exit 0
 fi
 
-# A skill whose behaviour the diff changes: its own shards, every skill
-# declaring it under dependencies.required, and its name queued for the
-# search, whose scripts reach on in turn.
-reached=" "
-pending=""
-reqs=""
-reqs_read=false
-reach_skill() { # NAME
-  local skill required
-  case "$reached" in *" $1 "*) return 0 ;; esac
-  reached="$reached$1 "
-  want_package "skills/$1"
-  pending="$pending
-skills/$1
-../$1/"
-  if [ "$reqs_read" = false ]; then
-    reqs="$(requirements)" ||
-      die "requirements-failed" "the dependencies.required lists of skills/*/SKILL.md could not be read"
-    while IFS="$(printf '\t')" read -r skill required; do
-      [ -n "$skill" ] || continue
-      [ "$skill" != "?" ] || die "requirements-unreadable path=$required" \
-        "dependencies: holds a line this reader cannot take"
-      [ -d "skills/$required" ] || die "requirements-unreadable path=skills/$skill/SKILL.md" \
-        "dependencies.required names $required, which is no skill under skills/"
-    done <<<"$reqs"
-    reqs_read=true
+# The reach, read once for every event's selection: tools/guard
+# --suite-reach over the changed paths. REACH_SUITES holds its suites and
+# Pi-package trees, one per line, and REACH_TARGETS its Rust targets as a
+# JSON list. REACH_READ stays false where the query failed: the selection
+# then runs every shard, suite and target. The query's notes that a tree ran
+# whole, and its findings, are forwarded on stderr.
+REACH_READ=false
+REACH_SUITES=""
+REACH_TARGETS='[]'
+reach_read() {
+  local out err status=0 list="" target
+  err="$(mktemp)" || { printf 'ci-job-set: reach=unread cause=mktemp\n' >&2; return 0; }
+  out="$(printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach 2>"$err")" || status=$?
+  sed -n 's/^\(guard: .*\|guard-note: suites=all .*\)$/ci-job-set: reach-note: \1/p' "$err" >&2 || true
+  rm -f -- "$err"
+  if [ "$status" -ne 0 ]; then
+    printf 'ci-job-set: reach=unread status=%s\n' "$status" >&2
+    return 0
   fi
-  while IFS="$(printf '\t')" read -r skill required; do
-    [ "$required" != "$1" ] || reach_skill "$skill"
-  done <<<"$reqs"
+  REACH_SUITES="$(printf '%s\n' "$out" | sed '/^target /d; /^$/d')"
+  while IFS= read -r target; do
+    [ -z "$target" ] || list="$list,\"$target\""
+  done <<<"$(printf '%s\n' "$out" | sed -n 's/^target //p')"
+  REACH_TARGETS="[${list#,}]"
+  REACH_READ=true
 }
 
-# The `shards=` value for a measured row: the JSON list, in roster order.
+# Every target of every skill runtime, as the workflow's Rust step reads a
+# whole manifest: `<package>/*`.
+all_targets() {
+  local manifest list="" package
+  for manifest in skills/*/runtime/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    package="${manifest#skills/}"
+    list="$list,\"${package%%/*}/*\""
+  done
+  printf '[%s]' "${list#,}"
+}
+
+# Every shell suite a shard step can hand --suite-list, one per line.
+universe() {
+  local listed
+  listed="$(git -c core.quotePath=false ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
+    ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh')" ||
+    die universe-unread "git could not list the shell suites a shard step runs"
+  printf '%s\n' "$listed" | awk 'NF && !/\/run-all\.sh$/'
+}
+
+# Each suite on stdin into `want` by the shards whose steps run it: orch's
+# by the shard run-all.sh --shard-of gives it on either runner, every orch
+# shard where that cannot answer; any other suite, and a Pi-package tree
+# spelled DIR/, by its package's want_package shards.
+project() {
+  local suite package orch="" os shard
+  while IFS= read -r suite; do
+    [ -n "$suite" ] || continue
+    case "$suite" in
+      skills/orch/tests/*) orch="$orch$suite
+"; continue ;;
+    esac
+    package="$(printf '%s\n' "$suite" | awk -v mode=package "$PACKAGE_AWK")" ||
+      die suite-package-unread "the suite path $suite could not be mapped to its package"
+    [ -z "$package" ] || want_package "${package% *}"
+  done
+  [ -n "$orch" ] || return 0
+  for os in Linux macOS; do
+    if ! shard="$(printf '%s' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null | cut -d' ' -f1 | sort -u)"; then
+      printf 'ci-job-set: orch-shards=unread os=%s\n' "$os" >&2
+      # shellcheck disable=SC2086 # the list is a word list
+      want_shard $ORCH_SHARDS
+      return 0
+    fi
+    # shellcheck disable=SC2086 # one shard per word
+    [ -z "$shard" ] || want_shard $shard
+  done
+}
+
+# A measured row's `shards=` value, the JSON list in roster order, then its
+# `skipped_suites=` value: every universe suite outside the kept set, save
+# those a shard selected whole runs. The two lists are separated by a blank.
 select_shards() { # BUILD(true|false)
-  local build="$1" path skill batch found package list="" shard cited
+  local build="$1" path list="" shard cited kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites
+  want=" "
   set --
   while IFS= read -r path; do
     case "$path" in
-      .bun-version) want_shard node ;;
-      skills/*/* | .agents/skills/*/*)
-        skill="${path#.agents/}"
-        skill="${skill#skills/}"
-        reach_skill "${skill%%/*}"
-        # tools/ and hooks/ suites read every skill's scripts, some by glob.
-        # hooks/ is named by its two shards: the package's `node` is there
-        # for pi-hooks, which runs hooks by name.
-        want_package tools
-        want_shard guards-hooks guards-hooks-tail
-        ;;
-      refresh/*) want_package refresh ;;
-      tools/*) want_package tools ;;
-      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*) want_package hooks ;;
-      pi-extensions/pi-claude-bridge/*) want_package pi-extensions/pi-claude-bridge ;;
-      pi-extensions/*) want_package pi-extensions ;;
+      .bun-version) whole="$whole node" ;;
+      hooks/tests/* | *.md) ;;
+      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*)
+        whole="$whole node"
+        kept="$kept
+tools/tests/harness-smoke.test.sh" ;;
     esac
-    case "$path" in skills/* | hooks/* | tools/* | refresh/*) want_shard guards-scans ;; esac
-    # A file outside every skill is searched for by its own path, save a
-    # root file of prose: a bare AGENTS.md or README.md is every fixture's.
-    case "$path" in
-      skills/* | .agents/skills/*) ;;
-      */*) pending="$pending
-$path" ;;
-      *.md | *.markdown) ;;
-      *) pending="$pending
-$path" ;;
-    esac
+    case "$path" in skills/* | hooks/* | tools/* | refresh/*) whole="$whole guards-scans" ;; esac
     [ ! -f "$path" ] || set -- "$@" "$path"
   done <<<"$paths"
   # A changed file citing a shard by name, in the form
@@ -756,94 +637,65 @@ $path" ;;
     cited=0
     grep -qE -- "$SHARD_CITATION" "$@" || cited=$?
     case "$cited" in
-      0) want_shard guards-tools-tail ;;
+      0) kept="$kept
+tools/tests/orch-shard-partition.test.sh" ;;
       1) ;;
       *) die "citation-read-failed" "the changed files could not be read for shard citations" ;;
     esac
   fi
-  # Until no search finds a skill it has not searched for.
-  while [ -n "$pending" ]; do
-    batch="$pending"
-    pending=""
-    found="$(consumers <<<"$batch")" ||
-      die "consumers-failed" "the scripts and suites naming a changed path could not be searched"
-    # A suite that reads a path runs; a skill's script that reads one
-    # carries the change on to that skill's readers. The chain ends at
-    # tools/, hooks/ and pi-extensions/: a change to one of those is
-    # searched for by its own path, above.
-    while read -r package how; do
-      case "$package:$how" in
-        skills/*:script) reach_skill "${package#skills/}" ;;
-        skills/*:suite | refresh:* | tools:* | hooks:* | pi-extensions*:*) want_package "$package" ;;
-        :) ;;
-      esac
-    done <<<"$found"
-  done
-  # The checkout-kendex shards build kendex-cli for their real consumer rows,
-  # so a build input runs each.
-  # shellcheck disable=SC2086 # the list is a word list
-  [ "$build" = false ] || want_shard $CHECKOUT_KENDEX_SHARDS
-  # shellcheck disable=SC2086 # the roster is a word list
-  ! any "$ALL_SHARDS" || want_shard $SHARDS
+  [ "$build" = false ] || whole="$whole $CHECKOUT_KENDEX_SHARDS"
+  if [ "$REACH_READ" = false ] || any "$ALL_SHARDS"; then
+    whole=" $SHARDS"
+  fi
+  project <<<"$kept"
+  [ "$REACH_TARGETS" = '[]' ] || want_shard orch-rest
+  # shellcheck disable=SC2086 # the lists are word lists
+  want_shard $whole
   for shard in $SHARDS; do
     case "$want" in *" $shard "*) list="$list,\"$shard\"" ;; esac
   done
-  printf '[%s]' "${list#,}"
-}
-
-# The narrowed row's skips, for a measured diff of skill Markdown alone:
-# each suite tools/guard --note-skips names, whose own input note covers no
-# changed document, as one JSON list in NARROW_SKIPS. Any other answer from
-# it, a suite whose code names a document its note leaves out among them,
-# skips none, and its diagnostics stand above the row.
-NARROW_SKIPS='[]'
-narrow_suites() {
-  local skips status=0 list="" suite
-  skips="$(printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --note-skips)" || status=$?
-  if [ "$status" -ne 0 ]; then
-    printf 'ci-job-set: suite-skips=none status=%s\n' "$status" >&2
+  if [ "$whole" = " $SHARDS" ]; then
+    printf '[%s] []' "${list#,}"
     return 0
   fi
+  suites="$(universe)"
+  # The whole shards whose steps hand --suite-list candidates, and orch's
+  # suites by shard where one is orch's.
+  for shard in $whole; do
+    case " guards-scans node " in *" $shard "*) ;; *) need="$need $shard" ;; esac
+  done
+  case " $need " in
+    *" orch-"*)
+      orch="$(printf '%s\n' "$suites" | awk '/^skills\/orch\/tests\//')"
+      for os in Linux macOS; do
+        orch_map="$orch_map$(printf '%s\n' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null)
+" || need=" $SHARDS"
+      done ;;
+  esac
+  skipped=""
   while IFS= read -r suite; do
-    [ -z "$suite" ] || list="$list,\"$suite\""
-  done <<<"$(printf '%s\n' "$skips" | LC_ALL=C sort -u)"
-  NARROW_SKIPS="[${list#,}]"
-  idle_orch_shards
-}
-
-# The orch shards that keep no suite once NARROW_SKIPS leaves its suites out,
-# on either runner, in NARROW_IDLE: a leg of one would build both runtimes and
-# run nothing, so the narrowed row starts none. run-all.sh --shard-of owns
-# which suites are a shard's; where it cannot answer every shard stays.
-NARROW_IDLE=""
-idle_orch_shards() {
-  local suite kept="" keeping="" os shard
-  [ -f skills/orch/tests/run-all.sh ] || return 0
-  for suite in skills/orch/tests/*.sh; do
-    [ "$suite" != skills/orch/tests/run-all.sh ] || continue
-    case "$NARROW_SKIPS" in *"\"$suite\""*) continue ;; esac
-    kept="$kept$suite
-"
-  done
-  for os in Linux macOS; do
-    keeping="$keeping $(printf '%s' "$kept" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of | cut -d' ' -f1 | tr '\n' ' ')" ||
-      { printf 'ci-job-set: orch-shards=unread os=%s\n' "$os" >&2; return 0; }
-  done
-  for shard in $ORCH_SHARDS; do
-    case " $keeping " in *" $shard "*) ;; *) NARROW_IDLE="$NARROW_IDLE $shard" ;; esac
-  done
-}
-
-# The JSON list SHARDS less each SHARD named after it, in roster order.
-drop_shards() { # SHARDS SHARD...
-  local list="" shard from="$1"
-  shift
-  for shard in $SHARDS; do
-    case "$from" in *"\"$shard\""*) ;; *) continue ;; esac
-    case " $* " in *" $shard "*) continue ;; esac
-    list="$list,\"$shard\""
-  done
-  printf '[%s]' "${list#,}"
+    [ -n "$suite" ] || continue
+    case $'\n'"$kept"$'\n' in *$'\n'"$suite"$'\n'*) continue ;; esac
+    if [ -n "$need" ]; then
+      case "$suite" in
+        skills/orch/tests/*)
+          suite_shards=" $(printf '%s' "$orch_map" | awk -v suite="$suite" '$2 == suite { printf "%s ", $1 }')" ;;
+        *)
+          case "$suite" in
+            skills/*) package="${suite#skills/}"; package="skills/${package%%/*}" ;;
+            *) package="${suite%%/*}" ;;
+          esac
+          want=" "
+          want_package "$package"
+          suite_shards=$want ;;
+      esac
+      for shard in $need; do
+        case "$suite_shards" in *" $shard "*) continue 2 ;; esac
+      done
+    fi
+    skipped="$skipped,\"$suite\""
+  done <<<"$suites"
+  printf '[%s] [%s]' "${list#,}" "${skipped#,}"
 }
 
 # Whether one shard of the JSON list SHARDS is one the matrix runs on macOS.
@@ -858,11 +710,12 @@ macos_shard() { # SHARDS
 # One selection, printed as a word list: the lanes and shards CLASS, DOCS
 # and PATHS select at EVENT. Every rule on those four inputs is here, the
 # refusals included. Run it in a subshell: the readers above take the paths
-# from `paths`, which it sets, and the shard search starts empty each time.
+# from `paths`, which it sets, and the shard projection starts empty each
+# time. The reach it projects is read once, before any selection.
 select_row() { # CLASS DOCS PATHS EVENT
-  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards skipped macos catalog=false known=false each status
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards skipped macos catalog=false known=false each rust
   paths="$3"
-  want=" " reached=" " pending=""
+  want=" "
   case "$docs" in
     true | false) ;;
     *) die "invalid-docs-only value=$docs" "DOCS_ONLY is true or false" ;;
@@ -896,7 +749,7 @@ select_row() { # CLASS DOCS PATHS EVENT
   case "$read_lines" in *compiled=1*) catalog=true ;; esac
   case "$row" in
     render | trivial)
-      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[] skipped_suites=[] runtimes=false"
+      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[] skipped_suites=[] rust_targets=[]"
       ;;
     micro | small | standard | trivial-read)
       platform=false
@@ -907,12 +760,8 @@ select_row() { # CLASS DOCS PATHS EVENT
       build=false
       case "$read_lines" in *build=1*) build=true ;; esac
       shards="$(select_shards "$build")" || exit 2
-      skipped='[]'
-      if [ "$build" = false ]; then
-        skipped=$NARROW_SKIPS
-        # shellcheck disable=SC2086 # the list is a word list
-        [ -z "$NARROW_IDLE" ] || shards="$(drop_shards "$shards" $NARROW_IDLE)"
-      fi
+      skipped="${shards#* }"
+      shards="${shards%% *}"
       if any "$LANE_SOURCES"; then
         platform=true
         uitree=true
@@ -921,32 +770,21 @@ select_row() { # CLASS DOCS PATHS EVENT
       macos=$platform
       # The runner arithmetic uses the nightly macOS matrix's exclusions.
       macos_shard "$shards" || macos=false
-      # The runtimes' Rust targets read the two packages' own sources,
-      # scripts and fixtures, and the paths outside them a target names; no
-      # Rust row reads a skill's Markdown.
-      runtimes=false
-      runtime_input && runtimes=true
-      ! any "$LANE_SOURCES" || runtimes=true
-      if [ "$runtimes" = false ]; then
-        status=0
-        rust_named || status=$?
-        case "$status" in
-          0) runtimes=true ;;
-          1) ;;
-          *) die "rust-targets-failed" "the Rust targets naming a changed path could not be searched" ;;
-        esac
+      # The Rust targets are the reach's; a lane source or an unread reach
+      # runs every target.
+      rust=$REACH_TARGETS
+      if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then
+        rust="$(all_targets)"
       fi
-      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards skipped_suites=$skipped runtimes=$runtimes"
+      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards skipped_suites=$skipped rust_targets=$rust"
       ;;
   esac
 }
 
-# The narrowed row's skips, read once for every event's selection, and for
-# a measured class alone: any other class reaches select_row without them.
+# The reach, read once for every event's selection, and for a class whose
+# row can run a shard: render and trivial run none.
 case "$CHANGE_CLASS:$paths" in
-  micro:?* | small:?* | standard:?*)
-    any_outside "$SKILL_PROSE" || narrow_suites
-    ;;
+  micro:?* | small:?* | standard:?* | trivial:?*) reach_read ;;
 esac
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
 
@@ -984,5 +822,6 @@ if [ "$macos_on" = true ]; then
 fi
 
 # shellcheck disable=SC2086 # one `lane=value` word per job
-runtimes="$(sel_get "$now" runtimes)"
-emit "$now_shards" "[$queue]" "$(sel_get "$now" skipped_suites)" "$runtimes" $jobs
+skipped="$(sel_get "$now" skipped_suites)"
+rust="$(sel_get "$now" rust_targets)"
+emit "$now_shards" "[$queue]" "$skipped" "$rust" $jobs

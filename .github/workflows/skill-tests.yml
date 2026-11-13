@@ -190,7 +190,7 @@ jobs:
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
       skipped_suites: ${{ steps.select.outputs.skipped_suites }}
-      runtimes: ${{ steps.select.outputs.runtimes }}
+      rust_targets: ${{ steps.select.outputs.rust_targets }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
     # tools/ci-aggregate run from the group's tree, held by review.
@@ -958,29 +958,44 @@ jobs:
           done
           bash skills/orch/tests/run-all.sh --battery skills/orch/tests --shard orch-rest "$@"
 
-      # The two runtimes' fmt, clippy and Rust targets, on the orch-rest
-      # Linux leg wherever tools/ci-job-set's `runtimes` line is true, and on
-      # every event that runs no classifier. It runs after the orch-rest
-      # suites whatever they answered, so neither red hides the other. The
-      # fixture gh's projector is held to the jq the catalog's scripts are
-      # held to, so the step names the runner's jq first. Its minutes are
-      # unmeasured; the first merge group that runs it records them here.
+      # The runtimes' Rust targets tools/ci-job-set's `rust_targets` list
+      # names, on the orch-rest Linux leg, and every target of both runtimes
+      # on every event that runs no classifier. Per package with a target, fmt
+      # and clippy over all its targets prepare the run; cargo test runs the
+      # listed targets, its whole manifest for `<package>/*`, and the
+      # package's privacy harness runs beside them. It runs after the
+      # orch-rest suites whatever they answered, so neither red hides the
+      # other. The fixture gh's projector is held to the jq the catalog's
+      # scripts are held to, so the step names the runner's jq first. Its
+      # minutes are unmeasured; the first merge group that runs it records
+      # them here.
       - name: the package runtimes' Rust targets
-        if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.runtimes != 'false' }}
+        if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
+        env:
+          RUST_TARGETS: ${{ needs.changes.result == 'success' && needs.changes.outputs.rust_targets || '' }}
         run: |
           set -euo pipefail
           jq --version
-          for manifest in skills/agent-runtime/runtime/Cargo.toml skills/orch/runtime/Cargo.toml; do
-            echo "=== $manifest"
+          targets="${RUST_TARGETS:-[\"agent-runtime/*\",\"orch/*\"]}"
+          for package in $(jq -r '.[] | split("/")[0]' <<<"$targets" | sort -u); do
+            manifest="skills/$package/runtime/Cargo.toml"
+            args=()
+            if ! jq -e --arg p "$package/*" 'index($p) != null' <<<"$targets" >/dev/null; then
+              for target in $(jq -r --arg p "$package/" '.[] | select(startswith($p)) | ltrimstr($p)' <<<"$targets"); do
+                if [ "$target" = lib ]; then args+=(--lib); else args+=(--test "$target"); fi
+              done
+            fi
+            echo "=== $manifest ${args[*]}"
             cargo fmt --check --manifest-path "$manifest"
             cargo clippy --all-targets --locked --manifest-path "$manifest" -- -D warnings
-            cargo test --no-fail-fast --locked --manifest-path "$manifest"
+            cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"}
+            # --lib leaves the doctests out, and cargo takes --doc alone.
+            case " ${args[*]-} " in *" --lib "*) cargo test --doc --locked --manifest-path "$manifest" ;; esac
+            # The effect engine's privacy, held by the compiler's own error
+            # code for each planted case: a doctest cannot hold which rule
+            # refused.
+            bash "skills/$package/tests/privacy/privacy-cases.sh"
           done
-          # The effect engine's privacy in each package, held by the compiler's
-          # own error code for each planted case: a doctest cannot hold which
-          # rule refused.
-          bash skills/agent-runtime/tests/privacy/privacy-cases.sh
-          bash skills/orch/tests/privacy/privacy-cases.sh
 
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the

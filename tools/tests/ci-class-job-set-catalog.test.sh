@@ -28,7 +28,6 @@ trivial|README.md|false
 standard|README.md|false
 render|.agents/skills/orch/SKILL.md|false
 micro|$UI_ONLY|false
-micro|tools/guard|false
 micro|crates/app/src/editor.rs|false
 micro|crates/app/tests/integration.rs|false
 micro|crates/core/tests/integration.rs|false
@@ -57,6 +56,7 @@ micro|Cargo.lock|true
 micro|rust-toolchain.toml|true
 micro|.cargo/config.toml|true
 micro|.github/workflows/skill-tests.yml|true
+micro|tools/guard|true
 ROWS
 }
 catalog_rows "$JOB_SET"
@@ -81,21 +81,22 @@ else
   ok "must-fail: inputs inverse fails catalog selection"
 fi
 
-# The shard selection in a fixture world, where every reader is planted and
-# so each list is whole:
-#   worktree's script sources github's lib, and orch declares worktree;
-#   harness-ci's script sources orch's lib, and review-gate declares
-#   harness-ci;
-#   commit-guards' suites run preflight and read docs/guard/refs.md, and
-#   doc-limits and worktree declare commit-guards;
+# The shard selection in a fixture world, where every reader is planted, so
+# each list is the projection of the whole reach:
+#   worktree's script sources github's lib; harness-ci's script sources
+#   orch's lib; neither package holds a suite;
+#   commit-guards' suites run preflight and read docs/guard/refs.md;
 #   a tools/ suite reads kendex.settings.toml and names atomic-install.sh and
 #   README.md; hooks/ suites read crates/demo/src/discover.rs and
 #   docs/x/policy.md; a Pi package's suite runs tools/demo-tool;
-#   skills/AGENTS.md and docs/cite.md cite a shard.
-# A script's read carries the change to its skill's readers; a suite's read
-# runs that suite's shard and goes no further.
-# External commands, agent lists and hook lists do not add required skill
-# edges.
+#   skills/AGENTS.md and docs/cite.md cite a shard; orch's Rust target rows
+#   reads assets/rust-read.json.
+# A path no suite and no target can depend on runs no shard; a hook beside
+# the reach runs node and harness-smoke; a build input runs the checkout's
+# consumer shards whole.
+# tools/shipped-refs reads dependencies.required through
+# lib/skill-requirements.awk: external commands, agent lists and hook lists
+# add no required skill edge.
 required_edge="$(printf 'doc-limits\tcommit-guards')"
 check "required, optional, agents, hooks and commands retain only the required skill edge" "$required_edge" \
   "$(awk -f "$ROOT/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
@@ -116,66 +117,45 @@ while IFS='|' read -r path expected; do
   check "world selection over '$path'" "$expected" \
     "$(SELECT_IN="$SEL_WORLD" selection micro false "$path" | field shards)"
 done <<ROWS
-skills/price-handling/scripts/x|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
-skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest"]
-skills/orch/scripts/lib/kendex-env.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
-skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear"]
+skills/price-handling/scripts/x|["guards-scans"]
+skills/github/scripts/lib/gh-auth.sh|["guards-scans"]
+skills/orch/scripts/lib/kendex-env.sh|["orch-rest","guards-scans"]
+skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["refresh","orch-rest","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","jarvis","node"]
-.claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
-.pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
-hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
-docs/x/policy.md|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
+crates/demo/src/discover.rs|["refresh","orch-rest","guards-hooks","guards-hooks-tail","rest","jarvis"]
+.claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","node"]
+.pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","node"]
+hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","node"]
+docs/x/policy.md|["guards-hooks","guards-hooks-tail"]
 docs/guard/refs.md|["guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 tools/demo-tool|["guards-scans","guards-tools","guards-tools-tail","node"]
-skills/AGENTS.md|["guards-scans","guards-tools-tail"]
-docs/cite.md|["guards-tools-tail"]
+skills/AGENTS.md|["guards-scans","guards-tools","guards-tools-tail"]
+docs/cite.md|["guards-tools","guards-tools-tail"]
 kendex.toml|[]
 agents/reviewer.md|[]
 .kendex-lock.json|[]
 skills/CLAUDE.md|["guards-scans"]
-refresh/runner.sh|["review-gate","refresh","guards-scans"]
+refresh/runner.sh|["guards-scans"]
 ROWS
-# A Rust target of the runtimes is no shell suite: a path only it names runs
-# those targets and no shell shard, and a path nothing names runs neither.
-# PATH|SHARDS RUNTIMES, every row micro and not docs-only.
+# A Rust target of a runtime is no shell suite: a path only it reads runs
+# that target and the orch-rest leg that runs it, and a path nothing reads
+# runs neither.
+# PATH|SHARDS RUST TARGETS, every row micro and not docs-only.
 while IFS='|' read -r path expected; do
   world_rows=$((world_rows + 1))
   got="$(SELECT_IN="$SEL_WORLD" selection micro false "$path")"
-  check "world Rust targets over '$path'" "$expected" "$(field shards <<<"$got") $(field runtimes <<<"$got")"
+  check "world Rust targets over '$path'" "$expected" "$(field shards <<<"$got") $(field rust_targets <<<"$got")"
 done <<'ROWS'
-assets/rust-read.json|[] true
-assets/unread.json|[] false
+assets/rust-read.json|["orch-rest"] ["orch/rows"]
+assets/unread.json|[] []
 ROWS
 [ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 
-# Each refusal the shard selection makes, from a fixture or a planted copy.
-# A dependencies block this reader cannot take is refused, never read as no
-# dependency: WORLD-EDIT|EXPECTED, the edit made to doc-limits' SKILL.md.
-DEP_WORLD="$TMP/dep-world"
-while IFS='|' read -r edit expected; do
-  rm -rf -- "${DEP_WORLD:?}"
-  cp -R "$SEL_WORLD" "$DEP_WORLD"
-  sed "$edit" "$SEL_WORLD/skills/doc-limits/SKILL.md" >"$DEP_WORLD/skills/doc-limits/SKILL.md"
-  if cmp -s "$SEL_WORLD/skills/doc-limits/SKILL.md" "$DEP_WORLD/skills/doc-limits/SKILL.md"; then
-    bad "the SKILL.md edit changed nothing: $edit"
-    continue
-  fi
-  check "dependencies refused after '$edit'" "$expected" \
-    "$(SELECT_IN="$DEP_WORLD" selection micro false skills/price-handling/scripts/x)"
-done <<'ROWS'
-s/  required: \[commit-guards\]/  required:\n    - commit-guards/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
-s/\[commit-guards\]/["commit-guards"]/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
-s/^dependencies:$/dependencies: # the skills it needs/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
-s/^  required:/   required:/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
-s/\[commit-guards\]/[commit-guard]/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
-s/^  agents:/  unknown:/|exit=2 requirements-unreadable path=skills/doc-limits/SKILL.md
-ROWS
-# An optional list is read past, never refused and never followed.
-check "an optional list is no dependency" '["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]' \
-  "$(SELECT_IN="$SEL_WORLD" selection micro false skills/price-handling/scripts/x | field shards)"
+# Each refusal the shard selection makes, from a planted copy beside the
+# real reach.
+cp "$ROOT/tools/guard" "$TMP/rule/tools/guard"
 # EDIT#PATH#EXPECTED — a copy of the script with a planted fault. Fields split
 # on `#`, since an edit spells `$@`.
 while IFS='#' read -r edit path expected; do
@@ -185,11 +165,21 @@ while IFS='#' read -r edit path expected; do
   check "a planted fault is refused: $expected" "$expected" \
     "$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false "$path")"
 done <<'ROWS'
-s/skills\/worktree) want_shard worktree worktree-restack ;;/skills\/worktree) want_shard worktre worktree-restack ;;/#skills/worktree/scripts/worktree#exit=2 shard-undeclared shard=worktre
-s/^  awk -f "\$TOOLS_DIR\/lib\/skill-requirements.awk" "\$@"$/& \&\& false/#skills/price-handling/scripts/x#exit=2 requirements-failed
-s/files="\$(grep -lE /files="$(grep --no-such-option -lE /#kendex.settings.toml#exit=2 consumers-failed
+s/skills\/commit-guards) want_shard guards-commit /skills\/commit-guards) want_shard guards-commi /#skills/preflight/scripts/preflight#exit=2 shard-undeclared shard=guards-commi
 s/grep -qE -- "\$SHARD_CITATION"/grep --no-such-option -qE -- "$SHARD_CITATION"/#docs/cite.md#exit=2 citation-read-failed
 ROWS
+
+# A reach that cannot be read runs every shard, every suite and every
+# target: the copy asks a guard that is not there.
+sed 's|"$TOOLS_DIR/guard" --suite-reach|"$TOOLS_DIR/no-guard" --suite-reach|' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
+chmod +x "$TMP/rule/tools/ci-job-set"
+if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
+  bad "the unread-reach copy changed nothing"
+else
+  got="$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false skills/price-handling/scripts/x)"
+  check "an unread reach runs every shard, suite and target" "$ROSTER [] [\"orch/*\"]" \
+    "$(field shards <<<"$got") $(field skipped_suites <<<"$got") $(field rust_targets <<<"$got")"
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

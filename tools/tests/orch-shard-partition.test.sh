@@ -1133,6 +1133,8 @@ mkdir -p "$GITHUB_SELECT/tools/lib" "$GITHUB_SELECT/skills/github/tests"
 cp "$PART/tools/rust-reads" "$GITHUB_SELECT/tools/rust-reads"
 cp "$ROOT/tools/lib/skill-requirements.awk" "$GITHUB_SELECT/tools/lib/skill-requirements.awk"
 cp "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set"
+# The selector projects the reach tools/guard derives beside it.
+cp "$ROOT/tools/guard" "$GITHUB_SELECT/tools/guard"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$GITHUB_SELECT/tools/"
 stub_suite "$GITHUB_SELECT/skills/github/tests/pr-view.test.sh"
 git -C "$GITHUB_SELECT" init -q
@@ -1157,6 +1159,7 @@ mkdir -p "$TMP/owner-tools"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/owner-tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
 cp -R "$ROOT/tools/lib" "$TMP/owner-tools/lib"
+cp "$ROOT/tools/guard" "$TMP/owner-tools/guard"
 for package in slack jarvis; do
   awk -v row="    skills/$package) want_shard $package" 'index($0, row) == 1 { n++; next } { print } END { exit n != 1 }' \
     "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
@@ -1172,8 +1175,8 @@ for package in slack jarvis; do
   fi
 done
 
-# The moved suites need the refresh path to reach the refresh shard.
-awk '$0 ~ /^      refresh\/\*) want_package refresh ;;$/ { n++; next } { print } END { exit n != 1 }' \
+# The moved suites need the refresh package to reach the refresh shard.
+awk '$0 == "    skills/review-gate | refresh)" { $0 = "    skills/review-gate)"; n++ } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/owner-tools/ci-job-set" || bad "refresh selection control changed nothing"
 grep "^refresh	refresh/tests/" "$OWNERS" >"$TMP/owners-refresh" ||
   bad "refresh selection control has no suite"
@@ -1550,8 +1553,8 @@ check "must-fail: a build step dropping jarvis names the leg whose picker rows w
 # (`lane-mail compact`), and Slack's mailbox-read.test.sh and notice.test.sh
 # (`lane-mail compact` too) run it, so a leg owning one of those suites on either
 # runner builds both runtimes first, read from that step's real `if:`. The runtimes' own Rust targets run in one step, the
-# orch-rest Linux leg's, wherever the changes job's `runtimes` line is not
-# false.
+# orch-rest Linux leg's, wherever the changes job's `rust_targets` list is
+# not empty.
 step_if() { # WORKFLOW STEP ; that step's `if:` text, its `${{ }}` stripped
   awk -v name="      - name: $2" '
     found && /^        if: / {
@@ -1606,16 +1609,16 @@ plant "$WORKFLOW" " || matrix.shard == 'rest' || matrix.shard == 'jarvis'" " || 
 check "must-fail: a build step keeping rest to Linux names the macOS leg whose presence suite would refuse" "macOS rest" \
   "$(unbuilt_runtime_legs "$TMP/runtime-rest-linux.yml" macOS "$TMP/runtime-suites-macos")"
 TARGETS_STEP="the package runtimes' Rust targets"
-targets_runs() { # WORKFLOW SHARD OS RUNTIMES ; whether the targets step runs on that leg
-  gh_eval value "$(jq -cn --arg shard "$2" --arg os "$3" --arg runtimes "$4" \
-    '{matrix: {shard: $shard}, runner: {os: $os}, needs: {changes: {outputs: {runtimes: $runtimes}}}}')" \
+targets_runs() { # WORKFLOW SHARD OS RUST_TARGETS ; whether the targets step runs on that leg
+  gh_eval value "$(jq -cn --arg shard "$2" --arg os "$3" --arg targets "$4" \
+    '{matrix: {shard: $shard}, runner: {os: $os}, needs: {changes: {outputs: {rust_targets: $targets}}}}')" \
     "$(step_if "$1" "$TARGETS_STEP")"
 }
-check "the runtimes' targets run on the orch-rest Linux leg where runtimes is true, and where no classifier ran" \
+check "the runtimes' targets run on the orch-rest Linux leg where a target is listed, and where no classifier ran" \
   "true true false false false" \
-  "$(targets_runs "$WORKFLOW" orch-rest Linux true) $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux false) $(targets_runs "$WORKFLOW" orch-rest macOS true) $(targets_runs "$WORKFLOW" orch-dev Linux true)"
-check "one step runs each runtime manifest's targets" "1" \
-  "$(grep -c "for manifest in skills/agent-runtime/runtime/Cargo.toml skills/orch/runtime/Cargo.toml; do" "$WORKFLOW")"
+  "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-dev Linux '["orch/lib"]')"
+check "one step runs the listed runtime targets" "1" \
+  "$(grep -c 'cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args\[@\]+"${args\[@\]}"}' "$WORKFLOW")"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.

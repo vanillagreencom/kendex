@@ -15,10 +15,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 
 REACH="$ROOT/tools/ci-reach"
-# A skill's own prose: the skill's `rest` shard and the lanes every measured
-# class runs select it; the UI lane, the macOS lanes of an all-prose diff and
-# another package's shard do not.
-printf '%s\n' skills/price-handling/SKILL.md >"$TMP/paths"
+# The lock record: the orch-rest shard, which holds the two orch suites that
+# read it, and the lanes every measured class runs select it; the UI lane and
+# the orch-oversee shard, which holds no suite that reads it, do not.
+printf '%s\n' .kendex-lock.json >"$TMP/paths"
 
 reach() { # CLASS NAMES — the answer lines, then `exit=N`
   local status=0 out
@@ -29,23 +29,23 @@ reach() { # CLASS NAMES — the answer lines, then `exit=N`
 
 nl='
 '
-rest="Skill suites shard (rest, ubuntu-latest)"
-bridge="Skill suites shard (pi-claude-bridge, ubuntu-latest)"
+orch_rest="Skill suites shard (orch-rest, ubuntu-latest)"
+oversee="Skill suites shard (orch-oversee, ubuntu-latest)"
 ui="UI (vitest, tsc, biome)"
 macos="macOS cargo kendex-core"
 bot="Bot instructions"
 unmapped="Classify the diff"
 
 check "each check answered by its lane or shard, CI by the others" \
-  "within $rest${nl}outside $ui${nl}outside $bridge${nl}within $bot${nl}outside $macos${nl}within CI${nl}exit=0" \
-  "$(reach micro "$rest$nl$ui$nl$bridge$nl$bot$nl$macos$nl$unmapped${nl}CI")"
+  "within $orch_rest${nl}outside $ui${nl}outside $oversee${nl}within $bot${nl}within $macos${nl}within CI${nl}exit=0" \
+  "$(reach micro "$orch_rest$nl$ui$nl$oversee$nl$bot$nl$macos$nl$unmapped${nl}CI")"
 check "CI outside where every other failed check is" \
-  "outside $ui${nl}outside $bridge${nl}outside CI${nl}exit=0" \
-  "$(reach micro "$ui$nl$bridge${nl}CI")"
+  "outside $ui${nl}outside $oversee${nl}outside CI${nl}exit=0" \
+  "$(reach micro "$ui$nl$oversee${nl}CI")"
 check "no answer for a check no job maps to, nor for CI beside it" \
   "${nl}exit=0" "$(reach micro "$unmapped${nl}CI")"
 check "no answer for CI alone" "${nl}exit=0" "$(reach micro CI)"
-check "a class the selector refuses is refused" "${nl}exit=2" "$(reach bogus "$rest")"
+check "a class the selector refuses is refused" "${nl}exit=2" "$(reach bogus "$orch_rest")"
 grep -q '^ci-reach: cause=selection-refused' "$TMP/err" &&
   grep -q '^ci-job-set: cause=unknown-class' "$TMP/err" &&
   ok "the refusal names the selector's cause" || bad "the refusal names the selector's cause ($(cat "$TMP/err"))"

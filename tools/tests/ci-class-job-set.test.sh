@@ -32,22 +32,21 @@ micro|false|skills/orch/tests/lane-future.sh|$SHARD_CODE|$ORCH_ALL
 micro|false|skills/orch/tests/workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
 micro|false|skills/orch/tests/dev-review-lane-workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
 micro|false|skills/agent-runtime/runtime/src/lib.rs|$SHARD_CODE|$ORCH_ALL +rest
-standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE|$ORCH_ALL +guards-tools +rest
-micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
+micro|false|tools/tests/example.test.sh|$(lanes linux false true false)|+guards-scans -guards-tools -guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
 micro|false|skills/jarvis/scripts/task|$SHARD_CODE|+jarvis +rest
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
 micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox $ORCH_ALL +slack +guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls
-micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls +guards-tools
+micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +guards-tools
 micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls +guards-commit
 micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
 micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
-micro|false|skills/change-scope/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
+micro|false|skills/change-scope/scripts/lib/branch-growth.sh|$SHARD_CODE|+rest $ORCH_ALL
 micro|false|$SETTINGS_TOML|$SHARD_CODE|+guards-tools
 micro|false|$LOCAL_TOML|$SHARD_CODE|+guards-tools
-micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-hooks-tail +guards-tools-tail +rest
+micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-hooks-tail +rest
 micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|.bun-version|$SHARD_CODE|+node
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
@@ -55,7 +54,7 @@ micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
 micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
-micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools-tail"]
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans +guards-tools-tail
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$SHARD_CODE|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
@@ -75,36 +74,49 @@ ROWS
 [ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
-# The runtimes' Rust targets run where a path other than prose under the orch
-# or agent-runtime package, source or render, a lane source, or a path one of
-# their tests/rust/ files names changed: the hook they install and the
-# lane-mail they run. A skill's Markdown runs none of them.
-while IFS='|' read -r paths expected; do
-  check "runtimes over '$paths'" "$expected" \
-    "$(selection micro false "$(printf '%s\n' $paths)" | field runtimes)"
+# The Rust targets are the reach's: a runtime source runs every target of its
+# runtime and of each runtime that path-depends on it, a path a target or the
+# runtime runs or reads runs those targets, and a lane source every target.
+# PATHS|A TARGET THE LIST HOLDS|ONE IT DOES NOT, `-` for none
+while IFS='|' read -r paths held absent; do
+  got="$(selection micro false "$(printf '%s\n' $paths)" | field rust_targets)"
+  check "rust targets over '$paths' hold $held" true "$(jq --arg t "$held" 'index($t) != null' <<<"$got")"
+  [ "$absent" = - ] ||
+    check "rust targets over '$paths' leave out $absent" false "$(jq --arg t "$absent" 'index($t) != null' <<<"$got")"
 done <<'ROWS'
-skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|true
-skills/orch/scripts/lanes|true
-skills/agent-runtime/runtime/src/lib.rs|true
-skills/orch/workflows/merge-pr.md .agents/skills/orch/workflows/merge-pr.md|false
-hooks/lane-mail-check.sh|true
-skills/mailbox/scripts/lane-mail|true
-tools/ci-job-set|true
+skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|orch/lib|-
+skills/agent-runtime/runtime/src/lib.rs|orch/lib|-
+skills/orch/scripts/pr-order|orch/validate|agent-runtime/lib
+hooks/lane-mail-check.sh|orch/controller|orch/lib
+skills/mailbox/scripts/lane-mail|agent-runtime/controller|agent-runtime/lib
+skills/orch/tests/rust/push.rs|orch/push|orch/lib
+tools/ci-job-set|orch/*|-
 ROWS
+check "a path no target can depend on runs none" '[]' \
+  "$(selection micro false "$UNREAD_DOC" | field rust_targets)"
 
-# A narrowed orch diff starts the orch legs that keep a suite once its skips
-# leave theirs out, on either runner, and no other: a leg that kept none would
-# build both runtimes and run nothing.
-narrowed="$(selection micro false "$(printf '%s\n' skills/orch/workflows/merge-pr.md .agents/skills/orch/workflows/merge-pr.md)")"
-kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$narrowed")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | grep -v '/run-all\.sh$')"
-keeping="$(for os in Linux macOS; do printf '%s\n' "$kept_orch" | RUNNER_OS=$os bash "$ROOT/skills/orch/tests/run-all.sh" --shard-of; done | cut -d' ' -f1 | sort -u | tr '\n' ' ')"
-[ "$keeping" != "orch-dev orch-oversee orch-rest orch-state " ] ||
-  bad "the narrowed orch document keeps a suite in every orch shard, so the row below proves nothing"
-check "a narrowed orch diff starts the orch legs that keep a suite, and no other" "$keeping" \
-  "$(field shards <<<"$narrowed" | grep -o 'orch-[a-z]*' | sort | tr '\n' ' ')"
+# The shards are the reach's projection and the skips the rest: the lock
+# record runs the two orch suites that read it, in the orch shards that hold
+# them on either runner, and skips every other orch suite, and the github
+# package's group-leader.sh runs the restack-skip suite and the runtime's
+# targets that run it (the required members of the derived reach).
+lock="$(selection micro false .kendex-lock.json)"
+kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$lock")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | grep -v '/run-all\.sh$' | tr '\n' ' ')"
+check "the lock record keeps the orch suites that read it, and no other" \
+  "skills/orch/tests/post_merge.sh skills/orch/tests/sync_base.sh " "$kept_orch"
+keeping="$(for os in Linux macOS; do printf '%s\n' skills/orch/tests/post_merge.sh skills/orch/tests/sync_base.sh | RUNNER_OS=$os bash "$ROOT/skills/orch/tests/run-all.sh" --shard-of; done | cut -d' ' -f1 | sort -u | tr '\n' ' ')"
+check "and starts the orch legs that hold them, and no other" "$keeping" \
+  "$(field shards <<<"$lock" | grep -o 'orch-[a-z]*' | sort | tr '\n' ' ')"
+leader="$(selection micro false skills/github/scripts/lib/group-leader.sh)"
+check "group-leader.sh keeps the restack-skip suite" false \
+  "$(jq 'index("skills/orch/tests/restack_skip.sh") != null' <<<"$(field skipped_suites <<<"$leader")")"
+check "and runs the runtime target that runs it" true \
+  "$(jq 'index("orch/validate") != null' <<<"$(field rust_targets <<<"$leader")")"
 
+# The copy stands beside the real reach, so only the planted rule differs.
+cp "$ROOT/tools/guard" "$TMP/rule/tools/guard"
 awk '
-  $0 == "      .bun-version) want_shard node ;;" { sub(/want_shard node/, ":"); n++ }
+  $0 == "      .bun-version) whole=\"$whole node\" ;;" { sub(/whole="\$whole node"/, ":"); n++ }
   { print }
   END { if (n != 1) exit 1 }
 ' "$JOB_SET" >"$TMP/rule/tools/ci-job-set" ||
@@ -133,7 +145,7 @@ lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
 build_names() { # SCRIPT — the names its build list declares
   awk '/^build=\$\(printf/ { on = 1; sub(/.*%s\\n. /, "") } on { last = /\)$/; gsub(/[\\)]/, ""); print; if (last) exit }' "$1" | tr -s ' ' '\n' | grep .
 }
-SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads tools/macos-test-contracts tools/macos-test-contracts.json tools/lib/skill-requirements.awk"
+SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/guard tools/rust-reads tools/macos-test-contracts tools/macos-test-contracts.json"
 NAMES="crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml"
 pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JOB-SET READER
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
@@ -155,7 +167,7 @@ mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\] runtimes=false"$/'
+RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\] rust_targets=\[\]"$/'
 [ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 # LANE|WORD dropped from the render row
@@ -174,7 +186,7 @@ while IFS='|' read -r lane word; do
 done <<'ROWS'
 cargo_windows_check| cargo_windows_check=false
 macos|macos=false[ ]
-runtimes| runtimes=false
+rust_targets| rust_targets=[[]]
 ROWS
 [ "$forgot_rows" -eq 3 ] || { echo "the forgotten-lane table read $forgot_rows rows" >&2; exit 1; }
 

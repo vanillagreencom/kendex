@@ -5,8 +5,8 @@
 #
 # The wrapper carries the classifier's answer as it stands: the one class line
 # on stdout, every stderr line the classifier printed in order, and its
-# `class:` line last, after the queue-only and per-push records this package
-# adds. A wiring error of the classifier is the wrapper's, with the same
+# `class:` line last, after the queue-only, per-push and unread-paths records
+# this package adds. A wiring error of the classifier is the wrapper's, with the same
 # status. The verdict reaches the GitHub output file with the queue and lane
 # answers beside it. No flag of the wrapper carries a class, and the
 # classifier's own --paths-output is not one of the wrapper's.
@@ -64,20 +64,20 @@ forward_rows() { # WRAPPER
       --base "$base" --head HEAD 2>"$SANDBOX/wrap.err")" || wrap_status=$?
     assert_eq "$label: the wrapper's stdout and status are the classifier's" \
       "$core_out exit $core_status" "$wrap_out exit $wrap_status"
-    # Every classifier line, in order, with the two records ahead of the
-    # last one: the wrapper's log without its queue-only and per-push lines
-    # is the classifier's log.
+    # Every classifier line, in order, with the three records ahead of the
+    # last one: the wrapper's log without its queue-only, per-push and
+    # unread-paths lines is the classifier's log.
     core_err="$(cat "$SANDBOX/core.err")"
-    wrap_err="$(grep -v '^queue-only: \|^per-push: ' "$SANDBOX/wrap.err")"
+    wrap_err="$(grep -v '^queue-only: \|^per-push: \|^unread-paths:' "$SANDBOX/wrap.err")"
     assert_eq "$label: the wrapper carries every classifier line in order" "$core_err" "$wrap_err"
     core_lines="$(grep -c '' "$SANDBOX/core.err")"
-    assert_eq "$label: the wrapper adds the two records and nothing else" \
-      "$((core_lines + 2))" "$(grep -c '' "$SANDBOX/wrap.err")"
+    assert_eq "$label: the wrapper adds the three records and nothing else" \
+      "$((core_lines + 3))" "$(grep -c '' "$SANDBOX/wrap.err")"
     assert_eq "$label: the class line closes the wrapper's log" \
       "$(sed -n '$p' "$SANDBOX/core.err")" "$(sed -n '$p' "$SANDBOX/wrap.err")"
-    assert_eq "$label: the queue-only record precedes the per-push record and the class line" \
-      "queue-only per-push class" \
-      "$(tail -n 3 "$SANDBOX/wrap.err" | sed 's/^\([a-z-]*\):.*/\1/' | tr '\n' ' ' | sed 's/ $//')"
+    assert_eq "$label: the queue-only, per-push and unread-paths records precede the class line" \
+      "queue-only per-push unread-paths class" \
+      "$(tail -n 4 "$SANDBOX/wrap.err" | sed 's/^\([a-z-]*\):.*/\1/' | tr '\n' ' ' | sed 's/ $//')"
   done <<'ROWS'
 a micro diff|runtime/product.ts=2
 a small diff|runtime/product.ts=40

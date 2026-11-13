@@ -7,11 +7,10 @@ cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
 # build input runs the checkout-kendex shards for real kendex rows, the
-# Linux-only jarvis leg among them, and a tools/ path its suites' two shards
-# and the scans.
+# Linux-only jarvis leg among them, and a tools/ path no suite reads the
+# Linux-only scans alone.
 BUILD_ROW="$(measured both false true true '["refresh","orch-rest","rest","jarvis"]' '["refresh","orch-rest","rest"]')"
-TOOL_SHARDS='["guards-scans","guards-tools","guards-tools-tail"]'
-TOOL_ROW="$(measured both false true false "$TOOL_SHARDS" "$(macos_shards "$TOOL_SHARDS")")"
+TOOL_ROW="$(measured linux false true false '["guards-scans"]' '[]')"
 # Where a shard runs, and where none does. A shard runs on both runners
 # unless the diff is prose alone.
 SHARD_CODE="$(lanes both false true false)"
@@ -122,8 +121,10 @@ printf 'DISCOVER="$TEST_DIR/../../crates/demo/src/discover.rs"\n' >"$SEL_WORLD/h
 printf 'policy "$ROOT/docs/x/policy.md"\n' >"$SEL_WORLD/hooks/tests/policy.test.sh"
 mkdir -p "$SEL_WORLD/pi-extensions/pi-demo/tests" "$SEL_WORLD/docs"
 printf 'run("tools/demo-tool")\n' >"$SEL_WORLD/pi-extensions/pi-demo/tests/demo.test.ts"
+printf '{"name": "pi-demo", "scripts": {"test": "bun test"}}\n' >"$SEL_WORLD/pi-extensions/pi-demo/package.json"
 printf 'the `guards-scans` shard runs it\n' | tee "$SEL_WORLD/skills/AGENTS.md" >"$SEL_WORLD/docs/cite.md"
-mkdir -p "$SEL_WORLD/skills/orch/tests/rust"
+mkdir -p "$SEL_WORLD/skills/orch/tests/rust" "$SEL_WORLD/skills/orch/runtime"
+printf '[package]\nname = "orch-runtime"\n\n[[test]]\nname = "rows"\npath = "../tests/rust/rows.rs"\n' >"$SEL_WORLD/skills/orch/runtime/Cargo.toml"
 printf 'let fixture = root.join("assets/rust-read.json");\n' >"$SEL_WORLD/skills/orch/tests/rust/rows.rs"
 git -C "$SEL_WORLD" init -q
 git -C "$SEL_WORLD" add -A

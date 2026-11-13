@@ -372,10 +372,12 @@ for input in skills/orch/tests/lane-launch-trust.sh skills/orch/tests/lane_conte
   skills/orch/tests/lane-claims.sh; do
   printf '\n# launch replay\n' >> "$actual/$input"
 done
+# A lifecycle caller whose input note covers a changed library is a noted
+# reader and runs; guard-scoped.test.sh's launcher fixture holds the scoped
+# exclusion of production readers no note names.
 direct_launch_selection() { # SELECTED PATHS
   grep -Fxq 'skills/orch/tests/lane-launch-trust.sh' <<<"$1" &&
-    grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1" &&
-    ! grep -Fxq 'skills/orch/tests/lanes-usage-pct.sh' <<<"$1"
+    grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1"
 }
 scoped_selection=""
 for variant in scoped normal; do
@@ -395,8 +397,8 @@ for variant in scoped normal; do
   case "$variant" in
     scoped)
       scoped_selection=$selected
-      direct_launch_selection "$selected" && ok 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' \
-        || bad 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' "$OUT"
+      direct_launch_selection "$selected" && ok 'the incident scoped run keeps direct launch suites' \
+        || bad 'the incident scoped run keeps direct launch suites' "$OUT"
       ;;
     normal)
       # The scoped narrowing never reaches a normal run: it keeps every

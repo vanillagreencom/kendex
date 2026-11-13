@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the session-drift-check hook.
+# Inputs: crates/core/src/discover.rs, crates/core/src/manifest/validate/items.rs
 #
 # The hook is a thin adapter over `kendex check --quiet --report-only`. What it decides is
 # which arm the check's exit code chose, and that is a value on its keyed

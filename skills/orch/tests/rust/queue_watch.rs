@@ -2118,11 +2118,11 @@ fn orch_dir() -> PathBuf {
 
 /// A checkout of its own under `root` for kendex's reach command, which
 /// selects from the checkout it sits in: copies of the real tools the
-/// selection runs, a crates workspace holding the CLI smoke target
-/// `tools/rust-reads` requires, and the change the row validates, tracked
-/// in a repository of its own, so the answer never depends on the checkout
-/// the tests run in or on whether it is a repository. Answers its
-/// `tools/ci-reach`.
+/// selection runs, the suite reach among them, a crates workspace holding
+/// the CLI smoke target `tools/rust-reads` requires, and the change the row
+/// validates with the one suite that reads it, tracked in a repository of
+/// its own, so the answer never depends on the checkout the tests run in or
+/// on whether it is a repository. Answers its `tools/ci-reach`.
 fn reach_world(root: &std::path::Path) -> PathBuf {
     let world = root.join("reach-world");
     let tools = orch_dir().join("../../tools");
@@ -2130,6 +2130,7 @@ fn reach_world(root: &std::path::Path) -> PathBuf {
     for name in [
         "ci-reach",
         "ci-job-set",
+        "guard",
         "macos-test-contracts",
         "macos-test-contracts.json",
         "rust-reads",
@@ -2155,6 +2156,10 @@ fn reach_world(root: &std::path::Path) -> PathBuf {
         ("crates/cli/src/lib.rs", ""),
         ("crates/cli/tests/cli_smoke.rs", "fn smoke() {}\n"),
         ("skills/price-handling/SKILL.md", "x\n"),
+        (
+            "skills/price-handling/tests/skill.test.sh",
+            "cat \"$SKILL_DIR/SKILL.md\"\n",
+        ),
     ] {
         let path = world.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Tests for the merge group's narrowed row: a diff of skill Markdown alone
-# keeps the row its paths select, save an orch leg left with no suite, and
-# skips, inside its shards, each suite
-# whose own `# Inputs:` note covers no changed document. tools/guard
-# --note-skips names those suites, tools/ci-job-set publishes them as
-# `skipped_suites=`, and each shell suite step of skill-tests.yml runs the
-# candidates `tools/ci-job-set --suite-list` keeps.
+# Tests for the suites a shard step runs: tools/ci-job-set publishes, as
+# `skipped_suites=`, every shell suite outside the reach tools/guard
+# --suite-reach derives for the changed paths, and each shell suite step of
+# skill-tests.yml runs the candidates `tools/ci-job-set --suite-list` keeps.
 # Inputs: tools/guard, tools/ci-job-set, tools/lib/*, tools/rust-reads,
 # tools/macos-test-contracts, tools/macos-test-contracts.json,
-# .github/workflows/skill-tests.yml, skills/jarvis/SKILL.md,
-# skills/jarvis/references/decisions.md, skills/jarvis/tests/
+# .github/workflows/skill-tests.yml
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -18,22 +14,14 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 # shellcheck source=lib/ci-job-set-case.sh
 . "$TEST_DIR/lib/ci-job-set-case.sh"
-GUARD="$ROOT/tools/guard"
-# A copy of ci-job-set with no guard beside it, whose --note-skips query
-# fails: the row the paths select with no suite skipped.
+# A copy of ci-job-set with no guard beside it, whose reach cannot be read:
+# every shard runs whole.
 cp "$JOB_SET" "$TMP/rule/tools/ci-job-set"
 WHOLE="$TMP/rule/tools/ci-job-set"
 
-# The suites --note-skips names for PATHS in DIR, on one line, or `exit=N`.
-skips() { # DIR PATHS
-  local status=0 got
-  got="$(cd "$1" && printf '%s\n' $2 | "$GUARD" --note-skips 2>"$TMP/skips-err")" || status=$?
-  [ "$status" -eq 0 ] || { printf 'exit=%s' "$status"; return 0; }
-  printf '%s' "$got" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
-}
-
 # THE WORLD: the selection fixture's crates and skills, plus a package whose
-# guide each kind of note covers or does not.
+# guide some suites' notes cover, one suite's code reads, and the rest leave
+# out.
 W="$TMP/prose-world"
 cp -R "$SEL_WORLD" "$W"
 mkdir -p "$W/skills/demo/references" "$W/skills/demo/tests" "$W/.agents/skills/demo/references"
@@ -43,86 +31,35 @@ note_suite() { # PATH NOTE-LINES — a suite whose header holds NOTE-LINES and w
   printf '#!/usr/bin/env bash\n%s\ntrue\n' "$2" >"$W/$1"
 }
 note_suite skills/demo/tests/declared.test.sh '# Inputs: skills/demo/SKILL.md'
-note_suite skills/demo/tests/continued.test.sh $'# Inputs: skills/demo/SKILL.md,\n# skills/demo/references/guide.md.'
 note_suite skills/demo/tests/slashed.test.sh '# Inputs: skills/demo/references/'
 note_suite skills/demo/tests/folder.test.sh '# Inputs: skills/demo/references'
-note_suite skills/demo/tests/globbed.test.sh '# Inputs: skills/demo/*'
-note_suite skills/demo/tests/prose.test.sh '# Inputs: the demo scripts and this suite.'
-note_suite skills/demo/tests/relative.test.sh '# Inputs: references/guide.md'
-note_suite skills/demo/tests/braced.test.sh '# Inputs: skills/demo/{SKILL,README}.md'
 note_suite skills/demo/tests/plain.test.sh '# no note'
-note_suite tools/tests/tool.test.sh '# Inputs: tools/tests/'
+printf '#!/usr/bin/env bash\ncat "$SKILL_DIR/references/guide.md"\n' >"$W/skills/demo/tests/reader.test.sh"
 git -C "$W" add -A
 GUIDE="skills/demo/references/guide.md .agents/skills/demo/references/guide.md"
 
-# PATHS|EXPECTED skips. A suite runs where its note covers a path, as a case
-# pattern, a directory or a continuation line, and where it has no note it
-# can take: none, prose, a path relative to its tree or a brace list.
-skip_rows=0
-while IFS='|' read -r paths expected; do
-  skip_rows=$((skip_rows + 1))
-  check "skips: $paths" "$expected" "$(skips "$W" "$paths")"
-done <<ROWS
-$GUIDE|skills/demo/tests/declared.test.sh tools/tests/tool.test.sh
-.agents/skills/demo/references/guide.md|skills/demo/tests/declared.test.sh tools/tests/tool.test.sh
-skills/demo/SKILL.md|skills/demo/tests/folder.test.sh skills/demo/tests/slashed.test.sh tools/tests/tool.test.sh
-skills/demo/SKILL.md $GUIDE|tools/tests/tool.test.sh
-skills/demo/scripts/x|exit=2
-ROWS
-[ "$skip_rows" -eq 5 ] || { echo "the skips table read $skip_rows rows" >&2; exit 1; }
-
-# A suite whose own code names a document its note leaves out fails the
-# check, as a checkout path, from a sibling package or below its own root.
-# A path a fixture writes, bare or under .agents/, is no read and passes.
-# SOURCE|EXPECTED
-while IFS='|' read -r source expected; do
-  printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md\n%s\n' "$source" >"$W/skills/demo/tests/declared.test.sh"
-  check "consistency: $source" "$expected" "$(skips "$W" "$GUIDE" | sed 's/ .*//')"
-done <<'ROWS'
-cat "$ROOT/skills/demo/references/guide.md"|exit=1
-cat "$TEST_DIR/../../demo/references/guide.md"|exit=1
-cat "$SKILL_DIR/references/guide.md"|exit=1
-write "$repo" skills/demo/references/guide.md|skills/demo/tests/declared.test.sh
-cp guide "$sandbox/.agents/skills/demo/references/guide.md"|skills/demo/tests/declared.test.sh
-ROWS
-LIAR="$TMP/liar-world"
-cp -R "$W" "$LIAR"
-printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md\ncat "$ROOT/skills/demo/references/guide.md"\n' >"$LIAR/skills/demo/tests/declared.test.sh"
-skips "$LIAR" "$GUIDE" >/dev/null
-check "consistency: the refusal names the suite and the document" \
-  "guard: inputs-undeclared=skills/demo/tests/declared.test.sh path=skills/demo/references/guide.md" \
-  "$(grep '^guard: ' "$TMP/skips-err")"
-note_suite skills/demo/tests/declared.test.sh '# Inputs: skills/demo/SKILL.md'
-
-# THE NARROWED ROW: every word of the row the paths select, the shards among
-# them, with the skips added; the row skips none where the paths are not all
-# skill Markdown, where the class is not measured, or where --note-skips
-# refuses.
+# THE ROW: every suite outside the guide's reach is skipped; the reach holds
+# each suite whose note covers the guide, a directory item included, and the
+# suite whose code reads it. A copy that cannot read the reach skips none.
 row() { # DIR PATHS [JOB-SET] — the selection with its skips cut, and the skips
   local got
   got="$(SELECT_IN="$1" SELECT_WITH="${3:-$JOB_SET}" selection micro false "$(printf '%s\n' $2)")"
   printf '%s|%s' "${got% skipped_suites=*}" "$(field skipped_suites <<<"$got")"
 }
+skipped="$(row "$W" "$GUIDE" | sed 's/.*|//')"
+for suite in declared plain; do
+  check "row: the guide skips the $suite suite" true \
+    "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$skipped")"
+done
+for suite in slashed folder reader; do
+  check "row: the guide runs the $suite suite" false \
+    "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$skipped")"
+done
 whole="$(row "$W" "$GUIDE" "$WHOLE")"
-check "row: the copy without a guard skips nothing" "[]" "${whole#*|}"
-check "row: the guide keeps the row its paths select" "${whole%|*}" "$(row "$W" "$GUIDE" | sed 's/|.*//')"
-check "row: and skips the suites whose notes leave it out" \
-  '["skills/demo/tests/declared.test.sh","tools/tests/tool.test.sh"]' "$(row "$W" "$GUIDE" | sed 's/.*|//')"
-check "row: a path outside skill Markdown skips none" "[]" \
-  "$(row "$W" "skills/demo/references/guide.md skills/demo/scripts/x" | sed 's/.*|//')"
+check "row: the copy that cannot read the reach skips nothing" "[]" "${whole#*|}"
+check "row: and runs every shard" "$ROSTER" "$(sed 's/.* shards=\([^ ]*\).*/\1/' <<<"${whole%|*}")"
 check "row: render skips none" "[]" \
   "$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
-check "row: a refused note skips none" "[]" "$(row "$LIAR" "$GUIDE" | sed 's/.*|//')"
-UNREAD="$TMP/unread-world"
-cp -R "$W" "$UNREAD"
-chmod 000 "$UNREAD/skills/demo/tests/prose.test.sh"
-if [ -r "$UNREAD/skills/demo/tests/prose.test.sh" ]; then
-  ok "unread: skipped, a file mode 000 stays readable to this user"
-else
-  check "unread: a suite that cannot be read fails the query" "exit=2" "$(skips "$UNREAD" "$GUIDE")"
-  check "unread: and the row skips none" "[]" "$(row "$UNREAD" "$GUIDE" | sed 's/.*|//')"
-fi
-chmod 644 "$UNREAD/skills/demo/tests/prose.test.sh"
 
 # THE LIST: the candidates a step runs, by whole path, in argument order:
 # each one the skips do not name. Leaving one out records
@@ -218,26 +155,17 @@ while IFS= read -r step; do
     "$(step_run "$step" "$every")"
 done <<<"$steps"
 
-# THE REAL TREE. KEN-4773's one line in Jarvis's decisions reference keeps
-# the row its paths select, save the four orch legs, every suite of which it
-# skips, and skips the long Jarvis suites, whose notes leave that reference
-# out; SKILL.md, which command-declarations declares, keeps that suite.
-real() { # PATHS — the selection with its skips cut, and the skips
-  local got
-  got="$(SELECT_WITH="${2:-$JOB_SET}" selection micro false "$(printf '%s\n' $1)")"
-  printf '%s|%s' "${got% skipped_suites=*}" "$(field skipped_suites <<<"$got")"
+# THE REAL TREE: a Jarvis reference read by none of the long Jarvis suites
+# skips them, inside the shards its readers select.
+real() { # PATHS — the skips
+  selection micro false "$(printf '%s\n' $1)" | field skipped_suites
 }
 DECISIONS="skills/jarvis/references/decisions.md .agents/skills/jarvis/references/decisions.md"
 narrow="$(real "$DECISIONS")"
-check "real: the decisions reference keeps the row its paths select, save the orch legs" \
-  "$(real "$DECISIONS" "$WHOLE" | sed 's/|.*//; s/"orch-[a-z]*",//g')" "${narrow%|*}"
-check "real: and that row runs the Jarvis shard" "" "$(shards_miss +jarvis "$(field shards <<<"${narrow%|*}")")"
 for long in controls succession session task; do
-  check "real: and skips the long $long suite" true \
-    "$(jq --arg t "skills/jarvis/tests/$long.test.sh" 'index($t) != null' <<<"${narrow#*|}")"
+  check "real: the decisions reference skips the long $long suite" true \
+    "$(jq --arg t "skills/jarvis/tests/$long.test.sh" 'index($t) != null' <<<"$narrow")"
 done
-check "real: SKILL.md runs command-declarations" false \
-  "$(real skills/jarvis/SKILL.md | sed 's/.*|//' | jq 'index("skills/jarvis/tests/command-declarations.test.sh") != null')"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

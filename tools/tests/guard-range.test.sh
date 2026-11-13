@@ -847,6 +847,143 @@ map_row append "$SCHEMA_PATH" "$(note_for unreadable "$SCHEMA_PATH")"
 rm -- "$SCAN_BIN/awk" "$SCAN_BIN/real-awk" "$SCAN_BIN/awk.fail"
 back_to_base
 
+echo "=== --suite-reach prints the range run's selection and runs nothing ==="
+# A script, the suite named for it, a suite whose note names the script's
+# directory, and one the change reaches neither way. Every suite fails when
+# it runs, so a run reds the row.
+reset_world
+mkdir -p "$R/skills/reachdemo/scripts" "$R/skills/reachdemo/tests/fixtures"
+printf '#!/usr/bin/env bash\necho tool\n' >"$R/skills/reachdemo/scripts/tool"
+for suite in tool.test noted.test other.test; do
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/reachdemo/tests/$suite.sh"
+done
+printf '#!/usr/bin/env bash\n# Inputs: skills/reachdemo/scripts/\nexit 1\n' >"$R/skills/reachdemo/tests/noted.test.sh"
+printf 'data\n' >"$R/skills/reachdemo/tests/fixtures/data"
+chmod +x "$R/skills/reachdemo/scripts/tool" "$R"/skills/reachdemo/tests/*.sh
+suite_reach() { # GUARD PATH... — sets REACH, REACH_ERR and RC
+  RC=0
+  REACH="$(cd "$R" && printf '%s\n' "${@:2}" | "$1" --suite-reach 2>"$TMP/reach-err")" || RC=$?
+  REACH_ERR="$(cat "$TMP/reach-err")"
+}
+REACHDEMO=skills/reachdemo/tests
+suite_reach "$GUARD" skills/reachdemo/scripts/tool
+[ "$RC" -eq 0 ] && [ "$REACH" = "$REACHDEMO/noted.test.sh
+$REACHDEMO/tool.test.sh" ] && [[ $REACH_ERR == *"guard-note: suites=2/3 reason=mapped tree=skills/reachdemo"* ]] \
+  && ok "--suite-reach: a script selects its named suite and the suite whose note names its directory" \
+  || bad "--suite-reach: a script selects its named suite and the suite whose note names its directory" "rc=$RC reach=$REACH err=$REACH_ERR"
+suite_reach "$GUARD" skills/reachdemo/tests/fixtures/data
+[ "$RC" -eq 0 ] && [ "$REACH" = "$REACHDEMO/noted.test.sh
+$REACHDEMO/other.test.sh
+$REACHDEMO/tool.test.sh" ] && [[ $REACH_ERR == *"reason=unmapped path=skills/reachdemo/tests/fixtures/data"* ]] \
+  && ok "--suite-reach: a path of no role selects its tree's whole set" \
+  || bad "--suite-reach: a path of no role selects its tree's whole set" "rc=$RC reach=$REACH err=$REACH_ERR"
+# The control reads a note item as a bare pattern: a directory item then
+# covers nothing under it.
+if mutant_guard 's/^      note_covers "\$input" "\$input_path" || continue$/      case "$input_path" in $input) ;; *) continue ;; esac/'; then
+  suite_reach "$MUTANT_TOOLS/guard" skills/reachdemo/scripts/tool
+  [ "$REACH" = "$REACHDEMO/tool.test.sh" ] \
+    && ok "control: a note item read as a bare pattern drops the directory's reader" \
+    || bad "control: a note item read as a bare pattern drops the directory's reader" "rc=$RC reach=$REACH"
+else
+  bad "control changes the note reading"
+fi
+reset_world
+
+echo "=== --suite-reach holds a runtime's callers and Rust targets ==="
+# rtpkg: a runtime whose program rt-bin a script runs and whose source runs
+# rt-helper by a quoted name; deppkg path-depends on it, and its suite runs
+# rt-bin through a variable path; otherpkg holds a fixture a Rust target of
+# rtpkg reads and a helper an rtpkg suite sources, each spelled from the
+# sibling package.
+mkdir -p "$R/skills/rtpkg/runtime/src" "$R/skills/rtpkg/scripts" "$R/skills/rtpkg/tests/rust" "$R/skills/rtpkg/tests/fixtures" \
+  "$R/skills/deppkg/runtime/src" "$R/skills/deppkg/tests/rust" \
+  "$R/skills/otherpkg/tests/lib" "$R/skills/otherpkg/tests/fixtures" "$R/skills/otherpkg/scripts/lib"
+printf '[package]\nname = "rtpkg"\n\n[lib]\nname = "rtpkg"\npath = "src/lib.rs"\n\n[[bin]]\nname = "rt-bin"\npath = "src/main.rs"\n\n[[test]]\nname = "one"\npath = "../tests/rust/one.rs"\n\n[[test]]\nname = "two"\npath = "../tests/rust/two.rs"\n' \
+  >"$R/skills/rtpkg/runtime/Cargo.toml"
+printf '[package]\nname = "deppkg"\n\n[dependencies]\nrtpkg = { path = "../../rtpkg/runtime" }\n\n[[test]]\nname = "dt"\npath = "../tests/rust/dt.rs"\n' \
+  >"$R/skills/deppkg/runtime/Cargo.toml"
+printf 'pub fn run() { sibling("rt-helper"); }\n' >"$R/skills/rtpkg/runtime/src/lib.rs"
+printf 'fn main() {}\n' >"$R/skills/rtpkg/runtime/src/main.rs"
+printf 'fn main() {}\n' >"$R/skills/deppkg/runtime/src/lib.rs"
+printf '#!/usr/bin/env bash\necho helper\n' >"$R/skills/rtpkg/scripts/rt-helper"
+printf '#!/usr/bin/env bash\n. "$SCRIPT_DIR/../../otherpkg/scripts/lib/shared.sh"\nexec "$SCRIPT_DIR/rt-bin" "$@"\n' >"$R/skills/rtpkg/scripts/rt-caller"
+printf 'shared() { :; }\n' >"$R/skills/otherpkg/scripts/lib/shared.sh"
+printf '#[test]\nfn one() {}\n' >"$R/skills/rtpkg/tests/rust/one.rs"
+printf '#[test]\nfn two() { read("../otherpkg/tests/fixtures/data.txt"); }\n' >"$R/skills/rtpkg/tests/rust/two.rs"
+printf 'pub fn support() {}\n' >"$R/skills/rtpkg/tests/rust/support.rs"
+printf '#[test]\nfn dt() {}\n' >"$R/skills/deppkg/tests/rust/dt.rs"
+printf 'data\n' >"$R/skills/rtpkg/tests/fixtures/x"
+printf 'data\n' >"$R/skills/otherpkg/tests/fixtures/data.txt"
+printf 'h() { :; }\n' >"$R/skills/otherpkg/tests/lib/h.sh"
+for suite in rtpkg/tests/rt-caller.test rtpkg/tests/plain.test otherpkg/tests/o.test; do
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/$suite.sh"
+done
+printf '#!/usr/bin/env bash\n"$BIN/rt-bin" status\nexit 1\n' >"$R/skills/deppkg/tests/x.test.sh"
+printf '#!/usr/bin/env bash\n. "$TEST_DIR/../../otherpkg/tests/lib/h.sh"\nexit 1\n' >"$R/skills/rtpkg/tests/h-user.test.sh"
+chmod +x "$R"/skills/rtpkg/scripts/* "$R"/skills/*/tests/*.sh
+RT=skills/rtpkg/tests
+RT_ALL="target deppkg/dt
+target deppkg/lib
+target rtpkg/lib
+target rtpkg/one
+target rtpkg/two"
+# NAME|PATH|EXPECTED STDOUT
+RUNTIME_ROWS=(
+  "a runtime source selects its callers' suites in every tree and every target it and its dependents build|skills/rtpkg/runtime/src/main.rs|skills/deppkg/tests/x.test.sh
+$RT/rt-caller.test.sh
+$RT_ALL"
+  "a script the runtime runs by a quoted name selects the runtime's targets|skills/rtpkg/scripts/rt-helper|$RT/rt-caller.test.sh
+$RT_ALL"
+  "another package's fixture a Rust target reads as ../<name>/<file> selects that target|skills/otherpkg/tests/fixtures/data.txt|skills/otherpkg/tests/o.test.sh
+target rtpkg/two"
+  "another package's helper sourced as ../<name>/<file> selects its sourcer|skills/otherpkg/tests/lib/h.sh|skills/otherpkg/tests/o.test.sh
+$RT/h-user.test.sh"
+  "another package's library a script sources as ../<name>/<file> selects that script's suite|skills/otherpkg/scripts/lib/shared.sh|skills/otherpkg/tests/o.test.sh
+$RT/rt-caller.test.sh"
+  "a changed Rust target selects itself alone|skills/rtpkg/tests/rust/one.rs|target rtpkg/one"
+  "a changed Rust input selects every target of its runtime|skills/rtpkg/tests/rust/support.rs|target rtpkg/lib
+target rtpkg/one
+target rtpkg/two"
+  "a path of no role selects its tree's whole set and its runtime's targets|skills/rtpkg/tests/fixtures/x|$RT/h-user.test.sh
+$RT/plain.test.sh
+$RT/rt-caller.test.sh
+$RT_ALL"
+)
+for row in "${RUNTIME_ROWS[@]}"; do
+  IFS='|' read -r label path want <<<"$row"
+  want="${row#*|*|}"
+  suite_reach "$GUARD" "$path"
+  [ "$RC" -eq 0 ] && [ "$REACH" = "$want" ] \
+    && ok "--suite-reach: $label" \
+    || bad "--suite-reach: $label" "rc=$RC reach=$REACH err=$REACH_ERR"
+done
+# Each control removes one rule; the row it names then answers otherwise.
+runtime_control() { # LABEL SED ROW-NUMBER
+  local row="${RUNTIME_ROWS[$3]}" path want
+  path="${row#*|}"
+  path="${path%%|*}"
+  want="${row#*|*|}"
+  if mutant_guard "$2"; then
+    suite_reach "$MUTANT_TOOLS/guard" "$path"
+    [ "$RC" -eq 0 ] && [ "$REACH" != "$want" ] \
+      && ok "control: $1 breaks the row for $path" \
+      || bad "control: $1 breaks the row for $path" "rc=$RC reach=$REACH"
+  else
+    bad "control changes the reach: $1"
+  fi
+}
+runtime_control "a runtime that offers no program name" \
+  's/^        "$tree bin "\*) next_any+=("${line#"$tree bin "}") ;;$/        "$tree bin "*) ;;/' 0
+runtime_control "a runtime whose quoted names are not read" \
+  's/^        if (role == "runtime" || role == "rust-target" || role == "rust-input") scan_quoted(reader, text)$//' 1
+runtime_control "a sibling spelling read as a whole path alone" \
+  's/^    case "$rel" in skills\/\*\/\*) fixed="\/${rel#skills\/}" ;; esac$/    :/' 2
+runtime_control "a script's source line read as no read" \
+  's/^        if (sources) keep\[count\] = 1$//' 4
+runtime_control "another tree's runtime that offers no program name" \
+  's/^  \[ "$(path_role "$home" "$rel")" = runtime \] || return 1$/  return 1/' 0
+reset_world
+
 echo "=== a range with no usable base is refused before anything runs ==="
 # label|arguments|expected first line
 REFUSALS=(

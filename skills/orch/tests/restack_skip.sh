@@ -13,7 +13,7 @@
 # answer. The rows pin the whole answer line but its run directory.
 # Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
 # skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
-# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/, tools/.
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/, tools/guard.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
