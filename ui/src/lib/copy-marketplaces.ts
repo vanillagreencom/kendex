@@ -302,6 +302,7 @@ export const IMPORT_HELP =
 export const IMPORT_READING = "Finding packages on this computer…";
 export const IMPORT_NOTHING =
   "No packages to import. Install or create a package first.";
+export const IMPORT_LINKS_KEPT = "These links may no longer reach their files";
 const licenseOrNone = (license: string | null): string =>
   license ? license : "no license found";
 export const fromMarketplaceLabel = (

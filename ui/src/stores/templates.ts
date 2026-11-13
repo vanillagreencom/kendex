@@ -27,6 +27,7 @@ type Method = "symlink" | "copy";
 
 import { writingRepo } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
+import { sayWritten } from "@/lib/undone";
 
 export type Template = Template_Serialize;
 export type Draft = Draft_Serialize;
@@ -120,9 +121,14 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => {
         commands.templateCreateFromSelection(name, members),
       ),
     createFromProject: (project, chosen) =>
-      write(set, get, () =>
-        commands.templateCreateFromProject(project, chosen),
-      ),
+      write(set, get, async () => {
+        const answer = await commands.templateCreateFromProject(
+          project,
+          chosen,
+        );
+        if (answer.status === "ok") sayWritten(answer.data.warnings);
+        return answer;
+      }),
     addMembers: (name, members) =>
       write(set, get, () => commands.templateAddMembers(name, members)),
     removeMembers: (name, members) =>

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AppSettings,
@@ -66,7 +67,9 @@ vi.mock("@/bindings", () => ({
     projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
+}));
 
 /** The project every case here installs into or reads a draft from. */
 const ACME_ROOT = "/work/acme";
@@ -336,6 +339,47 @@ describe("creating a template from a project", () => {
         fingerprint: "offer-1",
       },
     );
+  });
+
+  // Only the save can say which links its copies kept, and the dialog
+  // closes on it, so each one must reach the window as a toast.
+  const kept = {
+    kind: "skill" as const,
+    name: "stray",
+    message: "skill-link-kept: SKILL.md: ../../memory/x.md",
+    remediation: "use an absolute path",
+  };
+  it.each([
+    { name: "a link was kept", warnings: [kept], calls: 1 },
+    { name: "every link converted", warnings: undefined, calls: 0 },
+  ])("toasts what the save kept: $name", async ({ warnings, calls }) => {
+    vi.mocked(commands.templateDraft).mockResolvedValue({
+      status: "ok",
+      data: DRAFT,
+    });
+    vi.mocked(commands.templateCreateFromProject).mockResolvedValue({
+      status: "ok",
+      data: { ...RUST_SERVICE, warnings },
+    });
+    mount(
+      <CreateTemplateDialog
+        project="/work/acme"
+        place="acme"
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    await settle();
+    await act(async () => button(document, NEW_TEMPLATE_LABEL).click());
+    await settle();
+
+    const toasted = vi.mocked(toast.message).mock.calls;
+    expect(toasted).toHaveLength(calls);
+    for (const [title, options] of toasted) {
+      expect(String(title)).toContain(kept.name);
+      expect(String(title)).toContain(kept.message);
+      expect(options?.description).toBe(kept.remediation);
+    }
   });
 
   // A project kendex manages nothing in still offers its local packages,

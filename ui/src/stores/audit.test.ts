@@ -296,6 +296,30 @@ describe("audit store run() actions", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  // Only the adopt can say which links its move kept: the stored tree reads
+  // the same either way, and the next read of the scope carries none.
+  it("says each link an adopt kept as written, with its fix", async () => {
+    const kept = {
+      kind: "skill" as const,
+      name: "lint",
+      message: "skill-link-kept: SKILL.md: ../../memory/x.md",
+      remediation: "use an absolute path",
+    };
+    vi.mocked(commands.adoptItem).mockResolvedValue({
+      status: "ok",
+      data: { ...emptyView, written: [kept] },
+    });
+
+    await useAuditStore
+      .getState()
+      .adopt(globalScope, "skill", "lint", ["claude"]);
+
+    expect(toast.message).toHaveBeenCalledWith(
+      `${kept.name}: ${kept.message}`,
+      { description: kept.remediation },
+    );
+  });
+
   it("does not toast success for a silent action like a toggle", async () => {
     vi.mocked(commands.toggleItem).mockResolvedValue({
       status: "ok",

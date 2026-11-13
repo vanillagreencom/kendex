@@ -81,9 +81,10 @@ pub fn package_fork(
     apply::execute(&env, &plan).map_err(|e| e.to_string())?;
     // The links the capture kept are its own report, which the settle
     // cannot read back off the stored tree.
-    let mut settled = settle_after(&env, &scope);
-    settled.warnings.extend(plan.warnings);
-    Ok(settled)
+    Ok(AuditView {
+        written: plan.warnings,
+        ..settle_after(&env, &scope)
+    })
 }
 
 /// Why installing beside did not finish, by phase: a refusal wrote
@@ -92,8 +93,17 @@ pub fn package_fork(
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum ForkBesideError {
-    Refused { message: String },
-    Recorded { message: String },
+    Refused {
+        message: String,
+    },
+    Recorded {
+        message: String,
+        /// What the fork that landed reported about itself: the links its
+        /// capture kept as written, as `AuditView::written` carries them on
+        /// a fork that also settled. Left off the wire when it kept none.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        written: Vec<engine::ItemWarning>,
+    },
 }
 
 /// Keep an edited install as a local fork under another name, leave the
@@ -108,9 +118,8 @@ pub fn package_fork_beside(
     new_name: String,
     rev: Option<String>,
 ) -> Result<AuditView, ForkBesideError> {
-    let refused = |message: String| ForkBesideError::Refused { message };
-    let env = env().map_err(refused)?;
-    let plan = engine::fork::fork_beside(
+    let env = env().map_err(|message| ForkBesideError::Refused { message })?;
+    fork_beside(
         &env,
         &scope,
         kind,
@@ -119,16 +128,37 @@ pub fn package_fork_beside(
         &new_name,
         rev.as_deref(),
     )
-    .map_err(|e| refused(e.to_string()))?;
+}
+
+/// [`package_fork_beside`] against the environment it is given.
+pub fn fork_beside(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+    new_name: &str,
+    rev: Option<&str>,
+) -> Result<AuditView, ForkBesideError> {
+    let refused = |message: String| ForkBesideError::Refused { message };
+    let plan = engine::fork::fork_beside(env, scope, kind, name, harness, new_name, rev)
+        .map_err(|e| refused(e.to_string()))?;
     // A plan that fails to apply rolls back: nothing recorded, a refusal.
-    apply::execute(&env, &plan).map_err(|e| refused(e.to_string()))?;
-    // The fork has landed. `Recorded` already says so to the window, which
-    // closes the name dialog and shows what landed beside the failure; it
-    // reads no view off this answer.
-    let mut settled =
-        settle_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })?;
-    settled.warnings.extend(plan.warnings);
-    Ok(settled)
+    apply::execute(env, &plan).map_err(|e| refused(e.to_string()))?;
+    // The fork has landed, and so have the links its capture kept: both
+    // answers carry them. `Recorded` already says the fork landed to the
+    // window, which closes the name dialog and shows what landed beside the
+    // failure; it reads no view off that answer.
+    match settle_scope(env, scope) {
+        Ok(settled) => Ok(AuditView {
+            written: plan.warnings,
+            ..settled
+        }),
+        Err(message) => Err(ForkBesideError::Recorded {
+            message,
+            written: plan.warnings,
+        }),
+    }
 }
 
 /// Discard one package's edits and re-render it — the door back to "the

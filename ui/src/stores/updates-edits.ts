@@ -1,5 +1,10 @@
 import { toast } from "sonner";
-import { commands, type HarnessId, type UpdateRow } from "@/bindings";
+import {
+  commands,
+  type HarnessId,
+  type ItemWarning,
+  type UpdateRow,
+} from "@/bindings";
 import {
   FORK_ERROR_TITLE,
   forkedToastLabel,
@@ -16,7 +21,7 @@ import {
 import { packageDisplayName } from "@/lib/labels";
 import { beforeWriting, offerToCommit, rescanEverything } from "@/lib/rescan";
 import { NO_REASON_GIVEN } from "@/lib/settled";
-import { saying, sayUnfinished } from "@/lib/undone";
+import { saying, sayUnfinished, sayWritten } from "@/lib/undone";
 import { readUnsettled, workOut } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
 import { holdingBusy, useUpdatesStore } from "./updates";
@@ -91,6 +96,7 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
       if (response.status === "error") return { error: response.error };
       toast.success(forkedToastLabel(name));
       sayUnfinished(name, response.data.unfinished);
+      sayWritten(response.data.written);
       return { ok: null };
     }),
   );
@@ -131,8 +137,12 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
 /** What an install beside landed: the whole of it, with the step behind it
  *  that failed where one did, or only the fork's record. */
 type Beside =
-  | { phase: "installed"; unfinished: string | null | undefined }
-  | { phase: "recorded"; why: string };
+  | {
+      phase: "installed";
+      unfinished: string | null | undefined;
+      written: ItemWarning[] | undefined;
+    }
+  | { phase: "recorded"; why: string; written: ItemWarning[] | undefined };
 
 /** What an install beside answered: a refusal, what it landed, or nothing
  *  at all. Its refusal is typed, so a bare string is the call failing on
@@ -177,13 +187,21 @@ export const installAsNew = async (
     );
     if (response.status === "ok")
       return {
-        ok: { phase: "installed", unfinished: response.data.unfinished },
+        ok: {
+          phase: "installed",
+          unfinished: response.data.unfinished,
+          written: response.data.written,
+        },
       };
     const failure: unknown = response.error;
     if (typeof failure === "object" && failure !== null && "phase" in failure) {
-      const { phase, message } = failure as { phase: string; message: string };
+      const { phase, message, written } = failure as {
+        phase: string;
+        message: string;
+        written?: ItemWarning[];
+      };
       if (phase === "recorded")
-        return { ok: { phase: "recorded", why: message } };
+        return { ok: { phase: "recorded", why: message, written } };
       if (phase === "refused") return { error: message };
     }
     return { unknown: String(failure) };
@@ -201,16 +219,20 @@ export const installAsNew = async (
     case "installed":
       toast.success(installedAsNewToastLabel(name, own));
       sayUnfinished(name, outcome.ok.unfinished);
+      sayWritten(outcome.ok.written);
       return null;
     case "recorded":
       // Not `sayUnfinished`: its step says the change is in place, and the
-      // change asked for here is the install that failed. One dialog, no
-      // toast, so the lasting account is the only one.
+      // change asked for here is the install that failed. One dialog says
+      // the failure, so the lasting account is the only one. The links the
+      // recorded fork kept are its capture's own report, not that failure,
+      // and nothing read afterwards can say them.
       useProblemsStore.getState().showError({
         title: besideNotInstalledTitle(name),
         message: outcome.ok.why === "" ? NO_REASON_GIVEN : outcome.ok.why,
         steps: [besideRecordedStep(own)],
       });
+      sayWritten(outcome.ok.written);
       return null;
   }
 };

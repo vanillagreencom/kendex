@@ -594,7 +594,7 @@ export const commands = {
 	 *  Keep an edited install as a local fork under another name, leave the
 	 *  original on its source, then render both.
 	 */
-	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, ForkBesideError>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
+	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, ForkBesideError_Serialize>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
 	/**
 	 *  Discard one package's edits and re-render it — the door back to "the
 	 *  catalog's version wins". Scoped to the package the user named twice
@@ -939,6 +939,14 @@ export type AuditView_Deserialize = {
 	notes: string[],
 	warnings: ItemWarning_Deserialize[],
 	/**
+	 *  What the write this response settles reported about itself: the
+	 *  links an adopt or a fork kept as written. A result of that one
+	 *  write, not standing state, so the next read of the scope carries
+	 *  none; `warnings` is what the scope says every time it is read.
+	 *  Left off the wire when the write reported nothing.
+	 */
+	written: ItemWarning_Deserialize[],
+	/**
 	 *  Every installation here, scored — the clean ones included, so a
 	 *  package with nothing found still has a score to show. Each row
 	 *  carries two scores that are never combined: safety and quality.
@@ -993,6 +1001,14 @@ export type AuditView_Serialize = {
 	plan: string[],
 	notes: string[],
 	warnings: ItemWarning_Serialize[],
+	/**
+	 *  What the write this response settles reported about itself: the
+	 *  links an adopt or a fork kept as written. A result of that one
+	 *  write, not standing state, so the next read of the scope carries
+	 *  none; `warnings` is what the scope says every time it is read.
+	 *  Left off the wire when the write reported nothing.
+	 */
+	written?: ItemWarning_Serialize[],
 	/**
 	 *  Every installation here, scored — the clean ones included, so a
 	 *  package with nothing found still has a score to show. Each row
@@ -2418,7 +2434,33 @@ export type FlagReason = { kind: "noBranch" } |
  *  nothing, so another name may well go through; a fork the scope already
  *  recorded but could not render needs an apply, not a different name.
  */
-export type ForkBesideError = { phase: "refused"; message: string } | { phase: "recorded"; message: string };
+export type ForkBesideError = ForkBesideError_Serialize | ForkBesideError_Deserialize;
+
+/**
+ *  Why installing beside did not finish, by phase: a refusal wrote
+ *  nothing, so another name may well go through; a fork the scope already
+ *  recorded but could not render needs an apply, not a different name.
+ */
+export type ForkBesideError_Deserialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the fork that landed reported about itself: the links its
+ *  capture kept as written, as `AuditView::written` carries them on
+ *  a fork that also settled. Left off the wire when it kept none.
+ */
+written: ItemWarning_Deserialize[] };
+
+/**
+ *  Why installing beside did not finish, by phase: a refusal wrote
+ *  nothing, so another name may well go through; a fork the scope already
+ *  recorded but could not render needs an apply, not a different name.
+ */
+export type ForkBesideError_Serialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the fork that landed reported about itself: the links its
+ *  capture kept as written, as `AuditView::written` carries them on
+ *  a fork that also settled. Left off the wire when it kept none.
+ */
+written?: ItemWarning_Serialize[] };
 
 /**
  *  Where a fork came from. A fork keeps the item's installed name — the

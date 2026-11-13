@@ -11,6 +11,7 @@ mod apply_migration;
 mod audit_scope_error;
 mod bindings;
 mod cask_symlink_launch;
+mod fork_beside;
 mod icons;
 mod marketplace_pending_reads;
 mod marketplace_rows_absent_manifest;

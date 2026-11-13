@@ -505,3 +505,44 @@ fn a_failed_settle_after_keeping_answers_with_the_kept_files() {
         "the settle's failure was dropped from the answer"
     );
 }
+
+/// A keep's own report rides on the answer to that keep alone: the link
+/// its move kept as written is in `written`, apart from what the scope
+/// says every time it is read, and the next read carries none of it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_kept_link_is_reported_by_the_keep_that_kept_it() {
+    let f = fixture();
+    // Five levels up from Claude's copy is outside the project.
+    fs::write(
+        f.project.join(".claude/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: does deploy\n---\n[o](../../../../../outside.md)\n",
+    )
+    .unwrap();
+    let kept = adopt(
+        &f.env,
+        &f.scope,
+        ItemKind::Skill,
+        "deploy",
+        &[kendex_core::model::HarnessId::Claude],
+    )
+    .unwrap();
+    let written: Vec<&str> = kept
+        .written
+        .iter()
+        .map(|warning| warning.message.as_str())
+        .collect();
+    assert_eq!(
+        written,
+        ["skill-link-kept: SKILL.md: ../../../../../outside.md"]
+    );
+    assert!(
+        !kept
+            .warnings
+            .iter()
+            .any(|warning| warning.message.starts_with("skill-link-kept:")),
+        "{:?}",
+        kept.warnings
+    );
+    assert!(view(&f.env, &f.scope).written.is_empty());
+}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { ImportSelection } from "@/bindings";
+import type { ImportSelection, ItemWarning } from "@/bindings";
 import { DotSpinner } from "@/components/loading";
+import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,6 +14,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   IMPORT_HELP,
+  IMPORT_LINKS_KEPT,
   IMPORT_NOTHING,
   IMPORT_READING,
 } from "@/lib/copy-marketplaces";
@@ -110,6 +112,7 @@ export function MineImportDialog({
             outcome.alreadyPresent.length === 0 ? (
               <p className="text-muted-foreground">Nothing was selected.</p>
             ) : null}
+            <KeptLinks warnings={outcome.warnings ?? []} />
           </div>
         ) : candidates === null ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -165,5 +168,39 @@ export function MineImportDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The links a copied skill kept as written, which the import is the only
+ *  thing able to say: the copy reads the same afterwards whether a link was
+ *  converted or kept. Drawn on the outcome because the dialog stays open on
+ *  it. Every one of these shares its fix, so the fix is said once. */
+function KeptLinks({ warnings }: { warnings: ItemWarning[] }) {
+  if (warnings.length === 0) return null;
+  const fixes = [
+    ...new Set(
+      warnings.flatMap((warning) =>
+        warning.remediation ? [warning.remediation] : [],
+      ),
+    ),
+  ];
+  return (
+    <StatusNote tone="warning" title={IMPORT_LINKS_KEPT}>
+      <ul className="space-y-1">
+        {warnings.map((warning) => (
+          <li
+            key={`${warning.name}:${warning.message}`}
+            className="break-all font-mono text-xs"
+          >
+            {warning.name}: {warning.message}
+          </li>
+        ))}
+      </ul>
+      {fixes.map((fix) => (
+        <p key={fix} className="mt-2">
+          {fix}
+        </p>
+      ))}
+    </StatusNote>
   );
 }
