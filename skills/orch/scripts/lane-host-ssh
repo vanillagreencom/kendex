@@ -438,7 +438,10 @@ def owned(row, item, verb):
     and a create for another item may have followed. The verb gives its absent
     answer and exits 0, touching nothing of the other item. A worktree for the
     item beside no marker naming it is a create that failed after making it,
-    which still refuses as unowned, as does a clone that is not there."""
+    which still refuses as unowned. A clone that is not there took the marker
+    and the process record with it: close gives its absent answer and removes
+    nothing, since a worktree left beside it lost its history with the clone;
+    stop and status refuse as unowned, since no record says nothing runs."""
     owner = remote(row, '''test -d "$1/.git" || exit 0
 if test -f "$1/.git/lane-host-item"; then
   owner=$(cat -- "$1/.git/lane-host-item") || exit 1
@@ -447,7 +450,7 @@ fi
 printf other''', row["clone"], item).stdout
     if owner == b"owned":
         return
-    if owner == b"other" and not worktree_exists(row, item):
+    if not owner and verb == "close" or owner == b"other" and not worktree_exists(row, item):
         lifecycle_output(row, (ABSENT_ANSWERS[verb].format(item) + "\n").encode())
         raise SystemExit(0)
     notice(verb + "-unowned", item=item)

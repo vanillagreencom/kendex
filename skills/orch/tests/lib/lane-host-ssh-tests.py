@@ -3149,14 +3149,56 @@ WORKTREE_SETUP_CMD = 'mkdir -p tmp; SECRET=; if test -f .env.local; then . ./.en
         self.assertEqual((clone / ".git/lane-host-item").read_text(), "OTHER-1\n")
         self.assertEqual((worktree / "tmp/other.json").read_text(), "keep")
         original = self.script.read_text()
-        answer = 'if owner == b"other" and not worktree_exists(row, item):'
+        answer = 'owner == b"other" and not worktree_exists(row, item):'
         self.assertEqual(original.count(answer), 1)
-        self.script.write_text(original.replace(answer, "if False:"))
+        self.script.write_text(original.replace(answer, "False:"))
         for verb, extra, _ in answers:
             with self.subTest(control=verb):
                 result, _ = ask(verb, extra)
                 self.assertEqual((result.returncode, result.stdout), (75, b""), result.stderr)
         self.script.write_text(original)
+
+    def remove_clone(self, worktree_stands):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        shutil.rmtree(self.row["clone"])
+        if not worktree_stands:
+            shutil.rmtree(worktree)
+        return worktree
+
+    def standing_paths(self):
+        return {Path(parent, name) for parent, dirs, files in os.walk(self.root) for name in dirs + files}
+
+    def close_over_a_gone_clone(self):
+        before = self.standing_paths()
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual((closed.returncode, closed.stdout, closed.stderr), (0, b"closed=absent item=TEST-1\n", b""))
+        self.assertEqual(before - self.standing_paths(), set())
+
+    def test_close_over_a_gone_clone_answers_absent_and_removes_nothing(self):
+        self.remove_clone(worktree_stands=False)
+        self.close_over_a_gone_clone()
+        original = self.script.read_text()
+        answer = 'not owner and verb == "close" or '
+        self.assertEqual(original.count(answer), 1)
+        self.script.write_text(original.replace(answer, ""))
+        refused = self.call("close", "--item", "TEST-1")
+        self.script.write_text(original)
+        self.assertEqual((refused.returncode, refused.stdout, refused.stderr),
+                         (75, b"", b"lane-host-ssh: close-unowned item=TEST-1\n"))
+
+    def test_close_over_a_gone_clone_leaves_a_standing_worktree_directory(self):
+        worktree = self.remove_clone(worktree_stands=True)
+        self.close_over_a_gone_clone()
+        self.assertTrue(worktree.is_dir())
+
+    def test_stop_and_status_over_a_gone_clone_refuse_as_unowned(self):
+        self.remove_clone(worktree_stands=False)
+        for verb in ("stop", "status"):
+            with self.subTest(verb=verb):
+                result = self.call(verb, "--item", "TEST-1", "--harness", "claude")
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (75, b"", f"lane-host-ssh: {verb}-unowned item=TEST-1\n".encode()))
 
     def creation_overlap(self, expect_busy, channel_loss=False):
         """An installer acknowledgement fixes the pre-worktree interval.
