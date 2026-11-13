@@ -67,7 +67,8 @@ pub(super) enum Seat {
     /// A managed Jarvis session: its own succession clears a reached mark,
     /// and any other gap is said and passed, since retiring the session
     /// cannot clear it. Its reading is recorded only where the fleet record
-    /// binds it, under `key`, in the overseer mailbox.
+    /// binds it, under `key`, in the overseer mailbox; unbound, it reads
+    /// nothing there, and its Copilot reading comes from its lead record.
     Jarvis {
         key: Option<String>,
         home: PathBuf,
@@ -427,6 +428,13 @@ impl<'a> Judge<'a> {
         }
     }
 
+    /// The mailbox this judgement reads its own records from: `mailbox`
+    /// where it records there, none for a Jarvis session the fleet record
+    /// does not bind, which neither writes nor reads the overseer's box.
+    fn own_box<'m>(&self, mailbox: &'m Path) -> Option<&'m Path> {
+        self.records().then_some(mailbox)
+    }
+
     /// A refusal of the judgement: a Jarvis session is told the gap and
     /// passed, since its succession cannot clear an input it could not
     /// read.
@@ -684,7 +692,7 @@ impl<'a> Judge<'a> {
         if session.is_empty() {
             return None;
         }
-        let text = std::fs::read_to_string(mailbox.join(CONTEXT_RECORD)).ok()?;
+        let text = std::fs::read_to_string(self.own_box(mailbox)?.join(CONTEXT_RECORD)).ok()?;
         let record = ContextRecord::parse(&text).ok()?;
         (record.harness.as_deref() == Some("pi")
             && record.session_id.as_deref() == Some(session)
@@ -705,7 +713,11 @@ impl<'a> Judge<'a> {
     /// read as room.
     fn copilot_reading(&self, turn: &mut Turn, mailbox: &Path) -> Flow<Reading> {
         let session = self.payload.session.as_str();
-        match compaction_flagged(mailbox, session) {
+        // An unbound Jarvis session's compaction is flagged nowhere.
+        let flagged = self
+            .own_box(mailbox)
+            .map_or(Ok(false), |mailbox| compaction_flagged(mailbox, session));
+        match flagged {
             Ok(true) => {
                 self.compacted.set(true);
                 return Ok(Reading::Compacted);
@@ -726,7 +738,13 @@ impl<'a> Judge<'a> {
                 if let Some(reading) = extension {
                     return Ok(reading);
                 }
-                turn.note(&Said::ReadingUnrecorded(mailbox.join(CONTEXT_RECORD)), "");
+                let record = match self.own_box(mailbox) {
+                    Some(mailbox) => mailbox.join(CONTEXT_RECORD),
+                    None => Leads::under(&self.vars.home)
+                        .file(session)
+                        .unwrap_or_default(),
+                };
+                turn.note(&Said::ReadingUnrecorded(record), "");
                 turn.note(&Said::SessionRecord(reason), "");
                 return Ok(Reading::None(Some("session-record")));
             }
@@ -755,18 +773,35 @@ impl<'a> Judge<'a> {
         true
     }
 
-    /// The extension's reading of this session from the mailbox's record:
-    /// `None` where no record stands or it is no reading of the extension's
-    /// for this session (another session's, a gap record, a status-line
-    /// reading), so the status-line record is read in its place.
+    /// The extension's reading of this session from the mailbox's record,
+    /// or for a Jarvis session the fleet record does not bind, from its
+    /// lead record: `None` where no record stands or it is no reading of
+    /// the extension's for this session (another session's, a gap record, a
+    /// status-line reading), so the status-line record is read in its place.
     fn extension_reading(&self, turn: &mut Turn, mailbox: &Path) -> Flow<Option<Reading>> {
-        let path = mailbox.join(CONTEXT_RECORD);
-        if std::fs::metadata(&path).is_err() {
-            return Ok(None);
-        }
-        let text = match std::fs::read_to_string(&path) {
+        let (path, read) = match self.own_box(mailbox) {
+            Some(mailbox) => {
+                let path = mailbox.join(CONTEXT_RECORD);
+                if std::fs::metadata(&path).is_err() {
+                    return Ok(None);
+                }
+                let read = std::fs::read_to_string(&path).map_err(|e| e.to_string());
+                (path, read)
+            }
+            None => {
+                let leads = Leads::under(&self.vars.home);
+                let session = &self.payload.session;
+                let (Some(path), Some(read)) =
+                    (leads.file(session), leads.reading(session).transpose())
+                else {
+                    return Ok(None);
+                };
+                (path, read)
+            }
+        };
+        let text = match read {
             Ok(text) => text,
-            Err(e) => return Err(self.refuse_record(turn, path, &e.to_string())),
+            Err(cause) => return Err(self.refuse_record(turn, path, &cause)),
         };
         let Ok(record) = ContextRecord::parse(&text) else {
             let cause = "it is neither a reading nor a gap record";
@@ -926,9 +961,6 @@ impl<'a> Judge<'a> {
 /// handoff.
 pub(super) const OVERSEER_ITEM: &str = "oversee";
 
-/// The flag a Copilot session's automatic compaction leaves in its mailbox.
-const COMPACTION_FLAG: &str = "compaction.json";
-
 /// The polls of a standing pending marker before a reading on its way is
 /// judged not to arrive in this turn end, and the pause between them.
 const PENDING_POLLS: u32 = 25;
@@ -938,7 +970,7 @@ const PENDING_POLL: Duration = Duration::from_millis(200);
 /// matching a flag naming none). `Err` with the flag and the cause where
 /// one stands and cannot be read as a flag.
 fn compaction_flagged(mailbox: &Path, session: &str) -> Result<bool, (PathBuf, String)> {
-    let path = mailbox.join(COMPACTION_FLAG);
+    let path = mailbox.join(super::copilot::COMPACTION_FLAG);
     if std::fs::symlink_metadata(&path).is_err() {
         return Ok(false);
     }

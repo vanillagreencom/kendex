@@ -20,10 +20,15 @@ use super::{Arm, Flow, Turn, Vars};
 /// A session with no lane item writes its own event row into the overseer
 /// mailbox directory of its checkout, keyed by its pane: the row arm under
 /// the event its payload or its row hook names, the overseer's turn end as
-/// a Stop. A session the record keys no pane for writes none.
+/// a Stop. A session the record keys no pane for writes none; a named pane
+/// whose server did not answer is told, ahead of the box, the top-level
+/// and the subagent checks, as the released writer read the key first.
 pub(super) fn session_row(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload) -> Flow {
     let role = Rc::clone(&turn.role);
     let Some(key) = &role.key else {
+        if let Some(cause) = &role.unkeyed {
+            turn.note(&Said::RowsUnwritten(lane.root.clone()), cause);
+        }
         return Ok(());
     };
     let event = match &turn.arm {
@@ -188,16 +193,23 @@ pub(super) fn lane_row(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Pay
 /// Its own place, ahead of every check that may end the run, since a
 /// Jarvis session is rarely a lane or a fleet's overseer. A Copilot call
 /// no lead record vouches for stamps too: the stamp lands only under the
-/// session id the record's own start bound.
+/// session id the record's own start bound. A named pane whose server did
+/// not answer keys no stamp, and that is told.
 pub(super) fn jarvis_row(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Payload) -> Flow {
     if turn.caller == Caller::Subagent || lane.item.is_some() {
         return Ok(());
     }
     let role = Rc::clone(&turn.role);
-    let (Some(jarvis), Some(key)) = (&role.jarvis, &role.key) else {
+    let Some(jarvis) = &role.jarvis else {
         return Ok(());
     };
     let Some(event) = turn_event(turn) else {
+        return Ok(());
+    };
+    let Some(key) = &role.key else {
+        if let Some(cause) = &role.unkeyed {
+            turn.note(&Said::JarvisRowsUnwritten(jarvis.record.clone()), cause);
+        }
         return Ok(());
     };
     let launch = launch(jarvis, key, harness_word(turn.harness));
@@ -336,22 +348,12 @@ fn wall_secs() -> u64 {
 )]
 mod tests {
     use super::*;
-    use crate::turnend::agents::Deadline;
-    use agent_runtime::clock::SystemClock;
 
     fn turn(harness: Harness, arm: Arm) -> Turn {
         Turn {
-            harness,
             arm: Some(arm),
-            caller: Caller::Lead,
             reported: true,
-            stderr: String::new(),
-            ack: None,
-            hook_dir: PathBuf::new(),
-            deadline: Deadline::start(&SystemClock),
-            role: Rc::new(role::Role::default()),
-            notice: None,
-            wake: None,
+            ..Turn::new(harness, PathBuf::new())
         }
     }
 
@@ -587,6 +589,7 @@ mod tests {
                     start: 1,
                     pane: "%3".to_owned(),
                 }),
+                unkeyed: None,
                 jarvis: Some(role::Launch {
                     record: record.to_path_buf(),
                     generation: Some("g7".to_owned()),

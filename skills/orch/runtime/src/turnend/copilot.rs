@@ -1,22 +1,27 @@
 //! A Copilot session's compaction and context reading, which its hooks hand
 //! to the turn end beside the turn end itself. Each is recorded in the box
-//! the session's turn end reads it from: a launched lane's mailbox.
+//! the session's turn end reads it from: a launched lane's mailbox, the
+//! overseer mailbox under the bound controller's key, or the lead record of
+//! a managed Jarvis session the fleet record does not bind.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use agent_runtime::context;
 use serde_json::{Value, json};
 
 use super::answer::{Harness, Said};
 use super::identity::Lane;
-use super::payload::{Caller, Payload};
-use super::{Flow, Turn, Vars};
+use super::payload::{Caller, Leads, Payload};
+use super::role::{Binding, Kind};
+use super::{Flow, Turn, Vars, controller, marks};
 use crate::marker::CONTEXT_RECORD;
 use crate::watch::context::ContextRecord;
+use crate::watch::mail::overseer_dir;
 
 /// The flag a Copilot session's automatic compaction leaves in its box,
 /// beside its reading: a file of its own, which no reading rewrites.
-const COMPACTION_FLAG: &str = "compaction.json";
+pub(super) const COMPACTION_FLAG: &str = "compaction.json";
 
 /// The compact arm: a Copilot lead's automatic compaction, flagged in the
 /// box its turn end reads, which holds that turn end until the handoff
@@ -27,24 +32,26 @@ const COMPACTION_FLAG: &str = "compaction.json";
 /// cannot be written is refused at exit 2, which Copilot shows the operator
 /// as a warning while the compaction goes on. A manual compaction is the
 /// operator's own and flags nothing, nor does a session with no box; the
-/// caller rule has already passed a compaction that is not the lead's.
+/// caller rule has already passed a compaction that is not the lead's. A
+/// Jarvis session's role is read at its turn end and its reading alone, so
+/// its lead record never takes a flag.
 pub(super) fn compaction_mark(
     turn: &mut Turn,
-    _vars: &Vars,
+    vars: &Vars,
     lane: &Lane,
     payload: &Payload,
 ) -> Flow {
     if turn.harness != Harness::Copilot || payload.trigger != "auto" {
         return Ok(());
     }
-    let Some(dir) = gated_box(turn, lane)? else {
+    let Some(Kept::Mailbox { dir, key }) = gated_box(turn, vars, lane)? else {
         return Ok(());
     };
     let flag = json!({
         "harness": "copilot",
         "trigger": payload.trigger,
         "session_id": (!payload.session.is_empty()).then_some(&payload.session),
-        "pane_key": null,
+        "pane_key": key,
         "at": record_stamp(),
     });
     let path = dir.join(COMPACTION_FLAG);
@@ -61,11 +68,11 @@ pub(super) fn compaction_mark(
 /// under the shared rule as any other harness's reading. Nothing goes on
 /// stdout; a gap is refused on stderr at exit 2, which the extension writes
 /// to the session timeline. A session with no box passes silently.
-pub(super) fn usage_read(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Payload) -> Flow {
+pub(super) fn usage_read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload) -> Flow {
     if turn.harness != Harness::Copilot {
         return Err(turn.refuse(Said::HarnessUnlisted(turn.hook_dir.clone()), ""));
     }
-    let Some(dir) = gated_box(turn, lane)? else {
+    let Some(kept) = gated_box(turn, vars, lane)? else {
         return Ok(());
     };
     // The extension hands over the root agent's readings alone, so a session
@@ -84,6 +91,10 @@ pub(super) fn usage_read(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &P
         payload.field("token_limit"),
     )
     .map_err(|cause| turn.refuse(Said::PayloadInvalid, cause))?;
+    let key = match &kept {
+        Kept::Mailbox { key, .. } => key.clone(),
+        Kept::Lead => None,
+    };
     let record = ContextRecord {
         harness: Some("copilot".to_owned()),
         tokens: Some(tokens),
@@ -91,9 +102,19 @@ pub(super) fn usage_read(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &P
         model: None,
         capacity_source: Some(context::COPILOT_EXTENSION_SOURCE.to_owned()),
         session_id: (!payload.session.is_empty()).then(|| payload.session.clone()),
-        pane_key: None,
+        pane_key: key,
         gap: None,
         at: Some(record_stamp()),
+    };
+    let dir = match kept {
+        Kept::Mailbox { dir, .. } => dir,
+        Kept::Lead => {
+            let leads = Leads::under(&vars.home);
+            let Err((file, cause)) = leads.keep_reading(&payload.session, &record) else {
+                return Ok(());
+            };
+            return Err(turn.refuse(Said::JarvisReadingUnkept(file), &cause));
+        }
     };
     let Err(cause) = record.write_to(&dir) else {
         return Ok(());
@@ -113,13 +134,46 @@ pub(super) fn usage_read(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &P
     Err(turn.refuse(said, &cause))
 }
 
+/// Where a Copilot session's reading and compaction flag are kept.
+enum Kept {
+    /// A mailbox directory, its records carrying `key` where the overseer
+    /// mailbox keys them by the bound controller's pane.
+    Mailbox { dir: PathBuf, key: Option<String> },
+    /// The lead record of a managed Jarvis session the fleet record does not
+    /// bind, which keeps its reading out of the overseer's box.
+    Lead,
+}
+
 /// The box a Copilot session's reading and compaction flag are recorded
-/// in, the one its turn end reads: a launched lane's mailbox; `None` for a session that is no
-/// launched lane, which passes silently.
-fn gated_box(turn: &mut Turn, lane: &Lane) -> Flow<Option<PathBuf>> {
-    match &lane.item {
-        Some(item) if lane.launched(turn)? => Ok(Some(lane.mail_root.join(item))),
-        _ => Ok(None),
+/// in, the one its turn end reads: a launched lane's mailbox; for a session
+/// with no lane item, the box follows the binding, the overseer mailbox
+/// under the caller's key where the fleet record binds the overseer or a
+/// managed Jarvis session, and an unbound Jarvis session's lead record.
+/// `None` for any other session, which passes silently, and where the
+/// settings naming the overseer mailbox do not load.
+fn gated_box(turn: &mut Turn, vars: &Vars, lane: &Lane) -> Flow<Option<Kept>> {
+    if let Some(item) = &lane.item {
+        if !lane.launched(turn)? {
+            return Ok(None);
+        }
+        let dir = lane.mail_root.join(item);
+        return Ok(Some(Kept::Mailbox { dir, key: None }));
+    }
+    let role = Rc::clone(&turn.role);
+    let Some(key) = &role.key else {
+        return Ok(None);
+    };
+    match (&role.kind, &role.binding) {
+        (Kind::Overseer | Kind::Jarvis(_), Binding::Bound(_)) => {
+            let Ok(settings) = marks::marks_settings(&lane.root, vars.private_env) else {
+                return Ok(None);
+            };
+            let dir = overseer_dir(&settings.roots.common);
+            let key = Some(controller::caller_key(key));
+            Ok(Some(Kept::Mailbox { dir, key }))
+        }
+        (Kind::Jarvis(_), Binding::None | Binding::Lost(_)) => Ok(Some(Kept::Lead)),
+        (Kind::None, _) | (Kind::Overseer, Binding::None | Binding::Lost(_)) => Ok(None),
     }
 }
 

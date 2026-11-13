@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime};
 use serde_json::Value;
 
 use super::answer::{LEAD_DAYS, Said};
+use crate::watch::context::ContextRecord;
 
 /// Who made the call the payload describes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,8 +232,47 @@ impl Leads {
         }
     }
 
-    fn file(&self, session: &str) -> Option<PathBuf> {
+    /// The lead record of `session`; none for a payload naming no session.
+    pub fn file(&self, session: &str) -> Option<PathBuf> {
         (!session.is_empty()).then(|| self.dir.join(session))
+    }
+
+    /// The context reading `session`'s lead record keeps, the box of a
+    /// managed Copilot Jarvis session the fleet record does not bind:
+    /// `Ok(None)` where it keeps none (no session, no record, or the empty
+    /// record a lead's start leaves); `Err` with the cause where the record
+    /// cannot be read.
+    pub fn reading(&self, session: &str) -> Result<Option<String>, String> {
+        let Some(file) = self.file(session) else {
+            return Ok(None);
+        };
+        match std::fs::read_to_string(file) {
+            Ok(text) => Ok((!text.is_empty()).then_some(text)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Keep `record` as `session`'s context reading in its lead record,
+    /// which stays the lead's identity. A reading the record cannot take
+    /// leaves it emptied where it can be, so no older figure is judged as
+    /// room. `Err` with the record and the causes.
+    pub fn keep_reading(
+        &self,
+        session: &str,
+        record: &ContextRecord,
+    ) -> Result<(), (PathBuf, String)> {
+        let Some(file) = self.file(session) else {
+            return Err((self.dir.clone(), "the payload names no session".to_owned()));
+        };
+        let Err(cause) = record.write_at(&file) else {
+            return Ok(());
+        };
+        let cause = match empty(&file) {
+            Ok(()) => cause,
+            Err(stands) => format!("{cause}\n{stands}"),
+        };
+        Err((file, cause))
     }
 
     /// The marker the context extension leaves while a reading of
@@ -288,7 +328,7 @@ impl Leads {
 /// stands, which is what the prune reads.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the Copilot lead record's one writer: the user's cache, outside every source tree and every workflow record"
+    reason = "the Copilot lead record's identity writer: the user's cache, outside every source tree and every workflow record"
 )]
 fn touch(dir: &Path, file: &Path, now: SystemTime) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -299,6 +339,18 @@ fn touch(dir: &Path, file: &Path, now: SystemTime) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", file.display()))?;
     handle
         .set_modified(now)
+        .map_err(|e| format!("{}: {e}", file.display()))
+}
+
+/// Empty the lead record `file`, keeping it as the lead's identity. `Err`
+/// names the file and the cause where it could not be emptied.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the emptying of a Copilot lead record whose reading could not be replaced, in the user's cache, outside every source tree and every workflow record"
+)]
+fn empty(file: &Path) -> Result<(), String> {
+    std::fs::File::create(file)
+        .map(drop)
         .map_err(|e| format!("{}: {e}", file.display()))
 }
 

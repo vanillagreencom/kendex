@@ -359,3 +359,364 @@ fn an_automatic_compaction_flags_its_box_and_a_manual_one_nothing() {
         out.stderr
     );
 }
+
+const PANE: &str = "%3";
+const SESSION: &str = "native-1";
+
+/// The account directory a session with no lane item runs on, and its
+/// lead record of `SESSION`, empty as its session start leaves it.
+fn copilot_lead(world: &TurnWorld) -> (PathBuf, PathBuf) {
+    let account = world.root.join("accounts/copilot-1");
+    fs::create_dir_all(&account).unwrap();
+    let leads = world.home.join(".cache/lane-mail/copilot-leads");
+    fs::create_dir_all(&leads).unwrap();
+    fs::write(leads.join(SESSION), "").unwrap();
+    (account, leads.join(SESSION))
+}
+
+/// The environment of a Copilot session on `pane` of the stand-in's
+/// server, or outside tmux, on `account`.
+fn copilot_env(world: &TurnWorld, pane: Option<&str>, account: &Path) -> Vec<(String, String)> {
+    let mut env = pane.map(|pane| world.on_pane(pane)).unwrap_or_default();
+    env.push(("COPILOT_HOME".to_owned(), account.display().to_string()));
+    env
+}
+
+/// The usage arm handed a reading of `SESSION` at `tokens` of a 272000
+/// limit, run in the world's checkout.
+fn session_usage(world: &TurnWorld, env: &[(String, String)], tokens: u64) -> TurnOut {
+    let payload = json!({"session_id": SESSION, "cwd": world.checkout,
+        "current_tokens": tokens, "token_limit": 272_000})
+    .to_string();
+    world.turn(&world.checkout, "copilot", &["usage"], &payload, env)
+}
+
+/// An automatic compaction of `SESSION`, run in the world's checkout.
+fn session_compaction(world: &TurnWorld, env: &[(String, String)]) -> TurnOut {
+    let payload = json!({"sessionId": SESSION, "timestamp": 1, "trigger": "auto"}).to_string();
+    world.turn(&world.checkout, "copilot", &["compact"], &payload, env)
+}
+
+/// The turn end of `SESSION`, run in the world's checkout.
+fn session_stop(world: &TurnWorld, env: &[(String, String)]) -> TurnOut {
+    let payload = json!({"sessionId": SESSION, "timestamp": 1}).to_string();
+    world.turn(&world.checkout, "copilot", &[], &payload, env)
+}
+
+/// The block reason a Copilot turn end handed its session, `None` where it
+/// passed with nothing on stdout.
+fn blocked(out: &TurnOut) -> Option<String> {
+    if out.stdout.is_empty() {
+        return None;
+    }
+    let answer: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(answer["decision"], "block", "{}", out.stdout);
+    Some(answer["reason"].as_str().unwrap().to_owned())
+}
+
+/// The overseer mailbox of the world's checkout.
+fn overseer_box(world: &TurnWorld) -> PathBuf {
+    world.checkout.join("tmp/lane-mail/overseer")
+}
+
+/// The JSON file `name` in the overseer mailbox, `None` where none stands.
+fn box_file(world: &TurnWorld, name: &str) -> Option<Value> {
+    let text = fs::read_to_string(overseer_box(world).join(name)).ok()?;
+    Some(serde_json::from_str(&text).unwrap())
+}
+
+/// The key every controller record carries for the world's pane `pane`.
+fn caller_key(world: &TurnWorld, pane: &str) -> String {
+    format!("{} {pane}", world.server_pid())
+}
+
+const ROUTE: &str = " op --fleet --effect-exit --request [REQUEST FILE]\n";
+
+/// The bound Copilot overseer's reading is recorded in the overseer mailbox
+/// under its pane key, and its turn end judges that reading and names the
+/// runtime succession; a session on a pane the fleet record does not name,
+/// and one outside tmux, record nothing. Lost by the fleet record, its turn
+/// end writes the gap over that reading, which, named again, it reports as
+/// no reading.
+#[test]
+fn an_overseers_copilot_reading_is_recorded_in_the_overseer_box_under_its_pane_key() {
+    let world = TurnWorld::new();
+    let (account, _) = copilot_lead(&world);
+    world.plant_fleet(world.controller(PANE, "copilot", &account, SESSION));
+    let mut env = copilot_env(&world, Some(PANE), &account);
+    env.push(("ORCH_HANDOFF_CONTEXT_PCT".to_owned(), "90".to_owned()));
+    let out = session_usage(&world, &env, 199_000);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", "")
+    );
+    let record = box_file(&world, "context.json").expect("the reading is recorded");
+    assert_eq!(
+        [
+            &record["tokens"],
+            &record["window"],
+            &record["session_id"],
+            &record["model"],
+            &record["pane_key"],
+        ],
+        [
+            &json!(199_000),
+            &json!(217_600),
+            &json!(SESSION),
+            &Value::Null,
+            &json!(caller_key(&world, PANE)),
+        ]
+    );
+    let out = session_stop(&world, &env);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let reason = blocked(&out).unwrap_or_else(|| panic!("passed: {}", out.stderr));
+    assert!(
+        reason.starts_with("lane-mail-check: context=199000\n"),
+        "{reason}"
+    );
+    assert!(reason.contains(ROUTE), "{reason}");
+    fs::remove_file(overseer_box(&world).join("context.json")).unwrap();
+    for (name, pane) in [("another pane", Some("%5")), ("outside tmux", None)] {
+        let out = session_usage(&world, &copilot_env(&world, pane, &account), 199_000);
+        assert_eq!(
+            (out.code, out.stdout.as_str(), out.stderr.as_str()),
+            (0, "", ""),
+            "{name}"
+        );
+        assert_eq!(box_file(&world, "context.json"), None, "{name}");
+    }
+    let out = session_usage(&world, &env, 199_000);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    world.plant_fleet(world.controller("%9", "copilot", &account, SESSION));
+    let out = session_stop(&world, &env);
+    let lost = format!("pane-unrecorded={}", caller_key(&world, PANE));
+    assert_eq!(
+        (out.code, out.keyed().first().copied()),
+        (0, Some(lost.as_str())),
+        "{}",
+        out.stderr
+    );
+    let record = box_file(&world, "context.json").unwrap();
+    assert_eq!(
+        [&record["tokens"], &record["gap"]],
+        [&Value::Null, &json!("pane-unrecorded")]
+    );
+    world.plant_fleet(world.controller(PANE, "copilot", &account, SESSION));
+    let out = session_stop(&world, &env);
+    let unrecorded = format!(
+        "reading-unrecorded={}",
+        overseer_box(&world).join("context.json").display()
+    );
+    assert_eq!(
+        (out.code, out.keyed().first().copied(), blocked(&out)),
+        (0, Some(unrecorded.as_str()), None),
+        "{}",
+        out.stderr
+    );
+}
+
+/// The bound Copilot overseer's automatic compaction is flagged in the
+/// overseer mailbox under its pane key, and its turn end is held on it,
+/// succession on or off, naming the runtime succession; a session on a pane
+/// the fleet record does not name, and one outside tmux, flag nothing; the
+/// overseer's own handoff record standing, its turn end passes.
+#[test]
+fn an_overseers_automatic_compaction_is_flagged_in_the_overseer_box_under_its_pane_key() {
+    let world = TurnWorld::new();
+    let (account, _) = copilot_lead(&world);
+    world.plant_fleet(world.controller(PANE, "copilot", &account, SESSION));
+    let env = copilot_env(&world, Some(PANE), &account);
+    let out = session_compaction(&world, &env);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", "")
+    );
+    let flag = box_file(&world, "compaction.json").expect("the compaction is flagged");
+    assert_eq!(
+        [
+            &flag["harness"],
+            &flag["trigger"],
+            &flag["session_id"],
+            &flag["pane_key"]
+        ],
+        [
+            &json!("copilot"),
+            &json!("auto"),
+            &json!(SESSION),
+            &json!(caller_key(&world, PANE))
+        ]
+    );
+    for off in [false, true] {
+        let mut env = env.clone();
+        if off {
+            let setting = "AGENT_RUNTIME_CONTROLLER_SUCCESSION";
+            env.push((setting.to_owned(), "off".to_owned()));
+        }
+        let out = session_stop(&world, &env);
+        assert_eq!(out.code, 0, "off {off}: {}", out.stderr);
+        let reason = blocked(&out).unwrap_or_else(|| panic!("off {off}: {}", out.stderr));
+        assert!(
+            reason.starts_with("lane-mail-check: compacted=auto\n"),
+            "off {off}: {reason}"
+        );
+        assert!(reason.contains(ROUTE), "off {off}: {reason}");
+    }
+    fs::remove_file(overseer_box(&world).join("compaction.json")).unwrap();
+    for (name, pane) in [("another pane", Some("%5")), ("outside tmux", None)] {
+        let out = session_compaction(&world, &copilot_env(&world, pane, &account));
+        assert_eq!(
+            (out.code, out.stdout.as_str(), out.stderr.as_str()),
+            (0, "", ""),
+            "{name}"
+        );
+        assert_eq!(box_file(&world, "compaction.json"), None, "{name}");
+    }
+    let out = session_compaction(&world, &env);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let mut fleet = world.fleet();
+    fleet["handoff"] = json!({ "session_id": SESSION, "pane_key": caller_key(&world, PANE) });
+    fs::write(world.fleet_path(), fleet.to_string()).unwrap();
+    let out = session_stop(&world, &env);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+}
+
+/// The environment of a managed Copilot Jarvis session on the world's pane
+/// `PANE` whose home is the world's checkout, on `account`: Jarvis's
+/// session owner installed there, its pane live in Jarvis's session at
+/// generation 4, its running record.
+fn jarvis_env(world: &TurnWorld, account: &Path) -> Vec<(String, String)> {
+    world.install_jarvis(&world.checkout);
+    world.plant_pane(PANE, "jarvis", "@7", "4", false);
+    let mut session = world.jarvis_session(PANE, "copilot", SESSION, "4", account);
+    session["origin"] = json!("manual");
+    let record = world.plant_jarvis(&world.checkout, session);
+    let mut env = copilot_env(world, Some(PANE), account);
+    env.push(("JARVIS_RECORD".to_owned(), record.display().to_string()));
+    env.push(("JARVIS_GENERATION".to_owned(), "4".to_owned()));
+    env
+}
+
+/// A managed Copilot Jarvis session the fleet record does not bind keeps
+/// its reading in its own lead record, and its turn end judges it there,
+/// handing Jarvis's own succession past the mark: the overseer mailbox,
+/// holding the overseer's record and compaction flag for this session id,
+/// is neither written nor read. A reading the lead record cannot take is
+/// refused and leaves the record emptied. Bound as its home's overseer, its
+/// reading follows the binding into the overseer mailbox under its key.
+#[test]
+fn an_unbound_jarvis_session_keeps_its_copilot_reading_in_its_lead_record() {
+    let world = TurnWorld::new();
+    let (account, lead) = copilot_lead(&world);
+    let env = jarvis_env(&world, &account);
+    let overseer = json!({"harness": "copilot", "model": null, "tokens": 450_000,
+        "window": null, "capacity_source": EXTENSION, "session_id": SESSION,
+        "pane_key": caller_key(&world, PANE), "gap": null, "at": "2026-11-12T00:00:00Z"})
+    .to_string();
+    let flag = json!({"harness": "copilot", "trigger": "auto", "session_id": SESSION,
+        "pane_key": caller_key(&world, PANE), "at": "2026-11-12T00:00:00Z"})
+    .to_string();
+    fs::create_dir_all(overseer_box(&world)).unwrap();
+    fs::write(overseer_box(&world).join("context.json"), &overseer).unwrap();
+    fs::write(overseer_box(&world).join("compaction.json"), &flag).unwrap();
+    let untouched = |step: &str| {
+        for (name, planted) in [("context.json", &overseer), ("compaction.json", &flag)] {
+            let standing = fs::read_to_string(overseer_box(&world).join(name)).unwrap();
+            assert_eq!(&standing, planted, "{step}: the overseer's {name} moved");
+        }
+    };
+    let out = session_usage(&world, &env, 50_000);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", "")
+    );
+    let kept: Value = serde_json::from_str(&fs::read_to_string(&lead).unwrap()).unwrap();
+    assert_eq!(
+        [
+            &kept["tokens"],
+            &kept["window"],
+            &kept["capacity_source"],
+            &kept["session_id"],
+            &kept["pane_key"],
+        ],
+        [
+            &json!(50_000),
+            &json!(217_600),
+            &json!(EXTENSION),
+            &json!(SESSION),
+            &Value::Null,
+        ]
+    );
+    untouched("the reading");
+    let out = session_stop(&world, &env);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.keyed()),
+        (0, "", Vec::<&str>::new()),
+        "{}",
+        out.stderr
+    );
+    untouched("the turn end below the mark");
+    let out = session_usage(&world, &env, 199_000);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let out = session_stop(&world, &env);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let reason = blocked(&out).unwrap_or_else(|| panic!("passed: {}", out.stderr));
+    assert!(
+        reason.starts_with("lane-mail-check: context=199000\n"),
+        "{reason}"
+    );
+    let succeed = format!(
+        "/.agents/skills/jarvis/scripts/jarvis-session succeed --home {}",
+        world.checkout.display()
+    );
+    assert!(reason.contains(&succeed), "{reason}");
+    untouched("the turn end past the mark");
+    // A lead record directory that takes no new file, where the permission
+    // bits hold (they do not for root): the reading is refused and the
+    // record, still writable, is emptied.
+    let leads = lead.parent().unwrap();
+    fs::set_permissions(leads, fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = leads.join("probe");
+    if fs::write(&probe, "").is_err() {
+        let out = session_usage(&world, &env, 60_000);
+        fs::set_permissions(leads, fs::Permissions::from_mode(0o755)).unwrap();
+        let keyed = format!("context-unrecorded={}", lead.display());
+        assert_eq!(
+            (out.code, out.stdout.as_str(), out.keyed()),
+            (2, "", vec![keyed.as_str()]),
+            "{}",
+            out.stderr
+        );
+        assert!(
+            out.stderr
+                .contains("A Jarvis Stop judges only a reading the shared reader can take"),
+            "{}",
+            out.stderr
+        );
+        assert_eq!(
+            fs::read_to_string(&lead).unwrap(),
+            "",
+            "the record is emptied"
+        );
+    } else {
+        fs::remove_file(&probe).unwrap();
+        fs::set_permissions(leads, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    untouched("the reading refused");
+    world.plant_fleet(world.controller(PANE, "copilot", &account, SESSION));
+    let before = fs::read_to_string(&lead).unwrap();
+    let out = session_usage(&world, &env, 70_000);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", "")
+    );
+    let record = box_file(&world, "context.json").unwrap();
+    assert_eq!(
+        [&record["tokens"], &record["pane_key"]],
+        [&json!(70_000), &json!(caller_key(&world, PANE))]
+    );
+    assert_eq!(
+        fs::read_to_string(&lead).unwrap(),
+        before,
+        "bound, the lead record moved"
+    );
+}

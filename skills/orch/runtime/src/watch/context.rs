@@ -99,14 +99,21 @@ impl ContextRecord {
         })
     }
 
-    /// The one writer of a session's record: `context.json` in `mailbox`,
-    /// through a file renamed over it so no reader meets half a record,
-    /// with the whole percent of the window used beside the reading.
+    /// A session's record in its mailbox: `context.json` in `mailbox`.
+    pub fn write_to(&self, mailbox: &Path) -> Result<(), String> {
+        self.write_at(&mailbox.join(CONTEXT_RECORD))
+    }
+
+    /// The one writer of a session's record: the file at `path`, a
+    /// mailbox's `context.json` or the lead record an unbound Copilot
+    /// Jarvis session keeps its reading in, through a file renamed over it
+    /// so no reader meets half a record, with the whole percent of the
+    /// window used beside the reading.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the session's context record is a mailbox file no state store holds; this is its one writer, through the record module's atomic replace"
+        reason = "the session's context record is a mailbox or lead-record file no state store holds; this is its one writer, through the record module's atomic replace"
     )]
-    pub fn write_to(&self, mailbox: &Path) -> Result<(), String> {
+    pub fn write_at(&self, path: &Path) -> Result<(), String> {
         let used_pct = match (self.tokens, self.window) {
             (Some(tokens), Some(window)) if window > 0 => Some(tokens.saturating_mul(100) / window),
             _ => None,
@@ -123,8 +130,7 @@ impl ContextRecord {
             "gap": self.gap,
             "at": self.at,
         });
-        agent_runtime::record::replace_atomically(&mailbox.join(CONTEXT_RECORD), &value)
-            .map_err(|e| e.to_string())
+        agent_runtime::record::replace_atomically(path, &value).map_err(|e| e.to_string())
     }
 
     /// The `TOKENS:WINDOW` word the marks judge (`overseer::judge_marks`)

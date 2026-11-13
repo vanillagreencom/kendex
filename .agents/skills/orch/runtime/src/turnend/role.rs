@@ -88,6 +88,9 @@ pub(super) struct Launch {
 pub(super) struct Role {
     /// `None` outside tmux, or where no pane is named or recovered.
     pub key: Option<Key>,
+    /// Why no key was made for the pane `TMUX_PANE` names: the server
+    /// `$TMUX` names did not answer.
+    pub unkeyed: Option<String>,
     /// The Jarvis record named by the launch, or by the pane recovery.
     pub jarvis: Option<Launch>,
     pub kind: Kind,
@@ -174,8 +177,15 @@ pub(super) fn session_pane(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &
         }
         None => (None, launch),
     };
+    // A named pane on a socket that is set keys nothing only where its
+    // server did not answer.
+    let unkeyed = match (&key, vars.tmux_pane.as_deref(), &vars.tmux_socket) {
+        (None, Some(pane), Some(_)) => Some(format!("pane=unkeyed tmux_pane={pane}")),
+        _ => None,
+    };
     turn.role = Rc::new(Role {
         key,
+        unkeyed,
         jarvis,
         ..Role::default()
     });
@@ -363,6 +373,7 @@ pub(super) fn read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload)
     };
     turn.role = Rc::new(Role {
         key: Some(key),
+        unkeyed: turn.role.unkeyed.clone(),
         jarvis: turn.role.jarvis.clone(),
         kind,
         binding,

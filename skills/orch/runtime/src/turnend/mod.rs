@@ -221,6 +221,24 @@ struct Turn {
 }
 
 impl Turn {
+    /// A turn of `harness` from the install at `hook_dir`, before its arm,
+    /// caller and role are read: the one constructor every turn takes.
+    fn new(harness: Harness, hook_dir: PathBuf) -> Turn {
+        Turn {
+            harness,
+            arm: None,
+            caller: Caller::Lead,
+            reported: false,
+            stderr: String::new(),
+            ack: None,
+            hook_dir,
+            deadline: Deadline::start(&SystemClock),
+            role: Rc::new(role::Role::default()),
+            notice: None,
+            wake: None,
+        }
+    }
+
     fn note(&mut self, said: &Said, cause: &str) {
         self.stderr.push_str(&said.text(cause));
         self.stderr.push('\n');
@@ -304,19 +322,8 @@ pub fn run(
     stdin: &mut dyn Read,
 ) -> Answer {
     let vars = Vars::read(private_env);
-    let mut turn = Turn {
-        harness: Harness::of(hook_dir, vars.pi_dir.as_deref()),
-        arm: None,
-        caller: Caller::Lead,
-        reported: false,
-        stderr: String::new(),
-        ack: None,
-        hook_dir: hook_dir.to_path_buf(),
-        deadline: Deadline::start(&SystemClock),
-        role: Rc::new(role::Role::default()),
-        notice: None,
-        wake: None,
-    };
+    let harness = Harness::of(hook_dir, vars.pi_dir.as_deref());
+    let mut turn = Turn::new(harness, hook_dir.to_path_buf());
     match judge(&mut turn, &vars, arm, event, stdin) {
         Ok(()) => turn.pass(),
         Err(answer) => answer,

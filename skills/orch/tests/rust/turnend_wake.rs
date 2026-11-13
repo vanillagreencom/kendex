@@ -220,7 +220,7 @@ fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
     for case in cases {
         let world = TurnWorld::new();
         let (mut env, account) = if case.jarvis {
-            jarvis_on(&world)
+            jarvis_on(&world, RUNNING)
         } else {
             claude_on(&world, PANE)
         };

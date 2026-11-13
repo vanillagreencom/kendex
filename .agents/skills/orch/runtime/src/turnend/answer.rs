@@ -303,6 +303,9 @@ pub enum Said {
         record: PathBuf,
         removed: bool,
     },
+    /// The lead record an unbound Copilot Jarvis session's reading could
+    /// not be written to.
+    JarvisReadingUnkept(PathBuf),
     /// The flag a Copilot lead's automatic compaction could not be written
     /// to.
     CompactionUnflagged(PathBuf),
@@ -441,6 +444,9 @@ impl Said {
             Said::StopCause(cause) => ("stop-cause", (*cause).to_owned()),
             Said::ReadingUnowned(session) => ("session-unrecorded", session.clone()),
             Said::ReadingUnkept { record, .. } => {
+                ("context-unrecorded", record.display().to_string())
+            }
+            Said::JarvisReadingUnkept(record) => {
                 ("context-unrecorded", record.display().to_string())
             }
             Said::CompactionUnflagged(flag) => {
@@ -752,6 +758,10 @@ impl Said {
                 removed: false,
             } => format!(
                 "this Copilot session's context reading could not be written to {}, and the earlier reading standing there could not be removed either, so its next turn end still judges that older figure, which can lie below the mark this reading crossed, until a later reading is recorded; repair the directory. The causes follow:",
+                record.display()
+            ),
+            Said::JarvisReadingUnkept(record) => format!(
+                "The context reading could not be written to {}. A Jarvis Stop judges only a reading the shared reader can take; the write cause follows:",
                 record.display()
             ),
             Said::CompactionUnflagged(flag) => format!(

@@ -438,7 +438,7 @@ fn lost(
 }
 
 /// The key every controller record carries: `<server pid> <pane>`.
-fn caller_key(key: &Key) -> String {
+pub(super) fn caller_key(key: &Key) -> String {
     format!("{} {}", key.server, key.pane)
 }
 
