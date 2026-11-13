@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::answer::{Harness, Said};
 use super::identity::Lane;
 use super::payload::{Caller, Leads, Payload};
-use super::role::{Binding, Kind};
+use super::role::{self, Binding, Kind};
 use super::{Flow, Turn, Vars, controller, marks};
 use crate::marker::CONTEXT_RECORD;
 use crate::watch::context::ContextRecord;
@@ -103,6 +103,7 @@ pub(super) fn usage_read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Pa
         capacity_source: Some(context::COPILOT_EXTENSION_SOURCE.to_owned()),
         session_id: (!payload.session.is_empty()).then(|| payload.session.clone()),
         pane_key: key,
+        transcript: (!payload.transcript.is_empty()).then(|| payload.transcript.clone()),
         gap: None,
         at: Some(record_stamp()),
     };
@@ -157,7 +158,8 @@ fn gated_box(turn: &mut Turn, vars: &Vars, lane: &Lane) -> Flow<Option<Kept>> {
             return Ok(None);
         }
         let dir = lane.mail_root.join(item);
-        return Ok(Some(Kept::Mailbox { dir, key: None }));
+        let key = role::pane_key(vars);
+        return Ok(Some(Kept::Mailbox { dir, key }));
     }
     let role = Rc::clone(&turn.role);
     let Some(key) = &role.key else {

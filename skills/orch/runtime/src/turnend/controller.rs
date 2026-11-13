@@ -468,6 +468,7 @@ fn gap_record(turn: &mut Turn, mailbox: &Path, session: &str, key: &str, gap: &s
         capacity_source: None,
         session_id: nul(session),
         pane_key: Some(key.to_owned()),
+        transcript: None,
         gap: Some(gap.to_owned()),
         at: Some(marks::record_stamp()),
     };

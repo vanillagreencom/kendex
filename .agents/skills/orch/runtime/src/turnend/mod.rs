@@ -4,6 +4,7 @@
 //! stderr, the harness's exit status. A turn end that finds nothing to hold
 //! passes at exit 0 with nothing written.
 
+pub mod admission;
 mod agents;
 pub mod answer;
 mod controller;
@@ -494,6 +495,7 @@ fn judged(
     if *arm == Arm::Halt {
         if lane.item.is_some() {
             mail::question_tool_check(turn, vars, lane, payload)?;
+            marks::session_record(turn, lane, vars, payload)?;
         }
         marks::attached_launch_check(turn, lane, vars, payload)?;
     }

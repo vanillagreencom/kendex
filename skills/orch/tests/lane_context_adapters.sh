@@ -2,28 +2,22 @@
 # Tests for the harness adapters under lib/adapters/, reached through
 # lib/lane-context.sh. An adapter turns the records its harness writes into
 # one reading, the tokens the last response left in the context and the
-# window the model has. Every reader of a reading, the turn-end hook, the
-# review admission and the runtime watch, reads it through an adapter, so a
-# row here pins what all of them read. The judge of a reading is the
-# runtime's `marks`, whose own rows are the runtime's; the command-line tables
-# here run the built runtime, through AGENT_RUNTIME_CACHE.
+# window the model has. The turn-end hook reads a reading through an
+# adapter, so a row here pins what it reads. The judge of a reading is the
+# runtime's `marks`, whose own rows are the runtime's.
 #
 # LIB_UNDER_TEST names another copy of the library, with its adapters beside
 # it, for the must-fail controls at the end; each control runs only the one
 # table its planted defect reaches.
 # Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
 # skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
-# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
-# skills/orch/workflows/review-pr.md.
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 LIB="${LIB_UNDER_TEST:-$SCRIPTS_DIR/lib/lane-context.sh}"
-
-RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$SCRIPTS_DIR/../../agent-runtime/scripts/lib/key.sh")" \
-  || { echo "lane_context_adapters: runtime-cache=unresolved" >&2; exit 1; }
 
 TMP_ROOT="$(mktemp -d)" || { echo "lane_context_adapters: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane_context_adapters: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -511,282 +505,6 @@ opencode|$CLAUDE_OWNED||$CHOME|3 harness-unlisted
 ROWS
 fi
 
-PANEL_BOX="$TMP_ROOT/panel-box"
-PANEL_HOME="$TMP_ROOT/panel-home"
-mkdir -p "$PANEL_BOX" "$PANEL_HOME"
-
-if section pre-panel; then
-  # review-pr consumes this command's room/due stdout. Start with no recorded
-  # context, as lane-marker does for a new session, then refresh mid-turn from
-  # the native transcript. Copilot has no status-line file in this home.
-  panel_run() { # LIB_ARGUMENT...
-    env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
-      DISABLE_AUTO_COMPACT=1 ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
-      "$BASH" "$LIB" "$@" 2>"$T/panel.err"
-  }
-  panel_read() { # HARNESS TRANSCRIPT [OPERATION]
-    local out rc=0
-    out=$(panel_run --reading ${3:+"$3"} "$1" s1 "$2" "$PANEL_BOX" "$T") || rc=$?
-    printf '%s\n' "$out" > "$T/panel-reading.json"
-    if [ "$rc" -eq 0 ]; then out=$(jq -r '.verdict' "$T/panel-reading.json"); fi
-    printf 'rc=%s verdict=%s' "$rc" "$out"
-  }
-  for row in '249999|room' '250000|due' '250001|due'; do
-    IFS='|' read -r tokens want <<<"$row"
-    claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
-    assert_eq "$(panel_read claude "$T/panel-transcript" --attached-launch)" "rc=0 verdict=$want" \
-      "pre-panel fresh transcript $tokens: $want" "$T/panel.err"
-    assert_eq "$(jq -r '.tokens' "$PANEL_BOX/context.json" 2>/dev/null || echo absent)" "$tokens" \
-      "pre-panel records the current $tokens reading without a prior record"
-    assert_eq "$(jq -c '[.decision.tokens,.decision.cap,.decision.mark_pct,.decision.cap_mark,.decision.window_mark,.decision.reserve_applied,.decision.reserve_tokens,.source.harness,.source.session_id]' "$T/panel-reading.json")" \
-      "[$tokens,400000,90,250000,750000,true,150000,\"claude\",\"s1\"]" \
-      "attached launch decision fields at $tokens"
-  done
-  # A lane holding the earlier review-pr text sends the unflagged five- or
-  # six-argument form before its attached panel, which keeps the reserve.
-  claude_line claude-opus-5-5 300000 > "$T/panel-transcript"
-  for form in five six; do
-    positional=(claude s1 "$T/panel-transcript" "$PANEL_BOX" "$T")
-    [ "$form" = five ] || positional+=("")
-    rc=0
-    out=$(panel_run "${positional[@]}") || rc=$?
-    assert_eq "rc=$rc verdict=$out" "rc=0 verdict=due" \
-      "unflagged $form-argument pre-panel 300000 of 1000000: due" "$T/panel.err"
-  done
-  # The same native command guards panels, dev-fix and diagnosis launches;
-  # an ordinary checkpoint asks for the plain mark.
-  for row in '274811|room' '276194|room' '399999|room' '400000|due'; do
-    IFS='|' read -r tokens want <<<"$row"
-    claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
-    assert_eq "$(panel_read claude "$T/panel-transcript" --checkpoint)" "rc=0 verdict=$want" \
-      "ordinary checkpoint $tokens: $want" "$T/panel.err"
-    assert_eq "$(jq -c '[.decision.tokens,.decision.cap_mark,.decision.reserve_applied,.decision.reserve_tokens]' "$T/panel-reading.json")" \
-      "[$tokens,400000,false,0]" "ordinary checkpoint decision fields at $tokens"
-  done
-  "$BASH" -c 'source "$1"; lane_context_record "$2" copilot 100000 800000 "" s1 "" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' _ "$LIB" "$PANEL_BOX"
-  assert_eq "$(panel_read copilot '')" 'rc=0 verdict=room' \
-    'pre-panel accepts a Copilot extension reading without a status-line record' "$T/panel.err"
-  if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
-    mkdir -p "$PANEL_HOME/.cache/lane-mail/copilot-usage"
-    touch "$PANEL_HOME/.cache/lane-mail/copilot-usage/s1"
-    assert_eq "$(panel_read copilot '')" 'rc=2 verdict=' \
-      'pre-panel refuses a pending Copilot reading instead of accepting its older record' "$T/panel.err"
-    rm -- "$PANEL_HOME/.cache/lane-mail/copilot-usage/s1"
-  fi
-fi
-
-if section codex-by-id; then
-  # review-pr's admission names no transcript for a Codex session whose
-  # harness exposes no path: the shared reader finds the rollout by the
-  # session id through the agent-runtime lookup and reads it. The lookup is
-  # the executable's stand-in here, answering in its own reply shape; a
-  # lookup that names no file, or gives no answer, is a gap, never a refusal.
-  ID_HOME="$PANEL_HOME/codex"
-  ROLLOUT="$ID_HOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s1.jsonl"
-  mkdir -p "${ROLLOUT%/*}" "$TMP_ROOT/by-id/bin"
-  { codex_context gpt-6.1-sol; codex_count 249999 475000; } > "$ROLLOUT"
-  cat > "$TMP_ROOT/by-id/bin/agent-runtime" <<'STUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${AGENT_RUNTIME_LOG:?}"
-[ -z "${AGENT_RUNTIME_EXIT:-}" ] || exit "$AGENT_RUNTIME_EXIT"
-cat -- "${AGENT_RUNTIME_REPLY:?}"
-STUB
-  chmod 755 "$TMP_ROOT/by-id/bin/agent-runtime"
-  by_id() { # REPLY_JSON [EXIT]
-    local rc=0
-    printf '%s\n' "$1" > "$TMP_ROOT/by-id/reply.json"
-    : > "$TMP_ROOT/by-id/argv.log"
-    env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$ID_HOME" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
-      AGENT_RUNTIME_CLI="$TMP_ROOT/by-id/bin/agent-runtime" AGENT_RUNTIME_REPLY="$TMP_ROOT/by-id/reply.json" \
-      AGENT_RUNTIME_LOG="$TMP_ROOT/by-id/argv.log" AGENT_RUNTIME_EXIT="${2:-}" \
-      ORCH_COMPACTION_OVERRIDES="$ORCH_COMPACTION_OVERRIDES" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
-      "$BASH" "$LIB" --attached-launch --reading codex s1 '' "$PANEL_BOX" "$T" >"$TMP_ROOT/by-id/out.json" 2>"$T/panel.err" || rc=$?
-    printf 'rc=%s' "$rc"
-  }
-  assert_eq "$(by_id "$(jq -nc --arg f "$ROLLOUT" '{ok:true,result:{reading:"live",file:$f}}')")" 'rc=0' \
-    'Codex rollout by id: a fixture rollout named by the session id with no path is read' "$T/panel.err"
-  assert_eq "$(jq -c '[.verdict,.source.transcript,.decision.tokens]' "$TMP_ROOT/by-id/out.json")" "[\"room\",\"$ROLLOUT\",249999]" \
-    'Codex rollout by id: the reading binds the rollout the lookup named'
-  assert_eq "$(cat "$TMP_ROOT/by-id/argv.log")" "session-file --harness codex --home $ID_HOME --cwd $T --id s1" \
-    'Codex rollout by id: the lookup is asked for the session id under the Codex home for the project'
-  assert_eq "$(by_id '{"ok":true,"result":{"reading":"gone"}}')" 'rc=2' \
-    'Codex rollout by id: no file for the id yet is a gap' "$T/panel.err"
-  assert_eq "$(grep -c 'context-unmeasured=session-file-absent' "$T/panel.err" || true)" 1 \
-    'Codex rollout by id: the gap names the absent file'
-  assert_eq "$(by_id '' 69)" 'rc=2' \
-    'Codex rollout by id: an executable that is not built is a gap' "$T/panel.err"
-  assert_eq "$(grep -c 'context-unmeasured=session-lookup-unavailable' "$T/panel.err" || true)" 1 \
-    'Codex rollout by id: the gap names the lookup'
-  assert_eq "$(by_id '{"ok":true,"result":{"reading":"unreadable","cause":"store-unreadable"}}')" 'rc=2' \
-    'Codex rollout by id: an unreadable store is a gap' "$T/panel.err"
-  assert_eq "$(grep -c 'context-unmeasured=session-store-unreadable' "$T/panel.err" || true)" 1 \
-    'Codex rollout by id: the gap names the store'
-fi
-
-if section codex-alternate; then
-  # review-pr consumes verdict. These native rollouts reproduce the measured
-  # Luna/Sol inputs; the ordinary judge still owns both plain boundaries.
-  while IFS='|' read -r name model tokens window operation evidence reserve want; do
-    transcript="$T/codex-panel"
-    { codex_context "$model"; codex_count "$tokens" "$window"; } > "$transcript"
-    overrides="$ORCH_COMPACTION_OVERRIDES"
-    case "$evidence" in
-      known) ;;
-      absent) overrides='' ;;
-      invalid) overrides=not-json ;;
-      unread) cp "$T/codex-unread" "$transcript" ;;
-      empty) cp "$T/codex-none" "$transcript" ;;
-      missing) transcript="$T/absent-panel" ;;
-      *) echo "lane_context_adapters: evidence=$evidence" >&2; exit 1 ;;
-    esac
-    args=(--reading)
-    case "$operation" in
-      positional-five | positional-six) ;;
-      *) args+=("--$operation") ;;
-    esac
-    args+=(codex s1 "$transcript" "$PANEL_BOX" "$T")
-    [[ "$operation" != positional-six ]] || args+=("")
-    rc=0
-    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$PANEL_HOME/codex" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
-      ORCH_COMPACTION_OVERRIDES="$overrides" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS="$reserve" \
-      "$BASH" "$LIB" "${args[@]}" 2>"$T/panel.err") || rc=$?
-    verdict=''
-    [[ "$rc" != 0 ]] || verdict=$(jq -r '.verdict' <<<"$out")
-    assert_eq "$rc:$verdict" "$want" "Codex admission $name" "$T/panel.err"
-    if [[ "$rc" == 0 && "$evidence" == known && "$window" != null ]]; then
-      assert_eq "$(jq -c '[.decision.tokens,.source.harness,.source.session_id,.source.transcript]' <<<"$out")" \
-        "[$tokens,\"codex\",\"s1\",\"$transcript\"]" "Codex admission binding $name"
-      if [[ "$operation" == attached-launch && "$verdict" == alternate-review ]]; then
-        assert_eq "$(jq -c '[.decision.reserve_applied,.decision.reserve_tokens]' <<<"$out")" \
-          "[true,$reserve]" "Codex admission retains reserve decision $name"
-      fi
-    fi
-  done <<'ROWS'
-luna-fresh|gpt-6-luna|84140|258400|attached-launch|known|150000|0:alternate-review
-luna-reserve-room|gpt-6-luna|82559|258400|attached-launch|known|150000|0:room
-luna-reserve-equal|gpt-6-luna|82560|258400|attached-launch|known|150000|0:alternate-review
-luna-plain-equal|gpt-6-luna|232560|258400|attached-launch|known|150000|0:alternate-review
-luna-plain-due|gpt-6-luna|232561|258400|attached-launch|known|150000|0:due
-sol-reserve-room|gpt-6.1-sol|249999|475000|attached-launch|known|150000|0:room
-sol-reserve-equal|gpt-6.1-sol|250000|475000|attached-launch|known|150000|0:alternate-review
-sol-measured|gpt-6.1-sol|269524|475000|attached-launch|known|150000|0:alternate-review
-sol-successor|gpt-6.1-sol|283010|475000|attached-launch|known|150000|0:alternate-review
-sol-plain-reading|gpt-6.1-sol|319607|475000|attached-launch|known|150000|0:alternate-review
-sol-before-cap|gpt-6.1-sol|399999|475000|attached-launch|known|150000|0:alternate-review
-sol-at-cap|gpt-6.1-sol|400000|475000|attached-launch|known|150000|0:due
-luna-positional-five|gpt-6-luna|84140|258400|positional-five|known|150000|0:due
-luna-positional-six|gpt-6-luna|84140|258400|positional-six|known|150000|0:due
-luna-checkpoint|gpt-6-luna|84140|258400|checkpoint|known|150000|0:room
-luna-checkpoint-equal|gpt-6-luna|232560|258400|checkpoint|known|150000|0:room
-luna-checkpoint-due|gpt-6-luna|232561|258400|checkpoint|known|150000|0:due
-unknown-point|gpt-6-luna|84140|null|attached-launch|known|150000|2:
-unverified-point|gpt-6-luna|84140|258400|attached-launch|absent|150000|2:
-invalid-point-evidence|gpt-6-luna|84140|258400|attached-launch|invalid|150000|2:
-independent-reserve-cap|gpt-6.1-sol|300000|null|attached-launch|known|150000|0:due
-independent-invalid-window-cap|gpt-6.1-sol|300000|-1|attached-launch|known|150000|0:due
-invalid-window-below-cap|gpt-6-luna|84140|-1|attached-launch|known|150000|2:
-independent-plain-cap|gpt-6.1-sol|400000|null|attached-launch|known|150000|0:due
-unread-usage|gpt-6-luna|84140|258400|attached-launch|unread|150000|2:
-absent-usage|gpt-6-luna|84140|258400|attached-launch|empty|150000|2:
-missing-transcript|gpt-6-luna|84140|258400|attached-launch|missing|150000|2:
-invalid-reserve|gpt-6-luna|84140|258400|attached-launch|known|-1|2:
-zero-reserve|gpt-6-luna|84140|258400|attached-launch|known|0|0:room
-ROWS
-  # Execute the workflow's shared process admission command twice against
-  # the same native transcript. The second reading must see collection's
-  # newer usage, not the earlier alternate-review decision.
-  checkpoint_command=$(awk '/^### Process launch admission$/ { section=1; next }
-    /^###? / && section { section=0 }
-    section && /^```bash$/ { active=1; next } /^```$/ && active { active=0; next }
-    active && /lane-context.sh/ { print; hits++ }
-    END { if (hits != 1 || active) exit 1 }' "$SCRIPTS_DIR/../workflows/review-pr.md")
-  checkpoint_command="${checkpoint_command/.agents\/skills\/orch\/scripts\/lib\/lane-context.sh/\"$LIB\"}"
-  checkpoint_command="${checkpoint_command//\[HARNESS\]/codex}"
-  checkpoint_command="${checkpoint_command//\[SESSION_ID\]/s1}"
-  checkpoint_command="${checkpoint_command//\[TRANSCRIPT_PATH\]/$T/codex-wave}"
-  checkpoint_command="${checkpoint_command//\[WORKTREE_PATH\]/$T/wave}"
-  checkpoint_command="${checkpoint_command//\[ISSUE_ID\]/fixture-4642}"
-  mkdir -p "$T/wave/tmp/lane-mail/fixture-4642"
-  while IFS='|' read -r name model window before after evidence want; do
-    { codex_context "$model"; codex_count "$before" "$window"; } > "$T/codex-wave"
-    for phase in before after; do
-      overrides="$ORCH_COMPACTION_OVERRIDES"
-      expected=0:room
-      if [[ "$phase" == after ]]; then
-        { codex_context "$model"; codex_count "$after" "$window"; } > "$T/codex-wave"
-        [[ "$evidence" != unread ]] || cp "$T/codex-unread" "$T/codex-wave"
-        [[ "$evidence" != absent ]] || overrides=''
-        expected="$want"
-      fi
-      rc=0
-      out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" ORCH_COMPACTION_OVERRIDES="$overrides" \
-        ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
-        "$BASH" -c "$checkpoint_command" 2>"$T/panel.err") || rc=$?
-      verdict=''
-      [[ "$rc" != 0 ]] || verdict=$(jq -r '.verdict' <<<"$out")
-      assert_eq "$rc:$verdict" "$expected" "process checkpoint $name $phase" "$T/panel.err"
-      if [[ "$rc" == 0 ]]; then
-        assert_eq "$(jq -c '[.decision.reserve_applied,.decision.reserve_tokens,.source.session_id]' <<<"$out")" \
-          '[false,0,"s1"]' "process checkpoint native plain binding $name $phase"
-      fi
-    done
-  done <<'ROWS'
-sol-crossing|gpt-6.1-sol|475000|399999|400000|known|0:due
-luna-crossing|gpt-6-luna|258400|232560|232561|known|0:due
-unavailable-usage|gpt-6-luna|258400|232560|232561|unread|2:
-unavailable-capacity|gpt-6-luna|258400|232560|100000|absent|2:
-ROWS
-  "$BASH" -c 'source "$1"; lane_context_compaction_flag "$2" copilot auto s1' _ "$LIB" "$PANEL_BOX"
-  out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
-    "$BASH" "$LIB" --attached-launch --reading copilot s1 '' "$PANEL_BOX" "$T")
-  assert_eq "$(jq -c '[.verdict,.decision,.source.compacted]' <<<"$out")" '["due",null,true]' \
-    'automatic compaction keeps the parent handoff'
-fi
-
-if section pi-panel; then
-  # A Pi lane runs the pre-panel command from its Bash tool, where no payload
-  # names a window. The window comes from the session's record, written by
-  # the hook from the carrier's payload, never from a number the lane types.
-  PI_PANEL_AGENT="$TMP_ROOT/pi-panel-agent"
-  PI_PANEL_BOX="$TMP_ROOT/pi-panel-box"
-  mkdir -p "$PI_PANEL_AGENT" "$PI_PANEL_BOX"
-  pi_line claude-opus-5-5 146108 anthropic > "$T/pi-panel"
-  pi_panel_read() { # [WINDOW_ARGUMENT]
-    local out rc=0
-    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" PI_CODING_AGENT_DIR="$PI_PANEL_AGENT" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
-      ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
-      "$BASH" "$LIB" --attached-launch pi s1 "$T/pi-panel" "$PI_PANEL_BOX" "$PI_READ_PROJECT" "$@" 2>"$T/panel.err") || rc=$?
-    printf 'rc=%s verdict=%s' "$rc" "$out"
-  }
-  # `row|compaction enabled|record session and model|window argument, `none`
-  # for the five-argument form|answer|keyed stderr line`. At 146108 tokens and
-  # the 150000 reserve, 272000 is due and 1000000 is room.
-  while IFS='|' read -r row compaction record argument want key; do
-    printf '{"compaction":{"enabled":%s}}\n' "$compaction" > "$PI_PANEL_AGENT/settings.json"
-    rm -f -- "$PI_PANEL_BOX/context.json"
-    if [[ -n "$record" ]]; then
-      read -r record_session record_model <<<"$record"
-      "$BASH" -c 'source "$1"; lane_context_record "$2" pi 100000 1000000 "$3" "$4"' _ \
-        "$LIB" "$PI_PANEL_BOX" "$record_model" "$record_session"
-    fi
-    if [[ "$argument" == none ]]; then got=$(pi_panel_read); else got=$(pi_panel_read "$argument"); fi
-    assert_eq "$got" "$want" "pi pre-panel $row: $want" "$T/panel.err"
-    if [[ -n "$key" ]]; then
-      assert_eq "$(grep -cxF -- "$key" "$T/panel.err" || true)" 1 "pi pre-panel $row reports $key"
-    fi
-    if [[ "$argument" == none ]]; then
-      assert_eq "$(grep -c '^lane-context: window-argument=' "$T/panel.err" || true)" 0 "pi pre-panel $row warns of no window argument"
-    fi
-  done <<'ROWS'
-typed-window|false|s1 anthropic/claude-opus-5-5|272000|rc=0 verdict=room|lane-context: window-argument=272000
-five-arguments|false|s1 anthropic/claude-opus-5-5|none|rc=0 verdict=room|
-no-source|false|||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
-record|false|s1 anthropic/claude-opus-5-5||rc=0 verdict=room|
-record-other-session|false|s2 anthropic/claude-opus-5-5||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
-record-other-model|false|s1 anthropic/claude-opus-4-8||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
-compaction-on|true|s1 anthropic/claude-opus-5-5||rc=2 verdict=|lane-context: context-unmeasured=window-unavailable
-ROWS
-fi
 if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   echo "=== must-fail controls ==="
   SECTION_NOW=controls
@@ -816,9 +534,6 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     [[ -n "$table" ]] || return 0
     mkdir -p "$copy"
     cp -R "$SCRIPTS_DIR/lib/." "$copy/"
-    cp "$SCRIPTS_DIR/orch-env" "$copy/../orch-env"
-    printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$SCRIPTS_DIR/orch-runtime" > "$copy/../orch-runtime"
-    chmod 755 "$copy/../orch-runtime"
     assert_eq "$(grep -c -F -e "$3" "$copy/$2" || true)" "1" "control $1 finds exactly one site to mutate"
     perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/g' -- "$3" "$4" "$copy/$2"
     out="$(LANE_CONTEXT_SUITE_ONLY="$table" LIB_UNDER_TEST="$copy/lane-context.sh" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
@@ -874,25 +589,6 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'dry launch claude-lyra-9-9 notice count'
   control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
     'claude configuration 0 gives point unresolved'
-  control rollout-by-id lane-context.sh \
-    '    [ -n "$TRANSCRIPT" ] || lane_context_session_file "$HARNESS" "$SESSION" "$LANE_DIR" || return 0' \
-    '    [ -n "$TRANSCRIPT" ] || return 0' \
-    'Codex rollout by id: a fixture rollout named by the session id with no path is read'
-  control alternate-review lane-context.sh \
-    '    if [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
-    '    if false && [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
-    'Codex admission luna-fresh'
-  control process-checkpoint-fresh lane-context.sh '  context_read_and_record "$BOX" ""' \
-    '  context_read_and_record "$BOX" ""; TOKENS=399999 WINDOW=475000' \
-    'process checkpoint sol-crossing after'
-  control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false SOURCE=' \
-    'pre-panel fresh transcript 250001: due'
-  control launch-only-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if true; then' \
-    'ordinary checkpoint 274811: room'
-  control unflagged-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if [ "$CLI_OPERATION" = attached-launch ]; then' \
-    'unflagged five-argument pre-panel 300000 of 1000000: due'
-  control pi-record-session adapters/pi.sh '[ "$LANE_CTX_SESSION" = "$2" ] && ' '' \
-    'pi pre-panel record-other-session: rc=2 verdict='
   control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \
     'user {"compaction":{"enabled":false}} and project {"compaction":{"enabled":true}}: rc=0'
   control owned-claude-session adapters/claude.sh '*) LANE_ADAPTER_OWNED_REASON=session-mismatch; return 1 ;;' '*) ;;' \

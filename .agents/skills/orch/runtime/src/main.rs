@@ -251,6 +251,24 @@ enum Verb {
         #[arg(allow_hyphen_values = true)]
         event: Option<String>,
     },
+    /// The review admission a launched lane asks from its own shell before
+    /// an attached panel or a process-owned reviewer starts: the session and
+    /// transcript its own tool call recorded at its pane, read and judged as
+    /// its turn end judges them. One JSON line `verdict` (`room`, `due` or,
+    /// for a Codex attached launch the reserve alone refuses,
+    /// `alternate-review`), `decision`, `source` at exit 0; a keyed refusal
+    /// on stderr at exit 2.
+    #[command(group = clap::ArgGroup::new("launch").required(true))]
+    Admission {
+        #[arg(long)]
+        item: String,
+        /// An attached launch, judged with the attached-agent reserve.
+        #[arg(long, group = "launch")]
+        attached_launch: bool,
+        /// A process launch, judged on the plain mark.
+        #[arg(long, group = "launch")]
+        checkpoint: bool,
+    },
     /// The merge cycles the fleet record holds, printed as text lines: the
     /// per-class totals, or a running lane's stage rows. No fleet record
     /// prints nothing.
@@ -1982,6 +2000,15 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 flags.private_env,
                 &mut std::io::stdin().lock(),
             );
+            std::process::exit(answer.write());
+        }
+        Verb::Admission {
+            item,
+            attached_launch: _,
+            checkpoint,
+        } => {
+            let answer =
+                orch_runtime::turnend::admission::run(&item, checkpoint, flags.private_env);
             std::process::exit(answer.write());
         }
         Verb::Cycle { op } => {

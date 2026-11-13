@@ -533,10 +533,9 @@ def headroom_cell:
   elif .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end;
 '
 
-# The live reader shared by the hook and the pre-panel check. The hook supplies
-# its session inputs, WORK_DIR and the message/refuse_handoff callbacks. Direct
-# execution below supplies the same contract for review-pr. Both use the
-# harness adapter and Copilot extension owner; neither reads a cached record
+# The live reader the hook calls. The hook supplies its session inputs,
+# WORK_DIR and the message/refuse_handoff callbacks; the reader uses the
+# harness adapter and the Copilot extension owner, and reads no cached record
 # as a prerequisite to refreshing it.
 TRANSCRIPT_WINDOW=1048576
 
@@ -766,125 +765,3 @@ copilot_reading_pending() {
   done
   return 1
 }
-
-# The checkpoint or attached-launch caller invokes this library with the
-# native session inputs a hook payload supplies, but for its window: HARNESS
-# SESSION TRANSCRIPT BOX PROJECT. A session runs it from its own shell tool,
-# where no payload exists, so a window there could only be a number the caller
-# typed, and the adapter finds a Pi window itself (lane_adapter_pi_reading). A
-# sixth argument, empty or not, is the window a released review-pr text
-# passes, which a lane that loaded that text sends: it reads, unused,
-# with one warning naming this form, until the next kendex major release. The
-# caller's launch home stays in the harness environment. Without --checkpoint
-# the reading is judged with the agent reserve, for an impending attached
-# launch, which --attached-launch names; --checkpoint, an ordinary
-# checkpoint, uses the plain mark.
-# Explicit Codex attached-launch callers also get alternate-review when only
-# the reserve refuses the launch. review-pr runs that panel through job-unit;
-# the native hook and unflagged callers keep the reserve's due answer.
-# stdout is room, due or alternate-review, or with --reading one JSON object
-# carrying `verdict`, `decision` and `source`; an unavailable read exits
-# nonzero. The hook keeps its own callbacks and never enters this arm.
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  CLI_OPERATION=""
-  CLI_OUTPUT_READING=false
-  while :; do
-    case "${1:-}" in
-      --attached-launch | --checkpoint)
-        if [ -n "$CLI_OPERATION" ]; then
-          printf '%s\n' "lane-context: operation=$1" 'Pass one of --attached-launch and --checkpoint.' >&2
-          exit 2
-        fi
-        CLI_OPERATION=${1#--}
-        shift
-        ;;
-      --reading) CLI_OUTPUT_READING=true; shift ;;
-      *) break ;;
-    esac
-  done
-  if [ "${1:-}" = --help ]; then
-    printf '%s\n' 'Usage: bash lib/lane-context.sh [--attached-launch | --checkpoint] [--reading] HARNESS SESSION TRANSCRIPT BOX PROJECT' \
-      'Print room, due or alternate-review for the current session context. The agent reserve applies, as for an impending attached launch,' \
-      'unless --checkpoint asks for the plain mark of an ordinary checkpoint.' \
-      'Explicit Codex --attached-launch returns alternate-review when the plain mark still has room; review-pr uses process-owned reviewers.' \
-      '--reading prints the native verdict, decision and source binding as JSON for the handoff record.'
-    exit 0
-  fi
-  case "$#" in
-    5) ;;
-    6)
-      printf '%s\n' "lane-context: window-argument=$6" \
-        'The window argument is no longer read: run lane-context.sh --attached-launch --reading HARNESS SESSION TRANSCRIPT BOX PROJECT.' >&2
-      ;;
-    *)
-      printf '%s\n' 'lane-context: arguments=unavailable' >&2
-      exit 2
-      ;;
-  esac
-  HARNESS=$1 SESSION=$2 TRANSCRIPT=$3 BOX=$4 LANE_DIR=$5 PAYLOAD_WINDOW=""
-  HOOK_DIR="${BASH_SOURCE[0]%/*}"
-  TAB=$(printf '\t')
-  COPILOT_USAGE=$(lane_context_copilot_pending_dir)
-  WORK_DIR="$(mktemp -d)" || { printf '%s\n' 'lane-context: scratch=mktemp-failed' >&2; exit 2; }
-  [[ -d $WORK_DIR && ! -L $WORK_DIR ]] || { printf '%s\n' 'lane-context: scratch=not-a-directory' >&2; exit 2; }
-  WORK_DIR="$(cd -- "$WORK_DIR" && pwd -P)" || { printf '%s\n' 'lane-context: scratch=resolve-failed' >&2; exit 2; }
-  trap 'rm -rf -- "${WORK_DIR:?}"' EXIT
-  message() {
-    printf 'lane-context: %s=%s\n' "$1" "${2:-}" >&2
-    [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
-    return 0
-  }
-  refuse_handoff() { message "$@"; exit 2; }
-  context_read_and_record "$BOX" ""
-  if [ "$COMPACTED" = true ]; then
-    VERDICT=due
-  else
-    if [ -z "$TOKENS" ] || [ "$TOKENS" = "$LANE_CONTEXT_UNREAD" ]; then
-      message context-unmeasured "${READ_GAP:-reading-unavailable}"
-      exit 2
-    fi
-    RESERVE_ARGS=()
-    if [ "$CLI_OPERATION" != checkpoint ]; then
-      AGENT_RESERVE=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_AGENT_RESERVE_TOKENS "") || exit 2
-      RESERVE_ARGS=(--agent-reserve "${AGENT_RESERVE:-150000}")
-    fi
-    # The runtime's one judge answers the plain mark and, for a launch, the
-    # reserve's beside it. A window that is no plain count is no window, so
-    # the token cap judges alone.
-    JUDGE_WINDOW=$WINDOW
-    case "$JUDGE_WINDOW" in '' | *[!0-9]* | 0*) JUDGE_WINDOW="" ;; esac
-    JUDGE_RC=0
-    JUDGED=$(cd -- "$LANE_DIR" && "$LANE_CONTEXT_SCRIPTS/orch-runtime" marks --item judged \
-      --context "$TOKENS:$JUDGE_WINDOW" ${RESERVE_ARGS[@]+"${RESERVE_ARGS[@]}"} 2>"$WORK_DIR/judge.err") || JUDGE_RC=$?
-    if [ "$JUDGE_RC" -ne 0 ]; then
-      message context-judge "exit=$JUDGE_RC" "$(cat -- "$WORK_DIR/judge.err")"
-      exit 2
-    fi
-    VERDICT=$(jq -er "if \$reserve then .result.reserve.context else .result.context end" \
-      --argjson reserve "$([ "${#RESERVE_ARGS[@]}" -eq 0 ] && echo false || echo true)" <<<"$JUDGED") || {
-      message context-judge unreadable "$JUDGED"; exit 2;
-    }
-    PLAIN_VERDICT=$(jq -er '.result.context' <<<"$JUDGED") || { message context-judge unreadable "$JUDGED"; exit 2; }
-    case "$VERDICT" in
-      due | room) ;;
-      *) message context-unmeasured window-unavailable; exit 2 ;;
-    esac
-    if [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then
-      # A reserve-only refusal is not a parent handoff. An unmeasured plain
-      # reading cannot establish room, even if the reserve proved its cap due.
-      [ "$PLAIN_VERDICT" != room ] || VERDICT=alternate-review
-    fi
-  fi
-  if [ "$CLI_OUTPUT_READING" = true ]; then
-    # Compaction is due before any judgement, so it records no decision.
-    DECISION=null
-    if [ "$COMPACTED" != true ]; then
-      DECISION=$(jq -ec "if \$reserve then .result.reserve.context_decision else .result.context_decision end" \
-        --argjson reserve "$([ "${#RESERVE_ARGS[@]}" -eq 0 ] && echo false || echo true)" <<<"$JUDGED") || exit 2
-    fi
-    CONTEXT=$(lane_context_handoff_context "$DECISION" "$HARNESS" "$SESSION" "$TRANSCRIPT" "" "$SOURCE" "$COMPACTED") || exit 2
-    jq -c --arg verdict "$VERDICT" '{verdict:$verdict} + .' <<<"$CONTEXT"
-  else
-    printf '%s\n' "$VERDICT"
-  fi
-fi

@@ -22,6 +22,7 @@ use super::controller;
 use super::identity::{Lane, shell_quoted};
 use super::model;
 use super::payload::{Caller, Leads, Payload};
+use super::role;
 use super::{Answer, Arm, Flow, Turn, Vars};
 use crate::marker::CONTEXT_RECORD;
 use crate::ops::store::handoff_standing;
@@ -259,6 +260,55 @@ pub(super) fn attached_launch_check(
     Err(turn.refuse(said, ""))
 }
 
+/// The gap a lane's record names where a tool call bound it: no reading is
+/// taken there.
+const TOOL_CALL_GAP: &str = "tool-call";
+
+/// A launched lane's record bound to this session at a tool call, wherever
+/// the standing record names another session or none: the review admission
+/// reads the session and its transcript from it, the lane naming neither,
+/// so a lane that reaches review inside its first turn is bound. A record of
+/// this session stands as it is; one that cannot be read is left to the
+/// reader that refuses it; a write that fails is reported.
+pub(super) fn session_record(turn: &mut Turn, lane: &Lane, vars: &Vars, payload: &Payload) -> Flow {
+    let Some(item) = lane.item.as_deref() else {
+        return Ok(());
+    };
+    if turn.caller != Caller::Lead || payload.session.is_empty() || !lane.launched(turn)? {
+        return Ok(());
+    }
+    let mailbox = lane.mail_root.join(item);
+    let path = mailbox.join(CONTEXT_RECORD);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match ContextRecord::parse(&text) {
+            Ok(record) if record.session_id.as_deref() == Some(payload.session.as_str()) => {
+                return Ok(());
+            }
+            Ok(_) => {}
+            Err(_) => return Ok(()),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Ok(()),
+    }
+    let nul = |text: &str| (!text.is_empty()).then(|| text.to_owned());
+    let record = ContextRecord {
+        harness: nul(harness_word(turn.harness)),
+        tokens: None,
+        window: None,
+        model: None,
+        capacity_source: None,
+        session_id: Some(payload.session.clone()),
+        pane_key: role::pane_key(vars),
+        transcript: nul(&payload.transcript),
+        gap: Some(TOOL_CALL_GAP.to_owned()),
+        at: Some(record_stamp()),
+    };
+    if let Err(cause) = record.write_to(&mailbox) {
+        turn.note(&Said::ContextUnrecorded(path), &cause);
+    }
+    Ok(())
+}
+
 /// The settings and the standing handoff a launched lane's marks are judged
 /// under, or at an attached launch the bound overseer's, under the fleet
 /// item's. A lane no launch recorded, and any other session naming no lane
@@ -393,12 +443,47 @@ impl<'a> Judge<'a> {
         }
     }
 
+    /// A launched lane's judgement at its review admission, outside any
+    /// hook: its reading recorded in `mailbox`, its handoff in `file`.
+    pub(super) fn admission(
+        lane: &'a Lane,
+        item: &'a str,
+        vars: &'a Vars,
+        payload: &'a Payload,
+        settings: Settings,
+        file: PathBuf,
+        mailbox: PathBuf,
+    ) -> Judge<'a> {
+        Judge {
+            lane,
+            item,
+            vars,
+            payload,
+            settings,
+            file,
+            mailbox,
+            seat: Seat::Lane,
+            source: Cell::new(None),
+            compacted: Cell::new(false),
+        }
+    }
+
     /// The key the reading is recorded under: the controller's alone.
     fn pane_key(&self) -> Option<String> {
         match &self.seat {
             Seat::Lane => None,
             Seat::Overseer { key, .. } => Some(key.clone()),
             Seat::Jarvis { key, .. } => key.clone(),
+        }
+    }
+
+    /// The key the context record carries: a lane's own pane, so the review
+    /// admission binds the record to the session at the caller's pane; the
+    /// controller's key otherwise.
+    fn record_key(&self) -> Option<String> {
+        match &self.seat {
+            Seat::Lane => role::pane_key(self.vars),
+            Seat::Overseer { .. } | Seat::Jarvis { .. } => self.pane_key(),
         }
     }
 
@@ -476,7 +561,7 @@ impl<'a> Judge<'a> {
     /// default where unset, refused on any other form. A figure past what
     /// a count holds leaves no room below the mark, as any reserve at the
     /// absolute mark does.
-    fn agent_reserve(&self, turn: &mut Turn) -> Flow<u64> {
+    pub(super) fn agent_reserve(&self, turn: &mut Turn) -> Flow<u64> {
         let Some(text) = self.settings.marks.agent_reserve.as_deref() else {
             return Ok(DEFAULT_RESERVE);
         };
@@ -523,7 +608,7 @@ impl<'a> Judge<'a> {
     }
 
     /// An attached launch refused on an input it could not be judged on.
-    fn refuse_input(&self, turn: &mut Turn, value: &str) -> Answer {
+    pub(super) fn refuse_input(&self, turn: &mut Turn, value: &str) -> Answer {
         match self.handoff_instruction(turn, Value::Null) {
             Ok(instruction) => {
                 let said = Said::AgentInput {
@@ -634,7 +719,8 @@ impl<'a> Judge<'a> {
             model: nul(&model),
             capacity_source: self.source.get().map(str::to_owned),
             session_id: nul(&self.payload.session),
-            pane_key: self.pane_key(),
+            pane_key: self.record_key(),
+            transcript: nul(transcript),
             gap: None,
             at: Some(record_stamp()),
         };
@@ -887,17 +973,9 @@ impl<'a> Judge<'a> {
         if turn.arm == Some(Arm::Halt) {
             agent = format!("{DETACHED_ROUTE}\n{agent}");
         }
-        let nul = |text: &str| (!text.is_empty()).then(|| text.to_owned());
         let context = json!({
             "decision": decision,
-            "source": {
-                "harness": nul(harness_word(turn.harness)),
-                "session_id": nul(&self.payload.session),
-                "transcript": nul(&self.payload.transcript),
-                "pane_key": self.pane_key(),
-                "capacity_source": self.source.get(),
-                "compacted": self.compacted.get(),
-            },
+            "source": self.source(turn),
         });
         if let Seat::Overseer { key, pane, .. } = &self.seat {
             return Ok(self.succession(&agent, &context, key, pane, mark));
@@ -931,6 +1009,20 @@ impl<'a> Judge<'a> {
         Ok(format!(
             "{agent}\nReach the next safe point first, a pushed head, a landed merge or a held PR; never interrupt a round or leave an unpushed tree. There, write the handoff record and send the notice, then end the session:\n{init}  {workflow_state}{state_args} set {item} handoff {word}\n  {reader} notice --item {item} --file [FILE NAMING WHAT IS LEFT]\nThis refusal repeats at every turn end until that record stands."
         ))
+    }
+
+    /// The native session a decision was read for, which a handoff record's
+    /// context and the review admission's answer carry.
+    pub(super) fn source(&self, turn: &Turn) -> Value {
+        let nul = |text: &str| (!text.is_empty()).then(|| text.to_owned());
+        json!({
+            "harness": nul(harness_word(turn.harness)),
+            "session_id": nul(&self.payload.session),
+            "transcript": nul(&self.payload.transcript),
+            "pane_key": self.pane_key(),
+            "capacity_source": self.source.get(),
+            "compacted": self.compacted.get(),
+        })
     }
 
     /// The controller's route out of a refusal: its own succession through

@@ -53,6 +53,9 @@ pub struct ContextRecord {
     pub capacity_source: Option<String>,
     pub session_id: Option<String>,
     pub pane_key: Option<String>,
+    /// The session's transcript as its own payload named it: the review
+    /// admission reads it by the record, the lane naming no input.
+    pub transcript: Option<String>,
     /// Why a turn end took no reading, where it took none.
     pub gap: Option<String>,
     pub at: Option<String>,
@@ -94,6 +97,7 @@ impl ContextRecord {
             capacity_source: text("capacity_source"),
             session_id: text("session_id"),
             pane_key: text("pane_key"),
+            transcript: text("transcript"),
             gap,
             at: text("at"),
         })
@@ -127,6 +131,7 @@ impl ContextRecord {
             "capacity_source": self.capacity_source,
             "session_id": self.session_id,
             "pane_key": self.pane_key,
+            "transcript": self.transcript,
             "gap": self.gap,
             "at": self.at,
         });
@@ -330,7 +335,7 @@ pub enum LaneContext {
     /// The record, or the rows it is judged beside, could not be read.
     Unreadable { cause: String },
     Own {
-        record: ContextRecord,
+        record: Box<ContextRecord>,
         standing: Standing,
     },
 }
@@ -407,7 +412,10 @@ pub fn lane(lane: &Lane, files: Files, scripts: &Path, now: u64) -> LaneContext 
     } else {
         Standing::Current
     };
-    LaneContext::Own { record, standing }
+    LaneContext::Own {
+        record: Box::new(record),
+        standing,
+    }
 }
 
 #[cfg(test)]
@@ -460,6 +468,7 @@ mod tests {
             capacity_source: None,
             session_id: None,
             pane_key: None,
+            transcript: None,
             gap: None,
             at: None,
         };

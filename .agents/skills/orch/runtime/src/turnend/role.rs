@@ -328,6 +328,15 @@ fn told_once(told: &Path) -> std::io::Result<()> {
     std::fs::write(told, "")
 }
 
+/// The caller's own key, `<server pid> <pane>`, which every record a lane's
+/// session writes carries, so the review admission tells this session's
+/// record from a predecessor's at another pane; `None` outside tmux or where
+/// the server does not answer.
+pub(super) fn pane_key(vars: &Vars) -> Option<String> {
+    let key = key_on(vars, vars.tmux_pane.as_deref()?)?;
+    Some(super::controller::caller_key(&key))
+}
+
 /// The key of `pane` on the server `$TMUX`'s socket names; `None` outside
 /// tmux or where that server does not answer, which keys no record.
 #[allow(

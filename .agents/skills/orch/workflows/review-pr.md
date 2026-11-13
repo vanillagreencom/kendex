@@ -66,7 +66,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 **Pre-panel context check.** When this round will start attached reviewers, refresh the current context through the same reader `lane-mail-check` calls before sizing or starting them. Take `[HARNESS]`, `[SESSION_ID]` and any `[TRANSCRIPT_PATH]` from this session's native inputs, not from `context.json`. For Codex with a known session id and no transcript path, pass an empty `[TRANSCRIPT_PATH]`: the reader asks agent-runtime's `session-file` lookup for the rollout bound to that id. With neither a path nor an id, the Codex reading is `transcript-unnamed`; a failed lookup reports its own gap. Pass no window: a number the session types is no window source. Keep the session's launch home in its harness environment. Run from `[WORKTREE_PATH]`:
 
 ```bash
-bash .agents/skills/orch/scripts/lib/lane-context.sh --attached-launch --reading "[HARNESS]" "[SESSION_ID]" "[TRANSCRIPT_PATH]" "[WORKTREE_PATH]/tmp/lane-mail/[ISSUE_ID]" "[WORKTREE_PATH]"
+.agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --attached-launch
 ```
 
 The shared reader refreshes Claude, Codex and Pi through their existing adapters. A Pi window comes from this session's context record in that mailbox when it names the transcript's model, or else from Pi's own model registry for that `provider/model`. With neither, the command refuses as `context-unmeasured=window-unavailable`. Copilot uses its extension reading, pending-marker check and status-line fallback. No prior `context.json` is required. The command reads `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`, then asks the runtime's one window judge, `orch-runtime marks --context TOKENS:WINDOW`, which reads `ORCH_HANDOFF_CONTEXT_PCT` and is the judge the turn-end hook asks. `--reading` returns JSON with `verdict`, `decision` and native `source` binding. Only a successful `verdict` of `room` permits attached panel sizing below. A failed read or judge starts no attached panel; report the cause and repair it before re-entering § 2.
@@ -206,7 +206,7 @@ Fresh session — you have no memory of earlier cycles. Read your prior report [
 Every process-owned initial, later or continuation wave, and the one allowed terminal replacement in § 3.1, enters here immediately before the runtime launch command. Refresh the parent from the same native inputs and inherited launch home used in § 2. Run from the worktree:
 
 ```bash
-bash .agents/skills/orch/scripts/lib/lane-context.sh --checkpoint --reading "[HARNESS]" "[SESSION_ID]" "[TRANSCRIPT_PATH]" "[WORKTREE_PATH]/tmp/lane-mail/[ISSUE_ID]" "[WORKTREE_PATH]"
+.agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --checkpoint
 ```
 
 Only a successful `room` result launches the selected process through codex-runtime.md. A `due` result takes § 2's existing checkpoint/publication and provenance-preserving handoff with this latest `decision` and `source`; start no process. A failed or unavailable read starts nothing and reports its cause. Admission re-entry starts no fresh batch and repeats no external availability detection. Keep the full panel, exact assignment, concrete head/range, original token/evidence boundary, accepted-file rechecks and spent allowances. Record an actual first delegation only when the existing runner confirms that job started. Denied or unavailable admission keeps a never-launched domain unlaunched and starts no clock. A replacement keeps its original clock and rejection boundary.

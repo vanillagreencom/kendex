@@ -2611,3 +2611,419 @@ fn a_copilot_attached_launch_is_refused_on_a_gap_and_unobserved_past_the_reserve
     assert_eq!(out.code, 2, "{}", out.stderr);
     assert_eq!(out.first(), "lane-mail-check: agent-input=usage-absent");
 }
+
+// --- the record the review admission reads -----------------------------------
+
+/// The pid the planted `tmux` server answers, and so the server half of
+/// every pane key a row's session carries.
+const SERVER_PID: &str = "4242";
+
+impl World {
+    /// The environment of a session on `pane` of a planted tmux server: a
+    /// `tmux` stand-in first on `PATH` answers the server read alone, with
+    /// [`SERVER_PID`], and refuses every other call.
+    fn on_pane(&self, pane: &str) -> Vec<(String, String)> {
+        write_executable(
+            &self.stand_ins().join("tmux"),
+            format!(
+                "#!/bin/sh\n[ \"$1\" = -S ] && shift 2\ncase \"$*\" in\n  'display-message -p #{{pid}} #{{start_time}}') printf '{SERVER_PID} 1700000000\\n' ;;\n  *) printf 'tmux stand-in: no answer for: %s\\n' \"$*\" >&2; exit 1 ;;\nesac\n"
+            ),
+        );
+        vec![
+            (
+                "TMUX".to_owned(),
+                format!("{},{SERVER_PID},0", self.root.join("tmux-socket").display()),
+            ),
+            ("TMUX_PANE".to_owned(), pane.to_owned()),
+        ]
+    }
+
+    /// The lane's context record as a row plants it.
+    fn plant_record(&self, record: Value) {
+        fs::write(
+            self.mail_root().join(ITEM).join("context.json"),
+            record.to_string(),
+        )
+        .unwrap();
+    }
+}
+
+fn borrowed(env: &[(String, String)]) -> Vec<(&str, &str)> {
+    env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
+}
+
+/// A lane's tool call binds its record to the session the payload names,
+/// with the caller's pane key and the transcript, wherever the record names
+/// another session or none; a record of this session stands as it is; and
+/// the turn end's reading carries the same key and transcript.
+#[test]
+fn a_tool_call_binds_the_lanes_record_to_its_own_session_and_pane() {
+    let world = World::launched();
+    let pane = world.on_pane("%3");
+    let env = borrowed(&pane);
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    let call = json!({"session_id": "s1", "transcript_path": transcript,
+        "tool_name": "Bash", "tool_input": {"command": "true"}})
+    .to_string();
+    let bound = |record: &Value| {
+        json!([
+            record["session_id"],
+            record["pane_key"],
+            record["transcript"],
+            record["tokens"]
+        ])
+    };
+    let key = format!("{SERVER_PID} %3");
+    let fresh = json!(["s1", key, transcript, null]);
+    // `(the record standing, the record after the call)`: none, another
+    // session's at another pane and one naming no session are replaced;
+    // this session's own reading stands.
+    let own = json!({"harness": "claude", "tokens": 900, "session_id": "s1",
+        "pane_key": format!("{SERVER_PID} %3"), "gap": null, "at": "2026-11-11T00:00:00Z"});
+    let rows: &[(Option<Value>, Value)] = &[
+        (None, fresh.clone()),
+        (
+            Some(json!({"harness": "claude", "tokens": 5, "session_id": "s0",
+                "pane_key": format!("{SERVER_PID} %1"), "gap": null, "at": "2026-11-11T00:00:00Z"})),
+            fresh.clone(),
+        ),
+        (
+            Some(
+                json!({"harness": "claude", "tokens": 5, "gap": null, "at": "2026-11-11T00:00:00Z"}),
+            ),
+            fresh.clone(),
+        ),
+        (Some(own.clone()), bound(&own)),
+    ];
+    for (standing, want) in rows {
+        let record = world.mail_root().join(ITEM).join("context.json");
+        match standing {
+            Some(standing) => world.plant_record(standing.clone()),
+            None => {
+                let _ = fs::remove_file(&record);
+            }
+        }
+        let out = world.turn_in(&world.lane, &world.hooks("claude"), &["halt"], &call, &env);
+        assert_eq!((out.code, out.stderr.as_str()), (0, ""), "{standing:?}");
+        assert_eq!(bound(&world.record()), *want, "{standing:?}");
+    }
+    let off = ("DISABLE_AUTO_COMPACT", "1");
+    let mut stop_env = env.clone();
+    stop_env.push(off);
+    let stop = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
+    let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], &stop, &stop_env);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        bound(&world.record()),
+        json!(["s1", key, transcript, 1_000])
+    );
+}
+
+impl World {
+    /// The review admission for `launch` run from the lane, with `env`
+    /// added.
+    fn admission(&self, launch: &str, env: Env) -> Out {
+        let mut command = isolated();
+        command
+            .args(["admission", "--item", ITEM, launch])
+            .current_dir(&self.lane)
+            .env("PWD", &self.lane)
+            .env("HOME", &self.home)
+            .env("PATH", tool_path(&[&self.stand_ins()]))
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let out = command.output().expect("orch-runtime");
+        Out {
+            code: out.status.code().expect("an exit status"),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
+    }
+
+    /// A tool call of session `s1` under `harness`'s install naming
+    /// `transcript`, the one that binds the lane's record.
+    fn tool_call(&self, harness: &str, transcript: Option<&Path>, env: Env) {
+        let mut call = json!({"session_id": "s1", "tool_name": "Bash",
+            "tool_input": {"command": "true"}});
+        if let Some(transcript) = transcript {
+            call["transcript_path"] = json!(transcript);
+        }
+        let out = self.turn_in(
+            &self.lane,
+            &self.hooks(harness),
+            &["halt"],
+            &call.to_string(),
+            env,
+        );
+        assert_eq!((out.code, out.stderr.as_str()), (0, ""), "{call}");
+    }
+}
+
+/// One setting a row adds, where it adds one.
+type Setting<'a> = Option<(&'a str, &'a str)>;
+
+/// The transcript lines a row writes, where it writes any.
+type Lines<'a> = Option<&'a [Value]>;
+
+/// The verdict and the first keyed line of an admission's answer.
+fn admitted(out: &Out) -> (i32, String) {
+    if out.code == 0 {
+        assert_eq!(out.stderr, "", "a pass names nothing on stderr");
+        return (0, out.json()["verdict"].as_str().unwrap_or("").to_owned());
+    }
+    assert_eq!(out.stdout, "", "a refusal prints no verdict");
+    (out.code, out.first().to_owned())
+}
+
+/// The admission answers from the record the session's own tool call bound,
+/// reading the transcript fresh at every call: an attached launch is judged
+/// with the attached-agent reserve and a checkpoint on the plain mark, each
+/// settings word and each missing input refused by name, and the answer
+/// names the decision and the native session it was read for.
+#[test]
+fn the_admission_judges_the_session_its_own_tool_call_bound() {
+    let world = World::launched();
+    let pane = world.on_pane("%3");
+    let mut env = borrowed(&pane);
+    env.push(("DISABLE_AUTO_COMPACT", "1"));
+    let transcript = world.root.join("t.jsonl");
+    world.tool_call("claude", Some(&transcript), &env);
+    // `(tokens, launch, setting, verdict or first keyed line)`, the window
+    // 200000 and the mark 90 percent: 180000 plain, 30000 less the reserve.
+    let reserve = |value| ("ORCH_HANDOFF_AGENT_RESERVE_TOKENS", value);
+    let rows: &[(u64, &str, Setting, i32, &str)] = &[
+        (20_000, "--attached-launch", None, 0, "room"),
+        (30_000, "--attached-launch", None, 0, "due"),
+        (30_000, "--checkpoint", None, 0, "room"),
+        (180_000, "--checkpoint", None, 0, "room"),
+        (180_001, "--checkpoint", None, 0, "due"),
+        (20_000, "--attached-launch", Some(reserve("0")), 0, "room"),
+        (
+            20_000,
+            "--attached-launch",
+            Some(reserve("1e5")),
+            2,
+            "lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=1e5",
+        ),
+        (20_000, "--checkpoint", Some(reserve("1e5")), 0, "room"),
+        (
+            20_000,
+            "--checkpoint",
+            Some(("ORCH_HANDOFF_CONTEXT_PCT", "101")),
+            2,
+            "lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=101",
+        ),
+        (
+            20_000,
+            "--checkpoint",
+            Some(("DISABLE_AUTO_COMPACT", "")),
+            2,
+            "lane-mail-check: agent-input=context-unmeasured",
+        ),
+    ];
+    for (tokens, launch, setting, code, want) in rows {
+        let row = format!("{tokens} {launch} {setting:?}");
+        world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", *tokens)]);
+        let mut env = env.clone();
+        env.extend(setting.iter().copied());
+        let out = world.admission(launch, &env);
+        assert_eq!(
+            admitted(&out),
+            (*code, (*want).to_owned()),
+            "{row}: {}",
+            out.stderr
+        );
+        if *code == 0 {
+            let answer = out.json();
+            assert_eq!(answer["decision"]["tokens"], json!(tokens), "{row}");
+            let reserved = *launch == "--attached-launch";
+            assert_eq!(
+                answer["decision"]["reserve_applied"],
+                json!(reserved),
+                "{row}"
+            );
+            assert_eq!(
+                answer["source"],
+                json!({"harness": "claude", "session_id": "s1", "transcript": transcript,
+                    "pane_key": null, "capacity_source": null, "compacted": false}),
+                "{row}"
+            );
+        }
+    }
+    // Each input a reading needs, refused by name with nothing started.
+    let unread = json!({"type": "assistant", "message": {"model": "m", "usage": {"other": 1}}});
+    let missing = world.root.join("missing.jsonl");
+    let rows: &[(Lines, Option<&Path>, &str)] = &[
+        (
+            None,
+            None,
+            "lane-mail-check: agent-input=transcript-unnamed",
+        ),
+        (
+            None,
+            Some(&missing),
+            "lane-mail-check: transcript=unreadable",
+        ),
+        (
+            Some(&[]),
+            Some(&transcript),
+            "lane-mail-check: agent-input=usage-absent",
+        ),
+        (
+            Some(&[unread]),
+            Some(&transcript),
+            "lane-mail-check: agent-input=usage-unread",
+        ),
+    ];
+    for (lines, named, want) in rows {
+        if let Some(lines) = lines {
+            world.transcript("t.jsonl", lines);
+        }
+        world.plant_record(
+            json!({"harness": "claude", "gap": "tool-call", "session_id": "s1",
+            "pane_key": format!("{SERVER_PID} %3"), "transcript": named,
+            "at": "2026-11-11T00:00:00Z"}),
+        );
+        let out = world.admission("--attached-launch", &env);
+        assert_eq!(admitted(&out), (2, (*want).to_owned()), "{}", out.stderr);
+    }
+}
+
+/// The admission binds only a record of the session at the caller's own
+/// pane: none, one of zero bytes or not an object, one naming no session
+/// and one written at another pane are refused by name; a lane with no pane
+/// is told apart by the session id its own tool call wrote.
+#[test]
+fn the_admission_refuses_a_record_of_no_session_or_another_pane() {
+    let world = World::launched();
+    let record = world.mail_root().join(ITEM).join("context.json");
+    let unrecorded = format!("lane-mail-check: session-unrecorded={}", record.display());
+    let at_three = world.on_pane("%3");
+    let at_four = world.on_pane("%4");
+    let mut three = borrowed(&at_three);
+    three.push(("DISABLE_AUTO_COMPACT", "1"));
+    let mut four = borrowed(&at_four);
+    four.push(("DISABLE_AUTO_COMPACT", "1"));
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    let out = world.admission("--attached-launch", &three);
+    assert_eq!(admitted(&out), (2, unrecorded.clone()), "{}", out.stderr);
+    for text in ["", "[]"] {
+        fs::write(&record, text).unwrap();
+        let out = world.admission("--attached-launch", &three);
+        assert_eq!(
+            admitted(&out),
+            (2, unrecorded.clone()),
+            "{text:?}: {}",
+            out.stderr
+        );
+    }
+    world.plant_record(json!({"harness": "claude", "tokens": 5, "gap": null,
+        "pane_key": format!("{SERVER_PID} %3"), "at": "2026-11-11T00:00:00Z"}));
+    let out = world.admission("--attached-launch", &three);
+    assert_eq!(admitted(&out), (2, unrecorded), "{}", out.stderr);
+    world.tool_call("claude", Some(&transcript), &three);
+    let out = world.admission("--attached-launch", &four);
+    assert_eq!(
+        admitted(&out),
+        (
+            2,
+            format!("lane-mail-check: session-other-pane={SERVER_PID} %3 caller={SERVER_PID} %4")
+        ),
+        "{}",
+        out.stderr
+    );
+    let out = world.admission("--attached-launch", &three);
+    assert_eq!(admitted(&out), (0, "room".to_owned()), "{}", out.stderr);
+    let paneless = [("DISABLE_AUTO_COMPACT", "1")];
+    let out = world.admission("--attached-launch", &paneless);
+    assert_eq!(
+        admitted(&out),
+        (
+            2,
+            format!("lane-mail-check: session-other-pane={SERVER_PID} %3 caller=none")
+        ),
+        "{}",
+        out.stderr
+    );
+    fs::remove_file(&record).unwrap();
+    world.tool_call("claude", Some(&transcript), &paneless);
+    let out = world.admission("--attached-launch", &paneless);
+    assert_eq!(admitted(&out), (0, "room".to_owned()), "{}", out.stderr);
+}
+
+/// A Codex attached launch the reserve alone refuses, the plain mark still
+/// with room, is admitted to process-owned reviewers; at the plain mark it
+/// is due, and a checkpoint or another harness keeps its plain verdict. A
+/// Copilot session flagged compacting is due before any judgement, and its
+/// extension reading is judged as any other.
+#[test]
+fn the_admission_names_codex_alternate_review_and_copilot_compaction() {
+    let world = World::launched();
+    let pane = world.on_pane("%3");
+    let overrides = json!({"harness": "codex", "settings": {
+        "model_auto_compact_token_limit": "1000000",
+        "model_auto_compact_token_limit_scope": "body_after_prefix",
+        "model_post_turn_compact_threshold_percent": "0"}})
+    .to_string();
+    let mut env = borrowed(&pane);
+    env.push(("ORCH_COMPACTION_OVERRIDES", overrides.as_str()));
+    let transcript = world.root.join("r.jsonl");
+    world.tool_call("codex", Some(&transcript), &env);
+    // The token cap is 400000; the reserve 150000 leaves 250000 below it.
+    let rows: &[(u64, &str, &str)] = &[
+        (249_999, "--attached-launch", "room"),
+        (260_000, "--attached-launch", "alternate-review"),
+        (260_000, "--checkpoint", "room"),
+        (400_000, "--attached-launch", "due"),
+    ];
+    for (tokens, launch, want) in rows {
+        world.transcript(
+            "r.jsonl",
+            &[
+                json!({"type": "turn_context", "payload": {"model": "gpt-5"}}),
+                json!({"type": "event_msg", "payload": {"type": "token_count", "info": {
+                    "last_token_usage": {"total_tokens": tokens}, "model_context_window": 1_000_000}}}),
+            ],
+        );
+        let out = world.admission(launch, &env);
+        assert_eq!(
+            admitted(&out),
+            (0, (*want).to_owned()),
+            "{tokens} {launch}: {}",
+            out.stderr
+        );
+        if *want == "alternate-review" {
+            let decision = &out.json()["decision"];
+            assert_eq!(decision["reserve_applied"], json!(true));
+            assert_eq!(out.json()["source"]["harness"], json!("codex"));
+        }
+    }
+    // Copilot: the extension's reading judged, then the compaction flag.
+    let copilot = World::launched();
+    let pane = copilot.on_pane("%3");
+    let mut env = borrowed(&pane);
+    let account = copilot.copilot_home().display().to_string();
+    env.push(("COPILOT_HOME", account.as_str()));
+    copilot.plant_record(json!({"harness": "copilot", "model": null, "tokens": 1_000,
+        "window": 200_000, "capacity_source": EXTENSION, "session_id": "s1",
+        "pane_key": format!("{SERVER_PID} %3"), "gap": null, "at": "2026-11-11T00:00:00Z"}));
+    let out = copilot.admission("--attached-launch", &env);
+    assert_eq!(admitted(&out), (0, "room".to_owned()), "{}", out.stderr);
+    fs::write(
+        copilot.mail_root().join(ITEM).join("compaction.json"),
+        json!({"harness": "copilot", "trigger": "auto", "session_id": "s1"}).to_string(),
+    )
+    .unwrap();
+    let out = copilot.admission("--attached-launch", &env);
+    assert_eq!(admitted(&out), (0, "due".to_owned()), "{}", out.stderr);
+    let answer = out.json();
+    assert_eq!(
+        (
+            answer["decision"].clone(),
+            answer["source"]["compacted"].clone()
+        ),
+        (Value::Null, json!(true))
+    );
+}

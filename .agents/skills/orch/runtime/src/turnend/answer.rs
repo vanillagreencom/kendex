@@ -319,6 +319,14 @@ pub enum Said {
     Compacted {
         instruction: String,
     },
+    // The review admission's lines (`admission`).
+    /// No record of this session stands in the lane's mailbox, by its path.
+    SessionUnrecorded(PathBuf),
+    /// The lane's record names another pane than the caller's.
+    SessionOtherPane {
+        recorded: String,
+        caller: String,
+    },
     // The model switch's lines (`model`).
     /// A model switch the turn end could not judge, record or recover, by
     /// the cause it names.
@@ -507,6 +515,10 @@ impl Said {
             }
             Said::RecordUnread { path, .. } => ("record", path.display().to_string()),
             Said::Compacted { .. } => ("compacted", "auto".to_owned()),
+            Said::SessionUnrecorded(record) => ("session-unrecorded", record.display().to_string()),
+            Said::SessionOtherPane { recorded, caller } => {
+                ("session-other-pane", format!("{recorded} caller={caller}"))
+            }
             Said::ModelUnavailable(cause) => ("model-unavailable", (*cause).to_owned()),
             Said::ModelSwitched {
                 launched, observed, ..
@@ -852,6 +864,8 @@ impl Said {
             Said::Compacted { instruction } => format!(
                 "this lane requires handoff: Copilot began compacting this session automatically, its preCompact hook naming trigger auto, before a context reading past the handoff mark reached a turn end. Nothing after that compaction is trusted, so start no new work and write the handoff from durable state, the workflow state, git and the PR, never from the conversation the compaction summarised. No handoff record stands. Then end the session, so the next one continues the work.\n{instruction}"
             ),
+            Said::SessionUnrecorded(_) => "the review admission found no record of this session in its lane's mailbox: the record this session's tool calls write is absent, cannot be read or names no session, so no session is judged and nothing may start. Run the admission again from this session's own shell, whose tool call writes the record:".to_owned(),
+            Said::SessionOtherPane { .. } => "the review admission found the lane's record written by the session at another pane than this caller's, so it is no record of this session and nothing is judged or may start. Run the admission again from this session's own shell, whose tool call binds the record to it".to_owned(),
             Said::ModelUnavailable(_) => "this session's model switch was not judged or recovered for the cause named above, and the session runs on as it is; a later switch is judged again. The words of the step that failed follow where it wrote any:".to_owned(),
             Said::ModelSwitched {
                 recovered: Recovered::Controller,
