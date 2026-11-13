@@ -1949,3 +1949,126 @@ wait"#,
         );
     }
 }
+
+/// An adoption records the harness identity read in the pane's foreground,
+/// never the caller's word for it; a record of another, live controller
+/// refuses `overseer-live`; a pane holding no harness refuses
+/// `pane-not-harness`; the same pane adopted again is healed in place.
+#[test]
+fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record_or_a_shell() {
+    use serde_json::json;
+
+    // A child this test holds, killed and reaped on drop whatever is asserted.
+    struct Held(std::process::Child);
+    impl Drop for Held {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    pane.run_stub(dir.path(), "claude", "echo ready\n");
+    pane.await_row(&|row| row == "ready");
+    let record = dir.path().join("workflow-state-oversee.json");
+    std::fs::write(&record, r#"{"intents": []}"#).unwrap();
+    let cwd = dir.path().display().to_string();
+    let socket = pane.socket.display().to_string();
+    let adopt = |target: &str| -> (Option<i32>, serde_json::Value) {
+        let out = Command::new(binary())
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", dir.path())
+            .env("TMPDIR", dir.path())
+            .env("LANG", "C.UTF-8")
+            .args(["controller", "adopt", "--record"])
+            .arg(&record)
+            .args(["--pane", target, "--socket", &socket, "--harness", "claude"])
+            .args([
+                "--session-id",
+                "by-hand-1",
+                "--account",
+                &cwd,
+                "--cwd",
+                &cwd,
+            ])
+            .output()
+            .unwrap();
+        let reply = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|_| panic!("no reply: {}", String::from_utf8_lossy(&out.stderr)));
+        (out.status.code(), reply)
+    };
+    let fleet = || -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap()
+    };
+    let harness_pid: u32 = pane
+        .tmux(&["display-message", "-p", "-t", &pane.pane, "#{pane_pid}"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    let (code, answer) = adopt(&pane.pane);
+    assert_eq!(code, Some(0), "{answer}");
+    assert_eq!(answer["result"], json!({"generation": 1, "healed": false}));
+    let overseer = fleet()["overseer"].clone();
+    assert_eq!(overseer["pane"], pane.pane);
+    assert_eq!(overseer["server"], pane.server_pid.to_string());
+    assert_eq!(overseer["server_start"], pane.server_start);
+    assert_eq!(overseer["window"], pane.window);
+    assert_eq!(overseer["harness_pid"], harness_pid);
+    assert_eq!(
+        overseer["harness_start"],
+        identity_reading(harness_pid)["start"]
+    );
+    assert_eq!(overseer["session_id"], "by-hand-1");
+    // The same pane again: healed, the generation kept.
+    let (_, answer) = adopt(&pane.pane);
+    assert_eq!(answer["result"]["healed"], true, "{answer}");
+    assert_eq!(fleet()["overseer"]["generation"], 1);
+    // A pane whose foreground is no harness.
+    let idle = pane
+        .tmux(&[
+            "new-window",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            &pane.session,
+            "exec sleep 600",
+        ])
+        .trim()
+        .to_owned();
+    let (code, answer) = adopt(&idle);
+    assert_eq!(code, Some(1), "{answer}");
+    assert_eq!(answer["refusal"]["key"], "pane-not-harness", "{answer}");
+    // Another, live controller recorded: a second one is refused.
+    let live = Held(Command::new("sleep").arg("600").spawn().unwrap());
+    let identity = identity_reading(live.0.id());
+    let mut doc = fleet();
+    doc["overseer"] = json!({
+        "runtime": "tmux",
+        "generation": 3,
+        "server": pane.server_pid.to_string(),
+        "server_start": pane.server_start,
+        "server_socket": socket,
+        "pane": "%99",
+        "window": "@99",
+        "harness_pid": live.0.id().to_string(),
+        "harness_start": identity["start"],
+        "harness": "claude",
+        "cwd": cwd,
+    });
+    std::fs::write(&record, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let (code, answer) = adopt(&pane.pane);
+    assert_eq!(code, Some(1), "{answer}");
+    assert_eq!(answer["refusal"]["key"], "overseer-live", "{answer}");
+    assert_eq!(fleet()["overseer"]["pane"], "%99", "nothing written");
+    // That controller gone: adopted at the next generation.
+    drop(live);
+    let (code, answer) = adopt(&pane.pane);
+    assert_eq!(code, Some(0), "{answer}");
+    assert_eq!(answer["result"]["generation"], 4);
+    assert_eq!(fleet()["overseer"]["pane"], pane.pane);
+}

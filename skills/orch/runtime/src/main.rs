@@ -1752,13 +1752,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &SystemClock,
                 )?)?);
             }
-            // An adoption reads the pane first and makes its one transition
-            // on what it read.
-            if let Request::AdoptController(r) = &request {
-                return Ok(serde_json::to_value(effects::adopt_controller(
-                    &path, r, &settings, locking,
-                )?)?);
-            }
             // A round's reconcile first sends the end notices its closed runs
             // still owe, the continuation a crash between a run's close and
             // its send left, through the fleet's mailbox.

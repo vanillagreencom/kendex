@@ -40,12 +40,8 @@ A session opened by hand records itself first, from its own pane, through the re
 
 For the adoption, write `[REQUEST_FILE]` with the harness file tool, then run the request below. Add only known launch fields (`account`, `home`, `model`, `effort`, `session_id`, `permission`, `extra_args`) and `socket` where the pane is on another socket. The runtime reads the process identity from the pane.
 
-```json
-{"op":"adopt-controller","pane":"[PANE]","harness":"[HARNESS]","cwd":"[DIR]"}
-```
-
 ```bash
-.agents/skills/orch/scripts/orch-runtime op --fleet --request [REQUEST_FILE]
+.agents/skills/agent-runtime/scripts/agent-runtime controller adopt --record [DOC] --pane [PANE] --harness [HARNESS] --cwd [DIR]
 ```
 
 Where another lifecycle owns replacement, its adoption also carries `succession`, an array of command words whose first word is the owner's absolute executable path, followed by its succession arguments. The record keeps that command. Run it at a mark instead of choosing a successor or requesting a transfer. When the watch runs that owner to recover a dead or walled controller: [overseer-session-events.md § Recovery requests](../references/overseer-session-events.md#recovery-requests). `request-transfer` refuses such a record as `succession-owned command=...`. A Jarvis controller belongs to its Jarvis lifecycle.

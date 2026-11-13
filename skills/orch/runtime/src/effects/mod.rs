@@ -79,7 +79,6 @@ use crate::ops::{self, Applied, OutcomeRecorded, Report, Request};
 use crate::settings::Settings;
 use crate::state::{self, Lane, LaneMembers};
 use agent_runtime::clock::Clock;
-use agent_runtime::controller::AdoptController;
 use agent_runtime::controller::effect as controller;
 use agent_runtime::intent::EffectOp;
 use agent_runtime::intent::Intent;
@@ -238,7 +237,6 @@ fn has_live_effect(request: &Request) -> bool {
         Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
-        | Request::AdoptController(_)
         | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
@@ -440,7 +438,6 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     Request::AdoptSession(_)
                     | Request::BeginRound(_)
                     | Request::RecordValidationAdmission(_)
-                    | Request::AdoptController(_)
                     | Request::ClaimIntent(_)
                     | Request::AcceptResult(_)
                     | Request::RecordVerification(_)
@@ -497,7 +494,6 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
-        | Request::AdoptController(_)
         | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
@@ -554,19 +550,6 @@ pub fn run_job(
         agent_runtime::controller::run::run_job(ctl, intent_id)
     })
     .map(recorded)
-}
-
-/// Read the pane an adoption names and record the controller in it: the
-/// one read-then-record operation of the fleet.
-pub fn adopt_controller(
-    path: &Path,
-    r: &AdoptController,
-    settings: &Settings,
-    locking: Locking,
-) -> Result<Applied> {
-    Ok(ops::adoption_applied(
-        agent_runtime::effects::adopt_controller(path, r, &settings.engine, locking)?,
-    ))
 }
 
 /// Register the controller a person opened by hand in the caller's own
@@ -867,7 +850,6 @@ fn hand_over_request(request: &Request) -> Option<agent_runtime::controller::tra
         | Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
-        | Request::AdoptController(_)
         | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)

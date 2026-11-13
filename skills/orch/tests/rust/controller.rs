@@ -1003,6 +1003,36 @@ fn kept_dead(server: &Server, runner: &Runner) -> String {
     server.open_kept_dead("overseer", runner.state_dir())
 }
 
+/// `agent-runtime controller adopt` of `pane` running Claude in `cwd` on the
+/// runner's fleet record, with `flags` after, under the runner's
+/// environment: the fleet server is the caller's `$TMUX`.
+fn adopt(runner: &Runner, pane: &str, cwd: &Path, flags: &[&str]) -> std::process::Output {
+    let record = runner
+        .state_dir()
+        .join(agent_runtime::record::FLEET_FILE_NAME);
+    let mut command = program(agent_runtime());
+    runner.apply_env(&mut command);
+    command
+        .args(["controller", "adopt", "--record"])
+        .arg(&record)
+        .args(["--pane", pane, "--harness", "claude", "--cwd"])
+        .arg(cwd)
+        .args(flags)
+        .current_dir(runner.state_dir())
+        .output()
+        .expect("agent-runtime")
+}
+
+/// The key of the refusal an agent-runtime reply carries.
+fn adoption_refusal(out: &std::process::Output) -> String {
+    let answer = reply(out);
+    assert_eq!(answer["ok"], false, "{answer}");
+    answer["refusal"]["key"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// A recorded controller with no identity whose pane its shell holds alone,
 /// or whose pane its server keeps dead, has ended: a start replaces the
 /// record and closes the predecessor's window, a dead-cause transfer
@@ -1150,17 +1180,14 @@ fn an_ended_controller_with_no_identity_is_adopted_over_and_stopped_by_its_bare_
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let adopted = harness_held(&server, &runner);
-    let request = json!({
-        "op": "adopt-controller",
-        "pane": adopted,
-        "harness": "claude",
-        "cwd": runner.state_dir().display().to_string(),
-    });
     let held = harness_held(&server, &runner);
     let mut fleet = runner.fleet();
     fleet["overseer"] = record_on(&server, runner.state_dir(), &held, None);
     runner.write_fleet(&fleet);
-    assert_eq!(refusal_key(&runner.op_fleet(&request)), "overseer-live");
+    assert_eq!(
+        adoption_refusal(&adopt(&runner, &adopted, runner.state_dir(), &[])),
+        "overseer-live"
+    );
     assert_eq!(
         runner.fleet()["overseer"]["pane"],
         json!(held),
@@ -1170,9 +1197,9 @@ fn an_ended_controller_with_no_identity_is_adopted_over_and_stopped_by_its_bare_
     let mut fleet = runner.fleet();
     fleet["overseer"] = record_on(&server, runner.state_dir(), &ended, None);
     runner.write_fleet(&fleet);
-    let answer = reply(&runner.op_fleet(&request));
+    let answer = reply(&adopt(&runner, &adopted, runner.state_dir(), &[]));
     assert_eq!(answer["ok"], true, "{answer}");
-    assert_eq!(answer["result"]["report"]["generation"], 4);
+    assert_eq!(answer["result"]["generation"], 4);
     assert_eq!(runner.fleet()["overseer"]["pane"], json!(adopted));
 
     let mut fleet = runner.fleet();
@@ -1825,74 +1852,6 @@ fn end_standing_jobs(runner: &Runner) {
     for pid in standing {
         end_sleeper(pid as u32);
     }
-}
-
-/// An adoption records the harness identity read in the pane's foreground,
-/// never the caller's word for it; a record of another, live controller
-/// refuses `overseer-live`; a pane holding no harness refuses
-/// `pane-not-harness`; the same pane adopted again is healed in place.
-#[test]
-fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record_or_a_shell() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let pane = server.open_stub(
-        "overseer",
-        "stub-confirm",
-        runner.state_dir(),
-        runner.state_dir(),
-    );
-    server.await_composer(&pane);
-    let request = json!({
-        "op": "adopt-controller",
-        "pane": pane,
-        "harness": "claude",
-        "session_id": "by-hand-1",
-        "account": runner.state_dir().display().to_string(),
-        "cwd": runner.state_dir().display().to_string(),
-    });
-    let answer = reply(&runner.op_fleet(&request));
-    assert_eq!(answer["ok"], true, "{answer}");
-    let report = &answer["result"]["report"];
-    assert_eq!(report["op"], "adopt-controller");
-    assert_eq!(report["generation"], 1);
-    assert_eq!(report["healed"], false);
-    let overseer = runner.fleet()["overseer"].clone();
-    assert_eq!(overseer["pane"], pane);
-    assert_eq!(overseer["server"], server.pid.to_string());
-    assert_eq!(overseer["server_start"], server.start);
-    assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
-    assert_eq!(overseer["harness_start"], start_of(server.pane_pid(&pane)));
-    assert_eq!(overseer["session_id"], "by-hand-1");
-    assert!(overseer["window"].as_str().unwrap().starts_with('@'));
-    // The same pane again: healed, the generation kept.
-    let answer = reply(&runner.op_fleet(&request));
-    assert_eq!(answer["result"]["report"]["healed"], true, "{answer}");
-    assert_eq!(runner.fleet()["overseer"]["generation"], 1);
-    // A pane whose foreground is no harness.
-    let idle = server.open_idle("other", runner.state_dir());
-    let mut shell = request.clone();
-    shell["pane"] = json!(idle);
-    assert_eq!(refusal_key(&runner.op_fleet(&shell)), "pane-not-harness");
-    // Another, live controller recorded: a second one is refused.
-    let live_controller = Owned::sleep();
-    let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(
-        live_controller.pid(),
-        &live_controller.start(),
-        &server,
-        runner.state_dir(),
-    );
-    runner.write_fleet(&fleet);
-    assert_eq!(refusal_key(&runner.op_fleet(&request)), "overseer-live");
-    assert_eq!(runner.fleet()["overseer"]["pane"], "%99", "nothing written");
-    // That controller gone: adopted at the next generation.
-    drop(live_controller);
-    let answer = reply(&runner.op_fleet(&request));
-    assert_eq!(answer["ok"], true, "{answer}");
-    assert_eq!(answer["result"]["report"]["generation"], 4);
-    assert_eq!(runner.fleet()["overseer"]["pane"], pane);
 }
 
 /// The table `kendex list` prints for a checkout whose install covers the
@@ -2920,13 +2879,8 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
         runner.state_dir(),
     );
     server.await_composer(&other);
-    let out = runner.op_fleet(&json!({
-        "op": "adopt-controller",
-        "pane": other,
-        "harness": "claude",
-        "cwd": runner.state_dir().display().to_string(),
-    }));
-    assert_eq!(refusal_key(&out), "predecessor-unproven");
+    let out = adopt(&runner, &other, runner.state_dir(), &[]);
+    assert_eq!(adoption_refusal(&out), "predecessor-unproven");
     assert_eq!(runner.fleet()["overseer"]["pane"], pane, "nothing written");
     // A stop names nothing to retire and closes nothing.
     let report = effect_report(&runner.op_fleet(&json!({"op": "stop-controller"})));
@@ -2939,14 +2893,9 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
     assert!(runner.fleet()["overseer"].get("off").is_none());
     // Adoption from the record's own pane heals it: the server start bound,
     // the identity read in the pane.
-    let answer = reply(&runner.op_fleet(&json!({
-        "op": "adopt-controller",
-        "pane": pane,
-        "harness": "claude",
-        "cwd": runner.state_dir().display().to_string(),
-    })));
+    let answer = reply(&adopt(&runner, &pane, runner.state_dir(), &[]));
     assert_eq!(answer["ok"], true, "{answer}");
-    assert_eq!(answer["result"]["report"]["healed"], true);
+    assert_eq!(answer["result"]["healed"], true);
     let healed = runner.fleet()["overseer"].clone();
     assert_eq!(healed["server_start"], server.start);
     assert_eq!(healed["harness_pid"], pid);
@@ -7917,15 +7866,15 @@ fn the_reconcile_heals_an_unbound_controllers_identity_and_never_binds_a_previou
     assert_eq!(std::fs::read(&state).unwrap(), bytes);
     // The session's own id, as the turn-end binding reads it from the
     // session itself, binds where the record holds none.
-    let answer = reply(&runner.op_fleet(&json!({
-        "op": "adopt-controller",
-        "pane": pane,
-        "harness": "claude",
-        "session_id": format!("stub-{pid}"),
-        "account": home.display().to_string(),
-        "cwd": home.display().to_string(),
-    })));
-    assert_eq!(answer["result"]["report"]["healed"], true, "{answer}");
+    let session = format!("stub-{pid}");
+    let account = home.display().to_string();
+    let answer = reply(&adopt(
+        &runner,
+        &pane,
+        &home,
+        &["--session-id", &session, "--account", &account],
+    ));
+    assert_eq!(answer["result"]["healed"], true, "{answer}");
     assert_eq!(
         runner.fleet()["overseer"]["session_id"],
         format!("stub-{pid}")

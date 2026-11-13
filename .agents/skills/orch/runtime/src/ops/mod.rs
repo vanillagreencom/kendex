@@ -100,11 +100,11 @@ use serde_json::{Map, Value};
 use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, Kind, Lane, Snapshot};
+use agent_runtime::controller::ControllerAdopted;
 use agent_runtime::controller::transition::{
     self as controller, ControllerStarted, RequestTransfer, StartController, StopController,
     StopRequested, TransferRequested,
 };
-use agent_runtime::controller::{AdoptController, ControllerAdopted};
 use agent_runtime::intent::EffectOp;
 use agent_runtime::intent::Intent;
 use agent_runtime::journal::Effect;
@@ -123,10 +123,6 @@ pub enum Request {
     RecordValidationAdmission(RecordValidationAdmission),
     RequestTransfer(Box<RequestTransfer>),
     StartController(Box<StartController>),
-    /// Read the pane's foreground identity, then record; the `effects`
-    /// module runs it, since the read comes before the one transition it
-    /// makes.
-    AdoptController(Box<AdoptController>),
     StopController(StopController),
     /// Take an open intent's owner lease: the detached job's first act.
     ClaimIntent(ClaimIntent),
@@ -204,7 +200,6 @@ impl Request {
             Request::RecordValidationAdmission(_) => "record-validation-admission",
             Request::RequestTransfer(_) => "request-transfer",
             Request::StartController(_) => "start-controller",
-            Request::AdoptController(_) => "adopt-controller",
             Request::StopController(_) => "stop-controller",
             Request::ClaimIntent(_) => "claim-intent",
             Request::AcceptResult(_) => "accept-result",
@@ -261,7 +256,6 @@ impl Request {
             | Request::AdoptSession(_)
             | Request::RequestTransfer(_)
             | Request::StartController(_)
-            | Request::AdoptController(_)
             | Request::StopController(_)
             | Request::ClaimIntent(_)
             | Request::CloseOwnedResources(_)
@@ -435,7 +429,6 @@ fn reread_on_record_changed(request: &Request) -> bool {
         | Request::RecordValidationAdmission(_)
         | Request::RequestTransfer(_)
         | Request::StartController(_)
-        | Request::AdoptController(_)
         | Request::StopController(_)
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
@@ -596,7 +589,6 @@ pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<(
         Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
-        | Request::AdoptController(_)
         | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
@@ -713,7 +705,6 @@ pub fn item_transition(
         | Request::AdoptSession(_)
         | Request::RequestTransfer(_)
         | Request::StartController(_)
-        | Request::AdoptController(_)
         | Request::StopController(_)
         | Request::ClaimIntent(_)
         | Request::CloseOwnedResources(_)
@@ -785,7 +776,6 @@ pub fn fleet_transition(
         Request::ClaimIntent(r) => Ok(Report::ClaimIntent(Box::new(journal::claim_intent(
             path, doc, r, env,
         )?))),
-        Request::AdoptController(_) => Err(Error::OpNotTransition { op: request.name() }),
         Request::CloseOwnedResources(r) => Ok(Report::CloseOwnedResources(Box::new(
             lane::close_owned_resources(path, doc, r, env, host()?)?,
         ))),
