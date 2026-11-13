@@ -333,24 +333,26 @@ fn capture_skill(
         .map_err(|cause| unrestored(cause.to_string()))?;
     let files = crate::render::skill::with_skill_text(files, crate::render::skill::strip_block);
     let (files, warnings) = match &coordinates {
-        Some(coordinates) => crate::render::skill::convert_links(
+        Some(coordinates) => crate::render::skill::Located::observed(
             files,
-            crate::render::agent::BodyPaths {
-                source: edited,
-                rendered: &coordinates.directory,
-                source_root: &coordinates.root,
-                install_root: &coordinates.root,
-            },
-            false,
-            None,
-        ),
+            edited,
+            &coordinates.root,
+        )
+        .render_at(&coordinates.directory, false, None),
         None => (files, Vec::new()),
     };
     let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
         unreachable!("authored_form refuses a tree with no SKILL.md text")
     };
     Ok(Captured {
-        rendering: skill_round_trip(of, edited, &captured, on_disk, coordinates.as_ref()),
+        rendering: crate::render::skill::round_trip(
+            of.manifest,
+            of.name,
+            edited,
+            &captured,
+            on_disk,
+            coordinates.as_ref(),
+        ),
         files: Capture::Tree(files),
         carry: None,
         read_at: published.commit,
@@ -645,46 +647,4 @@ fn skill_text(files: &[(PathBuf, Vec<u8>)]) -> Option<String> {
         .iter()
         .find(|(rel, _)| rel == std::path::Path::new(crate::render::skill::SKILL_FILE))
         .and_then(|(_, bytes)| String::from_utf8(bytes.clone()).ok())
-}
-
-/// A captured skill tree's `SKILL.md` beside what it renders back to. A
-/// skill's tree is nearly its own source form, but not quite: the renderer
-/// strips and re-injects the project-instructions block, so bytes written
-/// inside that block are not bytes a source can hold, and it cuts the
-/// frontmatter to the installed key set, which the capture put the
-/// publisher's other keys back around. What the round trip asks is
-/// whether the captured source renders to the bytes on disk.
-fn skill_round_trip(
-    of: &ForkOf,
-    edited: &std::path::Path,
-    captured: &str,
-    on_disk: String,
-    coordinates: Option<&crate::manifest::SkillCoordinates>,
-) -> (String, String) {
-    let captured = if let Some(coordinates) = coordinates {
-        let source = &coordinates.directory;
-        let root = &coordinates.root;
-        crate::render::agent::rebase_skill(
-            captured,
-            crate::render::agent::BodyPaths {
-                source: &source.join(crate::render::skill::SKILL_FILE),
-                source_root: root,
-                rendered: &edited.join(crate::render::skill::SKILL_FILE),
-                install_root: root,
-            },
-            false,
-            |target| target.starts_with(source),
-        )
-        .0
-    } else {
-        captured.to_owned()
-    };
-    let instructions = crate::render::skill::skill_instructions(of.manifest, of.name);
-    (
-        crate::render::skill::installed_keys(&crate::render::skill::inject_instructions(
-            &captured,
-            instructions.as_deref(),
-        )),
-        on_disk,
-    )
 }
