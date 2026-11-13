@@ -835,30 +835,11 @@ fn cgroup_dir(cgroup: &str) -> std::path::PathBuf {
     Path::new("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'))
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the recorded group is stopped by each member's observed start identity"
-)]
+/// The recorded job group ended through the one group stop: `true` where a
+/// member was signalled and every one ended, `false` where the group was
+/// already gone.
 pub fn stop_group(identity: &Identity) -> Result<bool> {
-    let rows =
-        process::table().map_err(|e| Error::refused("stop-unreadable", &[("cause", e.cause)]))?;
-    if matches!(process::still_runs(identity), Reading::Gone)
-        && (rows.iter().any(|r| r.pid == identity.pid)
-            || !rows.iter().any(|r| r.pgrp == identity.pid))
-    {
-        return Ok(false);
-    }
-    let mut members = Vec::new();
-    for row in rows.iter().filter(|r| r.pgrp == identity.pid) {
-        match process::identity(row.pid) {
-            Reading::Live(id) => members.push(id),
-            Reading::Gone => {}
-            Reading::Unreadable { cause } => {
-                return Err(Error::refused("stop-unreadable", &[("cause", cause)]));
-            }
-        }
-    }
-    match process::stop_identities(&members, KILL_GRACE)? {
+    match process::stop_group(identity, KILL_GRACE)? {
         process::Stop::AlreadyGone => Ok(false),
         process::Stop::Stopped { .. } => Ok(true),
         other @ (process::Stop::IdentityStale
@@ -1413,25 +1394,10 @@ fn group_end(leader: &Identity) -> Option<JobEnd> {
     matches!(group_reading(leader), Reading::Gone).then_some(JobEnd::Exited)
 }
 
-/// The job group `leader` leads: the leader's identity through the one
-/// reader, and, once that reads gone, the kernel's table for any live member
-/// naming the leader's pid as its group, so a leader that exited leaving a
-/// member is a group still running. A live process at the leader's pid ends
-/// the group: the kernel frees a pid number only once no task holds it as its
-/// pid, its group or its session, so a process that took the number, one
-/// that leads a group of its own included, proves no member of the leader's
-/// group runs.
+/// The job group `leader` leads, by the one group rule
+/// (`process::group_members`).
 pub fn group_reading(leader: &Identity) -> Reading<()> {
-    match process::still_runs(leader) {
-        Reading::Live(_) => Reading::Live(()),
-        Reading::Unreadable { cause } => Reading::Unreadable { cause },
-        Reading::Gone => match process::table() {
-            Ok(rows) if rows.iter().any(|row| row.pid == leader.pid) => Reading::Gone,
-            Ok(rows) if rows.iter().any(|row| row.pgrp == leader.pid) => Reading::Live(()),
-            Ok(_) => Reading::Gone,
-            Err(e) => Reading::Unreadable { cause: e.cause },
-        },
-    }
+    process::group_members(leader).map(|_| ())
 }
 
 /// The end of the job group `pgid`, read by the group key alone.

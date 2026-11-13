@@ -869,6 +869,37 @@ enum ProcessOp {
     Identity { pid: u32 },
     /// Whether an identity still runs.
     Live { pid: u32, start: String },
+    /// Become PROGRAM as the leader of a process group recorded at FILE as
+    /// `{"pid","start"}`: a new group where this process leads none and
+    /// holds no terminal, the one it leads where no other process is in it.
+    /// Prints nothing on success: this process is then PROGRAM. Refuses
+    /// `group-live` where FILE's group still runs (`process stop --file
+    /// FILE` ends it), `group-shared`, `group-unmade cause=terminal` and
+    /// `exec-failed` (FILE removed).
+    Lead {
+        #[arg(long)]
+        file: PathBuf,
+        /// PROGRAM and its arguments, after `--`.
+        #[arg(last = true, required = true)]
+        command: Vec<std::ffi::OsString>,
+    },
+    /// The group FILE records: `live` with the leader and its member count,
+    /// `gone` (no FILE included) or `unreadable`; with `--member PID`,
+    /// whether PID is in that group.
+    Group {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        member: Option<u32>,
+    },
+    /// Stop the group FILE records, every member by its own identity: TERM,
+    /// the grace, then KILL; no FILE is a group already gone.
+    Stop {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        grace_secs: u64,
+    },
 }
 
 /// What a launch records: the pane, the command, and the identities read
@@ -1792,8 +1823,8 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 }
             })
         }
-        // Both print the reading whole: `live` with the identity, `gone`,
-        // or `unreadable` with its cause.
+        // The readings print whole: `live` with the identity, `gone`, or
+        // `unreadable` with its cause.
         Verb::Process { op } => match op {
             ProcessOp::Identity { pid } => {
                 Ok(serde_json::to_value(process::identity(pid)).unwrap_or_default())
@@ -1802,6 +1833,16 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &Identity { pid, start },
             ))
             .unwrap_or_default()),
+            ProcessOp::Lead { file, command } => {
+                let (program, args) = command
+                    .split_first()
+                    .expect("clap requires PROGRAM after --");
+                Err(agent_runtime::group::lead(&file, program, args))
+            }
+            ProcessOp::Group { file, member } => agent_runtime::group::reading(&file, member),
+            ProcessOp::Stop { file, grace_secs } => {
+                agent_runtime::group::stop(&file, Duration::from_secs(grace_secs))
+            }
         },
         Verb::Accounts { op } => accounts_verb(op),
         Verb::Controller { op } => controller_verb(op),

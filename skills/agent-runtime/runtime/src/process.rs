@@ -767,6 +767,59 @@ pub fn stop_tree(root: &Identity, matches: &dyn Fn(&str) -> bool, grace: Duratio
     stop_identities(&targets, grace)
 }
 
+/// The members of the process group `leader` leads, read in one table: every
+/// row whose group is the leader's pid, the leader among them while it runs.
+/// Once the leader reads gone, a member that still names its pid as its group
+/// keeps the group live. A live process at the leader's pid ends the group:
+/// the kernel frees a pid number only once no task holds it as its pid, its
+/// group or its session, so a process that took the number, one that leads a
+/// group of its own included, proves no member of the leader's group runs.
+pub fn group_members(leader: &Identity) -> Reading<Vec<Row>> {
+    let leader_runs = match still_runs(leader) {
+        Reading::Live(_) => true,
+        Reading::Gone => false,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    let rows = match table() {
+        Ok(rows) => rows,
+        Err(Unreadable { cause }) => return Reading::Unreadable { cause },
+    };
+    if !leader_runs && rows.iter().any(|row| row.pid == leader.pid) {
+        return Reading::Gone;
+    }
+    let members: Vec<Row> = rows
+        .into_iter()
+        .filter(|row| row.pgrp == leader.pid)
+        .collect();
+    if leader_runs || !members.is_empty() {
+        Reading::Live(members)
+    } else {
+        Reading::Gone
+    }
+}
+
+/// End every member of the group `leader` leads ([`group_members`]), each by
+/// its own identity: TERM, the grace, then KILL. `AlreadyGone` where the
+/// group reads gone; refused `stop-unreadable` where the group or a member's
+/// identity cannot be read, nothing signalled.
+pub fn stop_group(leader: &Identity, grace: Duration) -> Result<Stop> {
+    let unreadable = |cause: &str| Error::refused("stop-unreadable", &[("cause", cause)]);
+    let rows = match group_members(leader) {
+        Reading::Live(rows) => rows,
+        Reading::Gone => return Ok(Stop::AlreadyGone),
+        Reading::Unreadable { cause } => return Err(unreadable(cause)),
+    };
+    let mut members = Vec::new();
+    for row in rows {
+        match identity(row.pid) {
+            Reading::Live(id) => members.push(id),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => return Err(unreadable(cause)),
+        }
+    }
+    stop_identities(&members, grace)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;

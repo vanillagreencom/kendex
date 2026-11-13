@@ -23,6 +23,7 @@ disallowed-methods = [
     # processes
     { path = "agent_runtime::process::stop_tree", reason = "a process is signalled only through the operation handle's token, `signalled` written first, or the session command's exact stop" },
     { path = "agent_runtime::process::stop_identities", reason = "a process is signalled only through the operation handle's token, `signalled` written first, or the session command's exact stop" },
+    { path = "agent_runtime::process::stop_group", reason = "a process is signalled only through the operation handle's token, `signalled` written first, or the session command's exact stop" },
     # the detached start and the harness's trust record
     { path = "agent_runtime::host::start_detached", reason = "a detached job is started only by the operation handle, its record written first" },
     { path = "agent_runtime::trust::prepare", reason = "a harness's trust record is written only before the window it serves opens" },

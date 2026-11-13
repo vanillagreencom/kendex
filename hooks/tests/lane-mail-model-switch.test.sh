@@ -21,7 +21,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|complete|fresh-shell|runtime-record|missing-judge|lock-cause|unbuilt-store) ;;
+    matching|complete|fresh-shell|runtime-record|missing-judge|lock-cause|unbuilt-store|native-outside-group) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -152,6 +152,40 @@ assert_eq "$(cat "$TMP_ROOT/stdout")" '' 'missing fleet record reports once'
 assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'unavailable launch evidence changes no process'
 kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 
+fi
+
+if model_case native-outside-group; then
+echo '=== a native callback outside the recorded group ==='
+# A hosted lane's record names the process group agent-runtime's lead made;
+# a callback that runs outside that live group never acts on it.
+model_world native-outside-group claude-fable-5-1
+rm -- "$LANE/tmp/workflow-state-oversee.json"
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+# orch's required agent-runtime, installed beside it as a project install
+# links it.
+ln -s -f -n "$REPO_ROOT/skills/agent-runtime" "$LANE/.agents/skills/agent-runtime"
+ln -s -f -n ../../.agents/skills/agent-runtime "$LANE/.claude/skills/agent-runtime"
+AR="$LANE/.claude/skills/agent-runtime/scripts/agent-runtime"
+GROUP_FILE="$LANE/.git/lane-host-pid"
+# Job control starts the background lead in a group of its own, whose id is
+# its pid: the lead keeps that group, records it and becomes the sleeper.
+set -m
+"$AR" process lead --file "$GROUP_FILE" -- "$TMP_ROOT/bin/claude" 90 &
+OWNED_CHILD=$!
+set +m
+until_second=$((SECONDS + 15))
+until [[ -s "$GROUP_FILE" || "$SECONDS" -ge "$until_second" ]]; do sleep 0.05; done
+assert_eq "$("$AR" process group --file "$GROUP_FILE" | jq -r '[.result.reading, .result.pid] | join("|")')" "live|$OWNED_CHILD" \
+  'the record names the live group the row made'
+START=$(lane_process_start "$OWNED_CHILD")
+# No model in the record: a callback taken for the lane records launch-missing
+# and starts no recovery.
+"$REPO_ROOT/skills/orch/scripts/lane-marker" --launch-record "$(jq -nc --arg f "$GROUP_FILE" '{identity_file:$f}')" "$LANE" KEN-3916
+event claude-opus-4-8
+assert_eq "$(jq -r '.model_checks.s1.cause' "$LANE/tmp/workflow-state-KEN-3916.json")" launch-unread \
+  'a callback outside the recorded group reads no launch'
+assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'a callback outside the recorded group changes no process'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 fi
 
 echo '=== unavailable dependency and association evidence ==='
@@ -716,6 +750,7 @@ old, new = {
     "lock-cause": ('        model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"\n      }\n', '        model_unavailable_notice handoff-unwritten "$observed"\n      }\n'),
     "init-key": ('case "$(awk \'/^orch-runtime: / { print; exit }\' "$WORK_DIR/model.err")" in', 'case "$(head -n 1 -- "$WORK_DIR/model.err")" in'),
     "unbuilt-notice": ('  if [ "$1" -eq 69 ]; then\n    hand_over "$(message store-unbuilt', '  if false; then\n    hand_over "$(message store-unbuilt'),
+    "group-member": ('select($group.result.reading == "live" and $group.result.member == true)', 'select($group.result.reading == "live")'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -734,6 +769,7 @@ comparison|matching
 lock-cause|lock-cause
 init-key|complete
 unbuilt-notice|unbuilt-store
+group-member|native-outside-group
 CONTROLS
   while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/relaunch-$rule.sh"

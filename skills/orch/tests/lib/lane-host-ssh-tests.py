@@ -8,9 +8,11 @@ import base64
 import hashlib
 import os
 from pathlib import Path
+import pty
 import runpy
 import shutil
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -161,6 +163,14 @@ esac
 printf 'agent-runtime-setup: key=fixture binary=/cache/bin/agent-runtime-fixture\n'
 printf 'orch-runtime-setup: key=fixture binary=/cache/bin/orch-runtime-fixture\n'
 ''')
+        # The clone's runtime entries a stop runs on the host, each the binary
+        # setup built for these sources, and agent-runtime's setup naming its
+        # own: the prefix's group leader.
+        self.executable(scripts / "orch-runtime", f'#!/bin/sh\nexec {shlex.quote(str(self.runtime_binary()))} "$@"\n')
+        agent = self.source / ".agents/skills/agent-runtime/scripts"
+        lead = shlex.quote(str(self.agent_runtime_binary()))
+        self.executable(agent / "setup", f"#!/usr/bin/env bash\nprintf 'agent-runtime-setup: key=fixture binary=%s\\n' {lead}\n")
+        self.executable(agent / "agent-runtime", f'#!/bin/sh\nexec {lead} "$@"\n')
         # append takes its lock through the clone's own installed lock library.
         self.copy_tree(PACKAGE / "scripts/lib", scripts / "lib")
         self.copy_tree(PACKAGE.parent / "mailbox/scripts", self.source / ".agents/skills/mailbox/scripts")
@@ -497,7 +507,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         return subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],
                               env={**self.env, "COPILOT_GITHUB_TOKEN": "placeholder", "GH_TOKEN": "app-token",
                                    "GITHUB_TOKEN": "actions-token", "HOME": str(self.root)},
-                              capture_output=True)
+                              capture_output=True, start_new_session=True)
 
     def test_create_runs_copilot_on_its_stored_login(self):
         """A copilot lane copies no credential, its provider selects COPILOT_HOME, and the launch policy clears the COPILOT_GITHUB_TOKEN the host's profile exports while GH_TOKEN and GITHUB_TOKEN reach the lane."""
@@ -564,10 +574,6 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         # entry runs the binary setup built for these sources.
         runtime = self.runtime_binary()
         self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
-        relative = ".agents/skills/orch/scripts/orch-runtime"
-        entry = f'#!/bin/sh\nexec {shlex.quote(str(runtime))} "$@"\n'
-        self.executable(self.source / relative, entry)
-        self.seed_source(relative, entry)
         if control == "consumer":
             guard = 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ]; then'
             self.assertEqual(hook_text.count(guard), 1)
@@ -673,7 +679,7 @@ signal.sigwait({signal.SIGTERM})
                if not key.startswith(("ORCH_", "TMUX", "LANE_MAIL_", "CLAUDE_", "ANTHROPIC_"))}
         env.update(REAL_BASH=shutil.which("bash"), CLAUDE_PROJECT_DIR=str(path), LANE_MAIL_ITEM="TEST-1")
         child = subprocess.Popen([env["REAL_BASH"], "-c", command], cwd=path, env=env,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
             import select
             ready, _, _ = select.select([child.stdout], [], [], 20)
@@ -829,37 +835,66 @@ signal.sigwait({signal.SIGTERM})
         self.assertIn(f"lane-host-ssh: marker-script-missing path={marker}\n".encode(), refused.stderr)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
 
-    def test_create_names_a_clone_without_the_identity_recorder(self):
-        # The clone's library is what every prefix sources to record its
-        # identity, so one older than the recorder would end the prefix at
-        # bash's 127 with nothing naming what the clone is missing.
-        library = ".agents/skills/orch/scripts/lib/lane-state.sh"
-        text = (self.source / library).read_text()
-        self.seed_source(library, text + "\nunset -f lane_identity_record\n")
-        refused = self.create()
-        path = Path(self.row["clone"]) / library
+    def test_create_names_a_clone_without_the_agent_runtime_setup(self):
+        # Every prefix runs the group leader agent-runtime's setup builds, so
+        # a clone without that setup refuses before any window opens.
+        self.assertEqual(self.create().returncode, 0)
+        setup = Path(self.row["clone"]) / ".agents/skills/agent-runtime/scripts/setup"
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "config", "core.fileMode", "false"], check=True)
+        setup.chmod(0o644)
+        refused = self.create("--reuse")
         self.assertEqual((refused.returncode, refused.stdout,
-                          f"lane-host-ssh: identity-recorder-missing path={path}\n".encode() in refused.stderr),
+                          f"lane-host-ssh: agent-runtime-setup-missing path={setup}\n".encode() in refused.stderr),
                          (1, b"", True), refused.stderr)
         original = self.script.read_text()
-        probe = 'declare -F lane_identity_record >/dev/null'
-        self.assertEqual(original.count(probe), 1)
-        self.script.write_text(original.replace(probe, 'true'))
-        self.assertEqual(self.create().returncode, 0)
+        step = 'lead = built(row, "agent-runtime", "agent-runtime")'
+        self.assertEqual(original.count(step), 1)
+        self.script.write_text(original.replace(step, 'lead = "agent-runtime"'))
+        self.assertEqual(self.create("--reuse").returncode, 0)
 
-    def test_prefix_names_an_identity_it_could_not_record(self):
-        # A record that fails ends the prefix there: the harness never starts,
-        # and the pane carries the line naming the file.
+    def test_create_names_a_clone_whose_agent_runtime_setup_names_no_binary(self):
+        # A setup that answers without a binary leaves the prefix nothing to
+        # lead with, so create refuses before any window opens.
+        self.assertEqual(self.create().returncode, 0)
+        relative = ".agents/skills/agent-runtime/scripts/setup"
+        # The sync-base step refuses a tracked change, so the clone is told
+        # the planted setup is unchanged.
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "update-index", "--skip-worktree", relative],
+                       check=True)
+        (Path(self.row["clone"]) / relative).write_text("#!/bin/sh\nprintf 'agent-runtime-setup: held\\n'\n")
+        refused = self.create("--reuse")
+        self.assertEqual((refused.returncode, refused.stdout,
+                          b"lane-host-ssh: agent-runtime-unbuilt output=agent-runtime-setup: held\n" in refused.stderr),
+                         (1, b"", True), refused.stderr)
+
+    def test_prefix_names_a_record_it_could_not_write(self):
+        # A record that cannot be written ends the prefix there: the harness
+        # never starts, and the pane carries the group leader's keyed line.
         created = self.create(harness="codex")
         self.assertEqual(created.returncode, 0, created.stderr)
         prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
-        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
-        identity.mkdir()
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        record.mkdir()
         run = subprocess.run(["bash", "-c", prefix + " " + shlex.quote("printf started")],
-                             env={**self.env, "HOME": str(self.root)}, capture_output=True)
-        self.assertEqual((run.returncode, run.stdout,
-                          f"lane-host-ssh: identity-record-failed path={identity}\n".encode() in run.stderr),
-                         (1, b"", True), run.stderr)
+                             env={**self.env, "HOME": str(self.root)}, capture_output=True, start_new_session=True)
+        self.assertEqual((run.returncode, b"started" in run.stdout,
+                          json.loads(run.stdout)["refusal"]["key"],
+                          run.stderr.startswith(f"agent-runtime: io-failed operation=read path={record}\n".encode())),
+                         (1, False, "io-failed", True), run.stderr)
+
+    @classmethod
+    def agent_runtime_binary(cls):
+        """The agent-runtime binary setup built for this checkout's sources, found
+        through agent-runtime's own key library under the suite's environment."""
+        if getattr(cls, "_agent_runtime_binary", None) is None:
+            runtime = PACKAGE.parent / "agent-runtime"
+            found = subprocess.run(
+                ["bash", "-c", 'refuse() { printf "%s\\n" "$*" >&2; exit 1; }; . "$1" && cache=$(agent_runtime_cache) '
+                 '&& key=$(agent_runtime_key "$2") && printf "%s/bin/agent-runtime-%s" "$cache" "$key"',
+                 "key", str(runtime / "scripts/lib/key.sh"), str(runtime / "runtime")],
+                capture_output=True, text=True, check=True)
+            cls._agent_runtime_binary = Path(found.stdout)
+        return cls._agent_runtime_binary
 
     @classmethod
     def runtime_binary(cls):
@@ -923,7 +958,7 @@ rc=0
         child_env["ORCH_STATE_DIR"] = str(self.root / "control-state")
         return subprocess.run([shutil.which("bash", path=self.env["PATH"]), "-c",
                                fields["remote-prefix"] + " " + shlex.quote(command)],
-                              env=child_env, capture_output=True, timeout=60)
+                              env=child_env, capture_output=True, timeout=60, start_new_session=True)
 
     def assert_hosted_state(self, fields, path, run):
         self.assertEqual(run.returncode, 0, run.stderr)
@@ -955,11 +990,11 @@ rc=0
 
     def test_control_prefix_without_state_export_fails_the_state_contract(self):
         original = self.script.read_text()
-        export = 'prefix = "exec env " + shlex.quote("ORCH_STATE_DIR=" + path + "/tmp") + " " + prefix'
+        export = 'shlex.join(["ORCH_STATE_DIR=" + path + "/tmp", *names,'
         self.assertEqual(original.count(export), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(export, 'prefix = "exec " + prefix'))
+            self.executable(self.script, original.replace(export, 'shlex.join([*names,'))
             fields, path, run = self.hosted_state_launch()
             with self.assertRaises(AssertionError):
                 self.assert_hosted_state(fields, path, run)
@@ -2411,90 +2446,14 @@ exit 9
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_status_reads_the_owned_harness_and_refuses_failed_reads(self):
-        self.assertEqual(self.create().returncode, 0)
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        lane = subprocess.Popen([str(self.bin / "claude"), "-c", "printf 'ready\\n'; read -r line"],
-                                cwd=Path(self.row["clone"] + "-worktree"), env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        try:
-            self.assertEqual(lane.stdout.readline(), b"ready\n")
-            for harness, expected in (("claude", b"running\n"), ("codex", b"exited\n")):
-                with self.subTest(harness=harness):
-                    result = self.call("status", "--item", "TEST-1", "--harness", harness)
-                    self.assertEqual((result.returncode, result.stdout, lane.poll()), (0, expected, None), result.stderr)
-            original = self.script.read_text()
-            rule = 'if test -n "$LANE_OWNED_PROCESS_PIDS"; then printf'
-            self.assertEqual(original.count(rule), 1)
-            self.script.write_text(original.replace(rule, rule.replace("test -n", "test -z")))
-            self.assertNotEqual(self.call("status", "--item", "TEST-1", "--harness", "claude").stdout, b"running\n")
-            self.script.write_text(original)
-        finally:
-            lane.stdin.close()
-            lane.stdout.close()
-            lane.wait(timeout=2)
-        self.assertEqual(self.call("status", "--item", "TEST-1", "--harness", "claude").stdout, b"exited\n")
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library.write_text(library.read_text() + '\nlane_owned_processes() { return 2; }\n')
-        for env in ({}, {"SSH_TEST_FAIL": "7"}):
-            result = self.call("status", "--item", "TEST-1", "--harness", "claude", **env)
-            self.assertEqual((result.returncode != 0, result.stdout), (True, b""), (env, result.stderr))
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "deleted cwd integration requires procfs")
-    def test_status_follows_the_launch_root_through_merge_cleanup(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        worktree = Path(self.row["clone"] + "-worktree")
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        lane = subprocess.Popen([str(self.bin / "claude"), "-c", "printf 'ready\\n'; read -r line"],
-                                cwd=worktree, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        original = library.read_text()
-        try:
-            self.assertEqual(lane.stdout.readline(), b"ready\n")
-            # merge-pr removes the registered tree before its harness exits.
-            subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)],
-                           check=True, capture_output=True, env=self.env)
-            result = self.call("status", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((result.returncode, result.stdout, lane.poll()), (0, b"running\n", None), result.stderr)
-            controls = (
-                ('launch-record) root="$1";', 'launch-record) root="$(cd -- "$1" && pwd -P)" || return 2;'),
-                ('"$cwd" == "$root (deleted)"', '"$cwd" == "$root"'),
-            )
-            for old, new in controls:
-                self.assertEqual(original.count(old), 1)
-                library.write_text(original.replace(old, new))
-                mutant = self.call("status", "--item", "TEST-1", "--harness", "claude")
-                self.assertNotEqual((mutant.returncode, mutant.stdout), (0, b"running\n"), mutant.stderr)
-            for failure in ('lane_process_table() { return 1; }', 'lane_process_cwd() { return 1; }'):
-                library.write_text(original + '\n' + failure + '\n')
-                failed = self.call("status", "--item", "TEST-1", "--harness", "claude")
-                self.assertEqual((failed.returncode, failed.stdout), (1, b""), failed.stderr)
-            library.write_text(original)
-        finally:
-            library.write_text(original)
-            lane.stdin.close()
-            lane.stdout.close()
-            lane.wait(timeout=2)
-        exited = self.call("status", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((exited.returncode, exited.stdout), (0, b"exited\n"), exited.stderr)
-        marker = clone / ".git/lane-mail/test-1"
-        marker.unlink()
-        unknown = self.call("status", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((unknown.returncode, unknown.stdout), (1, b""), unknown.stderr)
-        marker.write_text(str(worktree) + '\n')
-        closed = self.call("close", "--item", "TEST-1", "--merged")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
-
     def launch_lane(self, on_term="exit 0", name="codex"):
         """A codex lane started through its create's own prefix, a process named NAME in the worktree.
 
-        The prefix records the launch identity of the shell it execs into the
-        harness, so the returned process's pid is the one recorded. The harness
-        waits in a builtin read on a FIFO nothing writes, never forking: a
-        forked child is named for the harness until it execs, and a stop that
-        reads the process table then counts it beside the harness."""
+        The prefix's group leader records itself and becomes the harness, so the
+        returned process's pid is the one recorded; it leads the new session
+        the start makes, so the group it keeps is its own. The harness waits in
+        a builtin read on a FIFO nothing writes, never forking, so the group
+        holds the harness alone."""
         created = self.create(harness="codex")
         self.assertEqual(created.returncode, 0, created.stderr)
         prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
@@ -2506,243 +2465,252 @@ exit 9
                    + shlex.quote(f"exec 3<>{shlex.quote(str(idle))}; trap {shlex.quote(on_term)} TERM; printf 'ready\\n'; "
                                  "while :; do read -r -t 0.1 -u 3 _; done"))
         lane = subprocess.Popen(["bash", "-c", prefix + " " + shlex.quote(command)],
-                                env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE)
+                                env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE, start_new_session=True)
         self.addCleanup(lane.wait, 2)
         self.addCleanup(lambda: lane.poll() is None and lane.kill())
         self.addCleanup(lane.stdout.close)
         self.assertEqual(lane.stdout.readline(), b"ready\n")
         return lane
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_without_an_identity_signals_only_the_named_harness_in_the_owned_worktree(self):
-        # A lane launched before its prefix recorded an identity holds none,
-        # as a create whose prefix nothing ran does: stop finds its harness by
-        # the worktree.
-        self.assertEqual(self.create().returncode, 0)
-        self.assertFalse((Path(self.row["clone"]) / ".git/lane-host-pid").exists())
-        worktree = Path(self.row["clone"] + "-worktree")
-        clone = Path(self.row["clone"])
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        (self.bin / "claude").chmod(0o755)
-
-        def harness(cwd):
-            return subprocess.Popen([str(self.bin / "claude"), "-c",
-                                     "trap 'exit 0' TERM; while :; do sleep 1; done"],
-                                    cwd=cwd, env=self.env)
-
-        holder = subprocess.Popen(
-            [sys.executable, "-c",
-             "import os,sys,time; p=os.fork(); "
-             "os.execl(sys.argv[1],sys.argv[1],'-c','exit 0') if p == 0 else "
-             "(print(p,flush=True),time.sleep(30))", str(self.bin / "claude")],
-            cwd=worktree, env=self.env, stdout=subprocess.PIPE, text=True)
-        zombie = int(holder.stdout.readline())
-        holder.stdout.close()
-        for _ in range(100):
-            state = Path(f"/proc/{zombie}/stat").read_text().rsplit(")", 1)[1].split()[0]
-            if state == "Z":
-                break
-            time.sleep(0.01)
-        self.assertEqual(state, "Z")
-
-        lane = harness(worktree)
-        lane_two = harness(worktree)
-        outside = harness(clone)
+    @staticmethod
+    def gone(pid):
+        """Whether no live process holds PID: absent, or exited awaiting its parent."""
         try:
-            stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((stopped.returncode, stopped.stdout),
-                             (0, b"stopped item=TEST-1 processes=2\n"), stopped.stderr)
-            lane.wait(timeout=2)
-            lane_two.wait(timeout=2)
-            self.assertIsNone(outside.poll())
+            return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] in ("Z", "X")
+        except FileNotFoundError:
+            return True
 
-            library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-            library_original = library.read_text()
-            library.write_text(library_original + f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{zombie}"; }}\n')
-            raced = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((raced.returncode, raced.stdout),
-                             (0, b"stopped item=TEST-1 processes=0\n"), raced.stderr)
+    def until_gone(self, *pids):
+        deadline = time.monotonic() + 10
+        while not all(self.gone(pid) for pid in pids) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return [pid for pid in pids if not self.gone(pid)]
 
-            library.write_text(library_original)
-            inverse = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-            self.assertEqual((inverse.returncode, inverse.stdout),
-                             (0, b"stopped item=TEST-1 processes=0\n"), inverse.stderr)
-        finally:
-            if 'library_original' in locals():
-                library.write_text(library_original)
-            for process in (lane, lane_two, outside, holder):
-                if process.poll() is None:
-                    process.terminate()
-                process.wait(timeout=2)
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_refuses_a_process_that_left_the_worktree(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        (self.bin / "claude").chmod(0o755)
-        # The ownership read named this pid, and by the signal its directory is
-        # the clone, not the worktree: a process that moved, or a reused pid.
-        moved = subprocess.Popen([str(self.bin / "claude"), "-c", "trap 'exit 0' TERM; while :; do sleep 1; done"],
-                                 cwd=clone, env=self.env)
-        self.addCleanup(moved.wait, 2)
-        self.addCleanup(lambda: moved.poll() is None and moved.kill())
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        staged = f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{moved.pid}"; }}\n'
-        library.write_text(library_original + staged)
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, f"stop-owner-changed item=TEST-1 pid={moved.pid}\n".encode() in refused.stderr),
-                         (1, True), refused.stderr)
-        self.assertIsNone(moved.poll())
-
-    def test_stop_refuses_an_unreadable_owned_process_set(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        library.write_text(library_original + '\nunset -f lane_stop_owned\n')
-        missing = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((missing.returncode, b"stop-operation-missing" in missing.stderr), (1, True), missing.stderr)
-        library.write_text(library_original + '\nlane_owned_processes() { return 2; }\n')
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1\n" in refused.stderr),
-                         (1, True), refused.stderr)
-
-    def test_stop_answers_a_removed_worktree_with_its_own_status(self):
-        # merge-pr removes the item's worktree before its lane goes idle, and
-        # the runtime's hosted stop reads exit 4 as a stop to skip, so no remote-failed line
-        # may sit above its stop-skipped line. stop's control is the guard
-        # removed.
-        self.assertEqual(self.create().returncode, 0)
-        worktree = Path(self.row["clone"] + "-worktree")
-        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
-                       check=True, capture_output=True)
-        removed = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((removed.returncode, removed.stdout, b"stop-worktree-removed item=TEST-1\n" in removed.stderr,
-                          b"remote-failed" in removed.stderr),
-                         (4, b"", True, False), removed.stderr)
-        original = self.script.read_text()
-        guard = """if ! test -d "$1"; then
-  printf 'lane-host-ssh: stop-worktree-removed item=%s\\n' "$4" >&2
-  exit 4
-fi
-"""
-        self.assertEqual(original.count(guard), 1)
-        self.script.write_text(original.replace(guard, ""))
-        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((mutant.returncode, b"stop-worktree-read-failed item=TEST-1" in mutant.stderr),
-                         (1, True), mutant.stderr)
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_signals_the_recorded_harness(self):
-        lane = self.launch_lane()
-        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
-        self.assertEqual(identity.read_text().split(" ", 1)[0], str(lane.pid))
-        outside = subprocess.Popen([str(self.bin / "codex"), "-c", "trap 'exit 0' TERM; while :; do sleep 0.1; done"],
-                                   cwd=Path(self.row["clone"] + "-worktree"), env=self.env)
-        self.addCleanup(outside.wait, 2)
-        self.addCleanup(lambda: outside.poll() is None and outside.kill())
-        other = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((other.returncode, other.stdout, lane.poll()),
-                         (0, b"stopped item=TEST-1 processes=0\n", None), other.stderr)
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the group reading here uses procfs")
+    def test_the_prefix_makes_the_lane_group_on_a_server_that_shares_its_own_and_stop_ends_it_alone(self):
+        # The SSH server runs every session's command inside one group of its
+        # own, as a server with no terminal to give does: the remote shell is a
+        # member of that group and leads none. The stand-in is a shell leading
+        # a new session and group, with another session's command beside the
+        # one it runs through the planted ssh.
+        created = self.create(harness="codex")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
+        shutil.copy2(shutil.which("bash"), self.bin / "codex")
+        idle = self.root / "codex-idle"
+        os.mkfifo(idle)
+        pids = self.root / "lane-pids"
+        line = (f"cd {shlex.quote(self.row['clone'] + '-worktree')} && exec {shlex.quote(str(self.bin / 'codex'))} -c "
+                + shlex.quote(f"sleep 600 >/dev/null 2>&1 & member=$!; (sleep 600 >/dev/null 2>&1 & printf '%s\\n' \"$!\" > {shlex.quote(str(pids))}.orphan); "
+                              f"printf '%s %s\\n' \"$$\" \"$member\" > {shlex.quote(str(pids))}; exec 3<>{shlex.quote(str(idle))}; "
+                              "while :; do read -r -t 0.1 -u 3 _; done"))
+        server = subprocess.Popen(["bash", "-c", 'sleep 600 >/dev/null 2>&1 & printf "%s\\n" "$!"; "$@"; wait', "server",
+                                   "ssh", "-t", "-o", "BatchMode=yes", "--", self.row["target"], prefix + " " + shlex.quote(line)],
+                                  env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE, start_new_session=True)
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        # The lane's group by its record, then the server's session, which
+        # this row made, by its own group id.
+        self.addCleanup(server.wait, 5)
+        self.addCleanup(os.killpg, server.pid, signal.SIGKILL)
+        self.addCleanup(subprocess.run, [str(self.agent_runtime_binary()), "process", "stop", "--grace-secs", "1",
+                                         "--file", str(record)], capture_output=True)
+        self.addCleanup(server.stdout.close)
+        bystander = int(server.stdout.readline())
+        deadline = time.monotonic() + 20
+        while not (pids.exists() and pids.read_text().endswith("\n")) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        leader, member = map(int, pids.read_text().split())
+        orphan = int(Path(str(pids) + ".orphan").read_text())
+        self.assertEqual(json.loads(record.read_text())["pid"], leader)
+        pgrp = int(Path(f"/proc/{leader}/stat").read_text().rsplit(")", 1)[1].split()[2])
+        self.assertEqual((pgrp, leader != server.pid), (leader, True))
+        status = self.call("status", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((status.returncode, status.stdout), (0, b"running\n"), status.stderr)
         stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
-        lane.wait(timeout=2)
-        self.assertIsNone(outside.poll())
-        # The recorded harness gone, its identity is stale: the stop says so
-        # and takes the worktree rule, which finds the harness left there.
-        gone = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((gone.returncode, gone.stdout, f"stop-identity-stale item=TEST-1 pid={lane.pid}\n".encode() in gone.stderr),
-                         (0, b"stopped item=TEST-1 processes=1\n", True), gone.stderr)
-        outside.wait(timeout=2)
+        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=3\n"), stopped.stderr)
+        self.assertEqual(self.until_gone(leader, member, orphan), [])
+        self.assertEqual((server.poll(), self.gone(bystander)), (None, False))
+        status = self.call("status", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((status.returncode, status.stdout), (0, b"exited\n"), status.stderr)
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_signals_the_recorded_harness_after_its_worktree_is_gone(self):
-        # merge-pr removes the item's worktree before its lane goes idle, and a
-        # later create may make a tree at the same path: neither hides the
-        # recorded harness. The control is a removed-worktree guard put into a
-        # copy of the script.
+    def on_terminal(self, script):
+        """SCRIPT run by bash leading a new session whose controlling terminal
+        is a pty: its pid, exit status and everything the terminal showed."""
+        pid, master = pty.fork()
+        if pid == 0:
+            try:
+                os.execve(shutil.which("bash"), ["bash", "-c", script], {**self.env, "HOME": str(self.root)})
+            finally:
+                os._exit(127)
+        shown = b""
+        while True:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            shown += chunk
+        os.close(master)
+        return pid, os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]), shown
+
+    def test_a_prefix_on_a_terminal_keeps_the_group_it_leads_and_refuses_one_it_does_not(self):
+        # A pane's `ssh -t` gives the remote shell a terminal whose session it
+        # leads: that group is the lane's, and the terminal's hang-up still
+        # reaches it. A process holding the terminal that leads no group would
+        # make a background group of it, so it refuses with nothing started.
+        created = self.create(harness="codex")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        line = shlex.quote("printf started")
+        _, code, shown = self.on_terminal("(" + prefix + " " + line + ")")
+        self.assertEqual((code, b"agent-runtime: group-unmade cause=terminal" in shown, b"started" in shown, record.exists()),
+                         (1, True, False, False), shown)
+        pid, code, shown = self.on_terminal(prefix + " " + line)
+        self.assertEqual((code, b"started" in shown, json.loads(record.read_text())["pid"]), (0, True, pid), shown)
+
+    def test_status_reads_the_recorded_group_whatever_the_worktree(self):
         lane = self.launch_lane()
+        clone = Path(self.row["clone"])
+        record = clone / ".git/lane-host-pid"
+        status = lambda **env: self.call("status", "--item", "TEST-1", "--harness", "codex", **env)
+        running = status()
+        self.assertEqual((running.returncode, running.stdout, lane.poll()), (0, b"running\n", None), running.stderr)
+        # merge-pr removes the registered tree before its harness exits.
         worktree = Path(self.row["clone"] + "-worktree")
-        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
-                       check=True, capture_output=True)
+        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)],
+                       check=True, capture_output=True, env=self.env)
+        self.assertEqual(status().stdout, b"running\n")
         original = self.script.read_text()
-        anchor = '''owned(row, item, "stop")
-    result = remote(row, \'\'\''''
-        self.assertEqual(original.count(anchor), 1)
-        self.script.write_text(original.replace(anchor, anchor + '''if ! test -d "$2-worktree"; then
-  printf 'lane-host-ssh: stop-worktree-removed item=%s\\\\n' "$3" >&2
-  exit 4
-fi
-'''))
-        mutant = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((mutant.returncode, b"stop-worktree-removed item=TEST-1\n" in mutant.stderr, lane.poll()),
-                         (4, True, None), mutant.stderr)
+        rule = '{"live": "running", "gone": "exited"}'
+        self.assertEqual(original.count(rule), 1)
+        self.script.write_text(original.replace(rule, '{"live": "exited", "gone": "exited"}'))
+        self.assertNotEqual(status().stdout, b"running\n")
         self.script.write_text(original)
-        worktree.mkdir()
+        text = record.read_text()
+        record.write_text("4242 Tue Nov 11 09:00:00 2026\n")
+        for env in ({}, {"SSH_TEST_FAIL": "7"}):
+            failed = status(**env)
+            self.assertEqual((failed.returncode != 0, failed.stdout), (True, b""), (env, failed.stderr))
+        self.assertIn(b"lane-host-ssh: status-read-failed item=TEST-1", status().stderr)
+        record.write_text(text)
         stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
         self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
-        lane.wait(timeout=2)
+        lane.wait(timeout=5)
+        self.assertEqual(status().stdout, b"exited\n")
+        record.unlink()
+        self.assertEqual(status().stdout, b"exited\n")
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_leaves_a_pid_that_started_at_another_time(self):
-        # The pid now names a later process: it is never signalled by the
-        # identity, and the worktree rule then answers for the lane, here a
-        # worktree its close-out removed.
+    def test_stop_reaches_the_recorded_group_alone_whatever_the_worktree(self):
+        # merge-pr removes the item's worktree before its lane goes idle: the
+        # stop reads no directory. A record whose pid now carries another
+        # start names a group that ended, and nothing is signalled by it.
         lane = self.launch_lane()
-        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
-        identity.write_text(f"{lane.pid} Thu Jan 1 00:00:00 1970\n")
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        text = record.read_text()
+        record.write_text(json.dumps({"pid": lane.pid, "start": "ticks:1"}))
+        reused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((reused.returncode, reused.stdout, lane.poll()),
+                         (0, b"stopped item=TEST-1 processes=0\n", None), reused.stderr)
+        record.write_text(text)
         worktree = Path(self.row["clone"] + "-worktree")
         subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
                        check=True, capture_output=True)
-        reused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((reused.returncode, reused.stdout, f"stop-identity-stale item=TEST-1 pid={lane.pid}\n".encode() in reused.stderr,
-                          b"stop-worktree-removed item=TEST-1\n" in reused.stderr, lane.poll()),
-                         (4, b"", True, True, None), reused.stderr)
-
-    def test_stop_refuses_an_identity_it_cannot_use(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        identity = clone / ".git/lane-host-pid"
-        identity.write_text("not-a-pid\n")
-        invalid = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((invalid.returncode, invalid.stdout,
-                          f"stop-identity-invalid item=TEST-1 path={identity}\n".encode() in invalid.stderr),
-                         (1, b"", True), invalid.stderr)
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        library.write_text(library_original + '\nunset -f lane_stop_identity\n')
-        identity.write_text("1 Thu Jan 1 00:00:00 1970\n")
-        missing = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((missing.returncode, f"stop-operation-missing path={library}\n".encode() in missing.stderr),
-                         (1, True), missing.stderr)
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_refuses_when_a_signaled_process_stays_live(self):
-        lane = self.launch_lane(on_term="")
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        library.write_text(library_original + '\nkill() { return 1; }\n')
-        signal_refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((signal_refused.returncode, f"stop-signal-refused item=TEST-1 pid={lane.pid}".encode() in signal_refused.stderr),
-                         (1, True), signal_refused.stderr)
-        # The private signal stub models delayed teardown after an accepted KILL.
-        library.write_text(library_original + '\nkill() { if [[ "$1" == -KILL ]]; then return 0; fi; builtin kill "$@"; }\n')
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((refused.returncode, f"stop-timeout item=TEST-1 pid={lane.pid}".encode() in refused.stderr, lane.poll()),
-                         (1, True, None), refused.stderr)
-        term_only = "for signal in TERM KILL; do"
-        self.assertEqual(library_original.count(term_only), 1)
-        library.write_text(library_original.replace(term_only, "for signal in TERM; do"))
-        control = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((control.returncode, f"stop-timeout item=TEST-1 pid={lane.pid}".encode() in control.stderr, lane.poll()),
-                         (1, True, None), control.stderr)
-        library.write_text(library_original)
         stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((stopped.returncode, stopped.stdout),
-                         (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
-        self.assertEqual(lane.wait(timeout=2), -9)
+        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
+        self.assertEqual(lane.wait(timeout=5), 0)
+        again = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((again.returncode, again.stdout), (0, b"stopped item=TEST-1 processes=0\n"), again.stderr)
+
+    def test_stop_and_close_refuse_a_record_they_cannot_read(self):
+        self.assertEqual(self.create().returncode, 0)
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        record.write_text("4242 Tue Nov 11 09:00:00 2026\n")
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, refused.stdout, b"agent-runtime: record-shape" in refused.stderr,
+                          b"lane-host-ssh: stop-failed item=TEST-1 outcome=refused exit=1\n" in refused.stderr),
+                         (1, b"", True, True), refused.stderr)
+        original = self.script.read_text()
+        for control in (False, True):
+            if control:
+                guarded = 'stop_lane(row, args.item, path, "close", "close-stop-failed")'
+                self.assertEqual(original.count(guarded), 1)
+                self.script.write_text(original.replace(guarded, "try:\n            " + guarded
+                                                        + "\n        except SystemExit:\n            pass"))
+            closed = self.call("close", "--item", "TEST-1")
+            kept = (closed.returncode, b"lane-host-ssh: close-stop-failed item=TEST-1" in closed.stderr,
+                    record.exists(), Path(self.row["clone"] + "-worktree").exists())
+            if control:
+                self.assertNotEqual(kept, (1, True, True, True), closed.stderr)
+            else:
+                self.assertEqual(kept, (1, True, True, True), closed.stderr)
+        self.script.write_text(original)
+
+    def test_close_ends_the_lane_group_before_it_removes_the_record(self):
+        # A lane whose SSH session held no terminal gets no hang-up when its
+        # window closes: the provider's close is its last stop.
+        for control in (False, True):
+            with self.subTest(control=control):
+                case = type(self)()
+                self.addCleanup(case.doCleanups)
+                case.setUp()
+                if control:
+                    original = case.script.read_text()
+                    stop = '        stop_lane(row, args.item, path, "close", "close-stop-failed")\n'
+                    self.assertEqual(original.count(stop), 1)
+                    case.script.write_text(original.replace(stop, ""))
+                lane = case.launch_lane()
+                closed = case.call("close", "--item", "TEST-1")
+                self.assertEqual(closed.returncode, 0, closed.stderr)
+                self.assertFalse((Path(case.row["clone"]) / ".git/lane-host-pid").exists())
+                try:
+                    lane.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                self.assertEqual(lane.poll() is None, control)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the job's start is read in procfs")
+    def test_stop_ends_the_worktrees_validation_runs_through_the_clone_runtime(self):
+        # A validation run leads a group of its own, which the lane's group
+        # stop does not reach: the clone's runtime stops it first, as it does
+        # a local lane's at its close. The planted run names a job this row
+        # started in a group of its own.
+        self.assertEqual(self.create().returncode, 0)
+        run = Path(self.row["clone"] + "-worktree") / "tmp/dev-validate-planted"
+        run.mkdir(parents=True)
+        (run / "start").write_text("start=1\n")
+        for control in (True, False):
+            job = subprocess.Popen(["sleep", "600"], process_group=0)
+            self.addCleanup(job.wait, 5)
+            self.addCleanup(lambda job=job: job.poll() is None and job.kill())
+            start = json.loads(subprocess.run([str(self.agent_runtime_binary()), "process", "identity", str(job.pid)],
+                                              check=True, capture_output=True).stdout)["result"]["start"]
+            (run / "command").write_text(json.dumps({"pid": job.pid, "start": start}))
+            (run / "stop").unlink(missing_ok=True)
+            original = self.script.read_text()
+            step = 'ORCH_STATE_DIR="$2/tmp" exec "$1$3" validate entry --stop --worktree "$2"'
+            self.assertEqual(original.count(step), 1)
+            if control:
+                self.script.write_text(original.replace(step, "exit 0"))
+            stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+            self.script.write_text(original)
+            self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=0\n"), stopped.stderr)
+            try:
+                job.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            self.assertEqual(job.poll() is None, control)
+        self.assertEqual((run / "stop").read_text(), "stop-requested\n")
+        job = subprocess.Popen(["sleep", "600"], process_group=0)
+        self.addCleanup(job.wait, 5)
+        self.addCleanup(lambda job=job: job.poll() is None and job.kill())
+        (run / "command").write_text(json.dumps({"pid": job.pid}))
+        (run / "stop").unlink()
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, refused.stdout, job.poll(),
+                          b"lane-host-ssh: stop-validations-failed item=TEST-1" in refused.stderr),
+                         (1, b"", None, True), refused.stderr)
 
     def test_close_preserves_and_restores_only_traced_render_drift(self):
         self.assertEqual(self.create().returncode, 0)
@@ -2888,16 +2856,29 @@ fi
 
     def test_close_stops_when_the_state_directory_does_not_resolve(self):
         # A checkout whose settings the loader refuses leaves the item's state
-        # unplaced: close stops before the worktree goes, rather than archive
+        # unplaced: close stops before anything goes, rather than archive
         # without it. A private env file that is no regular file is refused.
+        # With the worktree standing, the clone's runtime cannot read the
+        # worktree's validation runs under those settings and refuses first;
+        # with it removed there is no run to stop, and the state read refuses.
         created = self.create()
         self.assertEqual(created.returncode, 0, created.stderr)
         path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
         (path / ".env.local").mkdir()
         closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual((closed.returncode, closed.stdout, path.is_dir(),
+                          b"lane-host-ssh: close-validations-failed item=TEST-1 exit=2\n" in closed.stderr,
+                          b"settings-invalid" in closed.stderr), (1, b"", True, True, True), closed.stderr)
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(path)],
+                       check=True, capture_output=True)
+        clone_env = Path(self.row["clone"]) / ".env.local"
+        clone_env.unlink()
+        clone_env.mkdir()
+        closed = self.call("close", "--item", "TEST-1")
         self.assertNotEqual(closed.returncode, 0, closed.stderr)
         self.assertIn(b"lane-host-ssh: state-unresolved item=TEST-1", closed.stderr)
-        self.assertEqual((closed.stdout, path.is_dir()), (b"", True))
+        self.assertEqual((closed.stdout, clone_env.is_dir(), (Path(self.row["clone"]) / ".git/lane-host-item").exists()),
+                         (b"", True, True))
 
     def test_close_refuses_a_drift_patch_that_does_not_carry_the_path(self):
         self.assertEqual(self.create().returncode, 0)
@@ -3029,7 +3010,7 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
             Path(self.env["LAUNCH_RESULT"]).unlink(missing_ok=True)
             prefix = dict(field.split("=", 1) for field in output.decode().strip().split("\t"))["remote-prefix"]
             return subprocess.run([self.env["REAL_BASH"], "-c", prefix + " " + shlex.quote("exec " + shlex.quote(str(harness)))],
-                                  env=self.env, capture_output=True)
+                                  env=self.env, capture_output=True, start_new_session=True)
 
         launched = launch(result.stdout)
         self.assertEqual(launched.returncode, 0, launched.stderr)

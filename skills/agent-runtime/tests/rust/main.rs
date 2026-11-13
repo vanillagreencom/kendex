@@ -1339,3 +1339,402 @@ fn session_file_finds_the_rollout_by_its_id_and_answers_three_valued() {
     assert_eq!(code, Some(1));
     assert_eq!(reply["refusal"]["key"], "harness-unknown", "{reply}");
 }
+
+/// The binary's exit status and its one reply line, over `args`.
+fn reply_of(args: &[&std::ffi::OsStr]) -> (Option<i32>, serde_json::Value) {
+    let out = Command::new(binary())
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let reply = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
+        panic!(
+            "{args:?}: no reply: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    (out.status.code(), reply)
+}
+
+fn refusal_field(reply: &serde_json::Value, name: &str) -> Option<String> {
+    reply["refusal"]["fields"]
+        .as_array()?
+        .iter()
+        .find(|pair| pair[0] == name)
+        .and_then(|pair| pair[1].as_str().map(str::to_owned))
+}
+
+/// The reading `process identity` gives for `pid`, a process this row started.
+fn identity_reading(pid: u32) -> serde_json::Value {
+    let pid = pid.to_string();
+    reply_of(&["process".as_ref(), "identity".as_ref(), pid.as_ref()])
+        .1
+        .get("result")
+        .cloned()
+        .unwrap()
+}
+
+/// The pids a planted program wrote to `path`, once it wrote a whole line.
+fn pids_at(path: &std::path::Path) -> Vec<u32> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && text.ends_with('\n')
+        {
+            return text
+                .split_whitespace()
+                .map(|p| p.parse().unwrap())
+                .collect();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} never written",
+            path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// What a group row leaves on its way out, even past a failed assertion:
+/// the group its record names, stopped through the verb under test by each
+/// member's identity, then the session `setsid` made for the row, by its own
+/// group id, then every child this row holds, reaped.
+struct GroupWorld {
+    record: PathBuf,
+    session: Option<u32>,
+    children: Vec<std::process::Child>,
+}
+
+impl Drop for GroupWorld {
+    fn drop(&mut self) {
+        let _ = Command::new(binary())
+            .args(["process", "stop", "--grace-secs", "1", "--file"])
+            .arg(&self.record)
+            .output();
+        if let Some(session) = self.session {
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &format!("-{session}")])
+                .status();
+        }
+        for child in &mut self.children {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// A non-leader with no terminal, as an SSH server runs a command inside the
+/// group it shares with every other session's commands: the lead makes a new
+/// group in place, records its leader, and becomes the program; the group
+/// reads live with its members and the stop ends that group alone, the
+/// server's own group and its other member left running.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_lead_without_a_group_or_terminal_makes_the_group_the_stop_ends_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("lane-host-pid");
+    // `setsid` leads a new session and group here, the stand-in for the
+    // server; its background member runs the lead.
+    let server = r#"sleep 600 >/dev/null 2>&1 & printf '%s\n' "$!" > "$3/bystander"
+"$1" process lead --file "$2" -- sh -c 'sleep 600 >/dev/null 2>&1 & printf "%s %s\n" "$$" "$!" > "$1/lane"; wait' lane "$3" &
+wait"#;
+    let child = Command::new("setsid")
+        .args(["sh", "-c", server, "server"])
+        .arg(binary())
+        .arg(&record)
+        .arg(dir.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let server_pid = child.id();
+    let _world = GroupWorld {
+        record: record.clone(),
+        session: Some(server_pid),
+        children: vec![child],
+    };
+    let lane = pids_at(&dir.path().join("lane"));
+    let (leader, member) = (lane[0], lane[1]);
+    let bystander = pids_at(&dir.path().join("bystander"))[0];
+    let recorded: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert_eq!(recorded["pid"], leader, "{recorded}");
+    assert_eq!(recorded["start"], identity_reading(leader)["start"]);
+    let stat = std::fs::read_to_string(format!("/proc/{leader}/stat")).unwrap();
+    let pgrp: u32 = stat[stat.rfind(')').unwrap() + 1..]
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!((pgrp, leader != server_pid), (leader, true));
+    let file = record.as_os_str();
+    let read = |member: u32| {
+        let member = member.to_string();
+        reply_of(&[
+            "process".as_ref(),
+            "group".as_ref(),
+            "--file".as_ref(),
+            file,
+            "--member".as_ref(),
+            member.as_ref(),
+        ])
+    };
+    let (code, reply) = read(member);
+    assert_eq!(code, Some(0), "{reply}");
+    assert_eq!(
+        (
+            &reply["result"]["reading"],
+            &reply["result"]["pid"],
+            &reply["result"]["members"],
+            &reply["result"]["member"],
+        ),
+        (
+            &serde_json::json!("live"),
+            &serde_json::json!(leader),
+            &serde_json::json!(2),
+            &serde_json::json!(true),
+        ),
+        "{reply}"
+    );
+    assert_eq!(read(bystander).1["result"]["member"], false);
+    let stop = || {
+        reply_of(&[
+            "process".as_ref(),
+            "stop".as_ref(),
+            "--grace-secs".as_ref(),
+            "5".as_ref(),
+            "--file".as_ref(),
+            file,
+        ])
+    };
+    let (code, reply) = stop();
+    assert_eq!(code, Some(0), "{reply}");
+    assert_eq!(
+        reply["result"]["stop"],
+        serde_json::json!({"outcome": "stopped", "signaled": 2})
+    );
+    for pid in [leader, member] {
+        assert_eq!(identity_reading(pid)["reading"], "gone", "{pid}");
+    }
+    for pid in [server_pid, bystander] {
+        assert_eq!(identity_reading(pid)["reading"], "live", "{pid}");
+    }
+    assert_eq!(read(member).1["result"]["reading"], "gone");
+    assert_eq!(
+        stop().1["result"]["stop"],
+        serde_json::json!({"outcome": "already-gone"})
+    );
+}
+
+/// A caller that leads a group another process is in does not own that
+/// group: the lead refuses before it records or runs anything.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_lead_over_a_group_another_process_is_in_refuses_group_shared() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("lane-host-pid");
+    let shared = r#"sleep 600 >/dev/null 2>&1 &
+exec "$1" process lead --file "$2" -- touch "$3/ran""#;
+    let child = Command::new("setsid")
+        .args(["sh", "-c", shared, "shared"])
+        .arg(binary())
+        .arg(&record)
+        .arg(dir.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let _world = GroupWorld {
+        record: record.clone(),
+        session: Some(child.id()),
+        children: Vec::new(),
+    };
+    let out = child.wait_with_output().unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{reply}");
+    assert_eq!(reply["refusal"]["key"], "group-shared", "{reply}");
+    assert_eq!(refusal_field(&reply, "members").as_deref(), Some("1"));
+    assert!(!record.exists() && !dir.path().join("ran").exists());
+}
+
+/// A record whose group still runs refuses a second lead over it, whatever
+/// the caller's standing: a launch that skipped its stop never starts a
+/// second program, and the record stays as it was.
+#[test]
+fn a_lead_over_a_recorded_group_that_still_runs_refuses_group_live() {
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("lane-host-pid");
+    let running = Command::new("sleep")
+        .arg("600")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = running.id();
+    let _world = GroupWorld {
+        record: dir.path().join("none"),
+        session: None,
+        children: vec![running],
+    };
+    let identity = identity_reading(pid);
+    let text = serde_json::json!({"pid": pid, "start": identity["start"]}).to_string();
+    std::fs::write(&record, &text).unwrap();
+    let ran = dir.path().join("ran");
+    let (code, reply) = reply_of(&[
+        "process".as_ref(),
+        "lead".as_ref(),
+        "--file".as_ref(),
+        record.as_os_str(),
+        "--".as_ref(),
+        "touch".as_ref(),
+        ran.as_os_str(),
+    ]);
+    assert_eq!(code, Some(1), "{reply}");
+    assert_eq!(reply["refusal"]["key"], "group-live", "{reply}");
+    assert_eq!(refusal_field(&reply, "pid"), Some(pid.to_string()));
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), text);
+    assert!(!ran.exists());
+}
+
+/// A lead whose program cannot be run leaves no record naming a group
+/// nothing leads.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_lead_whose_program_cannot_run_removes_its_record_and_refuses_exec_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("lane-host-pid");
+    let out = Command::new("setsid")
+        .arg(binary())
+        .args(["process", "lead", "--file"])
+        .arg(&record)
+        .arg("--")
+        .arg(dir.path().join("absent"))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{reply}");
+    assert_eq!(reply["refusal"]["key"], "exec-failed", "{reply}");
+    assert!(!record.exists());
+}
+
+/// The recorded group, read and stopped: a member whose parent exited still
+/// names the leader's group and is reached; a process in another group is
+/// not. No record reads gone and stops nothing; a record of another shape
+/// refuses every verb that reads it.
+#[test]
+fn the_recorded_group_reads_and_stops_with_its_orphan_and_nothing_else() {
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("lane-host-pid");
+    let lane = Command::new("sh")
+        .args([
+            "-c",
+            r#"sleep 600 >/dev/null 2>&1 & printf '%s\n' "$!" > "$1/member"
+(sleep 600 >/dev/null 2>&1 & printf '%s\n' "$!" > "$1/orphan")
+exec sleep 600"#,
+            "lane",
+        ])
+        .arg(dir.path())
+        .process_group(0)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let leader = lane.id();
+    let bystander = Command::new("sleep")
+        .arg("600")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let bystander_pid = bystander.id();
+    let _world = GroupWorld {
+        record: record.clone(),
+        session: None,
+        children: vec![lane, bystander],
+    };
+    let member = pids_at(&dir.path().join("member"))[0];
+    let orphan = pids_at(&dir.path().join("orphan"))[0];
+    let identity = identity_reading(leader);
+    std::fs::write(
+        &record,
+        serde_json::json!({"pid": leader, "start": identity["start"]}).to_string(),
+    )
+    .unwrap();
+    let file = record.as_os_str();
+    let read = |member: u32| {
+        let member = member.to_string();
+        reply_of(&[
+            "process".as_ref(),
+            "group".as_ref(),
+            "--file".as_ref(),
+            file,
+            "--member".as_ref(),
+            member.as_ref(),
+        ])
+        .1["result"]
+            .clone()
+    };
+    let live = read(orphan);
+    assert_eq!(
+        (&live["reading"], &live["members"], &live["member"]),
+        (
+            &serde_json::json!("live"),
+            &serde_json::json!(3),
+            &serde_json::json!(true)
+        ),
+        "{live}"
+    );
+    assert_eq!(read(bystander_pid)["member"], false);
+    let stop = |file: &std::ffi::OsStr| {
+        reply_of(&[
+            "process".as_ref(),
+            "stop".as_ref(),
+            "--grace-secs".as_ref(),
+            "5".as_ref(),
+            "--file".as_ref(),
+            file,
+        ])
+    };
+    let (code, reply) = stop(file);
+    assert_eq!(code, Some(0), "{reply}");
+    assert_eq!(
+        reply["result"]["stop"],
+        serde_json::json!({"outcome": "stopped", "signaled": 3})
+    );
+    for pid in [leader, member, orphan] {
+        assert_eq!(identity_reading(pid)["reading"], "gone", "{pid}");
+    }
+    assert_eq!(identity_reading(bystander_pid)["reading"], "live");
+    assert_eq!(
+        read(orphan),
+        serde_json::json!({"reading": "gone", "member": false})
+    );
+    assert_eq!(
+        stop(file).1["result"]["stop"],
+        serde_json::json!({"outcome": "already-gone"})
+    );
+    let absent = dir.path().join("absent");
+    assert_eq!(
+        stop(absent.as_os_str()).1["result"]["stop"],
+        serde_json::json!({"outcome": "already-gone"})
+    );
+    std::fs::write(&record, "4242 Tue Nov 11 09:00:00 2026\n").unwrap();
+    for verb in [
+        &["process", "group", "--file"][..],
+        &["process", "stop", "--file"][..],
+    ] {
+        let mut args: Vec<&std::ffi::OsStr> = verb.iter().map(|word| word.as_ref()).collect();
+        args.push(file);
+        let (code, reply) = reply_of(&args);
+        assert_eq!(
+            (code, &reply["refusal"]["key"]),
+            (Some(1), &serde_json::json!("record-shape")),
+            "{verb:?}: {reply}"
+        );
+    }
+}

@@ -9,7 +9,7 @@
 # timeout: 30
 # harnesses: [claude, codex, pi, copilot, opencode, cursor]
 # requires: [lane-mail-deliver, lane-mail-halt, session-start-row, session-end-row, stop-failure-row, critical-path-deny, lane-mail-model-switch]
-# requires-skills: [orch, mailbox]
+# requires-skills: [orch, mailbox, agent-runtime]
 # ---
 
 set -euo pipefail
@@ -3391,26 +3391,20 @@ model_unavailable_notice() { # CAUSE OBSERVED [DEPENDENCY_DETAIL]
   hand_over "$notice"
 }
 
-# The SSH prefix owns the native PID record. A callback must still descend
-# from that live predecessor; a delayed callback must not stop a replacement.
+# The SSH prefix's group leader owns the native record: agent-runtime made
+# the lane's process group and records its leader. A callback must still run
+# in that live group; a delayed callback must not stop a replacement.
 model_native_record() {
-  local file record launch table descendants hops pid current=false
+  local file record launch group
   launch=$("$SCRIPTS/lane-marker" --launch-path "$COMMON" "$ITEM") || return 1
   [ -f "$launch" ] && [ ! -L "$launch" ] || return 1
   record=$(cat -- "$launch") || return 1
-  "$BASH" -euo pipefail -c '. "$1/lib/lane-state.sh"' _ "$SCRIPTS" || return 1
-  . "$SCRIPTS/lib/lane-state.sh"
   file=$(jq -er '.identity_file | strings | select(startswith("/"))' <<<"$record") || return 1
   [ -f "$file" ] && [ ! -L "$file" ] || return 1
-  lane_identity_read "$file" && lane_identity_status "$LANE_IDENTITY_PID" "$LANE_IDENTITY_START" || return 1
-  table=$(lane_process_table) || return 1
-  descendants=$(lane_process_below "$table" "$LANE_IDENTITY_PID" '.*' 1 "" pids) || return 1
-  while read -r hops pid; do
-    [ "$pid" != "$$" ] || current=true
-  done <<<"$descendants"
-  [ "$current" = true ] || return 1
-  jq -c --arg session "$SESSION" --arg pid "$LANE_IDENTITY_PID" --arg start "$LANE_IDENTITY_START" \
-    '. + {session_id:$session,launch:{pid:$pid,start:$start}}' <<<"$record"
+  group=$("${SCRIPTS%/orch/scripts}/agent-runtime/scripts/agent-runtime" process group --file "$file" --member "$$") || return 1
+  jq -ce --arg session "$SESSION" --argjson group "$group" \
+    'select($group.result.reading == "live" and $group.result.member == true)
+     | . + {session_id:$session,launch:{pid:($group.result.pid | tostring),start:$group.result.start}}' <<<"$record"
 }
 
 model_lane_association() { # RECORD SERVER

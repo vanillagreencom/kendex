@@ -525,6 +525,26 @@ pub(crate) fn start(
     )
 }
 
+/// The one group step: the process `command` runs leads a new process group
+/// of its own, set by `setpgid(0, 0)` just before its exec, with no fork of
+/// its own, on every unix std supports.
+fn lead_group(command: &mut Command) {
+    std::os::unix::process::CommandExt::process_group(command, 0);
+}
+
+/// Become `executable` with `args` in this process, its pid and start kept,
+/// leading a new process group first where `new_group`. The caller's
+/// environment and standard streams pass whole: the program replaces the
+/// caller. Returns only where the exec failed, with its cause.
+pub fn exec(executable: &OsStr, args: &[std::ffi::OsString], new_group: bool) -> std::io::Error {
+    let mut command = Command::new(executable);
+    command.args(args);
+    if new_group {
+        lead_group(&mut command);
+    }
+    std::os::unix::process::CommandExt::exec(&mut command)
+}
+
 /// The one spawn site. `alone`: the child's environment is `place.env`
 /// alone, nothing inherited.
 #[allow(clippy::too_many_arguments)]
@@ -547,7 +567,7 @@ fn spawn(
         command.env_clear();
     }
     if own_group {
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        lead_group(&mut command);
     }
     if let Some(cwd) = place.cwd {
         command.current_dir(cwd);

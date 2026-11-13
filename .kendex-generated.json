@@ -38,6 +38,7 @@
   ".agents/skills/agent-runtime/runtime/src/effects/testing.rs",
   ".agents/skills/agent-runtime/runtime/src/effects/window.rs",
   ".agents/skills/agent-runtime/runtime/src/error.rs",
+  ".agents/skills/agent-runtime/runtime/src/group.rs",
   ".agents/skills/agent-runtime/runtime/src/harness.rs",
   ".agents/skills/agent-runtime/runtime/src/host/mod.rs",
   ".agents/skills/agent-runtime/runtime/src/host/tmux.rs",

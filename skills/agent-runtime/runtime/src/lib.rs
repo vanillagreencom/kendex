@@ -16,6 +16,7 @@ pub mod controller;
 )]
 pub mod effects;
 pub mod error;
+pub mod group;
 pub mod harness;
 #[allow(
     clippy::disallowed_methods,
