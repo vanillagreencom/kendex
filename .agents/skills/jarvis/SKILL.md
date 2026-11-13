@@ -70,6 +70,9 @@ Read the linked workflow or reference for the task before acting.
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
 | Report committed Markdown growth and shape for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
+| Add an agent or skill, or change an installed agent | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [home layout](references/home-layout.md) |
+| Remember a fact or establish a workstream | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [memory](references/memory.md) |
+| Add a hook or schedule | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [verification](references/verification.md) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
 | Use an automation browser, fill a form or handle a bot check | [references/browser.md](references/browser.md) |

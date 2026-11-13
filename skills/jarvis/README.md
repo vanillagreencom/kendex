@@ -71,7 +71,9 @@ Your own files sit in the Jarvis home beside the package, and package updates le
 
 - `AGENTS.md` holds your standing instructions: who decides what, and which work Jarvis may do without asking.
 - `skills/NAME/` holds skills you write. Create `skills/my-task/SKILL.md` with a frontmatter `name: my-task` and a `description` that says when to read it, then the instructions below it. In your home's `kendex.toml`, declare `[sources."."]` with `path = "."`, then list the skill under `[skills.my-task]` with `source = "."`. Run `kendex refresh` from your home to install it.
+- `agents/NAME.md` holds agents you write. Give the agent a frontmatter `name` and `description`, followed by its scope and instructions. Reuse the same home source and list it under `[agents.NAME]` with `source = "."`. Refresh from your home and check the agent in each selected supported assistant. Change an installed agent through the manifest's agent overrides or `kendex fork`, rather than editing its generated file.
 - `memory/` holds facts and preferences under [Memory](references/memory.md). Keep secrets in a password manager, never in memory.
+- Ask Jarvis to remember a fact or establish a workstream through [Personal additions](references/home-contract.md#personal-additions). Workstream notes keep the goal, scope, owner and tracker links; tasks and waiting conditions stay in the tracker.
 - `kendex.settings.toml` holds shared settings under `[env]`, such as the report cadence, quiet hours, time zone and report folder. The [settings example](kendex.settings.toml.example) lists them.
 - `.env.local` holds secrets and settings for one computer only. Its values override `kendex.settings.toml`.
 
