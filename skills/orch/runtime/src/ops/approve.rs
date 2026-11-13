@@ -298,15 +298,12 @@ fn replies(settings: &Settings, r: &ApproveHead, head: &str, token: &str) -> Res
         .join(".agents/skills/github/scripts/github.sh");
     let pr = r.pr.to_string();
     // The router owns reader credential selection. Supply the fleet token only
-    // when neither an environment credential nor keyring can identify a reader;
-    // a credential line only a shell reads is the router's, which sources the
-    // private file itself.
+    // when neither an environment credential nor keyring can identify a reader.
     let has_env = settings
         .review
         .approval_reader_env
         .iter()
-        .any(|(key, value)| key != "GH_HOST" && !value.is_empty())
-        || !settings.review.approval_unread.is_empty();
+        .any(|(key, value)| key != "GH_HOST" && !value.is_empty());
     let mut env: Vec<_> = settings
         .review
         .approval_reader_env
@@ -492,14 +489,10 @@ pub fn run(
                 .ok_or_else(|| refuse("comment-file", &[]))?,
         ),
     };
-    // The credential, the app's login and the host must be read values; a
-    // reader credential only a shell reads stays the router's.
-    if settings
-        .review
-        .approval_unread
-        .iter()
-        .any(|key| !matches!(key.as_str(), "GH_TOKEN" | "GITHUB_TOKEN" | "GH_BOT_TOKEN"))
-    {
+    // Every key the approval reads must be a read value: a line only a shell
+    // reads is read by no reader, the github router's loader included, which
+    // refuses it.
+    if !settings.review.approval_unread.is_empty() {
         return Err(refuse("approval-setting-unread", &[]));
     }
     let token = crate::watch::security::read_token(settings.review.approval_token_file.as_deref())

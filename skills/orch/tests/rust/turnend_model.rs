@@ -141,6 +141,22 @@ fn recovery_job(lane: &Path) -> PathBuf {
     lane.join("tmp").join(format!("model-recovery-{ITEM}.unit"))
 }
 
+/// A stand-in for the runtime's entry the recovery's job runs, held until
+/// `release` exists (bounded at 30 seconds): the job then outlives the
+/// launch's read of it on any load. With no entry the job ends within
+/// milliseconds, and a loaded launch reads it gone and answers it refused.
+fn held_entry(lane: &Path, release: &Path) {
+    let scripts = lane.join(".agents/skills/orch/scripts");
+    fs::create_dir_all(&scripts).unwrap();
+    write_executable(
+        &scripts.join("orch-runtime"),
+        format!(
+            "#!/bin/sh\ni=0\nwhile [ ! -e '{}' ] && [ \"$i\" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n",
+            release.display()
+        ),
+    );
+}
+
 /// The keyed lines of the switch's answer: its stderr and the context it
 /// handed the session.
 fn told(out: &TurnOut) -> Vec<String> {
@@ -293,6 +309,10 @@ fn a_lanes_acquired_switch_tells_a_refused_recovery_once_with_its_key_line() {
     for (case, plant, cause, line, started) in cases {
         let world = TurnWorld::new();
         let lane = lane_in(&world);
+        let release = world.root.join("entry-release");
+        if started {
+            held_entry(&lane, &release);
+        }
         let mut entry = launched_entry(&world, "opus", &lane);
         plant(&lane, &mut entry);
         let mut fleet = json!({ "lanes": [entry] });
@@ -302,6 +322,7 @@ fn a_lanes_acquired_switch_tells_a_refused_recovery_once_with_its_key_line() {
         fs::write(fleet_path(&lane), fleet.to_string()).unwrap();
         let payload = switched(SESSION, Some("claude-sonnet-4-5"));
         let out = lane_turn(&world, &lane, "claude", &payload, PANE);
+        fs::write(&release, "").unwrap();
         assert_eq!(out.code, 0, "{case}: {}", out.stderr);
         assert_eq!(
             handed(&out),

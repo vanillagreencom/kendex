@@ -1224,7 +1224,7 @@ fn a_private_reader_identity_survives_the_approval_file_credential() {
 }
 
 #[test]
-fn a_reader_credential_only_a_shell_reads_refuses_no_verb_and_keeps_its_reader() {
+fn an_approval_key_only_a_shell_reads_refuses_the_approval_before_any_call() {
     let dir = world();
     let root = dir.path();
     let op = |root: &Path| {
@@ -1240,7 +1240,8 @@ fn a_reader_credential_only_a_shell_reads_refuses_no_verb_and_keeps_its_reader()
             .output()
             .unwrap()
     };
-    // The router sources the project's private file only inside a checkout.
+    // A reader credential in a shell's form in a checkout's private file: no
+    // reader reads it, the github router's loader refusing it as data.
     let init = support::program("git")
         .args(["init", "-q"])
         .current_dir(root)
@@ -1264,23 +1265,15 @@ fn a_reader_credential_only_a_shell_reads_refuses_no_verb_and_keeps_its_reader()
     );
     assert!(String::from_utf8_lossy(&inspect.stderr).contains("key=GH_TOKEN reason=shell-form"));
     let out = op(root);
-    assert!(
-        out.status.success(),
-        "{} {:?}",
-        String::from_utf8_lossy(&out.stderr),
+    assert!(!out.status.success());
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        reply["refusal"]["key"],
+        "approval-setting-unread",
+        "{reply} {:?}",
         calls(root)
     );
-    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(result["result"]["status"], "confirmed", "{result}");
-    // The router sourced the line itself: its reads ran as the lane.
-    let viewer: Vec<_> = calls(root)
-        .into_iter()
-        .filter(|(_, args)| args.iter().any(|a| a.contains("viewer {")))
-        .collect();
-    assert!(
-        !viewer.is_empty() && viewer.iter().all(|(token, _)| token == LANE_TOKEN),
-        "{viewer:?}"
-    );
+    assert!(!root.join("gh.log").exists(), "{:?}", calls(root));
     // A host the approval cannot read refuses the approval, before any call.
     let dir = world();
     let root = dir.path();

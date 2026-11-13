@@ -670,8 +670,8 @@ pub struct ReviewSettings {
     pub approval_login: Option<String>,
     pub approval_reader_env: Vec<(String, String)>,
     /// The approval keys the private env file sets in a form only a shell
-    /// reads, with no caller value over them: the approval cannot know
-    /// them, and the github router, which sources the file, reads them.
+    /// reads, with no caller value over them: no reader reads such a line,
+    /// since every loader reads the file as data and never runs it.
     pub approval_unread: Vec<String>,
     pub copilot_hold: String,
     pub wait: String,
