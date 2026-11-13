@@ -197,14 +197,16 @@ Overseer side:
               a line cursor nor an acknowledgement
 
 Owner channel, the overseer's own mailbox from any of its checkouts:
-  ask --item overseer --to owner --file PATH --options a,b
+  ask --item overseer --to owner --file PATH --options a,b [--purpose memory]
               (--recommend a | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM --do TEXT]
               --issue requires --do: plain words saying what the
               person does and what evidence closes it. It adds the configured
               Linear assignment, label, opening action line and comment.
               Tracker failures leave the chat ask open.
               a question for the owner, appended to to-overseer.jsonl with
-              `to` as a field. Every owner ask, a draft ask too, carries a
+              `to` as a field. --purpose memory adds `purpose: "memory"`,
+              marking a memory proposal; its text takes at most 256 UTF-8 bytes.
+              No other purpose is accepted. Every owner ask, a draft ask too, carries a
               deadline: --wait minutes from now, ORCH_ASK_WAIT_MINUTES
               (default 120) when --wait is not given. What the deadline
               does is the ask's form, stated here alone. --recommend names
@@ -235,7 +237,7 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               text_hash, the lowercase hex SHA-256 of text's UTF-8 bytes
               that lane-mail computes. The Jarvis session sends only when the
               approval it holds for that ask id names the same text_hash
-  notice --item overseer --to owner --file PATH [--ref MSGID [--progress]] [--attach PATH]
+  notice --item overseer --to owner --file PATH [--ref MSGID [--progress]] [--attach PATH] [--open URL]
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
               peer's line or a resolution, or an owner ask in
@@ -375,6 +377,10 @@ Options:
   --ref MSGID   ask and notice --to owner only: the owner note or owner ask
                 answered
   --progress    notice --to owner with --ref only: mark a step report
+  --purpose memory
+                ask --to owner only: a memory proposal, at most 256 UTF-8 bytes
+  --open URL    notice --to owner only: exactly one https URL; writes the optional
+                top-level string `open`, which Fleet offers the owner to open
   --attach PATH notice --to owner only: the file carried beside the text
   --recommend a ask --to owner only: the option that stands at the deadline
   --wait N      ask --to owner only: minutes until the ask's deadline
@@ -400,7 +406,7 @@ Counts include compacted rows. The first id stays original.
 Envelope, one JSON object per line: id, kind, at, from, re (answers and closes),
 halt (true on a directive sent with --halt), text and options (asks with
 choices), and the owner-channel fields each verb above writes: to, ref, progress
-(true only with --progress),
+(true only with --progress), open, purpose,
 attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (an ask's or notice's copy of its --ref envelope's
 delivery_id), thread_ts and parent (threaded owner directives only),
@@ -510,7 +516,7 @@ option-conflict, missing-value, option-required, item-invalid, after-invalid, bo
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress-needs-ref,
 recommend-invalid, recommend-missing, recommend-required, draft-field,
 draft-medium, attach-outside, attach-repeated,
-ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
+ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated, open-invalid, purpose-invalid, memory-too-long,
 overseer-only,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
@@ -612,6 +618,9 @@ fix=run `oversee register` from the orch skill in the session that should read t
     minutes-invalid) text='The option, or ORCH_ASK_WAIT_MINUTES, takes a non-negative integer number of minutes.' ;;
     to-invalid) text='--to takes owner or peer. A peer ask is `peer ask --repo`, which writes peer itself, so an ask or notice typed here takes owner.' ;;
     ref-invalid) text='--ref takes the id of an envelope: ASCII letters, digits, dot, underscore and hyphen.' ;;
+    purpose-invalid) text='--purpose takes memory only, on an owner ask.' ;;
+    memory-too-long) text='A memory proposal takes at most 256 UTF-8 bytes of text.' ;;
+    open-invalid) text='--open takes exactly one https URL.' ;;
     progress-needs-ref) text='A progress notice requires --ref to bind the step report to its request.' ;;
     ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
@@ -697,6 +706,8 @@ TO=""
 REF=""
 PROGRESS=0
 ATTACH=""
+OPEN=""
+PURPOSE=""
 RECOMMEND=""
 WAIT=""
 WAIT_GIVEN=0
@@ -749,6 +760,8 @@ while [ "$#" -gt 0 ]; do
     --receipts) RECEIPTS=1; shift ;;
     --ack) need_val "$@"; ACK="$2"; shift 2 ;;
     --to) need_val "$@"; TO="$2"; shift 2 ;;
+    --purpose) need_val "$@"; PURPOSE="$2"; shift 2 ;;
+    --open) need_val "$@"; OPEN="$2"; shift 2 ;;
     --ref) need_val "$@"; REF="$2"; shift 2 ;;
     --progress) PROGRESS=1; shift ;;
     --attach)
@@ -810,6 +823,10 @@ fi
 # with --box, since each mailbox file has its own logical line numbers.
 for given in $OPTS_GIVEN; do
   case "$given" in
+    --purpose)
+      [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --purpose
+      [ "$PURPOSE" = memory ] || refuse purpose-invalid "$PURPOSE" ;;
+    --open) [ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --open ;;
     --to)
       case "$TO" in owner | peer) ;; *) refuse to-invalid "$TO" ;; esac
       case "$VERB:$ITEM:$TO" in
@@ -867,6 +884,25 @@ esac
 for dependency in jq awk cat date mkdir mv tail tr; do
   command -v "$dependency" >/dev/null 2>&1 || refuse command-missing "$dependency"
 done
+
+# Fleet's owner-notice reader opens this exact URL. Reject whitespace before
+# urlsplit, which otherwise silently strips some control characters.
+if [ -n "$OPEN" ]; then
+  command -v python3 >/dev/null 2>&1 || refuse command-missing python3
+  python3 -c '
+import sys
+from urllib.parse import urlsplit
+value = sys.argv[1]
+try:
+    url = urlsplit(value)
+    url.port  # Reading it rejects malformed or out-of-range ports.
+    valid = (not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+             and url.scheme == "https" and bool(url.hostname))
+except ValueError:
+    valid = False
+sys.exit(0 if valid else 1)
+' "$OPEN" || refuse open-invalid --open
+fi
 
 # Slack's relay produces both pointer fields together on threaded directives.
 if [ -n "$THREAD_TS$PARENT" ]; then
@@ -1673,7 +1709,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   line="$(jq -cn --arg id "$id" --arg kind "$1" --argjson now "$now" --arg re "${2:-}" \
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
-    --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
+    --arg purpose "$PURPOSE" --arg open "$OPEN" --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
     --arg thread "$THREAD_TS" --slurpfile parent "$WORK_DIR/parent.json" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
@@ -1687,6 +1723,8 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $ref == "" then {} else {ref: $ref} end)
       + (if $progress == "1" then {progress: true} else {} end)
       + (if $attach == "" then {} else {attach: $attach} end)
+      + (if $open == "" then {} else {open: $open} end)
+      + (if $purpose == "" then {} else {purpose: $purpose} end)
       + (if $recommend == "" then {} else {recommend: $recommend} end)
       + (if $reserved == "1" then {reserved: true} else {} end)
       + (if $wait == "" then {} else {wait: ($wait | tonumber), deadline: (($now + ($wait | tonumber) * 60) | todate)} end)
@@ -2139,6 +2177,12 @@ case "$VERB" in
 
   ask | notice)
     lm_read_file
+    # Talk stores the proposal's envelope text as UTF-8, capped at 256 bytes.
+    # Match the envelope's removal of one final newline before counting bytes.
+    if [ "$PURPOSE" = memory ]; then
+      jq -en --rawfile text "$FILE" '$text | sub("\n$"; "") | utf8bytelength <= 256' >/dev/null ||
+        refuse memory-too-long --file
+    fi
     if [ "$VERB" = notice ] && [ -n "$OPTIONS" ]; then
       refuse option-unknown --options
     fi
