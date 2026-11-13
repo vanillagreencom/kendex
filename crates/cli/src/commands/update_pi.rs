@@ -478,9 +478,11 @@ fn plan_scope(
     let (declared, resolved) = declared_sources(env, scope, unrefreshed, &mut notes)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
+    // A declared package whose source was not evaluated is a note, not
+    // proof that nothing supplies it.
     let mut sourced = std::collections::BTreeSet::new();
     for (name, resolution) in resolved {
-        if matches!(resolution, Ok(pi_ext::Resolved::Ships(_))) {
+        if !matches!(resolution, Ok(pi_ext::Resolved::Retired { .. })) {
             sourced.insert(name.clone());
         }
         let key = kendex_core::lock::entry_key(
@@ -675,7 +677,9 @@ fn plan_lines(style: &Style, plan: &ScopePlan) -> Vec<(Stream, Vec<String>)> {
             ui::Status::Notice,
         ),
     )];
-    if plan.rows.is_empty() {
+    // A package kendex could not evaluate has a note and no row, and may
+    // be installed.
+    if plan.rows.is_empty() && plan.notes.is_empty() {
         drawn.push((
             Stream::Err,
             style.report_detail(&[Span::Prose("no pi packages installed")], "  "),
@@ -1050,7 +1054,9 @@ mod tests {
     /// `not-evaluated=` key on stderr; rich marks each row with what it
     /// needs: done, an install this run makes, a package blocked from
     /// installing, and a notice for what kendex leaves alone. Rich leaves a
-    /// missing version off and says the unevaluated package in words.
+    /// missing version off and says the unevaluated package in words. A
+    /// plan whose only package was not evaluated never says nothing is
+    /// installed.
     #[test]
     fn a_plan_draws_each_status_with_what_it_needs() {
         let source_dir = PathBuf::from("/catalog/pi-extensions/pi-widgets");
@@ -1098,7 +1104,7 @@ mod tests {
         let place = project.root.display();
         let project_plain = format!("err|{} ({place})", root.display());
         let project_rich = format!("err|    <90>{place}</>");
-        let rows: [(&ScopePlan, &[&str], &[&str]); 3] = [
+        let rows: [(&ScopePlan, &[&str], &[&str]); 4] = [
             (
                 &full,
                 &[
@@ -1142,6 +1148,23 @@ mod tests {
                     "err|<1;36>global</>  <90>0</>",
                     "err|    <90>/home/a/.pi/agent</>",
                     "err|    <90>no pi packages installed</>",
+                ],
+            ),
+            (
+                &plan(
+                    Vec::new(),
+                    vec![("pi-broken".into(), "source cat is not readable".into())],
+                ),
+                &[
+                    "err|user (/home/a/.pi/agent)",
+                    "err|  ! not-evaluated=pi-broken scope=user : source cat is not readable",
+                ],
+                &[
+                    "err|",
+                    "err|<1;36>global</>  <90>0</>",
+                    "err|    <90>/home/a/.pi/agent</>",
+                    "err|  <31>✗</> pi-broken: kendex could not check it",
+                    "err|    <90>source cat is not readable</>",
                 ],
             ),
             (

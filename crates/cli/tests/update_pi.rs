@@ -854,6 +854,30 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
     );
     let checked = kendex(&root, &project, &["check", "--scope", "project"]);
     assert_eq!(checked.status.code(), Some(0), "{checked:?}");
+
+    // The pin is cached, so an update with the catalog out of reach still
+    // evaluates the package against its revision.
+    fs::rename(&upstream, root.join("git/owner/gone")).unwrap();
+    for args in [
+        &["update-pi", "--check", "--scope", "project"][..],
+        &["update-pi", "--scope", "project"],
+    ] {
+        let output = kendex(&root, &project, args);
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+        let notes = String::from_utf8_lossy(&output.stderr);
+        assert!(!notes.contains("not-evaluated=pi-widgets"), "{notes}");
+    }
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+        "export const version = 1;\n"
+    );
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    let recorded = lock
+        .entries
+        .values()
+        .find(|entry| entry.name == "pi-widgets")
+        .unwrap();
+    assert_eq!(recorded.source_commit.as_deref(), Some(pinned.as_str()));
 }
 
 /// A global package installed from a tracking remote catalog whose cache
@@ -927,6 +951,13 @@ fn a_stale_remote_catalog_is_refreshed_or_refused_before_the_update() {
                 assert_eq!(output.status.code(), Some(1), "{run}: {output:?}");
                 let notes = String::from_utf8_lossy(&output.stderr);
                 assert_eq!(notes.matches(not_evaluated).count(), 1, "{run}: {notes}");
+                // The not-evaluated note is the package's only line: no
+                // plan row, unsourced or otherwise, names it.
+                let rows = String::from_utf8_lossy(&output.stdout);
+                assert!(
+                    !rows.split_whitespace().any(|word| word == "pi-widgets"),
+                    "{run}: {rows}"
+                );
             }
             assert_eq!(
                 fs::read_to_string(&installed).unwrap(),
