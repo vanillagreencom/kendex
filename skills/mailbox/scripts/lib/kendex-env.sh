@@ -99,7 +99,7 @@ kendex_env_message() { # KEY ARG...
       ;;
     private-env-line)
       printf 'kendex-env: private-env-line file=%s lineno=%s\n' "$1" "$2"
-      printf '%s\n' "::error::$1:$2: the private env file is read as data and never run, so each line is blank, a # comment, or [export ]KEY=VALUE, where VALUE is a single-quoted string with no apostrophe inside, a double-quoted string with no '\"', '\\', '\$' or backtick inside, or a bare word of letters, digits and _ . / : @ % + , = -, optionally followed by a space and a # comment"
+      printf '%s\n' "::error::$1:$2: the private env file is read as data and never run, so each line is blank, a # comment, or [export ]KEY=VALUE, where VALUE is a single-quoted string with no apostrophe inside, a double-quoted string with no '\"', '\\', '\$' or backtick inside, or a bare word with no whitespace, quotes, backslash, dollar sign, backtick or shell operator (; & | ( ) < >), and no tilde at the start or after a colon; on an export line, a bare word must also have no opening brace (use single quotes instead), optionally followed by a space and a # comment"
       ;;
     reserved-key)
       printf 'kendex-env: reserved-key file=%s key=%s\n' "$1" "$2"
@@ -283,11 +283,16 @@ kendex_load_settings_file() {
 # own string (kendex_decode_value), except where the shell reads a quoted
 # value differently: a `#` touching the closing quote is part of the value
 # there, and double quotes expand `$` and backticks.
-kendex_env_line_value() { # OUT_VAR RAW — value assigned to OUT_VAR; 1 = outside the grammar, OUT_VAR untouched
+kendex_env_line_value() { # OUT_VAR RAW [FORM] — value assigned to OUT_VAR; 1 = outside the grammar, OUT_VAR untouched
   local _kendex_line_decoded
-  local _kendex_line_bare='^([A-Za-z0-9_./:@%+,=-]*)([[:space:]]+#.*)?$'
+  local _kendex_line_bare='^([^[:space:]"'\''$`\\&;|()<>]*)([[:space:]]+#.*)?$'
   local _kendex_line_glued="^('[^']*'|\"[^\"]*\")#"
+  # Assignment words have no pathname expansion, brace expansion or word
+  # splitting. Tildes expand only at the start or immediately after a colon.
   if [[ "$2" =~ $_kendex_line_bare ]]; then
+    [[ "${BASH_REMATCH[1]}" != \~* && "${BASH_REMATCH[1]}" != *:\~* ]] || return 1
+    # Export arguments can brace-expand; keep that form quoted as data.
+    [[ "${3-}" != export || "${BASH_REMATCH[1]}" != *'{'* ]] || return 1
     printf -v "$1" '%s' "${BASH_REMATCH[1]}"
     return 0
   fi
@@ -324,7 +329,7 @@ kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::err
     _kendex_env_key=""
     if [[ "$_kendex_env_line" =~ $_kendex_env_assignment ]]; then
       _kendex_env_key="${BASH_REMATCH[1]}"
-      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" || _kendex_env_key=""
+      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" "$_kendex_env_form" || _kendex_env_key=""
     fi
     if [[ -z "$_kendex_env_key" ]]; then
       kendex_env_message private-env-line "$1" "$_kendex_env_lineno" >&2
