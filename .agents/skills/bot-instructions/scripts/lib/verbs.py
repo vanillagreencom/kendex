@@ -21,7 +21,7 @@ def _cause(exc):
     return str(exc) or type(exc).__name__
 
 
-def render_verb(ctx, root, dry_run=False):
+def render_verb(ctx, root, dry_run=False, discover=False):
     """Validate, then write. A validator failure leaves the repo untouched."""
     run.require_clean(ctx)
     # A marked file the TOML no longer produces is removed after the writes,
@@ -31,15 +31,19 @@ def render_verb(ctx, root, dry_run=False):
     gone = validators_repo.removed_orphans(ctx, tree.Index(root))
     paths = sorted(ctx.build.files)
     region = ctx.build.region_body is not None
-    nothing = [] if paths or region else [
-        "nothing to render: every [bot-instructions.bots] flag is false" if ctx.build.remote else
-        "nothing to render: local output needs [bot-instructions.bots] codex = true"
-    ]
-    if dry_run:
+    if discover:
+        paths = [path for path in paths if writer.inspect(root, path)[1]]
+        region = region and _region_owned(root)
+    elif dry_run:
         for path in paths:
             writer.replace(root, path, ctx.build.files[path], dry_run=True)
         if region:
             _splice(ctx, root, dry_run=True)
+    nothing = [] if paths or region else [
+        "nothing to render: every [bot-instructions.bots] flag is false" if ctx.build.remote else
+        "nothing to render: local output needs [bot-instructions.bots] codex = true"
+    ]
+    if dry_run or discover:
         lines = [f"would write {p}" for p in paths]
         if region:
             lines.append(
@@ -106,6 +110,15 @@ def _splice(ctx, root, dry_run=False):
 
     writer.replace(root, "AGENTS.md", transform=transform, require_marker=False,
                    dry_run=dry_run)
+
+
+def _region_owned(root):
+    """Whether discovery may report the region that a write may replace."""
+    existing, _ = writer.inspect(root, "AGENTS.md", require_marker=False)
+    if existing is None:
+        return False
+    current = render.region_of(existing)
+    return current is not None and marker.owns("AGENTS.md", current)
 
 
 def check_verb(ctx):
