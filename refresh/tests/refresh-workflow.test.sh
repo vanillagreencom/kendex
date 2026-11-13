@@ -149,7 +149,9 @@ executable(scripts / 'review-policy', '''case "$1" in
   *) exit 2 ;;
 esac
 ''')
-executable(scripts / 'install-latest.sh', '''printf 'latest|%s|%s\\n' "$GH_TOKEN" "$GITHUB_TOKEN" >>"$INSTALLS"
+installer_scripts = root / '.agents/skills/harness-ci/scripts'
+installer_scripts.mkdir(parents=True)
+executable(installer_scripts / 'install-latest.sh', '''printf 'latest|%s|%s\\n' "$GH_TOKEN" "$GITHUB_TOKEN" >>"$INSTALLS"
 ''')
 executable(bin_dir / 'curl', '''printf '%s\\n' "$*" >"$CURL_ARGS"
 printf '%s\\n' 'printf "main\\n" >>"$INSTALLS"; exit "$MAIN_EXIT"'
@@ -184,7 +186,7 @@ for policy, lock, main_exit, expected in (
             'vanillagreencom/kendex/f6ad9491a810a9256f04f66f8d083eb9db709602/install.sh')
         recorded = (root / 'github-env').read_text().splitlines()
         assert recorded == ([f'HARNESS_CI_LOCK_KENDEX={root}/kendex-lock/.local/bin/kendex'] if main_exit == 0 else [])
-needle = '  .agents/skills/review-gate/scripts/install-latest.sh'
+needle = '  .agents/skills/harness-ci/scripts/install-latest.sh'
 assert body.count(needle) == 1
 mutant = body.replace(needle, '  : # ' + needle.strip())
 assert mutant != body

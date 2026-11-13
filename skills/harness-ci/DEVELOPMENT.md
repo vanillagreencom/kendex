@@ -33,6 +33,8 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 
 ## Tests
 
+tests/install-latest.test.sh holds immutable release selection, refusal, credential isolation and latest-release delivery. Its disposable-copy controls exercise the same installer.
+
 `tests/` runs in kendex CI on every change to this repository; run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
 
 | Suite | Covers |
