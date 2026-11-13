@@ -159,8 +159,9 @@ fn ready_names_what_each_duty_lacks_and_its_fix() {
 /// wrapper is gone names the packages' install; a wrapper that answers
 /// neither built nor unbuilt reads `unanswered` and names orch's setup; a
 /// mailbox program that is not executable names the packages' install; and
-/// a job on a computer with neither `systemd-run` nor `setsid` names the
-/// one its launcher falls to.
+/// a lane launch, a controller start and a job on a computer without
+/// `setsid` each name it, a `systemd-run` there or not: a detached job's
+/// launcher falls to `setsid` wherever the service manager runs no unit.
 #[test]
 fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
     use std::os::unix::fs::PermissionsExt;
@@ -220,14 +221,21 @@ fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
     let bin = root.join("no-runner");
     let no_runner = std::ffi::OsString::from(support::path_without(&bin, "setsid"));
     let _ = fs::remove_file(bin.join("systemd-run"));
-    let (lines, code) = ready_in(&root, &["--duty", "job"], &[("PATH", &no_runner)]);
-    assert_eq!(
-        (lines, code),
+    let no_setsid = |duty: &str| {
         (
-            vec!["unready duty=job program=setsid cause=absent fix=install-setsid".to_owned()],
-            1
+            vec![format!(
+                "unready duty={duty} program=setsid cause=absent fix=install-setsid"
+            )],
+            1,
         )
-    );
+    };
+    for duty in ["launch", "controller", "job"] {
+        let answer = ready_in(&root, &["--duty", duty], &[("PATH", &no_runner)]);
+        assert_eq!(answer, no_setsid(duty), "{duty}");
+    }
+    support::write_executable(&bin.join("systemd-run"), "#!/bin/sh\nexit 4\n");
+    let answer = ready_in(&root, &["--duty", "job"], &[("PATH", &no_runner)]);
+    assert_eq!(answer, no_setsid("job"), "a systemd-run beside no setsid");
 }
 
 /// `args` run in a fresh `root` on a search path without `absent`.

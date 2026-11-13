@@ -10,9 +10,11 @@
 //! package's program is judged present and executable only, since each
 //! package refuses its own missing tools. A harness's binary stays the
 //! launch's own preflight: the walk chooses the harness per launch. A
-//! lookup that chooses between two mechanisms (the job's service manager or
-//! `setsid`, `flock` or the `mkdir` mutex) stays where the choice is made,
-//! and the table names what that choice needs.
+//! lookup that chooses between two mechanisms (`flock` or the `mkdir`
+//! mutex) stays where the choice is made, and the table names what that
+//! choice needs. A detached job's launcher falls to `setsid` wherever the
+//! service manager does not run its unit, so every duty that starts a job
+//! needs `setsid` whether or not `systemd-run` stands.
 
 use std::path::{Path, PathBuf};
 
@@ -58,9 +60,11 @@ pub enum Duty {
     /// `watch run`: the fleet's scheduler, which wakes the overseer through
     /// agent-runtime and reads its mailbox and its panes.
     Watch,
-    /// A lane's launch: a window on the fleet's server, a worktree's git.
+    /// A lane's launch: a window on the fleet's server, a worktree's git,
+    /// and the detached jobs its waiters run as.
     Launch,
-    /// A controller's start: a window on the fleet's server.
+    /// A controller's start: a window on the fleet's server, and the
+    /// detached jobs its watch and its succession run as.
     Controller,
     /// A controller's transfer or stop: a window, and the detached job that
     /// runs it, a service manager unit or a `setsid` group.
@@ -122,9 +126,6 @@ enum Need {
     Entry { name: &'static str, path: PathBuf },
     /// A program on `PATH`.
     OnPath(&'static str),
-    /// One of two mechanisms a choice made where they run takes, the second
-    /// the one it falls to: ready where either stands.
-    Either(&'static str, &'static str),
 }
 
 /// What a duty lacks on this computer and the fix.
@@ -181,9 +182,14 @@ fn needs(duty: Duty, settings: &Settings) -> Vec<Need> {
             Need::OnPath("tmux"),
             Need::OnPath("git"),
         ],
-        Duty::Launch => vec![Need::OnPath("tmux"), Need::OnPath("git")],
-        Duty::Controller | Duty::Register => vec![Need::OnPath("tmux")],
-        Duty::Job => vec![Need::OnPath("tmux"), Need::Either("systemd-run", "setsid")],
+        Duty::Launch => vec![
+            Need::OnPath("tmux"),
+            Need::OnPath("git"),
+            Need::OnPath("setsid"),
+        ],
+        Duty::Controller => vec![Need::OnPath("tmux"), Need::OnPath("setsid")],
+        Duty::Job => vec![Need::OnPath("tmux"), Need::OnPath("setsid")],
+        Duty::Register => vec![Need::OnPath("tmux")],
         Duty::CiProof | Duty::ReconcileItems => vec![Need::OnPath("gh"), Need::OnPath("git")],
         Duty::Prune => vec![
             Need::Entry {
@@ -210,8 +216,6 @@ pub fn judge(duty: Duty, settings: &Settings) -> Result<Vec<Unready>> {
             Need::OnPath(name) => on_path(name)
                 .is_none()
                 .then(|| (*name, "absent", format!("install-{name}"))),
-            Need::Either(first, second) => (on_path(first).is_none() && on_path(second).is_none())
-                .then(|| (*second, "absent", format!("install-{second}"))),
         };
         if let Some((program, cause, fix)) = found {
             lacking.push(Unready {
