@@ -1947,8 +1947,7 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
     // and `absent`, which the catalog does not offer. Each link below
     // leaves a project the catalog stands outside, as `ship`'s does.
     // The template also names `old`, which the catalog has since retired
-    // while keeping its files: nothing installs it, and its notice is all
-    // the install says of it.
+    // while keeping its files: nothing installs it.
     let market = home.join("market");
     fs::create_dir_all(market.join("skills/gh")).unwrap();
     fs::write(

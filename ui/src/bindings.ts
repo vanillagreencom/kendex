@@ -5972,10 +5972,6 @@ export type TemplateInstall_Deserialize = {
 	copied: string[],
 	/**  What a step said while it worked. */
 	notes: string[],
-	/**
-	 *  What the renders of the installed packages warned about, each with
-	 *  its fix: a link a copy keeps that reaches nothing from here, say.
-	 */
 	warnings: ItemWarning_Deserialize[],
 	/**
 	 *  Why the run stopped short of the whole template, or null where it
@@ -6013,10 +6009,6 @@ export type TemplateInstall_Serialize = {
 	copied: string[],
 	/**  What a step said while it worked. */
 	notes: string[],
-	/**
-	 *  What the renders of the installed packages warned about, each with
-	 *  its fix: a link a copy keeps that reaches nothing from here, say.
-	 */
 	warnings: ItemWarning_Serialize[],
 	/**
 	 *  Why the run stopped short of the whole template, or null where it

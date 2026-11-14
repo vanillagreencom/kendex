@@ -152,8 +152,6 @@ pub struct TemplateInstall {
     pub copied: Vec<String>,
     /// What a step said while it worked.
     pub notes: Vec<String>,
-    /// What the renders of the installed packages warned about, each with
-    /// its fix: a link a copy keeps that reaches nothing from here, say.
     pub warnings: Vec<crate::engine::ItemWarning>,
     /// Why the run stopped short of the whole template, or null where it
     /// finished. What `subscribed` and `declared` name is on disk either
