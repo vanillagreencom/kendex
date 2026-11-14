@@ -9161,10 +9161,16 @@ fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
 /// Through the real `launch-lane` and the real `close-lane`: a launch
 /// naming the item's obligation records it; the item's next phase naming
 /// none keeps it, and one naming another is refused `obligation-conflict`
-/// with nothing written; a record that binds none takes the obligation a
-/// later launch names; a parent named without its pair is refused
-/// `request-invalid` with nothing written; the cycle recorder copies the
-/// recorded obligation into the cycle.
+/// with nothing written; a first launch naming neither an obligation nor a
+/// repository records none, and its record takes the obligation a later
+/// launch names; a parent named without its pair is refused
+/// `request-invalid` with nothing written. A first launch naming a
+/// repository and no obligation records the item's own, its parent
+/// unknown; a relaunch and the next phase keep it, the cycle recorder
+/// copies it into the cycle, one naming another repository or item is
+/// refused `obligation-conflict`, a later launch naming the same item's
+/// parent fills it, and one naming another parent then is refused
+/// `obligation-conflict`, each refusal with nothing written.
 #[test]
 fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -9228,20 +9234,44 @@ fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     let answer = reply(&runner.op_fleet(&half));
     assert_eq!(answer["refusal"]["key"], "request-invalid", "{answer}");
     assert_eq!(runner.fleet(), before, "a half-named parent writes nothing");
+    let stop = |item: &str| {
+        let mut fleet = runner.fleet();
+        for lane in fleet["lanes"].as_array_mut().unwrap() {
+            if lane["item"] == item {
+                lane["status"] = json!("stopped");
+                lane["launch"] = Value::Null;
+            }
+        }
+        runner.write_fleet(&fleet);
+    };
+    let mut first = launch_request("KEN-S", runner.state_dir());
+    first["repo"] = json!("O/R");
+    let own = json!({"repo": "o/r", "item": "KEN-S", "parent_repo": null, "parent_item": null});
+    let report = effect_report(&runner.op_fleet(&first));
+    assert_eq!(
+        report["lane"]["obligation"], own,
+        "a first launch naming a repository records its own item: {}",
+        report["lane"]
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-S")));
+    let report = effect_report(&runner.op_fleet(&first));
+    assert_eq!(
+        report["lane"]["obligation"], own,
+        "the next phase keeps it: {}",
+        report["lane"]
+    );
+    stop("KEN-S");
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-S", runner.state_dir())));
+    assert_eq!(
+        report["lane"]["obligation"], own,
+        "a relaunch keeps it: {}",
+        report["lane"]
+    );
     // The close verb over the record the launch wrote, left stopped as a
     // kept sandbox leaves it, its delivery a direct push in the project's
     // checkout (the state directory) whose push log is unread: the cycle
     // the close records reads the launch's binding.
-    let relaunched = effect_report(&runner.op_fleet(&launch_request("KEN-O", runner.state_dir())));
-    assert_eq!(relaunched["intent"]["outcome"], "confirmed", "{relaunched}");
-    let mut fleet = runner.fleet();
-    for lane in fleet["lanes"].as_array_mut().unwrap() {
-        if lane["item"] == "KEN-O" {
-            lane["status"] = json!("stopped");
-            lane["launch"] = Value::Null;
-        }
-    }
-    runner.write_fleet(&fleet);
+    stop("KEN-S");
     let state = runner.state_dir().display().to_string();
     let out = program("git")
         .args(["-C", &state, "commit", "-q", "--allow-empty", "-m", "work"])
@@ -9254,20 +9284,51 @@ fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
         .unwrap();
     let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
     let answer = reply(&runner.op_fleet(
-        &json!({"op": "close-lane", "item": "KEN-O", "delivery": {"commit": {"commit": head}}}),
+        &json!({"op": "close-lane", "item": "KEN-S", "delivery": {"commit": {"commit": head}}}),
     ));
     assert_eq!(answer["result"]["word"], "closed", "{answer}");
     let lane = runner.fleet()["lanes"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|l| l["item"] == "KEN-O")
+        .find(|l| l["item"] == "KEN-S")
         .cloned()
         .unwrap();
     assert_eq!(
-        lane["cycle"]["obligation"], obligation,
+        lane["cycle"]["obligation"], own,
         "the cycle reads the launch's binding: {lane}"
     );
+    let mut named = launch_request("KEN-S", runner.state_dir());
+    let parent =
+        json!({"repo": "o/r", "item": "KEN-S", "parent_repo": "o/p", "parent_item": "KEN-P"});
+    let before = runner.fleet();
+    for (key, value) in [("repo", "o/x"), ("item", "KEN-X")] {
+        named["obligation"] = parent.clone();
+        named["obligation"][key] = json!(value);
+        let answer = reply(&runner.op_fleet(&named));
+        assert_eq!(
+            answer["refusal"]["key"], "obligation-conflict",
+            "{key}: {answer}"
+        );
+        assert_eq!(
+            runner.fleet(),
+            before,
+            "{key}: another lineage writes nothing"
+        );
+    }
+    named["obligation"] = parent.clone();
+    let report = effect_report(&runner.op_fleet(&named));
+    assert_eq!(
+        report["lane"]["obligation"], parent,
+        "the item's parent fills the unknown one: {}",
+        report["lane"]
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-S")));
+    let before = runner.fleet();
+    named["obligation"]["parent_item"] = json!("KEN-Z");
+    let answer = reply(&runner.op_fleet(&named));
+    assert_eq!(answer["refusal"]["key"], "obligation-conflict", "{answer}");
+    assert_eq!(runner.fleet(), before, "another parent writes nothing");
 }
 
 /// One origin for the fleet's checkout and a lane's: a clone of the
