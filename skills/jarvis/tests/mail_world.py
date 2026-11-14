@@ -25,9 +25,9 @@ def make_project(path, overseer=True):
         target.joinpath("scripts").symlink_to(REPO / "skills" / name / "scripts", target_is_directory=True)
     if overseer:
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "ORCH_", "KENDEX_"))}
-        state = REPO / "skills/orch/scripts/workflow-state"
-        subprocess.run([str(state), "init", "oversee"], cwd=path, env=clean, check=True, capture_output=True)
-        subprocess.run([str(state), "set", "oversee", "controller", os.environ.get("MAIL_WORLD_OVERSEER") or json.dumps({"pane": "%1", "server": str(os.getpid())})],
+        runtime = REPO / "skills/orch/scripts/orch-runtime"
+        subprocess.run([str(runtime), "state", "init", "--fleet"], cwd=path, env=clean, check=True, capture_output=True)
+        subprocess.run([str(runtime), "state", "set", "--fleet", "/controller", os.environ.get("MAIL_WORLD_OVERSEER") or json.dumps({"pane": "%1", "server": str(os.getpid())})],
                        cwd=path, env=clean, check=True, capture_output=True)
     return path
 

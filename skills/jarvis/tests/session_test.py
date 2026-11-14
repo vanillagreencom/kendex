@@ -926,7 +926,7 @@ class SessionContract(unittest.TestCase):
                                 capture_output=True, text=True, check=True).stdout.strip()
         pane = self.env | {"TMUX": terminal["server"] + "," + server + ",0", "TMUX_PANE": terminal["pane"],
                            "CLAUDE_CONFIG_DIR": str(self.account), "PWD": str(self.home)}
-        registered = subprocess.run([str(SKILLS / "orch/scripts/oversee"), "register"], cwd=self.home, env=pane,
+        registered = subprocess.run([str(SKILLS / "orch/scripts/orch-runtime"), "register", "--fleet"], cwd=self.home, env=pane,
                                     capture_output=True, text=True, timeout=60)
         self.assertEqual(registered.returncode, 0, registered.stdout + registered.stderr)
         self.assertEqual(self.controller().get("seat"), "jarvis", "the register dropped the seat")

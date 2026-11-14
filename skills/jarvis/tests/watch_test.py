@@ -1567,7 +1567,7 @@ with open(sys.argv[1], "ab") as out:
             successor.batch(60)
             successor.batch(75)
             self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")] * 2)
-            path = self.command([REPO / "skills/orch/scripts/workflow-state", "progress-report-path"])
+            path = self.command(["sh", "-c", '"$0" state progress-report-path | jq -er .result.path', REPO / "skills/orch/scripts/orch-runtime"])
             self.assertEqual(path.returncode, 0, path.stderr)
             report = Path(path.stdout.strip())
             report.write_text("checkpoint readings\n")

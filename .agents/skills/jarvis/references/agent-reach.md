@@ -54,7 +54,7 @@ Report the actual cause in plain words. Do not retry or work around a refusal.
 
 | Cause | Action |
 |---|---|
-| `overseer-absent` or owner-note's `no-overseer` | Nothing was sent. With mailbox alone, offer the [directive install](#install). With orch, the agent's session must run `oversee register` in its own tmux pane. Offer [Control host setup](#control-host-setup) first for a session there. Owner-note's `no-overseer` means no tried machine listed a matching root with an overseer. |
+| `overseer-absent` or owner-note's `no-overseer` | Nothing was sent. With mailbox alone, offer the [directive install](#install). With orch, the agent's session must run `orch-runtime register --fleet` in its own tmux pane. Offer [Control host setup](#control-host-setup) first for a session there. Owner-note's `no-overseer` means no tried machine listed a matching root with an overseer. |
 | `overseer-unreadable` | Nothing was sent. Report the fleet-record read failure. |
 | `no-reader` from owner-note | Nothing was sent. agent-runtime's controller status reads the recorded overseer not live (`live=false`). Offer registration or a fleet launch in the intended checkout. |
 | `reader-unjudged` from owner-note | Nothing was sent. Report the failed read its `cause=` and agent-runtime's refusal name; do not treat it as a stopped overseer. |

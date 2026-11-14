@@ -72,9 +72,9 @@ class Presence(unittest.TestCase):
                     test.addCleanup(lambda: (process.kill(), process.wait(), process.stdin.close()))
                     started = subprocess.run([real_ps, "-o", "lstart=", "-p", str(process.pid)], check=True, text=True,
                                              capture_output=True, env=dict(os.environ, LC_ALL="C", TZ="UTC")).stdout
-                    subprocess.run([str(root / ".agents/skills/orch/scripts/workflow-state"), "update", "oversee",
-                                    ".controller.harness_pid = %s | .controller.harness_start = %s"
-                                    % (json.dumps(str(process.pid)), json.dumps("lstart:" + started.strip()))],
+                    subprocess.run([str(root / ".agents/skills/orch/scripts/orch-runtime"), "state", "set", "--fleet",
+                                    "/controller/harness_pid", str(process.pid),
+                                    "/controller/harness_start", "lstart:" + started.strip()],
                                    cwd=root, env=os.environ, check=True, capture_output=True)
         state = Harness()
         state.write_text("idle")
@@ -178,12 +178,12 @@ class Presence(unittest.TestCase):
                 self.assertFalse(watch.live(epoch+480), observed)
                 no_renew(epoch+480)
             state.write_text("idle")
-            workflow = root / ".agents/skills/orch/scripts/workflow-state"
-            subprocess.run([str(workflow), "update", "oversee", '.controller.session_id = null'],
+            runtime = root / ".agents/skills/orch/scripts/orch-runtime"
+            subprocess.run([str(runtime), "state", "set", "--fleet", "/controller/session_id", "null"],
                            cwd=root, env=os.environ, check=True, capture_output=True)
             self.assertFalse(watch.live(epoch+480))
             no_renew(epoch+480)
-            subprocess.run([str(workflow), "update", "oversee", '.controller.session_id = "s1"'],
+            subprocess.run([str(runtime), "state", "set", "--fleet", "/controller/session_id", "s1"],
                            cwd=root, env=os.environ, check=True, capture_output=True)
             def warnings():
                 # Delivered warnings leave the input log; the mailbox owns their receipts.
