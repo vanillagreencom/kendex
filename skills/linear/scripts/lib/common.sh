@@ -80,7 +80,7 @@ kendex_load_project_env "$PROJECT_ROOT"
 # project file would otherwise read as if it still redirected something.
 if [[ -n "${LINEAR_CACHE_ROOT+set}" ]]; then
     printf '%s\n' 'linear-setting: retired=LINEAR_CACHE_ROOT' >&2
-    printf '%s\n' 'Remove LINEAR_CACHE_ROOT from the environment, kendex.settings.toml and .env.local: every read goes to the live API and no local store exists to redirect.' >&2
+    printf '%s\n' 'Remove LINEAR_CACHE_ROOT from the environment, kendex.settings.toml and .env.local: no local store exists to redirect.' >&2
     exit 1
 fi
 

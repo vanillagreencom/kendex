@@ -1216,10 +1216,11 @@ set_sort_order() {
     normalize_mutation_response "$result" "projectUpdate" "project"
 }
 
-# Placement against the declared project map, read live: every open team
-# issue outside a map project, and every boundary and project-kind finding
-# the Audit section of project-management references/project-map.md lists.
-# Read-only; it reports and never moves an issue. Findings are data, so it
+# Placement against the declared project map: every open team issue outside
+# a map project, and every boundary and project-kind finding the Audit section
+# of project-management references/project-map.md lists. The open issues come
+# from the team listing or, given --inventory FILE, the pass's inventory
+# (linear_inventory). Read-only; it reports and never moves an issue. Findings are data, so it
 # exits 0 with them; a read it cannot finish fails with no output.
 audit_projects() {
     local team="" inventory=""

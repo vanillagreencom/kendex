@@ -326,9 +326,11 @@ delete_label() {
     normalize_mutation_response "$result" "issueLabelDelete" "issueLabel"
 }
 
-# Drift against the declared taxonomy, read live: each undeclared label on the
-# team's open issues with the issues carrying it, and each name both a team
-# label and a workspace label use. Read-only; it reports and never relabels.
+# Drift against the declared taxonomy: each undeclared label on the team's
+# open issues with the issues carrying it, and each name both a team label and
+# a workspace label use. The open issues come from the team listing or, given
+# --inventory FILE, the pass's inventory (linear_inventory). Read-only; it
+# reports and never relabels.
 audit_labels() {
     local team="" inventory=""
     while [[ $# -gt 0 ]]; do

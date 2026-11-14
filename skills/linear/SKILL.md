@@ -1,7 +1,7 @@
 ---
 name: linear
 description: "Load for any Linear read or write: issues, projects, cycles, milestones, initiatives, labels."
-summary: "Bash CLI over Linear's GraphQL API, read live: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
+summary: "Bash CLI over Linear's GraphQL API: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
 license: MIT
 user-invocable: true
 metadata:

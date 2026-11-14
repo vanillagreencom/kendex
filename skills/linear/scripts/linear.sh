@@ -133,7 +133,7 @@ case "$resource" in
     # what to run instead and exits nonzero, so a caller still running it fails
     # rather than reading a store that no longer exists.
     sync)
-        echo "linear: removed=sync replacement=none: every read goes to the live API, so drop the sync step" >&2
+        echo "linear: removed=sync replacement=none: no local store exists to sync, so drop the sync step (linear.sh --help)" >&2
         exit 1
         ;;
     cache)
