@@ -111,8 +111,8 @@ if [ -z "${MAILBOX_UNDER_TEST:-}" ]; then
         '. "$SCRIPT_DIR/lib/common-root.sh"; . "$ORCH_SCRIPTS/lib/lane-host-read.sh"'
       row=()
     elif [ "$control" = reader ]; then
-      mutate_file "$TMP_ROOT/$control/scripts/lane-mail" 'if [ ! -f "$ORCH_SCRIPTS/lib/overseer-launch.sh" ]; then' \
-        'if [ ! -f "$ORCH_SCRIPTS/lib/overseer-launch.sh" ]; then return 0;'
+      mutate_file "$TMP_ROOT/$control/scripts/lane-mail" 'if [ ! -x "$AGENT_RUNTIME_SCRIPTS/agent-runtime" ]; then' \
+        'if [ ! -x "$AGENT_RUNTIME_SCRIPTS/agent-runtime" ]; then return 0;'
       row=(--reader-row)
     elif [ "$control" = attach ]; then
       mutate_file "$TMP_ROOT/$control/scripts/lane-mail" \

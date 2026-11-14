@@ -1002,7 +1002,7 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
     );
 }
 
-fn repair_passes(mode: &str) {
+fn repair_passes(mode: &str, agent_runtime: &std::path::Path) {
     use agent_runtime::clock::{Clock, SystemClock};
     use orch_runtime::schedule::Duty;
     use orch_runtime::watch::{Baseline, Tick, tracker};
@@ -1043,9 +1043,25 @@ fn repair_passes(mode: &str) {
         "from":"overseer:test","re":"1780000000-12-34","issue":"T-7","tracker_label":"owner-gated",
         "tracker_comment":"question-1","text":""});
     fs::write(mail.join("to-overseer.jsonl"), format!("{ask}\n{posted}\n")).unwrap();
-    let real_mail =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mailbox/scripts/lane-mail");
-    let cli = support::isolated_program(&real_mail.canonicalize().unwrap());
+    // The mailbox as an installed checkout lays it out: its program and
+    // library under `mailbox/scripts`, and agent-runtime's entry two
+    // directories up, whose controller status a send to the overseer asks
+    // first; the entry is the binary the shipped wrapper runs from a set-up
+    // cache.
+    let real_mail = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/scripts/lane-mail")
+        .canonicalize()
+        .unwrap();
+    let packages = world.dir.path().join("packages");
+    let mailbox = packages.join("mailbox/scripts");
+    let shared = packages.join("agent-runtime/scripts");
+    for dir in [&mailbox, &shared] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    std::os::unix::fs::symlink(&real_mail, mailbox.join("lane-mail")).unwrap();
+    std::os::unix::fs::symlink(real_mail.with_file_name("lib"), mailbox.join("lib")).unwrap();
+    std::os::unix::fs::symlink(agent_runtime, shared.join("agent-runtime")).unwrap();
+    let cli = support::isolated_program(&mailbox.join("lane-mail"));
     let cli = cli.display().to_string();
     // The watch runs in the project checkout, the repository the mailbox
     // takes an answer's send to belong to; this process runs this row alone.
@@ -1140,16 +1156,21 @@ fn repair_passes(mode: &str) {
 #[test]
 fn an_owner_answer_is_delivered_once_whatever_its_description_repair_did() {
     const ROW: &str = "an_owner_answer_is_delivered_once_whatever_its_description_repair_did";
+    const RUNTIME: &str = "REPAIR_AGENT_RUNTIME";
     if let Some(mode) = std::env::var_os("REPAIR_CHILD") {
-        repair_passes(&mode.to_string_lossy());
+        let runtime = std::env::var_os(RUNTIME).expect("the parent names agent-runtime");
+        repair_passes(&mode.to_string_lossy(), runtime.as_ref());
         return;
     }
     // Each mode's passes run in a child, which moves into the world's
-    // checkout as the watch runs there.
+    // checkout as the watch runs there; agent-runtime is built here, where
+    // cargo has its own home.
+    let runtime = support::agent_runtime();
     for mode in ["write.drop", "", "write.lost", "write.quota"] {
         let out = support::program(std::env::current_exe().unwrap())
             .args(["--exact", ROW, "--nocapture"])
             .env("REPAIR_CHILD", mode)
+            .env(RUNTIME, runtime)
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);

@@ -41,15 +41,18 @@ for pair in "$R1 $R2" "$R3 $R4"; do
     "true" "no message reaches generation of $1 twice"
 done
 
-# An unreadable generation refuses the delivery rather than guess a reader.
+# An unreadable generation refuses the delivery rather than guess a reader,
+# at the relay's own read of the record.
 generation '"x"'
 reply 'Unreadable reader.' "$ROOT_TS" 2>"$SK_TMP/refused.err"
-assert_eq "$RC=$(carried "$REPLY")" "1=" "a record whose generation cannot be read refuses the delivery"
+assert_eq "$RC=$(carried "$REPLY")=$(grep -c 'fleet record .overseer.generation' "$SK_TMP/refused.err")" "1==1" \
+  "a record whose generation cannot be read refuses the delivery at the relay's read"
 
 # Controls plant defects in copies of the runtime, never in the checkout.
 sk_mutant reader relay.py 'raise Refusal\("lane-mail-failed", f"\{command\} \{\(proc[^\n]*' 'return 0'
-reply 'Read as zero.' "$ROOT_TS"
-assert_eq "$RC" "0" "control: reading an unreadable generation as 0 breaks the refusal assertion"
+reply 'Read as zero.' "$ROOT_TS" 2>"$SK_TMP/refused.err"
+assert_eq "$RC=$(grep -c 'fleet record .overseer.generation' "$SK_TMP/refused.err")" "1=0" \
+  "control: reading an unreadable generation as 0 leaves the refusal to lane-mail's own record read"
 sk_bin_reset
 generation 2
 sk_mutant mark relay.py 'mark = thread\.reads\.get\(generation\) if thread is not None else None' 'mark = None'

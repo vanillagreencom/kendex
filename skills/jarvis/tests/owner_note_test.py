@@ -25,30 +25,42 @@ class OwnerNote(MailWorld):
         self.home = make_project(self.root / "home", overseer=False)
         self.note = self.root / "note.md"
         self.note.write_text(NOTE)
-        # Synthetic process/pane snapshots at lane-mail's external boundary;
-        # the recorded pid is this still-owned test process, never a guessed id.
-        self.processes = self.root / "processes"
-        self.panes = self.root / "panes"
-        self.processes.write_text("%s tmux\n" % os.getpid())
-        self.panes.write_text("%s 1790000000 %%1\n" % os.getpid())
-        self.other_panes = self.root / "other-panes"
-        self.other_panes.write_text("%s 1790000000 %%1\n" % (os.getpid() + 1))
-        self.env.update(MAIL_TEST_PROCESSES=str(self.processes), MAIL_TEST_PANES=str(self.panes),
-                        MAIL_TEST_OTHER_PANES=str(self.other_panes))
-        real_ps = shlex.quote(shutil.which("ps"))
-        self.executable("ps", '#!/bin/sh\n'
-                        'if [ "$*" = "-A -o pid= -o comm=" ]; then\n'
-                        '  [ -z "${MAIL_TEST_PS_ERROR:-}" ] || { echo process-read-failed >&2; exit 1; }\n'
-                        '  cat "$MAIL_TEST_PROCESSES"\n'
-                        'else exec ' + real_ps + ' "$@"; fi\n')
-        self.executable("tmux", '#!/bin/sh\n[ "$1" = list-panes ] || exit 1\n'
-                        'if [ -n "${MAIL_TEST_READER_SOCKET:-}" ] && '
-                        '[ "${TMUX%%,*}" != "$MAIL_TEST_READER_SOCKET" ]; then\n'
-                        '  cat "$MAIL_TEST_OTHER_PANES"; exit\nfi\n'
-                        '[ -z "${MAIL_TEST_SOCKET_GONE:-}" ] || '
-                        '{ echo "no server running on $MAIL_TEST_READER_SOCKET" >&2; exit 1; }\n'
-                        '[ -z "${MAIL_TEST_PANE_ERROR:-}" ] || { echo pane-list-failed >&2; exit 1; }\n'
-                        'cat "$MAIL_TEST_PANES"\n')
+        # The overseer every world records is a session on this test's own
+        # tmux server, on its own socket and reading no configuration, which
+        # agent-runtime's controller status judges for lane-mail. The server
+        # keeps a second window's pane after its process exited, and a third
+        # window's pane was closed.
+        self.socket = self.root / "reader.sock"
+
+        def tmux(*args):
+            result = self.command(["tmux", "-S", self.socket, "-f", "/dev/null", *args], self.root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
+        tmux("new-session", "-d", "-s", "reader", "-x", "80", "-y", "24", "exec sleep 600")
+        self.addCleanup(self.command, ["tmux", "-S", self.socket, "kill-server"], self.root)
+        running = tmux("display-message", "-p", "-t", "=reader:", "#{pane_id}")
+        tmux("set-option", "-g", "remain-on-exit", "on")
+        self.dead_pane = tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "=reader:", "exit 3")
+        self.closed_pane = tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "=reader:", "exec sleep 600")
+        tmux("kill-pane", "-t", self.closed_pane)
+        for _ in range(100):
+            if tmux("display-message", "-p", "-t", self.dead_pane, "#{pane_dead}") == "1":
+                break
+            self.command(["sleep", "0.05"], self.root)
+        self.assertEqual(tmux("display-message", "-p", "-t", self.dead_pane, "#{pane_dead}"), "1")
+        server, start = tmux("display-message", "-p", "#{pid} #{start_time}").split()
+        self.reader = {"server": server, "server_start": int(start), "pane": running, "server_socket": str(self.socket)}
+        self.gone_server = self.command(["sh", "-c", "echo $$"], self.root).stdout.strip()
+        # A ps that cannot run, for the one process read a record's start
+        # recorded in ps's own form asks.
+        self.failing_ps = self.root / "failing-ps"
+        self.failing_ps.mkdir()
+        (self.failing_ps / "ps").write_text("#!/bin/sh\necho ps-refused >&2\nexit 2\n")
+        (self.failing_ps / "ps").chmod(0o755)
+        recorded = os.environ.get("MAIL_WORLD_OVERSEER")
+        os.environ["MAIL_WORLD_OVERSEER"] = json.dumps(self.reader)
+        self.addCleanup(lambda: os.environ.pop("MAIL_WORLD_OVERSEER") if recorded is None
+                        else os.environ.update(MAIL_WORLD_OVERSEER=recorded))
         self.executable("ssh", '#!/bin/sh\nprintf "%s\\n" "$1" >> "$SSH_LOG"\nshift\ncd "$REMOTE_HOME" || exit 1\n'
                         'HOME="$REMOTE_HOME" REGISTRY="$REMOTE_REGISTRY" TMPDIR="$REMOTE_TMP" exec sh -c "$*"\n')
 
@@ -135,32 +147,32 @@ class OwnerNote(MailWorld):
                     self.assertEqual(calls, [])
 
     def test_reader_required(self, only=None):
-        # Succession keeps the predecessor's identity while pending, then
-        # publishes the opened successor before either takes another turn.
-        live = {"server": str(os.getpid()), "server_start": 1790000000, "pane": "%1"}
-        socket = str(self.root / "overseer socket")
-        recorded = dict(live, server_socket=socket)
-        # Managed Jarvis supplies its named-server TMUX; SSH can supply none.
-        other = {"TMUX": str(self.root / "jarvis socket") + ",%s,0" % os.getpid(),
-                 "MAIL_TEST_READER_SOCKET": socket}
+        # The recorded overseer is judged where its record names it, on this
+        # test's own tmux server: a session that stopped, a pane its process
+        # left, an earlier server or a gone one has no reader, and a read that
+        # fails is unjudged with agent-runtime's cause. Succession keeps the
+        # predecessor's identity while pending, then publishes the opened
+        # successor before either takes another turn.
+        live = self.reader
+        silent = str(self.root / "silent.sock")
         rows = (
-            ("unnamed", {"window": "@1"}, {}, "no-reader", "unnamed"),
-            ("stopped", dict(live, pane="%9"), {}, "no-reader", "pane-gone"),
-            ("reused", dict(recorded, server_start=1780000000), other, "no-reader", "pane-gone"),
-            ("process-unreadable", live, {"MAIL_TEST_PS_ERROR": "1"}, "reader-unjudged", "server"),
-            ("pane-unreadable", recorded, dict(other, MAIL_TEST_PANE_ERROR="1"), "reader-unjudged", "server"),
-            ("pending", dict(live, pending={"launch_line": "next overseer"}), {}, None, None),
+            ("unnamed", {"window": "@1"}, {}, "no-reader", "live=false"),
+            ("stopped", dict(live, pane=self.closed_pane), {}, "no-reader", "live=false"),
+            ("dead", dict(live, pane=self.dead_pane), {}, "no-reader", "live=false"),
+            ("reused", dict(live, server_start=live["server_start"] - 1), {}, "no-reader", "live=false"),
+            ("server-gone", dict(live, server=self.gone_server, server_socket=str(self.root / "gone.sock")), {},
+             "no-reader", "live=false"),
+            ("server-unreachable", dict(live, server_socket=silent), {}, "reader-unjudged", "cause=server-unreachable"),
+            ("process-unreadable", dict(live, harness_pid=live["server"], harness_start="Thu Nov 13 10:00:00 2026"),
+             {"PATH": str(self.failing_ps) + os.pathsep + self.env["PATH"]}, "reader-unjudged", "cause=ps-exit-2"),
+            ("pending", dict(live, pending={"harness": "claude", "model": "opus"}), {}, None, None),
             ("successor", dict(live, generation=2), {}, None, None),
             ("older", live, {}, "option-unknown", None),
-            ("recorded-caller", recorded, other, None, None),
-            ("recorded-default", recorded, dict(other, TMUX=""), None, None),
-            ("recorded-wrong-server", recorded, dict(other, MAIL_TEST_PANES=str(self.other_panes)),
-             "reader-unjudged", "server"),
-            ("recorded-gone", recorded, dict(other, MAIL_TEST_SOCKET_GONE="1"), "no-reader", "pane-gone"),
-            ("empty-socket", dict(live, server_socket=""), {}, None, None),
-            ("legacy-other-server", live, other, "reader-unjudged", "server"),
+            ("recorded", live, {}, None, None),
+            # Managed Jarvis supplies its named-server TMUX; SSH can supply none.
+            ("caller-elsewhere", live, {"TMUX": silent + ",1,0"}, None, None),
         )
-        for name, record, extra, refusal, cause in rows:
+        for name, record, extra, refusal, field in rows:
             if only is not None and name != only:
                 continue
             for host in (False, True):
@@ -191,9 +203,10 @@ class OwnerNote(MailWorld):
                     if refusal:
                         self.assertEqual(result.returncode, 2, result.stderr)
                         self.assertEqual(result.stdout, "")
-                        self.assertIn("lane-mail: " + refusal + "=", result.stderr)
-                        if cause:
-                            self.assertIn("cause=" + cause, result.stderr)
+                        if field:
+                            self.assertIn("lane-mail: %s=%s %s\n" % (refusal, root, field), result.stderr)
+                        else:
+                            self.assertIn("lane-mail: " + refusal + "=", result.stderr)
                         self.assertEqual(self.mailbox_snapshot([root]), before)
                     else:
                         self.assertEqual(result.returncode, 0, result.stderr)
@@ -204,19 +217,22 @@ class OwnerNote(MailWorld):
 
     def test_reader_instrument_control(self):
         # Each mutation must fail its named regression row, not a neighbouring
-        # refusal: bypassing the gate delivers without a reader, while dropping
-        # socket selection rejects a live reader on the other server.
+        # refusal: bypassing the gate or the status's live answer delivers
+        # without a reader, while dropping the status's refusal reports a read
+        # that failed as nobody reading.
         controls = (
             ("unnamed", '    [ "$REQUIRE_READER" -eq 0 ] || lm_peer_reader\n',
-             '    [ "$REQUIRE_READER" -eq 0 ] || :\n', 0, ["directive"]),
-            ("recorded-caller", '  [ -z "$socket" ] || export TMUX="$socket,$server,0"\n',
-             '  [ -z "$socket" ] || :\n', 2, []),
+             '    [ "$REQUIRE_READER" -eq 0 ] || :\n', 0, ["directive"], None),
+            ("stopped", '  elif [ "$LM_READER_LIVE" != true ]; then\n', '  elif false; then\n', 0, ["directive"], None),
+            ("server-unreachable", '  elif [ -n "$LM_READER_CAUSE" ]; then\n', '  elif false; then\n', 2, [],
+             "no-reader"),
         )
-        for row_name, old, new, code, kinds in controls:
+        for row_name, old, new, code, kinds, key in controls:
             with self.subTest(row=row_name), tempfile.TemporaryDirectory() as folder:
                 package = Path(folder) / "mailbox/scripts"
                 shutil.copytree(REPO / "skills/mailbox/scripts", package)
-                Path(folder, "orch").symlink_to(REPO / "skills/orch", target_is_directory=True)
+                for name in ("orch", "agent-runtime"):
+                    Path(folder, name).symlink_to(REPO / "skills" / name, target_is_directory=True)
                 path = package / "lane-mail"
                 source = path.read_text()
                 self.assertEqual(source.count(old), 1)
@@ -256,7 +272,7 @@ class OwnerNote(MailWorld):
                         self.assertIn("owner-note: sent ", sent[0].stdout)
                     else:
                         self.assertEqual(sent[0].stdout, "")
-                        self.assertIn("lane-mail: reader-unjudged=", sent[0].stderr)
+                        self.assertIn("lane-mail: %s=" % key, sent[0].stderr)
                     root = case.root / (row_name + "-local/local/app")
                     self.assertEqual([row["kind"] for row in case.box(root, "to-lane")], kinds)
                 finally:

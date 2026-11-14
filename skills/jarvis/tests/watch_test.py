@@ -41,7 +41,7 @@ class Producer(unittest.TestCase):
         self.packages = self.root / "producer"
         for name in ("jarvis", "mailbox", "slack"):
             shutil.copytree(REPO / "skills" / name / "scripts", self.packages / name / "scripts")
-        for name in ("orch", "github"):
+        for name in ("orch", "github", "agent-runtime"):
             self.packages.joinpath(name).symlink_to(REPO / "skills" / name, target_is_directory=True)
         self.scripts = self.packages / "jarvis/scripts"
         # The public status dependency starts healthy; cases supply recorded

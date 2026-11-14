@@ -116,10 +116,11 @@ Overseer side:
               the watch acknowledges that mailbox with --ack
               --require-reader, used by Jarvis owner-note, is accepted only
               with --item overseer --directive without --host. It refuses
-              no-reader (cause=unnamed|pane-gone) or reader-unjudged
-              (cause=server) before appending. It judges the current recorded
-              pane, including during succession, not whether it is taking a
-              turn. Peer delivery remains advisory after its append.
+              no-reader (live=false) or reader-unjudged (cause=<the
+              agent-runtime refusal's cause>) before appending. It judges
+              the current recorded controller, including during succession,
+              not whether it is taking a turn. Peer delivery remains advisory
+              after its append.
               A send to a lane goes where its caller's route names, read
               from no record: the local mailbox under the root; with --host,
               the mailbox at --root on the provider ORCH_LANE_HOST names in
@@ -341,16 +342,15 @@ Peer side, one other repository's overseer mailbox per call:
               host, send from
               that host's checkout. The
               owner form, `send --item overseer`, requires the same record.
-              An unreadable record refuses as `overseer-unreadable`. Where
-              a recorded overseer names no pane or a `server_start` not epoch
-              seconds, or a pane that no longer runs on the server its
-              `server_start` names, or on that server pid where it carries
-              no `server_start`, stderr
-              opens `lane-mail: no-reader=<REPO root> cause=unnamed|pane-gone`
-              with a `fix=` line naming `orch-runtime register --fleet`;
-              where that cannot be judged from here,
-              `lane-mail: reader-unjudged=<REPO root>
-              cause=hosted|server`. Either is a notice after the
+              An unreadable record refuses as `overseer-unreadable`. The
+              record is read through `agent-runtime controller status`, which
+              this send needs beside the mailbox. Where that status reads the
+              recorded controller not live, stderr opens
+              `lane-mail: no-reader=<REPO root> live=false` with a `fix=` line
+              naming `orch-runtime register --fleet`; where the status could
+              not be read, `lane-mail: reader-unjudged=<REPO root> cause=C`
+              with agent-runtime's cause and its refusal, and for a hosted
+              peer `cause=hosted`. Either is a notice after the
               receipt, at exit 0: the note landed. Only ORCH_STATE_DIR is
               read from REPO's settings files, as data, to place its record,
               and no file of REPO's is sourced. An answer (--re) has no pane
@@ -620,9 +620,9 @@ lm_message() { # KEY VALUE
     repo-unresolved) text='The peer repository is not a checkout on this disk. Pass the path of one, or a bare name of a checkout beside this one.' ;;
     repo-self) text='A peer is another repository, and that value resolves to this one. Both sides of an exchange would land in one mailbox, where this repository is reported as its own peer. To write a note to this overseer, use `send --item overseer`.' ;;
     lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
-    no-reader) text="$reader_outcome"' no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane, or binds it to a tmux server start time that is not epoch seconds (cause=unnamed), or names one that no longer runs on the tmux server the record binds it to by its start time, or on that server process where the record carries no start time (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names.
+    no-reader) text="$reader_outcome"' no session reads that checkout'\''s overseer mailbox: agent-runtime'\''s controller status reads the controller its fleet record names not live (live=false), a record naming no tmux pane and server start, a pane that no longer runs or holds no harness, or a tmux server that is gone or replaced. The lane-mail hooks hand that mailbox only to the session the record names.
 fix=run `orch-runtime register --fleet` from the orch skill in the session that should read that checkout'\''s mail, which makes that session the checkout'\''s overseer, its turn end held at the context marks for a succession as a fleet overseer'\''s is; or start its fleet with the runtime'\''s `start-controller` request, as orch'\''s workflows/oversee.md § Controller start and adoption states' ;;
-    reader-unjudged) text="$reader_outcome"' whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
+    reader-unjudged) text="$reader_outcome"' whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), or agent-runtime'\''s controller status could not read the session the record names, and the cause is its own; its refusal follows.' ;;
     overseer-unreadable) text='The checkout overseer record could not be read. Nothing was appended.' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
     item-case-variant) text='A mailbox for this item already exists under another spelling of the same name, so a lane and an overseer would read separate folders on a case-sensitive disk. Use that spelling, or drain it and remove it.' ;;
@@ -1580,66 +1580,23 @@ lm_sent() {
 }
 
 # Whether the checkout's overseer mailbox has a reader. Peer delivery reports
-# this after landing; --require-reader refuses before an owner directive. The reader is the one session the checkout's fleet record names
-# under `.overseer` by tmux server and pane: the lane-mail-check hooks hand the
-# mailbox to that session alone, and a live watch there reads it itself. No
-# record, or one naming no server pid and `%N` pane, or a `server_start` that
-# is not epoch seconds, names nobody, and a pane that no longer runs reads
-# nothing. The pane is judged on the server the record's `server_start` binds
-# it to, since a later server may be handed the same pid and pane id; a
-# record carrying no start names the session in that pane on that server pid
-# whatever its start, as the hooks read it, which hand it the mailbox and
-# write the start into the record. Which record carries no start is
-# lib/overseer-launch.sh § OL_JQ_DEFS's ol_unstarted, sourced here alone so
-# no other verb pays for it. A saved socket selects the recorded server as
-# overseer-host-tmux inspect does; old records retain the caller's server.
-# A hosted peer's record and tmux server sit on its own host, out of this
-# shell's reach.
+# this after landing; --require-reader refuses before an owner directive. The
+# reader is the one session the checkout's fleet record names under
+# `.overseer`: the lane-mail-check hooks hand the mailbox to that session
+# alone, and a live watch there reads it itself. Whether it still runs is
+# agent-runtime's controller status, which lm_require_overseer read for this
+# root: `live: false` is nobody to read it, and its `controller-unreadable`
+# refusal is a read that failed, reported with its own cause. A hosted
+# peer's record and tmux server sit on its own host, out of this shell's
+# reach.
 lm_peer_reader() {
-  local record server start pane socket rc=0 TMUX="${TMUX:-}"
-  # shellcheck source=../../orch/scripts/lib/overseer-launch.sh
-  . "$ORCH_SCRIPTS/lib/overseer-launch.sh"
-  # shellcheck source=../../orch/scripts/lib/tmux-server.sh
-  . "$ORCH_SCRIPTS/lib/tmux-server.sh"
   if [ "$HOST" -eq 1 ]; then
     lm_reader_report reader-unjudged "$ROOT" cause=hosted
-    return 0
+  elif [ -n "$LM_READER_CAUSE" ]; then
+    lm_reader_report reader-unjudged "$ROOT" "cause=$LM_READER_CAUSE" "$(cat -- "$WORK_DIR/status.err")"
+  elif [ "$LM_READER_LIVE" != true ]; then
+    lm_reader_report no-reader "$ROOT" live=false
   fi
-  record="$(jq -r "$OL_JQ_DEFS"'
-    . as $o | ($o.server // "") as $s
-    | [($s | tostring), (if $o | ol_unstarted($s; ($o.pane // $o.session // "")) then "unstarted"
-            else ($o.server_start // "" | tostring) end), ($o.pane // "" | tostring)] | join(" ")' \
-    <<<"$LM_OVERSEER_RECORD")" || refuse overseer-unreadable "$ROOT"
-  server="${record%% *}"
-  record="${record#* }"
-  start="${record%% *}"
-  pane="${record#* }"
-  case "$server" in
-    '' | *[!0-9]*) server="" ;;
-  esac
-  # A record carrying no start is judged on its server alone; any other start
-  # that is not epoch seconds binds the record to no server.
-  case "$start" in
-    unstarted) start="" ;;
-    '' | *[!0-9]*) start=invalid ;;
-  esac
-  case "$pane" in
-    % | %*[!0-9]*) pane="" ;;
-    %*) ;;
-    *) pane="" ;;
-  esac
-  if [ -z "$server" ] || [ "$start" = invalid ] || [ -z "$pane" ]; then
-    lm_reader_report no-reader "$ROOT" cause=unnamed
-    return 0
-  fi
-  socket="$(jq -r '.server_socket // empty' <<<"$LM_OVERSEER_RECORD")" || refuse overseer-unreadable "$ROOT"
-  [ -z "$socket" ] || export TMUX="$socket,$server,0"
-  tmux_pane_live "$server" "$start" "$pane" "$socket" || rc=$?
-  case "$rc" in
-    0) [ "$TMUX_PANE_DEAD" != 1 ] || lm_reader_report no-reader "$ROOT" cause=pane-dead ;;
-    1) lm_reader_report no-reader "$ROOT" cause=pane-gone ;;
-    *) lm_reader_report reader-unjudged "$ROOT" cause=server "$TMUX_PANE_DETAIL" ;;
-  esac
   return 0
 }
 
@@ -1648,7 +1605,7 @@ lm_reader_report() { # KEY ROOT CAUSE [DETAIL]
     REFUSE_EXTRA="$3"
     refuse "$1" "$2" "${4:-}"
   fi
-  lm_notice "$1" "$2" "$3"
+  lm_notice "$1" "$2" "$3" "${4:-}"
 }
 
 # Owner sends use full resolution; peer asks and replies share data-only
@@ -1669,28 +1626,34 @@ lm_overseer_path() { # full|data ROOT
 lm_overseer_absent() { # ROOT
     printf 'lane-mail: overseer-absent=%s no overseer is recorded here; run orch-runtime register --fleet in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout\n' "$1" >&2
 }
-LM_OVERSEER_RECORD=""
+# The record at ROOT read through agent-runtime's controller status: no
+# document or no controller in it is overseer-absent; a status that answers
+# leaves `live` for lm_peer_reader, and its controller-unreadable refusal
+# leaves the cause; any other answer is overseer-unreadable with its words.
+LM_READER_LIVE=""
+LM_READER_CAUSE=""
 lm_require_overseer() { # full|data ROOT
-  local scope="$1" root="$2" path
-  if [ ! -f "$ORCH_SCRIPTS/lib/overseer-launch.sh" ]; then
+  local scope="$1" root="$2" path reply answer
+  LM_READER_LIVE="" LM_READER_CAUSE=""
+  if [ ! -x "$AGENT_RUNTIME_SCRIPTS/agent-runtime" ]; then
     lm_overseer_absent "$root"
-    printf '%s\n' 'Orch is not installed beside this package, so no session reads this mailbox.' >&2
+    printf '%s\n' 'agent-runtime is not installed beside this package, so no session reads this mailbox.' >&2
     exit 2
   fi
-  lm_require_orch lib/overseer-launch.sh lib/tmux-server.sh
   if ! path="$(lm_overseer_path "$scope" "$root")"; then
     refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/reader.err")"
   fi
   [ -n "$path" ] || refuse overseer-unreadable "$root"
-  LM_OVERSEER_RECORD=null
-  if [ -e "$path" ]; then
-    LM_OVERSEER_RECORD="$(jq -r '.overseer // null' -- "$path" 2>"$WORK_DIR/reader.err")" ||
-      refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/reader.err")"
-  fi
-  if [ "$LM_OVERSEER_RECORD" = null ]; then
-    lm_overseer_absent "$root"
-    exit 2
-  fi
+  reply="$("$AGENT_RUNTIME_SCRIPTS/agent-runtime" controller status --record "$path" 2>"$WORK_DIR/status.err")" || :
+  answer="$(jq -r 'if .ok then [(.result.recorded != null), .result.live]
+    else ["refused", .refusal.key, ([.refusal.fields[] | select(.[0] == "cause") | .[1]] | first // "")] end
+    | map(tostring) | join(" ")' <<<"$reply" 2>/dev/null)" || answer=""
+  case "$answer" in
+    'true true' | 'true false') LM_READER_LIVE="${answer#true }" ;;
+    'false false' | 'refused record-missing '*) lm_overseer_absent "$root"; exit 2 ;;
+    'refused controller-unreadable '?*) LM_READER_CAUSE="${answer#refused controller-unreadable }" ;;
+    *) refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/status.err")" ;;
+  esac
 }
 
 # A notice on stderr that ends nothing: the keyed line closed by FIELD, the

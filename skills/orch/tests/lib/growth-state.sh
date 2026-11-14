@@ -116,6 +116,21 @@ mutant_scripts() {
       chmod 0755, $file or die "runtime fixture mode: $!\n";
     ' -- "$orch_src/orch-runtime" "$runtime_cache" "$runtime_entry" || _mutant_scripts_refuse runtime-failed "$runtime_entry"
   done
+  # A private lane-mail reads an overseer record through the agent-runtime
+  # package beside it, the built one whatever HOME or environment it runs under.
+  local agent_runtime="${dir%/scripts}/../agent-runtime/scripts/agent-runtime"
+  if [[ "$moved" -eq 1 && ! -e "$agent_runtime" ]]; then
+    mkdir -p "${agent_runtime%/*}" || _mutant_scripts_refuse mkdir-failed "${agent_runtime%/*}"
+    perl -e '
+      use strict; use warnings;
+      my ($real, $cache, $file) = @ARGV;
+      open my $out, ">", $file or die "runtime fixture write: $!\n";
+      print {$out} "#!/usr/bin/env bash\nexport AGENT_RUNTIME_CACHE=\"$cache\"\nexec \"$real\" \"\$@\"\n" or die "runtime fixture output: $!\n";
+      close $out or die "runtime fixture close: $!\n";
+      chmod 0755, $file or die "runtime fixture mode: $!\n";
+    ' -- "$orch_src/../../agent-runtime/scripts/agent-runtime" "$runtime_cache" "$agent_runtime" \
+      || _mutant_scripts_refuse runtime-failed "$agent_runtime"
+  fi
   printf '%s\n' "$dir"
 }
 

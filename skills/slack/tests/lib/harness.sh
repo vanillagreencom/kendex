@@ -47,6 +47,11 @@ SK_TMP="$(cd -- "$SK_TMP" && pwd -P)" || { printf 'slack-tests: scratch=resolve-
 export GIT_CEILING_DIRECTORIES="${SK_TMP%/*}"
 set +e
 mkdir -p "$SK_TMP/home"
+# An overseer send asks the built agent-runtime through its wrapper, which
+# reads the cache under HOME where no AGENT_RUNTIME_CACHE is handed in, as
+# none is to the package runs under `env -i`.
+mkdir -p "$SK_TMP/home/.cache/kendex"
+ln -s "$AGENT_RUNTIME_CACHE" "$SK_TMP/home/.cache/kendex/agent-runtime"
 sk_cleanup() {
   [ -z "$FAKE_PID" ] || kill "$FAKE_PID" 2>/dev/null
   # shellcheck disable=SC2086
@@ -169,7 +174,7 @@ bin_dir = root / "tmp/no-flock-bin"
 bin_dir.mkdir()
 for name in ("bash", "sh", "cat", "tail", "mkdir", "mv", "rm", "rmdir", "date", "awk", "sed", "git",
              "tr", "head", "sleep", "cp", "ln", "wc", "sort", "grep", "dirname", "basename", "touch",
-             "chmod", "id", "uname", "mktemp", "env", "python3"):
+             "chmod", "id", "uname", "mktemp", "env", "python3", "find", "cut", "sha256sum"):
     command = shutil.which(name)
     if command is None:
         sys.exit("mutex fixture: command-missing=" + name)
@@ -411,6 +416,7 @@ sk_copy() {
   ln -sfn "$SK_ROOT/skills/orch" "$dir/skills/orch"
   mkdir -p "$dir/skills/mailbox"
   cp -R "${SK_SLACK%/slack/scripts/slack}/mailbox/scripts" "$dir/skills/mailbox/scripts"
+  ln -sfn "$SK_ROOT/skills/agent-runtime" "$dir/skills/agent-runtime"
   ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
   SK_BIN="$dir/skills/slack/scripts/slack"
 }
@@ -443,6 +449,7 @@ sk_tracker_fixture() {
   ln -s "$SK_ROOT/skills/orch" "$SK_TMP/tracker/skills/orch"
   mkdir -p "$SK_TMP/tracker/skills/mailbox"
   cp -R "$SK_ROOT/skills/mailbox/scripts" "$SK_TMP/tracker/skills/mailbox/scripts"
+  ln -s "$SK_ROOT/skills/agent-runtime" "$SK_TMP/tracker/skills/agent-runtime"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/tracker/skills/linear/scripts/linear.sh"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/bin/gh"
   chmod +x "$SK_TMP/tracker/skills/linear/scripts/linear.sh" "$SK_TMP/bin/gh"
