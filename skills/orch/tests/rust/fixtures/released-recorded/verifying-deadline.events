@@ -1,4 +1,4 @@
-EVENT verifying-deadline KEN-1 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
-EVENT verifying-deadline KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z
-EVENT verifying-deadline KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z
-EVENT verifying-deadline KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z
+EVENT verifying-deadline KEN-1 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z read=unread
+EVENT verifying-deadline KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z read=unread
+EVENT verifying-deadline KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z read=unread
+EVENT verifying-deadline KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z read=unread

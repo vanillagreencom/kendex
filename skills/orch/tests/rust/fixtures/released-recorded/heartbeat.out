@@ -5,10 +5,10 @@ account claude config_dir=/home/u/.claude harness=claude through=local status=ok
 account claude2 config_dir=/home/u/.claude2 harness=claude through=local status=ok verdict=walled headroom_pct=0 binding_bucket=model binding_resets_at=2026-10-04T00:00:00Z
 account codex config_dir=/home/u/.codex harness=codex through=local status=ok verdict=walled headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-05T00:00:00Z
 account codex2 config_dir=/home/u/.codex2 harness=codex through=local status=ok verdict=walled headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-03T00:00:00Z
-verifying KEN-1 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=- reading="Read deployed health" where="live service" why="needs deployment"
-verifying KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read consumer refresh" where="consumer PR" why="needs rollout"
-verifying KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=- reading="Read deployed health" where="live service" why="needs deployment"
-verifying KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read consumer refresh" where="consumer PR" why="needs rollout"
+verifying KEN-1 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=- reading="Read deployed health" where="live service" why="needs deployment" read=unread cause=no-reader
+verifying KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read consumer refresh" where="consumer PR" why="needs rollout" read=unread cause=no-reader
+verifying KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=- reading="Read deployed health" where="live service" why="needs deployment" read=unread cause=no-reader
+verifying KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read consumer refresh" where="consumer PR" why="needs rollout" read=unread cause=no-reader
 owed KEN-10 state=in-progress priority=2 lane=stopped verdict=merged pr=21
 owed KEN-11 state=in-progress priority=1 lane=stopped verdict=dated harness=claude until=2026-10-04T00:00:00Z
 owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue

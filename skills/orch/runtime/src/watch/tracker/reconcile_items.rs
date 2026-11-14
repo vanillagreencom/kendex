@@ -56,6 +56,11 @@ pub struct Counts {
     pub overdue: u64,
     pub blocked: u64,
     pub waiting: u64,
+    pub met: u64,
+    pub failed: u64,
+    pub inconclusive: u64,
+    pub missing: u64,
+    pub unread: u64,
     pub items: u64,
 }
 
@@ -396,6 +401,11 @@ pub fn run(
                     report.counts.overdue += counts.overdue;
                     report.counts.blocked += counts.blocked;
                     report.counts.waiting += counts.waiting;
+                    report.counts.met += counts.met;
+                    report.counts.failed += counts.failed;
+                    report.counts.inconclusive += counts.inconclusive;
+                    report.counts.missing += counts.missing;
+                    report.counts.unread += counts.unread;
                 }
             }
         }

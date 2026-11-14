@@ -2108,7 +2108,8 @@ fn plant_red_jobs(world: &mut World, id: u64) {
         &format!("repos/owner/repo/actions/runs/{id}/jobs?per_page=100&page=1"),
         json!({"body": {"total_count": 1, "jobs": [{"id": job, "run_id": id, "name": "tests",
             "head_sha": "0000000000000000000000000000000000000000", "status": "completed",
-            "conclusion": "failure", "check_run_url": format!("https://api.github.com/repos/owner/repo/check-runs/{job}")}]}}),
+            "conclusion": "failure", "started_at": "2026-08-15T09:00:00Z", "completed_at": "2026-08-15T09:01:00Z",
+            "check_run_url": format!("https://api.github.com/repos/owner/repo/check-runs/{job}")}]}}),
     );
     world.gh(
         &format!("repos/owner/repo/actions/jobs/{job}/logs"),
@@ -2853,8 +2854,8 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
         world.gh(
             "repos/owner/repo/actions/runs/202/jobs?per_page=100&page=1",
             json!({"body": {"total_count": 2, "jobs": [
-                {"id": 902, "run_id": 202, "name": "a", "head_sha": "0000000000000000000000000000000000000000", "status": "completed", "conclusion": "success", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/902"},
-                {"id": 903, "run_id": 202, "name": "b", "head_sha": "0000000000000000000000000000000000000000", "status": "completed", "conclusion": "success", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/903"}]}}),
+                {"id": 902, "run_id": 202, "name": "a", "head_sha": "0000000000000000000000000000000000000000", "status": "completed", "conclusion": "success", "started_at": "2026-10-18T00:00:00Z", "completed_at": "2026-10-18T00:01:00Z", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/902"},
+                {"id": 903, "run_id": 202, "name": "b", "head_sha": "0000000000000000000000000000000000000000", "status": "completed", "conclusion": "success", "started_at": "2026-10-18T00:00:00Z", "completed_at": "2026-10-18T00:01:00Z", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/903"}]}}),
         );
         world.gh(
             "repos/owner/repo/check-runs/902/annotations?per_page=100&page=1",
@@ -3370,9 +3371,9 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
 
 /// The tracker body reads the item with its blocker, the verification body
 /// judges the slot it left: the box is `blocked` and names the blocker,
-/// with no deadline event; once the blocker closes the box is due and the
-/// event fires. The lines and the event are the recorded watch's bytes on
-/// the suite's own world.
+/// with no deadline event, past its deadline too; once the blocker closes
+/// the box is due or overdue and the event fires. The first lines and event
+/// are the recorded watch's bytes on the suite's own world.
 #[test]
 fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_closes() {
     const NOW: u64 = 1_790_899_201; // 2026-10-02T00:00:01Z, `verifying_one`'s clock
@@ -3460,6 +3461,241 @@ fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_
         want,
         "closing a blocker raises due attention"
     );
+    // Past its deadline the open blocker still holds the box: blocked, no
+    // event; once the blocker closes the box is overdue, said once.
+    const PAST: &str = "## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-10-01T12:00:00Z; Deadline: 2026-10-01T23:00:00Z";
+    let past_item = |blockers: &[&str]| {
+        let mut body = verifying_item(blockers);
+        body["body"][0]["description"] = json!(PAST);
+        body
+    };
+    world.linear("issues list", past_item(&["KEN-99"]));
+    pass(&mut tracker, &mut baseline, &clock, NOW).unwrap();
+    let produced = pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        *lines_slot.lock().unwrap(),
+        vec![
+            "verifying KEN-1 box=1 trigger=\"2026-10-01T12:00:00Z\" status=blocked deadline=2026-10-01T23:00:00Z blocked_by=KEN-99 reading=\"Read health\" where=\"service\" why=\"live release\""
+        ],
+        "an open blocker holds a box past its deadline"
+    );
+    assert_eq!(rendered(&produced), Vec::<String>::new());
+    assert_eq!(baseline.get("verifying-deadline", "KEN-1"), Some("-"));
+    world.linear("issues list", past_item(&[]));
+    pass(&mut tracker, &mut baseline, &clock, NOW).unwrap();
+    let produced = pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW,
+    )
+    .unwrap();
+    let overdue = "verifying KEN-1 box=1 trigger=\"2026-10-01T12:00:00Z\" status=overdue deadline=2026-10-01T23:00:00Z blocked_by=- reading=\"Read health\" where=\"service\" why=\"live release\" read=unread cause=no-reader";
+    assert_eq!(*lines_slot.lock().unwrap(), vec![overdue]);
+    assert_eq!(
+        rendered(&produced),
+        vec![
+            "EVENT verifying-deadline KEN-1 box=1 trigger=\"2026-10-01T12:00:00Z\" status=overdue deadline=2026-10-01T23:00:00Z read=unread",
+            overdue
+        ],
+        "the closed blocker's past deadline is said once"
+    );
+}
+
+/// A due check whose `Where:` is a GitHub job is read through that job's
+/// elapsed seconds and its reading kept in the line and the row key: only
+/// a met reading completes the box, once, through the tracker CLI; a failed
+/// or inconclusive one takes one comment; a job still running reads
+/// missing; a read that fails and a check with no comparator read unread,
+/// the second with no GitHub call. A second pass on the same answers writes
+/// nothing more.
+#[test]
+fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box() {
+    const NOW: u64 = 1_790_899_201;
+    const JOB: &str = "https://github.com/owner/repo/actions/runs/5/job/77";
+    let numeric = format!(
+        "## Done when\n- [ ] Post-merge: job time <= 600 s; Where: {JOB}; Why after merge: runs on main; Deadline: 2026-10-03T00:00:00Z"
+    );
+    let outcome = format!(
+        "## Done when\n- [ ] Post-merge: job finishes; Where: {JOB}; Why after merge: runs on main; Deadline: 2026-10-03T00:00:00Z"
+    );
+    let job = |status: &str, conclusion: Value, completed: Value| {
+        json!({"body": {"id": 77, "run_id": 5, "name": "perf",
+            "head_sha": "0000000000000000000000000000000000000000", "status": status,
+            "conclusion": conclusion, "started_at": "2026-10-01T10:00:00Z", "completed_at": completed,
+            "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/77"}})
+    };
+    /// (description, the job's answer, the line's reading, completions,
+    /// comments, job reads)
+    type Row<'a> = (&'a str, Option<Value>, &'a str, usize, usize, usize);
+    let rows: Vec<Row> = vec![
+        (
+            numeric.as_str(),
+            Some(job(
+                "completed",
+                json!("success"),
+                json!("2026-10-01T10:06:52Z"),
+            )),
+            " read=met observed=412",
+            1,
+            0,
+            1,
+        ),
+        (
+            numeric.as_str(),
+            Some(job(
+                "completed",
+                json!("success"),
+                json!("2026-10-01T10:15:00Z"),
+            )),
+            " read=failed observed=900",
+            0,
+            1,
+            1,
+        ),
+        (
+            numeric.as_str(),
+            Some(job("in_progress", Value::Null, Value::Null)),
+            " read=missing",
+            0,
+            0,
+            1,
+        ),
+        (
+            numeric.as_str(),
+            Some(job(
+                "completed",
+                json!("cancelled"),
+                json!("2026-10-01T10:01:00Z"),
+            )),
+            " read=inconclusive cause=cancelled",
+            0,
+            1,
+            1,
+        ),
+        (
+            numeric.as_str(),
+            None,
+            " read=unread cause=read-failed",
+            0,
+            0,
+            1,
+        ),
+        (
+            outcome.as_str(),
+            None,
+            " read=unread cause=no-reader",
+            0,
+            0,
+            0,
+        ),
+    ];
+    for (description, answer, reading, completions, comments, reads) in rows {
+        let mut world = World::new();
+        world.linear("statuses list", statuses());
+        let mut verifying_item = item(
+            "KEN-1",
+            "2026-09-20T00:00:00Z",
+            "Verifying",
+            "started",
+            json!(1),
+            &[],
+        );
+        verifying_item["description"] = json!(description);
+        world.linear("issues list", json!({"body": [verifying_item]}));
+        world.linear(
+            "issues bulk-get",
+            json!({"body": {"issues": {"nodes": [
+                {"identifier": "KEN-1", "state": {"type": "started"}, "children": {"nodes": []}}
+            ]}}}),
+        );
+        world.linear("issues complete", json!({"body": {"success": true}}));
+        world.linear("comments create", json!({"body": {"success": true}}));
+        if let Some(answer) = answer {
+            world.gh("repos/owner/repo/actions/jobs/77", answer);
+        }
+        let clock = FakeClock::new();
+        let settings = world.settings(&[]);
+        let ctx = world.context(settings.clone(), None);
+        let shared = ctx.shared.clone();
+        let mut tracker = tracker::body(ctx);
+        let lines_slot = verifying::Lines::default();
+        let mut verification = verifying::body(verifying::Context {
+            settings,
+            gh: world.dir.path().join("gh"),
+            shared,
+            lines: lines_slot.clone(),
+        });
+        let mut baseline = Baseline::default();
+        let kind = reading.split(' ').nth(1).unwrap_or_default();
+        let line = format!(
+            "verifying KEN-1 box=1 trigger=\"merge\" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading={} where=\"{JOB}\" why=\"runs on main\"{reading}",
+            if description == numeric {
+                "\"job time <= 600 s\""
+            } else {
+                "\"job finishes\""
+            }
+        );
+        let event = format!(
+            "EVENT verifying-deadline KEN-1 box=1 trigger=\"merge\" status=due deadline=2026-10-03T00:00:00Z {kind}"
+        );
+        for round in [1, 2] {
+            pass(&mut tracker, &mut baseline, &clock, NOW).unwrap();
+            let produced = pass_as(
+                Duty::Verification,
+                &mut verification,
+                &mut baseline,
+                &clock,
+                NOW,
+            )
+            .unwrap();
+            assert_eq!(*lines_slot.lock().unwrap(), vec![line.clone()], "{reading}");
+            let want = if round == 1 {
+                vec![event.clone(), line.clone()]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(rendered(&produced), want, "{reading} round {round}");
+        }
+        let calls = world.linear_calls();
+        let completed: Vec<&String> = calls
+            .iter()
+            .filter(|c| c.starts_with("issues complete"))
+            .collect();
+        assert_eq!(completed.len(), completions, "{reading}: {calls:?}");
+        for call in completed {
+            assert!(
+                call.starts_with("issues complete KEN-1 --done-when-met 1 --evidence-file ")
+                    && call.ends_with("/evidence"),
+                "{call}"
+            );
+        }
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|c| c.starts_with("comments create KEN-1 --body-file "))
+                .count(),
+            comments,
+            "{reading}: {calls:?}"
+        );
+        assert_eq!(
+            world
+                .gh_calls()
+                .iter()
+                .filter(|c| *c == "api repos/owner/repo/actions/jobs/77")
+                .count(),
+            reads * 2,
+            "{reading}: one job read per pass"
+        );
+    }
 }
 
 /// A Verifying item left with an open branch-provable box, as a merge

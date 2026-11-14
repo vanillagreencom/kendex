@@ -1,6 +1,8 @@
 //! The one box judge: an item's post-merge checklist judged on its merge
-//! and its releases, for the watch's verifying duty and for
-//! `reconcile-items`.
+//! and its releases, each due box read through the reader its `Where:`
+//! names, for the watch's verifying duty and for `reconcile-items`. Only
+//! the duty writes: a met box completes, a failed or inconclusive one takes
+//! one comment.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -14,9 +16,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::error::Result;
+use crate::ops::boxes;
 use crate::settings::Settings;
 use crate::verify::Answer;
-use crate::verify::wire::{Nullable, Pull};
+use crate::verify::wire::{Job, Nullable, Pull, RunConclusion, RunStatus};
 use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
@@ -129,10 +132,79 @@ struct ParsedBox {
     release_repo: Option<String>,
     #[serde(default)]
     release_glob: Option<String>,
+    #[serde(default)]
+    numeric: Option<Numeric>,
+}
+
+/// The parse's reading of a numeric check, `FIGURE COMPARATOR VALUE UNIT`;
+/// a reading with no comparator is an outcome check and has none.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Numeric {
+    comparator: String,
+    value: f64,
+    #[serde(default)]
+    unit: Option<String>,
+}
+
+/// What the watch read for a due or overdue box through the reader its
+/// `Where:` names.
+#[derive(Debug, Clone, PartialEq)]
+enum Reading {
+    /// The observed figure holds the pass condition.
+    Met(u64),
+    /// The observed figure breaks it.
+    Failed(u64),
+    /// The source has not produced the figure yet.
+    Missing,
+    /// The source ended with no figure to judge: its conclusion word.
+    Inconclusive(&'static str),
+    /// No reader the check names reaches it: the cause word.
+    Unread(&'static str),
+}
+
+impl Reading {
+    fn kind(&self) -> &'static str {
+        match self {
+            Reading::Met(_) => "met",
+            Reading::Failed(_) => "failed",
+            Reading::Missing => "missing",
+            Reading::Inconclusive(_) => "inconclusive",
+            Reading::Unread(_) => "unread",
+        }
+    }
+
+    /// The line's fields: ` read=<kind>`, then ` observed=<figure>` where a
+    /// figure was read or ` cause=<word>` where none was.
+    fn fields(&self) -> String {
+        match self {
+            Reading::Met(figure) | Reading::Failed(figure) => {
+                format!(" read={} observed={figure}", self.kind())
+            }
+            Reading::Missing => " read=missing".to_owned(),
+            Reading::Inconclusive(word) | Reading::Unread(word) => {
+                format!(" read={} cause={word}", self.kind())
+            }
+        }
+    }
+}
+
+/// The tracker write a box's reading owes, made once when its due key is
+/// new: a met box completes with its Evidence line, a failed or
+/// inconclusive one takes one comment.
+pub(super) enum Owed {
+    Complete {
+        number: u64,
+        evidence: String,
+        /// The merge the boxes count from, where the item's boxes read it.
+        merged_at: Option<String>,
+    },
+    Comment {
+        text: String,
+    },
 }
 
 /// One box under judgement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Judged {
     number: u64,
     trigger: String,
@@ -148,6 +220,9 @@ struct Judged {
     /// `merged=<UTC>` on a release box, whether its publication resolved.
     merged: Option<String>,
     status: &'static str,
+    numeric: Option<Numeric>,
+    /// A due or overdue box's reading.
+    read: Option<Reading>,
 }
 
 impl Judged {
@@ -170,25 +245,61 @@ impl Judged {
             .map(|m| format!(" merged={m}"))
             .unwrap_or_default();
         format!(
-            "verifying {id} box={} trigger={} status={} deadline={}{merged} blocked_by={blocked} reading={} where={} why={}",
+            "verifying {id} box={} trigger={} status={} deadline={}{merged} blocked_by={blocked} reading={} where={} why={}{}",
             self.number,
             json_text(&self.trigger),
             self.status,
             self.deadline.as_deref().unwrap_or("-"),
             json_text(&self.reading),
             json_text(&self.where_),
-            json_text(&self.why)
+            json_text(&self.why),
+            self.read.as_ref().map(Reading::fields).unwrap_or_default()
         )
     }
 
+    /// The due box's row key; its reading's kind is part of it, so a new
+    /// reading is said, and written, once.
     fn due_key(&self) -> String {
         format!(
-            "box={} trigger={} status={} deadline={}",
+            "box={} trigger={} status={} deadline={}{}",
             self.number,
             json_text(&self.trigger),
             self.status,
-            self.deadline.as_deref().unwrap_or("null")
+            self.deadline.as_deref().unwrap_or("null"),
+            self.read
+                .as_ref()
+                .map(|r| format!(" read={}", r.kind()))
+                .unwrap_or_default()
         )
+    }
+
+    /// The write this box's reading owes, observed at `at` (UTC).
+    fn owed(&self, at: &str, merged: Option<&Merge>) -> Option<Owed> {
+        let numeric = self.numeric.as_ref()?;
+        let unit = numeric.unit.as_deref().unwrap_or_default();
+        let pass = format!("{} {} {unit}", numeric.comparator, numeric.value);
+        let source = format!("from {} at {at}", self.where_);
+        let comment = |what: String| Owed::Comment {
+            text: format!(
+                "## Post-merge check read\n\nBox {} read `{}`: {what}, {source}. The box stays open with its named person.\n\nread-by=watch\n",
+                self.number,
+                self.read.as_ref().map_or("", Reading::kind)
+            ),
+        };
+        match self.read.as_ref()? {
+            Reading::Met(figure) => Some(Owed::Complete {
+                number: self.number,
+                evidence: format!("{figure} {unit} {pass} {source}"),
+                merged_at: merged.map(|m| clock::iso_utc(m.at)),
+            }),
+            Reading::Failed(figure) => {
+                Some(comment(format!("observed {figure} {unit}, needs {pass}")))
+            }
+            Reading::Inconclusive(word) => Some(comment(format!(
+                "the source ended `{word}` with no figure to judge"
+            ))),
+            Reading::Missing | Reading::Unread(_) => None,
+        }
     }
 }
 
@@ -235,6 +346,8 @@ fn judged_boxes(parsed: &Parsed, container: bool) -> Option<Vec<Judged>> {
                         release: None,
                         merged: None,
                         status: "due",
+                        numeric: None,
+                        read: None,
                     }
                 } else {
                     Judged {
@@ -251,6 +364,8 @@ fn judged_boxes(parsed: &Parsed, container: bool) -> Option<Vec<Judged>> {
                         release: b.release_repo.clone().zip(b.release_glob.clone()),
                         merged: None,
                         status: "due",
+                        numeric: b.numeric.clone(),
+                        read: None,
                     }
                 }
             })
@@ -540,6 +655,161 @@ fn releases(
     Ok(out)
 }
 
+/// The publication epoch of the first published release of `repo` after
+/// `merge` whose tag `glob` matches and, where the merge names its commit
+/// in `repo`, that contains it.
+fn release_after(
+    gh: &Path,
+    repo: &str,
+    glob: &str,
+    merge: &Merge,
+    read: &mut BTreeMap<String, Value>,
+) -> std::result::Result<Option<u64>, (&'static str, String)> {
+    let oid = match merge.oids.get(&repo.to_ascii_lowercase()) {
+        None => None,
+        Some(Some(oid)) => Some(oid.clone()),
+        Some(None) => return Err(("verifying-release-unread", format!("repo={repo}"))),
+    };
+    let listed = releases(gh, repo, read)
+        .map_err(|cause| ("verifying-release-unread", format!("repo={repo} {cause}")))?;
+    for (at, tag) in listed.into_iter().filter(|(at, _)| *at > merge.at) {
+        if !glob_matches(glob, &tag) {
+            continue;
+        }
+        if let Some(oid) = &oid {
+            let path = format!(
+                "repos/{repo}/compare/{oid}...{}",
+                crate::verify::segment(&tag)
+            );
+            let comparison = gh_json(gh, &path, read).map_err(|cause| {
+                (
+                    "verifying-release-unread",
+                    format!("repo={repo} tag={tag} {cause}"),
+                )
+            })?;
+            match comparison.get("status").and_then(Value::as_str) {
+                Some("ahead" | "identical") => {}
+                Some("behind" | "diverged") => continue,
+                other => {
+                    return Err((
+                        "verifying-release-unread",
+                        format!("repo={repo} tag={tag} status={}", other.unwrap_or("")),
+                    ));
+                }
+            }
+        }
+        return Ok(Some(at));
+    }
+    Ok(None)
+}
+
+/// The repository a `Where:` of exactly `https://github.com/O/R/<rest>`
+/// names, with `<rest>` split on `/`.
+fn github_locator(locator: &str) -> Option<(String, Vec<&str>)> {
+    let path = locator.strip_prefix("https://github.com/")?;
+    let mut parts = path.split('/');
+    let repo = format!("{}/{}", parts.next()?, parts.next()?);
+    crate::verify::validate_repo(&repo).ok()?;
+    Some((repo, parts.collect()))
+}
+
+/// A box's reading through the reader its `Where:` names: a GitHub job
+/// URL (the job's elapsed seconds) or a repository's releases page (1
+/// where a release after the merge holds it, else 0). Any other source, a
+/// check with no comparator and a unit the reader does not give answer
+/// unread: no reader is invented for them.
+fn read_box(
+    gh: &Path,
+    b: &Judged,
+    merged: Option<&Merge>,
+    read: &mut BTreeMap<String, Value>,
+) -> Reading {
+    let Some(numeric) = &b.numeric else {
+        return Reading::Unread("no-reader");
+    };
+    let Some((repo, rest)) = github_locator(&b.where_) else {
+        return Reading::Unread("no-reader");
+    };
+    let number = |word: &str| !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit());
+    let figure = match rest.as_slice() {
+        ["actions", "runs", run, "job", job] if number(run) && number(job) => {
+            if numeric.unit.as_deref() != Some("s") {
+                return Reading::Unread("unit");
+            }
+            match job_seconds(gh, &repo, job, read) {
+                Ok(seconds) => seconds,
+                Err(reading) => return reading,
+            }
+        }
+        ["releases"] => {
+            let Some(merge) = merged else {
+                return Reading::Unread("merge");
+            };
+            let glob = match &b.release {
+                Some((named, glob)) if named.eq_ignore_ascii_case(&repo) => glob.as_str(),
+                Some(_) | None => "*",
+            };
+            // No release yet is missing until the deadline, then compared.
+            match release_after(gh, &repo, glob, merge, read) {
+                Ok(Some(_)) => 1,
+                Ok(None) if b.status == "due" => return Reading::Missing,
+                Ok(None) => 0,
+                Err(_) => return Reading::Unread("read-failed"),
+            }
+        }
+        _ => return Reading::Unread("no-reader"),
+    };
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a job's seconds and a release count are far below 2^53"
+    )]
+    let observed = figure as f64;
+    let holds = match numeric.comparator.as_str() {
+        "<=" => observed <= numeric.value,
+        ">=" => observed >= numeric.value,
+        "<" => observed < numeric.value,
+        ">" => observed > numeric.value,
+        "=" => (observed - numeric.value).abs() < f64::EPSILON,
+        _ => return Reading::Unread("comparator"),
+    };
+    if holds {
+        Reading::Met(figure)
+    } else {
+        Reading::Failed(figure)
+    }
+}
+
+/// A completed, successful job's elapsed whole seconds, or the reading its
+/// state answers.
+fn job_seconds(
+    gh: &Path,
+    repo: &str,
+    job: &str,
+    read: &mut BTreeMap<String, Value>,
+) -> std::result::Result<u64, Reading> {
+    let path = format!("repos/{repo}/actions/jobs/{job}");
+    let value = gh_json(gh, &path, read).map_err(|_| Reading::Unread("read-failed"))?;
+    let job: Job = serde_json::from_value(value).map_err(|_| Reading::Unread("job-fields"))?;
+    if job.status != RunStatus::Completed {
+        return Err(Reading::Missing);
+    }
+    match job.conclusion {
+        Nullable::Present(RunConclusion::Success) => {}
+        Nullable::Present(other) => return Err(Reading::Inconclusive(other.word())),
+        Nullable::Absent | Nullable::Null => return Err(Reading::Inconclusive("none")),
+    }
+    let Nullable::Present(completed) = &job.completed_at else {
+        return Err(Reading::Unread("job-fields"));
+    };
+    match (
+        clock::epoch_secs(&job.started_at),
+        clock::epoch_secs(completed),
+    ) {
+        (Some(started), Some(completed)) if completed >= started => Ok(completed - started),
+        _ => Err(Reading::Unread("job-fields")),
+    }
+}
+
 fn judge(
     gh: &Path,
     boxes: &mut [Judged],
@@ -555,52 +825,11 @@ fn judge(
         let Some((repo, glob)) = b.release.clone() else {
             continue;
         };
-        let Some(Merge {
-            at: merge_epoch,
-            oids,
-        }) = merged
-        else {
+        let Some(merge) = merged else {
             return Err(("verifying-merge-unread", String::new()));
         };
-        let oid = match oids.get(&repo.to_ascii_lowercase()) {
-            None => None,
-            Some(Some(oid)) => Some(oid.clone()),
-            Some(None) => return Err(("verifying-release-unread", format!("repo={repo}"))),
-        };
-        let listed = releases(gh, &repo, read)
-            .map_err(|cause| ("verifying-release-unread", format!("repo={repo} {cause}")))?;
-        let mut resolved = None;
-        for (at, tag) in listed.into_iter().filter(|(at, _)| *at > *merge_epoch) {
-            if !glob_matches(&glob, &tag) {
-                continue;
-            }
-            if let Some(oid) = &oid {
-                let path = format!(
-                    "repos/{repo}/compare/{oid}...{}",
-                    crate::verify::segment(&tag)
-                );
-                let comparison = gh_json(gh, &path, read).map_err(|cause| {
-                    (
-                        "verifying-release-unread",
-                        format!("repo={repo} tag={tag} {cause}"),
-                    )
-                })?;
-                match comparison.get("status").and_then(Value::as_str) {
-                    Some("ahead" | "identical") => {}
-                    Some("behind" | "diverged") => continue,
-                    other => {
-                        return Err((
-                            "verifying-release-unread",
-                            format!("repo={repo} tag={tag} status={}", other.unwrap_or("")),
-                        ));
-                    }
-                }
-            }
-            resolved = Some(at);
-            break;
-        }
-        b.trigger_epoch = resolved;
-        b.merged = Some(clock::iso_utc(*merge_epoch));
+        b.trigger_epoch = release_after(gh, &repo, &glob, merge, read)?;
+        b.merged = Some(clock::iso_utc(merge.at));
     }
     for b in boxes.iter_mut() {
         if b.deadline_hours.is_some() {
@@ -612,10 +841,12 @@ fn judge(
             b.deadline_epoch = fired.zip(b.deadline_hours).map(|(f, h)| f + h * 3600);
             b.deadline = b.deadline_epoch.map(clock::iso_utc);
         }
-        b.status = if b.deadline_epoch.is_some_and(|d| d <= now) {
-            "overdue"
-        } else if blocked {
+        // A recorded open blocker holds the box past its deadline too: the
+        // check waits on the blocker, not on a date.
+        b.status = if blocked {
             "blocked"
+        } else if b.deadline_epoch.is_some_and(|d| d <= now) {
+            "overdue"
         } else if b.trigger_kind != "merge"
             && b.trigger_kind != "outcome"
             && b.trigger_epoch.is_none_or(|t| t > now)
@@ -636,15 +867,22 @@ pub(super) struct Counts {
     pub overdue: u64,
     pub blocked: u64,
     pub waiting: u64,
+    pub met: u64,
+    pub failed: u64,
+    pub inconclusive: u64,
+    pub missing: u64,
+    pub unread: u64,
 }
 
 pub(super) enum Item {
-    /// The lines and the row key, with the due keys the event lines carry.
+    /// The lines and the row key, with the due keys the event lines carry
+    /// and the write each due key's reading owes.
     Read {
         lines: Vec<String>,
         key: String,
         due: Vec<String>,
         counts: Counts,
+        owed: BTreeMap<String, Owed>,
     },
     /// Unread this pass: the prior row stands.
     Unread { key: &'static str, cause: String },
@@ -670,7 +908,10 @@ pub(super) fn judge_item(
     let Some(mut boxes) = judged_boxes(&parsed, item.container) else {
         return Ok(Item::Invalid { evidence });
     };
-    let merged = if boxes.iter().any(Judged::needs_merge) {
+    let reads_releases = |b: &Judged| {
+        github_locator(&b.where_).is_some_and(|(_, rest)| rest.as_slice() == ["releases"])
+    };
+    let merged = if boxes.iter().any(|b| b.needs_merge() || reads_releases(b)) {
         match merge_of(&ctx.gh, merged_keys.unwrap_or(&[]), read) {
             Ok(merged) => merged,
             Err(cause) => {
@@ -694,12 +935,21 @@ pub(super) fn judge_item(
     ) {
         return Ok(Item::Unread { key, cause });
     }
-    let mut lines: Vec<String> = boxes.iter().map(|b| b.line(&item.id, blocked)).collect();
-    let due: Vec<String> = boxes
-        .iter()
+    let at = clock::iso_utc(now);
+    let mut owed = BTreeMap::new();
+    let mut due = Vec::new();
+    for b in boxes
+        .iter_mut()
         .filter(|b| b.status == "due" || b.status == "overdue")
-        .map(Judged::due_key)
-        .collect();
+    {
+        b.read = Some(read_box(&ctx.gh, b, merged.as_ref(), read));
+        let key = b.due_key();
+        if let Some(write) = b.owed(&at, merged.as_ref()) {
+            owed.insert(key.clone(), write);
+        }
+        due.push(key);
+    }
+    let mut lines: Vec<String> = boxes.iter().map(|b| b.line(&item.id, blocked)).collect();
     let key = if lines.is_empty() {
         lines.push(format!("verifying {} boxes=0", item.id));
         "boxes=0".to_owned()
@@ -717,13 +967,42 @@ pub(super) fn judge_item(
             "waiting" => counts.waiting += 1,
             _ => unreachable!("the box judge assigns one status"),
         }
+        match &b.read {
+            Some(Reading::Met(_)) => counts.met += 1,
+            Some(Reading::Failed(_)) => counts.failed += 1,
+            Some(Reading::Inconclusive(_)) => counts.inconclusive += 1,
+            Some(Reading::Missing) => counts.missing += 1,
+            Some(Reading::Unread(_)) => counts.unread += 1,
+            None => {}
+        }
     }
     Ok(Item::Read {
         lines,
         key,
         due,
         counts,
+        owed,
     })
+}
+
+/// Make the write a new due key's reading owes; its note goes to stderr.
+/// A refused write is not retried: the key stands in the row, and the due
+/// event hands the box to the verify pass.
+fn write_owed(ctx: &Context, id: &str, owed: &Owed) {
+    let note = match owed {
+        Owed::Complete {
+            number,
+            evidence,
+            merged_at,
+        } => format!(
+            "box={number} {}",
+            boxes::complete_reading(&ctx.settings, id, merged_at.as_deref(), *number, evidence)
+        ),
+        Owed::Comment { text } => {
+            format!("comment={}", boxes::post(&ctx.settings, id, text))
+        }
+    };
+    let _ = writeln!(std::io::stderr(), "verifying-write issue={id} {note}");
 }
 
 fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
@@ -786,7 +1065,11 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                 }
             }
             Item::Read {
-                lines, key, due, ..
+                lines,
+                key,
+                due,
+                owed,
+                ..
             } => {
                 held.insert(item.id.clone());
                 all_lines.extend(lines.iter().cloned());
@@ -814,6 +1097,9 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                             id: item.id.clone(),
                             row: row.clone(),
                         });
+                        if let Some(write) = owed.get(row) {
+                            write_owed(ctx, &item.id, write);
+                        }
                     }
                     produced.changes.push(Change::Set {
                         kind: DEADLINE_ROW.to_owned(),
@@ -884,7 +1170,7 @@ mod tests {
     }
 
     #[test]
-    fn overdue_precedes_blockers_and_unfired_triggers() {
+    fn a_blocker_precedes_a_past_deadline_and_overdue_precedes_unfired_triggers() {
         let gh = PathBuf::from("gh");
         let mut read = BTreeMap::new();
         let make = |kind: &str, trigger_epoch: Option<u64>, deadline_epoch: Option<u64>| Judged {
@@ -901,9 +1187,12 @@ mod tests {
             release: None,
             merged: None,
             status: "due",
+            numeric: None,
+            read: None,
         };
         let rows: Vec<(Judged, bool, &str)> = vec![
-            (make("merge", None, Some(100)), true, "overdue"),
+            (make("merge", None, Some(100)), true, "blocked"),
+            (make("merge", None, Some(100)), false, "overdue"),
             (make("merge", None, Some(101)), true, "blocked"),
             (make("time", Some(200), Some(101)), false, "waiting"),
             (make("time", None, None), false, "waiting"),

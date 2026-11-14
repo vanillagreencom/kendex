@@ -427,7 +427,7 @@ fn the_verifying_lines_and_deadline_events_match_the_recorded_bytes() {
     assert_eq!(
         baseline.get("verifying-deadline", "KEN-1"),
         Some(
-            "box=2 trigger=\"merge\" status=overdue deadline=2026-10-02T00:00:00Z|box=3 trigger=\"merge\" status=due deadline=2026-10-03T00:00:00Z"
+            "box=2 trigger=\"merge\" status=overdue deadline=2026-10-02T00:00:00Z read=unread|box=3 trigger=\"merge\" status=due deadline=2026-10-03T00:00:00Z read=unread"
         )
     );
     let again = pass(
@@ -607,7 +607,7 @@ fn a_deadline_row_moves_only_after_its_event_line_is_durable() {
         assert_eq!(
             baseline.get("verifying-deadline", "KEN-1"),
             Some(
-                "box=2 trigger=\"merge\" status=due deadline=2026-10-02T00:00:00Z|box=3 trigger=\"merge\" status=due deadline=2026-10-03T00:00:00Z"
+                "box=2 trigger=\"merge\" status=due deadline=2026-10-02T00:00:00Z read=unread|box=3 trigger=\"merge\" status=due deadline=2026-10-03T00:00:00Z read=unread"
             ),
             "round {round}"
         );

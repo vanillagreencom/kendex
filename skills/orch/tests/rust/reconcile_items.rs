@@ -556,6 +556,20 @@ fn release_world_named(
     files: &[(&str, Value)],
     merged: &[&str],
 ) -> (orch_runtime::Result<reconcile::Report>, Vec<String>) {
+    let (report, calls, _) = release_world_logged(items, files, merged);
+    (report, calls)
+}
+
+/// [`release_world_named`] with the tracker CLI's calls beside `gh`'s.
+fn release_world_logged(
+    items: Vec<Value>,
+    files: &[(&str, Value)],
+    merged: &[&str],
+) -> (
+    orch_runtime::Result<reconcile::Report>,
+    Vec<String>,
+    Vec<String>,
+) {
     let world = World::new(items);
     world.checkout();
     let dir = world.dir.path();
@@ -567,14 +581,85 @@ fn release_world_named(
     for (name, value) in files {
         fs::write(dir.join(name), value.to_string()).unwrap();
     }
+    // The state directory a tracker write would stage its input in stands,
+    // so a write the verb must never make would reach the tracker CLI.
+    fs::create_dir(dir.join("state")).unwrap();
     let merged: Vec<String> = merged.iter().map(|m| (*m).to_owned()).collect();
     let report = reconcile::run(&world.settings(&[]), None, &merged, Some(&gh), NOW);
-    let calls = fs::read_to_string(dir.join("gh.log"))
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_owned)
-        .collect();
-    (report, calls)
+    let log = |name: &str| {
+        fs::read_to_string(dir.join(name))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    };
+    (report, log("gh.log"), log("linear.log"))
+}
+
+/// The reconciliation reads a due check through the releases page its
+/// `Where:` names, as the watch reads it, and reports the reading in its
+/// lines and counts; it completes nothing and comments on nothing.
+#[test]
+fn reconcile_items_reports_a_releases_reading_and_completes_nothing() {
+    if !support::isolated_row("reconcile_items_reports_a_releases_reading_and_completes_nothing") {
+        return;
+    }
+    let item = issue(
+        "T-1",
+        "Verifying",
+        "started",
+        "## Done when\n- [ ] Post-merge: release count >= 1 release; Where: https://github.com/owner/repo/releases; Why after merge: ships in a release; Deadline: +72h",
+        None,
+    );
+    let line = |report: &reconcile::Report| {
+        report
+            .lines
+            .iter()
+            .find(|l| l.starts_with("verifying T-1 "))
+            .cloned()
+            .unwrap_or_default()
+    };
+    // (merged at, the releases, the reading, the counts met and missing)
+    let rows = [
+        (
+            "2026-10-02T00:00:00Z",
+            json!([release("v1", "2026-10-03T00:00:00Z")]),
+            " read=met observed=1",
+            (1, 0),
+        ),
+        ("2026-10-02T00:00:00Z", json!([]), " read=missing", (0, 1)),
+        (
+            "2026-09-30T00:00:00Z",
+            json!([]),
+            " read=failed observed=0",
+            (0, 0),
+        ),
+    ];
+    for (merged_at, releases, reading, counts) in rows {
+        let (report, _, linear) = release_world_logged(
+            vec![item.clone()],
+            &[
+                ("search.json", search(&[1])),
+                ("pull-1.json", rest_pull(1, merged_at, OID)),
+                ("releases-1.json", releases),
+                ("compare-v1.json", json!({"status":"ahead"})),
+            ],
+            &[],
+        );
+        let report = report.unwrap();
+        assert!(line(&report).ends_with(reading), "{reading}: {report:?}");
+        assert_eq!(
+            (report.counts.met, report.counts.missing),
+            counts,
+            "{reading}"
+        );
+        assert!(
+            !linear
+                .iter()
+                .any(|c| c.starts_with("issues complete") || c.starts_with("comments create")),
+            "{reading}: {linear:?}"
+        );
+    }
 }
 
 /// The released release reads, each item's merge found by the key search

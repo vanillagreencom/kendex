@@ -1,1 +1,1 @@
-verifying KEN-P box=1 trigger="outcome" status=due deadline=- blocked_by=- reading="Read shared outcome at source" where="-" why="-"
+verifying KEN-P box=1 trigger="outcome" status=due deadline=- blocked_by=- reading="Read shared outcome at source" where="-" why="-" read=unread cause=no-reader

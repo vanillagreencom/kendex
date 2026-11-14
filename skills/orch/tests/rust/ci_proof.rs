@@ -148,7 +148,8 @@ fn check_run(id: u64, head: &str) -> Value {
 
 fn job(id: u64, run: u64, head: &str, repo: &str) -> Value {
     json!({"id": id, "run_id": run, "name": CHECK, "head_sha": head, "status": "completed",
-        "conclusion": "success", "check_run_url": format!("https://api.github.com/repos/{repo}/check-runs/{id}"),
+        "conclusion": "success", "started_at": "2026-10-09T08:00:00Z", "completed_at": "2026-10-09T08:00:01Z",
+        "check_run_url": format!("https://api.github.com/repos/{repo}/check-runs/{id}"),
         "steps": [{"name": "classify", "status": "completed", "conclusion": "success", "number": 1,
                    "started_at": "2026-10-09T08:00:00Z", "completed_at": "2026-10-09T08:00:01Z"}]})
 }

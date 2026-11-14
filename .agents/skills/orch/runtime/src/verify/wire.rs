@@ -612,7 +612,8 @@ pub(crate) struct RunPullHead {
 // --- actions/workflow-jobs ---------------------------------------------------------
 
 /// A workflow job (actions/workflow-jobs, "Get a job for a workflow run"):
-/// the job a check run's id names, read for its run and its outcome.
+/// the job a check run's id names, read for its run and its outcome; the
+/// verification duty reads a post-merge check's job for its elapsed time.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Job {
     /// Required (actions/workflow-jobs, `id`: integer).
@@ -628,6 +629,11 @@ pub(crate) struct Job {
     /// Required, nullable (actions/workflow-jobs, `conclusion`: enum or
     /// null).
     pub(crate) conclusion: Nullable<RunConclusion>,
+    /// Required (actions/workflow-jobs, `started_at`: date-time).
+    pub(crate) started_at: String,
+    /// Required, nullable (actions/workflow-jobs, `completed_at`: date-time
+    /// or null).
+    pub(crate) completed_at: Nullable<String>,
     /// Required (actions/workflow-jobs, `check_run_url`: string): the check
     /// run the job reports as.
     pub(crate) check_run_url: String,
@@ -1679,6 +1685,7 @@ mod tests {
             json!({
                 "id": 72, "run_id": 20, "name": "Classify the diff", "head_sha": "abc",
                 "status": "completed", "conclusion": "success",
+                "started_at": "2026-01-29T15:10:00Z", "completed_at": "2026-01-29T15:15:00Z",
                 "check_run_url": "https://api.github.com/repos/o/r/check-runs/72"
             }),
             &[
@@ -1688,6 +1695,8 @@ mod tests {
                 ("head_sha", Required),
                 ("status", Required),
                 ("conclusion", Nullable),
+                ("started_at", Required),
+                ("completed_at", Nullable),
                 ("check_run_url", Required),
             ],
         );

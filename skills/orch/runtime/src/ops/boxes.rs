@@ -6,7 +6,8 @@
 //! refuses any open branch box it is not given, so a box the section gives
 //! no evidence for ticks nothing: one comment on the item names the boxes
 //! with evidence and the boxes without. On a Done item, which no duty reads
-//! again, one comment names any other completion left unsettled.
+//! again, one comment names any other completion left unsettled. A post-merge
+//! box the verification duty reads met completes through the same command.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -169,6 +170,42 @@ pub fn complete(
             });
             Completion::Unsettled { note, comment }
         }
+    }
+}
+
+/// Complete `item`'s post-merge box `number` from the watch's met reading,
+/// `evidence` its Evidence line, through `issues complete`, whose own rule
+/// sets the item's state; `merged_at` where the item's merge was read. The
+/// note names what the completion left.
+pub fn complete_reading(
+    settings: &Settings,
+    item: &str,
+    merged_at: Option<&str>,
+    number: u64,
+    evidence: &str,
+) -> String {
+    let run = match RunDir::create(&settings.state_dir) {
+        Ok(run) => run,
+        Err(e) => return format!("boxes-unticked cause=run-dir-failed error={e}"),
+    };
+    let file = run.dir.join("evidence");
+    if let Err(e) = run.write(&file, &format!("{number}: {evidence}\n")) {
+        return format!("boxes-unticked cause=evidence-unwritten error={e}");
+    }
+    let number = number.to_string();
+    let file = file.display().to_string();
+    let mut args = vec!["issues", "complete", item];
+    if let Some(at) = merged_at {
+        args.extend(["--post-merge-at", at]);
+    }
+    args.extend(["--done-when-met", &number, "--evidence-file", &file]);
+    match run_linear(settings, "complete", &args) {
+        Ok(out) if out.status.success() => format!("boxes-ticked by=watch boxes={number}"),
+        Ok(out) => completion_note(&host::stderr_text(&out), out.status.code()),
+        Err(agent_runtime::Error::NotStarted { .. }) => {
+            "boxes-unticked cause=tracker-unstarted".to_owned()
+        }
+        Err(_) => "boxes-unknown cause=unanswered".to_owned(),
     }
 }
 
@@ -389,7 +426,7 @@ fn post_comment(settings: &Settings, run: &RunDir, item: &str, text: &str) -> &'
 
 #[allow(
     clippy::disallowed_methods,
-    reason = "the close's tracker calls for a merged item's boxes through the one runner: the item read, its one completion and its one comment"
+    reason = "the tracker calls for a merged item's boxes through the one runner: the close's item read, a completion and one comment"
 )]
 fn run_linear(
     settings: &Settings,

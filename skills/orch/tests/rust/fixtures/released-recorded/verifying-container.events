@@ -1,1 +1,1 @@
-EVENT verifying-deadline KEN-P box=1 trigger="outcome" status=due deadline=null
+EVENT verifying-deadline KEN-P box=1 trigger="outcome" status=due deadline=null read=unread
