@@ -179,8 +179,10 @@ beforeEach(() => {
 const kept = {
   kind: "skill" as const,
   name: "stray",
-  message: "skill-link-kept: SKILL.md: ../../memory/x.md",
-  remediation: "use an absolute path",
+  message:
+    "SKILL.md links to ../../memory/x.md, which may no longer reach its file",
+  remediation: "Use an absolute path.",
+  detail: "skill-link-kept: SKILL.md: ../../memory/x.md",
 };
 
 /** Everything on screen, the dialogs included: a dialog renders into a

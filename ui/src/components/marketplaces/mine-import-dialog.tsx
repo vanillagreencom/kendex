@@ -190,7 +190,7 @@ function KeptLinks({ warnings }: { warnings: ItemWarning[] }) {
         {warnings.map((warning) => (
           <li
             key={`${warning.name}:${warning.message}`}
-            className="break-all font-mono text-xs"
+            className="break-words"
           >
             {warning.name}: {warning.message}
           </li>

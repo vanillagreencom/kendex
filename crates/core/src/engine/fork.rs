@@ -302,6 +302,10 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             let files = crate::render::skill::authored_form(files, &published.text)
                 .map_err(|cause| unrestored(cause.to_string()))?;
             let stored = stored_reading(of);
+            // Links are read from `edited` as the scope spells it, the
+            // spelling the stored reading and its bound are in: resolved
+            // through a linked home, the origin would stand outside the
+            // bound it is converted into, and every link would be kept.
             let (files, kept) = match &stored {
                 Some(position) => links::convert(
                     links::Origin {

@@ -81,12 +81,12 @@ fn a_recorded_fork_carries_the_links_it_kept() {
         Err(LandingStopped::Refused { message }) => panic!("the fork was refused: {message}"),
         Ok(_) => panic!("the settle went through, so this fixture proves nothing"),
     };
-    let written: Vec<&str> = written
+    let written: Vec<Option<&str>> = written
         .iter()
-        .map(|warning| warning.message.as_str())
+        .map(|warning| warning.detail.as_deref())
         .collect();
     assert_eq!(
         written,
-        ["skill-link-kept: SKILL.md: ../../../../../outside.md"]
+        [Some("skill-link-kept: SKILL.md: ../../../../../outside.md")]
     );
 }

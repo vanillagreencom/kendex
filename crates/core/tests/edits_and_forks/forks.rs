@@ -422,46 +422,142 @@ fn forking_a_skill_with_a_symlink_inside_refuses_rather_than_dropping_it() {
     );
 }
 
+/// A fork captures and clears only the managed shared tree a tool's link
+/// reads. A link the person repointed elsewhere is read past, through a
+/// linked home and a plain one alike, and a link in the edit keeps
+/// reaching the project file it reached; a shared tree the person replaced
+/// with a link to a folder of their own is refused, and that folder is
+/// neither captured nor moved.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree() {
-    let w = world();
-    write_skill(&w.upstream, "gh", "Real content.");
-    commit(&w.upstream, "one");
-    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
-    sync_and_apply(&w);
-
-    // Repoint the native link at a foreign directory. fork must resolve to
-    // the managed canonical tree, never read or trash the foreign target.
-    let native = w.home.join("app/.claude/skills/gh");
-    let foreign = w.home.join("foreign");
-    fs::create_dir_all(&foreign).unwrap();
-    fs::write(foreign.join("secret.md"), "not part of the package").unwrap();
-    let canonical = w.home.join("app/.agents/skills/gh");
-    fs::write(
-        canonical.join("SKILL.md"),
-        "---\nname: gh\ndescription: mine\n---\nMine.\n",
-    )
-    .unwrap();
-    fs::remove_file(&native).unwrap();
-    std::os::unix::fs::symlink(&foreign, &native).unwrap();
-
-    let plan =
-        kendex_core::engine::fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude)
-            .unwrap();
-    // The captured content is the canonical tree, and nothing trashes the
-    // foreign directory.
-    let descriptions: Vec<String> = plan.ops.iter().map(|op| op.line()).collect();
-    let debug = format!("{:?}", plan.ops);
-    assert!(
-        !debug.contains("foreign"),
-        "the foreign target must never be captured or trashed: {debug}"
-    );
-    assert!(
-        descriptions.iter().any(|d| d.contains("fork")),
-        "{descriptions:?}"
-    );
-    assert!(foreign.join("secret.md").is_file());
+fn forking_a_skill_through_links_reads_only_the_managed_tree() {
+    #[derive(Clone, Copy)]
+    enum Tamper {
+        Nothing,
+        NativeLinkRepointed,
+        SharedTreeLinked,
+    }
+    // (row, whether the home is reached through a link, the tampering,
+    // whether the fork goes through)
+    for (row, linked_home, tamper, forks) in [
+        ("managed link", false, Tamper::Nothing, true),
+        (
+            "managed link under a linked home",
+            true,
+            Tamper::Nothing,
+            true,
+        ),
+        (
+            "native link repointed",
+            false,
+            Tamper::NativeLinkRepointed,
+            true,
+        ),
+        (
+            "shared tree linked elsewhere",
+            false,
+            Tamper::SharedTreeLinked,
+            false,
+        ),
+    ] {
+        let w = match linked_home {
+            true => world_via_link(),
+            false => world(),
+        };
+        write_skill(&w.upstream, "gh", "Real content.");
+        commit(&w.upstream, "one");
+        declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+        sync_and_apply(&w);
+        let native = w.home.join("app/.claude/skills/gh");
+        let shared = w.home.join("app/.agents/skills/gh");
+        assert!(native.is_symlink(), "{row}");
+        // The edit links a file of the project, from where the tree stands.
+        fs::write(w.home.join("app/notes.md"), "Notes.\n").unwrap();
+        let mine = "---\nname: gh\ndescription: mine\n---\n[n](../../../notes.md)\n";
+        fs::write(shared.join("SKILL.md"), mine).unwrap();
+        let foreign = w.home.join("foreign");
+        fs::create_dir_all(&foreign).unwrap();
+        fs::write(foreign.join("secret.md"), "not part of the package").unwrap();
+        match tamper {
+            Tamper::Nothing => {}
+            Tamper::NativeLinkRepointed => {
+                fs::remove_file(&native).unwrap();
+                std::os::unix::fs::symlink(&foreign, &native).unwrap();
+            }
+            Tamper::SharedTreeLinked => {
+                fs::rename(&shared, foreign.join("gh")).unwrap();
+                std::os::unix::fs::symlink(foreign.join("gh"), &shared).unwrap();
+            }
+        }
+        let managed = kendex_core::paths::canonical(&shared).unwrap();
+        let answer = kendex_core::engine::fork::fork(
+            &w.env,
+            &w.scope,
+            ItemKind::Skill,
+            "gh",
+            HarnessId::Claude,
+        );
+        match (answer, forks) {
+            (Ok(plan), true) => {
+                assert!(plan.warnings.is_empty(), "{row}: {:?}", plan.warnings);
+                // The captured link, read from the shared tree the fork
+                // stores its links in, reaches the project's file.
+                let captured = plan
+                    .ops
+                    .iter()
+                    .find_map(|planned| match &planned.op {
+                        kendex_core::apply::Op::WriteTree { files, .. } => files
+                            .iter()
+                            .find(|(path, _)| path == std::path::Path::new("SKILL.md"))
+                            .map(|(_, bytes)| String::from_utf8(bytes.clone()).unwrap()),
+                        _ => None,
+                    })
+                    .unwrap();
+                let spelled = captured
+                    .lines()
+                    .find_map(|line| line.strip_prefix("[n](")?.strip_suffix(')'))
+                    .unwrap();
+                assert_eq!(
+                    kendex_core::paths::canonical(&managed.join(spelled)).unwrap(),
+                    kendex_core::paths::canonical(&w.home.join("app/notes.md")).unwrap(),
+                    "{row}: {captured}"
+                );
+                let trashed: Vec<std::path::PathBuf> = plan
+                    .ops
+                    .iter()
+                    .filter_map(|planned| match &planned.op {
+                        kendex_core::apply::Op::Trash { path, .. } => {
+                            Some(kendex_core::paths::canonical(path).unwrap_or(path.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert!(trashed.contains(&managed), "{row}: {trashed:?}");
+                assert!(
+                    trashed
+                        .iter()
+                        .all(|path| !path
+                            .starts_with(kendex_core::paths::canonical(&foreign).unwrap())),
+                    "{row}: the foreign folder is cleared: {trashed:?}"
+                );
+            }
+            (Err(CoreError::ItemNotFound { .. }), false) => {
+                assert!(shared.is_symlink(), "{row}: the link was moved");
+                assert_eq!(
+                    fs::read_to_string(foreign.join("gh/SKILL.md")).unwrap(),
+                    mine,
+                    "{row}"
+                );
+                assert!(
+                    !w.home.join("app/.kendex-local/skills/gh").exists(),
+                    "{row}: a fork was written"
+                );
+            }
+            (Ok(plan), false) => panic!("{row}: the fork went through: {:?}", plan.ops),
+            (Err(error), _) => panic!("{row}: {error}"),
+        }
+        assert!(foreign.join("secret.md").is_file(), "{row}");
+    }
 }
 
 /// Content that is already the user's own has nothing to fork: a local

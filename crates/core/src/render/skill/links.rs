@@ -451,14 +451,18 @@ pub(crate) fn kept_warning(name: &str, link: &KeptLink) -> ItemWarning {
         name: name.to_owned(),
         harness: None,
         message: format!(
-            "skill-link-kept: {}: {}",
+            "{} links to {}, which may no longer reach its file",
             crate::paths::slashed(&link.file),
             link.target
         ),
         remediation: Some(
-            "the link keeps its spelling, which no longer claims the file it reached before; use an absolute path or URL for a target outside the project or catalog".to_owned(),
+            "Use an absolute path or URL for a file outside the project or catalog.".to_owned(),
         ),
-        detail: None,
+        detail: Some(format!(
+            "skill-link-kept: {}: {}",
+            crate::paths::slashed(&link.file),
+            link.target
+        )),
     }
 }
 
@@ -471,13 +475,16 @@ pub(crate) fn not_converted_warning(name: &str, file: &Path) -> ItemWarning {
         name: name.to_owned(),
         harness: None,
         message: format!(
-            "skill-link-file-not-converted: {}",
+            "{} is a link, so the links inside it were not converted",
             crate::paths::slashed(file)
         ),
         remediation: Some(
-            "the file is a link and kept as it is; replace it with a regular file for its links to be converted".to_owned(),
+            "Replace it with a regular file for its links to be converted.".to_owned(),
         ),
-        detail: None,
+        detail: Some(format!(
+            "skill-link-file-not-converted: {}",
+            crate::paths::slashed(file)
+        )),
     }
 }
 

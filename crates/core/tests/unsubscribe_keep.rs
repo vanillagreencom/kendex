@@ -289,14 +289,16 @@ fn keeping_a_path_catalogs_skill_keeps_every_link_target() {
         assert_eq!(reached(&installed), target, "{location} before");
 
         let kept = kendex_core::engine::detach::source(&env, &scope, "cat").unwrap();
-        let reported: Vec<&str> = kept
+        let reported: Vec<Option<&str>> = kept
             .warnings
             .iter()
-            .map(|warning| warning.message.as_str())
+            .map(|warning| warning.detail.as_deref())
             .collect();
         assert_eq!(
             reported,
-            ["skill-link-kept: SKILL.md: ../../../../../../outside.md"],
+            [Some(
+                "skill-link-kept: SKILL.md: ../../../../../../outside.md"
+            )],
             "{location}"
         );
         apply::execute(&env, &kept).unwrap();
@@ -399,10 +401,12 @@ fn keeping_a_fetched_skill_keeps_what_each_delivered_copy_read() {
         let before: Vec<std::path::PathBuf> = copies.iter().map(|copy| reached(copy)).collect();
 
         let kept = kendex_core::engine::detach::source(&env, &scope, "cat").unwrap();
-        let apart = kept
-            .warnings
-            .iter()
-            .any(|warning| warning.message.starts_with("skill-links-delivered-apart:"));
+        let apart = kept.warnings.iter().any(|warning| {
+            warning
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("skill-links-delivered-apart:"))
+        });
         assert_eq!(apart, !tagged, "{row}");
         apply::execute(&env, &kept).unwrap();
         let resync = kendex_core::engine::detach::resync_kept(&env, &scope).unwrap();

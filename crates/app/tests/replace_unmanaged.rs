@@ -527,20 +527,20 @@ fn a_kept_link_is_reported_by_the_keep_that_kept_it() {
         &[kendex_core::model::HarnessId::Claude],
     )
     .unwrap();
-    let written: Vec<&str> = kept
+    let written: Vec<Option<&str>> = kept
         .written
         .iter()
-        .map(|warning| warning.message.as_str())
+        .map(|warning| warning.detail.as_deref())
         .collect();
     assert_eq!(
         written,
-        ["skill-link-kept: SKILL.md: ../../../../../outside.md"]
+        [Some("skill-link-kept: SKILL.md: ../../../../../outside.md")]
     );
     assert!(
-        !kept
-            .warnings
-            .iter()
-            .any(|warning| warning.message.starts_with("skill-link-kept:")),
+        !kept.warnings.iter().any(|warning| warning
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with("skill-link-kept:"))),
         "{:?}",
         kept.warnings
     );

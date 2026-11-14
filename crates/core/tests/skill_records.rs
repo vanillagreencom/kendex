@@ -131,10 +131,10 @@ fn local_skill_links_reach_their_source_targets_from_every_markdown_file() {
         // says so; a fetched catalog is the publisher's bytes and says
         // nothing.
         assert_eq!(
-            report
-                .warnings
-                .iter()
-                .any(|warning| warning.message.starts_with("agent-link-unrepresentable:")),
+            report.warnings.iter().any(|warning| warning
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("agent-link-unrepresentable:"))),
             !fetched,
             "{location}"
         );

@@ -32,9 +32,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         &agent.model_classes,
         &agent.model_bindings,
     );
-    warnings.extend(resolved.warning.map(|w| {
-        crate::render::RenderWarning::with_fix(w, "use a provider/model id or a tier alias")
-    }));
+    warnings.extend(resolved.warning);
     // No model line means "inherit the default" — OpenCode has no literal
     // for it, and `openai/inherit` is exactly the invalid id this replaces.
     if let Some(id) = &resolved.id {
@@ -335,12 +333,11 @@ mod tests {
         // A bare id is written as given and said out loud; render
         // validation refuses it before it reaches disk.
         assert!(rendered.text.contains("model: mystery\n"));
-        assert!(
-            rendered
-                .warnings
-                .iter()
-                .any(|w| w.message.contains("old-id"))
-        );
+        assert!(rendered.warnings.iter().any(|w| {
+            w.detail
+                .as_deref()
+                .is_some_and(|line| line.contains("old-id"))
+        }));
     }
 
     #[test]

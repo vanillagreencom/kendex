@@ -165,9 +165,31 @@ pub struct TemplateInstall {
 }
 
 impl TemplateInstall {
-    fn rendered(&mut self, report: crate::engine::EngineReport) {
+    /// Fold in one step's report. The step plans the whole destination, so
+    /// its warnings name every package there, standing ones included, and
+    /// each step repeats them. The install carries only those about what
+    /// this step installed, `ours` and what came in with it; the rest stay
+    /// with the scope's own reading.
+    fn rendered(
+        &mut self,
+        report: crate::engine::EngineReport,
+        ours: impl IntoIterator<Item = (ItemKind, String)>,
+    ) {
         self.notes.extend(report.notes);
-        self.warnings.extend(report.warnings);
+        let mut ours: BTreeSet<(ItemKind, String)> = ours.into_iter().collect();
+        ours.extend(
+            report
+                .set_changes
+                .iter()
+                .filter(|change| change.direction == crate::engine::SetDirection::Add)
+                .map(|change| (change.kind, change.name.clone())),
+        );
+        self.warnings.extend(
+            report
+                .warnings
+                .into_iter()
+                .filter(|warning| ours.contains(&(warning.kind, warning.name.clone()))),
+        );
     }
 }
 
@@ -921,7 +943,13 @@ fn install_group(
     // Notes are what a step said while it worked, not a claim about a
     // write, so they travel whether or not the plan had anything in
     // it.
-    landed.install.rendered(report);
+    // A curated set's members are the add's own derivation, which its
+    // added set names.
+    let ours = group
+        .items
+        .iter()
+        .map(|item| (item.kind, item.name.clone()));
+    landed.install.rendered(report, ours);
     // The saved switch, applied to the declarations the add just
     // wrote. `AddRequest` carries no per-item flag, so the state is
     // put on the declaration the way the copy path does — one pass
@@ -1059,7 +1087,11 @@ fn install_local(
     landed.commit(env, &report.plan, |install| {
         install.declared.extend(declared);
     })?;
-    landed.install.rendered(report);
+    let ours = resolution
+        .copies
+        .iter()
+        .map(|copy| (copy.kind, copy.name.clone()));
+    landed.install.rendered(report, ours);
     Ok(())
 }
 

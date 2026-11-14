@@ -591,7 +591,7 @@ fn rebase_for_surface(
                     harness: None,
                     message: warning.message,
                     remediation: warning.remediation,
-                    detail: None,
+                    detail: warning.detail,
                 };
                 // Every variant converts the same links; one warning names
                 // each, however many places the tree lands.

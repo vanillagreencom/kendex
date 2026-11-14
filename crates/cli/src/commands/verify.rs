@@ -1343,8 +1343,8 @@ fn say_row(
                 .harness
                 .is_none_or(|harness| harness == entry.harness)
     }) {
-        match ui::report::is_run_model_warning(&warning.message) {
-            true => ui::report::run_model_warning(&warning.message),
+        match ui::report::is_run_model_warning(warning) {
+            true => ui::report::run_model_warning(warning),
             false => ui::stderr(&style.report_detail(&[Span::Prose(&warning.message)], "  ! ")),
         }
     }

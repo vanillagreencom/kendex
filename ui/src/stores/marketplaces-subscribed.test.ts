@@ -7,7 +7,11 @@ import {
   type MarketplaceRow,
 } from "@/bindings";
 import { UNKNOWN_COMPLETION_STEP } from "@/lib/copy";
-import { keptRecordedStep } from "@/lib/copy-marketplaces";
+import {
+  keptNotInstalledTitle,
+  keptRecordedStep,
+  unsubscribeUnknownTitle,
+} from "@/lib/copy-marketplaces";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useMarketplacesStore } from "./marketplaces";
 import { rowSubscribed, subscribedKeys } from "./marketplaces-shared";
@@ -75,8 +79,10 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
 const kept: ItemWarning = {
   kind: "skill",
   name: "house-style",
-  message: "skill-link-kept: SKILL.md: ../../memory/x.md",
-  remediation: "use an absolute path",
+  message:
+    "SKILL.md links to ../../memory/x.md, which may no longer reach its file",
+  remediation: "Use an absolute path.",
+  detail: "skill-link-kept: SKILL.md: ../../memory/x.md",
 };
 // The line `sayWritten` gives a warning, which the person reads with its fix
 // beneath it.
@@ -220,7 +226,7 @@ describe("a Community row's Subscribed marker", () => {
 
     const outcome = await useMarketplacesStore
       .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
+      .unsubscribe({ scope: "global" }, "kit", "Acme Kit", false, false);
     await useMarketplacesStore.getState().load();
 
     expect(useMarketplacesStore.getState().error).toBeNull();
@@ -241,7 +247,7 @@ describe("a Community row's Subscribed marker", () => {
 
     const ok = await useMarketplacesStore
       .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
+      .unsubscribe({ scope: "global" }, "kit", "Acme Kit", false, false);
 
     // The refusal comes back from the call — the dialog reads it there, not
     // out of the shared slot, which every landing read clears.
@@ -273,7 +279,7 @@ describe("a Community row's Subscribed marker", () => {
 
     const ok = await useMarketplacesStore
       .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
+      .unsubscribe({ scope: "global" }, "kit", "Acme Kit", false, false);
 
     expect(ok).toEqual({ done: true });
     const live = subscribedKeys(useMarketplacesStore.getState().rows);
@@ -330,7 +336,7 @@ describe("a Community row's Subscribed marker", () => {
       });
       await useMarketplacesStore
         .getState()
-        .unsubscribe({ scope: "global" }, "kit", entry.keep, false);
+        .unsubscribe({ scope: "global" }, "kit", "Acme Kit", entry.keep, false);
       expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
         entry.calls,
       );
@@ -352,6 +358,7 @@ describe("a Community row's Subscribed marker", () => {
           message: "the render of skill gh failed",
           written: [kept],
         },
+        title: keptNotInstalledTitle,
         steps: [keptRecordedStep("kit")],
         message: "the render of skill gh failed",
         calls: [[keptToast, { description: kept.remediation }]],
@@ -359,6 +366,7 @@ describe("a Community row's Subscribed marker", () => {
       {
         name: "a call that never answered",
         error: "connection reset",
+        title: unsubscribeUnknownTitle,
         steps: [UNKNOWN_COMPLETION_STEP],
         message: "connection reset",
         calls: [],
@@ -386,12 +394,16 @@ describe("a Community row's Subscribed marker", () => {
 
       const outcome = await useMarketplacesStore
         .getState()
-        .unsubscribe({ scope: "global" }, "kit", true, false);
+        .unsubscribe({ scope: "global" }, "kit", "Acme Kit", true, false);
 
       expect(outcome, entry.name).toEqual({ done: true });
       expect(useMarketplacesStore.getState().error, entry.name).toBeNull();
       const dialog = useProblemsStore.getState().dialog;
       expect(dialog.open, entry.name).toBe(true);
+      // Titled by the name the page shows, never the alias the engine is
+      // sent: the two differ here.
+      expect(dialog.title, entry.name).toBe(entry.title("Acme Kit"));
+      expect(dialog.title, entry.name).not.toBe(entry.title("kit"));
       expect(dialog.message, entry.name).toBe(entry.message);
       expect(dialog.steps, entry.name).toEqual(entry.steps);
       expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(

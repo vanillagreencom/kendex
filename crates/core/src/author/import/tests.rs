@@ -741,15 +741,17 @@ fn an_import_reads_links_into_the_destination_catalog() {
             written.contains(&format!("[m]({link})")),
             "{row}: {written}"
         );
-        let reported: Vec<&str> = outcome
+        let reported: Vec<Option<&str>> = outcome
             .warnings
             .iter()
-            .map(|warning| warning.message.as_str())
+            .map(|warning| warning.detail.as_deref())
             .collect();
         match converted {
             None => assert_eq!(
                 reported,
-                [format!("skill-link-kept: SKILL.md: {authored}")],
+                [Some(
+                    format!("skill-link-kept: SKILL.md: {authored}").as_str()
+                )],
                 "{row}"
             ),
             Some(link) => {
@@ -874,14 +876,14 @@ fn an_own_untagged_skill_is_read_from_its_recorded_places() {
         };
         match (apply(&env, &scopes, &target, &[chosen]), spoiled) {
             (Ok(outcome), Spoiled::Nothing) => {
-                let reported: Vec<&str> = outcome
+                let reported: Vec<Option<&str>> = outcome
                     .warnings
                     .iter()
-                    .map(|warning| warning.message.as_str())
+                    .map(|warning| warning.detail.as_deref())
                     .collect();
                 assert_eq!(
                     reported,
-                    ["skill-link-kept: SKILL.md: ../../../memo.md"],
+                    [Some("skill-link-kept: SKILL.md: ../../../memo.md")],
                     "{row}"
                 );
                 assert_eq!(

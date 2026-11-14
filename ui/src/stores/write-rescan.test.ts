@@ -281,7 +281,7 @@ describe("a write that reaches repo_effects and is refused", () => {
 
     const outcome = await useMarketplacesStore
       .getState()
-      .unsubscribe(scope, "kit", false, false);
+      .unsubscribe(scope, "kit", "Acme Kit", false, false);
     await rescansSettled();
 
     expect(outcome).toEqual({ error: "the scope is busy" });

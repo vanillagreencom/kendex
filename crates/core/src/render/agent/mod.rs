@@ -22,6 +22,9 @@ mod source;
 pub use body::BodyPaths;
 pub(crate) use body::rebase;
 pub(crate) use body::{compare_skill_links, rebase_skill, unrepresentable_link};
+// The code check_against tells this warning apart by.
+#[cfg(test)]
+pub(crate) use body::UNREPRESENTABLE_LINK;
 pub(crate) use role_policy::role_rule;
 pub use role_policy::{RolePolicy, RoleRule};
 pub use source::{Role, SourceAgent, default_pane, parse_source_agent};

@@ -1851,7 +1851,9 @@ fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
 /// stores the saving project's shared-tree reading, installs tagged, and
 /// reads relative to whichever scope installs it, a project or the
 /// personal scope with its local store anywhere. A link that leaves the
-/// installing scope is the install's typed warning, its fix beside it.
+/// installing scope is the install's typed warning, its fix beside it,
+/// once however many steps the install takes; a warning the destination
+/// already gave about a package the install never touched is not.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_shared_copy_reaches_the_installing_scopes_file() {
@@ -1904,18 +1906,30 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
         },
     )
     .unwrap();
-    let keys = |warnings: &[crate::engine::ItemWarning]| -> Vec<(String, bool)> {
-        warnings
-            .iter()
-            .map(|warning| {
-                let key = warning.message.split(':').next().unwrap_or_default();
-                (key.to_owned(), warning.remediation.is_some())
-            })
-            .collect()
-    };
+    // Every warning, whole: its package, its diagnostic line and whether
+    // it carries a fix.
+    let keys =
+        |warnings: &[crate::engine::ItemWarning]| -> Vec<(ItemKind, String, Option<String>, bool)> {
+            warnings
+                .iter()
+                .map(|warning| {
+                    (
+                        warning.kind,
+                        warning.name.clone(),
+                        warning.detail.clone(),
+                        warning.remediation.is_some(),
+                    )
+                })
+                .collect()
+        };
     assert_eq!(
         keys(&saved.warnings),
-        [("skill-link-kept".to_owned(), true)],
+        [(
+            ItemKind::Skill,
+            "ship".to_owned(),
+            Some("skill-link-kept: SKILL.md: ../../../../outside.md".to_owned()),
+            true
+        )],
         "{:?}",
         saved.warnings
     );
@@ -1924,6 +1938,24 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
         "{:?}",
         saved.members[0].source
     );
+    // A second step: a marketplace member, whose add plans the whole
+    // destination again.
+    let market = home.join("market");
+    super::skill(&market.join("skills"), "gh", "market bytes");
+    let mut saved = saved.template;
+    saved.members.push(Member {
+        kind: MemberKind::Skill,
+        name: "gh".to_owned(),
+        enabled: true,
+        source: MemberSource::Marketplace {
+            repo: crate::paths::slashed(&market),
+            rev: None,
+        },
+    });
+    // A package the destination already holds whose link leaves it: a
+    // warning every plan there gives, about nothing the install writes.
+    let outside = home.join("outside-catalog");
+    super::skill(&outside.join("skills"), "linked", "[x](../../memory/x.md)");
     // Each destination holds its own `memory/x.md`.
     let other = home.join("other");
     // (row, destination, its root, whether the outside link leaves it)
@@ -1933,8 +1965,27 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
             Scope::Project {
                 root: {
                     fs::create_dir_all(other.join(".claude")).unwrap();
-                    fs::write(other.join("kendex.toml"), "schema = 8\n").unwrap();
-                    other.canonicalize().unwrap()
+                    fs::write(
+                        other.join("kendex.toml"),
+                        format!(
+                            "schema = 8\n[sources.outside]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.linked]\nsource = \"outside\"\n",
+                            crate::test_util::source_path(&outside)
+                        ),
+                    )
+                    .unwrap();
+                    let root = other.canonicalize().unwrap();
+                    let standing = Scope::Project { root: root.clone() };
+                    let report = crate::engine::audit(&env, &standing).unwrap();
+                    assert!(
+                        report
+                            .warnings
+                            .iter()
+                            .any(|warning| warning.name == "linked"),
+                        "the destination gives no standing warning: {:?}",
+                        report.warnings
+                    );
+                    crate::apply::execute(&env, &report.plan).unwrap();
+                    root
                 },
             },
             other.canonicalize().unwrap(),
@@ -1953,7 +2004,12 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
         )
         .unwrap();
         let expected = match leaves {
-            true => vec![("agent-link-unrepresentable".to_owned(), true)],
+            true => vec![(
+                ItemKind::Skill,
+                "ship".to_owned(),
+                Some("agent-link-unrepresentable: ../../../../outside.md".to_owned()),
+                true,
+            )],
             false => Vec::new(),
         };
         assert_eq!(keys(&landed.warnings), expected, "{row}: {landed:?}");

@@ -192,8 +192,10 @@ describe("updates store: edited places", () => {
     const kept = {
       kind: "skill" as const,
       name: "gh",
-      message: "skill-link-kept: SKILL.md: ../../memory/x.md",
-      remediation: "use an absolute path",
+      message:
+        "SKILL.md links to ../../memory/x.md, which may no longer reach its file",
+      remediation: "Use an absolute path.",
+      detail: "skill-link-kept: SKILL.md: ../../memory/x.md",
     };
     const landed = {
       scope: { scope: "global" as const },

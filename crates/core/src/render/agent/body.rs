@@ -25,13 +25,18 @@ pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWar
     )
 }
 
+/// The key of [`unrepresentable_link`]'s diagnostic line, which a reader
+/// of a plan's warnings tells this warning apart by.
+pub(crate) const UNREPRESENTABLE_LINK: &str = "agent-link-unrepresentable";
+
 /// The warning a render gives a link it kept because no spelling from the
 /// rendered file reaches its target inside the roots.
 pub(crate) fn unrepresentable_link(target: &str) -> RenderWarning {
     RenderWarning::with_fix(
-        format!("agent-link-unrepresentable: {target}"),
-        "keep the link target inside the catalog and the rendered scope, or use an absolute path or URL",
+        format!("The link to {target} can't reach its file from where this is installed"),
+        "Keep the link target inside the catalog and the installed folder, or use an absolute path or URL.",
     )
+    .with_detail(format!("{UNREPRESENTABLE_LINK}: {target}"))
 }
 
 /// The skill form of [`rebase`]: a link `keep` claims, or whose spelling

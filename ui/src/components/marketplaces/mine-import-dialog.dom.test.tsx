@@ -11,14 +11,16 @@ import { MineImportDialog } from "./mine-import-dialog";
 
 vi.mock("@/bindings", () => ({ commands: {} }));
 
-const FIX = "use an absolute path or URL";
+const FIX = "Use an absolute path or URL.";
 
 const kept = (file: string) => ({
   kind: "skill" as const,
   name: "house-style",
   harness: null,
-  message: `skill-link-kept: ${file}: ../../memory/x.md`,
+  message: `${file} links to ../../memory/x.md, which may no longer reach its file`,
   remediation: FIX,
+  // The keyed line is for the terminal and `--json`, never the window.
+  detail: `skill-link-kept: ${file}: ../../memory/x.md`,
 });
 
 const said = () => document.body.textContent ?? "";
@@ -60,5 +62,6 @@ describe("an import's outcome", () => {
     for (const line of lines) expect(said()).toContain(line);
     expect(times(IMPORT_LINKS_KEPT)).toBe(lines.length > 0 ? 1 : 0);
     expect(times(FIX)).toBe(lines.length > 0 ? 1 : 0);
+    expect(said()).not.toContain("skill-link-kept");
   });
 });

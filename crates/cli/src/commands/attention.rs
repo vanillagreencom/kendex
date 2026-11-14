@@ -52,7 +52,7 @@ pub fn print_attention(
 ) -> Attention {
     let (lines, attention) = attention(&ui::style(), env, report, listing, reached, shown);
     for warning in &report.warnings {
-        ui::report::run_model_warning(&warning.message);
+        ui::report::run_model_warning(warning);
     }
     ui::stderr(&lines);
     attention

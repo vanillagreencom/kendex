@@ -279,15 +279,16 @@ export const UNSUBSCRIBE_EDITED_NEXT =
 // The keep landed and the install of the kept copies behind it did not.
 // One error dialog says both halves, the half that failed as its title and
 // the half that stands as its step, as an install beside does
-// (`besideNotInstalledTitle`).
-export const keptNotInstalledTitle = (source: string): string =>
-  `Your copies of the packages from '${source}' didn't install`;
+// (`besideNotInstalledTitle`). Titled by the marketplace's name, as the
+// unsubscribe dialog is, never by the alias the engine is sent.
+export const keptNotInstalledTitle = (marketplace: string): string =>
+  `Your copies of the packages from ${marketplace} didn't install`;
 export const keptRecordedStep = (source: string): string =>
   `You are unsubscribed from '${source}', and My Library lists its packages under Your own. The page shows what is on disk now.`;
 // An unsubscribe whose answer never came back, said as any write is whose
-// completion is unknown.
-export const unsubscribeUnknownTitle = (source: string): string =>
-  unknownCompletionTitle(`unsubscribing from '${source}'`);
+// completion is unknown, and titled by the marketplace's name.
+export const unsubscribeUnknownTitle = (marketplace: string): string =>
+  unknownCompletionTitle(`unsubscribing from ${marketplace}`);
 
 // The Community tab's two directories.
 export const DIRECTORY_CHECK_AGAIN_LABEL = "Check kendex.ai again";
@@ -314,7 +315,7 @@ export const IMPORT_HELP =
 export const IMPORT_READING = "Finding packages on this computer…";
 export const IMPORT_NOTHING =
   "No packages to import. Install or create a package first.";
-export const IMPORT_LINKS_KEPT = "These links may no longer reach their files";
+export const IMPORT_LINKS_KEPT = "Links to check";
 const licenseOrNone = (license: string | null): string =>
   license ? license : "no license found";
 export const fromMarketplaceLabel = (

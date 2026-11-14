@@ -173,18 +173,16 @@ fn stored_links(
                 kind: ItemKind::Skill,
                 name: item.name.clone(),
                 harness: None,
-                message: format!(
+                message: "Kept as delivered, because its installed copies read its links differently; each copy keeps reading what it read before".to_owned(),
+                remediation: None,
+                detail: Some(format!(
                     "skill-links-delivered-apart: {}",
                     positions
                         .iter()
                         .map(|position| position.display().to_string())
                         .collect::<Vec<_>>()
                         .join(", ")
-                ),
-                remediation: Some(
-                    "the kept package stores its bytes as delivered, so each of these places keeps reading what it read before".to_owned(),
-                ),
-                detail: None,
+                )),
             };
             (files, None, vec![warning])
         }

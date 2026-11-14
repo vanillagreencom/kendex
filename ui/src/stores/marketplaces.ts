@@ -103,9 +103,13 @@ interface MarketplacesState extends InstallActions, CatalogCaches {
    * the app, and it needs a subscription to ask about — so this makes one
    * and hands it over, and the reader still answers where the packages go. */
   subscribeForInstall: (repo: string) => Promise<Catalog | null>;
+  /** Unsubscribe `scope` from `source`, the alias the engine addresses.
+   *  `name` is what the page titles the marketplace, which the failures
+   *  this says are titled by. */
   unsubscribe: (
     scope: Scope,
     source: string,
+    name: string,
     keep: boolean,
     discardEdits: boolean,
   ) => Promise<UnsubscribeOutcome>;
@@ -212,7 +216,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     return subscription(scope, outcome.name);
   },
 
-  unsubscribe: (scope, source, keep, discardEdits) =>
+  unsubscribe: (scope, source, name, keep, discardEdits) =>
     writingRepo(
       async () => {
         let response: Awaited<
@@ -241,7 +245,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
               // install, and the rows are read again below like any landing.
               set({ error: null });
               useProblemsStore.getState().showError({
-                title: keptNotInstalledTitle(source),
+                title: keptNotInstalledTitle(name),
                 message: stop.message === "" ? NO_REASON_GIVEN : stop.message,
                 steps: [keptRecordedStep(source)],
               });
@@ -255,7 +259,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
               // read again below.
               set({ error: null });
               useProblemsStore.getState().showError({
-                title: unsubscribeUnknownTitle(source),
+                title: unsubscribeUnknownTitle(name),
                 message: stop.message,
                 steps: [UNKNOWN_COMPLETION_STEP],
               });

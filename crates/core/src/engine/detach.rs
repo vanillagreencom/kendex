@@ -489,6 +489,25 @@ pub fn resync_kept(env: &Env, scope: &Scope) -> Result<EngineReport> {
     super::plan_apply(env, scope, &super::PlanOptions::locked())
 }
 
+/// What the re-sync after a keep reported about the packages the keep
+/// took: its warnings about `closure`'s items, declared and derived. The
+/// re-sync plans the whole scope, so its report also carries every
+/// standing warning the scope gives on any read; those stay with that
+/// read.
+pub fn kept_resync_warnings(closure: &Closure, resync: &EngineReport) -> Vec<super::ItemWarning> {
+    let ours: std::collections::BTreeSet<(ItemKind, &str)> = closure
+        .items
+        .iter()
+        .map(|item| (item.kind, item.name.as_str()))
+        .collect();
+    resync
+        .warnings
+        .iter()
+        .filter(|warning| ours.contains(&(warning.kind, warning.name.as_str())))
+        .cloned()
+        .collect()
+}
+
 /// The manifest this conversion writes: every kept package reading `local`
 /// and recorded as a fork, and the source it came from gone. Derived before
 /// anything is read, because it is the scope a kept agent's assignment has

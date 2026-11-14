@@ -99,6 +99,11 @@ pub fn unsubscribe(
             undone,
         });
     }
+    // What the keep takes, read before the source it names is gone: the
+    // packages whose re-sync warnings are this write's own.
+    let closure = kendex_core::engine::ops::manifest_for_mutation(env, scope)
+        .and_then(|manifest| detach::closure(env, scope, source, &manifest))
+        .map_err(|e| refused(e.to_string()))?;
     // The conversion has no report of its own beyond the links it kept.
     // The resync below supplies the report that repository effects need.
     let kept = detach::source(env, scope, source).map_err(|e| refused(e.to_string()))?;
@@ -115,7 +120,8 @@ pub fn unsubscribe(
             });
         }
     };
-    warnings.extend(resync.warnings.iter().cloned());
+    let resynced = detach::kept_resync_warnings(&closure, &resync);
+    warnings.extend(resynced);
     match crate::repo_effects::write(env, &resync) {
         Ok(undone) => Ok(Unsubscribed { warnings, undone }),
         Err(message) => Err(LandingStopped::Recorded {
@@ -183,7 +189,9 @@ mod tests {
     /// Keeping a skill whose link leaves the project answers with that link
     /// as the keep reported it, its fix beside it, for the window to show:
     /// on a keep that finished, and on one whose render after it failed,
-    /// where nothing else reads what the landed keep reported.
+    /// where nothing else reads what the landed keep reported. A warning
+    /// the scope gives about another source's package, which the keep never
+    /// touched, is not part of the answer.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn unsubscribe_keep_answers_each_kept_link_with_its_fix() {
@@ -198,14 +206,27 @@ mod tests {
             skill(&catalog, "gh", "[m](../../memory/x.md)");
             std::fs::create_dir_all(catalog.join("memory")).unwrap();
             std::fs::write(catalog.join("memory/x.md"), "Memory.\n").unwrap();
+            // Another source's package whose link leaves the project: a
+            // warning every plan of this scope gives.
+            let outside = home.join("outside");
+            skill(&outside, "linked", "[x](../../memory/x.md)");
             std::fs::create_dir_all(root.join(".claude")).unwrap();
             let manifest = format!(
-                "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.gh]\nsource = \"cat\"\n",
-                crate::test_util::source_path(&catalog)
+                "schema = 8\n[sources.cat]\n{}\n[sources.outside]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.gh]\nsource = \"cat\"\n[skills.linked]\nsource = \"outside\"\n",
+                crate::test_util::source_path(&catalog),
+                crate::test_util::source_path(&outside)
             );
             std::fs::write(root.join("kendex.toml"), &manifest).unwrap();
             let scope = Scope::Project { root: root.clone() };
             let report = kendex_core::engine::audit(&env, &scope).unwrap();
+            assert!(
+                report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.name == "linked"),
+                "the scope gives no standing warning: {:?}",
+                report.warnings
+            );
             apply::execute(&env, &report.plan).unwrap();
             let unwritable = match render_fails {
                 false => None,
@@ -243,13 +264,27 @@ mod tests {
                     panic!("the render after the keep failed: {message}")
                 }
             };
-            let kept: Vec<&ItemWarning> = warnings
+            let answered: Vec<(ItemKind, &str, Option<&str>, bool)> = warnings
                 .iter()
-                .filter(|warning| warning.message.starts_with("skill-link-kept:"))
+                .map(|warning| {
+                    (
+                        warning.kind,
+                        warning.name.as_str(),
+                        warning.detail.as_deref(),
+                        warning.remediation.is_some(),
+                    )
+                })
                 .collect();
-            assert_eq!(kept.len(), 1, "render_fails={render_fails}: {warnings:?}");
-            assert_eq!(kept[0].name, "gh");
-            assert!(kept[0].remediation.is_some(), "{:?}", kept[0]);
+            assert_eq!(
+                answered,
+                [(
+                    ItemKind::Skill,
+                    "gh",
+                    Some("skill-link-kept: SKILL.md: ../../memory/x.md"),
+                    true
+                )],
+                "render_fails={render_fails}"
+            );
         }
     }
 }

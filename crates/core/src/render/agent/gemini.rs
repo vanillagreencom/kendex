@@ -35,7 +35,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         &agent.model_classes,
         &agent.model_bindings,
     );
-    warnings.extend(resolved.warning.map(RenderWarning::new));
+    warnings.extend(resolved.warning);
     // Omission keeps the session model without introducing a native selector.
     if let Some(id) = &resolved.id {
         push(format!("model: {}", yaml_scalar(id)));

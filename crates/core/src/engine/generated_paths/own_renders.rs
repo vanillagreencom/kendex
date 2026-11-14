@@ -252,8 +252,13 @@ fn check_against(env: &Env, root: &Path, declared: &Manifest, lock: &Lock) -> St
     let links: Vec<String> = report
         .warnings
         .iter()
-        .filter(|warning| warning.message.starts_with("agent-link-unrepresentable:"))
-        .map(|warning| format!("{}: {}", warning.name, warning.message))
+        .filter_map(|warning| {
+            let detail = warning.detail.as_deref()?;
+            detail
+                .strip_prefix(crate::render::agent::UNREPRESENTABLE_LINK)
+                .is_some_and(|rest| rest.starts_with(": "))
+                .then(|| format!("{}: {detail}", warning.name))
+        })
         .collect();
     if !links.is_empty() {
         return Standing::Refused(Finding::Unrepresentable { links });

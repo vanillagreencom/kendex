@@ -87,6 +87,25 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
     assert_eq!(warning_lines(&plain(), &retired), [keyed]);
     assert_eq!(tagged(&warning_lines(&rich(120), &retired)), [keyed]);
 
+    // A warning's diagnostic line follows its fix, whole, for a reader
+    // that keys on its code.
+    let kept = [ItemWarning {
+        kind: ItemKind::Skill,
+        name: "ship".into(),
+        harness: None,
+        message: "SKILL.md links to ../x.md, which may no longer reach its file".into(),
+        remediation: Some("Use an absolute path or URL.".into()),
+        detail: Some("skill-link-kept: SKILL.md: ../x.md".into()),
+    }];
+    assert_eq!(
+        warning_lines(&plain(), &kept),
+        [
+            "warning: ship: SKILL.md links to ../x.md, which may no longer reach its file",
+            "  fix: Use an absolute path or URL.",
+            "  skill-link-kept: SKILL.md: ../x.md",
+        ]
+    );
+
     // desired_custom_hooks supplies prose remediation, not a command.
     let remedy = "set agents = \"all\" to make it run for everything, or keep it as instructions";
     changed.warnings[0].remediation = Some(remedy.into());

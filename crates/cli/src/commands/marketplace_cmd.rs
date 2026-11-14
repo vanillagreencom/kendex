@@ -190,7 +190,7 @@ fn run_unsubscribe(
                 .and_then(|resync| {
                     ui::stderr(&super::engine_common::warning_lines(
                         &style,
-                        &resync.warnings,
+                        &detach::kept_resync_warnings(&closure, &resync),
                     ));
                     apply_report_accounted(env, &resync, None)
                 })
