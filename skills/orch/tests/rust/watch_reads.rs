@@ -2065,12 +2065,17 @@ fn push_path(floor: Option<&str>) -> String {
     }
 }
 
+/// The head a push row's run `id` carries: the id, zero-padded to a sha.
+fn push_head(id: u64) -> String {
+    format!("{id:040}")
+}
+
 /// A push run on main in GitHub's documented shape; `conclusion` is null
 /// for a run not completed.
 fn push_run(id: u64, created_at: &str, status: &str, conclusion: Option<&str>) -> Value {
     json!({"id": id, "run_attempt": 1, "created_at": created_at, "updated_at": created_at,
         "status": status, "conclusion": conclusion, "event": "push", "head_branch": "main",
-        "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000",
+        "path": ".github/workflows/skill-tests.yml", "head_sha": push_head(id),
         "workflow_id": 1, "repository": {"id": 1296269, "full_name": "owner/repo"},
         "head_repository": {"id": 1296269, "full_name": "owner/repo"}, "pull_requests": []})
 }
@@ -2111,11 +2116,22 @@ fn plant_red_jobs(world: &mut World, id: u64) {
     );
 }
 
-/// The `main-push-failing` line a red push run of `skill-tests.yml` prints.
-fn red_line(id: u64) -> String {
+/// The `main-push-failing` line a red push run of `skill-tests.yml` prints,
+/// its range starting at run `since`'s head, `None` where no green run is
+/// known.
+fn red_line(id: u64, since: Option<u64>) -> String {
+    let since = since.map_or_else(|| "none".to_owned(), push_head);
     format!(
-        "EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run={id} jobs=[\"tests\"] cause=FAILED: suite-{id}"
+        "EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run={id} head={} since={since} jobs=[\"tests\"] cause=FAILED: suite-{id}",
+        push_head(id)
     )
+}
+
+/// A push mark's value: `floor`, the `judged` runs, the `red` run's JSON or
+/// `null`, and the run whose head is `green`.
+fn push_mark(floor: &str, judged: &str, red: &str, green: Option<u64>) -> String {
+    let green = green.map_or_else(|| "null".to_owned(), |id| format!("\"{}\"", push_head(id)));
+    format!(r#"{{"floor":"{floor}","judged":{judged},"red":{red},"green":{green}}}"#)
 }
 
 /// The alert token file the fleet renews: mode 600, one word.
@@ -2970,8 +2986,9 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
 /// last pass, once, oldest first: a red run behind a green one, and a run
 /// that was unfinished at the last pass and finished red behind a newer
 /// green one, whose creation time the mark kept as the next search's
-/// floor. The first pass, with no mark, judges only the standing run. A
-/// failed read refuses the pass and moves no mark.
+/// floor. Each names its head and the head of the last green run before it,
+/// which the mark keeps across passes. The first pass, with no mark, judges
+/// only the standing run. A failed read refuses the pass and moves no mark.
 #[test]
 fn every_red_push_run_since_the_last_pass_is_reported_once() {
     let (t1, t2, t3, t4) = (
@@ -3007,8 +3024,8 @@ fn every_red_push_run_since_the_last_pass_is_reported_once() {
     );
     assert_eq!(
         baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
-        Some(r#"{"floor":"2026-10-18T01:00:00Z","judged":[[502,1]],"red":null}"#),
-        "the unfinished run holds the floor"
+        Some(push_mark(t1, "[[502,1]]", "null", Some(500)).as_str()),
+        "the unfinished run holds the floor, the last green run before it the range's start"
     );
     plant_runs(
         &mut world,
@@ -3023,10 +3040,14 @@ fn every_red_push_run_since_the_last_pass_is_reported_once() {
     plant_red_jobs(&mut world, 501);
     plant_red_jobs(&mut world, 503);
     let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2000).unwrap();
-    assert_eq!(rendered(&second), vec![red_line(501), red_line(503)]);
+    assert_eq!(
+        rendered(&second),
+        vec![red_line(501, Some(500)), red_line(503, Some(502))],
+        "each red run's range starts at the last green run before it, the mark's before the floor"
+    );
     assert_eq!(
         baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
-        Some(r#"{"floor":"2026-10-18T04:00:00Z","judged":[[504,1]],"red":null}"#),
+        Some(push_mark(t4, "[[504,1]]", "null", Some(502)).as_str()),
         "the newest green run stands"
     );
     let jobs_reads = |w: &World| {
@@ -3065,8 +3086,14 @@ fn every_red_push_run_since_the_last_pass_is_reported_once() {
     );
     plant_red_jobs(&mut world, 505);
     let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 4000).unwrap();
-    assert_eq!(rendered(&third), vec![red_line(505)]);
-    let red = r#"{"floor":"2026-10-18T05:00:00Z","judged":[[505,1]],"red":{"run":505,"attempt":1,"jobs":["tests"]}}"#;
+    assert_eq!(rendered(&third), vec![red_line(505, Some(504))]);
+    let red = push_mark(
+        t5,
+        "[[505,1]]",
+        r#"{"run":505,"attempt":1,"jobs":["tests"]}"#,
+        Some(504),
+    );
+    let red = red.as_str();
     assert_eq!(
         baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
         Some(red)
@@ -3121,8 +3148,18 @@ fn a_cancelled_push_run_is_skipped_when_the_standing_run_is_picked() {
     ));
     let mut baseline = Baseline::default();
     let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
-    assert_eq!(rendered(&first), vec![red_line(301)]);
-    let red = r#"{"floor":"2026-10-18T02:00:00Z","judged":[[302,1]],"red":{"run":301,"attempt":1,"jobs":["tests"]}}"#;
+    assert_eq!(
+        rendered(&first),
+        vec![red_line(301, None)],
+        "a red run with no green run read before it names no range start"
+    );
+    let red = push_mark(
+        t2,
+        "[[302,1]]",
+        r#"{"run":301,"attempt":1,"jobs":["tests"]}"#,
+        None,
+    );
+    let red = red.as_str();
     assert_eq!(
         baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
         Some(red)
@@ -3164,11 +3201,17 @@ fn a_cancelled_push_run_is_skipped_when_the_standing_run_is_picked() {
     );
     plant_red_jobs(&mut world, 303);
     let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 3000).unwrap();
-    assert_eq!(rendered(&third), vec![red_line(303)]);
+    assert_eq!(rendered(&third), vec![red_line(303, None)]);
     assert_eq!(
         baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
         Some(
-            r#"{"floor":"2026-10-18T04:00:00Z","judged":[[304,1]],"red":{"run":303,"attempt":1,"jobs":["tests"]}}"#
+            push_mark(
+                t4,
+                "[[304,1]]",
+                r#"{"run":303,"attempt":1,"jobs":["tests"]}"#,
+                None
+            )
+            .as_str()
         )
     );
 }

@@ -236,11 +236,15 @@ pub enum Event {
         workflow: String,
         cause: String,
     },
+    /// `range`, a push run's alone: its head and the head of the last green
+    /// push run before it, `none` where the watch knows of none, so the
+    /// merges between the two are the ones that can have turned it red.
     MainPushFailing {
         repo: String,
         workflow: String,
         event: String,
         run: String,
+        range: Option<(String, String)>,
         jobs: String,
         cause: String,
     },
@@ -618,11 +622,18 @@ impl Event {
                 workflow,
                 event,
                 run,
+                range,
                 jobs,
                 cause,
-            } => format!(
-                "EVENT main-push-failing {repo} workflow={workflow} event={event} run={run} jobs={jobs} cause={cause}"
-            ),
+            } => {
+                let range = range
+                    .as_ref()
+                    .map(|(head, since)| format!(" head={head} since={since}"))
+                    .unwrap_or_default();
+                format!(
+                    "EVENT main-push-failing {repo} workflow={workflow} event={event} run={run}{range} jobs={jobs} cause={cause}"
+                )
+            }
             Event::MainPushBudget {
                 repo,
                 run,

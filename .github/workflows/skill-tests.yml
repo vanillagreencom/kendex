@@ -24,10 +24,10 @@ name: Skill Tests
 # select and each other lane as `tools/ci-job-set` selects it; the invariant
 # comment there is the one statement of what each lane runs. A diff of skill
 # Markdown alone narrows inside its shards: the changes job publishes the
-# suites whose own input notes cover none of it as `skipped_suites`, each
-# shell suite step leaves those out of its own, and a leg whose list left
-# out one of its suites runs its `narrowed by the suite list` step, so the
-# main push runs that shard whole. The selected
+# suites whose own input notes cover none of it as `skipped_suites`, and
+# each shell suite step leaves those out of its own. The changes job also
+# uploads that list and the Rust targets as the `ci-selection` artifact,
+# the record the main push reads of what this group ran. The selected
 # macOS cargo and shell legs run in the group. The two diff checks,
 # preflight and Markdown, run on every group against its base.
 # `tools/ci-job-set --event-parity` holds the pull-request selection, which
@@ -40,19 +40,23 @@ name: Skill Tests
 # A PUSH TO MAIN carries the tree its merge group proved, so its cargo lanes
 # run only the compile steps, which save the compile cache under the merged
 # lockfile for each platform, and the catalog and smoke checks run as on
-# every main run. Its Linux and macOS shell shards run only where the
-# same-head merge group did not prove them: the `changes` job reads that
-# group's shard jobs through `tools/ci-job-set`, whose push route states the
-# proof, and an unread, failed, pending or absent proof runs the shard. The
-# temporary main-only suites run on every push. THE NIGHTLY RUN, the daily schedule on main, also runs the
-# full macOS shell roster, the macOS cargo tests and the Windows tests; a
-# manual dispatch runs the same jobs on demand. A macOS or Windows failure
-# that independently passing changes cause only in combination, or that no
-# group's selection reached, surfaces there, and the overseer's watch
-# reports a red scheduled run.
+# every main run. Its Linux and macOS shell legs run only the suites, and
+# its Rust step only the targets, the same-head merge group did not prove on
+# that runner: the `changes` job reads that group's published selection and
+# its jobs through `tools/ci-job-set`, whose push route states the proof, and
+# an unread, failed, pending or absent proof runs the suite or target. The
+# temporary main-only suites run on every push. Push runs share one
+# concurrency group, so the merges landing during a run share the next. THE
+# NIGHTLY RUN, the daily schedule on main, runs the macOS shell roster, the
+# cargo legs and the Windows tests, each where no merge-group or push run at
+# its head already ran it green: the `changes` job reads those runs through
+# `tools/ci-job-set`, whose night route states the proof. A manual dispatch
+# runs every one of those jobs on demand. A macOS or Windows failure that no
+# run at the head reached surfaces there, and the overseer's watch reports a
+# red scheduled run.
 # Whatever else does NOT run on every event carries its own `if:` saying
 # why. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
-# groups and every shard does each night.
+# groups and main pushes.
 #
 # Every job names its GitHub-hosted runner in `runs-on:`, directly or through
 # its matrix's `os` list, the same label on every event. The repository is
@@ -106,7 +110,7 @@ name: Skill Tests
 # other leg takes 15. The per-shard figures behind each budget are in the
 # comment above it.
 # Every merge group runs its selected Linux and macOS shards; the nightly
-# run runs the whole macOS roster.
+# run runs the macOS shards no run at its head proved.
 
 "on":
   # Kept for the required `CI` context alone: a pull request runs no lane.
@@ -134,10 +138,14 @@ env:
 
 # A push to a pull request's branch cancels the run its previous head started,
 # which could only report on a head the pull request no longer has. A merge
-# group, a push to main or a nightly run keys its group to its own run and
-# cancels nothing: cancelling a queue run would eject its entry.
+# group or a nightly run keys its group to its own run and cancels nothing:
+# cancelling a queue run would eject its entry. Every push to main shares one
+# group keyed to the ref and cancels nothing: GitHub runs one and holds one
+# pending, and a newer push replaces the pending run, so the merges that land
+# while a push run goes share the next one, which proves the newest head; no
+# merge waits for it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -156,14 +164,16 @@ jobs:
   # check nothing will report.
   #
   # The class is read on merge_group alone. A pull request runs no lane, and
-  # the nightly run runs its fixed jobs without a class. On a push to main
-  # only the root checkout and the select step run: tools/ci-job-set reads
-  # the same-head merge group's shard jobs, which `actions: read` admits,
-  # and publishes the shards that group left unproved. The root checkout
-  # there is main itself.
+  # a manual dispatch runs the nightly jobs whole without this job. On a push
+  # to main only the root checkout and the select step run: tools/ci-job-set
+  # reads the same-head merge group's jobs and published selection, which
+  # `actions: read` admits, and publishes the suites, shards and targets
+  # that group left unproved. On the nightly schedule the same two steps
+  # publish the macOS shards and cargo lanes no same-head group or push run
+  # proved. The root checkout there is main itself.
   changes:
     name: Classify the diff
-    if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -190,6 +200,7 @@ jobs:
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
       skipped_suites: ${{ steps.select.outputs.skipped_suites }}
+      skipped_suites_macos: ${{ steps.select.outputs.skipped_suites_macos }}
       rust_targets: ${{ steps.select.outputs.rust_targets }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
@@ -310,7 +321,20 @@ jobs:
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
           EVENT: ${{ env.EVENT }}
           GH_TOKEN: ${{ github.token }}
+          CI_SELECTION: ${{ runner.temp }}/ci-selection.json
         run: tools/ci-job-set --event-parity
+      # The group's selection, for the push at its head to read: the one
+      # record of the suites and targets this run left out. A lost upload
+      # costs that push its whole roster, never this group its result.
+      - name: the selection, for the main push at this head
+        if: github.event_name == 'merge_group'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-selection
+          path: ${{ runner.temp }}/ci-selection.json
+          if-no-files-found: error
+          overwrite: true
 
   # This repository is the package's source, so the candidate's own checker
   # judges the candidate's renders: a change to the renderer or the derivation
@@ -563,8 +587,9 @@ jobs:
       # The suites the changes job skips, which each shell suite step's
       # `tools/ci-job-set --suite-list` leaves out of its candidates; none
       # where that job did not succeed or does not run, the nightly and
-      # main-only legs among them.
-      SKIPPED_SUITES: ${{ needs.changes.result == 'success' && needs.changes.outputs.skipped_suites || '[]' }}
+      # main-only legs among them. A push's macOS legs read the list of the
+      # suites its group proved on macOS, which no other run publishes.
+      SKIPPED_SUITES: ${{ needs.changes.result == 'success' && (matrix.os == 'macos-latest' && needs.changes.outputs.skipped_suites_macos || needs.changes.outputs.skipped_suites) || '[]' }}
     steps: &skill-suite-steps
       # run-all.sh stops every suite still running at this Unix time and names
       # each in the log, so a hang fails by name before the job ceiling cancels
@@ -818,7 +843,7 @@ jobs:
           set -u
           fail=0
           review=()
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/review-gate/tests/*.test.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/review-gate/tests/*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
             review+=("=${base%.sh}")
@@ -835,7 +860,7 @@ jobs:
           set -u
           fail=0
           refresh=()
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list refresh/tests/*.test.sh)"
+          kept="$(tools/ci-job-set --suite-list refresh/tests/*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
             refresh+=("=${base%.sh}")
@@ -889,7 +914,7 @@ jobs:
           for t in skills/orch/tests/*.sh; do
             [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
           done
-          kept=" $(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
+          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
           [ "$kept" != "  " ] || exit 0
           for t in "${candidates[@]}"; do
             case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
@@ -904,7 +929,7 @@ jobs:
           for t in skills/orch/tests/*.sh; do
             [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
           done
-          kept=" $(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
+          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
           [ "$kept" != "  " ] || exit 0
           for t in "${candidates[@]}"; do
             case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
@@ -919,7 +944,7 @@ jobs:
           for t in skills/orch/tests/*.sh; do
             [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
           done
-          kept=" $(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
+          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
           [ "$kept" != "  " ] || exit 0
           for t in "${candidates[@]}"; do
             case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
@@ -951,7 +976,7 @@ jobs:
           for t in skills/orch/tests/*.sh; do
             [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
           done
-          kept=" $(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
+          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
           [ "$kept" != "  " ] || exit 0
           for t in "${candidates[@]}"; do
             case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
@@ -959,8 +984,9 @@ jobs:
           bash skills/orch/tests/run-all.sh --battery skills/orch/tests --shard orch-rest "$@"
 
       # The runtimes' Rust targets tools/ci-job-set's `rust_targets` list
-      # names, on the orch-rest Linux leg, and every target of both runtimes
-      # on every event that runs no classifier. Per package with a target, fmt
+      # names, on the orch-rest Linux leg (on a push, those its same-head
+      # group left unproved), and every target of both runtimes where the
+      # changes job published none. Per package with a target, fmt
       # and clippy over all its targets prepare the run; cargo test runs the
       # listed targets, its whole manifest for `<package>/*`, and the
       # package's privacy harness runs beside them. It runs after the
@@ -1092,7 +1118,7 @@ jobs:
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/commit-guards/tests/*.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/commit-guards/tests/*.sh)"
           for t in $kept; do
             if grep -qF -- "$t" <<<"$claims"; then
               continue
@@ -1124,7 +1150,7 @@ jobs:
           # The rejectors keep the claimed suites out; these selectors name
           # the suites this leg's list keeps.
           selected=0
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list tools/tests/*.test.sh)"
+          kept="$(tools/ci-job-set --suite-list tools/tests/*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1140,7 +1166,7 @@ jobs:
           tools/rust-reads --cli-smoke . >/dev/null || exit $?
           fail=0
           failed=""
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list tools/tests/harness-smoke.test.sh \
+          kept="$(tools/ci-job-set --suite-list tools/tests/harness-smoke.test.sh \
             tools/tests/orch-shard-partition.test.sh)"
           for t in $kept; do
             base="${t##*/}"
@@ -1181,7 +1207,7 @@ jobs:
           md_refs=skills/commit-guards/tests/md-refs
           hooks=()
           guards=()
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list hooks/tests/*.sh \
+          kept="$(tools/ci-job-set --suite-list hooks/tests/*.sh \
             skills/commit-guards/tests/install-git-hooks.test.sh \
             "$md_refs.test.sh")"
           for t in $kept; do
@@ -1220,7 +1246,7 @@ jobs:
         run: |
           set -u
           hooks=()
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list hooks/tests/lane-mail-*.test.sh \
+          kept="$(tools/ci-job-set --suite-list hooks/tests/lane-mail-*.test.sh \
             hooks/tests/reviewer-*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
@@ -1241,7 +1267,7 @@ jobs:
         run: |
           set -u
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/commit-guards/tests/pre-push.test.sh \
+          kept="$(tools/ci-job-set --suite-list skills/commit-guards/tests/pre-push.test.sh \
             skills/commit-guards/tests/md-refs.test.sh)"
           for t in $kept; do
             base="${t##*/}"
@@ -1263,7 +1289,7 @@ jobs:
           linear=()
           bot=()
           preflight=()
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh)"
+          kept="$(tools/ci-job-set --suite-list "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh)"
           for t in $kept; do
             case "$t" in skills/linear/tests/must-fail-controls.sh) continue ;; esac
             base="${t##*/}"
@@ -1287,7 +1313,7 @@ jobs:
       - name: linear must-fail controls
         if: matrix.shard == 'linear-controls'
         run: |
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/linear/tests/must-fail-controls.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/linear/tests/must-fail-controls.sh)"
           for t in $kept; do
             echo "=== $t"
             bash "$t"
@@ -1307,7 +1333,7 @@ jobs:
         run: |
           set -u
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/worktree/tests/*.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/worktree/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             case "$base" in *restack*) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || continue ;; esac
@@ -1325,7 +1351,7 @@ jobs:
         if: matrix.shard == 'worktree-restack'
         run: |
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/worktree/tests/*restack*.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/worktree/tests/*restack*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1338,7 +1364,7 @@ jobs:
         if: matrix.shard == 'mailbox'
         run: |
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/mailbox/tests/*.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/mailbox/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1350,7 +1376,7 @@ jobs:
         if: matrix.shard == 'slack'
         run: |
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/slack/tests/*.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/slack/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1368,7 +1394,7 @@ jobs:
         if: matrix.shard == 'jarvis'
         run: |
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/*.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/jarvis/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1382,13 +1408,13 @@ jobs:
       # suites of a leg that measured under 200s: session in guards-hooks
       # (193-194s), succession in guards-tools (155-166s). The rest step skips
       # each path these steps spell, so a deleted step returns its suite there.
-      # Linux runs both in `jarvis`. The `if:` keeps a Linux leg from marking
-      # itself narrowed for a suite it never runs; the body's native check
-      # repeats it for the routing suites, which run step bodies without `if:`.
+      # Linux runs both in `jarvis`. The `if:` keeps a Linux leg from running a
+      # suite its runner leaves to `jarvis`; the body's native check repeats
+      # it for the routing suites, which run step bodies without `if:`.
       - name: Jarvis session suite on macOS
         if: matrix.shard == 'guards-hooks' && runner.os == 'macOS'
         run: |
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/session.test.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/jarvis/tests/session.test.sh)"
           [ -n "$kept" ] || exit 0
           [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests =session.test
@@ -1396,7 +1422,7 @@ jobs:
       - name: Jarvis succession suite on macOS
         if: matrix.shard == 'guards-tools' && runner.os == 'macOS'
         run: |
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/succession.test.sh)"
+          kept="$(tools/ci-job-set --suite-list skills/jarvis/tests/succession.test.sh)"
           [ -n "$kept" ] || exit 0
           [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests =succession.test
@@ -1524,7 +1550,7 @@ jobs:
           # The selectors apply across the pool by base name, so a kept suite
           # can bring a same-named one of another battery, never drop one.
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list ${candidates[@]+"${candidates[@]}"})"
+          kept="$(tools/ci-job-set --suite-list ${candidates[@]+"${candidates[@]}"})"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1760,31 +1786,23 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
-      # A suite list that left out one of this leg's suites arms this step,
-      # so its success tells the main push's proof read (tools/ci-job-set,
-      # NARROWED_STEP) that the leg ran part of its shard; a leg that kept
-      # every suite skips it and proves its shard.
-      - name: narrowed by the suite list
-        if: env.SUITE_LIST_DROPPED == 'true'
-        run: echo "this leg ran the suites its list kept, not its whole shard"
-
       - name: Report final job budget
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
 
-  # The full nightly macOS roster. changes is skipped there, so the shared
-  # matrix expression uses its full-roster fallback. The suite steps and
-  # budgets have one owner. A main push runs its macOS legs in the queue job
-  # below, because changes runs there and the shared alias would read its
-  # Linux list.
+  # The nightly macOS roster: the macOS shards no same-head merge group or
+  # push run proved green, as the changes job's `queue_macos_shards` lists
+  # them on the schedule, and the whole macOS-capable roster where that job
+  # did not succeed or a manual dispatch skipped it. The suite steps and
+  # budgets have one owner; the queue job below shares this matrix list.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
     strategy:
       fail-fast: false
       matrix:
-        shard: *skill-suite-shards
+        shard: &macos-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
         # The native eligibility owner declares unsupported and empty shards,
         # and those whose families another macOS job retains. The partition
@@ -1817,7 +1835,7 @@ jobs:
   # `queue_macos_shards` list names; tools/ci-job-set's header states when
   # it is empty. A main push runs the macOS shards its same-head merge group
   # left unproved, through the same list. Where the changes job published
-  # nothing the nightly roster less its Linux-only shards runs. CI holds
+  # nothing the macOS-capable roster runs. CI holds
   # this job to the same list on a merge group, so a failed or cancelled leg
   # ejects the entry and an unselected one does not.
   skill-suites-macos-queue:
@@ -1827,7 +1845,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: *macos-suite-shards
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
@@ -1950,9 +1968,10 @@ jobs:
   # that step is the whole job on every platform: it saves the compile cache
   # under the merged lockfile, the entry the next group and night restore.
   # The nightly run compiles on every platform and tests on macOS and
-  # Windows, which catches a failure that changes passing alone cause in
-  # combination. Splitting a lane adds legs under `CI` and changes no
-  # required context name.
+  # Windows, each lane where no run at its head already ran those steps
+  # green (tools/ci-job-set's night route), which catches a failure no group
+  # at that head tested. Splitting a lane adds legs under `CI` and changes
+  # no required context name.
   #
   # One compile cache per shard, keyed by the action on the lockfile, the
   # toolchain and RUSTFLAGS, plus the crate — and on macOS the leg — through
@@ -1964,7 +1983,7 @@ jobs:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_linux.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2058,7 +2077,7 @@ jobs:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_macos.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2329,7 +2348,7 @@ jobs:
     name: Windows cargo (core and CLI targets compile)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_windows_check.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -2359,7 +2378,7 @@ jobs:
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:

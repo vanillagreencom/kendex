@@ -62,32 +62,27 @@ check "row: render skips none" "[]" \
   "$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
 
 # THE LIST: the candidates a step runs, by whole path, in argument order:
-# each one the skips do not name. Leaving one out records
-# SUITE_LIST_DROPPED=true in the SUITE_LIST_DROPS file, which arms the leg's
-# narrowed step; keeping every one records nothing.
+# each one the skips do not name.
 CANDIDATES="skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh"
-list_of() { # SKIPPED — the kept candidates on one line and what was recorded, or `exit=N CAUSE`
+list_of() { # SKIPPED — the kept candidates on one line, or `exit=N CAUSE`
   local status=0 got
-  : >"$TMP/list-drops"
   # shellcheck disable=SC2086 # one candidate per word
-  got="$(SKIPPED_SUITES="$1" SUITE_LIST_DROPS="$TMP/list-drops" "$JOB_SET" --suite-list $CANDIDATES 2>"$TMP/list-err")" || status=$?
+  got="$(SKIPPED_SUITES="$1" "$JOB_SET" --suite-list $CANDIDATES 2>"$TMP/list-err")" || status=$?
   [ "$status" -eq 0 ] || { printf 'exit=%s %s' "$status" "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/list-err")"; return 0; }
-  printf "'%s' recorded='%s'" "$(printf '%s' "$got" | tr '\n' ' ')" "$(tr '\n' ' ' <"$TMP/list-drops")"
+  printf "'%s'" "$(printf '%s' "$got" | tr '\n' ' ')"
 }
 while IFS='|' read -r skipped expected; do
   check "list: '$skipped'" "$expected" "$(list_of "$skipped")"
 done <<'ROWS'
-["skills/b/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/c/tests/y.test.sh' recorded='SUITE_LIST_DROPPED=true '
-["skills/c/tests/y.test.sh","skills/a/tests/x.test.sh"]|'skills/b/tests/x.test.sh' recorded='SUITE_LIST_DROPPED=true '
-["skills/a/tests/x.test.sh","skills/b/tests/x.test.sh","skills/c/tests/y.test.sh"]|'' recorded='SUITE_LIST_DROPPED=true '
-["skills/d/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
-[]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
-|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
+["skills/b/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/c/tests/y.test.sh'
+["skills/c/tests/y.test.sh","skills/a/tests/x.test.sh"]|'skills/b/tests/x.test.sh'
+["skills/a/tests/x.test.sh","skills/b/tests/x.test.sh","skills/c/tests/y.test.sh"]|''
+["skills/d/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh'
+[]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh'
+|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh'
 ["a b"]|exit=2 suite-skips-unreadable
 all|exit=2 suite-skips-unreadable
 ROWS
-check "list: a record that cannot be written fails the call" "exit=2 suite-list-unrecorded" \
-  "$(status=0; SKIPPED_SUITES='["skills/a/tests/x.test.sh"]' SUITE_LIST_DROPS="$TMP/no-such-dir/env" "$JOB_SET" --suite-list skills/a/tests/x.test.sh 2>"$TMP/list-err" || status=$?; printf 'exit=%s %s' "$status" "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/list-err")")"
 
 # THE STEPS: each shell suite step is the workflow's own text, run against
 # stub runners in an empty tree. A step whose every candidate is skipped
@@ -117,26 +112,24 @@ step_dir() { # STEP-NAME — the stub tree, its step.sh, or `no-step`
     body { exit }
   ' "$WF" >"$dir/step.sh"
 }
-step_run() { # STEP-NAME SKIPPED — the runners' arguments, or `none`, the exit and whether the narrowed step is armed
+step_run() { # STEP-NAME SKIPPED — the runners' arguments, or `none`, and the exit
   local dir="$TMP/step" status=0
   step_dir "$1"
   [ -s "$dir/step.sh" ] || { printf 'no-step'; return 0; }
-  : >"$dir/env"
-  (cd "$dir" && CALLS="$dir/calls" SKIPPED_SUITES="$2" GITHUB_ENV="$dir/env" bash -e -o pipefail step.sh >/dev/null 2>&1) || status=$?
-  printf '%s exit=%s narrowed=%s' "$( [ -f "$dir/calls" ] && sed 's/ $//' "$dir/calls" || echo none)" "$status" \
-    "$(grep -qx 'SUITE_LIST_DROPPED=true' "$dir/env" && echo yes || echo no)"
+  (cd "$dir" && CALLS="$dir/calls" SKIPPED_SUITES="$2" bash -e -o pipefail step.sh >/dev/null 2>&1) || status=$?
+  printf '%s exit=%s' "$( [ -f "$dir/calls" ] && sed 's/ $//' "$dir/calls" || echo none)" "$status"
 }
 while IFS='|' read -r skipped expected; do
   check "review-gate step: '$skipped'" "$expected" "$(step_run 'review-gate suites' "$skipped")"
 done <<'ROWS'
-[]|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
-["skills/other/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
-["skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test exit=0 narrowed=yes
-["skills/review-gate/tests/a.test.sh","skills/review-gate/tests/b.test.sh"]|none exit=0 narrowed=yes
+[]|--battery skills/review-gate/tests =a.test =b.test exit=0
+["skills/other/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test =b.test exit=0
+["skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test exit=0
+["skills/review-gate/tests/a.test.sh","skills/review-gate/tests/b.test.sh"]|none exit=0
 ROWS
 # Every shard step that runs a suite, read from the workflow, runs none
-# where the skips name each of its candidates, and arms the narrowed step.
-# The candidates are what the step hands --suite-list in the stub tree.
+# where the skips name each of its candidates. The candidates are what the
+# step hands --suite-list in the stub tree.
 steps="$(awk '
   /^      - name: / { name = substr($0, 15); shard = 0; next }
   /^        if: matrix\.shard == / { shard = 1; next }
@@ -149,9 +142,9 @@ while IFS= read -r step; do
   step_dir "$step"
   printf '#!/usr/bin/env bash\nshift\nprintf "%%s\\n" "$@" | tee -a "$CANDIDATES_OUT"\n' >"$TMP/step/tools/ci-job-set"
   : >"$TMP/candidates"
-  (cd "$TMP/step" && CALLS=/dev/null CANDIDATES_OUT="$TMP/candidates" GITHUB_ENV=/dev/null bash -e -o pipefail step.sh >/dev/null 2>&1) || true
+  (cd "$TMP/step" && CALLS=/dev/null CANDIDATES_OUT="$TMP/candidates" bash -e -o pipefail step.sh >/dev/null 2>&1) || true
   every="$(grep . "$TMP/candidates" | jq -Rsc 'split("\n") | map(select(. != ""))')"
-  check "step: '$step' runs no suite where every candidate is skipped" "none exit=0 narrowed=yes" \
+  check "step: '$step' runs no suite where every candidate is skipped" "none exit=0" \
     "$(step_run "$step" "$every")"
 done <<<"$steps"
 

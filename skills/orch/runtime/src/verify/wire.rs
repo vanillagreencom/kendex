@@ -542,8 +542,9 @@ pub(crate) struct WorkflowRun {
     /// as it was at the run, with its ref after `@` where GitHub appends
     /// one; a workflow's current `Workflow.path` can differ after a rename.
     pub(super) path: String,
-    /// Required (actions/workflow-runs, `head_sha`: string).
-    pub(super) head_sha: String,
+    /// Required (actions/workflow-runs, `head_sha`: string): the watch's
+    /// push read names a red run's range by it.
+    pub(crate) head_sha: String,
     /// Required, nullable (actions/workflow-runs, `head_branch`: string or
     /// null).
     pub(crate) head_branch: Nullable<String>,

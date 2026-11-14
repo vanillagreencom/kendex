@@ -2042,6 +2042,7 @@ fn main_push(
                         workflow: workflow.clone(),
                         event: event.to_owned(),
                         run: run.id.to_string(),
+                        range: None,
                         jobs: jobs_json.clone(),
                         cause: cause.clone(),
                     });
@@ -2066,13 +2067,16 @@ fn main_push(
 /// the newest run it read), so a run that finishes after a newer one is
 /// still read; `judged`, the runs created at or after the floor that pass
 /// had judged, by id and attempt, so each is reported once; `red`, the run
-/// standing red with its failed jobs, `None` while main stands clear.
+/// standing red with its failed jobs, `None` while main stands clear;
+/// `green`, the head of the last run created before the floor that ended
+/// green, where a red run's range starts when no green run is read after it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PushMark {
     floor: String,
     judged: Vec<(u64, u64)>,
     red: Option<RedRun>,
+    green: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
@@ -2111,7 +2115,8 @@ fn push_runs(
 }
 
 /// The push incident: each completed run the mark has not judged, oldest
-/// first, prints `main-push-failing` once where it ended red, so a later
+/// first, prints `main-push-failing` once where it ended red, with its head
+/// and the head of the last green run before it, so a later
 /// green run hides no red one (with no mark only the standing run is
 /// judged); the standing is the newest completed run not cancelled (a
 /// cancelled run decides nothing), red with its failed jobs or clear, and
@@ -2153,6 +2158,16 @@ fn judge_push(
     }
     done.sort_by(|(a, _), (b, _)| (&a.created_at, a.id).cmp(&(&b.created_at, b.id)));
     let standing = done.iter().rev().find(|(_, c)| *c != "cancelled");
+    // Each run's range start, the head of the last green run before it, read
+    // oldest first from the mark's green head, which precedes every run read.
+    let mut green = mark.and_then(|m| m.green.clone());
+    let mut since: BTreeMap<u64, String> = BTreeMap::new();
+    for (run, c) in &done {
+        since.insert(run.id, green.clone().unwrap_or_else(|| "none".to_owned()));
+        if *c == "success" {
+            green = Some(run.head_sha.clone());
+        }
+    }
     let judged: BTreeSet<(u64, u64)> = mark
         .map(|m| m.judged.iter().copied().collect())
         .unwrap_or_default();
@@ -2177,6 +2192,10 @@ fn judge_push(
             workflow: workflow.to_owned(),
             event: "push".to_owned(),
             run: run.id.to_string(),
+            range: Some((
+                run.head_sha.clone(),
+                since.get(&run.id).cloned().unwrap_or_default(),
+            )),
             jobs: serde_json::to_string(&jobs).unwrap_or_default(),
             cause,
         });
@@ -2217,10 +2236,19 @@ fn judge_push(
             serde_json::to_string(&red.jobs).unwrap_or_default(),
         );
     }
+    // The next pass reads from the floor on, so its range starts at the last
+    // green run before the floor.
+    let green = done
+        .iter()
+        .rev()
+        .find(|(run, c)| *c == "success" && run.created_at < floor)
+        .map(|(run, _)| run.head_sha.clone())
+        .or_else(|| mark.and_then(|m| m.green.clone()));
     let next = PushMark {
         floor,
         judged: judged.into_iter().collect(),
         red,
+        green,
     };
     if mark != Some(&next) {
         produced.changes.push(Change::Set {

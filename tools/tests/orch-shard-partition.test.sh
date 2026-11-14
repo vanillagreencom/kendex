@@ -1213,12 +1213,12 @@ else
   bad "must-fail: a matrix dropping one macOS exclude disagrees with ci-job-set"
 fi
 
-# The merge queue's macOS legs: the queue job's fallback list, which runs
-# where nothing classified, names the nightly roster less the shards
-# excluded as Linux-only.
+# The macOS legs' fallback list, which the nightly job declares and the
+# queue job aliases, and which runs where nothing classified, names the
+# shard roster less the shards excluded as Linux-only.
 queue_fallback_shards() { # queue_fallback_shards <workflow>
   awk '/^  [A-Za-z0-9_-]+:/ { job = $1 }
-       job == "skill-suites-macos-queue:" && /^        shard: / { print }' "$1" |
+       job == "skill-suites-macos:" && /^        shard: / { print }' "$1" |
     sed -n "s/.*'\(\[[^]]*\]\)'.*/\1/p" | tr -d '[]" ' | tr ',' '\n' | grep . | sort -u
 }
 queue_shards="$(queue_fallback_shards "$WORKFLOW")"

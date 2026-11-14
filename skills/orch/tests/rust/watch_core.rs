@@ -1123,10 +1123,23 @@ fn every_event_renders_to_its_recorded_bytes() {
                 workflow: s("ci.yml"),
                 event: s("push"),
                 run: s("1234"),
+                range: Some((s("b2"), s("a1"))),
                 jobs: s("guards,tests"),
                 cause: s("failure"),
             },
-            "EVENT main-push-failing vanillagreencom/kendex workflow=ci.yml event=push run=1234 jobs=guards,tests cause=failure",
+            "EVENT main-push-failing vanillagreencom/kendex workflow=ci.yml event=push run=1234 head=b2 since=a1 jobs=guards,tests cause=failure",
+        ),
+        (
+            Event::MainPushFailing {
+                repo: s("vanillagreencom/kendex"),
+                workflow: s("ci.yml"),
+                event: s("schedule"),
+                run: s("1235"),
+                range: None,
+                jobs: s("guards"),
+                cause: s("failure"),
+            },
+            "EVENT main-push-failing vanillagreencom/kendex workflow=ci.yml event=schedule run=1235 jobs=guards cause=failure",
         ),
         (
             Event::MainPushBudget {

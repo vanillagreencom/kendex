@@ -242,8 +242,15 @@ aggregators() { # WORKFLOW — every job whose script calls tools/ci-aggregate
   ' "$1" | LC_ALL=C sort -u
 }
 
-PUBLISHED_BY_SCRIPT="$(selection standard false 'crates/core/src/lib.rs' |
-  tr ' ' '\n' | sed 's/=.*//' | LC_ALL=C sort)"
+# A class selection's lines, and a push's whose proof read fails, which adds
+# the line the push route alone publishes: its whole rosters skip nothing.
+mkdir -p "$TMP/gh-down"
+printf '#!/bin/sh\nexit 1\n' >"$TMP/gh-down/gh"
+chmod +x "$TMP/gh-down/gh"
+PUSH_SELECTION="$(PATH="$TMP/gh-down:$PATH" GITHUB_REPOSITORY=owner/repo GITHUB_SHA=0 SELECT_EVENT=push selection '' '' '' | sed -n '$p')"
+case "$PUSH_SELECTION" in *" skipped_suites_macos=[] "*) ;; *) echo "a failed push read published '$PUSH_SELECTION'" >&2; exit 1 ;; esac
+PUBLISHED_BY_SCRIPT="$(printf '%s %s' "$(selection standard false 'crates/core/src/lib.rs')" "$PUSH_SELECTION" |
+  tr ' ' '\n' | sed 's/=.*//' | LC_ALL=C sort -u)"
 [ "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" | grep -c .)" -gt 0 ] ||
   { echo "ci-job-set published no lane, so the extractor is broken" >&2; exit 1; }
 check "the changes job publishes exactly the lanes ci-job-set selects" \
@@ -252,6 +259,24 @@ check "each published lane is the select step's line of the same name" "" \
   "$(published_map "$WORKFLOW" | awk '$1 != $2')"
 check "the gates read exactly the lanes ci-job-set selects" \
   "$PUBLISHED_BY_SCRIPT" "$(lanes_read "$WORKFLOW")"
+# Each shell leg's skip list: a push's macOS leg reads the suites its group
+# proved on macOS, every other leg the one list, and none where the changes
+# job did not succeed. The leg env's expression, evaluated.
+SKIPS_EXPR="$(sed -n 's/^      SKIPPED_SUITES: \${{ \(.*\) }}$/\1/p' "$WORKFLOW")"
+[ -n "$SKIPS_EXPR" ] || { echo "no SKIPPED_SUITES expression read out of $WORKFLOW" >&2; exit 1; }
+# OS|RESULT|MACOS LIST|EXPECTED
+while IFS='|' read -r os result macos expected; do
+  check "a $os leg's skips with the changes job at $result and macOS list '$macos'" "$expected" \
+    "$(gh_eval value "$(jq -cn --arg os "$os" --arg r "$result" --arg m "$macos" '
+      {matrix: {os: $os}, needs: {changes: {result: $r, outputs: ({skipped_suites: "[\"l\"]"}
+        + (if $m == "" then {} else {skipped_suites_macos: $m} end))}}}')" "$SKIPS_EXPR")"
+done <<'ROWS'
+ubuntu-latest|success|["m"]|"[\"l\"]"
+macos-latest|success|["m"]|"[\"m\"]"
+macos-latest|success|[]|"[]"
+macos-latest|success||"[\"l\"]"
+macos-latest|failure|["m"]|"[]"
+ROWS
 GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 [ "$(printf '%s\n' "$GATE_PAIRS" | grep -c .)" -gt 0 ] ||
   { echo "no gated job read out of $WORKFLOW, so the extractor is broken" >&2; exit 1; }
@@ -331,9 +356,10 @@ legs() { # WORKFLOW SELECTION [RESULT] [EVENT] [KEY] — what a matrix key expan
 
 # The selected portability job on merge groups.
 MACOS_QUEUE_JOB=skill-suites-macos-queue
-EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
-# What a merge group runs of it: every lane.
-EVERY_GROUP_LANE="$EVERY_GATED"
+EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
+# What a merge group runs of it: every lane but the nightly macOS roster,
+# which reads its lane on the schedule alone.
+EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
   "$(gated_jobs "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 
@@ -388,6 +414,10 @@ PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[]'
 PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"]'
 PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[]'
 NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos smoke"
+# The night's selections: every leg proved at the head, and one macOS shard
+# and the macOS cargo tests left unproved.
+NIGHT_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] skipped_suites=[] skipped_suites_macos=[] rust_targets=[] cargo_linux=false cargo_macos=false cargo_windows=false cargo_windows_check=false'
+NIGHT_SOME='shell_shards=true shell_os=["macos-latest"] shards=[] queue_macos_shards=["rest"] skipped_suites=[] skipped_suites_macos=[] rust_targets=[] cargo_linux=false cargo_macos=true cargo_windows=false cargo_windows_check=false'
 # EVENT|RESULT|SELECTION|EXPECTED. A pull request runs `CI` alone for a
 # Rust-only diff, a docs-only diff and a dead classifier alike.
 event_rows=0
@@ -405,10 +435,12 @@ push|success|$PUSH_PROVED|$MAIN_FIXED skill-suites-main-only smoke
 push|success|$PUSH_REST|$MAIN_JOBS
 push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-main-only skill-suites-shard smoke
 push|failure|$ALL_OFF|$MAIN_JOBS
-schedule|skipped|$ALL_OFF|$NIGHTLY_JOBS
+schedule|failure|$ALL_OFF|cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke
+schedule|success|$NIGHT_PROVED|catalog changes smoke
+schedule|success|$NIGHT_SOME|cargo-macos catalog changes skill-suites-macos smoke
 workflow_dispatch|skipped|$ALL_OFF|$NIGHTLY_JOBS
 ROWS
-[ "$event_rows" -ge 12 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
+[ "$event_rows" -ge 14 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
 
 # A classifier that died published nothing. Every gated job a merge group
 # runs, runs, which is what each condition's status function and result
@@ -437,21 +469,40 @@ ROWS
 macos_condition() { # WORKFLOW
   job_ifs "$1" | awk -F '\t' '$1 == "skill-suites-macos" { print $2 }'
 }
-while IFS='|' read -r event result expected; do
+while IFS='|' read -r event result sel expected; do
   check "macOS skill suites run=$expected on $event with classification $result" "$expected" \
-    "$(gh_eval value "$(context_json "$event" "$result" "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$WORKFLOW")")"
-done <<'ROWS'
-pull_request|skipped|false
-merge_group|success|false
-merge_group|failure|false
-push|success|false
-schedule|skipped|true
-workflow_dispatch|skipped|true
+    "$(gh_eval value "$(context_json "$event" "$result" "$sel" "$TMP/published-map")" "$(macos_condition "$WORKFLOW")")"
+done <<ROWS
+pull_request|skipped|$ALL_OFF|false
+merge_group|success|$ALL_OFF|false
+merge_group|failure|$ALL_OFF|false
+push|success|$ALL_OFF|false
+schedule|failure|$ALL_OFF|true
+schedule|success|$NIGHT_PROVED|false
+schedule|success|$NIGHT_SOME|true
+workflow_dispatch|skipped|$ALL_OFF|true
 ROWS
 check "the nightly macOS matrix uses macOS alone" '["macos-latest"]' \
   "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
-check "the nightly run runs the full shard roster through the alias" "$ROSTER" \
-  "$(gh_eval value "$(context_json schedule skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
+check "the nightly run runs the macOS-capable roster where nothing classified" "$QUEUE_ALL" \
+  "$(gh_eval value "$(context_json workflow_dispatch skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
+check "the nightly run runs the macOS shards no run at its head proved" '["rest"]' \
+  "$(gh_eval value "$(context_json schedule success "$NIGHT_SOME" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
+# The cargo lanes on the schedule read their selection; a push and a
+# dispatch run them whatever the changes job published.
+# JOB|EVENT|SELECTION|RUNS
+while IFS='|' read -r job event sel runs; do
+  check "$job runs=$runs on $event" "$runs" \
+    "$(gh_eval value "$(context_json "$event" success "$sel" "$TMP/published-map")" "$(job_ifs "$WORKFLOW" | awk -F '\t' -v j="$job" '$1 == j { print $2 }')")"
+done <<ROWS
+cargo-linux|schedule|$NIGHT_PROVED|false
+cargo-check-windows|schedule|$NIGHT_PROVED|false
+cargo-macos|schedule|$NIGHT_PROVED|false
+cargo-tests-windows|schedule|$NIGHT_PROVED|false
+cargo-macos|schedule|$NIGHT_SOME|true
+cargo-macos|push|$NIGHT_PROVED|true
+cargo-macos|workflow_dispatch|$NIGHT_PROVED|true
+ROWS
 
 # The queue's macOS legs: the job's condition, then its shard key evaluated,
 # as GitHub expands the matrix; `none` where the condition stands the job
@@ -853,9 +904,10 @@ done
 ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can run on a merge group
   local wf="$1" ci job expr main_only=""
   ci="$(jobs_named "$wf" CI)"
+  # A job that can run on a merge group runs on one whose classifier died,
+  # which every gated lane runs on.
   while IFS=$'\t' read -r job expr; do
-    case "$expr" in *needs.*) continue ;; esac
-    if [ "$(gh_eval value '{"github":{"event_name":"merge_group"}}' "$expr")" = false ]; then
+    if [ "$(gh_eval value '{"github":{"event_name":"merge_group"},"needs":{"changes":{"result":"failure"}}}' "$expr")" = false ]; then
       main_only="$main_only$job\n"
     fi
   done < <(job_ifs "$wf")
@@ -896,38 +948,41 @@ pull_request|a pull request runs no lane|yes
 merge_group|a pull request runs no lane|no
 ROWS
 # The workflow's events; the changes job every lane and CI read runs on the
-# merge group and, for its push route alone, the main push.
+# merge group and, for its proof routes alone, the main push and the
+# schedule.
 check "the workflow runs on its five events" "merge_group pull_request push schedule workflow_dispatch" \
   "$(triggers "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 changes_if="$(job_ifs "$WORKFLOW" | awk -F '\t' '$1 == "changes" { print $2 }')"
 while IFS='|' read -r event classifies; do
-  check "the changes job classifies on $event: $classifies" "$classifies" \
+  check "the changes job runs on $event: $classifies" "$classifies" \
     "$(gh_eval value "$(jq -cn --arg e "$event" '{github: {event_name: $e, ref: "refs/heads/main"}}')" "$changes_if")"
 done <<'ROWS'
 merge_group|true
 pull_request|false
 push|true
-schedule|false
+schedule|true
 workflow_dispatch|false
 ROWS
 
 # --- 2a'. Superseded runs ---------------------------------------------------
 # A push to a pull request cancels the run its previous head started; a merge
-# group, a push to main or a nightly run never shares a group with another run, so nothing
-# cancels or queues it behind one. Each `${{ }}` of the workflow's
-# concurrency values is evaluated and spliced back into its text.
+# group or a nightly run never shares a group with another run, so nothing
+# cancels or queues it behind one; every push to main shares the ref's group
+# and cancels nothing, so a newer push waits and replaces only the pending
+# run. Each `${{ }}` of the workflow's concurrency values is evaluated and
+# spliced back into its text.
 # EVENT|GROUP|CANCEL
 concurrency_rows=0
 while IFS='|' read -r event group cancel; do
   concurrency_rows=$((concurrency_rows + 1))
-  concurrency_ctx="$(jq -cn --arg e "$event" '{github: {workflow: "fixture-ci", event_name: $e, run_id: 7}}
+  concurrency_ctx="$(jq -cn --arg e "$event" '{github: {workflow: "fixture-ci", event_name: $e, run_id: 7, ref: "refs/heads/main"}}
     | if $e == "pull_request" then .github.event = {pull_request: {number: 42}} else . end')"
   check "a $event run's concurrency group and cancel" "$group $cancel" \
     "$(concurrency_value "$WORKFLOW" group "$concurrency_ctx") $(concurrency_value "$WORKFLOW" cancel-in-progress "$concurrency_ctx")"
 done <<'ROWS'
 pull_request|fixture-ci-pull_request-42|true
 merge_group|fixture-ci-merge_group-7|false
-push|fixture-ci-push-7|false
+push|fixture-ci-push-refs/heads/main|false
 schedule|fixture-ci-schedule-7|false
 ROWS
 [ "$concurrency_rows" -ge 4 ] || { echo "the concurrency table read $concurrency_rows rows" >&2; exit 1; }
@@ -937,7 +992,7 @@ ROWS
 # The pre-patch shape of the macOS cargo lane: gated on the event alone. It
 # runs on the one-skill row, which is the full battery the narrowing exists
 # to avoid.
-plant "$WORKFLOW" "!cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true')" \
+plant "$WORKFLOW" "!cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true')" \
   "!cancelled()" "$TMP/wf-ungated.yml"
 case " $(running "$TMP/wf-ungated.yml" "$one_skill" success merge_group) " in
   *" cargo-macos "*) ok "must-fail: a lane condition reading no selection runs on the one-skill row" ;;
