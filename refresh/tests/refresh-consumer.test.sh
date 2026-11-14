@@ -291,12 +291,6 @@ case "$1" in
       rm -rf -- .agents/skills/bot-instructions
       cp -R "$TEST_REFRESH_BOT" .agents/skills/bot-instructions
     fi
-    case "$TEST_ORCH_MODE" in
-      keep) ;;
-      absent) rm -rf -- .agents/skills/orch ;;
-      install) rm -rf -- .agents/skills/orch; cp -R "$TEST_FRESH_ORCH" .agents/skills/orch ;;
-      *) exit 2 ;;
-    esac
     if [ -n "${TEST_HOSTILE:-}" ]; then
       cp "$TEST_FRESH_TEMPLATES/"*.yml .agents/skills/review-gate/templates/
       for path in adopt-refresh.sh validate-standard.sh lib/diagnostics.sh lib/settings.sh lib/standard.sh; do
@@ -953,67 +947,10 @@ reset_default
 cp "$TMP/version-runner" "$runner"
 commit "$repo"
 git -C "$repo" push -q origin main
-# Committed settings and private overrides are real consumer inputs. Neither
-# the parse nor the report is doubled in these rolling-refresh fixtures. A
-# private Fable override stays clean: only committed settings are scanned.
-for row in \
-  'claude:1:high||deprecated|claude:1:high' \
-  'claude:opus:high||clean|' \
-  'claude::high||clean|' \
-  'claude:opus:high|codex:2:low|deprecated|codex:2:low' \
-  'claude::high,codex:0:low||refused|codex:0:low' \
-  'claude:1:high|claude:fable:high|clean|' \
-  'claude:1:high|claude:fable:high|clean||private.env'; do
-  IFS='|' read -r committed private status entry private_path <<<"$row"
-  private_path="${private_path:-.env.local}"
-  reset_default
-  printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
-  if [ "$private_path" != .env.local ]; then
-    printf 'KENDEX_ENV_FILE = "%s"\n' "$private_path" >>"$repo/kendex.settings.toml"
-  fi
-  printf '.env.local\nprivate.env\n' >"$repo/.gitignore"
-  commit "$repo"
-  git -C "$repo" push -q origin main
-  rm -f -- "$repo/.env.local" "$repo/private.env"
-  if [ -n "$private" ]; then
-    printf 'AGENT_RUNTIME_CONTROLLER_PREFERENCE=%s\n' "$private" >"$repo/$private_path"
-  fi
-  run_refresh stale pass render
-  if [ "$status" = clean ]; then
-    if [ "$RC" -eq 0 ] && cmp -s "$TMP/clean-body" "$TMP/state/body"; then ok 'clean preference leaves the whole body unchanged'; else bad 'clean preference body' "$OUT"; fi
-  elif [ "$RC" -eq 0 ] && grep -qxF '## Settings' "$TMP/state/body" &&
-    grep -qF "AGENT_RUNTIME_CONTROLLER_PREFERENCE: $status entry <code>$entry</code>; use \`harness:model:effort\`." "$TMP/state/body"; then
-    ok "$status effective preference appears in Settings"
-  else bad "$status effective preference report" "$OUT"; fi
-  if [ "$status" = refused ]; then
-    if grep -qF 'refused entry <code>codex:0:low</code>' "$TMP/state/body"; then ok 'report includes every refused entry'; else bad 'report omitted a refused entry'; fi
-  fi
-done
-# A resolver that ignores PRIVATE_FILE reports the committed numeric value
-# rather than the clean custom override. It must turn that clean-body row red.
+# Removing the settings append from a private runner must make the retired-
+# setting assertion below red without changing the scan or the formatter.
 reset_default
-cp "$repo/.agents/skills/review-gate/scripts/lib/settings.sh" "$TMP/settings-lib"
-python3 - "$repo/.agents/skills/review-gate/scripts/lib/settings.sh" <<'PY'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1]).resolve()
-text = path.read_text()
-old = 'private_file="${3-.env.local}"'
-assert text.count(old) == 1
-changed = '# ' + old + '\n' + text.replace(old, 'private_file=".env.local"')
-assert changed != text
-path.write_text(changed)
-PY
-commit "$repo"
-git -C "$repo" push -q origin main
-run_refresh stale pass render
-if [ "$RC" -eq 0 ] && ! cmp -s "$TMP/clean-body" "$TMP/state/body"; then ok 'control: ignored private path turns the clean-body assertion red'; else bad 'private path resolver control' "$OUT"; fi
-reset_default
-cp "$TMP/settings-lib" "$repo/.agents/skills/review-gate/scripts/lib/settings.sh"
-# Removing the Settings append from a private runner must make the same
-# deprecated-entry assertion red without changing the parser or formatter.
-reset_default
-printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.settings.toml"
+printf '[env]\nPR_REVIEW_GATE = "on"\n' >"$repo/kendex.settings.toml"
 rm -f -- "$repo/.env.local"
 cp "$runner" "$TMP/settings-runner"
 python3 - "$runner" <<'PY'
@@ -1030,20 +967,23 @@ PY
 commit "$repo"
 git -C "$repo" push -q origin main
 run_refresh stale pass render
-if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body"; then ok 'control: dropped Settings append turns the deprecated-entry assertion red'; else bad 'Settings append control' "$OUT"; fi
+if [ "$RC" -eq 0 ] && ! grep -qxF '## Consumer settings' "$TMP/state/body"; then ok 'control: dropped settings append turns the retired-setting assertion red'; else bad 'settings append control' "$OUT"; fi
 reset_default
 cp "$TMP/settings-runner" "$runner"
+printf '[env]\n' >"$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
-# Model values stay committed and produce no report on either route.
+# Model values and a refused controller preference stay committed values and
+# produce no report on either route. Each control restores one removed
+# producer's matcher and field in a disposable runner.
 cp "$runner" "$TMP/models-runner"
 cp "$repo/kendex.settings.toml" "$TMP/models-settings"
-for mode in render current control; do
+for mode in render current models-control refused-control; do
   reset_default
   cp "$TMP/models-runner" "$runner"
   cat >"$repo/kendex.settings.toml" <<'TOML'
 [env]
-AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:opus:high"
+AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude::high,codex:0:low"
 # SECOND_OPINION_CODEX_MODEL = "gpt-6-astra"
 SECOND_OPINION_CODEX_CMD = "codex exec -m GpT-6-AsTrA" # pinned
 SECOND_OPINION_CLAUDE_MODEL = "claude-opus-5-5"
@@ -1061,28 +1001,33 @@ assert s.count(needle) == 1
 changed = s.replace(needle, needle + '  cp "$TMP/settings.json" "' + sys.argv[2] + '"\n')
 assert changed != s
 s = changed
-if sys.argv[3] == 'control':
-    # Restore the removed producer's matcher and field in a disposable runner.
-    for old, new in [
-        ('committed=()\n', 'deprecated_models=()\ncommitted=()\n'),
-        ('    committed+=("$key" "$value")\n', r'''    committed+=("$key" "$value")
-    shopt -s nocasematch
+matchers = {
+    'models-control': ('deprecated_models', r'''    shopt -s nocasematch
     if [[ $value == *gpt-6-astra* || $value == *fable* ]]; then
       deprecated_models+=("$key = \"$value\"")
     fi
 '''),
-        ('  --args \\\n', '  --argjson models_count "${#deprecated_models[@]}" --args \\\n'),
-        ('($refused_count + $deprecated_count) as $committed_start |',
-         '($refused_count + $deprecated_count) as $models_start |\n   ($models_start + $models_count) as $committed_start |'),
-        ('deprecated: $ARGS.positional[$refused_count:$committed_start],',
-         'deprecated: $ARGS.positional[$refused_count:$models_start],\n    deprecated_models: $ARGS.positional[$models_start:$committed_start],'),
-        ('  ${committed[@]+"${committed[@]}"}',
-         '  ${deprecated_models[@]+"${deprecated_models[@]}"} \\\n  ${committed[@]+"${committed[@]}"}'),
-        ('keys == ["committed", "deprecated", "refused"]',
-         'keys == ["committed", "deprecated", "deprecated_models", "refused"]'),
+    'refused-control': ('refused', r'''    if [ "$key" = AGENT_RUNTIME_CONTROLLER_PREFERENCE ]; then
+      IFS=, read -r -a entries <<<"$value"
+      for entry in "${entries[@]}"; do
+        [[ $entry =~ ^[a-z]+:[a-z][a-z0-9.-]*:[a-z]+$ ]] || refused+=("$entry")
+      done
+    fi
+'''),
+}
+if sys.argv[3] in matchers:
+    field, matcher = matchers[sys.argv[3]]
+    for old, new in [
+        ('committed=()\n', 'FIELD=()\ncommitted=()\n'),
+        ('    committed+=("$key" "$value")\n', '    committed+=("$key" "$value")\n' + matcher),
+        ('jq -cn --args \\\n', 'jq -cn --argjson field_count "${#FIELD[@]}" --args \\\n'),
+        ("'{committed: ($ARGS.positional |",
+         "'{FIELD: $ARGS.positional[:$field_count],\n    committed: ($ARGS.positional[$field_count:] |"),
+        ('  -- ${committed[@]+"${committed[@]}"}',
+         '  -- ${FIELD[@]+"${FIELD[@]}"} \\\n  ${committed[@]+"${committed[@]}"}'),
     ]:
         assert s.count(old) == 1, old
-        changed = s.replace(old, new)
+        changed = s.replace(old, new.replace('FIELD', field))
         assert changed != s
         s = changed
 p.write_text(s)
@@ -1096,23 +1041,28 @@ PY_MODELS
     *) run_refresh "models-$mode" pass render ;;
   esac
   case "$mode" in
-    control)
+    models-control)
       if [ "$RC" -eq 0 ] && jq -e '.deprecated_models == [
           "SECOND_OPINION_CODEX_CMD = \"codex exec -m GpT-6-AsTrA\"", "REVIEW_MODEL = \"FaBlE\""]' "$TMP/state/settings.json" >/dev/null &&
-          ! jq -e 'keys == ["committed", "deprecated", "refused"]' "$TMP/state/settings.json" >/dev/null; then
+          ! jq -e 'keys == ["committed"]' "$TMP/state/settings.json" >/dev/null; then
         ok 'control: restored fixed-name model producer turns the settings-object assertion red'
       else bad 'fixed-name model matcher control' "$OUT"; fi ;;
+    refused-control)
+      if [ "$RC" -eq 0 ] && jq -e '.refused == ["claude::high", "codex:0:low"]' "$TMP/state/settings.json" >/dev/null &&
+          ! jq -e 'keys == ["committed"]' "$TMP/state/settings.json" >/dev/null; then
+        ok 'control: restored refused-entry producer turns the settings-object assertion red'
+      else bad 'refused-entry producer control' "$OUT"; fi ;;
     *)
       report="$TMP/state/body"
       [ "$mode" != current ] || report="$TMP/state/summary"
-      if [ "$RC" -eq 0 ] && ! grep -qF '<code>' "$report" &&
-          jq -e 'keys == ["committed", "deprecated", "refused"] and
-            .committed == {"AGENT_RUNTIME_CONTROLLER_PREFERENCE":"claude:opus:high",
+      if [ "$RC" -eq 0 ] && ! grep -qF '<code>' "$report" && ! grep -qxF '## Settings' "$report" &&
+          jq -e 'keys == ["committed"] and
+            .committed == {"AGENT_RUNTIME_CONTROLLER_PREFERENCE":"claude::high,codex:0:low",
               "SECOND_OPINION_CODEX_CMD":"codex exec -m GpT-6-AsTrA",
               "SECOND_OPINION_CLAUDE_MODEL":"claude-opus-5-5", "REVIEW_MODEL":"FaBlE"}' "$TMP/state/settings.json" >/dev/null &&
           { if [ "$mode" = current ]; then grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT";
             else refresh_class_matches render pushed cause=renders-match-their-sources PATCH; fi; }; then
-        ok "$mode keeps mixed-case model values in the settings object with no report"
+        ok "$mode keeps mixed-case model values and a refused preference in the settings object with no report"
       else bad "$mode model values" "$OUT"; fi ;;
   esac
 done
@@ -1858,229 +1808,55 @@ git -C "$repo" push -q origin main
 creates_before="$(wc -l <"$TMP/state/creates" | tr -d ' ')"
 run_refresh stale pass render
 if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -gt "$creates_before" ]; then ok 'control exposes duplicate pull creation'; else bad 'control exposes duplicate pull creation' "$OUT"; fi
-# Keep the report runner in a distinct default-branch checkout. Refresh can
-# install orch for the first time, replace its parser, or remove it entirely.
+# The project selection reads its settings with the release's library, kept
+# in a distinct default-branch checkout. tail and sed extract private and TOML
+# values. A failure must name its source and stop publication.
 reset_default
 cp "$TMP/class-runner" "$runner"
-printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/settings-trusted" HEAD
-# A release keeps its path reader when a consumer removes optional orch.
-mv "$TMP/settings-trusted/skills" "$TMP/settings-trusted/consumer-skills"
-mkdir "$TMP/settings-trusted/skills"
-cp -R "$repo/.agents/skills/orch" "$TMP/settings-trusted/skills/orch"
-for package in review-gate harness-ci; do
-  ln -s "../.agents/skills/$package" "$TMP/settings-trusted/skills/$package"
-  [ -L "$TMP/settings-trusted/skills/$package" ] || exit 1
-done
 runner="$TMP/settings-trusted/refresh/refresh-consumer.sh"
-cp "$runner" "$TMP/boundary-runner"
-cp -R "$repo/.agents/skills/orch" "$TMP/release-orch"
-FRESH_ORCH="$TMP/release-orch"
-# The release parser reads the real setting but refuses inherited credentials.
-python3 - "$FRESH_ORCH/scripts/lib/overseer-launch.sh" <<'PY_GUARD'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1]).resolve()
-s = p.read_text()
-declarations = [line for line in s.splitlines(keepends=True)
-                if line.startswith('ol_preference_entries() {')]
-assert len(declarations) == 1
-old = declarations[0]
-assert s.count(old) == 1
-# Insert after the complete declaration so its argument comment stays a comment.
-changed = s.replace(old, old + '''  if [[ -n ${GH_TOKEN+x} || -n ${GITHUB_TOKEN+x} || -n ${TEST_SECRET+x} ]]; then
-    printf 'parse-error=credential-present\\n' >&2
-    return 87
-  fi
-''')
-assert changed != s
-p.write_text(changed)
-PY_GUARD
-cp "$FRESH_ORCH/scripts/lib/overseer-launch.sh" "$TMP/release-parser"
-# The preserved parser must not decide the refreshed release's answer.
-printf 'exit 89\n' >>"$TMP/settings-trusted/.agents/skills/orch/scripts/lib/overseer-launch.sh"
-for row in 'absent|absent' 'parser-update|install' 'first-install|install' 'token-absence|install' 'unchecked|install'; do
-  IFS='|' read -r name ORCH_MODE <<<"$row"
-  # A release whose orch carries no shell preference parser.
-  [ "$name" != unchecked ] || rm -f -- "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
-  reset_default
-  if [ "$name" = absent ]; then
-    # A consumer without orch still gets its committed settings scanned.
-    printf 'PR_REVIEW_GATE = "on"\nSECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"\n' >>"$repo/kendex.settings.toml"
-    commit "$repo"
-    git -C "$repo" push -q origin main
-  fi
-  if [ "$name" = first-install ]; then
-    rm -rf -- "$repo/.agents/skills/orch" "$TMP/settings-trusted/.agents/skills/orch"
-    commit "$repo"
-    git -C "$repo" push -q origin main
-  fi
-  : >"$TMP/state/calls"
-  run_refresh "boundary-$name" pass render
-  if [ "$name" = absent ]; then
-    if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body" &&
-        grep -qxF "refresh-settings=orch-absent value=$repo/.agents/skills/orch" <<<"$OUT" &&
-        grep -qF -- '- <code>PR_REVIEW_GATE</code>' "$TMP/state/body" &&
-        ! grep -qF -- '<code>SECOND_OPINION_CODEX_CMD' "$TMP/state/body"; then
-      ok 'absent optional orch refreshes without preference diagnostics and still names a retired setting'
-    else bad 'absent optional orch' "$OUT"; fi
-  elif [ "$name" = unchecked ]; then
-    if [ "$RC" -eq 0 ] &&
-        grep -qxF "refresh-settings=preference-unchecked value=$repo/.agents/skills/orch/scripts/lib/overseer-launch.sh" <<<"$OUT" &&
-        ! grep -qF 'deprecated entry' "$TMP/state/body"; then
-      ok 'an orch without the shell parser refreshes with the preference unchecked'
-    else bad 'orch without the shell parser' "$OUT"; fi
-    # Parsing anyway sources the absent library and stops the same refresh.
-    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
-      '^  orch=unchecked$' 's/^  orch=unchecked$/  orch=present # &/'
-    reset_default
-    before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-    : >"$TMP/state/calls"
-    run_refresh unchecked-control pass render
-    if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
-      ok 'control: a parse with no parser breaks the unchecked refresh'
-    else bad 'unchecked preference control' "$OUT"; fi
-    cp "$TMP/boundary-runner" "$runner"
-    cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
-  elif [ "$RC" -eq 0 ] && grep -qF 'deprecated entry <code>claude:1:high</code>' "$TMP/state/body"; then
-    ok "$name uses the credential-free release parser"
-  else bad "$name parser boundary" "$OUT"; fi
-  if [ "$name" = parser-update ]; then
-    python3 - "$runner" <<'PY_PARSER_CONTROL'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1]).resolve()
-s = p.read_text()
-for lib in ('kendex-env.sh', 'overseer-launch.sh'):
-    old = 'source "$2/.agents/skills/orch/scripts/lib/' + lib + '"'
-    assert s.count(old) == 1
-    changed = s.replace(old, '# ' + old + '\n' + old.replace('$2/.agents/skills', '$1/../..'))
-    assert changed != s
-    s = changed
-p.write_text(s)
-PY_PARSER_CONTROL
-    reset_default
-    before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-    : >"$TMP/state/calls"
-    run_refresh parser-update-control pass render
-    if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
-      ok 'control: preserved parser breaks the release parser assertion'
-    else bad 'post-refresh parser control' "$OUT"; fi
-    cp "$TMP/boundary-runner" "$runner"
-  fi
-  if [ "$name" = absent ]; then
-    # A forced parser block must break the same successful absent-orch row.
-    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
-      '^  orch=absent$' 's/^  orch=absent$/  orch=present # &/'
-    reset_default
-    before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-    : >"$TMP/state/calls"
-    run_refresh absent-control pass render
-    if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
-      ok 'control: forced parser block breaks absent optional orch'
-    else bad 'absent optional orch control' "$OUT"; fi
-    cp "$TMP/boundary-runner" "$runner"
-    # A committed scan run only beside orch drops the same retired row.
-    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
-      '^if \[ -f kendex\.settings\.toml \]; then$' \
-      's/^if \[ -f kendex\.settings\.toml \]; then$/if [ "$3" = present ] \&\& [ -f kendex.settings.toml ]; then # \&/'
-    reset_default
-    : >"$TMP/state/calls"
-    run_refresh absent-scan-control pass render
-    if [ "$RC" -eq 0 ] && grep -qxF "refresh-settings=orch-absent value=$repo/.agents/skills/orch" <<<"$OUT" &&
-        ! grep -qF -- '<code>PR_REVIEW_GATE</code>' "$TMP/state/body" &&
-        ! grep -qF -- '<code>SECOND_OPINION_CODEX_CMD' "$TMP/state/body"; then
-      ok 'control: a committed scan behind orch turns the absent-orch scan assertion red'
-    else bad 'absent orch committed scan control' "$OUT"; fi
-    cp "$TMP/boundary-runner" "$runner"
-  fi
-done
-# Inheriting the environment exposes the token and makes the parser refuse.
-python3 - "$runner" <<'PY_ENV_CONTROL'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1]).resolve()
-s = p.read_text()
-old = 'if ! env -i PATH="$PATH" HOME="$HOME" bash -s -- "$SCRIPT_DIR" "$ROOT" "$orch" >"$TMP/settings.json" <<\'SETTINGS_PARSE\''
-assert s.count(old) == 1
-changed = s.replace(old, '# ' + old + '\n' + old.replace('env -i ', 'env '))
-assert changed != s
-p.write_text(changed)
-PY_ENV_CONTROL
-reset_default
-before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-: >"$TMP/state/calls"
-run_refresh token-control pass render
-if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch" &&
-    grep -qxF 'parse-error=credential-present' <<<"$OUT"; then
-  ok 'control: inherited environment breaks token absence'
-else bad 'token absence control' "$OUT"; fi
-cp "$TMP/boundary-runner" "$runner"
-# Unexpected parser stdout is data, never a command or a clean report.
-for output in noise extra-field empty; do
-  cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
-  case "$output" in
-    noise) printf '\nprintf "not-json\\n"\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
-    extra-field) printf '\nprintf '\''{"refused":[],"deprecated":[],"committed":{},"extra":true}\\n'\''\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
-    empty) printf '\nexit 0\n' >>"$FRESH_ORCH/scripts/lib/overseer-launch.sh" ;;
-  esac
-  reset_default
-  before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
-  : >"$TMP/state/calls"
-  run_refresh "malformed-$output" pass render
-  if refresh_stopped_at_settings "$before" "refresh-error=settings-output value=$repo/.agents/skills/orch"; then
-    ok "$output parser output stops before publication or merge changes"
-  else bad "$output parser output refusal" "$OUT"; fi
-  if [ "$output" = extra-field ]; then
-    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
-      '^if \[ "\$settings_lines" -ne 1 \] \|\|' \
-      's/^if \[ "\$settings_lines" -ne 1 \].*; then$/if false; then # &/'
-    reset_default
-    : >"$TMP/state/calls"
-    run_refresh malformed-control pass render
-    if [ "$RC" -eq 0 ] && ! refresh_stopped_at_settings "$before" "refresh-error=settings-output value=$repo/.agents/skills/orch"; then
-      ok 'control: dropped output refusal publishes malformed extraction as clean'
-    else bad 'parser data validation control' "$OUT"; fi
-    cp "$TMP/boundary-runner" "$runner"
-  fi
-done
-cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
-# tail and sed extract private and TOML values. Failures must name the source.
-cp "$TMP/settings-lib" "$TMP/boundary-settings"
+release_settings="$TMP/settings-trusted/.agents/skills/review-gate/scripts/lib/settings.sh"
+cp "$release_settings" "$TMP/boundary-settings"
 for command in tail sed; do
   real_command="$(command -v "$command")" || exit 1
+  key=KENDEX_REFRESH_PROJECTS
+  [ "$command" != sed ] || key=KENDEX_ENV_FILE
   cat >"$TMP/bin/$command" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
 input="\$(cat)" || exit 1
-if [[ "\$input" == *AGENT_RUNTIME_CONTROLLER_PREFERENCE* ]]; then exit 7; fi
+if [[ "\$input" == *$key* ]]; then exit 7; fi
 exec "$real_command" "\$@" <<<"\$input"
 SH
   chmod +x "$TMP/bin/$command"
   reset_default
-  rm -f -- "$repo/.env.local" "$repo/private.env"
+  rm -f -- "$repo/.env.local"
   source_path=kendex.settings.toml
-  committed=claude:1:high
-  [ "$command" != tail ] || committed=claude:opus:high
-  printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
+  if [ "$command" = sed ]; then
+    printf '[env]\nKENDEX_ENV_FILE = ".env.local"\n' >"$repo/kendex.settings.toml"
+  else
+    printf '[env]\n' >"$repo/kendex.settings.toml"
+  fi
+  # Ignored, so the private file survives the control's clean checkout.
+  grep -qxF .env.local "$repo/.gitignore" 2>/dev/null || printf '.env.local\n' >>"$repo/.gitignore"
   commit "$repo"
   git -C "$repo" push -q origin main
   if [ "$command" = tail ]; then
     source_path="$repo/.env.local"
-    printf 'AGENT_RUNTIME_CONTROLLER_PREFERENCE=claude:1:high\n' >"$source_path"
+    printf 'KENDEX_REFRESH_PROJECTS=.\n' >"$source_path"
   fi
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
   : >"$TMP/state/calls"
   run_refresh "extract-$command" pass render
   printf -v expected 'review-gate-error=settings-extract value=%q' "${source_path#"$repo/"}"
-  if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch" &&
+  if refresh_stopped_at_settings "$before" 'refresh-error=settings-extraction value=KENDEX_REFRESH_PROJECTS' &&
       grep -qxF -- "$expected" <<<"$OUT"; then
     ok "$command extraction failure names its source and stops publication"
   else bad "$command extraction failure" "$OUT"; fi
   # Dropping the class-owned error return must turn both refusal rows red.
-  python3 - "$TMP/settings-trusted/.agents/skills/review-gate/scripts/lib/settings.sh" <<'PY_EXTRACT'
+  python3 - "$release_settings" <<'PY_EXTRACT'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve()
@@ -2096,14 +1872,13 @@ PY_EXTRACT
   reset_default
   : >"$TMP/state/calls"
   run_refresh "extract-$command-control" pass render
-  if [ "$RC" -eq 0 ] && ! grep -qxF '## Settings' "$TMP/state/body"; then
-    ok "control: ignored $command failure publishes a clean report"
+  if [ "$RC" -eq 0 ] && ! grep -qF 'refresh-error=settings-extraction' <<<"$OUT"; then
+    ok "control: ignored $command failure publishes"
   else bad "$command extraction failure control" "$OUT"; fi
-  cp "$TMP/boundary-settings" "$TMP/settings-trusted/.agents/skills/review-gate/scripts/lib/settings.sh"
+  cp "$TMP/boundary-settings" "$release_settings"
   rm -f -- "$TMP/bin/$command"
 done
-unset FRESH_ORCH ORCH_MODE
-rm -f -- "$repo/.env.local" "$repo/private.env"
+rm -f -- "$repo/.env.local"
 
 # Scripts from the consumer's committed pre-platform checkout must adopt
 # refreshed catalog data before its PR can bring the new scripts. Fixtures

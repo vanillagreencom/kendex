@@ -36,16 +36,14 @@ no issue and no evidence comment. The note
 upstream-unfiled record, including paths outside the inventory.
 Log lines go to stderr.
 
---settings formats ol_preference_entries' refused and deprecated arrays from
-refresh-consumer as a pull request Settings section. Its committed object, every
-committed [env] `KEY = "value"` setting, is matched against the package's
-retired-settings.json: a key listed under keys, or a value listed under
-values for its key, a shipped default since replaced. Those rows and the
-notes array, the change-class lines naming a consumer setting that
-refresh-consumer passes once the classifier ran, form a Consumer settings
-section. It reports and changes no setting. An absent array or object reads
-as empty. A clean parse emits no text. It does not parse settings or
-preference entries itself.
+--settings matches refresh-consumer's committed object, every committed [env]
+`KEY = "value"` setting, against the package's retired-settings.json: a key
+listed under keys, or a value listed under values for its key, a shipped
+default since replaced. Those rows and the notes array, the change-class lines
+naming a consumer setting that refresh-consumer passes once the classifier
+ran, form a Consumer settings section. It reports and changes no setting. An
+absent array or object reads as empty. A clean scan emits no text. It does not
+parse settings itself.
 """
 import hashlib
 import html
@@ -74,7 +72,6 @@ INDEX_LAG = timedelta(hours=1)
 
 
 def settings_report():
-    """Format the existing preference parser's diagnostics, not its grammar."""
     entries = json.load(sys.stdin)
 
     def code(entry):
@@ -83,11 +80,6 @@ def settings_report():
         return f"<code>{text}</code>"
 
     sections = []
-    rows = [f"- AGENT_RUNTIME_CONTROLLER_PREFERENCE: {status} entry {code(entry)}; use `harness:model:effort`."
-            for status in ("refused", "deprecated") for entry in entries[status]]
-    if rows:
-        sections.append("## Settings\n\n" + "\n".join(rows) + "\n\n"
-                        "A setting joins this report by exposing its existing parse the same way.")
     retired = json.loads(RETIRED.read_text())
     committed = entries.get("committed", {})
     stale = [f"- {code(key)}: retired; no package reads it." for key in committed if key in retired["keys"]]

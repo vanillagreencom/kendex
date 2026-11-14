@@ -20,34 +20,20 @@ import sys
 
 skill, root = map(Path, sys.argv[1:3])
 real_cli = sys.argv[3]
-# Refresh-consumer owns the parse. This mode only formats its diagnostics.
+# Refresh-consumer owns the scan. This mode only formats its rows.
 reporter = skill / 'refresh-report.py'
 astra = 'SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"'
 fable = 'AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:Fable:high"'
 def settings_run(entries, script=reporter):
  return subprocess.run(['python3', str(script), '--settings'], input=json.dumps(entries),
                        text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
-def settings(refused=(), deprecated=(), models=(), script=reporter):
- result = settings_run(dict(refused=refused, deprecated=deprecated, deprecated_models=models), script)
+def settings(models=(), script=reporter):
+ result = settings_run(dict(deprecated_models=models), script)
  assert result.returncode == 0, result.stderr
  return result.stdout
-for refused, deprecated, present in [
- ([], [], False),
- ([], ['claude:1:high'], True),
- (['claude::high', 'codex:0:low'], ['claude:1:high'], True),
- (['<script>`bad\nentry</script>'], [], True),
-]:
- out = settings(refused, deprecated)
- assert ('## Settings' in out) == present
- assert out.count('AGENT_RUNTIME_CONTROLLER_PREFERENCE:') == len(refused) + len(deprecated)
- assert not present or 'harness:model:effort' in out
- assert '<script>' not in out and '`bad' not in out
- assert '## Deprecated models' not in out
- if not present: assert out == ''
-# Older runners can still send model rows. They produce no report.
+# Model rows produce no report.
 legacy_models = [astra, fable, 'X = "fable <b> `x` y"']
 assert settings(models=legacy_models) == ''
-assert settings(deprecated=['claude:1:high'], models=legacy_models) == settings(deprecated=['claude:1:high'])
 source = reporter.read_text()
 # The settings mode reads the package's retired list beside its scripts
 # directory, so a mutant runs from the same layout.
@@ -55,11 +41,6 @@ mutants = root / 'package/refresh'
 mutants.mkdir(parents=True)
 (root / 'package/skills/review-gate').mkdir(parents=True)
 (root / 'package/skills/review-gate/retired-settings.json').write_bytes((skill.parent / 'skills/review-gate/retired-settings.json').read_bytes())
-# A runner installed before deprecated_models emits two arrays to this reporter.
-two_keys = dict(refused=[], deprecated=['claude:1:high'])
-legacy = settings_run(two_keys)
-assert legacy.returncode == 0, legacy.stderr
-assert legacy.stdout.count('AGENT_RUNTIME_CONTROLLER_PREFERENCE:') == 1 and '## Deprecated models' not in legacy.stdout
 needle = '    retired = json.loads(RETIRED.read_text())\n'
 assert source.count(needle) == 1
 restored = mutants / 'model-report.py'
@@ -68,13 +49,6 @@ restored.write_text(source.replace(needle, '''    models = [f"- {code(entry)}" f
         sections.append("## Deprecated models\\n\\n" + "\\n".join(models))
 ''' + needle))
 assert settings(models=legacy_models, script=restored) != ''
-for needle, refused, deprecated in [('    if rows:\n', [], ['claude:1:high'])]:
- assert source.count(needle) == 1
- mutant = mutants / 'settings-report.py'
- changed = source.replace(needle, '# ' + needle + '    if False:\n')
- assert changed != source
- mutant.write_text(changed)
- assert settings(refused, deprecated, script=mutant) == ''
 # Consumer settings: a retired key, a retired default under its own key and
 # each classifier note make one row; a current value, a retired value under
 # another key and an unlisted key make none. Rows are untrusted text.
@@ -91,7 +65,7 @@ consumer_rows = [
   [gate, '- <code>queue-only: path=a &lt;b&gt; &#96;x&#96; y</code>']),
 ]
 def consumer(committed, notes, script=reporter):
- entries = dict(refused=[], deprecated=[], committed=committed)
+ entries = dict(committed=committed)
  if notes is not None: entries['notes'] = notes
  result = settings_run(entries, script)
  assert result.returncode == 0, result.stderr

@@ -14,10 +14,9 @@
 # install when the commit carries no such tag or more than one. The default
 # catalog follows main, with the engine's compatibility refusal selecting the
 # release catalog. A declared rev takes precedence. Later steps run their
-# scripts from that checkout. The consumer code a run executes is the settings
-# report in refresh-consumer.sh, which sources the consumer's refreshed orch
-# libraries, and the refreshed bot-instructions render kendex runs once in the
-# run's checkout, each under env -i with no credential.
+# scripts from that checkout. The consumer code a run executes is the
+# refreshed bot-instructions render kendex runs once in the run's checkout,
+# under env -i with no credential.
 #
 # Report lines, one per line: kendex-install: version=TAG commit=SHA on
 # success, kendex-install: cause=KEY value=VALUE on a refusal, and
