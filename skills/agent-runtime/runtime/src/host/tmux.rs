@@ -1045,26 +1045,29 @@ pub fn kill_server(server: &Server) -> Result<()> {
     Ok(())
 }
 
+/// A private server on a socket under `dir`, ended on drop whatever the
+/// test did; its socket is its own, never the person's.
+#[cfg(test)]
+pub(crate) struct Private(pub(crate) Server);
+
+#[cfg(test)]
+impl Private {
+    pub(crate) fn start(dir: &Path) -> Private {
+        let server = start_private_server(&dir.join("t.sock"), "t", dir).expect("a server");
+        Private(server)
+    }
+}
+
+#[cfg(test)]
+impl Drop for Private {
+    fn drop(&mut self) {
+        let _ = kill_server(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A private server on a socket under `dir`, ended on drop whatever the
-    /// test did; its socket is its own, never the person's.
-    struct Private(Server);
-
-    impl Private {
-        fn start(dir: &Path) -> Private {
-            let server = start_private_server(&dir.join("t.sock"), "t", dir).expect("a server");
-            Private(server)
-        }
-    }
-
-    impl Drop for Private {
-        fn drop(&mut self) {
-            let _ = kill_server(&self.0);
-        }
-    }
 
     /// A pane the live server does not have reads gone, by its exact id; a
     /// pane the server keeps after its process exited reads dead, with its

@@ -22,15 +22,15 @@ PROVIDER="$SRC_DIR/overseer-host-tmux"
 TMP_ROOT="$(mktemp -d)" || { echo "overseer-host: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "overseer-host: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "overseer-host: scratch=resolve-failed" >&2; exit 1; }
-SOCK="overseer-host-$$"
+SOCK="$TMP_ROOT/tmux.sock"
 IDENTITY_GUARD=""
 cleanup() {
   if [[ -n "$IDENTITY_GUARD" ]]; then kill "$IDENTITY_GUARD" 2>/dev/null || true; wait "$IDENTITY_GUARD" 2>/dev/null || true; fi
-  tmux -L "$SOCK" kill-server 2>/dev/null || true
+  tmux -S "$SOCK" kill-server 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
-tm() { tmux -L "$SOCK" "$@"; }
+tm() { tmux -S "$SOCK" "$@"; }
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
@@ -86,7 +86,7 @@ assert_eq "$RC|$OUT" \
 # --- the tmux provider ------------------------------------------------------------
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work"
-tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
+tmux -S "$SOCK" -f /dev/null new-session -d -s fleet -x 200 -y 40 'exec sleep 100000'
 tm set-option -g renumber-windows off
 tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "exec /bin/sh"

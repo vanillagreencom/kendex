@@ -1035,9 +1035,9 @@ mod tests {
     #[test]
     fn a_dormant_window_opens_with_nothing_typed() {
         let dir = tempfile::tempdir().unwrap();
-        let socket = dir.path().join("tmux.sock");
-        let server = crate::host::tmux::start_private_server(&socket, "s", dir.path())
-            .expect("a private tmux server");
+        let private = crate::host::tmux::Private::start(dir.path());
+        let server = private.0.clone();
+        let socket = server.socket.clone();
         let (settings, env, path, intent) = launch_fixture(dir.path(), json!([]));
         let run = super::testing::run(
             &path,
@@ -1058,7 +1058,7 @@ mod tests {
         )
         .unwrap();
         let pane = operation
-            .open_dormant(&server, "s", "KEN-D", dir.path())
+            .open_dormant(&server, "t", "KEN-D", dir.path())
             .unwrap()
             .expect("a window");
         // The shell's prompt first, so the row's line is echoed after it.
@@ -1129,7 +1129,6 @@ mod tests {
             String::from_utf8_lossy(&read.stdout).trim_end(),
             "fleet-broker attach KEN-D"
         );
-        let _ = crate::host::tmux::kill_server(&server);
     }
 
     /// A pane that runs no process the effect started passes to the record
@@ -1264,12 +1263,12 @@ mod tests {
     #[test]
     fn a_pane_key_on_a_server_replaced_at_the_same_pid_reads_gone_on_the_moved_close() {
         let dir = tempfile::tempdir().unwrap();
-        let socket = dir.path().join("tmux.sock");
-        let server = crate::host::tmux::start_private_server(&socket, "s", dir.path())
-            .expect("a private tmux server");
+        let private = crate::host::tmux::Private::start(dir.path());
+        let server = private.0.clone();
+        let socket = server.socket.clone();
         for (start, expect) in [(server.start + 1, "pane-gone"), (server.start, "closed")] {
             let pane =
-                crate::host::tmux::new_window(&server, "s", "w", dir.path()).expect("a window");
+                crate::host::tmux::new_window(&server, "t", "w", dir.path()).expect("a window");
             let (settings, env, path, mut intent) = close_fixture(
                 dir.path(),
                 json!([{"kind": "pane", "pane": pane.id, "server": server.pid, "server_start": start, "role": "harness"}]),
@@ -1320,7 +1319,6 @@ mod tests {
                 let _ = crate::host::tmux::kill_pane(&pane);
             }
         }
-        let _ = crate::host::tmux::kill_server(&server);
     }
 
     /// A token names a key of the set that minted it and acts on no other. The token

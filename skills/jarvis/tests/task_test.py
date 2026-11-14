@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 import unittest
+from fixtures.tmux_scope import isolate
+isolate()
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
