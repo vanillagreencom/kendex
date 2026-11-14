@@ -1852,8 +1852,11 @@ fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
 /// reads relative to whichever scope installs it, a project or the
 /// personal scope with its local store anywhere. A link that leaves the
 /// installing scope is the install's typed warning, its fix beside it,
-/// once however many steps the install takes; a warning the destination
-/// already gave about a package the install never touched is not.
+/// once however many steps the install takes. So is each warning about
+/// what a step's request reached: a dependency it brought in, a set's
+/// member its catalog does not offer, and a member already installed that
+/// it renders again. A warning the destination already gave about a
+/// package the install never touched is not.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_shared_copy_reaches_the_installing_scopes_file() {
@@ -1940,18 +1943,35 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
     );
     // A second step: a marketplace member, whose add plans the whole
     // destination again.
+    // It requires `helper`, and a set it installs, `kit`, carries `upd`
+    // and `absent`, which the catalog does not offer. Each link below
+    // leaves a project the catalog stands outside, as `ship`'s does.
     let market = home.join("market");
-    super::skill(&market.join("skills"), "gh", "market bytes");
+    fs::create_dir_all(market.join("skills/gh")).unwrap();
+    fs::write(
+        market.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: about gh\ndependencies:\n  required: [helper]\n---\nmarket bytes\n",
+    )
+    .unwrap();
+    super::skill(&market.join("skills"), "helper", "[h](../../nowhere/h.md)");
+    super::skill(&market.join("skills"), "upd", "plain bytes");
+    fs::write(
+        market.join("kendex.toml"),
+        "[marketplace]\nname = \"market\"\n[bundles.kit]\nskills = [\"upd\", \"absent\"]\n",
+    )
+    .unwrap();
     let mut saved = saved.template;
-    saved.members.push(Member {
-        kind: MemberKind::Skill,
-        name: "gh".to_owned(),
-        enabled: true,
-        source: MemberSource::Marketplace {
-            repo: crate::paths::slashed(&market),
-            rev: None,
-        },
-    });
+    for (kind, name) in [(MemberKind::Skill, "gh"), (MemberKind::Bundle, "kit")] {
+        saved.members.push(Member {
+            kind,
+            name: name.to_owned(),
+            enabled: true,
+            source: MemberSource::Marketplace {
+                repo: crate::paths::slashed(&market),
+                rev: None,
+            },
+        });
+    }
     // A package the destination already holds whose link leaves it: a
     // warning every plan there gives, about nothing the install writes.
     let outside = home.join("outside-catalog");
@@ -1959,7 +1979,7 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
     // Each destination holds its own `memory/x.md`.
     let other = home.join("other");
     // (row, destination, its root, whether the outside link leaves it)
-    for (row, destination, root, leaves) in [
+    let rows = [
         (
             "another project",
             Scope::Project {
@@ -1968,8 +1988,9 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
                     fs::write(
                         other.join("kendex.toml"),
                         format!(
-                            "schema = 8\n[sources.outside]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.linked]\nsource = \"outside\"\n",
-                            crate::test_util::source_path(&outside)
+                            "schema = 8\n[sources.outside]\n{}\n[sources.market]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.linked]\nsource = \"outside\"\n[skills.upd]\nsource = \"market\"\n",
+                            crate::test_util::source_path(&outside),
+                            crate::test_util::source_path(&market)
                         ),
                     )
                     .unwrap();
@@ -1992,7 +2013,10 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
             true,
         ),
         ("personal scope", Scope::Global, home.clone(), false),
-    ] {
+    ];
+    // Another project holds `upd` already; the install renders it again.
+    super::skill(&market.join("skills"), "upd", "[u](../../nowhere/u.md)");
+    for (row, destination, root, leaves) in rows {
         fs::create_dir_all(root.join("memory")).unwrap();
         fs::write(root.join("memory/x.md"), format!("{row}.\n")).unwrap();
         let landed = install(
@@ -2003,16 +2027,35 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
             None,
         )
         .unwrap();
-        let expected = match leaves {
-            true => vec![(
+        // The steps all ran: the marketplace step planned and declared.
+        assert_eq!(landed.stopped, None, "{row}: {landed:?}");
+        assert!(
+            landed
+                .declared
+                .iter()
+                .any(|declared| declared == "skill gh"),
+            "{row}: {landed:?}"
+        );
+        let unrepresentable = |name: &str, target: &str| {
+            (
                 ItemKind::Skill,
-                "ship".to_owned(),
-                Some("agent-link-unrepresentable: ../../../../outside.md".to_owned()),
+                name.to_owned(),
+                Some(format!("agent-link-unrepresentable: {target}")),
                 true,
-            )],
-            false => Vec::new(),
+            )
         };
-        assert_eq!(keys(&landed.warnings), expected, "{row}: {landed:?}");
+        let mut expected = vec![(ItemKind::Skill, "absent".to_owned(), None, true)];
+        if leaves {
+            expected.extend([
+                unrepresentable("helper", "../../nowhere/h.md"),
+                unrepresentable("upd", "../../nowhere/u.md"),
+                unrepresentable("ship", "../../../../outside.md"),
+            ]);
+        }
+        let mut landed_keys = keys(&landed.warnings);
+        landed_keys.sort();
+        expected.sort();
+        assert_eq!(landed_keys, expected, "{row}: {landed:?}");
         let manifest =
             match crate::manifest::load(&crate::manifest::manifest_path(&env, &destination))
                 .unwrap()

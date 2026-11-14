@@ -19,7 +19,7 @@ pub(crate) use blocks::{Block, code_by_line};
 pub struct RenderWarning {
     pub message: String,
     pub remediation: Option<String>,
-    /// The diagnostic line a terminal or `--json` reader keys on, as
+    /// The diagnostic line a terminal reader keys on, as
     /// [`crate::engine::ItemWarning::detail`] carries it.
     pub detail: Option<String>,
 }

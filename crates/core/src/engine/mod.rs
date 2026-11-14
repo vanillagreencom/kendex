@@ -515,6 +515,7 @@ fn report(
         scope_errors,
         installations,
         wanted,
+        unoffered: state.unoffered,
         stood_in: readings.stood_in(lock),
         record: new_lock,
         held,

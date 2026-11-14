@@ -279,12 +279,12 @@ export const UNSUBSCRIBE_EDITED_NEXT =
 // The keep landed and the install of the kept copies behind it did not.
 // One error dialog says both halves, the half that failed as its title and
 // the half that stands as its step, as an install beside does
-// (`besideNotInstalledTitle`). Titled by the marketplace's name, as the
-// unsubscribe dialog is, never by the alias the engine is sent.
+// (`besideNotInstalledTitle`). Both name the marketplace as the unsubscribe
+// dialog does, never by the alias the engine is sent.
 export const keptNotInstalledTitle = (marketplace: string): string =>
   `Your copies of the packages from ${marketplace} didn't install`;
-export const keptRecordedStep = (source: string): string =>
-  `You are unsubscribed from '${source}', and My Library lists its packages under Your own. The page shows what is on disk now.`;
+export const keptRecordedStep = (marketplace: string): string =>
+  `You are unsubscribed from ${marketplace}, and My Library lists its packages under Your own. The page shows what is on disk now.`;
 // An unsubscribe whose answer never came back, said as any write is whose
 // completion is unknown, and titled by the marketplace's name.
 export const unsubscribeUnknownTitle = (marketplace: string): string =>

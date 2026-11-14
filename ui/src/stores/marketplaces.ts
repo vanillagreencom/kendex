@@ -247,7 +247,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
               useProblemsStore.getState().showError({
                 title: keptNotInstalledTitle(name),
                 message: stop.message === "" ? NO_REASON_GIVEN : stop.message,
-                steps: [keptRecordedStep(source)],
+                steps: [keptRecordedStep(name)],
               });
               sayWritten(stop.written);
               break;

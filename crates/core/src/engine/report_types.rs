@@ -254,8 +254,9 @@ pub struct ItemWarning {
     pub remediation: Option<String>,
     /// The technical cause, verbatim: the failed command and what it
     /// printed, or the keyed diagnostic line a reader tells the warning
-    /// apart by. `message` says what it means to a person; this is for the
-    /// terminal's detail lines, `--verbose` and `--json`.
+    /// apart by. `message` says what it means to a person; this is what the
+    /// terminal prints under the warning's fix, and under the warning in a
+    /// verbose updates listing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -492,6 +493,10 @@ pub struct EngineReport {
     /// or required by another package. A package every tool refused is
     /// in it; one its catalog retired is not.
     pub wanted: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
+    /// Members a declared set carries that its catalog does not offer, by
+    /// kind and name, each with the set that carries it. Asked for and not
+    /// installable, so not in `wanted`; each has its warning in `warnings`.
+    pub unoffered: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
     /// What the request behind this pass asked for.
     pub asked: Asked,
     /// What a disowning removal changes in kendex.toml: `Some` exactly
@@ -675,6 +680,7 @@ impl EngineReport {
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
             wanted: BTreeMap::new(),
+            unoffered: BTreeMap::new(),
             stood_in: StoodInRecord::default(),
             record: Lock::default(),
             held: Vec::new(),
@@ -736,6 +742,21 @@ impl EngineReport {
             Asked::Named(named) => named,
         };
         named_requirements(&self.wanted, named)
+    }
+
+    /// Every package this pass's request reaches, whether it installs or
+    /// not: [`EngineReport::asked_for`], and each member a set it asked for
+    /// carries that the set's catalog does not offer
+    /// ([`EngineReport::unoffered`]). What an operation reports as its own
+    /// result. A member the person took out of a set is in neither, and
+    /// neither is a package its catalog retired.
+    pub fn requested(&self) -> BTreeSet<(ItemKind, String)> {
+        let mut requested = self.asked_for();
+        match &self.asked {
+            Asked::Declared => requested.extend(self.unoffered.keys().cloned()),
+            Asked::Named(named) => requested.extend(named_requirements(&self.unoffered, named)),
+        }
+        requested
     }
 
     /// What the plan says of an item it writes on no tool and withholds

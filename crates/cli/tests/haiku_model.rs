@@ -1,5 +1,6 @@
 //! Consumer writes, template installs and verify deliver one renderer
-//! model notice.
+//! model notice, and verify lists an installed package's other warnings
+//! with their fix and diagnostic line.
 
 use std::fs;
 use std::process::Command;
@@ -34,10 +35,18 @@ fn exact_pin_renders_haiku_and_reports_one_warning_per_process() {
         )
         .unwrap();
     }
+    // A skill whose link leaves the project: a warning verify reads off
+    // every installation of it.
+    fs::create_dir_all(catalog.join("skills/linked")).unwrap();
+    fs::write(
+        catalog.join("skills/linked/SKILL.md"),
+        "---\nname: linked\ndescription: Linked\n---\n[x](../../memory/x.md)\n",
+    )
+    .unwrap();
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "{}\n[agents.another-fast]\nsource = \"cat\"\n[agents.removable]\nsource = \"cat\"\n",
+            "{}\n[agents.another-fast]\nsource = \"cat\"\n[agents.removable]\nsource = \"cat\"\n[skills.linked]\nsource = \"cat\"\n",
             agent_manifest(&catalog, Some("fast"))
         ),
     )
@@ -108,6 +117,14 @@ fn exact_pin_renders_haiku_and_reports_one_warning_per_process() {
         let output = run(&args);
         assert!(output.status.success(), "{args:?}: {output:?}");
         let stderr = String::from_utf8(output.stderr).unwrap();
+        if args[0] == "verify" {
+            assert!(
+                stderr
+                    .lines()
+                    .any(|line| line == "  agent-link-unrepresentable: ../../memory/x.md"),
+                "{args:?}: {stderr}"
+            );
+        }
         let warnings: Vec<_> = stderr
             .lines()
             .filter(|line| line.starts_with("model-resolution:"))

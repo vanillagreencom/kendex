@@ -359,7 +359,7 @@ describe("a Community row's Subscribed marker", () => {
           written: [kept],
         },
         title: keptNotInstalledTitle,
-        steps: [keptRecordedStep("kit")],
+        steps: (marketplace: string) => [keptRecordedStep(marketplace)],
         message: "the render of skill gh failed",
         calls: [[keptToast, { description: kept.remediation }]],
       },
@@ -367,7 +367,7 @@ describe("a Community row's Subscribed marker", () => {
         name: "a call that never answered",
         error: "connection reset",
         title: unsubscribeUnknownTitle,
-        steps: [UNKNOWN_COMPLETION_STEP],
+        steps: () => [UNKNOWN_COMPLETION_STEP],
         message: "connection reset",
         calls: [],
       },
@@ -400,12 +400,12 @@ describe("a Community row's Subscribed marker", () => {
       expect(useMarketplacesStore.getState().error, entry.name).toBeNull();
       const dialog = useProblemsStore.getState().dialog;
       expect(dialog.open, entry.name).toBe(true);
-      // Titled by the name the page shows, never the alias the engine is
-      // sent: the two differ here.
+      // Named by the name the page shows, in its title and its step, never
+      // the alias the engine is sent: the two differ here.
       expect(dialog.title, entry.name).toBe(entry.title("Acme Kit"));
       expect(dialog.title, entry.name).not.toBe(entry.title("kit"));
       expect(dialog.message, entry.name).toBe(entry.message);
-      expect(dialog.steps, entry.name).toEqual(entry.steps);
+      expect(dialog.steps, entry.name).toEqual(entry.steps("Acme Kit"));
       expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
         entry.calls,
       );

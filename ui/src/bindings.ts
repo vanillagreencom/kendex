@@ -3012,8 +3012,9 @@ export type ItemWarning_Deserialize = {
 	/**
 	 *  The technical cause, verbatim: the failed command and what it
 	 *  printed, or the keyed diagnostic line a reader tells the warning
-	 *  apart by. `message` says what it means to a person; this is for the
-	 *  terminal's detail lines, `--verbose` and `--json`.
+	 *  apart by. `message` says what it means to a person; this is what the
+	 *  terminal prints under the warning's fix, and under the warning in a
+	 *  verbose updates listing.
 	 */
 	detail?: string | null,
 };
@@ -3031,8 +3032,9 @@ export type ItemWarning_Serialize = {
 	/**
 	 *  The technical cause, verbatim: the failed command and what it
 	 *  printed, or the keyed diagnostic line a reader tells the warning
-	 *  apart by. `message` says what it means to a person; this is for the
-	 *  terminal's detail lines, `--verbose` and `--json`.
+	 *  apart by. `message` says what it means to a person; this is what the
+	 *  terminal prints under the warning's fix, and under the warning in a
+	 *  verbose updates listing.
 	 */
 	detail?: string | null,
 };

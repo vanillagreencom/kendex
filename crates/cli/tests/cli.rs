@@ -572,8 +572,11 @@ fn verify_names_an_installation_that_cannot_act() {
     assert!(output.status.success());
     let printed = String::from_utf8_lossy(&output.stderr);
     assert!(printed.contains("✓ hook audit [copilot]"), "{printed}");
+    // Said as a warning, keyed the way every warning list keys it.
     assert!(
-        printed.contains("!") && printed.contains("stays inert"),
+        printed
+            .lines()
+            .any(|line| line.starts_with("warning: audit") && line.contains("stays inert")),
         "{printed}"
     );
 }
