@@ -31,7 +31,11 @@
 //! `pane=local`, `status=verb` runs its harness on that host under the ssh
 //! client its window here holds. Its unread mail is typed into that window
 //! through `deliver --transport` once the provider's `status` reads the
-//! harness running. Nothing here reads its turn: the paste is said
+//! harness running. A running lane whose host's line reads `launch=ssh`,
+//! `pane=verb` runs its harness in the provider's own session: its window
+//! here is a viewer's, typed nothing, and its line goes through the
+//! provider's `send --file` once the watch's judge reads the provider's
+//! capture idle. Nothing here reads either turn: the paste is said
 //! `wake-unconfirmed cause=session-hosted`, the mark is final for the unread
 //! state, and the lane's own mailbox read is the confirmation. No hosted lane
 //! is resumed.
@@ -57,6 +61,7 @@ use agent_runtime::host;
 use serde_json::Value;
 
 use super::hosted::{self, Capabilities, HostStatus, Launch, PaneKind, Status};
+use super::lanes::LaneState;
 use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
 use crate::error::{Error, Result, WatchError};
@@ -208,8 +213,8 @@ fn alert_text(pane: &str, unread: &str, said: &Event) -> String {
 
 /// A target's recorded facts, as `deliver` takes them: the pane by its
 /// exact key on its server, the harness and the identity holding the pane,
-/// and the home, directory and id its session file is found by; for a
-/// hosted lane, the host whose ssh client the pane holds.
+/// and the home, directory and id its session file is found by; and how
+/// its line reaches it.
 struct Target {
     name: String,
     harness: Harness,
@@ -221,7 +226,21 @@ struct Target {
     home: Option<PathBuf>,
     cwd: PathBuf,
     session_id: Option<String>,
-    host: Option<String>,
+    route: Route,
+}
+
+/// How a target's line reaches it.
+enum Route {
+    /// Typed into its pane here, where its harness runs.
+    Pane,
+    /// Typed into its pane here, whose ssh client runs the harness on
+    /// `host` (`deliver --transport`).
+    Transport { host: String },
+    /// Sent through `host`'s own `send`, the provider holding the harness's
+    /// session; the pane here is a viewer's window, the mark's key alone,
+    /// and nothing is typed into it. `lane` is the record the watch's judge
+    /// reads the harness by.
+    Send { host: String, lane: Box<Lane> },
 }
 
 fn u64_of(value: &Value) -> Option<u64> {
@@ -250,20 +269,28 @@ fn lane_target(lane: &Lane, socket: &Path) -> Option<Target> {
 }
 
 /// A hosted lane as a target: a running lane whose host's line reads
-/// `launch=ssh`, `pane=local`, `status=verb`, whose window here holds the
-/// ssh client its harness runs under on the host. It names no identity,
-/// home or session: the pane's foreground is the client, and the session's
-/// file is on the host.
+/// `launch=ssh`, and either `pane=local` with `status=verb`, its window here
+/// holding the ssh client its harness runs under on the host, or
+/// `pane=verb`, the provider holding the harness's session and its window
+/// here a viewer's. It names no identity, home or session: the pane's
+/// foreground is the client or a viewer, and the session's file is on the
+/// host.
 fn hosted_target(lane: &Lane, caps: Capabilities, socket: &Path) -> Option<Target> {
-    let ssh = caps.launch == Some(Launch::Ssh)
-        && caps.pane == PaneKind::Local
-        && caps.status == Status::Verb;
-    let target = window_target(lane, socket).filter(|_| ssh)?;
+    let host = hosted::host_of(lane).to_owned();
+    let route = match caps.pane {
+        PaneKind::Local if caps.status == Status::Verb => Route::Transport { host },
+        PaneKind::Local => return None,
+        PaneKind::Verb => Route::Send {
+            host,
+            lane: Box::new(lane.clone()),
+        },
+    };
+    let target = window_target(lane, socket).filter(|_| caps.launch == Some(Launch::Ssh))?;
     Some(Target {
         identity: None,
         home: None,
         session_id: None,
-        host: Some(hosted::host_of(lane).to_owned()),
+        route,
         ..target
     })
 }
@@ -308,7 +335,7 @@ fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
         home,
         cwd: PathBuf::from(lane.mail_root.as_deref()?),
         session_id: lane.session_id.clone(),
-        host: None,
+        route: Route::Pane,
     })
 }
 
@@ -336,7 +363,7 @@ fn overseer_target(overseer: &Overseer, socket: &Path) -> Option<Target> {
         home: text("home").map(PathBuf::from),
         cwd: PathBuf::from(text("cwd")?),
         session_id: overseer.session_id.clone(),
-        host: None,
+        route: Route::Pane,
     })
 }
 
@@ -676,19 +703,34 @@ impl Wake {
             })
         };
         let room = resume.is_some_and(|r| r.wall);
-        let read = match &target.host {
-            // A hosted lane's harness is read through its provider; its
-            // window's screen is judged by the paste itself, and no turn
-            // count exists here. An exited or unread harness is the lanes
-            // duty's to name.
-            Some(host) => {
+        let read = match &target.route {
+            // A hosted lane's harness is read through its provider, and no
+            // turn count exists here: an exited or unread harness is the
+            // lanes duty's to name. A transport window's screen is judged by
+            // the paste itself; a provider-held session's screen is the
+            // provider's capture, read by the watch's one judge, and only an
+            // idle one is sent its line.
+            Route::Transport { host } => {
                 let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
                 match hosted::status(&scripts, host, &name, target.harness.name()) {
                     Ok(HostStatus::Running) => Read::Idle { turns: 0 },
                     Ok(HostStatus::Exited) | Err(_) => return Ok(()),
                 }
             }
-            None => self.read(target, room)?,
+            Route::Send { lane, .. } => {
+                match super::lanes::judge(&self.settings, lane, Some(&target.socket), None) {
+                    LaneState::Idle { .. } => Read::Idle { turns: 0 },
+                    LaneState::Gone
+                    | LaneState::Unreadable { .. }
+                    | LaneState::Exited
+                    | LaneState::Walled { .. }
+                    | LaneState::Asking
+                    | LaneState::RateLimitSwitch
+                    | LaneState::Working
+                    | LaneState::Unjudged { .. } => return Ok(()),
+                }
+            }
+            Route::Pane => self.read(target, room)?,
         };
         let events = match read {
             Read::Refused => {
@@ -803,10 +845,37 @@ impl Wake {
 
     /// Type `line` into the target through `deliver`, confirmed by a user
     /// turn beyond `turns_before`; `room` as [`Wake::read`] takes it. A
-    /// hosted target's paste is confirmed by nothing here.
+    /// hosted target's paste is confirmed by nothing here. A provider-held
+    /// session is sent the line through its provider's `send` instead:
+    /// only a send that typed nothing, refused at the provider-call bound,
+    /// leaves the state for the next pass; any other failure may have typed
+    /// part of the line, so it is final with its cause and never sent
+    /// again for this state.
     fn paste(&self, target: &Target, line: &str, turns_before: u64, room: bool) -> Result<Paste> {
+        if let Route::Send { host, .. } = &target.route {
+            let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+            return Ok(
+                match hosted::send_text(
+                    &scripts,
+                    host,
+                    &target.name,
+                    &self.settings.state_dir,
+                    line,
+                ) {
+                    Ok(()) => Paste::Unconfirmed {
+                        cause: "session-hosted".to_owned(),
+                    },
+                    Err(hosted::Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
+                        Paste::Refused
+                    }
+                    Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) => {
+                        Paste::Unconfirmed { cause }
+                    }
+                },
+            );
+        }
         let mut args = self.target_args(target, room)?;
-        if target.host.is_none() {
+        if matches!(target.route, Route::Pane) {
             args.extend(["--turns-before".to_owned(), turns_before.to_string()]);
         }
         args.extend(["--line".to_owned(), line.to_owned()]);
@@ -851,8 +920,9 @@ impl Wake {
         if let Some(start) = target.server_start {
             args.extend(["--server-start".to_owned(), start.to_string()]);
         }
-        if target.host.is_some() {
-            args.push("--transport".to_owned());
+        match target.route {
+            Route::Transport { .. } => args.push("--transport".to_owned()),
+            Route::Pane | Route::Send { .. } => {}
         }
         if let Some(program) = self
             .settings

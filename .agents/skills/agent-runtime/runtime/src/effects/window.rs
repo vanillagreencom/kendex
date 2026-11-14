@@ -296,52 +296,29 @@ impl Operation<'_> {
         let role = self.principal_role();
         self.obligations
             .add(Obligation::Receipt, role, self.harness);
-        self.obligations.add(
-            Obligation::Window {
-                server: opening.server,
-                server_start: opening.server_start,
+        let at = (opening.server, opening.server_start);
+        let acquired = self.acquire_window(
+            server,
+            session,
+            name,
+            &command.cwd,
+            at,
+            |operation, pane| {
+                operation.record_phase(Phase::Opening {
+                    opening: match pane {
+                        Some(pane) => Opening {
+                            pane: Some(pane.to_owned()),
+                            ..asked.clone()
+                        },
+                        None => asked.clone(),
+                    },
+                })
             },
-            role,
-            self.harness,
-        );
-        self.record_phase(Phase::Opening {
-            opening: asked.clone(),
-        })?;
-        // A failure that printed its pane opened a window nothing will type
-        // into: it is recorded as any opened pane is, then closed below.
-        let (pane, failed) = match tmux::new_window(server, session, name, &command.cwd) {
-            Ok(pane) => (pane, None),
-            Err(tmux::WindowFailed {
-                error,
-                opened: Some(pane),
-            }) => (*pane, Some(error)),
-            Err(tmux::WindowFailed {
-                error,
-                opened: None,
-            }) => {
-                return Ok(Err(OpenRefusal::Unanswered { refusal: error }));
-            }
+        )?;
+        let (pane, failed) = match acquired {
+            Ok(acquired) => acquired,
+            Err(refusal) => return Ok(Err(OpenRefusal::Unanswered { refusal })),
         };
-        self.obligations.replace(
-            &Obligation::Window {
-                server: opening.server,
-                server_start: opening.server_start,
-            },
-            "pane-recorded",
-            Obligation::Pane {
-                pane: pane.id.clone(),
-                server: opening.server,
-                server_start: Some(opening.server_start),
-            },
-            role,
-            self.harness,
-        );
-        self.record_phase(Phase::Opening {
-            opening: Opening {
-                pane: Some(pane.id.clone()),
-                ..asked
-            },
-        })?;
         let refusal = match failed {
             Some(error) => error,
             None => {
@@ -364,6 +341,106 @@ impl Operation<'_> {
         }
         self.read_receipt()?;
         Ok(Err(OpenRefusal::LineUnsent { refusal }))
+    }
+
+    /// The window acquisition both openers share, under the principal role:
+    /// a window possibly opened on the server keyed `at` (its pid and tmux
+    /// start) is recorded and made durable by `persist` before `new-window`
+    /// runs, then replaced by the pane the creating call printed and made
+    /// durable again with that pane, before anything else touches it.
+    /// `persist` is the opener's own write: the phase of the typed route,
+    /// the set alone of the dormant one. A `new-window` that printed its pane
+    /// and failed comes back with the pane and the failure, the pane standing
+    /// for the caller to close; one that printed none comes back as the
+    /// error, the window obligation standing.
+    fn acquire_window(
+        &mut self,
+        server: &Server,
+        session: &str,
+        name: &str,
+        cwd: &Path,
+        at: (u64, u64),
+        mut persist: impl FnMut(&mut Self, Option<&str>) -> Result<()>,
+    ) -> Result<std::result::Result<(Pane, Option<crate::Error>), crate::Error>> {
+        let (server_pid, server_start) = at;
+        let role = self.principal_role();
+        let window = Obligation::Window {
+            server: server_pid,
+            server_start,
+        };
+        self.obligations.add(window.clone(), role, self.harness);
+        persist(self, None)?;
+        // A failure that printed its pane opened a window: it is recorded as
+        // any opened pane is, for the caller to close.
+        let (pane, failed) = match tmux::new_window(server, session, name, cwd) {
+            Ok(pane) => (pane, None),
+            Err(tmux::WindowFailed {
+                error,
+                opened: Some(pane),
+            }) => (*pane, Some(error)),
+            Err(tmux::WindowFailed {
+                error,
+                opened: None,
+            }) => return Ok(Err(error)),
+        };
+        self.obligations.replace(
+            &window,
+            "pane-recorded",
+            Obligation::Pane {
+                pane: pane.id.clone(),
+                server: server_pid,
+                server_start: Some(server_start),
+            },
+            role,
+            self.harness,
+        );
+        persist(self, Some(&pane.id))?;
+        Ok(Ok((pane, failed)))
+    }
+
+    /// Open a window in `session` on `server`, named `name` in `cwd`, with
+    /// nothing typed into it: it holds the session's default command, its
+    /// pane standing in the set under the principal role, no receipt armed
+    /// and the phase left as it stands. A caller that keeps such a window
+    /// running publishes it with [`Operation::publish_pane`]. A `new-window`
+    /// that printed its pane and failed has that pane closed again by its
+    /// token; the error comes back either way, and the set says what
+    /// stands.
+    pub fn open_dormant(
+        &mut self,
+        server: &Server,
+        session: &str,
+        name: &str,
+        cwd: &Path,
+    ) -> Result<std::result::Result<Pane, crate::Error>> {
+        let at = (u64::from(server.pid), server.start);
+        let acquired = self.acquire_window(server, session, name, cwd, at, |operation, _| {
+            operation.write()
+        })?;
+        let (pane, failed) = match acquired {
+            Ok(acquired) => acquired,
+            Err(error) => return Ok(Err(error)),
+        };
+        let Some(error) = failed else {
+            return Ok(Ok(pane));
+        };
+        if let Ok(token) = self.standing_pane(pane) {
+            let _ = self.close_pane(token)?;
+        }
+        Ok(Err(error))
+    }
+
+    /// Set the user option `name` of the standing pane's window to `value`,
+    /// taken literally: what a reader of the window, such as a tmux hook,
+    /// finds there.
+    pub fn set_window_option(
+        &self,
+        pane: &super::obligations::Standing<Pane>,
+        name: &str,
+        value: &str,
+    ) -> std::result::Result<(), crate::Error> {
+        self.check_pane_token(pane)?;
+        tmux::set_window_option(pane.key(), name, value)
     }
 
     /// Type the launch line into `shell`, the session's idle shell, a pane

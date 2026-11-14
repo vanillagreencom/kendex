@@ -620,6 +620,11 @@ pub struct Lane {
     pub over_cap: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<LaunchIdentity>,
+    /// The pane `launch` names runs no harness: a window on this machine a
+    /// person watches a hosted harness through. Read through
+    /// [`Lane::viewer`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub viewer: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reservation: Option<Reservation>,
     /// The touched set the admission judged: the union
@@ -655,6 +660,13 @@ impl Lane {
         self.host
             .as_deref()
             .filter(|h| *h != "local" && !self.session_channel())
+    }
+
+    /// Whether the pane the record names is a viewer's window, no harness:
+    /// nothing read in it, its foreground or its screen, is the lane's,
+    /// since a tmux hook respawns it while a person watches.
+    pub fn viewer(&self) -> bool {
+        self.viewer
     }
 
     /// Whether the lane's sandbox is a provider's, which the provider's own

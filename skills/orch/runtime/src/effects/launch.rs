@@ -1076,7 +1076,8 @@ fn hosted_launch(
             )?
         }
         Client::Detached => detached_launch(
-            run, operation, &scripts, provider, &r.item, harness, &session, &created, &command,
+            run, operation, &scripts, provider, &r.item, harness, &server, &session, &created,
+            &command,
         )?,
     };
     if created.unrebased {
@@ -1269,13 +1270,22 @@ fn hosted_command(
 /// over ssh.
 const DETACHED_POLL: Duration = Duration::from_secs(1);
 
+/// The window option Fleet's tmux hook reads: the command it respawns the
+/// lane's window with while a person watches it.
+const VIEWER_OPTION: &str = "@lane-viewer-command";
+
 /// A lane whose provider owns the harness's session (`pane=verb`): the
 /// prefix run here, detached, its `host-exec` phase recorded first, so a
 /// launch cut after it is held by the reconcile, its slot kept, until a
 /// close supersedes it; then the harness confirmed through the provider.
-/// The record names no window, pane or process of this machine: the
-/// watch, the close and the park reach the lane by its host and item, and
-/// `window` is its name alone.
+/// Only then the lane's window on the fleet server, for a person to watch:
+/// the provider's `viewer-prefix` asked, the window opened unselected with
+/// nothing typed in the lane's checkout, its viewer option set from that
+/// line, and the window's pane published alone. That pane runs no harness
+/// (the record's `viewer`): the watch, the close and the park reach the
+/// lane by its host and item, and the close ends the window. A failure
+/// from the exec on closes a window it opened, then asks the provider's
+/// stop.
 #[allow(clippy::too_many_arguments)]
 fn detached_launch(
     run: &Run,
@@ -1284,6 +1294,7 @@ fn detached_launch(
     provider: &str,
     item: &str,
     harness: Harness,
+    server: &Server,
     session: &str,
     created: &hosted::Created,
     command: &LaunchCommand,
@@ -1296,22 +1307,72 @@ fn detached_launch(
         Ok(()) => detached_confirm(run, &operation, scripts, provider, item, harness)?,
         Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) => Err(cause),
     };
+    let failed = |operation: Operation, cause: &str| {
+        detached_failed(operation, scripts, provider, item, harness, cause)
+    };
     if let Err(cause) = confirmed {
-        return Ok(detached_failed(
-            operation, scripts, provider, item, harness, &cause,
-        ));
+        return Ok(failed(operation, &cause));
     }
-    let outcome = operation.settle(Word::Confirmed, json!({"note": "session-hosted"}));
-    Ok(outcome.with_wire(Wire {
-        window: Some(format!("{session}:{item}")),
-        members: crate::ops::LaneOutcome {
-            tmux_session: Some(session.to_owned()),
-            mail_root: Some(created.path.clone()),
-            home_implicit: false,
+    let viewer = match hosted::viewer_prefix(scripts, provider, item) {
+        Ok(viewer) => viewer,
+        Err(cause) => return Ok(failed(operation, &cause)),
+    };
+    let pane = match operation.open_dormant(server, session, item, &command.cwd)? {
+        Ok(pane) => pane,
+        Err(e) => {
+            return Ok(failed(
+                operation,
+                &format!("viewer-window-failed item={item} cause={}", e.key()),
+            ));
         }
-        .members(),
-        ..Wire::default()
-    }))
+    };
+    if let Some(line) = &viewer {
+        let token = match operation.standing_pane(pane.clone()) {
+            Ok(token) => token,
+            Err(pane) => {
+                return Ok(failed(
+                    operation,
+                    &format!("viewer-pane-unrecorded pane={}", pane.id),
+                ));
+            }
+        };
+        if let Err(e) = operation.set_window_option(&token, VIEWER_OPTION, line) {
+            let _ = operation.close_window(token)?;
+            return Ok(failed(
+                operation,
+                &format!("viewer-option-failed item={item} cause={}", e.key()),
+            ));
+        }
+    }
+    let observation = json!({"note": "session-hosted", "pane": pane.id, "server": pane.server.pid});
+    Ok(
+        match operation.publish_pane(Published::Target, &pane, observation.clone())? {
+            Ok(outcome) => outcome.with_wire(Wire {
+                launch: Some(LaunchIdentity {
+                    pane: Some(pane.id.clone()),
+                    server: Some(u64::from(pane.server.pid)),
+                    server_start: Some(pane.server.start),
+                    pid: None,
+                    start: None,
+                }),
+                window: Some(format!("{session}:{item}")),
+                members: crate::ops::LaneOutcome {
+                    tmux_session: Some(session.to_owned()),
+                    mail_root: Some(created.path.clone()),
+                    home_implicit: false,
+                    viewer: true,
+                }
+                .members(),
+                ..Wire::default()
+            }),
+            // A handle still standing holds the launch with the window.
+            Err(operation) => {
+                let mut observation = observation;
+                observation["note"] = json!("launch-handles-standing");
+                (*operation).hold(observation)
+            }
+        },
+    )
 }
 
 /// The harness the prefix started, read through its provider within the
@@ -1899,6 +1960,7 @@ fn launch_outcome(
                         tmux_session: Some(tmux_session.to_owned()),
                         mail_root,
                         home_implicit: opened.home_implicit,
+                        viewer: false,
                     }
                     .members(),
                     ..Wire::default()
@@ -2207,6 +2269,7 @@ mod tests {
             status: LaneStatus::Stopped,
             over_cap: None,
             launch: None,
+            viewer: false,
             reservation: None,
             touched: None,
             in_scope: None,

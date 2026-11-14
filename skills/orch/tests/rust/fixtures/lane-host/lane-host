@@ -20,7 +20,9 @@
 # lacks is exit 64 with `lane-host-fixture: unplanned argv=[...]` on stderr,
 # so a row that forgot an answer reads an unreadable call, never a missing
 # file. A `put` keeps the bytes it was handed in `lane-host.put.N` beside,
-# N its line of the log. Bash 3.2.
+# N its line of the log; a `send --item ID --file PATH` keeps PATH's bytes
+# in `lane-host.sent.N` and is answered by its argv with PATH dropped, the
+# caller's file name being its own. Bash 3.2.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 host="$(basename -- "$0")"
@@ -32,6 +34,10 @@ if [ "${1:-}" = put ]; then
   cat > "$here/lane-host.put.$(grep -c '' "$here/lane-host.log")"
 fi
 key="$*"
+if [ "${1:-}" = send ] && [ "${4:-}" = --file ] && [ -n "${5:-}" ]; then
+  cp -- "$5" "$here/lane-host.sent.$(grep -c '' "$here/lane-host.log")"
+  key="$1 $2 $3 $4"
+fi
 nth="#$((prior + 1))"
 reply="$(jq -c --arg k "$key" --arg h "$host $key" --arg n "$nth" '.[$h + $n] // .[$k + $n] // .[$h] // .[$k] // empty' -- "$here/lane-host.json" 2>/dev/null)" || reply=""
 if [ -z "$reply" ]; then

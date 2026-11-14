@@ -6428,6 +6428,56 @@ fn a_hosted_lane_whose_runtime_is_unbuilt_is_refused_before_any_window() {
 const DETACHED_CAPABILITIES: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tpane=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n";
 /// A Claude screen at its composer, which the one screen judge reads idle.
 const CLAUDE_AT_COMPOSER: &str = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n";
+/// The viewer command the planted provider's `viewer-prefix` answers.
+const VIEWER_LINE: &str = "fleet-broker attach KEN-H --viewer";
+
+/// The panes of the server that `before` did not list.
+fn new_panes(server: &Server, before: &[String]) -> Vec<String> {
+    server
+        .panes()
+        .into_iter()
+        .filter(|p| !before.contains(p))
+        .collect()
+}
+
+/// The first nonempty line `pane` shows once its shell ran a line this row
+/// typed after the shell's prompt: anything typed into the pane earlier
+/// reaches the shell before the row's line, so a pane nothing was typed
+/// into shows the row's line on its first prompt.
+fn first_line_read(server: &Server, pane: &str) -> String {
+    let screen = |server: &Server| {
+        String::from_utf8_lossy(&tmux(&server.socket, &["capture-pane", "-p", "-t", pane]).stdout)
+            .into_owned()
+    };
+    let wait = |drawn: &dyn Fn(&str) -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let text = screen(server);
+            if text.lines().any(|l| drawn(l.trim())) {
+                return text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never drawn: {text:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    wait(&|l| l.ends_with(['$', '#']));
+    server.send_line(pane, "echo row-42");
+    let text = wait(&|l| l == "row-42");
+    text.lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The value of the window option `name` on `pane`'s window, empty where
+/// unset.
+fn window_option(server: &Server, pane: &str, name: &str) -> String {
+    let out = tmux(&server.socket, &["show-options", "-wv", "-t", pane, name]);
+    String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+}
 
 impl HostedLaunch {
     /// The answers of a provider that owns the harness's session: its
@@ -6447,6 +6497,7 @@ impl HostedLaunch {
         answers["capture --item KEN-H"] = json!({"stdout": CLAUDE_AT_COMPOSER});
         answers["stop --item KEN-H --harness claude"] =
             json!({"stdout": "stopped item=KEN-H processes=1\n"});
+        answers["viewer-prefix --item KEN-H"] = json!({"stdout": format!("{VIEWER_LINE}\n")});
         for (key, answer) in more.as_object().unwrap() {
             answers[key] = answer.clone();
         }
@@ -6466,19 +6517,33 @@ impl HostedLaunch {
 }
 
 /// A provider that owns the harness's session: the launch runs its prefix
-/// over a client with no terminal and its stdin closed, opens no window,
-/// confirms the harness through the provider's `status` and `capture`, and
-/// records the lane by its host and item with no pane or process of this
-/// machine.
+/// over a client with no terminal and its stdin closed, confirms the
+/// harness through the provider's `status` and `capture`, then asks its
+/// `viewer-prefix` and opens the lane's window on the fleet server for a
+/// person to watch: unselected, nothing typed into it, its viewer option
+/// the provider's line, its shell holding none of the launching process's
+/// variables (a credential among them). The record names that window's
+/// pane and server, no process, and says the pane is a viewer's.
 #[test]
-fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_no_window() {
+fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_its_viewer_window_untyped() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
     let world = HostedLaunch::new(&server, dir.path(), record);
     world.plant_detached("exec true", json!({}));
     let panes_before = server.panes();
-    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    let active = |server: &Server| {
+        let out = tmux(
+            &server.socket,
+            &["display-message", "-p", "-t", "=fleet:", "#{window_id}"],
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let active_before = active(&server);
+    let report = effect_report(&world.runner.op_fleet_env(
+        &world.request(),
+        &[("CLAUDE_CODE_OAUTH_TOKEN", "planted-credential")],
+    ));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["intent"]["observation"]["note"], "session-hosted");
     let lane = &report["lane"];
@@ -6492,23 +6557,48 @@ fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_no_window() {
         "the worktree the host named"
     );
     assert_eq!(lane["window"], "fleet:KEN-H", "the lane's name");
+    let opened = new_panes(&server, &panes_before);
+    assert_eq!(opened.len(), 1, "one window opened: {opened:?}");
+    let pane = &opened[0];
     assert_eq!(
         lane["launch"],
-        Value::Null,
-        "no pane, server or pid: {lane}"
+        json!({"pane": pane, "server": server.pid, "server_start": server.start, "pid": null, "start": null}),
+        "the window's pane and server, no process: {lane}"
     );
-    assert_eq!(server.panes(), panes_before, "no window opened");
+    assert_eq!(lane["viewer"], true, "{lane}");
+    assert_eq!(
+        active(&server),
+        active_before,
+        "the window opened unselected"
+    );
+    assert_eq!(
+        window_option(&server, pane, "@lane-viewer-command"),
+        VIEWER_LINE
+    );
+    let environ = std::fs::read(format!("/proc/{}/environ", server.pane_pid(pane))).unwrap();
+    assert!(
+        !environ
+            .split(|b| *b == 0)
+            .any(|entry| entry.starts_with(b"CLAUDE_CODE_OAUTH_TOKEN=")),
+        "the window's shell holds none of the launching process's variables"
+    );
+    let first = first_line_read(&server, pane);
+    assert!(
+        first.ends_with("$ echo row-42") || first.ends_with("# echo row-42"),
+        "nothing was typed into the window: {first:?}"
+    );
     let account = world.runner.state_dir().display().to_string();
     let host = world.host();
     let verbs = world.verbs();
     assert_eq!(
-        verbs[verbs.len() - 3..],
+        verbs[verbs.len() - 4..],
         [
             "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json".to_owned(),
             "status --item KEN-H --harness claude".to_owned(),
             "capture --item KEN-H".to_owned(),
+            "viewer-prefix --item KEN-H".to_owned(),
         ],
-        "the launch record verified, then the harness read through the provider: {verbs:?}"
+        "the launch record verified, the harness read through the provider, then its viewer asked: {verbs:?}"
     );
     assert_eq!(
         verbs[1],
@@ -6532,6 +6622,95 @@ fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_no_window() {
         )),
         "the harness line enters the worktree the host named: {ssh}"
     );
+}
+
+/// The provider's `viewer-prefix` answers as the released launcher read
+/// them, after the harness is confirmed: exit 2 is a provider with no
+/// viewer, the window opened with no option; any other status fails the
+/// launch `host-viewer-failed`, and an empty answer or one of two lines
+/// fails it `host-viewer-invalid`, each through the provider's stop with no
+/// window left. A window whose `new-window` printed it and then failed (an
+/// `after-new-window` hook that fails) is closed before the stop, and the
+/// launch fails.
+#[test]
+fn a_pane_verb_viewer_prefix_answers_as_the_release_did() {
+    let hook_fails = "set-hook -g after-new-window 'run-shell \"exit 1\"'\n";
+    let cases = [
+        ("no viewer verb", json!({"exit": 2}), None, None),
+        (
+            "refused",
+            json!({"exit": 1}),
+            None,
+            Some("host-viewer-failed item=KEN-H exit=1"),
+        ),
+        (
+            "empty",
+            json!({"stdout": "\n"}),
+            None,
+            Some("host-viewer-invalid item=KEN-H"),
+        ),
+        (
+            "two lines",
+            json!({"stdout": "fleet-broker attach\nKEN-H\n"}),
+            None,
+            Some("host-viewer-invalid item=KEN-H"),
+        ),
+        (
+            "window hook failed",
+            json!({"stdout": format!("{VIEWER_LINE}\n")}),
+            Some(hook_fails),
+            Some("viewer-window-failed item=KEN-H cause=tmux-refused"),
+        ),
+    ];
+    for (case, viewer, config, cause) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = match config {
+            Some(text) => {
+                let path = dir.path().join("tmux.conf");
+                std::fs::write(&path, text).unwrap();
+                Server::start_with_config(dir.path(), "fleet", &path)
+            }
+            None => Server::start(dir.path(), "fleet"),
+        };
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let world = HostedLaunch::new(&server, dir.path(), record);
+        world.plant_detached("exec true", json!({"viewer-prefix --item KEN-H": viewer}));
+        let panes_before = server.panes();
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        let verbs = world.verbs();
+        let opened = new_panes(&server, &panes_before);
+        match cause {
+            None => {
+                assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+                assert_eq!(opened.len(), 1, "{case}: {opened:?}");
+                assert_eq!(
+                    window_option(&server, &opened[0], "@lane-viewer-command"),
+                    "",
+                    "{case}: no option set"
+                );
+                assert!(
+                    !verbs.iter().any(|v| v.starts_with("stop ")),
+                    "{case}: {verbs:?}"
+                );
+            }
+            Some(cause) => {
+                assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+                assert!(
+                    report["intent"]["observation"]["cause"]
+                        .as_str()
+                        .is_some_and(|c| c.starts_with(cause)),
+                    "{case}: {report}"
+                );
+                assert_eq!(
+                    verbs.last().map(String::as_str),
+                    Some("stop --item KEN-H --harness claude"),
+                    "{case}: {verbs:?}"
+                );
+                assert!(opened.is_empty(), "{case}: no window left: {opened:?}");
+                assert_eq!(report["lane"]["status"], "stopped", "{case}");
+            }
+        }
+    }
 }
 
 /// From the exec on, a launch that fails asks the provider to stop the
@@ -6654,11 +6833,14 @@ fn a_pane_verb_launch_cut_after_its_exec_is_held_by_the_reconcile() {
 }
 
 /// The record the launch writes for a provider that owns the harness's
-/// session is the one its readers take: `lane status` reads the lane
-/// through the provider's `status` and `capture`, and the close of its
-/// completed item stops the harness through the provider's `stop`, reads
-/// it exited there, closes the sandbox and ends the record, no tmux pane
-/// read or closed on the way.
+/// session is the one its readers take, whatever its viewer window shows:
+/// with that window respawned, as Fleet's hook does while a person watches,
+/// into a process named for the harness at an idle composer, `lane status`
+/// reads the lane through the provider's `status` and `capture` (working),
+/// and the close of its completed item stops the harness through the
+/// provider's `stop`, reads it exited there, closes the sandbox, ends the
+/// record and closes the viewer window, reading nothing in it as the
+/// harness (`stop: window-only`).
 #[test]
 fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
     let dir = tempfile::tempdir().unwrap();
@@ -6697,11 +6879,13 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
         .runner
         .env
         .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
-    // The fourth status read is the close's first after its stop.
+    // The fourth status read is the close's first after its stop; the
+    // second capture is `lane status`'s.
     world.plant_detached(
         "exec true",
         json!({
             "status --item KEN-H --harness claude#4": {"stdout": "exited\n"},
+            "capture --item KEN-H#2": {"stdout": "❯ do the thing\n✻ Working… (esc to interrupt)\n"},
             "close --item KEN-H": {"stdout": "kept=none\n"},
             "list": {"stdout": ""},
         }),
@@ -6709,10 +6893,26 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
     let panes = server.panes();
     let launched = effect_report(&world.runner.op_fleet(&world.request()));
     assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+    let viewer = new_panes(&server, &panes);
+    assert_eq!(viewer.len(), 1, "{viewer:?}");
+    let viewer = viewer[0].clone();
+    let claude = named_sleep(dir.path(), "claude");
+    let respawned = tmux(
+        &server.socket,
+        &[
+            "respawn-pane",
+            "-k",
+            "-t",
+            &viewer,
+            &format!("printf '❯\\302\\240\\n'; exec {} 600", claude.display()),
+        ],
+    );
+    assert!(respawned.status.success(), "{}", stderr(&respawned));
+    await_named(&server, &viewer, "claude");
 
     let read_from = world.verbs().len();
     let status = reply(&world.runner.run(&["lane", "status", "--item", "KEN-H"]));
-    assert_eq!(status["result"]["state"], "idle", "{status}");
+    assert_eq!(status["result"]["state"], "working", "{status}");
     let read = world.verbs()[read_from..].to_vec();
     assert_eq!(
         read[..3],
@@ -6750,7 +6950,68 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
             && verbs[stop + 1..].iter().any(|v| v == "close --item KEN-H"),
         "read exited, then the sandbox closed: {verbs:?}"
     );
-    assert_eq!(server.panes(), panes, "no pane opened or closed");
+    let close = world.runner.fleet()["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|i| i["op"] == "close-resources")
+        .cloned()
+        .unwrap_or_else(|| panic!("the close intent: {}", world.runner.fleet()));
+    assert_eq!(
+        close["observation"]["stop"], "window-only",
+        "nothing in the viewer read as the harness: {close}"
+    );
+    assert_eq!(server.panes(), panes, "the viewer window closed");
+}
+
+/// A `pane=verb` lane whose provider reads its harness exited, its item not
+/// terminal, is closed on its exit: the record's pane is its viewer's
+/// window, which holds no harness, so the close is admitted on the
+/// `exited` ground and its effect runs, never refused `lane-live`.
+#[test]
+fn an_exited_pane_verb_lane_holding_its_viewer_closes_on_its_exit() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let mut world = HostedLaunch::new(&server, dir.path(), record);
+    world.runner.env.push((
+        "LANE_MAIL_CLI".to_owned(),
+        fixtures()
+            .join("lane-mail-quiet/lane-mail")
+            .display()
+            .to_string(),
+    ));
+    world
+        .runner
+        .env
+        .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
+    world.plant_detached(
+        "exec true",
+        json!({
+            "status --item KEN-H --harness claude#2": {"stdout": "exited\n"},
+            "close --item KEN-H": {"stdout": "kept=none\n"},
+            "list": {"stdout": ""},
+        }),
+    );
+    let launched = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+    assert_eq!(world.runner.fleet()["lanes"][0]["viewer"], true);
+    let closed = reply(
+        &world
+            .runner
+            .op_fleet(&json!({"op": "close-owned-resources", "item": "KEN-H"})),
+    );
+    assert_eq!(closed["ok"], true, "{closed}");
+    let close = world.runner.fleet()["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|i| i["op"] == "close-resources")
+        .cloned()
+        .unwrap_or_else(|| panic!("the close's intent: {}", world.runner.fleet()));
+    assert_eq!(close["close"]["ground"], "exited", "{close}");
 }
 
 /// A hold stand-in whose row never releases it would stay on the machine

@@ -1353,6 +1353,160 @@ fn a_hosted_lane_whose_harness_is_not_read_running_is_typed_nothing_and_marked_n
     assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
 }
 
+/// The SSH kind's line of a provider that holds the harness's session
+/// (`pane=verb`).
+const VERB_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb\n";
+/// A Claude screen at its composer, which the one screen judge reads idle.
+const AT_COMPOSER: &str = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n";
+
+/// A `pane=verb` lane on the planted provider `box`: [`hosted_lane`]'s
+/// record, its window a viewer's (`viewer: true`), a live Claude stub at its
+/// composer that records every line typed into it.
+fn viewed_lane(fleet: &Fleet, answers: Value) -> (Value, PathBuf) {
+    let (mut lane, log) = hosted_lane(fleet, answers);
+    lane["viewer"] = json!(true);
+    (lane, log)
+}
+
+/// The bytes of each `send --file` the provider took, in order.
+fn sent(fleet: &Fleet) -> Vec<String> {
+    calls(&fleet.root.join("lane-host.log"))
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| call.starts_with("ORCH_LANE_HOST=box send --item KEN-1 --file "))
+        .map(|(at, _)| {
+            std::fs::read_to_string(fleet.root.join(format!("lane-host.sent.{}", at + 1))).unwrap()
+        })
+        .collect()
+}
+
+/// An idle `pane=verb` lane with unread mail: the watch's judge reads the
+/// provider's capture at the composer, and the one inbox line goes through
+/// the provider's `send --file`, the file holding exactly that line; the
+/// viewer window here is typed nothing. Nothing here reads the hosted turn,
+/// so the pass says `idle-unread` and `wake-unconfirmed
+/// cause=session-hosted` and marks the state final; the next pass on the
+/// same state asks the provider nothing and says nothing.
+#[test]
+fn an_idle_pane_verb_lane_with_unread_mail_is_sent_one_line_through_its_provider() {
+    let fleet = Fleet::new();
+    let (lane, log) = viewed_lane(
+        &fleet,
+        json!({
+            "capabilities": {"stdout": VERB_LINE},
+            "status --item KEN-1 --harness claude": {"stdout": "running\n"},
+            "capture --item KEN-1": {"stdout": AT_COMPOSER},
+            "send --item KEN-1 --file": {},
+        }),
+    );
+    fleet.set_lanes(vec![lane]);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let produced = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&produced),
+        vec![
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-unconfirmed KEN-1 cause=session-hosted"
+        ]
+    );
+    assert_eq!(
+        sent(&fleet),
+        vec!["Run .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-1 and act on every envelope it prints, answers and directives alike, as its text directs.".to_owned()]
+    );
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|m| m.outcome),
+        Some(WakeOutcome::Unconfirmed {
+            cause: "session-hosted".into()
+        })
+    );
+    let asked = calls(&log);
+    let again = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
+    assert_eq!(calls(&log), asked, "no provider verb for a final mark");
+    assert_eq!(
+        fleet.turns("lead-1"),
+        Vec::<String>::new(),
+        "the viewer window is typed nothing"
+    );
+}
+
+/// A `pane=verb` lane the watch's judge does not read idle is sent nothing,
+/// marked nothing and said nothing: its capture working, its capture
+/// failing, its harness read exited.
+#[test]
+fn a_pane_verb_lane_read_working_or_unread_is_sent_nothing_and_marked_nothing() {
+    let fleet = Fleet::new();
+    let (lane, log) = viewed_lane(
+        &fleet,
+        json!({
+            "capabilities": {"stdout": VERB_LINE},
+            "status --item KEN-1 --harness claude": {"stdout": "running\n"},
+            "status --item KEN-1 --harness claude#3": {"stdout": "exited\n"},
+            "capture --item KEN-1#1": {"stdout": "❯ do the thing\n✻ Working… (esc to interrupt)\n"},
+            "capture --item KEN-1#2": {"exit": 1},
+            "send --item KEN-1 --file": {},
+        }),
+    );
+    fleet.set_lanes(vec![lane]);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    for pass in ["working", "capture failed", "exited"] {
+        let produced = run_once(&mut body, &baseline, &clock).unwrap();
+        assert_eq!(rendered(&produced), Vec::<String>::new(), "{pass}");
+        assert_eq!(fleet.mark("KEN-1"), None, "{pass}");
+    }
+    assert_eq!(
+        calls(&log)
+            .iter()
+            .filter(|l| l.contains(" status "))
+            .count(),
+        3,
+        "{:?}",
+        calls(&log)
+    );
+    assert!(sent(&fleet).is_empty(), "{:?}", calls(&log));
+    assert!(
+        std::fs::symlink_metadata(fleet.record_file()).is_err(),
+        "a pass that marked nothing wrote no record"
+    );
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
+}
+
+/// A provider `send` that answered a failure may have typed part of the
+/// line: the state is final with the cause, said once, and never sent
+/// again.
+#[test]
+fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
+    let fleet = Fleet::new();
+    let (lane, log) = viewed_lane(
+        &fleet,
+        json!({
+            "capabilities": {"stdout": VERB_LINE},
+            "status --item KEN-1 --harness claude": {"stdout": "running\n"},
+            "capture --item KEN-1": {"stdout": AT_COMPOSER},
+            "send --item KEN-1 --file": {"exit": 1},
+        }),
+    );
+    fleet.set_lanes(vec![lane]);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let produced = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&produced),
+        vec![
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-unconfirmed KEN-1 cause=send-failed exit=1"
+        ]
+    );
+    let again = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new());
+    assert_eq!(sent(&fleet).len(), 1, "{:?}", calls(&log));
+}
+
 /// The bare `ps -o lstart` start of `pid`, its blanks squeezed, in the C
 /// locale and UTC: the form a shell writer records a lane's `wake` in.
 fn lstart_of(pid: u32) -> String {

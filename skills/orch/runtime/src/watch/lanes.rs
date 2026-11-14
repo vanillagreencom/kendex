@@ -75,7 +75,7 @@ use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
 use crate::state::{self, FleetState, Lane, LaneStatus};
 use agent_runtime::accounts::wall::{self as account_wall, AccountWallWrite, WallChannel};
-use agent_runtime::intent::Phase;
+use agent_runtime::intent::{Obligation, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
@@ -1248,7 +1248,7 @@ fn observe_one(
             kind,
             banner,
             source,
-        } => wall(obs, *kind, banner, *source, &slice, pass, hosts, cap, out),
+        } => wall(obs, *kind, banner, *source, &slice, pass, cap, out),
         LaneState::Unreadable { .. } => (obs.state.clone(), WallReading::Unavailable),
         // A gone window's rows wait for the pass that judges it.
         LaneState::Gone => (obs.state.clone(), WallReading::Clear),
@@ -1556,7 +1556,7 @@ fn copilot_note(lane: &Lane, pass: &Pass) -> Option<String> {
 /// told.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the wall's inputs are the observation, the judge's three words, the slice, the pass, the hosts and the sink"
+    reason = "the wall's inputs are the observation, the judge's three words, the slice, the pass, the cap and the sink"
 )]
 fn wall(
     obs: &Observed,
@@ -1565,7 +1565,6 @@ fn wall(
     source: WallSource,
     slice: &str,
     pass: &Pass,
-    hosts: &Hosts,
     cap: usize,
     out: &mut Produced,
 ) -> (LaneState, WallReading) {
@@ -1698,7 +1697,7 @@ fn wall(
     };
     let mut notes = Vec::new();
     match reset_at.filter(|_| passed) {
-        None => match route(obs, &account, pass, hosts, out, &mut notes) {
+        None => match route(obs, &account, pass, out, &mut notes) {
             Routed::Relaunched => {
                 out.changes.push(set(
                     "usage-limit",
@@ -1768,9 +1767,9 @@ enum Routed {
 /// the spent account excluded, its answer the line under the event; under
 /// `ORCH_WALL_RELAUNCH=auto` a qualifying account takes the lane through the
 /// record's own relaunch, started detached through the one runner, its marker
-/// written first for the outcome reader. A hosted lane whose kind declares a
-/// local pane has its harness stopped through the provider first (`lane-host
-/// stop --item --harness`), and a stop not confirmed refuses the relaunch as
+/// written first for the outcome reader. A hosted lane of any kind has its
+/// harness stopped through the provider first (`lane-host stop --item
+/// --harness`), and a stop not confirmed refuses the relaunch as
 /// `stop-failed` with the status, or `stop-unanswered` where it gave no
 /// answer. A relaunch refused after the pick is said
 /// under the event, after the pick's line, and never asked again this pass.
@@ -1778,7 +1777,6 @@ fn route(
     obs: &Observed,
     account: &str,
     pass: &Pass,
-    hosts: &Hosts,
     out: &mut Produced,
     notes: &mut Vec<String>,
 ) -> Routed {
@@ -1832,26 +1830,13 @@ fn route(
         Err(cause) => return refused(notes, &format!("context-unavailable cause={cause}")),
     };
     let host = hosted::host_of(obs.lane);
-    if host != "local" {
-        match hosts.of(obs.lane) {
-            Ok(Capabilities {
-                pane: PaneKind::Local,
-                ..
-            }) => {
-                // A stop refused or unanswered alike may leave the harness
-                // running, so neither relaunches beside it this pass.
-                if let Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) =
-                    hosted::stop(pass.scripts, host, &obs.lane.item, harness.name())
-                {
-                    return refused(notes, &cause);
-                }
-            }
-            Ok(Capabilities {
-                pane: PaneKind::Verb,
-                ..
-            }) => {}
-            Err(cause) => return refused(notes, &format!("stop-unjudged cause={cause}")),
-        }
+    // A stop refused or unanswered alike may leave the harness running, so
+    // neither relaunches beside it this pass.
+    if host != "local"
+        && let Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) =
+            hosted::stop(pass.scripts, host, &obs.lane.item, harness.name())
+    {
+        return refused(notes, &cause);
     }
     let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
     let log = pass
@@ -2283,6 +2268,21 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
             Some(Phase::CloudCreate { .. } | Phase::Preparing { .. }) | None => None,
         };
         known.extend(pane);
+        // A window an effect opened with nothing typed stands in its set
+        // before any outcome or phase names it.
+        let set = intent.obligations.iter().flat_map(|set| &set.standing);
+        known.extend(set.filter_map(|held| match &held.obligation {
+            Obligation::Pane { pane, .. } => Some(pane.clone()),
+            Obligation::Process(_)
+            | Obligation::Pid { .. }
+            | Obligation::PaneUnaddressed { .. }
+            | Obligation::Window { .. }
+            | Obligation::Receipt
+            | Obligation::JobSidecar { .. }
+            | Obligation::JobUnit { .. }
+            | Obligation::JobGroup(_)
+            | Obligation::JobPgid { .. } => None,
+        }));
     }
     let mut seen = BTreeSet::new();
     for window in windows {

@@ -74,6 +74,16 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     }
     // The harness is the set's, by role, never the lane's launch record.
     let Some(identity) = operation.engine_ref().harness_identity() else {
+        // A viewer's window runs no harness, whatever its foreground shows
+        // while a person watches: nothing in it is read or stopped, and the
+        // finish closes the window.
+        if lane.viewer() {
+            let mut observation = json!({"identity": "none", "stop": "window-only"});
+            if close.wake_held(&mut operation, &mut observation)? {
+                return Ok(close.hold(operation, observation));
+            }
+            return close.finish(operation, observation);
+        }
         // No recorded process identity: an earlier launcher's record may name a pid with
         // no start, read by that pid and discharged gone where nothing holds
         // it; then the pane the record names is the one handle left, and what

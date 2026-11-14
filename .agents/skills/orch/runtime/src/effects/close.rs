@@ -29,7 +29,7 @@ use crate::state::{self, FleetState, Lane, LaneStatus};
 use crate::verify::Answer;
 use crate::verify::wire::{Nullable, ParkPull, ParkPullAnswer};
 use crate::watch::hosted::{
-    self, Answer as HostAnswer, Asked, Capabilities, HostStopped, Input, PaneKind, Status, StopKind,
+    self, Answer as HostAnswer, Asked, Capabilities, HostStopped, PaneKind, Status, StopKind,
 };
 use crate::watch::lanes::{self, LaneState, reset};
 use crate::watch::tracker::{self, TerminalState};
@@ -368,23 +368,6 @@ pub(crate) fn account_room(
 
 /// How often the exit wait reads the lane again.
 const EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(200);
-
-/// The Copilot exit's input file, the verb's own under the state directory.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the close verb's own input file for the provider's send, written once and removed after"
-)]
-fn write_input(path: &Path, text: &str) -> std::io::Result<()> {
-    std::fs::write(path, text)
-}
-
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the close verb's own input file for the provider's send, removed once sent"
-)]
-fn remove_input(path: &Path) {
-    let _ = std::fs::remove_file(path);
-}
 
 /// The ground the close transition persists; a keep carries the judged park
 /// its sandbox stop follows.
@@ -1050,19 +1033,18 @@ impl Close<'_> {
                 ));
             }
         }
-        if hosted::send(self.scripts, self.host, self.item(), Input::Key("C-c")).is_err() {
+        if hosted::send_key(self.scripts, self.host, self.item(), "C-c").is_err() {
             return Ok(false);
         }
-        let input = self.settings.state_dir.join(format!(
-            "copilot-exit.{}.{}",
+        if hosted::send_text(
+            self.scripts,
+            self.host,
             self.item(),
-            std::process::id()
-        ));
-        let written = write_input(&input, "/exit");
-        let sent = written.is_ok()
-            && hosted::send(self.scripts, self.host, self.item(), Input::File(&input)).is_ok();
-        remove_input(&input);
-        if !sent {
+            &self.settings.state_dir,
+            "/exit",
+        )
+        .is_err()
+        {
             return Ok(false);
         }
         Ok(self.await_exit(None).is_ok())

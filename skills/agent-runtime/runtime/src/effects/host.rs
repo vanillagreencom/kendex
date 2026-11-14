@@ -743,7 +743,10 @@ impl Operation<'_> {
 
     /// Refuse `token-stale` where the pane token's key no longer stands in
     /// this handle's set.
-    fn check_pane_token(&self, token: &Standing<Pane>) -> std::result::Result<(), crate::Error> {
+    pub(super) fn check_pane_token(
+        &self,
+        token: &Standing<Pane>,
+    ) -> std::result::Result<(), crate::Error> {
         if self.key_of(token.key()).is_some() {
             return Ok(());
         }

@@ -458,8 +458,34 @@ pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String>
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// `stop --item ITEM --harness H` before a hosted `pane=local`
-/// relaunch and after a `pane=verb` launch that failed past its exec,
+/// `viewer-prefix --item ITEM`: the command a viewer of the lane's window
+/// on this machine runs, the one nonempty line of exit 0, its trailing line
+/// breaks dropped; `None` on exit 2, a provider with no such verb. Any
+/// other status, or a call that never ran, is `host-viewer-failed`; an
+/// empty answer, or one holding a line break, is `host-viewer-invalid`.
+pub fn viewer_prefix(scripts: &Path, host: &str, item: &str) -> Result<Option<String>, String> {
+    let out = lane_host(scripts, host, &["viewer-prefix", "--item", item])
+        .map_err(|cause| format!("host-viewer-failed item={item} {cause}"))?;
+    match out.status.code() {
+        Some(0) => {}
+        Some(2) => return Ok(None),
+        Some(_) | None => {
+            return Err(format!(
+                "host-viewer-failed item={item} exit={}",
+                exit_code(&out)
+            ));
+        }
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.trim_end_matches('\n');
+    if line.is_empty() || line.contains('\n') {
+        return Err(format!("host-viewer-invalid item={item}"));
+    }
+    Ok(Some(line.to_owned()))
+}
+
+/// `stop --item ITEM --harness H` before a hosted relaunch and after a
+/// `pane=verb` launch that failed past its exec,
 /// confirmed by exit 0 and the one line `stopped item=ITEM
 /// processes=N`, read by `call`'s three values: `Failed` a refusal or an
 /// unconfirmed answer (`stop-failed exit=N`), `Unknown` a stop that may
@@ -538,32 +564,66 @@ pub fn stop_answer(
     }
 }
 
-/// What the provider's `send` types into the harness it hosts.
-#[derive(Debug, Clone, Copy)]
-pub enum Input<'a> {
-    /// `--key KEY`: one key, `C-c` among them.
-    Key(&'a str),
-    /// `--file FILE`: the text a file holds, the provider's input contract.
-    File(&'a Path),
-}
-
-/// `send --item ITEM --key KEY | --file FILE`: the provider's own
-/// input to its pane, confirmed by exit 0; any other answer is its cause.
-pub fn send(scripts: &Path, host: &str, item: &str, input: Input<'_>) -> Result<(), String> {
-    let file;
-    let (flag, value) = match input {
-        Input::Key(key) => ("--key", key),
-        Input::File(path) => {
-            file = path.display().to_string();
-            ("--file", file.as_str())
-        }
-    };
-    let out = lane_host(scripts, host, &["send", "--item", item, flag, value])?;
+/// `send --item ITEM --key KEY`: one key, `C-c` among them, as the
+/// provider's own input to its pane, confirmed by exit 0; any other answer
+/// is its cause.
+pub fn send_key(scripts: &Path, host: &str, item: &str, key: &str) -> Result<(), String> {
+    let out = lane_host(scripts, host, &["send", "--item", item, "--key", key])?;
     if out.status.success() {
         Ok(())
     } else {
         Err(cause_of("send", &out))
     }
+}
+
+/// `send --item ITEM --file FILE` of `text`, the one way a text reaches a
+/// hosted harness, through a file of the state directory's own written for
+/// the call and removed after it. `Failed` is a send that typed nothing,
+/// its cause leading with [`BUSY`] where every slot stayed taken, or one
+/// the provider answered with a status (`send-failed exit=N`), which may
+/// have typed part of the text; `Unknown` is a send with no answer
+/// (`send-unanswered`).
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the send's own input file under the state directory, written for the one call and removed after it"
+)]
+pub fn send_text(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    state_dir: &Path,
+    text: &str,
+) -> Result<(), Asked> {
+    let input = state_dir.join(format!("send.{item}.{}", std::process::id()));
+    std::fs::write(&input, text).map_err(|e| {
+        Asked::Failed(format!(
+            "send-input-unwritten path={} cause={e}",
+            input.display()
+        ))
+    })?;
+    let path = input.display().to_string();
+    let out = call(
+        scripts,
+        host,
+        "send",
+        &["send", "--item", item, "--file", &path],
+        READ_BOUND,
+        "send",
+    );
+    let _ = std::fs::remove_file(&input);
+    let out = out?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(Asked::Failed(
+        format!(
+            "send-failed exit={} {}",
+            exit_code(&out),
+            first_line(&host::stderr_text(&out))
+        )
+        .trim_end()
+        .to_owned(),
+    ))
 }
 
 /// What the provider's close answered: the archive line its close printed

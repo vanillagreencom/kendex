@@ -1886,7 +1886,9 @@ fn a_pi_lane_s_stop_reason_is_the_idle_line_s_cause() {
 
 /// A window of the fleet session that no lane, controller record, open
 /// intent or receipt names is `stray-window` once; it stands after, and a
-/// recorded window is never one.
+/// recorded window is never one: a window an open launch's set holds before
+/// its phase or outcome names it (a viewer opened in the launch's last
+/// step) among them.
 #[test]
 fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
     let dir = tempfile::tempdir().unwrap();
@@ -1911,7 +1913,21 @@ fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
         format!("{receipted} 4242\n"),
     )
     .unwrap();
+    let viewer = server.open_window("KEN-9", dir.path(), "bash --norc --noprofile");
+    let mut doc = fleet.runner.fleet();
+    doc["intents"] = json!([{
+        "id": "launch-session:KEN-9:1-1", "op": "launch-session", "target": "KEN-9",
+        "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "phase": {"phase": "preparing", "step": "host-exec", "at": "provider"},
+        "obligations": {"standing": [{"kind": "pane", "pane": viewer, "server": server.pid,
+            "server_start": server.start, "role": "harness"}], "discharged": []}
+    }]);
+    fleet.runner.write_fleet(&doc);
     let state = fleet.read();
+    assert!(
+        state.intents.iter().any(|i| i.open()),
+        "the launch stands open"
+    );
     lane_driver!(server, fleet, readers, driver);
     let Reading::Live(stray_fields) =
         tmux::pane_fields(&tmux::server(&server.socket).unwrap(), &stray)
@@ -1936,6 +1952,7 @@ fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
     );
     assert!(server.panes().contains(&stray), "the stray stands");
     assert!(server.panes().contains(&receipted));
+    assert!(server.panes().contains(&viewer));
 }
 
 /// The overseer duty's driver: the pass over the fleet with planted judge
@@ -5631,6 +5648,103 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
                 dir.path().canonicalize().unwrap().display().to_string(),
                 "the relaunch runs from the checkout, not the host's root: {request}"
             );
+        }
+    }
+}
+
+/// A lane on a provider that owns its harness's session (`pane=verb`),
+/// walled by its Pi session rows read through the provider, has its harness
+/// stopped through `lane-host stop --item --harness` before the relaunch
+/// starts, as a `pane=local` lane's is: a relaunch beside the running
+/// harness would run two sessions for one item. A stop the provider refuses
+/// leaves the wall to the overseer with `reason=stop-failed` and nothing
+/// starts.
+#[test]
+fn a_walled_pane_verb_lane_is_stopped_through_its_provider_before_its_relaunch() {
+    const VERB_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb";
+    for (stop, refused) in [
+        (ok("stopped item=KEN-4 processes=1\n"), None),
+        (
+            json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
+            Some("stop-failed exit=4"),
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let mut record = relaunchable(
+            lane_record("KEN-4", "gh-4", "pi", &server, "%0", None, dir.path()),
+            dir.path(),
+        );
+        let object = record.as_object_mut().unwrap();
+        object.remove("recovery");
+        object.remove("launch");
+        record["host"] = json!(provider(dir.path()));
+        record["kind"] = json!("ssh");
+        let remote_root = dir.path().join("only-on-the-remote-host");
+        record["mail_root"] = json!(remote_root.display().to_string());
+        record["checkout"] = json!(dir.path().display().to_string());
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        let world = HostedWorld::new(dir.path());
+        let status_file = format!(
+            "cat --item KEN-4 {}/tmp/lane-status-KEN-4.md",
+            remote_root.display()
+        );
+        // The running watch's own state directory, where the relaunch's
+        // marker is written.
+        std::fs::create_dir_all(fleet.runner.state_dir().join("tmp/oversee-watch")).unwrap();
+        let rows_file = format!(
+            "cat --item KEN-4 {}/tmp/lane-mail/KEN-4/session-rows.jsonl",
+            remote_root.display()
+        );
+        world.plant_host(&[
+            ("capabilities", ok(VERB_LINE)),
+            ("status --item KEN-4 --harness pi", ok("running\n")),
+            ("capture --item KEN-4", ok("pi drew this\n")),
+            (
+                rows_file.as_str(),
+                ok("{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"429 Usage limit reached for this model\",\"at\":3}\n"),
+            ),
+            (status_file.as_str(), ok("Step: start\n")),
+            ("stop --item KEN-4 --harness pi", stop),
+        ]);
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = world.scripts.clone();
+        driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+        let produced = driver.pass(&state);
+        let stop_line = format!(
+            "ORCH_LANE_HOST={} stop --item KEN-4 --harness pi",
+            provider(dir.path())
+        );
+        assert!(
+            world.host_log().contains(&stop_line),
+            "{:?} {:?}",
+            world.host_log(),
+            lines(&produced)
+        );
+        let started = driver.relaunches.borrow();
+        match refused {
+            Some(status) => {
+                assert!(
+                    lines(&produced)
+                        .contains(&format!("wall-relaunch-refused lane=gh-4 reason={status}")),
+                    "{:?}",
+                    lines(&produced)
+                );
+                assert!(started.is_empty(), "nothing starts on a failed stop");
+            }
+            None => {
+                assert!(
+                    event_lines(&produced).contains(
+                        &"EVENT lane-relaunched KEN-4 lane=/home/me/.bclaude from=/home/me/.eclaude"
+                            .to_owned()
+                    ),
+                    "{:?}",
+                    lines(&produced)
+                );
+                assert_eq!(started.len(), 1);
+            }
         }
     }
 }

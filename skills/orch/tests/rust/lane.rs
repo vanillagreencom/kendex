@@ -4631,7 +4631,7 @@ fn a_hosted_copilot_lane_gets_exit_before_its_provider_stop() {
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
-                .starts_with("copilot-exit.")),
+                .starts_with("send.")),
             "the input file is removed"
         );
     }

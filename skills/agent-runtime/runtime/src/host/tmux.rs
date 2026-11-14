@@ -966,6 +966,19 @@ pub fn keep_on_exit(pane: &Pane) -> Result<()> {
     Ok(())
 }
 
+/// Set the user option `name` of the pane's window to `value`
+/// (`set-option -w`), the value one argument after `--`, so no leading dash
+/// reads as a flag.
+pub fn set_window_option(pane: &Pane, name: &str, value: &str) -> Result<()> {
+    confirm(&pane.server)?;
+    tmux(
+        Some(&pane.server.socket),
+        "set-option",
+        &["set-option", "-w", "-t", &pane.id, "--", name, value],
+    )?;
+    Ok(())
+}
+
 /// Close the pane's whole window, for a caller that owns the window: every
 /// pane in it goes.
 pub fn kill_window(pane: &Pane) -> Close {

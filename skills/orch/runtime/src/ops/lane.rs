@@ -1539,7 +1539,8 @@ pub(super) fn adopt_session(
 /// The ground a close request stands on, judged on the
 /// lane's recorded harness through the one identity reader. Without a
 /// stated ground the harness must read gone; a recorded pane with no
-/// identity is a lane not known exited. A `no-landing` disposition needs a
+/// identity is a lane not known exited, unless that pane is a viewer's,
+/// which holds no harness. A `no-landing` disposition needs a
 /// readable harness, idle or gone; the idle proof is the effect's, where the
 /// screen is read.
 fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<CloseGround> {
@@ -1589,7 +1590,8 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
             }),
             Some(Reading::Unreadable { cause }) => Err(unreadable(cause)),
             None => {
-                let pane_recorded = lane.launch.as_ref().is_some_and(|l| l.pane.is_some());
+                let pane_recorded =
+                    !lane.viewer() && lane.launch.as_ref().is_some_and(|l| l.pane.is_some());
                 if pane_recorded {
                     Err(Error::LaneLive {
                         item: lane.item.clone(),
@@ -2032,6 +2034,11 @@ pub struct LaneOutcome {
     /// The launch named no home, written as the lane's `home_implicit`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub home_implicit: bool,
+    /// The pane the launch publishes runs no harness, only a window a
+    /// person watches the hosted harness through, written as the lane's
+    /// `viewer`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub viewer: bool,
 }
 
 impl LaneOutcome {
@@ -2104,6 +2111,11 @@ pub(super) fn record_launch_outcome(
             sandbox_ended(lane);
             record::set(lane, "running_at", at);
             record::set(lane, "launch", serde_json::to_value(&r.launch)?);
+            if members.viewer {
+                record::set(lane, "viewer", true);
+            } else {
+                record::delete(lane, "viewer");
+            }
             record::set(lane, "session_id", string_or_null(&r.session_id));
             // The home a local launch read its sessions under, which a
             // relaunch reads the bound session from, and whether it named it.

@@ -695,10 +695,46 @@ impl<'a> Operation<'a> {
         observation: Value,
     ) -> Result<std::result::Result<EffectOutcome, Box<Operation<'a>>>> {
         let identity = identity.identity();
-        let runner = [
-            PaneRef::of_opened(opened).obligation(),
-            Obligation::Process(identity.clone()),
-        ];
+        self.publish_handles(
+            published,
+            vec![
+                PaneRef::of_opened(opened).obligation(),
+                Obligation::Process(identity.clone()),
+            ],
+            observation,
+        )
+    }
+
+    /// The publication of a pane that runs no process the effect started:
+    /// a window opened with nothing typed ([`Operation::open_dormant`])
+    /// passes to the record alone, as [`Operation::publish`] passes a
+    /// runner's pane with its identity, under the same proof.
+    pub fn publish_pane(
+        self,
+        published: Published,
+        pane: &Pane,
+        observation: Value,
+    ) -> Result<std::result::Result<EffectOutcome, Box<Operation<'a>>>> {
+        self.publish_handles(
+            published,
+            vec![Obligation::Pane {
+                pane: pane.id.clone(),
+                server: u64::from(pane.server.pid),
+                server_start: Some(pane.server.start),
+            }],
+            observation,
+        )
+    }
+
+    /// The one body of both publications: `runner` passes to the record
+    /// and every other standing obligation must already be discharged,
+    /// which [`Obligations::publish`] judges.
+    fn publish_handles(
+        self,
+        published: Published,
+        runner: Vec<Obligation>,
+        observation: Value,
+    ) -> Result<std::result::Result<EffectOutcome, Box<Operation<'a>>>> {
         let keys = self.principal_keys();
         let Operation {
             run,
@@ -945,6 +981,221 @@ mod tests {
 
     fn process_row(id: &Identity, role: &str) -> Value {
         json!({"kind": "process", "pid": id.pid, "start": id.start, "role": role})
+    }
+
+    /// A fleet under `dir` holding one open launch intent whose set is
+    /// `standing`, nothing signalled, no phase yet.
+    fn launch_fixture(
+        dir: &Path,
+        standing: Value,
+    ) -> (EngineSettings, crate::journal::Env, PathBuf, Intent) {
+        let (settings, env, path, _) = close_fixture(dir, json!([]));
+        let intent: Intent = serde_json::from_value(json!({
+            "id": "launch-session:KEN-D:1-1", "op": "launch-session",
+            "target": "KEN-D", "revision": 0, "created_at": "2026-01-29T15:20:00Z",
+            "outcome": "unconfirmed",
+            "obligations": {"standing": standing, "discharged": []}
+        }))
+        .unwrap();
+        let mut fleet: Value = serde_json::from_str(super::testing::FLEET).unwrap();
+        fleet["intents"] = json!([intent]);
+        std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
+        (settings, env, path, intent)
+    }
+
+    /// The screen of `pane` on the private server at `socket`, once one of
+    /// its lines, trimmed, answers `drawn`, bounded.
+    fn screen_once(socket: &Path, pane: &str, drawn: impl Fn(&str) -> bool) -> String {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let out = std::process::Command::new("tmux")
+                .arg("-S")
+                .arg(socket)
+                .args(["capture-pane", "-p", "-t", pane])
+                .output()
+                .unwrap();
+            let screen = String::from_utf8_lossy(&out.stdout).into_owned();
+            if screen.lines().any(|l| drawn(l.trim())) {
+                return screen;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never drawn: {screen:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// A window opened with nothing typed runs the session's default
+    /// command and receives no line: the first line its shell reads is the
+    /// one this row types after the open, which reaches the shell behind
+    /// anything typed before it. No receipt is armed, the phase stands as
+    /// it was, and the pane stands in the set under the principal role. A
+    /// window option set through the standing pane reads back from tmux.
+    #[test]
+    fn a_dormant_window_opens_with_nothing_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("tmux.sock");
+        let server = crate::host::tmux::start_private_server(&socket, "s", dir.path())
+            .expect("a private tmux server");
+        let (settings, env, path, intent) = launch_fixture(dir.path(), json!([]));
+        let run = super::testing::run(
+            &path,
+            &settings,
+            &env,
+            dir.path(),
+            dir.path().join("lane-mail"),
+            &crate::clock::SystemClock,
+        );
+        let mut operation = Operation::open(
+            &run,
+            &intent,
+            Bootstrap::Launch {
+                launch: None,
+                harness: Some(Harness::Claude),
+                auxiliary: None,
+            },
+        )
+        .unwrap();
+        let pane = operation
+            .open_dormant(&server, "s", "KEN-D", dir.path())
+            .unwrap()
+            .expect("a window");
+        // The shell's prompt first, so the row's line is echoed after it.
+        screen_once(&socket, &pane.id, |l| l.ends_with(['$', '#']));
+        let typed = std::process::Command::new("tmux")
+            .arg("-S")
+            .arg(&socket)
+            .args(["send-keys", "-t", &pane.id, "-l", "echo row-42"])
+            .status()
+            .unwrap();
+        assert!(typed.success());
+        let enter = std::process::Command::new("tmux")
+            .arg("-S")
+            .arg(&socket)
+            .args(["send-keys", "-t", &pane.id, "Enter"])
+            .status()
+            .unwrap();
+        assert!(enter.success());
+        let screen = screen_once(&socket, &pane.id, |l| l == "row-42");
+        let first = screen
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or_default();
+        assert!(
+            first.ends_with("$ echo row-42") || first.ends_with("# echo row-42"),
+            "the shell read nothing before the row's line: {screen:?}"
+        );
+        assert!(!run.receipt_path(&intent.id).exists(), "no receipt armed");
+        let recorded = read_intent(&path, &intent.id).unwrap();
+        assert_eq!(recorded.phase, None, "the phase stands as it was");
+        let standing: Vec<(Obligation, Option<Role>)> = recorded
+            .obligations
+            .unwrap()
+            .standing
+            .into_iter()
+            .map(|held| (held.obligation, held.role))
+            .collect();
+        assert_eq!(
+            standing,
+            vec![(
+                Obligation::Pane {
+                    pane: pane.id.clone(),
+                    server: u64::from(server.pid),
+                    server_start: Some(server.start),
+                },
+                Some(Role::Harness),
+            )]
+        );
+        let token = operation
+            .standing_pane(pane.clone())
+            .expect("the pane stands");
+        operation
+            .set_window_option(&token, "@lane-viewer-command", "fleet-broker attach KEN-D")
+            .unwrap();
+        let read = std::process::Command::new("tmux")
+            .arg("-S")
+            .arg(&socket)
+            .args([
+                "show-options",
+                "-wv",
+                "-t",
+                &pane.id,
+                "@lane-viewer-command",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&read.stdout).trim_end(),
+            "fleet-broker attach KEN-D"
+        );
+        let _ = crate::host::tmux::kill_server(&server);
+    }
+
+    /// A pane that runs no process the effect started passes to the record
+    /// alone: over a set holding that pane, the publication settles; over a
+    /// set that also holds a process, the handle comes back with both
+    /// standing, since nothing discharged the process.
+    #[test]
+    fn a_pane_published_alone_settles_with_no_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let pane = Pane {
+            server: Server {
+                socket: dir.path().join("tmux.sock"),
+                pid: 4242,
+                start: 7,
+            },
+            id: "%3".to_owned(),
+            window: "@3".to_owned(),
+            session: "s".to_owned(),
+        };
+        let pane_row = json!({"kind": "pane", "pane": "%3", "server": 4242, "server_start": 7, "role": "harness"});
+        let other = Identity {
+            pid: 4243,
+            start: "ticks:4243".into(),
+        };
+        for (standing, settles) in [
+            (json!([pane_row.clone()]), true),
+            (
+                json!([pane_row.clone(), process_row(&other, "harness")]),
+                false,
+            ),
+        ] {
+            let (settings, env, path, intent) = launch_fixture(dir.path(), standing);
+            let run = super::testing::run(
+                &path,
+                &settings,
+                &env,
+                dir.path(),
+                dir.path().join("lane-mail"),
+                &crate::clock::SystemClock,
+            );
+            let operation = Operation::open(
+                &run,
+                &intent,
+                Bootstrap::Launch {
+                    launch: None,
+                    harness: Some(Harness::Claude),
+                    auxiliary: None,
+                },
+            )
+            .unwrap();
+            match operation
+                .publish_pane(Published::Target, &pane, json!({}))
+                .unwrap()
+            {
+                Ok(outcome) => {
+                    assert!(settles, "a standing process settles nothing");
+                    let wire = outcome.wire("agent-runtime");
+                    assert_eq!(wire.outcome, Outcome::Confirmed);
+                    assert_eq!(wire.observation.unwrap()["published"], "target");
+                }
+                Err(held) => {
+                    assert!(!settles, "the pane alone settles");
+                    assert_eq!(held.obligations.record().standing.len(), 2);
+                }
+            }
+        }
     }
 
     /// A record with an obligation under no role opens no handle:
