@@ -504,8 +504,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 source "$SCRIPT_DIR/../lib/issue-validation.sh"
 
-ISSUE_RETURN_FIELDS=$(linear_issue_return_fields)
-
 read_description_file() {
     local description_file="$1"
     if [[ -z "$description_file" ]]; then
@@ -643,7 +641,7 @@ list_issues() {
 '"$ISSUE_BLOCKED_BY_FIELDS"
         page=250
         ;;
-    full) fields="${ISSUE_RETURN_FIELDS/    team \{ name \}/}" ;;
+    full) fields=$ISSUE_LIST_FIELDS ;;
     esac
 
     # Server-side search: pipe-separated terms, each matched as a

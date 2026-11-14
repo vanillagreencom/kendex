@@ -3,7 +3,10 @@
 # `projects audit` against recorded Linear replies: each project map finding
 # the Audit section of project-management references/project-map.md lists,
 # one planted defect per row in a copy of a clean team that yields none, and
-# its refusal of a map project Linear lacks or has twice live.
+# its refusal of a map project Linear lacks or has twice live. Then the audit
+# pass's team inventory its readers share (`issues list`, `labels audit` and
+# `projects audit` given --inventory): each answers what its live read does,
+# the pass lists the team once, and a file a reader cannot use refuses.
 
 set -euo pipefail
 
@@ -52,8 +55,9 @@ git -C "$PROJECT" config maintenance.auto false
 cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
 RENDER="$PROJECT/.agents/skills/project-management/SKILL.md"
 
-# The stub applies each filter its request sends and serves two open issues
-# per page, with a project's state only where the request selects it. An
+# The stub applies each filter its request sends and serves two issues per
+# page, open ones only where the request filters on state type, with a
+# project's state only where the request selects it. An
 # issue's state name defaults to its type's usual one; a fixture issue may name
 # another, and lists its label names.
 cat >"$PROJECT/bin/curl" <<'SH'
@@ -67,10 +71,11 @@ has() { [[ "$query" == *"$1"* ]] && echo true || echo false; }
 issue_rows() {
   jq -cj --arg op "$1" --argjson payload "$payload" \
     --argjson open "$(has 'state: {type: {nin: ["completed", "canceled"]}}')" \
+    --argjson team_filter "$(has 'team: {id: {eq: $teamId}}')" \
     --argjson project_state "$(has 'project { id name state }')" '
     {started: "In Progress", unstarted: "Todo", backlog: "Backlog", completed: "Done", canceled: "Canceled", duplicate: "Duplicate"} as $names
     | .projects as $projects | ($payload.variables.filter // {}) as $filter
-    | ($payload.variables.teamId // $filter.team.id.eq // null) as $team
+    | (if $team_filter then $payload.variables.teamId else $filter.team.id.eq // null end) as $team
     | {pageInfo: {hasNextPage: false, endCursor: null}} as $closed
     | [.issues[] | . + {state_name: (.state_name // $names[.state])}
       | select($team == null or .team == $team)
@@ -340,6 +345,8 @@ ROWS
 FAIL_INVENTORY=1 run_status rc linear failed-read "$BATCH" issues list --team kendex --max \
   --inventory "$TMP_ROOT/failed/inventory.json"
 assert_ne "failed read: refused" "$rc" 0
+assert "failed read: refused by its one collection" \
+  jq -e '.collections == 1 and .listings == ["InventoryIssues"]' <(request_counts "$TMP_ROOT/failed-read.jsonl")
 assert_eq "failed read: publishes nothing" "$(find "$TMP_ROOT/failed" -mindepth 1 | wc -l | tr -d ' ')" 0
 
 # The list answers from an inventory only what it can filter there; any other

@@ -30,6 +30,18 @@ control_replace scripts/lib/pages.sh 1 \
     '    graphql_pages "$query" "$variables" issues |' \
     '    { graphql_pages "$query" "$variables" issues || :; } |'
 
+# The failed read is refused before its collection, which the stub refuses.
+control_expect "failed read: refused by its one collection"
+control_replace scripts/lib/pages.sh 1 \
+    '    staged=$(mktemp -- "$file.XXXXXX") || return 1' \
+    '    [[ -z "${FAIL_INVENTORY:-}" ]] || return 1; staged=$(mktemp -- "$file.XXXXXX") || return 1'
+
+# The collection lists every team.
+control_expect "inventory: holds the team's every state and no other team"
+control_replace scripts/lib/pages.sh 1 \
+    '    query="query InventoryIssues(\$teamId: ID!, \$first: Int, \$after: String) { issues(filter: {team: {id: {eq: \$teamId}}}, first: \$first, after: \$after) { pageInfo { hasNextPage endCursor } nodes { $fields } } }"' \
+    '    query="query InventoryIssues(\$teamId: ID!, \$first: Int, \$after: String) { issues(filter: {}, first: \$first, after: \$after) { pageInfo { hasNextPage endCursor } nodes { $fields } } }"'
+
 # A file the reader cannot use answers as an empty team.
 control_expect "other-team: projects-audit refuses inventory-unread"
 control_replace scripts/lib/pages.sh 1 \
@@ -38,9 +50,9 @@ control_replace scripts/lib/pages.sh 1 \
 
 # The inventory reads no project state.
 control_expect "inventory: projects-audit prints what the live read prints"
-control_replace scripts/lib/pages.sh 1 \
-    "    printf '%s' \"\${fields/    project \\{ id name \\}/\$project}\"" \
-    "    printf '%s' \"\$fields\""
+control_replace scripts/lib/formatters.sh 1 \
+    'readonly ISSUE_INVENTORY_FIELDS="$ISSUE_FIELDS_HEAD    project { id name state }' \
+    'readonly ISSUE_INVENTORY_FIELDS="$ISSUE_FIELDS_HEAD    project { id name }'
 
 # The readers' own coverage: the label audit drops duplicate-state issues,
 # the project audit keeps them, the list drops its state filter and keeps the

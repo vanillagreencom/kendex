@@ -66,10 +66,10 @@ gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRAC
 
 `--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis notes in `analysis[]` and scopes itself to.
 
-Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). Under a declared taxonomy, run that preflight's label audit in this form:
+Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). On TRACKER=linear under a declared taxonomy, run that preflight's label audit in this form:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh labels audit --inventory [INVENTORY_FILE]   # § 1.1.2
+.agents/skills/linear/scripts/linear.sh labels audit --inventory [INVENTORY_FILE]   # TRACKER=linear, § 1.1.2
 ```
 
 A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.

@@ -324,55 +324,9 @@ graphql_query() {
     linear_complete_result "$result"
 }
 
-# Shared issue fields for mutation responses, the list query's fields. The
-# full list selection drops team and reads pages of ISSUE_FULL_PAGE rows. Read
-# at call time: the relation fields are formatters.sh's, and this file loads
-# without it under the pager tests.
-linear_issue_return_fields() {
-    printf '%s' '
-    id
-    identifier
-    title
-    description
-    state { name type }
-    assignee { name }
-    project { id name }
-    projectMilestone { id name }
-    cycle { id name number }
-    parent { id identifier title }
-    team { name }
-    labels { pageInfo { hasNextPage endCursor } nodes { name } }
-    priority
-    estimate
-    sortOrder
-    url
-    createdAt
-    updatedAt
-    archivedAt
-    trashed
-'"$ISSUE_RELATION_FIELDS"
-}
+# The full issue list, and the audit inventory it shares a selection with,
+# read pages of this many rows.
 ISSUE_FULL_PAGE=75
-
-# The audit inventory: one pass's complete reading of a team's issues, which
-# `issues list`, `labels audit` and `projects audit` read in place of their own
-# team listing when given --inventory FILE. It holds every non-archived issue
-# in every state, with the full list fields and each project's state: the
-# union of what those readers and the pass's reconciliation select, each
-# reader keeping its own filter. FILE binds one pass and is never refreshed,
-# so a path reused across passes serves the older reading.
-#
-# The file is {team, fields, nodes}. `fields` is the selection it was read
-# with, so a file read with other fields refuses as insufficient rather than
-# answering without the facts a reader needs.
-linear_inventory_fields() {
-    # A replacement held in a variable: Bash 3.2 keeps a backslash written
-    # before a brace in replacement text.
-    local fields project='    project { id name state }'
-    fields=$(linear_issue_return_fields) || return 1
-    fields="${fields/    team \{ name \}/}"
-    printf '%s' "${fields/    project \{ id name \}/$project}"
-}
 
 # Usage: linear_inventory_option --inventory VALUE, from the verb's own parse.
 linear_inventory_option() {
@@ -390,6 +344,20 @@ linear_inventory_refuse() { # FILE CAUSE
         '{error: ("inventory-unread file=" + $file + " cause=" + $cause)}' >&2
 }
 
+# The audit inventory: one pass's complete reading of a team's issues, which
+# `issues list`, `labels audit` and `projects audit` read in place of their own
+# team listing when given --inventory FILE. It holds every non-archived issue
+# in every state, with the full list fields and each project's state
+# (ISSUE_INVENTORY_FIELDS): the union of what those readers and the pass's
+# reconciliation select, each reader keeping its own filter. FILE binds one
+# pass and is never refreshed, so a path reused across passes serves the older
+# reading.
+#
+# The file is {team, fields, nodes}. `fields` is the selection it was read
+# with, so a file read with other fields refuses as insufficient rather than
+# answering without the facts a reader needs. The fields are formatters.sh's,
+# read at call time: the pager tests load this file without it.
+#
 # Print the team's inventory nodes as one JSON array. An existing FILE is read
 # and never replaced: unreadable, malformed, another team's or read with other
 # fields, it refuses `inventory-unread` and reads nothing from Linear, since a
@@ -398,8 +366,7 @@ linear_inventory_refuse() { # FILE CAUSE
 # published by rename, so a failed read leaves no file behind.
 # Usage: nodes=$(linear_inventory FILE TEAM_ID)
 linear_inventory() (
-    local file="$1" team_id="$2" fields cause query variables staged
-    fields=$(linear_inventory_fields) || return 1
+    local file="$1" team_id="$2" fields="$ISSUE_INVENTORY_FIELDS" cause query variables staged
     if [[ -e "$file" || -L "$file" ]]; then
         if [[ ! -f "$file" || ! -r "$file" ]]; then
             linear_inventory_refuse "$file" unreadable
