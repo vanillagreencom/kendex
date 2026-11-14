@@ -61,7 +61,7 @@ class Producer(unittest.TestCase):
         self.executable("kendex", '#!/bin/sh\ncat "$REGISTRY"\n')
         self.module = load(self.scripts / "lib/watch.py")
         self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_MAIN_HOST="", JARVIS_LOG_DIR=str(self.root / "log"),
-                             JARVIS_WAKE_SETTLE_SECS="15")
+                             JARVIS_WAKE_SETTLE_SECS="15", JARVIS_VOICE_REMIND_SECS="0")
 
     def project(self, name):
         return make_project(self.root / name)
@@ -663,6 +663,87 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             watch.accept(self.acquire_all(watch, 0))
             self.assertNotIn("EVENT mail ", watch.log.read_text()[len(before):])
             step(watch, 1, reminder, True, 0, [fourth])
+
+    def test_an_open_voice_request_is_reminded_each_period(self):
+        # A voice request a progress notice leaves open is reminded each
+        # period until its final reply; a plain owner note beside it once.
+        windows = self.root / "windows"
+        helper = self.scripts / "owner-unanswered"
+        helper.rename(self.scripts / "owner-unanswered-real")
+        helper.write_text('printf "%s\\n" "$*" >> ' + shlex.quote(str(windows)) +
+                          '\nexec "$BASH" "${BASH_SOURCE[0]%/*}/owner-unanswered-real" "$@"\n')
+        self.settings["JARVIS_VOICE_REMIND_SECS"] = "120"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                ThreadPoolExecutor(max_workers=1) as passes:
+            pending = Future()
+
+            def started():
+                watch = self.watch()
+                watch.next_presence["local"] = 10 ** 9
+                return watch
+
+            def check(now, submits, reminded):
+                """One _poll at now and, where it starts a check, the poll that accepts it: the ids reminded."""
+                before = watch.log.read_text() if watch.log.exists() else ""
+                watch._poll(passes, pending, now)
+                submitted = watch.unanswered_pending is not None
+                if submitted:
+                    watch.unanswered_pending.result(timeout=60)
+                    watch._poll(passes, pending, now)
+                added = watch.log.read_text()[len(before):] if watch.log.exists() else ""
+                self.assertEqual((submitted, re.findall(r"^EVENT owner-unanswered id=(\S+) ", added, re.M)),
+                                 (submits, reminded), now)
+
+            def saved():
+                memory = json.loads(watch.path.read_text())["unanswered"]
+                return [row["id"] for row in memory["pending"]], sorted(memory.get("reminded", {}))
+
+            watch = started()
+            voice = self.owner_note("voice-request: caller=owner operation=op-1\nBook the flight.")
+            plain = self.owner_note("plain ask")
+            self.mail(self.home, "notice", "looking it up", "--to", "owner", "--ref", voice, "--progress")
+            watch.accept(self.acquire_all(watch, 0))
+            # A period under the check interval is the next check's time.
+            for row in ((0, True, []), (119, False, [])):
+                check(*row)
+            self.clock(120)
+            check(120, True, [voice])
+            self.clock(240)
+            for row in ((239, False, []), (240, True, [voice])):
+                check(*row)
+            # A restart remembers the last reminder.
+            watch = started()
+            self.clock(240)
+            check(0, True, [])
+            self.clock(600)
+            check(120, True, [voice, plain])
+            self.clock(720)
+            check(240, True, [voice])
+            self.assertEqual(saved(), ([voice, plain], [voice]))
+            # A final reply ends the reminders; the plain note still waits.
+            self.mail(self.home, "notice", "booked", "--to", "owner", "--ref", voice)
+            self.clock(840)
+            check(360, True, [])
+            self.assertEqual(saved(), ([plain], []))
+            self.mail(self.home, "notice", "answered", "--to", "owner", "--ref", plain)
+            self.clock(960)
+            for row in ((480, True, []), (600, False, [])):
+                check(*row)
+            # With the setting 0 a voice request is reminded once at 600 s,
+            # and the check runs every 300 s.
+            self.settings["JARVIS_VOICE_REMIND_SECS"] = "0"
+            self.bin.joinpath("date").unlink()
+            watch = started()
+            second = self.owner_note("voice-request: caller=owner operation=op-2\nRenew the lease.")
+            self.mail(self.home, "notice", "renewing", "--to", "owner", "--ref", second, "--progress")
+            watch.accept(self.acquire_all(watch, 0))
+            checks = len(windows.read_text().splitlines())
+            check(0, True, [])
+            for offset, reminded in ((300, []), (600, [second]), (900, [])):
+                self.clock(offset)
+                for row in ((offset - 1, False, []), (offset, True, reminded)):
+                    check(*row)
+            self.assertEqual(len(windows.read_text().splitlines()) - checks, 4)
 
     def test_owner_unread_is_the_inbox_receipt(self):
         # The page keys on owner-unread; a read row only reminds the session.
@@ -1650,6 +1731,7 @@ with open(sys.argv[1], "ab") as out:
             defaults = self.module.config(BASH, self.home)
             self.assertEqual(defaults["JARVIS_CONTROL_HOST"], "")
             self.assertEqual(defaults["JARVIS_WAKE_SETTLE_SECS"], "15")
+            self.assertEqual(defaults["JARVIS_VOICE_REMIND_SECS"], "0")
             self.assertEqual(defaults["JARVIS_LOG_DIR"], str(self.root / ".local/state/jarvis"))
             with patch.dict(os.environ, XDG_STATE_HOME=str(self.root / "xdg")):
                 self.assertEqual(self.module.config(BASH, self.home)["JARVIS_LOG_DIR"], str(self.root / "xdg/jarvis"))

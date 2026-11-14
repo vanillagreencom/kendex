@@ -9,13 +9,14 @@ ORCH_SCRIPTS="$JARVIS_LIB/../../../orch/scripts"
 source "$MAILBOX_LIB/kendex-env.sh"
 
 jarvis_load() {
-  [[ ! -r "$ORCH_SCRIPTS/lib/settings-names.sh" ]] || source "$ORCH_SCRIPTS/lib/settings-names.sh"; kendex_load_project_env "$1" -- JARVIS_CONTROL_HOST JARVIS_CONTROL_USER JARVIS_LOG_DIR JARVIS_MAIN_HOST JARVIS_REMOTE_HOSTS JARVIS_UNATTENDED_HARNESSES JARVIS_WAKE_SETTLE_SECS ${orch_settings_names[@]+"${orch_settings_names[@]}"} || return 1
+  [[ ! -r "$ORCH_SCRIPTS/lib/settings-names.sh" ]] || source "$ORCH_SCRIPTS/lib/settings-names.sh"; kendex_load_project_env "$1" -- JARVIS_CONTROL_HOST JARVIS_CONTROL_USER JARVIS_LOG_DIR JARVIS_MAIN_HOST JARVIS_REMOTE_HOSTS JARVIS_UNATTENDED_HARNESSES JARVIS_VOICE_REMIND_SECS JARVIS_WAKE_SETTLE_SECS ${orch_settings_names[@]+"${orch_settings_names[@]}"} || return 1
   export JARVIS_CONTROL_HOST="${JARVIS_CONTROL_HOST:-}"
   export JARVIS_CONTROL_USER="${JARVIS_CONTROL_USER:-}"
   export JARVIS_REMOTE_HOSTS="${JARVIS_REMOTE_HOSTS:-}"
   export JARVIS_MAIN_HOST="${JARVIS_MAIN_HOST:-}"
   export JARVIS_LOG_DIR="${JARVIS_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/jarvis}"
   export JARVIS_WAKE_SETTLE_SECS="${JARVIS_WAKE_SETTLE_SECS:-15}"
+  export JARVIS_VOICE_REMIND_SECS="${JARVIS_VOICE_REMIND_SECS:-0}"
 }
 
 # Presence: the session the native turn end last stamped into the overseer
@@ -49,7 +50,7 @@ jarvis_live() {
 case "${1:-}" in
   config)
     jarvis_load "$2"
-    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_MAIN_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","ORCH_REPORT_EVERY_MINUTES")}))'
+    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_MAIN_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","JARVIS_VOICE_REMIND_SECS","ORCH_REPORT_EVERY_MINUTES")}))'
     ;;
   common-root)
     [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }
