@@ -2852,6 +2852,130 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
     }
 }
 
+/// A merged hosted lane whose clone left its host closes all the same: the
+/// provider answers `status` and `stop` as it does with no clone, each
+/// refused `<verb>-unowned` with status 75, its `close` `closed=absent`,
+/// and its `list` names no row for the item; the close skips the stop it
+/// cannot make, ends the lane `done` with that line, and the item's files
+/// leave once the archive under the configured root holds them.
+#[test]
+fn a_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_archived_and_removed() {
+    let archive_root = tempfile::tempdir().unwrap();
+    let mut fleet = Fleet::hosted(4);
+    fleet.env.push((
+        "ORCH_ARCHIVE_ROOT".to_owned(),
+        archive_root.path().display().to_string(),
+    ));
+    git_checkout(fleet.state_dir());
+    gone_clone(&mut fleet, hosted_lane("KEN-1"));
+    fleet.plant_tracker("KEN-1", "completed");
+    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let held = relative(&item_state);
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(answer["ok"], true, "{answer}");
+    let result = &answer["result"];
+    assert_eq!(result["word"], "closed", "{result}");
+    assert_eq!(
+        result["observation"]["host_close"], "closed=absent item=KEN-1",
+        "{result}"
+    );
+    assert!(
+        result["notes"].as_array().unwrap().contains(&json!(
+            "stop-skipped item=KEN-1 harness=claude cause=unowned"
+        )),
+        "{result}"
+    );
+    assert_eq!(fleet.lane("KEN-1")["status"], "done");
+    assert!(
+        std::fs::symlink_metadata(&item_state).is_err(),
+        "the item's files left"
+    );
+    let mut tarballs = Vec::new();
+    for project in std::fs::read_dir(archive_root.path()).unwrap() {
+        let oversee = project.unwrap().path().join("oversee");
+        for entry in std::fs::read_dir(oversee).unwrap() {
+            tarballs.push(entry.unwrap().path());
+        }
+    }
+    assert_eq!(tarballs.len(), 1, "{tarballs:?}");
+    assert!(
+        archived(&tarballs[0]).contains(&held),
+        "the archive holds {held}"
+    );
+    assert_eq!(
+        fleet.provider_calls(),
+        [
+            "status --item KEN-1 --harness claude",
+            "cat --item KEN-1 /w/ken-1/.git",
+            "touch --item KEN-1",
+            "stop --item KEN-1 --harness claude",
+            "close --item KEN-1 --merged",
+            "list",
+        ]
+    );
+}
+
+/// An unmerged hosted lane whose clone left its host closes as an exited
+/// one does: the provider's `status-unowned` refusal is no lane to judge,
+/// the stop it cannot make is skipped, and the canceled item's files leave
+/// before the provider's close answers `closed=absent`.
+#[test]
+fn an_unmerged_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_removed() {
+    let mut fleet = Fleet::hosted(4);
+    let mut unmerged = hosted_lane("KEN-1");
+    unmerged.as_object_mut().unwrap().remove("cycle");
+    gone_clone(&mut fleet, unmerged);
+    fleet.plant_tracker("KEN-1", "canceled");
+    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(answer["ok"], true, "{answer}");
+    let result = &answer["result"];
+    assert_eq!(result["word"], "closed", "{result}");
+    assert_eq!(
+        result["observation"]["host_close"], "closed=absent item=KEN-1",
+        "{result}"
+    );
+    assert!(
+        result["notes"].as_array().unwrap().contains(&json!(
+            "stop-skipped item=KEN-1 harness=claude cause=unowned"
+        )),
+        "{result}"
+    );
+    assert_eq!(fleet.lane("KEN-1")["status"], "done");
+    assert!(
+        std::fs::symlink_metadata(&item_state).is_err(),
+        "the item's files left"
+    );
+    assert_eq!(
+        fleet.provider_calls(),
+        [
+            "status --item KEN-1 --harness claude",
+            "stop --item KEN-1 --harness claude",
+            "close --item KEN-1",
+            "list",
+        ]
+    );
+}
+
+/// `lane`, the fleet's one record, on a provider that answers as the real
+/// one does once the lane's clone left its host: `status` and `stop`
+/// refused `<verb>-unowned` with status 75, `close` `closed=absent`, and a
+/// `list` naming no row for the item; every other verb the fixture's.
+fn gone_clone(fleet: &mut Fleet, mut lane: Value) {
+    fleet.answer("CLOSE_LINE", "closed=absent item=KEN-1");
+    fleet.answer("LIST", "");
+    let gone = fleet.state_dir().join("gone-clone-provider");
+    write_executable(
+        &gone,
+        format!(
+            "#!/bin/bash\ncase \"$1\" in\nstatus|stop)\n  printf '%q ' \"$@\" >> \"$LANE_HOST_STUB_LOG\"\n  printf '\\n' >> \"$LANE_HOST_STUB_LOG\"\n  printf 'lane-host-ssh: %s-unowned item=%s\\n' \"$1\" \"$3\" >&2\n  exit 75 ;;\nesac\nexec '{}' \"$@\"\n",
+            provider()
+        ),
+    );
+    lane["host"] = json!(gone.display().to_string());
+    fleet.write_lanes(vec![lane]);
+}
+
 /// The item's files leave before the provider's close: a removal that
 /// fails holds the close unconfirmed with `item_files` failed, and the
 /// provider is never asked to close; the repeat, the files free to go,
@@ -3538,6 +3662,11 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
             vec![("cause", "provider"), ("status", "1")],
         ),
         (
+            CloseCase2::new("provider stop busy", vec![hosted_lane("KEN-1")]),
+            "stop-failed",
+            vec![("cause", "provider"), ("status", "75")],
+        ),
+        (
             CloseCase2::new("provider stop unparsed", vec![hosted_lane("KEN-1")]),
             "stop-failed",
             vec![("cause", "answer-unparsed")],
@@ -3618,6 +3747,14 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
                 case.tracker = Some("started");
             }
             "provider stop refused" => case.answers.push(("STOP_STATUS", "1")),
+            // Status 75 is no lane of the item only beside its own line.
+            "provider stop busy" => {
+                case.answers.push(("STOP_STATUS", "75"));
+                case.answers.push((
+                    "STOP_ERROR",
+                    "lane-host-ssh: ownership-busy target=lane.example clone=/srv/clone exit=75",
+                ));
+            }
             "provider stop unparsed" => case.answers.push(("STOP_LINE", "stopped")),
             "provider stop capped" => case.slots = Some(Slots::After("status")),
             "list capped" => {

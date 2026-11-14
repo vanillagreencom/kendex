@@ -443,6 +443,17 @@ pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<H
     }
 }
 
+/// Whether `cause`, a [`status`] read's refusal, is the provider's answer
+/// that it holds no lane of `item`: exit 75 beside `status-unowned
+/// item=ITEM`, which a provider whose clone is gone answers.
+pub fn status_unowned(cause: &str, item: &str) -> bool {
+    cause
+        .strip_prefix(&format!(
+            "harness-probe-failed item={item} status exit={UNOWNED} "
+        ))
+        .is_some_and(|stderr| names(stderr, "status-unowned", item))
+}
+
 /// `capture --item ITEM`: the
 /// provider's own pane for a `pane=verb` kind, the screen on exit 0; any
 /// other answer is a failed read, never a screen.
@@ -494,6 +505,7 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
     let code = match stop_answer(scripts, host, item, harness)? {
         HostStopped::Stopped { .. } => return Ok(()),
         HostStopped::WorktreeRemoved => WORKTREE_REMOVED,
+        HostStopped::Unowned => UNOWNED,
         HostStopped::Refused { status } => status,
         HostStopped::Unparsed => 0,
     };
@@ -504,12 +516,16 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
 /// processes it signalled; the item's
 /// worktree gone (status 4 beside `stop-worktree-removed item=ITEM` on its
 /// stderr), which only a provider finding the harness by that directory
-/// answers, a status 4 without the line being the provider's own 4; any
-/// other non-zero status; or exit 0 without the confirming line.
+/// answers, a status 4 without the line being the provider's own 4; no
+/// lane of the item on the host (status 75 beside `stop-unowned item=ITEM`,
+/// which a provider whose clone is gone answers), a status 75 without the
+/// line being another refusal; any other non-zero status; or exit 0 without
+/// the confirming line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostStopped {
     Stopped { processes: u32 },
     WorktreeRemoved,
+    Unowned,
     Refused { status: i32 },
     Unparsed,
 }
@@ -517,6 +533,20 @@ pub enum HostStopped {
 /// The status a provider answers on any verb for an item whose worktree
 /// its own close-out removed.
 const WORKTREE_REMOVED: i32 = 4;
+
+/// The status a provider answers on a verb for an item it holds no lane of.
+const UNOWNED: i32 = 75;
+
+/// Whether a provider's stderr names `word` for `item`: the word followed
+/// by `item=ITEM`.
+fn names(stderr: &str, word: &str, item: &str) -> bool {
+    let item = format!("item={item}");
+    stderr
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .any(|w| w[0] == word && w[1] == item)
+}
 
 /// The word every cause of a call refused at the provider-call bound
 /// leads with: nothing ran.
@@ -541,14 +571,11 @@ pub fn stop_answer(
     )?;
     let code = exit_code(&out);
     let stderr = host::stderr_text(&out);
-    if code == WORKTREE_REMOVED
-        && stderr
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .windows(2)
-            .any(|w| w[0] == "stop-worktree-removed" && w[1] == format!("item={item}"))
-    {
+    if code == WORKTREE_REMOVED && names(&stderr, "stop-worktree-removed", item) {
         return Ok(HostStopped::WorktreeRemoved);
+    }
+    if code == UNOWNED && names(&stderr, "stop-unowned", item) {
+        return Ok(HostStopped::Unowned);
     }
     if code != 0 {
         return Ok(HostStopped::Refused { status: code });

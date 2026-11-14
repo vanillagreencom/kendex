@@ -621,6 +621,11 @@ impl Close<'_> {
             {
                 self.by_verdict(Ground::Ended("merged"), &mut notes)?
             }
+            // A host that holds no lane of the item runs nothing to protect:
+            // the lane ends as an exited one does.
+            LaneState::Unjudged { cause } if hosted::status_unowned(cause, self.item()) => {
+                self.by_verdict(Ground::Exited, &mut notes)?
+            }
             LaneState::Unjudged { .. } => return Err(self.live("unjudged")),
             LaneState::Walled { .. } => return Err(self.walled(wall.as_ref())),
             LaneState::Working => return Err(self.live("working")),
@@ -1108,9 +1113,9 @@ impl Close<'_> {
     }
 
     /// The provider's stop: the count of processes it signalled, or `None`
-    /// where an item whose worktree its close-out removed skips the stop on
-    /// a full close, which the provider's close ends; a keep or a park
-    /// refuses it.
+    /// where an item whose worktree its close-out removed, or of which the
+    /// host holds no lane, skips the stop on a full close, which the
+    /// provider's close ends; a keep or a park refuses it.
     fn provider_stop(&self, notes: &mut Vec<String>) -> Result<Option<u32>> {
         let harness = self.who.harness.as_deref().ok_or_else(|| {
             refused(
@@ -1134,6 +1139,22 @@ impl Close<'_> {
                     ("harness", harness),
                     ("cause", "provider"),
                     ("status", "4"),
+                ],
+            )),
+            Ok(HostStopped::Unowned) if !self.keep() => {
+                notes.push(format!(
+                    "stop-skipped item={} harness={harness} cause=unowned",
+                    self.item()
+                ));
+                Ok(None)
+            }
+            Ok(HostStopped::Unowned) => Err(refused(
+                "stop-failed",
+                &[
+                    ("item", self.item()),
+                    ("harness", harness),
+                    ("cause", "provider"),
+                    ("status", "75"),
                 ],
             )),
             Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => Err(refused(
