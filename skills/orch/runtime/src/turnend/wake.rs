@@ -10,7 +10,6 @@
 //! printed, never run. What it cannot judge is said under its own key and
 //! the turn goes on to its other checks.
 
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use agent_runtime::reading::Reading;
@@ -27,8 +26,6 @@ use crate::watch::claim;
 /// claim covers.
 const PROCESS_KEY: &str = "ORCH_WAKE_PROCESS";
 const START_KEY: &str = "ORCH_WAKE_START";
-/// The waiter a live claim's controller runs on the watch's log.
-const FOLLOW: &str = "sh \"[RUN_DIR]/follow.sh\" \"[RUN_DIR]/watch.log\" [NEXT_LINE]";
 
 /// What wakes the controller: the processes `pattern` matches, `None`
 /// where nothing can, and the command that starts one.
@@ -64,9 +61,9 @@ pub(super) fn check(
     let Some(pattern) = &wake.pattern else {
         return unarmed(turn, payload, &wake.start);
     };
-    match running(pattern) {
-        Ok(true) => Ok(()),
-        Ok(false) => unarmed(turn, payload, &wake.start),
+    match claim::running(pattern) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => unarmed(turn, payload, &wake.start),
         Err(cause) => {
             let gap = Said::WakeUnjudged {
                 gap: "wake-process",
@@ -107,7 +104,9 @@ fn wake(lane: &Lane, vars: &Vars, fleet: &Path) -> Result<Option<Wake>, Gap> {
                         let cause = "the live watch claim names no cwd".to_owned();
                         return Err(record(&paths.pid, cause));
                     }
-                    return Ok(Some(waiter(Path::new(&held.cwd), &held.origin, &paths.log)));
+                    let claim::Follow { pattern, start } =
+                        claim::waiter(Path::new(&held.cwd), &held.origin, &paths.log);
+                    return Ok(Some(Wake { pattern, start }));
                 }
                 Reading::Gone => {}
                 Reading::Unreadable { cause } => return Err(record(&paths.pid, cause.to_owned())),
@@ -138,64 +137,4 @@ fn wake(lane: &Lane, vars: &Vars, fleet: &Path) -> Result<Option<Wake>, Gap> {
         pattern: Some(pattern),
         start: start.to_owned(),
     }))
-}
-
-/// The waiter of a live claim working in `cwd`: `follow.sh` on the
-/// `watch.log` of any of its waiter directories; a watch a succession
-/// restarted is followed only through a waiter whose log is the watch's
-/// own `log`, linked there first.
-fn waiter(cwd: &Path, origin: &str, log: &Path) -> Wake {
-    if origin != "succession" {
-        let pattern = format!(
-            "follow[.]sh {}/tmp/waiter[.][^/]*/watch[.]log",
-            regex::escape(&cwd.display().to_string())
-        );
-        return Wake {
-            pattern: Regex::new(&pattern).ok(),
-            start: FOLLOW.to_owned(),
-        };
-    }
-    let alternatives: Vec<String> = std::fs::read_dir(cwd.join("tmp"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("waiter."))
-        .map(|entry| entry.path())
-        .filter(|dir| same_file(&dir.join("watch.log"), log))
-        .map(|dir| {
-            format!(
-                "follow[.]sh {}/watch[.]log([[:space:]]|$)",
-                regex::escape(&dir.display().to_string())
-            )
-        })
-        .collect();
-    let pattern = (!alternatives.is_empty())
-        .then(|| Regex::new(&alternatives.join("|")).ok())
-        .flatten();
-    Wake {
-        pattern,
-        start: format!(
-            "Link [RUN_DIR]/watch.log to {}, then {FOLLOW}",
-            log.display()
-        ),
-    }
-}
-
-/// Whether `a` and `b` name one file, links followed.
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (std::fs::metadata(a), std::fs::metadata(b)) {
-        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-        _ => false,
-    }
-}
-
-/// Whether a process other than this one runs a command line `pattern`
-/// matches, the line's words joined by spaces; a table that cannot be read
-/// is the cause.
-fn running(pattern: &Regex) -> Result<bool, String> {
-    let own = std::process::id();
-    let lines = agent_runtime::process::command_lines().map_err(|e| e.cause.to_owned())?;
-    Ok(lines
-        .iter()
-        .any(|(pid, words)| *pid != own && pattern.is_match(&words.join(" "))))
 }

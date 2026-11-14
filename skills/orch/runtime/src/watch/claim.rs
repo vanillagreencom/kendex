@@ -29,14 +29,21 @@
 //! the runner reads it between duties and ends, releasing the claim. A
 //! terminal signal ends the process at its default disposition and leaves
 //! the claim, which the next runner reads gone and takes over.
+//!
+//! A live claim is followed by its controller's waiter, `follow.sh` on the
+//! watch's log in a `tmp/waiter.*` directory of the claim's working
+//! directory: [`waiter`] names it and [`running`] reads whether one runs,
+//! for the turn end and the wake duty alike.
 
 use agent_runtime::record::FLEET_FILE_NAME;
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::process::{self, Identity};
 use agent_runtime::reading::Reading;
+use regex::Regex;
 use serde::Serialize;
 
 use crate::error::{Result, WatchError};
@@ -414,6 +421,89 @@ pub fn stop(paths: &Paths, clock: &dyn Clock) -> Result<Stopped> {
         }
         clock.sleep(STOP_POLL);
     }
+}
+
+/// The waiter a live claim's controller runs on the watch's log.
+const FOLLOW: &str = "sh \"[RUN_DIR]/follow.sh\" \"[RUN_DIR]/watch.log\" [NEXT_LINE]";
+
+/// A live claim's follow: the waiter processes `pattern` matches, `None`
+/// where none can be named, and the command that starts one.
+pub(crate) struct Follow {
+    pub(crate) pattern: Option<Regex>,
+    pub(crate) start: String,
+}
+
+/// The waiter of a live claim working in `cwd`: `follow.sh` on the
+/// `watch.log` of any of its waiter directories; a watch a succession
+/// restarted is followed only through a waiter whose log is the watch's
+/// own `log`, linked there first.
+pub(crate) fn waiter(cwd: &Path, origin: &str, log: &Path) -> Follow {
+    if origin != "succession" {
+        let pattern = format!(
+            "follow[.]sh {}/tmp/waiter[.][^/]*/watch[.]log",
+            regex::escape(&cwd.display().to_string())
+        );
+        return Follow {
+            pattern: Regex::new(&pattern).ok(),
+            start: FOLLOW.to_owned(),
+        };
+    }
+    let alternatives: Vec<String> = std::fs::read_dir(cwd.join("tmp"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("waiter."))
+        .map(|entry| entry.path())
+        .filter(|dir| same_file(&dir.join("watch.log"), log))
+        .map(|dir| {
+            format!(
+                "follow[.]sh {}/watch[.]log([[:space:]]|$)",
+                regex::escape(&dir.display().to_string())
+            )
+        })
+        .collect();
+    let pattern = (!alternatives.is_empty())
+        .then(|| Regex::new(&alternatives.join("|")).ok())
+        .flatten();
+    Follow {
+        pattern,
+        start: format!(
+            "Link [RUN_DIR]/watch.log to {}, then {FOLLOW}",
+            log.display()
+        ),
+    }
+}
+
+/// Whether `a` and `b` name one file, links followed.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// The start line of the waiter a process other than this one runs, by a
+/// command line `pattern` matches (the line's words joined by spaces): the
+/// number after the match, the follow's first unhandled line, the least
+/// where several run; `None` where none runs; a table that cannot be read
+/// is the cause. A follow given no number hands the session no line, so it
+/// says nothing of what was consumed and reads as line 1.
+pub(crate) fn running(pattern: &Regex) -> std::result::Result<Option<u64>, String> {
+    let own = std::process::id();
+    let lines = agent_runtime::process::command_lines().map_err(|e| e.cause.to_owned())?;
+    Ok(lines
+        .iter()
+        .filter(|(pid, _)| *pid != own)
+        .filter_map(|(_, words)| {
+            let line = words.join(" ");
+            let matched = pattern.find(&line)?;
+            let start = line[matched.end()..]
+                .split_whitespace()
+                .next()
+                .and_then(|word| word.parse().ok());
+            Some(start.unwrap_or(1))
+        })
+        .min())
 }
 
 #[cfg(test)]

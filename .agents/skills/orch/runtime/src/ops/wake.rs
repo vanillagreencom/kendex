@@ -107,11 +107,17 @@ impl WakeMark {
 }
 
 /// The watch's wake record: one standing mark per target (an item key or
-/// [`OVERSEER_TARGET`]), the latest for that target replacing the earlier.
+/// [`OVERSEER_TARGET`]), the latest for that target replacing the earlier;
+/// and `follow_start`, the start line of the last follow of the watch's log
+/// the duty saw running for the claim (the number its command line carries
+/// after the log's path), which is what the controller had consumed. None
+/// where no follow was seen.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WakeRecord {
     #[serde(default)]
     pub marks: BTreeMap<String, WakeMark>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_start: Option<u64>,
 }
 
 impl WakeRecord {
@@ -153,7 +159,8 @@ mod tests {
     /// The record holds one mark per target, the latest replacing the
     /// earlier; a mark stands for its unread state on its pane and server
     /// alone; a clear drops the target's mark and no other; the bytes
-    /// round-trip with the outcome's tag. Defect: a second mark kept beside
+    /// round-trip with the outcome's tag and the follow's start, which an
+    /// absent member reads as none seen. Defect: a second mark kept beside
     /// the first so the repeat reads the earlier state and types again, or
     /// one target's clear dropping another's mark.
     #[test]
@@ -174,6 +181,7 @@ mod tests {
                 }),
             ),
         );
+        record.follow_start = Some(12);
         let held = record.get("KEN-1").unwrap();
         assert!(held.stands_for("m-2", "%3", 42));
         assert!(!held.stands_for("m-1", "%3", 42), "an earlier unread state");
@@ -192,7 +200,10 @@ mod tests {
             record.get(OVERSEER_TARGET).map(|m| m.unread.as_str()),
             Some("m-4")
         );
+        assert_eq!(read.follow_start, Some(12));
         let empty: WakeRecord = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, WakeRecord::default());
+        let unfollowed: WakeRecord = serde_json::from_str(r#"{"marks":{}}"#).unwrap();
+        assert_eq!(unfollowed.follow_start, None, "no follow seen");
     }
 }

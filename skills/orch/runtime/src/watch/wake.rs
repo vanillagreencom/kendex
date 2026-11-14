@@ -49,6 +49,20 @@
 //! (`super::owner_alert`): the event on the pass that reads it, the alert
 //! on the next, once per unread state, the turn's word kept in the mark
 //! beside the outcome. A lane's limit is the overseer's to handle.
+//!
+//! Follow: an overseer that follows the watch's log is woken by the log's
+//! next line however its turn ended, a harness whose background exit starts
+//! no turn included. Each pass reads the live claim's waiter through the
+//! claim's one judge: a running waiter's start line is recorded
+//! (`WakeRecord::follow_start`, what the overseer had consumed) and the
+//! follow mark cleared. With no waiter running, a recorded start, a line at
+//! or past it in the log, no unread row for the overseer (the mail line
+//! wakes it then), no pending succession, no stop and no standing overseer
+//! handoff, the idle overseer is typed one line naming the claim's start
+//! command, once per mark under [`FOLLOW_TARGET`], confirmed by a new user
+//! turn. A confirmed line writes no log line, since that line would stand
+//! past the start again; a limit or an unconfirmed paste is said once and
+//! the owner told once, as for its mail.
 
 use agent_runtime::controller::Overseer;
 use std::collections::BTreeMap;
@@ -58,8 +72,11 @@ use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host;
+use agent_runtime::reading::Reading;
 use serde_json::Value;
 
+use super::claim;
+use super::events;
 use super::hosted::{self, Capabilities, HostStatus, Launch, PaneKind, Status};
 use super::lanes::LaneState;
 use super::owner_alert::{self, Word};
@@ -83,6 +100,10 @@ pub const WAKE_FILE: &str = "oversee-watch.wake.json";
 const ANSWER_MARGIN: Duration = Duration::from_secs(15);
 /// The owner alert's notice file under the state directory.
 const ALERT_FILE: &str = "overseer-wake-unread.txt";
+/// The follow wake's target word: its mark's key and its lines' target.
+pub const FOLLOW_TARGET: &str = "overseer-follow";
+/// The follow wake's owner notice file under the state directory.
+const FOLLOW_ALERT_FILE: &str = "overseer-wake-follow.txt";
 
 /// The wake record's path for the fleet state at `fleet`.
 pub fn record_path(fleet: &Path) -> PathBuf {
@@ -93,6 +114,14 @@ pub fn record_path(fleet: &Path) -> PathBuf {
 fn line_for(target: &str) -> String {
     format!(
         "Run .agents/skills/mailbox/scripts/lane-mail inbox --item {target} and act on every envelope it prints, answers and directives alike, as its text directs."
+    )
+}
+
+/// The follow wake's line: `start` is the claim's start command, its
+/// `[RUN_DIR]` and `[NEXT_LINE]` the session's own to fill.
+fn follow_line(start: &str) -> String {
+    format!(
+        "The fleet watch log has lines past your last follow and no follow runs: handle each numbered line from your next unhandled line, then re-arm with {start}"
     )
 }
 
@@ -189,15 +218,26 @@ fn unwoken(target: &str, outcome: Option<&WakeOutcome>) -> Option<Event> {
 }
 
 /// Where the owner's turn stands once `mark`'s outcome is on the log: told
-/// for the overseer left unwoken, where no turn stands yet (an alerted
-/// state is never alerted again, whatever its later outcome); nothing for
-/// a delivery or a lane, whose limit the overseer handles (`lane-reach.md`
-/// § Mail the wake cannot deliver).
+/// for the overseer left unwoken, for its mail or its follow, where no turn
+/// stands yet (an alerted state is never alerted again, whatever its later
+/// outcome); nothing for a delivery or a lane, whose limit the overseer
+/// handles (`lane-reach.md` § Mail the wake cannot deliver).
 fn owner_word(target: &str, mark: &WakeMark) -> Option<Word> {
-    if target != OVERSEER_TARGET || unwoken(target, mark.outcome.as_ref()).is_none() {
+    if !matches!(target, OVERSEER_TARGET | FOLLOW_TARGET)
+        || unwoken(target, mark.outcome.as_ref()).is_none()
+    {
         return None;
     }
     mark.owner.or(Some(Word::Told))
+}
+
+/// The line a confirmed delivery to `target` writes: none for the follow
+/// wake, whose own line would stand past the start it woke the session for.
+fn delivered(target: &str, resume: Option<String>) -> Option<Event> {
+    (target != FOLLOW_TARGET).then(|| Event::WakeDelivered {
+        target: target.to_owned(),
+        resume,
+    })
 }
 
 /// The owner's alert for an overseer left idle with its mail unread, in
@@ -208,6 +248,16 @@ fn alert_text(pane: &str, unread: &str, said: &Event) -> String {
     let why = why.strip_prefix("EVENT ").unwrap_or(&why);
     format!(
         "{why}: the overseer in pane {pane} is idle with mail it has not read, newest unread={unread}, and the watch could not wake it, so nothing acts on that mail until a turn runs in that pane. Type one line into pane {pane}, such as: Run .agents/skills/mailbox/scripts/lane-mail inbox --item overseer and act on every envelope it prints. The remedy for this line is under idle-unread in the orch skill's references/oversee-events.md.\n"
+    )
+}
+
+/// The owner's alert for an overseer left idle with watch lines past its
+/// last follow and no follow running.
+fn follow_alert_text(pane: &str, said: &Event) -> String {
+    let why = said.render();
+    let why = why.strip_prefix("EVENT ").unwrap_or(&why);
+    format!(
+        "{why}: the overseer in pane {pane} is idle, the fleet watch log has lines past its last follow and no follow runs, and the watch could not wake it, so nothing acts on those lines until a turn runs in that pane. Type one line into pane {pane} that asks it to handle each numbered line of the fleet watch log from its next unhandled line and re-arm its follow. The remedy for this line is under wake-limit in the orch skill's references/oversee-events.md.\n"
     )
 }
 
@@ -424,11 +474,38 @@ struct Wake {
 }
 
 impl Wake {
+    /// One pass: the unread and resume rows, then the overseer's follow. A
+    /// follow arm that fails leaves the lines the rows earned standing, with
+    /// its cause.
+    fn run(&self, tick: &Tick) -> Result<Produced> {
+        let mut produced = self.unread_and_resumes(tick)?;
+        let mail_owed = tick
+            .baseline
+            .rows
+            .iter()
+            .any(|r| r.kind == UNREAD_KIND && r.identity == OVERSEER_TARGET);
+        if let Err(cause) = self.follow(tick.wall, mail_owed, &mut produced) {
+            produced.failed = Some(cause.to_string());
+        }
+        Ok(produced)
+    }
+
+    /// The fleet watch's socket the targets' panes are on: the overseer
+    /// record's, else the fleet's reach.
+    fn socket(&self, fleet: &FleetState) -> Result<PathBuf> {
+        Ok(match fleet.overseer.as_ref().and_then(overseer_socket) {
+            Some(socket) => socket,
+            None => crate::effects::fleet_reach(&self.settings)?
+                .socket()?
+                .to_path_buf(),
+        })
+    }
+
     #[allow(
         clippy::disallowed_methods,
         reason = "the wake's one construction of the kernel host, for the read of a print-mode turn a lane record names before anything is typed; the read acts on nothing"
     )]
-    fn run(&self, tick: &Tick) -> Result<Produced> {
+    fn unread_and_resumes(&self, tick: &Tick) -> Result<Produced> {
         let mut produced = Produced::default();
         let rows = |kind: &str| -> Vec<(String, String)> {
             tick.baseline
@@ -449,12 +526,7 @@ impl Wake {
         let Some(fleet) = load_fleet(&self.fleet)? else {
             return Ok(produced);
         };
-        let socket = match fleet.overseer.as_ref().and_then(overseer_socket) {
-            Some(socket) => socket,
-            None => crate::effects::fleet_reach(&self.settings)?
-                .socket()?
-                .to_path_buf(),
-        };
+        let socket = self.socket(&fleet)?;
         let host = crate::ops::Host::kernel();
         // A resume goes first: its line runs the inbox read too, so the
         // unread state it types for stands marked when the mail is served.
@@ -569,56 +641,207 @@ impl Wake {
         record: &mut WakeRecord,
         produced: &mut Produced,
     ) -> Result<()> {
-        let name = target.name.clone();
-        if let Some(mark) = record.get(&name)
+        if let Some(mark) = record.get(&target.name)
             && mark.stands_for(unread, &target.pane, target.server)
         {
-            let mut mark = mark.clone();
-            match &mark.outcome {
-                Some(WakeOutcome::Delivered { .. }) => return Ok(()),
-                // A limit stands as read: the pane is not read again for
-                // it, and the owner's turn is all that is left.
-                Some(WakeOutcome::Limit { .. }) => return self.owner_turn(target, mark, record),
-                None | Some(WakeOutcome::Unconfirmed { .. }) => {}
-            }
-            // The paste may have gone in: the file alone says whether the
-            // turn arrived, and nothing is typed again for this state.
-            match self.read(target, false)? {
-                Read::Idle { turns } if turns > mark.turns_before => {
-                    mark.outcome = Some(WakeOutcome::Delivered { turns_after: turns });
-                    // Woken after all: nothing is owed to the owner.
-                    mark.owner = None;
-                    self.write(record, &name, Some(mark))?;
-                    produced.events.push(Event::WakeDelivered {
-                        target: name,
-                        resume: None,
-                    });
-                    Ok(())
-                }
-                // Still idle and unwoken: the owner's turn.
-                Read::Idle { .. } => self.owner_turn(target, mark, record),
-                // Not idle, or the pane gone or unreadable: the reading the
-                // alert would stand on is not there this pass.
-                Read::Refused => Ok(()),
-                Read::Limit { harness, cause } => {
-                    mark.outcome = Some(WakeOutcome::Limit {
-                        harness: harness.clone(),
-                        cause: cause.clone(),
-                    });
-                    mark.owner = owner_word(&name, &mark);
-                    self.write(record, &name, Some(mark))?;
-                    produced.events.push(Event::WakeLimit {
-                        target: name,
-                        harness,
-                        cause,
-                        resume: None,
-                    });
-                    Ok(())
-                }
-            }
+            self.repeat(target, mark.clone(), record, produced)
         } else {
             self.first_pass(target, unread, None, now, record, produced)
         }
+    }
+
+    /// A pass over the target's standing `mark`: never typed again; the
+    /// file re-read for a late turn, and the owner's turn for an overseer
+    /// still unwoken.
+    fn repeat(
+        &self,
+        target: &Target,
+        mut mark: WakeMark,
+        record: &mut WakeRecord,
+        produced: &mut Produced,
+    ) -> Result<()> {
+        let name = target.name.clone();
+        match &mark.outcome {
+            Some(WakeOutcome::Delivered { .. }) => return Ok(()),
+            // A limit stands as read: the pane is not read again for it,
+            // and the owner's turn is all that is left.
+            Some(WakeOutcome::Limit { .. }) => return self.owner_turn(target, mark, record),
+            None | Some(WakeOutcome::Unconfirmed { .. }) => {}
+        }
+        // The paste may have gone in: the file alone says whether the turn
+        // arrived, and nothing is typed again for this mark.
+        match self.read(target, false)? {
+            Read::Idle { turns } if turns > mark.turns_before => {
+                mark.outcome = Some(WakeOutcome::Delivered { turns_after: turns });
+                // Woken after all: nothing is owed to the owner.
+                mark.owner = None;
+                self.write(record, &name, Some(mark))?;
+                produced.events.extend(delivered(&name, None));
+                Ok(())
+            }
+            // Still idle and unwoken: the owner's turn.
+            Read::Idle { .. } => self.owner_turn(target, mark, record),
+            // Not idle, or the pane gone or unreadable: the reading the
+            // alert would stand on is not there this pass.
+            Read::Refused => Ok(()),
+            Read::Limit { harness, cause } => {
+                mark.outcome = Some(WakeOutcome::Limit {
+                    harness: harness.clone(),
+                    cause: cause.clone(),
+                });
+                mark.owner = owner_word(&name, &mark);
+                self.write(record, &name, Some(mark))?;
+                produced.events.push(Event::WakeLimit {
+                    target: name,
+                    harness,
+                    cause,
+                    resume: None,
+                });
+                Ok(())
+            }
+        }
+    }
+
+    /// The overseer's follow (module doc, Follow): the claim's waiter read
+    /// through the claim's one judge, its start recorded where one runs,
+    /// else the follow line typed where a line stands at or past the start
+    /// and no guard holds. `mail_owed` is an overseer unread row standing.
+    fn follow(&self, now: u64, mail_owed: bool, produced: &mut Produced) -> Result<()> {
+        let paths = claim::Paths::of(&self.fleet)?;
+        let Some(held) = claim::read(&paths)? else {
+            return Ok(());
+        };
+        // No live claim: no watch for a follow to read.
+        if held.cwd.is_empty() || !matches!(claim::read_live(&held), Reading::Live(_)) {
+            return Ok(());
+        }
+        let follow = claim::waiter(Path::new(&held.cwd), &held.origin, &paths.log);
+        let running = match &follow.pattern {
+            Some(pattern) => claim::running(pattern).map_err(|cause| {
+                Error::Runtime(agent_runtime::Error::External {
+                    program: "process-table",
+                    operation: "read",
+                    cause,
+                })
+            })?,
+            None => None,
+        };
+        let mut record = load_record(&self.record)?;
+        if let Some(start) = running {
+            if record.follow_start != Some(start) || record.get(FOLLOW_TARGET).is_some() {
+                record.follow_start = Some(start);
+                self.write(&mut record, FOLLOW_TARGET, None)?;
+            }
+            return Ok(());
+        }
+        // No follow seen: the turn end holds a session that never armed one.
+        let Some(start) = record.follow_start else {
+            return Ok(());
+        };
+        if mail_owed || events::line_count(&paths.log)? < start {
+            return Ok(());
+        }
+        let Some(fleet) = load_fleet(&self.fleet)? else {
+            return Ok(());
+        };
+        let Some(overseer) = fleet.overseer.as_ref() else {
+            return Ok(());
+        };
+        // A succession under way, a stopped controller or a handoff that
+        // stands is the controller's own lifecycle, not an idle follower.
+        if overseer.pending.is_some() || overseer.extra.get("off").is_some_and(|o| !o.is_null()) {
+            return Ok(());
+        }
+        // The controller's handoff is the fleet record's own item's.
+        let Some(item) = state::item_of(&self.fleet) else {
+            return Ok(());
+        };
+        let dir = self.fleet.parent().unwrap_or(Path::new("."));
+        let handoff = crate::ops::store::handoff_standing(dir, item, None)?;
+        if handoff["standing"].as_str() != Some("none") {
+            return Ok(());
+        }
+        let Some(target) = overseer_target(overseer, &self.socket(&fleet)?) else {
+            return Ok(());
+        };
+        let target = Target {
+            name: FOLLOW_TARGET.to_owned(),
+            ..target
+        };
+        match record.get(FOLLOW_TARGET) {
+            Some(mark) if mark.stands_for("", &target.pane, target.server) => {
+                self.repeat(&target, mark.clone(), &mut record, produced)
+            }
+            Some(_) | None => self.follow_first(&target, &follow.start, now, &mut record, produced),
+        }
+    }
+
+    /// The follow line for an overseer no mark on its pane stands for: read
+    /// idle, marked, typed and confirmed; a limit or an unconfirmed paste is
+    /// said, with the owner's word; a paste refused before typing leaves
+    /// the mark that stood.
+    fn follow_first(
+        &self,
+        target: &Target,
+        start: &str,
+        now: u64,
+        record: &mut WakeRecord,
+        produced: &mut Produced,
+    ) -> Result<()> {
+        let name = target.name.clone();
+        let standing = record.get(&name).cloned();
+        let mut mark = WakeMark {
+            pane: target.pane.clone(),
+            server: target.server,
+            server_start: target.server_start,
+            unread: String::new(),
+            turns_before: 0,
+            at: now,
+            outcome: None,
+            owner: None,
+            resume: None,
+        };
+        let events = match self.read(target, false)? {
+            Read::Refused => return Ok(()),
+            Read::Limit { harness, cause } => {
+                mark.outcome = Some(WakeOutcome::Limit {
+                    harness: harness.clone(),
+                    cause: cause.clone(),
+                });
+                vec![Event::WakeLimit {
+                    target: name.clone(),
+                    harness,
+                    cause,
+                    resume: None,
+                }]
+            }
+            Read::Idle { turns } => {
+                mark.turns_before = turns;
+                // The mark is on disk before anything is typed.
+                self.write(record, &name, Some(mark.clone()))?;
+                match self.paste(target, &follow_line(start), turns, false)? {
+                    Paste::Confirmed { turns_after } => {
+                        mark.outcome = Some(WakeOutcome::Delivered { turns_after });
+                        delivered(&name, None).into_iter().collect()
+                    }
+                    Paste::Unconfirmed { cause } => {
+                        mark.outcome = Some(WakeOutcome::Unconfirmed {
+                            cause: cause.clone(),
+                        });
+                        vec![Event::WakeUnconfirmed {
+                            target: name.clone(),
+                            cause,
+                            resume: None,
+                        }]
+                    }
+                    Paste::Refused => return self.write(record, &name, standing),
+                }
+            }
+        };
+        mark.owner = owner_word(&name, &mark);
+        self.write(record, &name, Some(mark))?;
+        produced.events.extend(events);
+        Ok(())
     }
 
     /// The owner's turn for a standing overseer mark whose outcome left the
@@ -639,11 +862,22 @@ impl Wake {
         let Some(said) = unwoken(&target.name, mark.outcome.as_ref()) else {
             return Ok(());
         };
-        let text = alert_text(&target.pane, &mark.unread, &said);
-        match owner_alert::send(&self.settings, ALERT_FILE, &text) {
+        let (file, text, fields) = if target.name == FOLLOW_TARGET {
+            (
+                FOLLOW_ALERT_FILE,
+                follow_alert_text(&target.pane, &said),
+                format!("pane={} target={FOLLOW_TARGET}", target.pane),
+            )
+        } else {
+            (
+                ALERT_FILE,
+                alert_text(&target.pane, &mark.unread, &said),
+                format!("pane={} unread={}", target.pane, mark.unread),
+            )
+        };
+        match owner_alert::send(&self.settings, file, &text) {
             Ok(()) => {
                 mark.owner = Some(Word::Alerted);
-                let fields = format!("pane={} unread={}", target.pane, mark.unread);
                 self.write(record, &target.name, Some(mark))?;
                 context::note("wake-owner-alerted", &fields);
             }

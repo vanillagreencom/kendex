@@ -1,0 +1,44 @@
+#!/bin/bash
+# A Copilot CLI composer stub for the wake rows, named `copilot` so the
+# kernel records Copilot's process name for it: it draws Copilot's composer
+# (the `❯ ` marker line with a rule of `─` drawn under it) so the judge
+# reads the pane idle, writes the session a Copilot session records under
+# COPILOT_HOME (`session-state/<id>/events.jsonl` holding its start row,
+# then `workspace.yaml` beside it with plain `id:` and `cwd:` lines, as
+# agent-runtime's `session` module reads them), named by the
+# `--session-id` it is given, and records each line it reads as one
+# `user.message` row in `events.jsonl`, then draws the composer again.
+#   STUB_TURNS_DROP  non-empty: no row is written, as a harness that lost
+#                    the pasted line.
+# It launches no model and reaches no account; it stands until its stdin
+# closes, which a kill-server or a window kill does.
+drop="${STUB_TURNS_DROP:-}"
+session="stub-$$"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) session="${2:-$session}"; shift ;;
+  esac
+  shift
+done
+events=""
+if [ -n "${COPILOT_HOME:-}" ]; then
+  dir="$COPILOT_HOME/session-state/$session"
+  mkdir -p "$dir"
+  events="$dir/events.jsonl"
+  printf '{"type":"session.start","data":{"sessionId":"%s"}}\n' "$session" > "$events"
+  printf 'id: %s\ncwd: %s\n' "$session" "$PWD" > "$dir/workspace.yaml"
+fi
+composer() {
+  printf '\xe2\x9d\xaf \n'
+  printf '%s\n' '────────────────────'
+}
+composer
+while IFS= read -r line; do
+  if [ -n "$events" ] && [ -z "$drop" ]; then
+    escaped="${line//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    printf '{"type":"user.message","data":{"content":"%s"},"id":"%s-%s","timestamp":"%s"}\n' \
+      "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$events"
+  fi
+  composer
+done

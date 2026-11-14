@@ -8,7 +8,7 @@
 //! lane whose record names a print-mode turn still running are never typed
 //! into; an idle hosted lane is typed through its window, unconfirmed. Each row's
 //! name carries the defect it catches. The stub harnesses are
-//! `fixtures/stub-turns/{claude,codex}`. The runner runs on the fake clock;
+//! `fixtures/stub-turns/{claude,codex,copilot}`. The runner runs on the fake clock;
 //! the paste's confirming-turn wait runs in the `deliver` child on the
 //! production bound, a bounded poll of the stub's own session file, and the
 //! rows' other waits are bounded polls of a stub's own signal.
@@ -56,9 +56,10 @@ fn settings_with(dir: &Path, agent_runtime: &Path, extra: &[(&str, &str)]) -> Se
         common: dir.to_path_buf(),
     };
     let binaries = format!(
-        "claude={},codex={}",
+        "claude={},codex={},copilot={}",
         stub("stub-turns").display(),
-        fixtures().join("stub-turns/codex").display()
+        fixtures().join("stub-turns/codex").display(),
+        fixtures().join("stub-turns/copilot").display()
     );
     let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
         (
@@ -1643,6 +1644,326 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
         "typed into the unbound pane: {:?}",
         std::fs::read_to_string(&typed)
     );
+}
+
+/// The watch's claim, as a running watch holds it: the test process, its
+/// working directory `cwd`.
+fn claim_in(fleet: &Fleet, cwd: &Path) {
+    claim_as(fleet, cwd, &me());
+}
+
+/// The watch's claim naming `identity`, working in `cwd`.
+fn claim_as(fleet: &Fleet, cwd: &Path, identity: &Identity) {
+    let written = watch::claim::write(
+        &fleet.paths,
+        &watch::claim::Record {
+            identity,
+            pane: "none",
+            origin: "hand",
+            script: "/w/orch-runtime",
+            cwd: &cwd.display().to_string(),
+        },
+    )
+    .unwrap();
+    assert_eq!(written, watch::claim::Written::Claimed);
+}
+
+/// The controller's follow of the watch's log from line `start`, as
+/// `watch-delivery.md` starts it from a waiter directory `waiter` under
+/// `cwd`: a shell whose command line is the follow's, reading nothing,
+/// held until the row drops it.
+fn follow_from(cwd: &Path, waiter: &str, start: &str) -> Owned {
+    let dir = cwd.join("tmp").join(format!("waiter.{waiter}"));
+    Owned(
+        Command::new(pane_shell())
+            .args([
+                "-c",
+                "read -r _",
+                &dir.join("follow.sh").display().to_string(),
+                &dir.join("watch.log").display().to_string(),
+                start,
+            ])
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("follow"),
+    )
+}
+
+/// Append `count` lines to the watch's log, as its runner writes them.
+fn log_more(fleet: &Fleet, count: usize) {
+    use std::io::Write as _;
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&fleet.paths.log)
+        .unwrap();
+    for _ in 0..count {
+        writeln!(log, "EVENT triage KEN-9").unwrap();
+    }
+}
+
+/// The wake record as it stands; the empty record where none was written.
+fn wake_record(fleet: &Fleet) -> WakeRecord {
+    std::fs::read(fleet.record_file())
+        .map(|bytes| serde_json::from_slice(&bytes).expect("the wake record parses"))
+        .unwrap_or_default()
+}
+
+/// The `user.message` rows of the Copilot session `session` under `home`.
+fn copilot_turns(home: &Path, session: &str) -> usize {
+    let events = home
+        .join("session-state")
+        .join(session)
+        .join("events.jsonl");
+    std::fs::read_to_string(events)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|row| row["type"] == "user.message")
+        .count()
+}
+
+/// One wake pass with no unread or resume row, which must not fail: its
+/// lines.
+fn pass(body: &mut watch::Body<'_>, clock: &FakeClock) -> Vec<String> {
+    let produced = run_once(body, &Baseline::default(), clock).unwrap();
+    assert_eq!(produced.failed, None, "the pass failed");
+    rendered(&produced)
+}
+
+/// An overseer that follows the watch's log is woken by the log's next
+/// line whatever way its turn ended. The watch records the start line of
+/// the follow it sees running; with no follow running and a line at or
+/// past that start, the idle overseer is typed the follow line once per
+/// mark, confirmed by a new user turn, and the delivery writes no log
+/// line. Nothing is typed with no follow seen, with no line past the start,
+/// on a repeat pass, while a follow runs, into a pane mid-turn, or while
+/// the overseer's mail is unread, the claim's watch is gone, a succession
+/// is pending, the controller is stopped or its handoff stands. A follow armed while lines already
+/// stand past its start, sighted and then gone, is typed: those lines were
+/// never handed over. On Copilot CLI the turn is a `user.message` row; a
+/// paste no row confirms is said once and told to the owner once.
+#[test]
+fn an_idle_overseer_with_watch_lines_past_its_last_follow_and_none_running_is_typed_once() {
+    let started = "re-arm with sh \"[RUN_DIR]/follow.sh\" \"[RUN_DIR]/watch.log\" [NEXT_LINE]";
+    // Claude: every step on one fleet.
+    {
+        let fleet = Fleet::new();
+        let pane = fleet.open("overseer", "claude", "lead-o", &[]);
+        fleet.server.await_composer(&pane.id);
+        let overseer = fleet.overseer("claude", &pane);
+        fleet.set_overseer(overseer.clone());
+        let cwd = fleet.root.join("watch-cwd");
+        std::fs::create_dir_all(&cwd).unwrap();
+        claim_in(&fleet, &cwd);
+        log_more(&fleet, 3);
+        let clock = FakeClock::new();
+        let mut body = fleet.body();
+        let none = Vec::<String>::new();
+        // No follow seen yet: nothing typed, nothing recorded.
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.turns("lead-o").len(), 0, "typed with no follow seen");
+        assert_eq!(wake_record(&fleet).follow_start, None);
+        // A follow from line 4 runs: its start recorded, nothing typed.
+        let follow = follow_from(&cwd, "a", "4");
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(wake_record(&fleet).follow_start, Some(4));
+        assert_eq!(fleet.turns("lead-o").len(), 0, "typed while a follow runs");
+        // The follow ends and no line stands past it: nothing typed.
+        drop(follow);
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.turns("lead-o").len(), 0, "typed with no line pending");
+        // A line lands: typed once, confirmed, no log line.
+        log_more(&fleet, 1);
+        assert_eq!(
+            pass(&mut body, &clock),
+            none,
+            "a delivered follow line writes no log line"
+        );
+        let typed = fleet.turns("lead-o");
+        assert_eq!(typed.len(), 1, "the confirmed step: {typed:?}");
+        assert!(typed[0].contains(started), "{typed:?}");
+        assert_eq!(
+            fleet.mark(wake::FOLLOW_TARGET).and_then(|m| m.outcome),
+            Some(WakeOutcome::Delivered { turns_after: 1 })
+        );
+        // The repeat pass: nothing.
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.turns("lead-o").len(), 1, "the repeat typed again");
+        // A re-armed follow: the mark cleared and its start recorded.
+        let follow = follow_from(&cwd, "b", "5");
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.mark(wake::FOLLOW_TARGET), None, "the mark stands");
+        assert_eq!(wake_record(&fleet).follow_start, Some(5));
+        assert_eq!(fleet.turns("lead-o").len(), 1);
+        drop(follow);
+        log_more(&fleet, 1);
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.turns("lead-o").len(), 2, "the re-armed step");
+        // Armed from line 6 while lines 6 and 7 already stand, sighted,
+        // then gone: those lines were never handed over.
+        log_more(&fleet, 2);
+        let follow = follow_from(&cwd, "c", "6");
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.turns("lead-o").len(), 2, "typed while a follow runs");
+        drop(follow);
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(
+            fleet.turns("lead-o").len(),
+            3,
+            "the armed-with-lines step: {:?}",
+            fleet.turns("lead-o")
+        );
+        // Each guard holds a pending line untyped.
+        let follow = follow_from(&cwd, "d", "8");
+        assert_eq!(pass(&mut body, &clock), none);
+        drop(follow);
+        log_more(&fleet, 1);
+        let mut record = wake_record(&fleet);
+        record.set(
+            OVERSEER_TARGET,
+            WakeMark {
+                pane: pane.id.clone(),
+                server: u64::from(fleet.server.pid),
+                server_start: Some(fleet.server.start),
+                unread: "m-1".into(),
+                turns_before: 0,
+                at: 1,
+                outcome: Some(WakeOutcome::Delivered { turns_after: 1 }),
+                owner: None,
+                resume: None,
+            },
+        );
+        std::fs::write(fleet.record_file(), serde_json::to_vec(&record).unwrap()).unwrap();
+        let mail = unread(&[(OVERSEER_TARGET, "m-1")]);
+        let produced = run_once(&mut body, &mail, &clock).unwrap();
+        assert_eq!(produced.failed, None, "the unread-row step failed");
+        assert_eq!(rendered(&produced), none);
+        assert_eq!(fleet.turns("lead-o").len(), 3, "the unread-row step");
+        let guards: [(&str, &str, Value); 3] = [
+            ("pending", "the pending step", pending(&fleet.cwd)),
+            (
+                "off",
+                "the off step",
+                json!({"at": "2026-01-29T15:20:00Z", "generation": 3}),
+            ),
+            (
+                "handoff",
+                "the handoff step",
+                json!({"session_id": "lead-x"}),
+            ),
+        ];
+        for (member, step, value) in guards {
+            let mut planted = fleet.read_fleet();
+            if member == "handoff" {
+                planted["handoff"] = value;
+            } else {
+                planted["controller"][member] = value;
+            }
+            fleet.write_fleet(&planted);
+            assert_eq!(pass(&mut body, &clock), none, "{step}");
+            assert_eq!(fleet.turns("lead-o").len(), 3, "{step}");
+            let mut cleared = fleet.read_fleet();
+            cleared.as_object_mut().unwrap().remove("handoff");
+            cleared["controller"] = overseer.clone();
+            fleet.write_fleet(&cleared);
+        }
+        // A claim whose watch is gone: no watch for a follow to read.
+        watch::claim::release(&fleet.paths, &me()).unwrap();
+        let ended = Owned::sleep();
+        let gone = Identity {
+            pid: ended.pid(),
+            start: ended.start(),
+        };
+        drop(ended);
+        claim_as(&fleet, &cwd, &gone);
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.turns("lead-o").len(), 3, "the claim step");
+        watch::claim::remove_gone(&fleet.paths).unwrap();
+        claim_in(&fleet, &cwd);
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(
+            fleet.turns("lead-o").len(),
+            4,
+            "pending once no guard holds"
+        );
+        // Mid-turn: a pane holding a turn is typed nothing and marked
+        // nothing.
+        let state = fleet.root.join("busy.state");
+        let hold = fleet.root.join("busy.fifo");
+        mkfifo(&hold);
+        let busy = fleet.open(
+            "busy",
+            "claude",
+            "lead-b",
+            &[
+                ("STUB_TURNS_STATE", &state.display().to_string()),
+                ("STUB_TURNS_HOLD", &hold.display().to_string()),
+            ],
+        );
+        fleet.server.await_composer(&busy.id);
+        await_state(&state, "idle");
+        fleet
+            .server
+            .send_line(&busy.id, "✻ Thinking… (esc to interrupt)");
+        await_state(&state, "working");
+        fleet.set_overseer(fleet.overseer("claude", &busy));
+        let held = fleet.mark(wake::FOLLOW_TARGET);
+        assert_eq!(pass(&mut body, &clock), none);
+        assert_eq!(fleet.turns("lead-b").len(), 0, "typed mid-turn");
+        assert_eq!(fleet.mark(wake::FOLLOW_TARGET), held, "marked mid-turn");
+    }
+    // Copilot CLI: confirmed by a `user.message` row; a paste no row
+    // confirms is said once and told to the owner once.
+    {
+        let fleet = Fleet::new();
+        let home = fleet.home.display().to_string();
+        let pane = fleet.open("overseer", "copilot", "cop-1", &[("COPILOT_HOME", &home)]);
+        fleet.server.await_composer(&pane.id);
+        fleet.set_overseer(fleet.overseer("copilot", &pane));
+        let cwd = fleet.root.join("watch-cwd");
+        std::fs::create_dir_all(&cwd).unwrap();
+        claim_in(&fleet, &cwd);
+        log_more(&fleet, 2);
+        let clock = FakeClock::new();
+        let mut body = fleet.body();
+        let follow = follow_from(&cwd, "a", "3");
+        assert_eq!(pass(&mut body, &clock), Vec::<String>::new());
+        drop(follow);
+        log_more(&fleet, 1);
+        assert_eq!(pass(&mut body, &clock), Vec::<String>::new());
+        assert_eq!(copilot_turns(&fleet.home, "cop-1"), 1, "the Copilot step");
+        assert_eq!(
+            fleet.mark(wake::FOLLOW_TARGET).and_then(|m| m.outcome),
+            Some(WakeOutcome::Delivered { turns_after: 1 })
+        );
+        let lost = fleet.open(
+            "overseer-2",
+            "copilot",
+            "cop-2",
+            &[("COPILOT_HOME", &home), ("STUB_TURNS_DROP", "1")],
+        );
+        fleet.server.await_composer(&lost.id);
+        fleet.set_overseer(fleet.overseer("copilot", &lost));
+        assert_eq!(
+            pass(&mut body, &clock),
+            vec!["EVENT wake-unconfirmed overseer-follow cause=turn-pending"],
+            "the unconfirmed step"
+        );
+        assert_eq!(fleet.notices(), Vec::<String>::new());
+        assert_eq!(pass(&mut body, &clock), Vec::<String>::new());
+        let notices = fleet.notices();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].starts_with("to=owner ")
+                && notices[0].contains("wake-unconfirmed overseer-follow cause=turn-pending")
+                && notices[0].contains(&format!("pane {}", lost.id)),
+            "{notices:?}"
+        );
+        assert_eq!(pass(&mut body, &clock), Vec::<String>::new());
+        assert_eq!(fleet.notices().len(), 1, "told twice");
+        assert_eq!(copilot_turns(&fleet.home, "cop-2"), 0);
+    }
 }
 
 /// A running watch whose agent-runtime answers setup-required in the middle
