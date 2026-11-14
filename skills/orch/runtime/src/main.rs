@@ -1114,8 +1114,7 @@ enum StateOp {
     },
     /// Merge the one JSON object a file holds into the fleet record's lane
     /// `--lane`: each field it names replaces the lane's, and its
-    /// `obligation` binds only where the lane names none or leaves the
-    /// same item's parent unknown.
+    /// `obligation` binds only where the lane names none.
     Merge {
         #[command(flatten)]
         target: Target,

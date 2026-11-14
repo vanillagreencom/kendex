@@ -2489,8 +2489,7 @@ const SURFACE_TWO_FLEET: &str = r#"{"issue_id":"oversee","sub_issues":[],"agent"
 /// alike, writes the fields it names into the lane its item finds and binds
 /// the lineage once: an absent or null obligation
 /// keeps the lane's, an unknown one binds, a known one differing refuses
-/// with nothing written, the same item's parent fills an unknown one, and
-/// an obligation of another shape refuses.
+/// with nothing written, and an obligation of another shape refuses.
 #[test]
 fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
     let store = Store::new();
@@ -2576,18 +2575,6 @@ fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
         two["obligation"],
         json!({"repo": "o/r", "item": "KEN-2", "parent_repo": null, "parent_item": null}),
         "a null obligation keeps the known binding"
-    );
-    let parent =
-        json!({"repo": "o/r", "item": "KEN-2", "parent_repo": "o/p", "parent_item": "KEN-0"});
-    merge(
-        "KEN-2",
-        "parent.json",
-        &format!(r#"{{"obligation":{parent}}}"#),
-    );
-    assert_eq!(
-        lane("KEN-2")["obligation"],
-        parent,
-        "the item's parent fills the unknown one"
     );
 
     let key = refused(

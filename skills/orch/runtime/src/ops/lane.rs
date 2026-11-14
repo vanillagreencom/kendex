@@ -69,10 +69,9 @@ use agent_runtime::journal::{new_intent, push_intent};
 /// or `FLAG VALUE` as two) and recorded on the lane; left out, the launch
 /// runs the settings' posture, and a word the table lacks is refused
 /// before any intent. `obligation` is the item's accepted lineage, written
-/// onto a record that carries none or whose parent it names where the
-/// record's leaves it unknown; one that differs otherwise from the record's
-/// is refused `obligation-conflict` before any intent. A first launch that
-/// states none records the item's own, where it names `repo`.
+/// onto a record that carries none; one that differs from the record's is
+/// refused `obligation-conflict` before any intent. A first launch that
+/// states none and names `repo` records the item as its own parent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LaunchLane {
     pub item: String,
@@ -131,11 +130,11 @@ pub struct LaunchLane {
 }
 
 /// The item's original obligation as the overseer's accepted launch or
-/// transfer mapping states it, or as a first launch naming none records
-/// its own item, recorded as `lanes[].obligation` for the cycle reader: the
-/// four keys, each present, the parent pair named together or null
-/// together. Nothing else maps it: a tracker's current parent is no
-/// original mapping.
+/// transfer mapping states it, or as a first launch naming none records it
+/// for a fresh item, the item its own parent; recorded as
+/// `lanes[].obligation` for the cycle reader: the four keys, each present,
+/// the parent pair named together or null together. Nothing else maps it:
+/// a tracker's current parent is no original mapping.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "ObligationKeys")]
 pub struct Obligation {
@@ -260,16 +259,21 @@ impl LaunchLane {
         ]
     }
 
-    /// The lineage a first launch stating none records: the item itself in
-    /// the repository the record names, spelled as a stated object's
-    /// canonical slug is, its parent unknown. No `repo`, no lineage: none is
-    /// read from a title, a parent or the checkout.
+    /// The lineage a first launch stating none records: a fresh item, its
+    /// own parent, in the repository the record names, spelled in both
+    /// places as a stated object's canonical slug is. A replacement states
+    /// its predecessor's object at its launch, so one stating none is
+    /// fresh. No `repo`, no lineage: none is read from a title, a parent or
+    /// the checkout.
     fn own_obligation(&self) -> Option<Obligation> {
-        self.repo.as_deref().map(|repo| Obligation {
-            repo: repo.to_ascii_lowercase(),
-            item: self.item.clone(),
-            parent_repo: None,
-            parent_item: None,
+        self.repo.as_deref().map(|repo| {
+            let repo = repo.to_ascii_lowercase();
+            Obligation {
+                repo: repo.clone(),
+                item: self.item.clone(),
+                parent_repo: Some(repo),
+                parent_item: Some(self.item.clone()),
+            }
         })
     }
 
@@ -1399,11 +1403,10 @@ pub(super) fn launch_lane(
             record::set(lane, "status", LaneStatus::Preparing.word());
             // What this launch states of the lane, over what the record
             // keeps: a permission choice and a grant judged now, and the
-            // lineage where the record binds none or no parent. A relaunch
-            // keeps the first launch's tier, since its brief opens the
-            // workflow with `start` whatever tier the item runs at; a launch
-            // over a `done` record opens the item's next phase, whose brief
-            // states its own.
+            // lineage where the record binds none. A relaunch keeps the
+            // first launch's tier, since its brief opens the workflow with
+            // `start` whatever tier the item runs at; a launch over a `done`
+            // record opens the item's next phase, whose brief states its own.
             if let Value::String(permission) = r.permission_recorded() {
                 record::set(lane, "permission", permission.as_str());
             }
@@ -2478,26 +2481,18 @@ pub(crate) fn record_surface_lane(
 }
 
 /// Whether a stated lineage may be written over the record's `known`: where
-/// the record binds none, binds the same, or binds the same repository and
-/// item with its parent unknown, which a stated parent fills. Every other
-/// difference contradicts the binding.
+/// the record binds none or binds the same. Every difference contradicts
+/// the binding, a stated parent over a null pair included.
 fn obligation_binds(known: Option<&Value>, stated: &Value) -> bool {
-    let Some(known) = known.filter(|known| !known.is_null()) else {
-        return true;
-    };
-    known == stated
-        || (known["parent_repo"].is_null()
-            && known["parent_item"].is_null()
-            && known["repo"] == stated["repo"]
-            && known["item"] == stated["item"])
+    known.is_none_or(|known| known.is_null() || known == stated)
 }
 
 /// A lane record's merge: the lane is found by its `item` inside the
 /// transition, every field the mapping names replaces the lane's, and the
 /// item's lineage is bound once, as the launch binds it: an absent or null
-/// `obligation` keeps the lane's, one contradicting a known binding refuses
-/// `obligation-conflict`, and an unknown binding or parent takes the one
-/// stated, held to the launch request's shape.
+/// `obligation` keeps the lane's, one differing from a known binding refuses
+/// `obligation-conflict`, and an unknown binding takes the one stated, held
+/// to the launch request's shape.
 pub(crate) fn merge_lane(
     path: &Path,
     doc: &mut Document,

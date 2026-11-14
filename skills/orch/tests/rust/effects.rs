@@ -9165,12 +9165,11 @@ fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
 /// repository records none, and its record takes the obligation a later
 /// launch names; a parent named without its pair is refused
 /// `request-invalid` with nothing written. A first launch naming a
-/// repository and no obligation records the item's own, its parent
-/// unknown; a relaunch and the next phase keep it, the cycle recorder
-/// copies it into the cycle, one naming another repository or item is
-/// refused `obligation-conflict`, a later launch naming the same item's
-/// parent fills it, and one naming another parent then is refused
-/// `obligation-conflict`, each refusal with nothing written.
+/// repository and no obligation records the item as its own parent; a
+/// relaunch and the next phase keep it, the cycle recorder copies it into
+/// the cycle, a later launch naming the same is admitted and keeps it, and
+/// one naming another parent or another repository is refused
+/// `obligation-conflict` with nothing written.
 #[test]
 fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -9246,7 +9245,7 @@ fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     };
     let mut first = launch_request("KEN-S", runner.state_dir());
     first["repo"] = json!("O/R");
-    let own = json!({"repo": "o/r", "item": "KEN-S", "parent_repo": null, "parent_item": null});
+    let own = json!({"repo": "o/r", "item": "KEN-S", "parent_repo": "o/r", "parent_item": "KEN-S"});
     let report = effect_report(&runner.op_fleet(&first));
     assert_eq!(
         report["lane"]["obligation"], own,
@@ -9299,36 +9298,31 @@ fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
         "the cycle reads the launch's binding: {lane}"
     );
     let mut named = launch_request("KEN-S", runner.state_dir());
-    let parent =
-        json!({"repo": "o/r", "item": "KEN-S", "parent_repo": "o/p", "parent_item": "KEN-P"});
-    let before = runner.fleet();
-    for (key, value) in [("repo", "o/x"), ("item", "KEN-X")] {
-        named["obligation"] = parent.clone();
-        named["obligation"][key] = json!(value);
-        let answer = reply(&runner.op_fleet(&named));
-        assert_eq!(
-            answer["refusal"]["key"], "obligation-conflict",
-            "{key}: {answer}"
-        );
-        assert_eq!(
-            runner.fleet(),
-            before,
-            "{key}: another lineage writes nothing"
-        );
-    }
-    named["obligation"] = parent.clone();
+    named["obligation"] = own.clone();
     let report = effect_report(&runner.op_fleet(&named));
     assert_eq!(
-        report["lane"]["obligation"], parent,
-        "the item's parent fills the unknown one: {}",
+        report["lane"]["obligation"], own,
+        "the same lineage stated again keeps it: {}",
         report["lane"]
     );
     effect_report(&runner.op_fleet(&terminal_close("KEN-S")));
     let before = runner.fleet();
-    named["obligation"]["parent_item"] = json!("KEN-Z");
-    let answer = reply(&runner.op_fleet(&named));
-    assert_eq!(answer["refusal"]["key"], "obligation-conflict", "{answer}");
-    assert_eq!(runner.fleet(), before, "another parent writes nothing");
+    for stated in [
+        json!({"repo": "o/r", "item": "KEN-S", "parent_repo": "o/p", "parent_item": "KEN-P"}),
+        json!({"repo": "o/x", "item": "KEN-S", "parent_repo": "o/r", "parent_item": "KEN-S"}),
+    ] {
+        named["obligation"] = stated.clone();
+        let answer = reply(&runner.op_fleet(&named));
+        assert_eq!(
+            answer["refusal"]["key"], "obligation-conflict",
+            "{stated}: {answer}"
+        );
+        assert_eq!(
+            runner.fleet(),
+            before,
+            "{stated}: another lineage writes nothing"
+        );
+    }
 }
 
 /// One origin for the fleet's checkout and a lane's: a clone of the
