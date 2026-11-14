@@ -1474,10 +1474,12 @@ pub fn copilot_home(settings: &Settings) -> Option<PathBuf> {
 /// `home` its confirmed launch ran under, else the watch's own Copilot home
 /// (`account-unnamed` with none). `None` for every other lane: a launch
 /// without the grant waits on its prompts by design, and the record alone
-/// cannot tell the two apart.
+/// cannot tell the two apart; a hosted lane's store is on its host, which
+/// this machine's store would answer wrongly.
 fn copilot_note(lane: &Lane, pass: &Pass) -> Option<String> {
     if lane.harness.as_deref() != Some("copilot")
         || lane.extra.get("allow_all") != Some(&Value::Bool(true))
+        || hosted::host_of(lane) != "local"
     {
         return None;
     }

@@ -510,9 +510,11 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
                               capture_output=True, start_new_session=True)
 
     def test_create_runs_copilot_on_its_stored_login(self):
-        """A copilot lane copies no credential, its provider selects COPILOT_HOME, and the launch policy clears the COPILOT_GITHUB_TOKEN the host's profile exports while GH_TOKEN and GITHUB_TOKEN reach the lane."""
+        """A copilot lane copies no credential, its provider selects COPILOT_HOME and names it as copilot-home, and the launch policy clears the COPILOT_GITHUB_TOKEN the host's profile exports while GH_TOKEN and GITHUB_TOKEN reach the lane."""
         before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         fields = self.copilot_create()
+        # The home the launcher installs the context reader into and finds the hooks under.
+        self.assertEqual(fields["copilot-home"], self.row["account"])
         run = self.copilot_run(fields, PACKAGE / "scripts/lib/lane-launch.sh")
         after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         self.assertEqual(after, before)

@@ -6437,6 +6437,44 @@ fn a_codex_lane_below_a_prior_turn_is_idle_on_its_first_pass_locally_and_on_its_
     );
 }
 
+/// A hosted Copilot lane launched with allow-all keeps its session store on
+/// its host: its asking line carries no policy note read from this
+/// machine's store.
+#[test]
+fn a_hosted_copilot_lanes_prompt_carries_no_note_from_this_machines_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window(
+        "gh-1",
+        dir.path(),
+        "printf '%s\\n' 'Do you want to proceed?' '❯ 1. Yes'; exec bash --norc --noprofile",
+    );
+    await_drawn(&server, &pane, "Do you want to proceed?");
+    let mut lane = hosted_lane(dir.path(), "KEN-1", "gh-1", "/remote/KEN-1");
+    lane["harness"] = json!("copilot");
+    lane["allow_all"] = json!(true);
+    lane["launch"] = json!({"pane": pane, "server": server.pid});
+    fleet.set_lanes(vec![lane]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (
+            &format!("{} capabilities", provider(dir.path())),
+            ok(SSH_LINE),
+        ),
+        ("status --item KEN-1 --harness copilot", ok("running\n")),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let asking: Vec<String> = event_lines(&driver.pass(&state))
+        .into_iter()
+        .filter(|l| l.starts_with("EVENT lane-asking"))
+        .collect();
+    assert_eq!(asking, vec!["EVENT lane-asking gh-1"]);
+}
+
 /// The scripts directory of a row's provider world: `provider`, the
 /// shared provider fixture under a link of its own, logging each call as
 /// `ORCH_LANE_HOST=<value|unset> <argv>` to `lane-host.log` beside it, its

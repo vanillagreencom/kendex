@@ -19,7 +19,8 @@
 # program that asked it). A key the map
 # lacks is exit 64 with `lane-host-fixture: unplanned argv=[...]` on stderr,
 # so a row that forgot an answer reads an unreadable call, never a missing
-# file. Bash 3.2.
+# file. A `put` keeps the bytes it was handed in `lane-host.put.N` beside,
+# N its line of the log. Bash 3.2.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 host="$(basename -- "$0")"
@@ -27,6 +28,9 @@ line="ORCH_LANE_HOST=$host $*"
 prior=0
 [ ! -f "$here/lane-host.log" ] || prior="$(grep -cxF -- "$line" "$here/lane-host.log")" || prior=0
 printf '%s\n' "$line" >> "$here/lane-host.log"
+if [ "${1:-}" = put ]; then
+  cat > "$here/lane-host.put.$(grep -c '' "$here/lane-host.log")"
+fi
 key="$*"
 nth="#$((prior + 1))"
 reply="$(jq -c --arg k "$key" --arg h "$host $key" --arg n "$nth" '.[$h + $n] // .[$k + $n] // .[$h] // .[$k] // empty' -- "$here/lane-host.json" 2>/dev/null)" || reply=""

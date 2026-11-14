@@ -20,7 +20,9 @@
 //! goes there and the launch runs under the config dir itself. A Claude
 //! launch in bypass-permissions mode also opens on a one-time confirmation
 //! per config dir, answered by `skipDangerousModePermissionPrompt` in that
-//! dir's settings.json, which the launch records the same way.
+//! dir's settings.json, which the launch records the same way. A hosted
+//! Claude lane's consent is recorded by the same rule in the host's files,
+//! through the provider's file verbs.
 //!
 //! An answer already recorded that is not trust or consent refuses: it is a
 //! decision somebody gave in the harness's own spelling, and overwriting it
@@ -210,13 +212,55 @@ fn install(path: &Path, text: &str) -> std::result::Result<(), (Step, std::io::E
 
 /// A trust config through [`install`], its failure the arm's refusal.
 fn install_config(path: &Path, text: &str, harness: Harness) -> Result<()> {
+    config_install(path, text).map_err(|(key, cause)| refused(key, harness, path, cause.as_deref()))
+}
+
+/// A refusal a file's read, its write or the judgement over it answers: the
+/// key, and the cause where one is known.
+type Refusal = (&'static str, Option<String>);
+
+/// A file's text where it stands, `None` where it does not.
+type ReadFile<'a> = &'a dyn Fn(&Path) -> std::result::Result<Option<String>, Refusal>;
+
+/// `text` made the whole content of a file.
+type WriteFile<'a> = &'a dyn Fn(&Path, &str) -> std::result::Result<(), Refusal>;
+
+fn config_install(path: &Path, text: &str) -> std::result::Result<(), Refusal> {
     install(path, text).map_err(|(step, e)| {
         let key = match step {
             Step::Write => "config-write",
             Step::Rename => "config-install",
         };
-        refused(key, harness, path, Some(&e.to_string()))
+        (key, Some(e.to_string()))
     })
+}
+
+/// A local file read as [`present`] judges it, its failure refused as `key`.
+fn read_file(path: &Path, key: &'static str) -> std::result::Result<Option<String>, Refusal> {
+    match present(path) {
+        Present::Absent => Ok(None),
+        Present::Unreadable(cause) => Err((key, Some(cause))),
+        Present::File => fs::read_to_string(path)
+            .map(Some)
+            .map_err(|e| (key, Some(e.to_string()))),
+    }
+}
+
+/// `text` made the whole content of a hosted file through the provider's
+/// `put`, by the path the host resolves, else the cause.
+pub type Write<'a> = &'a dyn Fn(&str, &str) -> std::result::Result<(), String>;
+
+/// A hosted preparation's refusal as the launch's `failed` cause: its key,
+/// then its fields, then its cause where one is known.
+fn cause_line(refusal: Refusal, fields: &[(&str, &str)]) -> String {
+    let (key, cause) = refusal;
+    let line = fields.iter().fold(key.to_owned(), |line, (name, value)| {
+        format!("{line} {name}={value}")
+    });
+    match cause {
+        Some(cause) => format!("{line} cause={cause}"),
+        None => line,
+    }
 }
 
 fn private_dir(path: &Path, key: &'static str, harness: Harness) -> Result<()> {
@@ -507,7 +551,6 @@ fn claude_trust(lane: &Path, dir: &Path) -> Result<Route> {
 /// cannot answer the confirmation. A recorded `false` is an answer somebody
 /// gave and refuses `bypass-refused`.
 fn claude_bypass_consent(lane: &Path) -> Result<()> {
-    const CONSENT: &str = "skipDangerousModePermissionPrompt";
     let h = Harness::Claude;
     let settings = lane.join("settings.json");
     let target = link_target(&settings).ok_or_else(|| {
@@ -518,43 +561,86 @@ fn claude_bypass_consent(lane: &Path) -> Result<()> {
             Some("too many links to follow"),
         )
     })?;
-    let mut doc = match present(&target) {
-        Present::Absent => Value::Object(Map::new()),
-        Present::Unreadable(cause) => {
-            return Err(refused("config-unreadable", h, &target, Some(&cause)));
-        }
-        Present::File => serde_json::from_str::<Value>(&read(&target, h)?)
-            .map_err(|e| refused("config-unreadable", h, &target, Some(&e.to_string())))?,
+    bypass_consent(
+        &target,
+        &|path| read_file(path, "config-unreadable"),
+        &config_install,
+    )
+    .map_err(|(key, cause)| refused(key, h, &target, cause.as_deref()))
+}
+
+/// The settings.json a hosted Claude lane's consent is read and written in:
+/// Claude's default config dir under the host user's home, since the
+/// provider sets no `CLAUDE_CONFIG_DIR`; the host resolves the relative path
+/// there.
+const HOSTED_CLAUDE_SETTINGS: &str = ".claude/settings.json";
+
+/// A hosted Claude lane's bypass consent, by the rule a local launch keeps
+/// ([`claude_bypass_consent`]), over the host's files: `read` the provider's
+/// `cat`, `write` its `put`, which replaces a linked file with a regular one.
+/// A provider's presence is never consent: a recorded `false` refuses
+/// `bypass-refused`.
+pub fn hosted_claude_consent(
+    read: crate::effects::prepare::gate::Read,
+    write: Write,
+) -> std::result::Result<(), String> {
+    bypass_consent(
+        Path::new(HOSTED_CLAUDE_SETTINGS),
+        &|path| {
+            read(&path.display().to_string()).map_err(|cause| ("config-unreadable", Some(cause)))
+        },
+        &|path, text| {
+            write(&path.display().to_string(), text).map_err(|cause| ("config-write", Some(cause)))
+        },
+    )
+    .map_err(|refusal| {
+        cause_line(
+            refusal,
+            &[("harness", "claude"), ("path", HOSTED_CLAUDE_SETTINGS)],
+        )
+    })
+}
+
+/// The consent in the settings.json at `settings`, read by `read`: `true`
+/// stands, `false` refuses `bypass-refused`, absent is written by `write`
+/// with every other key kept and read back.
+fn bypass_consent(
+    settings: &Path,
+    read: ReadFile,
+    write: WriteFile,
+) -> std::result::Result<(), Refusal> {
+    const CONSENT: &str = "skipDangerousModePermissionPrompt";
+    let mut doc = match read(settings)? {
+        None => Value::Object(Map::new()),
+        Some(text) => serde_json::from_str::<Value>(&text)
+            .map_err(|e| ("config-unreadable", Some(e.to_string())))?,
     };
     let Some(object) = doc.as_object_mut() else {
-        return Err(refused(
+        return Err((
             "config-unreadable",
-            h,
-            &target,
-            Some("the document is not an object"),
+            Some("the document is not an object".to_owned()),
         ));
     };
     match object.get(CONSENT) {
         Some(Value::Bool(true)) => return Ok(()),
-        Some(Value::Bool(false)) => return Err(refused("bypass-refused", h, &target, None)),
+        Some(Value::Bool(false)) => return Err(("bypass-refused", None)),
         None | Some(Value::Null) => {}
         Some(_) => {
-            return Err(refused(
+            return Err((
                 "config-unreadable",
-                h,
-                &target,
-                Some("`skipDangerousModePermissionPrompt` is not a boolean"),
+                Some("`skipDangerousModePermissionPrompt` is not a boolean".to_owned()),
             ));
         }
     }
     object.insert(CONSENT.to_owned(), Value::Bool(true));
-    let text = serde_json::to_string_pretty(&doc)
-        .map_err(|e| refused("config-write", h, &target, Some(&e.to_string())))?;
-    install_config(&target, &format!("{text}\n"), h)?;
-    let written: Value = serde_json::from_str(&read(&target, h)?)
-        .map_err(|e| refused("entry-unreadable", h, &target, Some(&e.to_string())))?;
+    let text =
+        serde_json::to_string_pretty(&doc).map_err(|e| ("config-write", Some(e.to_string())))?;
+    write(settings, &format!("{text}\n"))?;
+    let written = read(settings)?.ok_or(("entry-unreadable", None))?;
+    let written: Value =
+        serde_json::from_str(&written).map_err(|e| ("entry-unreadable", Some(e.to_string())))?;
     if written[CONSENT] != Value::Bool(true) {
-        return Err(refused("entry-unreadable", h, &target, None));
+        return Err(("entry-unreadable", None));
     }
     Ok(())
 }
@@ -607,77 +693,29 @@ fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
             ],
         ));
     }
-    let dest = home.join("extensions/kendex-lane-context/extension.mjs");
-    let standing = match present(&dest) {
-        Present::File => Some(read_as(&dest, "unwritable")?),
-        Present::Absent => None,
-        Present::Unreadable(cause) => {
-            return Err(reader_refused("unwritable", &dest, Some(&cause)));
-        }
-    };
-    if standing.as_deref() != Some(EXTENSION) {
-        let dir = dest.parent().unwrap_or(home);
-        fs::create_dir_all(dir)
-            .map_err(|e| reader_refused("unwritable", &dest, Some(&e.to_string())))?;
-        install(&dest, EXTENSION)
-            .map_err(|(_, e)| reader_refused("unwritable", &dest, Some(&e.to_string())))?;
-    }
     let settings = home.join("settings.json");
     let target =
         link_target(&settings).ok_or_else(|| reader_refused("unreadable", &settings, None))?;
-    let doc = match present(&target) {
-        Present::Absent => Value::Object(Map::new()),
-        Present::Unreadable(cause) => {
-            return Err(reader_refused("unreadable", &target, Some(&cause)));
-        }
-        Present::File => serde_json::from_str::<Value>(&read_as(&target, "unreadable")?)
-            .map_err(|e| reader_refused("unreadable", &target, Some(&e.to_string())))?,
+    let write = |path: &Path, text: &str| {
+        fs::create_dir_all(path.parent().unwrap_or(home))
+            .map_err(|e| ("unwritable", Some(e.to_string())))?;
+        install(path, text).map_err(|(_, e)| ("unwritable", Some(e.to_string())))
     };
-    let Value::Object(mut object) = doc else {
-        return Err(reader_refused(
-            "unreadable",
-            &target,
-            Some("the document is not an object"),
-        ));
-    };
-    match object
-        .get("enabledFeatureFlags")
-        .and_then(|f| f.get("EXTENSIONS"))
-    {
-        Some(Value::Bool(true)) => {}
-        Some(Value::Bool(false)) => {
-            return match status_line(home) {
-                Ok(()) => Ok(Prepared {
-                    route: Route::AllowAllEnv,
-                    home: home.to_path_buf(),
-                }),
-                Err(cause) => Err(reader_refused("disabled", &target, Some(cause))),
-            };
-        }
-        None | Some(Value::Null) => {
-            let flags = object
-                .entry("enabledFeatureFlags")
-                .or_insert_with(|| Value::Object(Map::new()));
-            let Some(flags) = flags.as_object_mut() else {
-                return Err(reader_refused(
-                    "unreadable",
-                    &target,
-                    Some("`enabledFeatureFlags` is not an object"),
-                ));
-            };
-            flags.insert("EXTENSIONS".to_owned(), Value::Bool(true));
-            let text = serde_json::to_string_pretty(&Value::Object(object))
-                .map_err(|e| reader_refused("unwritable", &target, Some(&e.to_string())))?;
-            install(&target, &format!("{text}\n"))
-                .map_err(|(_, e)| reader_refused("unwritable", &target, Some(&e.to_string())))?;
-        }
-        Some(_) => {
-            return Err(reader_refused(
-                "unreadable",
-                &target,
-                Some("`EXTENSIONS` is not a boolean"),
-            ));
-        }
+    let flag = context_reader(
+        &home.join(EXTENSION_FILE),
+        &target,
+        &|path| read_file(path, "unreadable"),
+        &write,
+    )
+    .map_err(|(file, (detail, cause))| reader_refused(detail, &file, cause.as_deref()))?;
+    if let Flag::Off = flag {
+        return match status_line(home) {
+            Ok(()) => Ok(Prepared {
+                route: Route::AllowAllEnv,
+                home: home.to_path_buf(),
+            }),
+            Err(cause) => Err(reader_refused("disabled", &target, Some(cause))),
+        };
     }
     let Some(pending) = pending else {
         return Err(reader_refused(
@@ -705,6 +743,105 @@ fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
         route: Route::AllowAllEnv,
         home: home.to_path_buf(),
     })
+}
+
+/// Where the context reader's extension stands under a Copilot home.
+const EXTENSION_FILE: &str = "extensions/kendex-lane-context/extension.mjs";
+
+/// What a Copilot home's `enabledFeatureFlags.EXTENSIONS` says once the
+/// reader stands.
+enum Flag {
+    On,
+    /// Set false: the operator's choice, never overridden.
+    Off,
+}
+
+/// A hosted Copilot lane's context reader made to stand in its Copilot
+/// home `home` on the host, by the rule a local launch keeps ([`copilot`]),
+/// over the host's files: `read` the provider's `cat`, `write` its `put`. A
+/// flag set false refuses `disabled`: the status-line fallback a local
+/// launch admits resolves an executable, which no file verb can test. The
+/// pending directory is the extension's own to make on its host.
+pub fn hosted_copilot_reader(
+    read: crate::effects::prepare::gate::Read,
+    write: Write,
+    home: &str,
+) -> std::result::Result<(), String> {
+    let settings = format!("{home}/settings.json");
+    let refusal = |file: &str, (detail, cause): Refusal| {
+        cause_line(
+            ("no-context-reader", cause),
+            &[("harness", "copilot"), ("file", file), ("detail", detail)],
+        )
+    };
+    let flag = context_reader(
+        Path::new(&format!("{home}/{EXTENSION_FILE}")),
+        Path::new(&settings),
+        &|path| read(&path.display().to_string()).map_err(|cause| ("unreadable", Some(cause))),
+        &|path, text| {
+            write(&path.display().to_string(), text).map_err(|cause| ("unwritable", Some(cause)))
+        },
+    )
+    .map_err(|(file, failed)| refusal(&file.display().to_string(), failed))?;
+    match flag {
+        Flag::On => Ok(()),
+        Flag::Off => Err(refusal(&settings, ("disabled", None))),
+    }
+}
+
+/// The context reader made to stand: the extension at `extension`,
+/// rewritten only where its content differs, and
+/// `enabledFeatureFlags.EXTENSIONS` set true in the settings.json at
+/// `settings` where absent, every other key kept. The refusal names its file
+/// and its detail: the extension `unwritable`, the settings `unreadable` or
+/// `unwritable`.
+fn context_reader(
+    extension: &Path,
+    settings: &Path,
+    read: ReadFile,
+    write: WriteFile,
+) -> std::result::Result<Flag, (PathBuf, Refusal)> {
+    let at = |file: &Path, detail: &'static str| {
+        let file = file.to_path_buf();
+        move |(_, cause): Refusal| (file, (detail, cause))
+    };
+    let standing = read(extension).map_err(at(extension, "unwritable"))?;
+    if standing.as_deref() != Some(EXTENSION) {
+        write(extension, EXTENSION).map_err(at(extension, "unwritable"))?;
+    }
+    let unreadable = |cause: String| (settings.to_path_buf(), ("unreadable", Some(cause)));
+    let doc = match read(settings).map_err(at(settings, "unreadable"))? {
+        None => Value::Object(Map::new()),
+        Some(text) => {
+            serde_json::from_str::<Value>(&text).map_err(|e| unreadable(e.to_string()))?
+        }
+    };
+    let Value::Object(mut object) = doc else {
+        return Err(unreadable("the document is not an object".to_owned()));
+    };
+    match object
+        .get("enabledFeatureFlags")
+        .and_then(|f| f.get("EXTENSIONS"))
+    {
+        Some(Value::Bool(true)) => Ok(Flag::On),
+        Some(Value::Bool(false)) => Ok(Flag::Off),
+        None | Some(Value::Null) => {
+            let flags = object
+                .entry("enabledFeatureFlags")
+                .or_insert_with(|| Value::Object(Map::new()));
+            let Some(flags) = flags.as_object_mut() else {
+                return Err(unreadable(
+                    "`enabledFeatureFlags` is not an object".to_owned(),
+                ));
+            };
+            flags.insert("EXTENSIONS".to_owned(), Value::Bool(true));
+            let text = serde_json::to_string_pretty(&Value::Object(object))
+                .map_err(|e| (settings.to_path_buf(), ("unwritable", Some(e.to_string()))))?;
+            write(settings, &format!("{text}\n")).map_err(at(settings, "unwritable"))?;
+            Ok(Flag::On)
+        }
+        Some(_) => Err(unreadable("`EXTENSIONS` is not a boolean".to_owned())),
+    }
 }
 
 /// Whether a session starting on the Copilot home `home` loads a context
@@ -745,10 +882,6 @@ fn link_target(path: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn read_as(path: &Path, detail: &str) -> Result<String> {
-    fs::read_to_string(path).map_err(|e| reader_refused(detail, path, Some(&e.to_string())))
 }
 
 /// Whether `home` runs `copilot-statusline` as its status line often enough

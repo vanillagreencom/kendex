@@ -716,6 +716,9 @@ pub struct Created {
     /// The Pi root a Pi lane runs under on the host, where the provider
     /// named one.
     pub pi_root: Option<String>,
+    /// The Copilot home a Copilot lane runs under on the host, where the
+    /// provider named one.
+    pub copilot_home: Option<String>,
     /// `tree=unrebased`: the item's retained tree stands on its own head,
     /// its rebase onto the base aborted on a conflict, the work intact.
     pub unrebased: bool,
@@ -756,11 +759,13 @@ pub fn create(
         prefix: String::new(),
         preparing: false,
         pi_root: None,
+        copilot_home: None,
         unrebased: kept_unrebased(&line),
     };
     for field in line.split('\t') {
         match field.split_once('=') {
             Some(("pi-root", v)) => created.pi_root = Some(v.to_owned()),
+            Some(("copilot-home", v)) => created.copilot_home = Some(v.to_owned()),
             Some(("ssh-target", v)) => created.target = v.to_owned(),
             Some(("path", v)) => created.path = v.to_owned(),
             Some(("remote-prefix", v)) => created.prefix = v.to_owned(),

@@ -15,7 +15,9 @@
 //! it, since a lane whose wake never loads is never woken. Copilot needs the three
 //! lane-mail hooks registered in its worktree or its home, and no settings
 //! layer switching them off, which `kendex hooks-off` judges; a hosted
-//! Copilot lane's home is on its host, which nothing reads for it.
+//! Copilot lane's hooks are found on its host by the same rule, and no
+//! settings layer there is judged, since `kendex hooks-off` reads this
+//! machine's files.
 //!
 //! A refusal is the launch's `failed` cause: its key, then its fields.
 
@@ -85,18 +87,23 @@ pub fn local(harness: Harness, home: Option<&Path>, worktree: &Path) -> Result<(
 }
 
 /// A hosted lane of `harness` on `model`, before the provider is asked to
-/// create anything: a Copilot lane, whose home is on its host, and a Pi
-/// lane billing a Claude seat, since the provider places the account it is
-/// given as Pi's own root.
+/// create anything: a Pi lane billing a Claude seat, since the provider
+/// places the account it is given as Pi's own root.
 pub fn before_create(harness: Harness, model: Option<&str>, provider: &str) -> Result<(), String> {
     match harness {
-        Harness::Copilot => Err("unsupported-for-oversee harness=copilot reason=hosted".to_owned()),
         Harness::Pi if harness.account_var(model) != harness.home_var() => Err(format!(
             "host-pi-claude-seat host={provider} model={}",
             model.unwrap_or("")
         )),
-        Harness::Pi | Harness::Claude | Harness::Codex => Ok(()),
+        Harness::Pi | Harness::Claude | Harness::Codex | Harness::Copilot => Ok(()),
     }
+}
+
+/// A hosted Copilot lane's hooks on its host once `create` made the
+/// worktree, each file read by `read` on the host under the Copilot home
+/// `home`.
+pub fn hosted_copilot(read: Read, home: &str, worktree: &str) -> Result<(), String> {
+    hook_scope(read, home, worktree).map(drop)
 }
 
 /// A hosted Pi lane's rules on its host's files once `create` made the
@@ -547,39 +554,19 @@ fn npm_name(spec: &str) -> &str {
     reason = "the launch gate's one read of kendex's hook-settings judgement, `kendex hooks-off`, through the one runner under the launch's tag, before any window opens"
 )]
 fn copilot_hooks(home: &Path, worktree: &Path) -> Result<(), String> {
-    let refused = |reason: &str, fields: &str| {
-        format!("unsupported-for-oversee harness=copilot reason={reason} {fields}")
-    };
-    let scopes = [worktree.join(".github/hooks"), home.join("hooks")];
-    let held = |dir: &Path| {
-        COPILOT_HOOKS.iter().all(|name| {
-            ["sh", "json"].iter().all(|ext| {
-                std::fs::metadata(dir.join(format!("{name}.{ext}"))).is_ok_and(|m| m.is_file())
-            })
-        })
-    };
-    let Some(scope) = scopes.iter().find(|dir| held(dir)) else {
-        return Err(refused(
-            "no-context-hooks",
-            &format!(
-                "scope={} scope={}",
-                scopes[0].display(),
-                scopes[1].display()
-            ),
-        ));
-    };
     let home = home.display().to_string();
     let project = worktree.display().to_string();
+    let scope = hook_scope(&read_local, &home, &project)?;
     let documents: Vec<String> = COPILOT_HOOKS
         .iter()
-        .map(|name| scope.join(format!("{name}.json")).display().to_string())
+        .map(|name| format!("{scope}/{name}.json"))
         .collect();
     let mut args = vec!["hooks-off", "--copilot-home", &home, "--project", &project];
     for document in &documents {
         args.extend(["--hook-document", document]);
     }
     let unjudged = |exit: &str, cause: &str| {
-        refused(
+        copilot_refused(
             "hooks-unjudged",
             &format!("exit={exit} cause={}", cause.lines().next().unwrap_or("")),
         )
@@ -604,9 +591,50 @@ fn copilot_hooks(home: &Path, worktree: &Path) -> Result<(), String> {
         .map_err(|e| unjudged("answer", &e.to_string()))?;
     match answer.get("switched_off_by") {
         Some(Value::Null) => Ok(()),
-        Some(Value::String(file)) => Err(refused("hooks-disabled", &format!("file={file}"))),
+        Some(Value::String(file)) => {
+            Err(copilot_refused("hooks-disabled", &format!("file={file}")))
+        }
         Some(_) | None => Err(unjudged("answer", "no switched_off_by answer")),
     }
+}
+
+fn copilot_refused(reason: &str, fields: &str) -> String {
+    format!("unsupported-for-oversee harness=copilot reason={reason} {fields}")
+}
+
+/// The first of the worktree's `.github/hooks` and the home's `hooks`
+/// holding all three Copilot hooks, each file read by `read`. A read that
+/// fails refuses with its cause rather than counting as absence, which would
+/// name the wrong remedy.
+fn hook_scope(read: Read, home: &str, worktree: &str) -> Result<String, String> {
+    let scopes = [format!("{worktree}/.github/hooks"), format!("{home}/hooks")];
+    let held = |scope: &str| -> Result<bool, String> {
+        for name in COPILOT_HOOKS {
+            for ext in ["sh", "json"] {
+                let file = format!("{scope}/{name}.{ext}");
+                match read(&file) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => return Ok(false),
+                    Err(cause) => {
+                        return Err(copilot_refused(
+                            "hooks-unreadable",
+                            &format!("file={file} cause={cause}"),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(true)
+    };
+    for scope in &scopes {
+        if held(scope)? {
+            return Ok(scope.clone());
+        }
+    }
+    Err(copilot_refused(
+        "no-context-hooks",
+        &format!("scope={} scope={}", scopes[0], scopes[1]),
+    ))
 }
 
 #[cfg(test)]

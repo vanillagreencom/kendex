@@ -935,6 +935,14 @@ fn hosted_launch(
     if let Err(cause) = gate::before_create(harness, r.model.as_deref(), provider) {
         return failed(operation, &cause);
     }
+    // Read before the provider creates anything, so a posture the setting
+    // refuses leaves no sandbox.
+    let bypass = match run.settings.launch.permission.get() {
+        Ok(permission) => {
+            agent_runtime::launch::full_bypass(harness, permission, &r.permission_words())
+        }
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
+    };
     let (Some(account), Some(repo)) = (r.account.as_deref(), r.repo.as_deref()) else {
         return failed(operation, "host-request-incomplete");
     };
@@ -1005,17 +1013,28 @@ fn hosted_launch(
             return Ok(preparing_held(operation, HOST_CREATE, provider, &cause));
         }
     };
-    if let Harness::Pi = harness
-        && let Err(cause) = gate::hosted_pi(
-            &|path: &str| match hosted::fetch(&scripts, provider, &r.item, path) {
-                hosted::Answer::Live(text) => Ok(Some(text)),
-                hosted::Answer::Gone => Ok(None),
-                hosted::Answer::Unreadable { cause } => Err(cause),
-            },
-            created.pi_root.as_deref(),
-            &created.path,
-        )
-    {
+    let read = |path: &str| match hosted::fetch(&scripts, provider, &r.item, path) {
+        hosted::Answer::Live(text) => Ok(Some(text)),
+        hosted::Answer::Gone => Ok(None),
+        hosted::Answer::Unreadable { cause } => Err(cause),
+    };
+    let write =
+        |path: &str, text: &str| hosted::put(&scripts, provider, &r.item, path, text.as_bytes());
+    let prepared = match harness {
+        Harness::Pi => gate::hosted_pi(&read, created.pi_root.as_deref(), &created.path),
+        Harness::Claude if bypass => trust::hosted_claude_consent(&read, &write)
+            .map_err(|cause| format!("{cause} host={provider}")),
+        // Copilot's own default home under the host user's home where the
+        // provider names none.
+        Harness::Copilot => {
+            let home = created.copilot_home.as_deref().unwrap_or(".copilot");
+            trust::hosted_copilot_reader(&read, &write, home)
+                .and_then(|()| gate::hosted_copilot(&read, home, &created.path))
+                .map_err(|cause| format!("{cause} host={provider}"))
+        }
+        Harness::Claude | Harness::Codex => Ok(()),
+    };
+    if let Err(cause) = prepared {
         return failed(operation, &cause);
     }
     if let Err(cause) = hosted_marker(&scripts, provider, &r.item, &created.path, r.refresh) {

@@ -6082,8 +6082,9 @@ impl HostedLaunch {
     /// The provider's answers for one launch of `KEN-H`: the static ssh
     /// line with a local pane, a create naming this disk's worktree, the
     /// worktree's `.git` naming a clone, no marker until the launch puts
-    /// one (its second read answers the root), and the launch record
-    /// `record`.
+    /// one (its second read answers the root), the launch record `record`,
+    /// and a host whose Claude settings already consent to the bypass the
+    /// default posture launches under.
     fn plant(&self, record: Value) {
         let account = self.runner.state_dir().display().to_string();
         let host = self.host();
@@ -6097,6 +6098,7 @@ impl HostedLaunch {
             "touch --item KEN-H": {},
             "put --item KEN-H /srv/clone/.git/lane-mail/ken-h": {},
             "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json": {"stdout": record.to_string()},
+            "cat --item KEN-H .claude/settings.json": {"stdout": "{\"skipDangerousModePermissionPrompt\": true}\n"},
         });
         std::fs::write(
             self.scripts.join("lane-host.json"),
@@ -6110,6 +6112,21 @@ impl HostedLaunch {
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
+            .collect()
+    }
+
+    /// The bytes of each `put` of `path`, in the order the provider took
+    /// them.
+    fn puts(&self, path: &str) -> Vec<String> {
+        let line = format!("ORCH_LANE_HOST={PROVIDER} put --item KEN-H {path}");
+        self.calls()
+            .iter()
+            .enumerate()
+            .filter(|(_, call)| **call == line)
+            .map(|(at, _)| {
+                std::fs::read_to_string(self.scripts.join(format!("lane-host.put.{}", at + 1)))
+                    .unwrap()
+            })
             .collect()
     }
 
@@ -6166,6 +6183,7 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
             format!(
                 "ORCH_LANE_HOST={PROVIDER} create --item KEN-H --repo o/r --harness claude --account {account}"
             ),
+            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H .claude/settings.json"),
             format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {host}/.git"),
             format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"),
             format!("ORCH_LANE_HOST={PROVIDER} touch --item KEN-H"),
@@ -7130,6 +7148,124 @@ fn a_bypassed_claude_launch_records_the_accounts_bypass_consent_and_honours_a_re
     );
 }
 
+/// Through the real hosted launch over the planted provider: a bypassed
+/// Claude lane reads its host's Claude settings once `create` answered and
+/// before any window, records the consent where it is absent with every
+/// other key kept and reads it back, refuses a recorded `false` and a file
+/// it cannot read, each naming the host; a launch with a narrower grant
+/// reads nothing.
+#[test]
+fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_refusal() {
+    let settings = "cat --item KEN-H .claude/settings.json";
+    let consent = json!({"skipDangerousModePermissionPrompt": true});
+    let themed = json!({"theme": "dark", "skipDangerousModePermissionPrompt": true});
+    type Case<'a> = (
+        &'a str,
+        Value,
+        Option<&'a Value>,
+        Option<&'a str>,
+        Result<Option<&'a Value>, &'a str>,
+    );
+    let cases: [Case; 5] = [
+        (
+            "absent",
+            json!({"exit": 2}),
+            Some(&consent),
+            None,
+            Ok(Some(&consent)),
+        ),
+        (
+            "other keys",
+            json!({"stdout": r#"{"theme": "dark"}"#}),
+            Some(&themed),
+            None,
+            Ok(Some(&themed)),
+        ),
+        (
+            "refused",
+            json!({"stdout": r#"{"skipDangerousModePermissionPrompt": false}"#}),
+            None,
+            None,
+            Err("bypass-refused harness=claude path=.claude/settings.json"),
+        ),
+        (
+            "unreadable",
+            json!({"exit": 1, "stderr": "lane-host-ssh: cat-failed\n"}),
+            None,
+            None,
+            Err("config-unreadable harness=claude path=.claude/settings.json cause="),
+        ),
+        (
+            "narrower",
+            json!({"exit": 1}),
+            None,
+            Some("--permission-mode dontAsk"),
+            Ok(None),
+        ),
+    ];
+    for (case, standing, read_back, permission, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let world = HostedLaunch::new(&server, dir.path(), record);
+        let answers_path = world.scripts.join("lane-host.json");
+        let mut answers: Value =
+            serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+        answers[settings] = standing;
+        answers["put --item KEN-H .claude/settings.json"] = json!({});
+        if let Some(read_back) = read_back {
+            answers[format!("{settings}#2")] = json!({"stdout": read_back.to_string()});
+        }
+        std::fs::write(&answers_path, answers.to_string()).unwrap();
+        let mut request = world.request();
+        if let Some(permission) = permission {
+            request["permission"] = json!(permission);
+        }
+        let panes_before = server.panes().len();
+        let report = effect_report(&world.runner.op_fleet(&request));
+        let calls = world.calls();
+        let puts = world.puts(".claude/settings.json");
+        match expected {
+            Ok(written) => {
+                assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+                assert_eq!(server.panes().len(), panes_before + 1, "{case}: one window");
+                let written: Vec<Value> = written.into_iter().cloned().collect();
+                assert_eq!(
+                    puts.iter()
+                        .map(|bytes| serde_json::from_str::<Value>(bytes).unwrap())
+                        .collect::<Vec<_>>(),
+                    written,
+                    "{case}: the consent put where it was absent, every other key kept: {calls:?}"
+                );
+                if permission.is_some() {
+                    assert!(
+                        !calls.iter().any(|c| c.ends_with(" .claude/settings.json")),
+                        "{case}: a narrower grant reads no consent: {calls:?}"
+                    );
+                }
+                effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+            }
+            Err(cause) => {
+                assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+                let observed = report["intent"]["observation"]["cause"]
+                    .as_str()
+                    .unwrap_or("");
+                assert!(
+                    observed.starts_with(cause)
+                        && observed.ends_with(&format!(" host={}", world.provider())),
+                    "{case}: {report}"
+                );
+                assert_eq!(server.panes().len(), panes_before, "{case}: no window");
+                assert_eq!(puts, Vec::<String>::new(), "{case}: nothing put");
+                assert!(
+                    std::fs::metadata(world.tools.join("ssh.log")).is_err(),
+                    "{case}: nothing dialled"
+                );
+            }
+        }
+    }
+}
+
 /// Through the real launch: a Codex lane and a Copilot lane whose harness
 /// is up at its composer a second before it writes its session (Codex its
 /// rollout, through the private launch home's link to the account's store;
@@ -7265,12 +7401,11 @@ fn a_refused_launch_keeps_the_dependencys_cause_as_detail_or_beside_the_refusals
     }
 }
 
-/// A hosted Copilot lane, whose home is on its host, and a hosted Pi lane
-/// billing a Claude seat are refused before the provider creates anything;
-/// a hosted Pi lane on its own root is judged on its host's files once
-/// `create` named that root.
+/// A hosted Pi lane billing a Claude seat is refused before the provider
+/// creates anything; a hosted Pi lane on its own root is judged on its
+/// host's files once `create` named that root.
 #[test]
-fn a_hosted_lane_is_gated_before_create_and_a_hosted_pi_lane_on_its_host_s_files() {
+fn a_hosted_pi_lane_is_gated_before_create_and_on_its_host_s_files() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
@@ -7291,12 +7426,6 @@ fn a_hosted_lane_is_gated_before_create_and_a_hosted_pi_lane_on_its_host_s_files
     answers[format!("cat --item KEN-H {host}/.pi/settings.json")] = json!({"exit": 2});
     std::fs::write(&answers_path, answers.to_string()).unwrap();
     for (harness, model, cause, created) in [
-        (
-            "copilot",
-            None,
-            "unsupported-for-oversee harness=copilot reason=hosted".to_owned(),
-            false,
-        ),
         (
             "pi",
             Some("pi-claude/fable"),
@@ -7337,6 +7466,183 @@ fn a_hosted_lane_is_gated_before_create_and_a_hosted_pi_lane_on_its_host_s_files
             std::fs::metadata(world.tools.join("ssh.log")).is_err(),
             "nothing dialled"
         );
+    }
+}
+
+/// Through the real hosted launch over the planted provider: a Copilot lane
+/// is created, then its context reader is made to stand in the Copilot home
+/// the provider named (`.copilot` under the host user's home where it names
+/// none) through the provider's `put`, the extension and the settings flag
+/// put only where they differ, and its three lane-mail hooks are found on
+/// the host before the window opens. A host holding no hooks, and a home
+/// whose flag is set false, refuse naming the host, with no window and
+/// nothing put.
+#[test]
+fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hooks_stand() {
+    const EXTENSION: &str =
+        include_str!("../../../agent-runtime/runtime/src/copilot-lane-context.mjs");
+    let enabled = r#"{"enabledFeatureFlags": {"EXTENSIONS": true}}"#;
+    let hooks = ["lane-mail-check", "lane-mail-compact", "lane-mail-start"];
+    type Case<'a> = (
+        &'a str,
+        Option<&'a str>,
+        Value,
+        Value,
+        bool,
+        Result<Option<Value>, &'a str>,
+    );
+    let cases: [Case; 5] = [
+        (
+            "installed",
+            Some("/srv/copilot"),
+            json!({"exit": 2}),
+            json!({"stdout": r#"{"theme": "dark"}"#}),
+            true,
+            Ok(Some(
+                json!({"theme": "dark", "enabledFeatureFlags": {"EXTENSIONS": true}}),
+            )),
+        ),
+        (
+            "standing",
+            Some("/srv/copilot"),
+            json!({"stdout": EXTENSION}),
+            json!({"stdout": enabled}),
+            true,
+            Ok(None),
+        ),
+        (
+            "default home",
+            None,
+            json!({"stdout": EXTENSION}),
+            json!({"stdout": enabled}),
+            true,
+            Ok(None),
+        ),
+        (
+            "no hooks",
+            Some("/srv/copilot"),
+            json!({"stdout": EXTENSION}),
+            json!({"stdout": enabled}),
+            false,
+            Err("unsupported-for-oversee harness=copilot reason=no-context-hooks scope="),
+        ),
+        (
+            "disabled",
+            Some("/srv/copilot"),
+            json!({"stdout": EXTENSION}),
+            json!({"stdout": r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#}),
+            true,
+            Err(
+                "no-context-reader harness=copilot file=/srv/copilot/settings.json detail=disabled",
+            ),
+        ),
+    ];
+    for (case, named, extension, settings, held, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let mut world = HostedLaunch::new(&server, dir.path(), record);
+        world.runner.verify = Some(1);
+        std::os::unix::fs::symlink(
+            fixtures().join("stub-record").join("copilot"),
+            world.tools.join("copilot"),
+        )
+        .unwrap();
+        let home = named.unwrap_or(".copilot");
+        let account = world.runner.state_dir().display().to_string();
+        let host = world.host();
+        let answers_path = world.scripts.join("lane-host.json");
+        let mut answers: Value =
+            serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+        let field = named.map_or(String::new(), |home| format!("\tcopilot-home={home}"));
+        answers[format!("create --item KEN-H --repo o/r --harness copilot --account {account}")] = json!({
+            "stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c{field}\n")
+        });
+        let extension_path = format!("{home}/extensions/kendex-lane-context/extension.mjs");
+        let settings_path = format!("{home}/settings.json");
+        answers[format!("cat --item KEN-H {extension_path}")] = extension;
+        answers[format!("cat --item KEN-H {settings_path}")] = settings;
+        answers[format!("put --item KEN-H {extension_path}")] = json!({});
+        answers[format!("put --item KEN-H {settings_path}")] = json!({});
+        for name in hooks {
+            for ext in ["sh", "json"] {
+                answers[format!("cat --item KEN-H {host}/.github/hooks/{name}.{ext}")] =
+                    json!({"exit": 2});
+                answers[format!("cat --item KEN-H {home}/hooks/{name}.{ext}")] = if held {
+                    json!({"stdout": "{}\n"})
+                } else {
+                    json!({"exit": 2})
+                };
+            }
+        }
+        std::fs::write(&answers_path, answers.to_string()).unwrap();
+        let mut request = world.request();
+        request["harness"] = json!("copilot");
+        let panes_before = server.panes().len();
+        let report = effect_report(&world.runner.op_fleet(&request));
+        let calls = world.calls();
+        let extensions = world.puts(&extension_path);
+        let flags = world.puts(&settings_path);
+        match expected {
+            Ok(written) => {
+                assert_ne!(report["intent"]["outcome"], "failed", "{case}: {report}");
+                assert_eq!(server.panes().len(), panes_before + 1, "{case}: one window");
+                let launched = launch_record_of(Path::new(&host));
+                assert_eq!(
+                    launched["program"]
+                        .as_str()
+                        .and_then(|p| Path::new(p).file_name()?.to_str()),
+                    Some("copilot"),
+                    "{case}: {launched}"
+                );
+                assert!(
+                    calls
+                        .iter()
+                        .any(|c| c.ends_with(&format!(" {home}/hooks/lane-mail-start.json"))),
+                    "{case}: the hooks read in the home: {calls:?}"
+                );
+                match written {
+                    Some(settings) => {
+                        assert_eq!(extensions, vec![EXTENSION.to_owned()], "{case}");
+                        assert_eq!(
+                            flags
+                                .iter()
+                                .map(|bytes| serde_json::from_str::<Value>(bytes).unwrap())
+                                .collect::<Vec<_>>(),
+                            vec![settings],
+                            "{case}: the flag set, every other key kept"
+                        );
+                    }
+                    None => assert_eq!(
+                        (extensions.len(), flags.len()),
+                        (0, 0),
+                        "{case}: nothing put where the reader stands: {calls:?}"
+                    ),
+                }
+                effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+            }
+            Err(cause) => {
+                assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+                let observed = report["intent"]["observation"]["cause"]
+                    .as_str()
+                    .unwrap_or("");
+                assert!(
+                    observed.starts_with(cause)
+                        && observed.ends_with(&format!(" host={}", world.provider())),
+                    "{case}: {report}"
+                );
+                assert_eq!(server.panes().len(), panes_before, "{case}: no window");
+                assert_eq!(
+                    (extensions.len(), flags.len()),
+                    (0, 0),
+                    "{case}: nothing put: {calls:?}"
+                );
+                assert!(
+                    std::fs::metadata(world.tools.join("ssh.log")).is_err(),
+                    "{case}: nothing dialled"
+                );
+            }
+        }
     }
 }
 
