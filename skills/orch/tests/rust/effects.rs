@@ -7031,9 +7031,6 @@ fn a_hold_fixture_whose_row_never_releases_it_ends_within_its_bound() {
         mkfifo(&path);
         path.display().to_string()
     };
-    let run_dir = root.join("run");
-    std::fs::create_dir(&run_dir).unwrap();
-    std::fs::write(run_dir.join("start"), "").unwrap();
     let codex_home = root.join("codex-home");
     std::fs::create_dir(&codex_home).unwrap();
     mkfifo(&codex_home.join("rollout-gate"));
@@ -7091,15 +7088,6 @@ fn a_hold_fixture_whose_row_never_releases_it_ends_within_its_bound() {
             "stub-codex-gated/codex",
             vec![],
             vec![("CODEX_HOME", codex_home.display().to_string())],
-        ),
-        (
-            "dev-validate-child/dev-validate-run",
-            vec![
-                "--child".into(),
-                "--run-dir".into(),
-                run_dir.display().to_string(),
-            ],
-            vec![("DEV_VALIDATE_CHILD_HOLD", fifo("validate.fifo"))],
         ),
     ];
     let started: Vec<_> = cases

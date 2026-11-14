@@ -2,7 +2,7 @@
 use crate::error::{Error, Result};
 use crate::state::{Proof, Reused, Stage, StageOutcome, ValidateMode};
 use agent_runtime::clock::Clock;
-use agent_runtime::{host, process, reading::Reading};
+use agent_runtime::{process, reading::Reading};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
@@ -383,85 +383,22 @@ pub fn last_pass(worktree: &Path) -> Result<LastPass> {
         .unwrap_or(LastPass::None))
 }
 
-/// The child a run directory's bare `pid` names, where the runtime's executor
-/// never claimed the directory (no `execution`, no `command`): a released
-/// run directory's child records that pid and nothing else in the directory
-/// names a process, so its argv, `--child --run-dir` ending in the run
-/// directory, is the child's identity, and its runner record, which names no
-/// identity, never answers for it. The runtime's start creates the job's error
-/// log, `job.err`, with the run directory and before any runner record, so a
-/// directory with neither `job.err` nor a pid is a start whose child never
-/// ran.
-pub(crate) enum BarePid {
-    /// The executor claimed the directory, or the runtime started it and no
-    /// pid is recorded yet: the executor's and the launcher's records answer.
-    Absent,
-    /// A start whose child never recorded its pid: never live, nothing to
-    /// stop, and lost once the launch grace has passed.
-    Unstarted,
-    Gone,
-    /// Running under another argv, or a pid that is no number: never
-    /// stopped or counted as the run, while a wait on the run reads it as
-    /// running until its cap.
-    Other,
-    /// Running with the run's argv, or running with an argv that cannot be
-    /// read: a start is refused rather than run beside it.
-    Live(u32),
-}
-
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the bare pid file is checked against its actual executor arguments before it can hold a new start"
-)]
-pub(crate) fn bare_pid(run: &RunFile) -> Result<BarePid> {
-    for claim in ["execution", "command"] {
-        match fs::symlink_metadata(run.dir.join(claim)) {
-            Ok(_) => return Ok(BarePid::Absent),
+/// Whether the directory is a start whose child never ran: the runtime's
+/// start creates the job's error log, `job.err`, with the run directory and
+/// before any other record, and its executor claims the directory
+/// (`execution`, `command`) before it runs anything, so a directory holding
+/// none of the three is never live, holds nothing to stop, and is lost once
+/// the launch grace has passed. Any other directory is read by the
+/// executor's and the launcher's records.
+pub(crate) fn unstarted(run: &RunFile) -> Result<bool> {
+    for record in ["execution", "command", "job.err"] {
+        match fs::symlink_metadata(run.dir.join(record)) {
+            Ok(_) => return Ok(false),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(unreadable(claim, e)),
+            Err(e) => return Err(unreadable(record, e)),
         }
     }
-    let pid = match fs::read_to_string(run.dir.join("pid")) {
-        Ok(s) => match s.trim().parse::<u32>() {
-            Ok(pid) => pid,
-            Err(_) => return Ok(BarePid::Other),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return match fs::symlink_metadata(run.dir.join("job.err")) {
-                Ok(_) => Ok(BarePid::Absent),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BarePid::Unstarted),
-                Err(e) => Err(unreadable("job.err", e)),
-            };
-        }
-        Err(e) => return Err(unreadable("pid", e)),
-    };
-    match process::identity(pid) {
-        Reading::Gone => Ok(BarePid::Gone),
-        Reading::Unreadable { .. } => Ok(BarePid::Live(pid)),
-        Reading::Live(_) => match host::run_tagged(
-            "validate",
-            "ps",
-            Path::new("ps"),
-            "executor-args",
-            &["-ww", "-p", &pid.to_string(), "-o", "args="],
-            Duration::from_secs(15),
-        ) {
-            Ok(out) if out.status.success() => {
-                let argv = host::stdout_text(&out);
-                let name = run.dir.file_name().unwrap_or_default().to_string_lossy();
-                Ok(
-                    if argv.contains(" --child --run-dir ")
-                        && argv.ends_with(&format!("/tmp/{name}"))
-                    {
-                        BarePid::Live(pid)
-                    } else {
-                        BarePid::Other
-                    },
-                )
-            }
-            _ => Ok(BarePid::Live(pid)),
-        },
-    }
+    Ok(true)
 }
 
 #[allow(
@@ -511,10 +448,8 @@ pub fn live(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
                 .unwrap_or(0);
             return Ok(Some((run.dir, pid)));
         }
-        match bare_pid(&run)? {
-            BarePid::Live(pid) => return Ok(Some((run.dir, pid))),
-            BarePid::Unstarted | BarePid::Gone | BarePid::Other => continue,
-            BarePid::Absent => {}
+        if unstarted(&run)? {
+            continue;
         }
         match runner_reading(&run) {
             Reading::Live(pid) => return Ok(Some((run.dir, pid))),
@@ -586,14 +521,12 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
         } else {
             String::new()
         };
-        let bare = bare_pid(&run)?;
+        let unstarted = unstarted(&run)?;
         let state = if elapsed >= cap {
             Some("timeout")
-        } else if matches!(bare, BarePid::Gone)
-            || (matches!(bare, BarePid::Unstarted) && elapsed >= poll.max(10))
-        {
+        } else if unstarted && elapsed >= poll.max(10) {
             Some("lost")
-        } else if matches!(bare, BarePid::Unstarted) {
+        } else if unstarted {
             None
         } else if let Ok(pid) = fs::read_to_string(run_dir.join("pid")) {
             if pid

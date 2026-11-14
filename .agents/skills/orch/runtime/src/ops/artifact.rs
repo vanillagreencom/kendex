@@ -1743,31 +1743,6 @@ fn select_receipt(settings: &Settings, id: &Identity) -> Result<(PathBuf, Option
         Err(e) if e.kind() == ErrorKind::NotFound => {}
         Err(e) => return Err(refuse("artifact-unreadable", e)),
     }
-    // A recovery companion must bind its failed parent before selection.
-    let recovery = bare.with_file_name(format!(
-        "dev-return-{}-{}-recovery.json",
-        id.issue, id.round_id
-    ));
-    if candidates.len() == 2 && candidates.contains(&bare) && candidates.contains(&recovery) {
-        let parent = json_file(&bare, "recovery-invalid")?;
-        let child = json_file(&recovery, "recovery-invalid")?;
-        if !scalars(&parent)
-            || !parent["validate"]
-                .as_str()
-                .is_some_and(|s| s.starts_with("FAILING:"))
-            || child["recovery_of"]
-                != bare
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default()
-            || ["issue", "round_id", "kind", "branch"]
-                .iter()
-                .any(|k| parent[*k] != child[*k])
-        {
-            return Err(refuse("recovery-invalid", recovery.display()));
-        }
-        return Ok((recovery, None));
-    }
     match candidates.len() {
         0 => Ok((bare, None)),
         1 => Ok((candidates.remove(0), None)),
@@ -2341,19 +2316,6 @@ fn recovery_run(settings: &Settings, id: &Identity) -> Result<Option<(PathBuf, R
         .transpose()
 }
 
-/// The round's own run, as the receipt would select it, where the
-/// validation start's liveness reader answers it live. A start refuses to
-/// run beside a live run, so the worktree holds at most one.
-fn released_live_run(settings: &Settings, r: &RecoverRound) -> Result<Option<PathBuf>> {
-    let Some((own, _)) = recovery_run(settings, &r.id)? else {
-        return Ok(None);
-    };
-    Ok(files::live(&r.id.worktree)
-        .map_err(|e| refuse("run-unreadable", e))?
-        .map(|(dir, _)| dir)
-        .filter(|dir| dir.file_name() == own.file_name()))
-}
-
 /// The worktree's unfinished runs ended by the validation entry's
 /// `--stop --worktree` stop, before a replacement round is minted. The
 /// started jobs of the item's own open stages are its stage loop's.
@@ -2379,13 +2341,6 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
     }
     if r.directive_unconfirmed {
         return redelegate(settings, r, "directive-unconfirmed", env);
-    }
-    if let Some(dir) = released_live_run(settings, r)? {
-        return Ok(Answer {
-            value: json!({"state":"round-live","run_dir":dir}),
-            text: format!("round-recover: round-live run-dir={}", dir.display()),
-            status: 4,
-        });
     }
     let Some(file) = &r.transcript else {
         return redelegate(settings, r, "no-transcript", env);

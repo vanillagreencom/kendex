@@ -359,7 +359,7 @@ mod dev_artifacts {
             git(&self.wt, &["add", path]);
             git(&self.wt, &["commit", "-qm", "change"]);
         }
-        fn released_receipt(&self, round: &str, kind: &str) -> Value {
+        fn failing_receipt(&self, round: &str, kind: &str) -> Value {
             let mut v = json!({"schema_version":1,"round_id":round,"kind":kind,"issue":"issue-8","branch":"work","commit":self.head(),"validate":"FAILING: lint","validate_mode":null,"validate_time":null,"validate_note":null,"qa_labels":[],"summary_posted":false,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"parser input reaches this branch"}]});
             if kind == "implement" {
                 v["baseline_lines"] = json!(1);
@@ -369,9 +369,10 @@ mod dev_artifacts {
         fn plant_receipt(&self, round: &str, v: &Value) {
             fs::write(self.receipt_path(round), v.to_string()).unwrap();
         }
-        fn released_run(&self, name: &str, mode: &str) -> PathBuf {
+        fn finished_run(&self, name: &str, mode: &str) -> PathBuf {
             let dir = self.wt.join(format!("tmp/dev-validate-{name}"));
             fs::create_dir(&dir).unwrap();
+            fs::write(dir.join("job.err"), "").unwrap();
             fs::write(
                 dir.join("start"),
                 format!(
@@ -477,14 +478,14 @@ mod dev_artifacts {
             ("replacement", "late-old"),
         ] {
             w.stamp(want);
-            w.plant_receipt(want, &w.released_receipt(internal, "fix"));
+            w.plant_receipt(want, &w.failing_receipt(internal, "fix"));
             assert_eq!(w.check(want)["reason"], "invalid", "{want}/{internal}");
         }
-        let mut other_issue = w.released_receipt("r1", "fix");
+        let mut other_issue = w.failing_receipt("r1", "fix");
         other_issue["issue"] = json!("issue-9");
         w.plant_receipt("r1", &other_issue);
         assert_eq!(w.check("r1")["reason"], "invalid");
-        w.plant_receipt("r1", &w.released_receipt("r1", "fix"));
+        w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
         assert_eq!(w.check("r1")["reason"], "valid");
     }
 
@@ -618,7 +619,7 @@ mod dev_artifacts {
     fn receipt_schema_and_gate_order_refuse_the_first_invalid_evidence() {
         let w = World::new();
         w.stamp("r1");
-        let receipt = w.released_receipt("r1", "fix");
+        let receipt = w.failing_receipt("r1", "fix");
         for (key, value) in [
             ("kind", json!("unknown")),
             ("issue", json!([])),
@@ -777,7 +778,7 @@ mod dev_artifacts {
     fn receipt_items_are_the_exact_delegated_set() {
         let w = World::new();
         w.stamp("r1");
-        let good = w.released_receipt("r1", "fix");
+        let good = w.failing_receipt("r1", "fix");
         for items in [
             json!([]),
             json!([{"n":2,"decision":"Applied","reasoning":"x"}]),
@@ -851,7 +852,7 @@ mod dev_artifacts {
     fn receipt_writer_preserves_sources_timing_summary_and_failure_identity() {
         let w = World::new();
         w.stamp("r1");
-        let run = w.released_run("one", "full");
+        let run = w.finished_run("one", "full");
         let dir = run.to_str().unwrap();
         let out = w.write(
             "r1",
@@ -929,7 +930,7 @@ mod dev_artifacts {
             .collect();
         assert!(scratch.is_empty(), "{scratch:?}");
         assert_eq!(w.check("r1")["verdict"], "retry");
-        let second = w.released_run("two", "full");
+        let second = w.finished_run("two", "full");
         result(&w.write(
             "r1",
             "fix",
@@ -965,7 +966,7 @@ mod dev_artifacts {
                 "true",
             ],
         ));
-        let ci = w.released_run("ci", "full");
+        let ci = w.finished_run("ci", "full");
         fs::write(
             ci.join("start"),
             fs::read_to_string(ci.join("start"))
@@ -1024,7 +1025,7 @@ mod dev_artifacts {
         // The record keeps every field the evidence and the arguments name.
         let shot = w.root.join("shot.png");
         fs::write(&shot, "png").unwrap();
-        let classed = w.released_run("class", "full");
+        let classed = w.finished_run("class", "full");
         w.record_start(&classed, &format!("class-base={head}"));
         let answer = result(&w.write(
             "bundle",
@@ -1051,7 +1052,7 @@ mod dev_artifacts {
         assert_eq!(v["validate_note"], "a caveat");
         assert_eq!(v["bundled"], true);
         assert_eq!(v["validate_class_base"], head);
-        let span = w.released_run("span", "full");
+        let span = w.finished_run("span", "full");
         fs::write(
             span.join("timing"),
             "started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:00:01Z\nseconds=5\n",
@@ -1067,7 +1068,7 @@ mod dev_artifacts {
             "timing-unreadable",
         );
         // An unfinished run has no wall time yet.
-        let open = w.released_run("open", "full");
+        let open = w.finished_run("open", "full");
         fs::remove_file(open.join("exit")).unwrap();
         fs::remove_file(open.join("timing")).unwrap();
         let answer = result(&w.write(
@@ -1088,7 +1089,7 @@ mod dev_artifacts {
         }
         fs::write(w.item(), doc.to_string()).unwrap();
         w.stamp("pick");
-        let mut stale = w.released_receipt("pick", "fix");
+        let mut stale = w.failing_receipt("pick", "fix");
         stale["kind"] = json!("unknown");
         fs::write(
             w.wt.join("tmp/dev-return-issue-8-pick-older.json"),
@@ -1097,14 +1098,14 @@ mod dev_artifacts {
         .unwrap();
         fs::write(
             w.wt.join("tmp/dev-return-issue-8-pick-newer.json"),
-            w.released_receipt("pick", "fix").to_string(),
+            w.failing_receipt("pick", "fix").to_string(),
         )
         .unwrap();
         assert_eq!(w.check("pick")["reason"], "valid");
     }
 
     #[test]
-    fn released_foreground_records_need_complete_timing_and_a_clean_recorded_tree() {
+    fn foreground_records_need_complete_timing_and_a_clean_recorded_tree() {
         let w = World::new();
         w.stamp("r1");
         let file = w.root.join("foreground");
@@ -1345,7 +1346,7 @@ mod dev_artifacts {
     fn a_stopped_run_reads_no_verdict_never_a_failure_or_a_pass() {
         let w = World::new();
         w.stamp("r1");
-        let run = w.released_run("stopped", "full");
+        let run = w.finished_run("stopped", "full");
         fs::write(run.join("exit"), "guard-exit=143 at=2026-01-01T00:00:01Z\n").unwrap();
         fs::write(run.join("stop"), "stop-requested\n").unwrap();
         let dir = run.to_str().unwrap();
@@ -1382,7 +1383,7 @@ mod dev_artifacts {
     fn an_unreadable_run_record_refuses_the_receipt_with_the_readers_own_diagnostic() {
         let w = World::new();
         w.stamp("r1");
-        let bad = w.released_run("bad", "class");
+        let bad = w.finished_run("bad", "class");
         let empty = w.wt.join("tmp/dev-validate-empty");
         fs::create_dir(&empty).unwrap();
         for (dir, cause) in [
@@ -1432,7 +1433,7 @@ mod dev_artifacts {
     fn the_writers_own_refusals_exit_two_name_their_guard_and_write_nothing() {
         let w = World::new();
         w.stamp("r1");
-        let run = w.released_run("one", "full");
+        let run = w.finished_run("one", "full");
         let dir = run.to_str().unwrap();
         let shots = w.root.join("shots");
         fs::create_dir(&shots).unwrap();
@@ -1732,7 +1733,7 @@ mod dev_artifacts {
             );
         }
         let receipt = w.root.join("receipt.json");
-        fs::write(&receipt, w.released_receipt("r1", "fix").to_string()).unwrap();
+        fs::write(&receipt, w.failing_receipt("r1", "fix").to_string()).unwrap();
         let receipt = receipt.to_str().unwrap();
         for (args, key) in [
             (
@@ -1889,7 +1890,7 @@ mod dev_artifacts {
             let w = World::new();
             w.stamp("r1");
             w.commit(path);
-            w.plant_receipt("r1", &w.released_receipt("r1", "fix"));
+            w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
             assert_eq!(
                 w.check("r1")["reason"],
                 if protected {
@@ -1914,7 +1915,7 @@ mod dev_artifacts {
             ],
         ));
         w.commit("tools/authorized");
-        w.plant_receipt("r1", &w.released_receipt("r1", "fix"));
+        w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
         assert_eq!(w.check("r1")["reason"], "valid");
         // A protected path the round's base already held is no addition,
         // whether the round edits it or moves a file onto a protected path.
@@ -1923,7 +1924,7 @@ mod dev_artifacts {
         git(&w.wt, &["commit", "-qam", "edit"]);
         git(&w.wt, &["mv", "app.txt", "tools/app.txt"]);
         git(&w.wt, &["commit", "-qm", "move"]);
-        w.plant_receipt("edits", &w.released_receipt("edits", "fix"));
+        w.plant_receipt("edits", &w.failing_receipt("edits", "fix"));
         assert_eq!(w.check("edits")["reason"], "valid");
         let linked = w.root.join("linked");
         git(
@@ -1957,7 +1958,7 @@ mod dev_artifacts {
         fs::write(linked.join("tools/linked"), "change").unwrap();
         git(&linked, &["add", "tools/linked"]);
         git(&linked, &["commit", "-qm", "linked change"]);
-        let mut value = w.released_receipt("linked", "fix");
+        let mut value = w.failing_receipt("linked", "fix");
         value["commit"] = json!(git(&linked, &["rev-parse", "HEAD"]));
         fs::write(
             linked.join("tmp/dev-return-issue-8-linked.json"),
@@ -2044,7 +2045,7 @@ mod dev_artifacts {
         );
         // The round's admitted run is its run, whatever a later run beside it
         // answered.
-        let late = w.released_run("late", "full");
+        let late = w.finished_run("late", "full");
         fs::write(
             late.join("start"),
             fs::read_to_string(late.join("start"))
@@ -2104,10 +2105,10 @@ mod dev_artifacts {
             )
         };
         refused(
-            &write("unstamped", &w.released_run("unstamped", "full")),
+            &write("unstamped", &w.finished_run("unstamped", "full")),
             "round-missing",
         );
-        let other = w.released_run("other-command", "full");
+        let other = w.finished_run("other-command", "full");
         fs::write(other.join("cmd"), "another command").unwrap();
         refused(&write("r1", &other), "run-off-round");
         let round = w.round_path("r1");
@@ -2116,7 +2117,7 @@ mod dev_artifacts {
         absent["base_sha"] = json!("1".repeat(40));
         fs::write(&round, absent.to_string()).unwrap();
         refused(
-            &write("r1", &w.released_run("absent-base", "full")),
+            &write("r1", &w.finished_run("absent-base", "full")),
             "ancestry-unreadable",
         );
         fs::write(&round, stamped).unwrap();
@@ -2128,7 +2129,7 @@ mod dev_artifacts {
         git(&w.wt, &["reset", "-q", "--hard", "main"]);
         w.commit("y.txt");
         let snapshot = |name: &str, line: Option<String>| {
-            let run = w.released_run(name, "full");
+            let run = w.finished_run(name, "full");
             w.record_start(&run, &format!("tree={}", w.tree()));
             if let Some(line) = line {
                 w.record_start(&run, &line);
@@ -2162,35 +2163,12 @@ mod dev_artifacts {
     }
 
     #[test]
-    fn released_bare_receipts_and_bound_recovery_companions_remain_readable() {
+    fn a_bare_receipt_is_the_rounds_answer_with_no_proof_run_of_its_own() {
         let w = World::new();
         w.stamp("r1");
-        let parent = w.released_receipt("r1", "fix");
+        let parent = w.failing_receipt("r1", "fix");
         w.plant_receipt("r1", &parent);
         assert_eq!(w.check("r1")["reason"], "valid");
-        let mut child = parent.clone();
-        child["validate"] = json!("pass");
-        child["validate_mode"] = json!("full");
-        child["validate_time"] = json!({"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:00:00Z","seconds":0});
-        child["recovery_of"] = json!("dev-return-issue-8-r1.json");
-        let path = w.wt.join("tmp/dev-return-issue-8-r1-recovery.json");
-        fs::write(&path, child.to_string()).unwrap();
-        assert_eq!(w.check("r1")["verdict"], "accept");
-        let companion = |child: &Value| {
-            fs::write(&path, child.to_string()).unwrap();
-            w.call(
-                &["dev-return", "check"],
-                "r1",
-                &["--expect-items-from-round"],
-            )
-        };
-        let mut other_parent = child.clone();
-        other_parent["recovery_of"] = json!("another.json");
-        refused(&companion(&other_parent), "recovery-invalid");
-        let mut other_branch = child.clone();
-        other_branch["branch"] = json!("elsewhere");
-        refused(&companion(&other_branch), "recovery-invalid");
-        fs::remove_file(&path).unwrap();
         // A run the round admitted with no proof recorded and no receipt of
         // its own leaves the round's bare receipt the answer.
         let mut doc = w.doc();
@@ -2276,7 +2254,7 @@ mod dev_artifacts {
             ))
         };
         let w = World::new();
-        w.released_run("passed", "full");
+        w.finished_run("passed", "full");
         let recovered = implement(&w);
         let v: Value = serde_json::from_str(
             &fs::read_to_string(recovered["artifact"].as_str().unwrap()).unwrap(),
@@ -2284,12 +2262,12 @@ mod dev_artifacts {
         .unwrap();
         assert_eq!(v["qa_labels"], json!(["needs-review", "needs-test"]));
         let w = World::new();
-        let stale = w.released_run("stale", "full");
+        let stale = w.finished_run("stale", "full");
         w.record_start(&stale, "tree=0000000000000000000000000000000000000000");
         assert_eq!(implement(&w)["reason"], "validate-unproven");
         let w = World::new();
-        w.released_run("older", "full");
-        let newer = w.released_run("newer", "full");
+        w.finished_run("older", "full");
+        let newer = w.finished_run("newer", "full");
         fs::write(
             newer.join("start"),
             fs::read_to_string(newer.join("start"))
@@ -2378,143 +2356,6 @@ mod dev_artifacts {
         refused(&out, "record-missing");
     }
 
-    struct Group(PathBuf);
-    impl Drop for Group {
-        fn drop(&mut self) {
-            if let Ok(pid) = fs::read_to_string(&self.0) {
-                let _ = program("kill")
-                    .args(["-KILL", "--", &format!("-{}", pid.trim())])
-                    .status();
-            }
-        }
-    }
-
-    fn until(what: &str, mut done: impl FnMut() -> bool) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        while !done() {
-            assert!(std::time::Instant::now() < deadline, "{what}");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    #[test]
-    fn a_released_bare_pid_run_holds_recovery_and_directive_replacement_stops_its_group_first() {
-        // The shell producer's records: its runner record before the launch,
-        // then the child's own pid, written by the child, whose argv ends in
-        // the run directory. The child outlives `until`'s bound, so within
-        // it only a stop ends the child; the group guard ends it otherwise.
-        let live_run = |w: &World, name: &str| {
-            let dir = w.released_run(name, "full");
-            fs::remove_file(dir.join("exit")).unwrap();
-            fs::write(
-                dir.join("runner"),
-                "runner=setsid\nline=runner=setsid reason=no-linger\n",
-            )
-            .unwrap();
-            let pid_file = dir.join("pid");
-            let group = Group(pid_file.clone());
-            let started = program("setsid")
-                .args([
-                    "-f",
-                    "sh",
-                    "-c",
-                    "echo $$ > \"$1\"; exec perl -e 'sleep 120' -- planted --child --run-dir \"$2\"",
-                    "child",
-                    pid_file.to_str().unwrap(),
-                    dir.to_str().unwrap(),
-                ])
-                .status()
-                .unwrap();
-            assert!(started.success());
-            until("the child recorded its pid", || {
-                fs::read_to_string(&pid_file).is_ok_and(|p| p.ends_with('\n'))
-            });
-            let pid = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
-            (dir, group, pid)
-        };
-        let alive = |pid: &str| {
-            program("kill")
-                .args(["-0", pid])
-                .status()
-                .unwrap()
-                .success()
-        };
-        let w = World::new();
-        let (dir, _group, pid) = live_run(&w, "live");
-        let before = w.doc();
-        let out = w.call(&["round", "recover"], "r1", &[]);
-        assert_eq!(out.status.code(), Some(4), "{}", stderr(&out));
-        assert_eq!(result(&out)["state"], "round-live");
-        assert_eq!(w.doc(), before);
-        let unreadable = w.root.join("transcript-dir");
-        fs::create_dir(&unreadable).unwrap();
-        let unreadable = unreadable.to_str().unwrap();
-        refused(
-            &w.call(&["round", "recover"], "r1", &["--transcript", unreadable]),
-            "transcript-unreadable",
-        );
-        let out = w.call(
-            &["round", "recover"],
-            "r1",
-            &["--transcript", unreadable, "--directive-unconfirmed"],
-        );
-        assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
-        assert!(out.stdout.is_empty());
-        assert_eq!(w.doc(), before);
-        let answer = result(&w.call(&["round", "recover"], "r1", &["--directive-unconfirmed"]));
-        assert_eq!(answer["state"], "redelegate");
-        assert_eq!(answer["reason"], "directive-unconfirmed");
-        assert_eq!(
-            fs::read_to_string(dir.join("stop")).unwrap(),
-            "stop-requested\n"
-        );
-        until("the stop ended the child's group", || !alive(&pid));
-        // A process that took the child's number under another argv is not
-        // the run: it holds no recovery and a replacement never signals it.
-        let w = World::new();
-        let dir = w.released_run("other", "full");
-        fs::remove_file(dir.join("exit")).unwrap();
-        fs::write(
-            dir.join("runner"),
-            "runner=setsid\nline=runner=setsid reason=no-linger\n",
-        )
-        .unwrap();
-        let other = support::Owned::sleep();
-        fs::write(dir.join("pid"), format!("{}\n", other.pid())).unwrap();
-        let out = w.call(&["round", "recover"], "r1", &[]);
-        assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
-        assert_eq!(result(&out)["reason"], "no-transcript");
-        let answer = result(&w.call(&["round", "recover"], "r1", &["--directive-unconfirmed"]));
-        assert_eq!(answer["state"], "redelegate");
-        assert!(alive(&other.pid().to_string()), "the other process runs on");
-        // A run still going over an earlier tree is not the round's run.
-        let w = World::new();
-        let (_, _group, pid) = live_run(&w, "earlier");
-        w.commit("app.txt");
-        w.released_run("own", "full");
-        let out = w.call(&["round", "recover"], "r1", &[]);
-        assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
-        assert!(alive(&pid));
-        // The item's own runs its stage loop does not stop, admitted with no
-        // job yet or closed while their files run on, end before the
-        // replacement too.
-        for stage in [
-            json!({"kind":"validate","round_id":"r1","start":1,"end":null}),
-            json!({"kind":"validate","round_id":"r1","start":1,"end":2,"outcome":"fail"}),
-        ] {
-            let w = World::new();
-            let (dir, _group, pid) = live_run(&w, "own-stage");
-            let mut doc = w.doc();
-            let mut stage = stage;
-            stage["run_dir"] = json!(dir);
-            doc["stages"].as_array_mut().unwrap().push(stage.clone());
-            fs::write(w.item(), doc.to_string()).unwrap();
-            let answer = result(&w.call(&["round", "recover"], "r1", &["--directive-unconfirmed"]));
-            assert_eq!(answer["reason"], "directive-unconfirmed", "{stage}");
-            until("the stop ended the item's own run", || !alive(&pid));
-        }
-    }
-
     #[test]
     fn recovery_contradicted_reports_redelegate_without_a_receipt() {
         for (report, reason) in [
@@ -2595,7 +2436,7 @@ mod dev_artifacts {
             )
         };
         let w = World::new();
-        let failed = w.released_run("failed", "full");
+        let failed = w.finished_run("failed", "full");
         fs::write(
             failed.join("exit"),
             "guard-exit=1 at=2026-01-01T00:00:01Z\n",
@@ -2603,7 +2444,7 @@ mod dev_artifacts {
         .unwrap();
         assert_eq!(recover(&w, &pass(&w))["reason"], "validate-unproven");
         let w = World::new();
-        let ci = w.released_run("ci", "full");
+        let ci = w.finished_run("ci", "full");
         fs::write(
             ci.join("start"),
             fs::read_to_string(ci.join("start"))
@@ -2679,7 +2520,7 @@ mod dev_artifacts {
     fn receipt_optional_fields_keep_unread_information_and_filter_wrong_shapes() {
         let w = World::new();
         w.stamp("r1");
-        let good = w.released_receipt("r1", "fix");
+        let good = w.failing_receipt("r1", "fix");
         for (field, input, expected) in [
             (
                 "near_ceiling",
@@ -2713,7 +2554,7 @@ mod dev_artifacts {
     fn malformed_round_records_never_supply_the_expected_items() {
         let w = World::new();
         w.stamp("r1");
-        w.plant_receipt("r1", &w.released_receipt("r1", "fix"));
+        w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
         let path = w.round_path("r1");
         let good: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         for (field, value, key) in [
@@ -2808,7 +2649,7 @@ mod dev_artifacts {
                 ),
                 "required",
             );
-            let run = w.released_run("apple", "full");
+            let run = w.finished_run("apple", "full");
             let dir = run.to_str().unwrap();
             refused(
                 &w.write(
@@ -2903,7 +2744,7 @@ mod dev_artifacts {
         let notes = [("notes.txt", Some("change\n"))];
         let project = |text: &'static str| ("App.xcodeproj/project.pbxproj", text);
         let pass = |w: &World, env: &[(&str, &str)], extra: &[&str]| {
-            let run = w.released_run("apple", "full");
+            let run = w.finished_run("apple", "full");
             let head = w.head();
             w.command()
                 .envs(env.iter().copied())
@@ -3166,7 +3007,7 @@ mod dev_artifacts {
         let w = world(&[wf], &ios);
         result(&w.write("r1", "implement", "FAILING: mac run test", &[]));
         let w = world(&[wf], &ios);
-        let stopped = w.released_run("stopped", "full");
+        let stopped = w.finished_run("stopped", "full");
         fs::write(
             stopped.join("exit"),
             "guard-exit=143 at=2026-01-01T00:00:01Z\n",
@@ -3218,7 +3059,7 @@ mod dev_artifacts {
         w.commit("new.txt");
         let new = w.head();
         w.commit("tools/new");
-        let receipt = w.released_receipt("r1", "fix");
+        let receipt = w.failing_receipt("r1", "fix");
         w.plant_receipt("r1", &receipt);
         assert_eq!(w.check("r1")["reason"], "additions_unattributable");
         let map = PathBuf::from(git(
@@ -3234,7 +3075,7 @@ mod dev_artifacts {
         assert_eq!(w.check("r1")["reason"], "comparison_failed");
         fs::remove_dir(&map).unwrap();
         let bound = |name: &str, head: &str| {
-            let run = w.released_run(name, "full");
+            let run = w.finished_run(name, "full");
             fs::write(
                 run.join("start"),
                 fs::read_to_string(run.join("start"))
@@ -3283,7 +3124,7 @@ mod dev_artifacts {
         let w = World::new();
         w.stamp("r1");
         w.commit("tools/new");
-        let mut value = w.released_receipt("r1", "fix");
+        let mut value = w.failing_receipt("r1", "fix");
         value["validate_mode"] = json!("full");
         value["validate_time"] = json!({"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:00:01Z","seconds":1});
         w.plant_receipt("r1", &value);
@@ -3321,39 +3162,15 @@ mod dev_artifacts {
     }
 
     #[test]
-    fn runtime_entries_delegate_arguments_and_preserve_the_plain_answer_contract() {
+    fn the_text_entries_answer_plainly_and_read_a_leading_hyphen_as_a_value() {
         let w = World::new();
-        let key_lib = scripts().join("../../agent-runtime/scripts/lib/key.sh");
-        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let out = program("/bin/bash")
-            .args(["-c", ". \"$1\"; agent_runtime_key \"$2\"", "key"])
-            .arg(key_lib)
-            .arg(runtime)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        let key = String::from_utf8(out.stdout).unwrap().trim().to_owned();
-        let cache = w.root.join("cache");
-        fs::create_dir_all(cache.join("bin")).unwrap();
-        // Copied by a child: a file this process held open for writing would
-        // be held by every other test thread's child between its fork and
-        // its exec, and running the copy then fails `ETXTBSY`.
-        let copied = program("cp")
-            .arg(support::binary())
-            .arg(cache.join(format!("bin/orch-runtime-{key}")))
-            .status()
-            .unwrap();
-        assert!(copied.success());
         w.stamp("r1");
-        let out = program(scripts().join("dev-artifact-check"))
-            .current_dir(&w.wt)
-            .args(w.identity("r1"))
-            .arg("--expect-items-from-round")
-            .env("AGENT_RUNTIME_CACHE", &cache)
-            .env("ORCH_STATE_DIR", &w.state)
-            .output()
-            .unwrap();
-        assert_eq!(out.status.code(), Some(1));
+        let out = w.call(
+            &["dev-return", "--text", "check"],
+            "r1",
+            &["--expect-items-from-round"],
+        );
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
         let v: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(v["verdict"], "wait");
         // A value that begins with a hyphen is prose, not a flag.
@@ -3663,7 +3480,7 @@ mod dev_artifacts {
         assert_eq!(answer.value["verdict"], "wait");
         assert_eq!(clock.elapsed(), Duration::from_secs(3));
         // A receipt that is there answers at once, whatever the budget left.
-        w.plant_receipt("r1", &w.released_receipt("r1", "implement"));
+        w.plant_receipt("r1", &w.failing_receipt("r1", "implement"));
         let settings = settings::load(&roots, &[], &flags).unwrap();
         let request = CheckReturn {
             file: None,

@@ -727,7 +727,7 @@ impl Said {
                 path.display()
             ),
             Said::RowsUnwritten(_) => "this session's event row could not be written, so the overseer judgement reads what the file already holds or, with no row, the pane, the named fallback; the session goes on:".to_owned(),
-            Said::LaneRowsUnwritten(_) => "this Pi lane's turn row could not be written, so oversee-watch and lanes state judge the lane from the rows the file already holds; the lane goes on:".to_owned(),
+            Said::LaneRowsUnwritten(_) => "this Pi lane's turn row could not be written, so the watch judges the lane from the rows the file already holds; the lane goes on:".to_owned(),
             Said::Events(status) => format!(
                 "the lane mailbox reader's events listing exited {status}, so whether this lane sent anything this turn is unknown; the turn ends unjudged rather than held, because nothing a lane does at its turn end repairs its mailbox:"
             ),
@@ -764,11 +764,11 @@ impl Said {
                 "the {harness} compaction settings could not be read. The token cap is still judged; the percentage mark has no verified point:"
             ),
             Said::HarnessUnlisted(dir) => format!(
-                "{} is no hook directory of a harness the orch adapters read a transcript for, so this session's context is not read and the context mark is not judged, and no Pi turn row is written, so a Pi lane running this install reads unjudged in oversee-watch and lanes state; the gap is reported rather than held",
+                "{} is no hook directory of a harness the orch adapters read a transcript for, so this session's context is not read and the context mark is not judged, and no Pi turn row is written, so a Pi lane running this install reads unjudged in the watch; the gap is reported rather than held",
                 dir.display()
             ),
             Said::ContextUnrecorded(path) => format!(
-                "this session's context reading could not be written to {}, so lanes context and oversee-succeed still hold the reading before it; the mark itself is judged on the reading this hook took:",
+                "this session's context reading could not be written to {}, so the watch and the next turn end still read the reading before it; the mark itself is judged on the reading this hook took:",
                 path.display()
             ),
             Said::Context {

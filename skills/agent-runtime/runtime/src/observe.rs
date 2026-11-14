@@ -232,8 +232,6 @@ static CLAUDE_COMPOSER: LazyLock<Regex> = LazyLock::new(|| Regex::new("^❯\u{a0
 static CODEX_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^› ").unwrap());
 /// Copilot's composer is the marker line with a rule drawn under it.
 static FRAME_RULE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[─━]{10,}\s*$").unwrap());
-static TRUST_DIALOG: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"Do you trust the files in this (folder|directory)").unwrap());
 /// Pi's editor border while a turn runs: a spinner glyph and the word.
 static PI_WORKING_BORDER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^── \S+ Working ─+\s*$").unwrap());
@@ -428,10 +426,6 @@ pub fn composer_drawn(slice: &str, harness: Harness) -> bool {
             .any(|w| MARKER.is_match(w[0]) && FRAME_RULE.is_match(w[1])),
         Harness::Pi => pi_composer_drawn(slice),
     }
-}
-
-pub fn trust_dialog(screen: &str) -> Option<&str> {
-    screen.lines().find(|l| TRUST_DIALOG.is_match(l))
 }
 
 /// The account's banner in the slice, empty when the harness drew none or

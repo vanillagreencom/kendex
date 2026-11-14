@@ -29,9 +29,9 @@ use agent_runtime::journal::Env;
 
 /// The poll interval a start records when the caller names none.
 pub const POLL_DEFAULT: u64 = 30;
-pub const JOB_UNIT_UNCONFIRMED: i32 = 6;
-/// The seconds between the bound's SIGTERM and its SIGKILL, job-unit's
-/// grace, which the cap carries so the sentinel lands inside a wait.
+/// The seconds between the bound's SIGTERM and its SIGKILL, the job
+/// launcher's grace, which the cap carries so the sentinel lands inside a
+/// wait.
 pub const KILL_GRACE: u64 = 10;
 /// How long a git read, a classifier read or a sibling script may take.
 const READ_TIMEOUT: Duration = Duration::from_secs(120);
@@ -1548,8 +1548,9 @@ fn write_run_dir(
     let write = |name: &str, text: &str| {
         fs::write(run_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
     };
-    // The job's error log stands before any record: a released run directory
-    // holds none, so it marks the directories this start wrote.
+    // The job's error log stands before any other record, so a directory
+    // holding neither it nor an executor's claim is a start whose child
+    // never ran (`files::unstarted`).
     write("job.err", "")?;
     write("class.log", &resolved.class_log)?;
     let mut paths = resolved.paths.join("\n");

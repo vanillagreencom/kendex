@@ -1005,28 +1005,27 @@ impl<'a> Judge<'a> {
             }
             _ => String::new(),
         };
-        let workflow_state =
-            shell_quoted(&scripts_dir(&self.settings.roots.project).join("workflow-state"));
+        let runtime = shell_quoted(&scripts_dir(&self.settings.roots.project).join("orch-runtime"));
         let item = shell_quoted(Path::new(self.item));
         let mut init = String::new();
         if !std::fs::metadata(&self.file).is_ok_and(|meta| meta.is_file()) {
             let branch = self.lane.branch(turn)?;
             init = if branch.is_empty() {
-                format!("  {workflow_state}{state_args} init {item}\n")
+                format!("  {runtime}{state_args} state init --item {item}\n")
             } else {
                 format!(
-                    "  {workflow_state}{state_args} init {item} --branch {}\n",
+                    "  {runtime}{state_args} state init --item {item} --branch {}\n",
                     shell_quoted(Path::new(&branch))
                 )
             };
         }
         let record = format!(
-            r#"{{"merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]","open_pr":"[PR_NUMBER_OR_NULL]","traps":["[TRAP]"],"context":{context}}}"#
+            r#"{{"op":"record-handoff","merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]","open_pr":"[PR_NUMBER_OR_NULL]","traps":["[TRAP]"],"context":{context}}}"#
         );
         let word = format!("'{}'", record.replace('\'', r"'\''"));
         let reader = shell_quoted(&self.settings.lane_mail_cli);
         Ok(format!(
-            "{agent}\nReach the next safe point first, a pushed head, a landed merge or a held PR; never interrupt a round or leave an unpushed tree. There, write the handoff record and send the notice, then end the session:\n{init}  {workflow_state}{state_args} set {item} handoff {word}\n  {reader} notice --item {item} --file [FILE NAMING WHAT IS LEFT]\nThis refusal repeats at every turn end until that record stands."
+            "{agent}\nReach the next safe point first, a pushed head, a landed merge or a held PR; never interrupt a round or leave an unpushed tree. There, write the handoff record and send the notice, then end the session:\n{init}  {runtime}{state_args} op --item {item} --request-json {word}\n  {reader} notice --item {item} --file [FILE NAMING WHAT IS LEFT]\nThis refusal repeats at every turn end until that record stands."
         ))
     }
 

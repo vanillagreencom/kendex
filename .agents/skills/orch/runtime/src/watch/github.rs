@@ -1520,34 +1520,22 @@ enum Standing {
     Unjudged,
 }
 
-fn refresh_row(value: &str) -> Result<(Option<RunKey>, Standing)> {
-    // `<run json>|<standing>`, or a released watch's unrecorded `<passes>|<cause>`.
-    if let Some((record, standing)) = value.split_once("]|") {
-        let key = RunKey::parse(&format!("{record}]")).ok_or_else(|| {
-            refused(
-                "github-row-invalid",
-                &[("row", REFRESH_ROW), ("value", value)],
-            )
-        })?;
-        let standing = match standing {
-            "" => Standing::Clear,
-            "unjudged" => Standing::Unjudged,
-            rest => parse_failing(rest).ok_or_else(|| {
-                refused(
-                    "github-row-invalid",
-                    &[("row", REFRESH_ROW), ("value", value)],
-                )
-            })?,
-        };
-        return Ok((Some(key), standing));
-    }
-    match parse_failing(value) {
-        Some(standing) => Ok((None, standing)),
-        None => Err(refused(
+/// The row `<run json>|<standing>`.
+fn refresh_row(value: &str) -> Result<(RunKey, Standing)> {
+    let invalid = || {
+        refused(
             "github-row-invalid",
             &[("row", REFRESH_ROW), ("value", value)],
-        )),
-    }
+        )
+    };
+    let (record, standing) = value.split_once("]|").ok_or_else(invalid)?;
+    let key = RunKey::parse(&format!("{record}]")).ok_or_else(invalid)?;
+    let standing = match standing {
+        "" => Standing::Clear,
+        "unjudged" => Standing::Unjudged,
+        rest => parse_failing(rest).ok_or_else(invalid)?,
+    };
+    Ok((key, standing))
 }
 
 fn parse_failing(text: &str) -> Option<Standing> {
@@ -1679,7 +1667,10 @@ fn refresh(
             }
         }
         let (recorded, mut standing) = match baseline.get(REFRESH_ROW, repo) {
-            Some(value) => refresh_row(value)?,
+            Some(value) => {
+                let (key, standing) = refresh_row(value)?;
+                (Some(key), standing)
+            }
             None => (None, Standing::Clear),
         };
         let newest = runs.first().map(|r| RunKey::of(r)).transpose()?;
@@ -2679,10 +2670,10 @@ mod tests {
         );
     }
 
-    /// The refresh row's two layouts, the runtime's and a released watch's,
-    /// round-trip, and an unknown layout is refused.
+    /// The refresh row round-trips its run and standing, and a value in no
+    /// other layout is refused.
     #[test]
-    fn the_refresh_row_reads_the_runtime_and_released_layouts() {
+    fn the_refresh_row_reads_its_run_and_standing_and_refuses_another_layout() {
         let key = RunKey {
             created_at: "2026-01-01T00:00:00Z".into(),
             id: 1234,
@@ -2691,44 +2682,30 @@ mod tests {
         assert_eq!(key.render(), "[\"2026-01-01T00:00:00Z\",1234,1]");
         assert_eq!(RunKey::parse(&key.render()), Some(key.clone()));
         let rows = [
-            (
-                format!("{}|", key.render()),
-                Some(key.clone()),
-                Standing::Clear,
-            ),
-            (
-                format!("{}|unjudged", key.render()),
-                Some(key.clone()),
-                Standing::Unjudged,
-            ),
+            (format!("{}|", key.render()), Standing::Clear),
+            (format!("{}|unjudged", key.render()), Standing::Unjudged),
             (
                 format!("{}|2|failed: x", key.render()),
-                Some(key.clone()),
                 Standing::Failing {
                     passes: 2,
                     cause: "failed: x".into(),
                 },
             ),
-            (
-                "3|Error: y".to_owned(),
-                None,
-                Standing::Failing {
-                    passes: 3,
-                    cause: "Error: y".into(),
-                },
-            ),
         ];
-        for (value, recorded, standing) in rows {
+        for (value, standing) in rows {
             assert_eq!(
                 refresh_row(&value).unwrap(),
-                (recorded, standing),
+                (key.clone(), standing),
                 "{value}"
             );
         }
-        assert_eq!(
-            refresh_row("garbage").unwrap_err().key(),
-            "github-row-invalid"
-        );
+        for value in ["garbage", "3|Error: y"] {
+            assert_eq!(
+                refresh_row(value).unwrap_err().key(),
+                "github-row-invalid",
+                "{value}"
+            );
+        }
     }
 
     /// The cause ranking over job logs with their timestamp prefixes.

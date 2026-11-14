@@ -7170,13 +7170,10 @@ fn a_request_whose_answer_was_lost_is_sent_once_more_then_falls_back_unconfirmed
 
 /// An error answer's retry is decided with the request: a request the
 /// policy held back holds the retry back, answering `copilot-error` with
-/// its cause once; Copilot's work already in flight stands for the retry;
-/// and a retry an earlier install recorded under
-/// `pr_approval.copilot_error_retries`, planted as that install wrote it,
-/// is the head's retry, carried into its record. None of them is requested
-/// again.
+/// its cause once; and Copilot's work already in flight stands for the
+/// retry. Neither is requested again.
 #[test]
-fn an_error_retry_in_flight_or_released_is_not_requested_again() {
+fn an_error_retry_in_flight_or_held_back_is_not_requested_again() {
     let error_world = || {
         let mut gh = Github::review_world();
         gh.answer(
@@ -7216,32 +7213,6 @@ fn an_error_retry_in_flight_or_released_is_not_requested_again() {
     let again = ok_result(&gh.review(false, &[]));
     assert_eq!(again["status"], "pending", "{again}");
     assert_eq!(gh.requests(), 0, "{:?}", gh.log());
-
-    // A retry an earlier install recorded: a `requested` one GitHub
-    // recorded after the error, and a `fallback` one.
-    for (outcome, request, timeline) in [
-        (
-            "requested",
-            "existing",
-            json!([{"event": "review_requested", "id": 71, "created_at": "2026-01-01T00:06:00Z", "requested_reviewer": {"login": "Copilot"}}]),
-        ),
-        ("fallback", "fallback", json!([])),
-    ] {
-        let mut gh = error_world();
-        gh.answer(&timeline_path(), timeline);
-        let mut state = gh.state();
-        state["pr_approval"] =
-            json!({"copilot_error_retries": {HEAD: {"review_id": "11", "outcome": outcome}}});
-        fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
-        for _ in 0..2 {
-            let result = ok_result(&gh.review(false, &[]));
-            assert_eq!(result["status"], "pending", "{outcome}: {result}");
-            assert_eq!(result["request"]["outcome"], request, "{outcome}: {result}");
-        }
-        assert_eq!(gh.requests(), 0, "{outcome}: {:?}", gh.log());
-        assert_eq!(gh.head_record()["retry"]["review_id"], 11, "{outcome}");
-        assert_eq!(gh.head_record()["retry"]["outcome"], outcome, "{outcome}");
-    }
 }
 
 /// Copilot's work in flight within its hold keeps every verdict that

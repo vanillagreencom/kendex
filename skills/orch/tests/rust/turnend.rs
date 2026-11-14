@@ -1841,7 +1841,9 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     assert!(!record.exists());
     // The refusal names the commands that record the handoff, the state
     // file's directory and the item's init on its branch, and the attached
-    // agents the Stop payload's registry still names out.
+    // agents the Stop payload's registry still names out. A session runs the
+    // two commands as printed: each succeeds against the real runtime, and
+    // the record they write ends the refusal.
     let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 650_000)]);
     let payload = json!({"session_id": "s1", "transcript_path": transcript,
         "background_tasks": [{"type": "subagent", "id": "a1", "status": "running"},
@@ -1858,24 +1860,54 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     );
     assert!(!out.stderr.contains("attached-agent=b1"), "{}", out.stderr);
     assert!(!out.stderr.contains("agents=unknown"), "{}", out.stderr);
-    let init = format!(
-        "--state-dir {} init {ITEM} --branch {ITEM}\n",
-        state_dir.display()
+    let runtime = world.lane.join(".agents/skills/orch/scripts/orch-runtime");
+    let printed = |tail: &str| {
+        let head = format!(
+            "  {} --state-dir {} {tail}",
+            runtime.display(),
+            state_dir.display()
+        );
+        out.stderr
+            .lines()
+            .find(|line| line.starts_with(&head))
+            .unwrap_or_else(|| panic!("no `{tail}` command: {}", out.stderr))
+            .to_owned()
+    };
+    let init = printed("state init ");
+    assert!(
+        init.ends_with(&format!(" --item {ITEM} --branch {ITEM}")),
+        "{init}"
     );
-    assert!(out.stderr.contains(&init), "{}", out.stderr);
-    let set = format!("--state-dir {} set {ITEM} handoff '", state_dir.display());
-    let record = out
-        .stderr
-        .lines()
-        .find_map(|line| {
-            line.split_once(&set)
-                .map(|(_, word)| word.trim_end_matches('\''))
-        })
-        .unwrap_or_else(|| panic!("no handoff command: {}", out.stderr));
-    let record: Value = serde_json::from_str(record).unwrap();
-    assert_eq!(record["context"]["decision"]["tokens"], json!(650_000));
-    assert_eq!(record["context"]["decision"]["cap_mark"], json!(650_000));
-    assert_eq!(record["context"]["source"]["session_id"], json!("s1"));
+    let record = printed("op ");
+    let request: Value = serde_json::from_str(
+        record
+            .split_once(" --request-json '")
+            .map(|(_, word)| word.trim_end_matches('\''))
+            .unwrap_or_else(|| panic!("no request: {record}")),
+    )
+    .unwrap();
+    assert_eq!(request["context"]["decision"]["tokens"], json!(650_000));
+    assert_eq!(request["context"]["decision"]["cap_mark"], json!(650_000));
+    assert_eq!(request["context"]["source"]["session_id"], json!("s1"));
+    fs::create_dir_all(runtime.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(binary(), &runtime).unwrap();
+    for line in [&init, &record] {
+        let ran = program("/bin/sh")
+            .args(["-c", line])
+            .current_dir(&world.lane)
+            .env("HOME", &world.home)
+            .env("PATH", tool_path(&[]))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(ran.status.success(), "{line}: {}", stderr(&ran));
+    }
+    let state = state_dir.join(format!("workflow-state-{ITEM}.json"));
+    let state: Value = serde_json::from_str(&fs::read_to_string(state).unwrap()).unwrap();
+    assert_eq!(state["branch"], ITEM, "{state}");
+    assert_eq!(state["handoff"]["context"], request["context"], "{state}");
+    let out = world.turn("claude", &[], &payload);
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "{}", out.stderr);
 }
 
 /// A lane whose handoff record stands is handing itself off and is never
@@ -2020,7 +2052,11 @@ fn an_attached_launch_keeps_the_reserve_only_while_an_agent_may_be_out() {
                 "{row}: {}",
                 out.stderr
             );
-            assert!(!out.stderr.contains(" handoff '"), "{row}: {}", out.stderr);
+            assert!(
+                !out.stderr.contains("record-handoff"),
+                "{row}: {}",
+                out.stderr
+            );
         }
     }
     let other = world.transcript("t.jsonl", &[claude_usage("m", 1_000)]);
@@ -2183,7 +2219,9 @@ fn a_helper_from_another_session_keeps_the_reserve_unobserved() {
         );
         assert_eq!(out.code, 2, "{launched_in}: {}", out.stderr);
         assert_eq!(out.first(), first, "{launched_in}");
-        let names_handoff = out.stderr.contains(&format!(" set {ITEM} handoff '"));
+        let names_handoff = out
+            .stderr
+            .contains(&format!(" op --item {ITEM} --request-json '"));
         assert_eq!(names_handoff, launched_in == "s0", "{}", out.stderr);
     }
 }

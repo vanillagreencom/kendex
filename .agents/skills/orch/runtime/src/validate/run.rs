@@ -899,68 +899,37 @@ pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
             let runner = super::files::fields(&run_dir.join("runner"))
                 .ok()
                 .and_then(|r| r.get("runner").cloned());
-            let bare = super::files::bare_pid(&run)?;
-            // A start whose child never ran and whose launcher wrote no runner
-            // record names no process and no unit: there is nothing to stop.
-            if matches!(bare, super::files::BarePid::Unstarted)
-                && fs::symlink_metadata(run_dir.join("runner"))
+            if super::files::unstarted(&run)? {
+                // A start whose child never ran and whose launcher wrote no
+                // runner record names no process and no unit: there is
+                // nothing to stop. A unit is stopped by the name its record
+                // carries, below.
+                if fs::symlink_metadata(run_dir.join("runner"))
                     .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-            {
-                return Ok(None);
-            }
-            if !matches!(bare, super::files::BarePid::Absent)
-                && !matches!(runner.as_deref(), Some("setsid" | "attached" | "systemd"))
-            {
-                return Err(super::files::unreadable(
-                    "stop-unreadable",
-                    format!("run-dir={} record-unreadable", run_dir.display()),
-                ));
-            }
-            match bare {
-                // A bare pid's record names no identity: a unit is stopped by
-                // the name its record carries, below, and any other child's
-                // group by the child its argv names.
-                super::files::BarePid::Live(_)
-                | super::files::BarePid::Unstarted
-                | super::files::BarePid::Gone
-                | super::files::BarePid::Other
-                    if runner.as_deref() == Some("systemd") => {}
-                super::files::BarePid::Live(pid) => {
-                    let ended = match agent_runtime::process::identity(pid) {
-                        agent_runtime::reading::Reading::Live(identity) => {
-                            agent_runtime::effects::job::stop_group(&identity)?
-                        }
-                        agent_runtime::reading::Reading::Gone => false,
-                        agent_runtime::reading::Reading::Unreadable { cause } => {
-                            return Err(super::files::unreadable(
-                                "stop-unreadable",
-                                format!("run-dir={} pid={pid} {cause}", run_dir.display()),
-                            ));
-                        }
-                    };
-                    let word = if runner.as_deref() == Some("attached") {
-                        "attached"
-                    } else {
-                        "setsid"
-                    };
-                    return Ok(ended.then_some(word));
+                {
+                    return Ok(None);
                 }
-                super::files::BarePid::Unstarted
-                | super::files::BarePid::Gone
-                | super::files::BarePid::Other => return Ok(None),
-                super::files::BarePid::Absent => {
-                    if command_reading(run_dir)?.is_some_and(|reading| {
-                        !matches!(reading, agent_runtime::reading::Reading::Gone)
-                    }) || !matches!(
-                        super::files::runner_reading(&run),
-                        agent_runtime::reading::Reading::Gone
-                    ) {
+                match runner.as_deref() {
+                    Some("systemd") => {}
+                    Some("setsid" | "attached") => return Ok(None),
+                    _ => {
                         return Err(super::files::unreadable(
                             "stop-unreadable",
-                            format!("run-dir={} execution-unanswered", run_dir.display()),
+                            format!("run-dir={} record-unreadable", run_dir.display()),
                         ));
                     }
                 }
+            } else if command_reading(run_dir)?
+                .is_some_and(|reading| !matches!(reading, agent_runtime::reading::Reading::Gone))
+                || !matches!(
+                    super::files::runner_reading(&run),
+                    agent_runtime::reading::Reading::Gone
+                )
+            {
+                return Err(super::files::unreadable(
+                    "stop-unreadable",
+                    format!("run-dir={} execution-unanswered", run_dir.display()),
+                ));
             }
         }
         Err(e) => {

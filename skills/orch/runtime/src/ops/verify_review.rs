@@ -779,29 +779,20 @@ impl Gate<'_> {
             return self.confirm_request(head.clone());
         }
         let ineligible = self.ineligible()?;
-        // A retry an earlier install recorded is carried into the head's
-        // retry, so a head mid-wait across an upgrade spends no second
-        // retry; an error answer standing on the head makes this request
-        // its one retry, claimed in the same write, so no second POST
-        // follows.
-        let released = released_retry(self.path, &self.doc, &self.view.head)?;
-        let mut retry = released.clone();
+        // An error answer standing on the head makes this request its one
+        // retry, claimed in the same write, so no second POST follows.
+        let mut retry = None;
         let request = if let Some(cause) = ineligible {
             RequestRecord::fallback(cause, None)
         } else {
             let reviews = self.reviews()?.clone();
             let work = self.work()?.is_some();
-            let released = released.as_ref().map(|retry| retry.outcome.as_str());
             if reviews
                 .latest
                 .as_ref()
                 .is_some_and(|latest| latest.no_files)
             {
                 RequestRecord::fallback("no-files", None)
-            } else if released == Some(REQUESTED) {
-                RequestRecord::existing("existing-error-retry")
-            } else if released == Some(FALLBACK) {
-                RequestRecord::fallback("error", None)
             } else if work {
                 RequestRecord::existing("existing-run")
             } else if reviews.any_non_error {
@@ -1073,8 +1064,7 @@ impl Gate<'_> {
     /// releases it decides the retry with its request, so at most one POST
     /// goes out. A request the refresh policy held back holds the retry back
     /// too, its cause the verdict's; Copilot's work already in flight stands
-    /// for the retry; a retry an earlier install recorded is the head's; a
-    /// `requested` retry GitHub shows no sign of is sent once more; and a
+    /// for the retry; a `requested` retry GitHub shows no sign of is sent once more; and a
     /// second error answer after the retry is the verdict. Its claim and its
     /// resend wait on the head's eligibility (`eligible`) as the request's
     /// do: on a head that may take no request now nothing is claimed or sent.
@@ -1087,9 +1077,7 @@ impl Gate<'_> {
         if record.held_as_draft() {
             return Ok(None);
         }
-        let released = released_retry(self.path, &self.doc, &self.view.head)?;
-        let standing = record.retry.clone().or(released.clone());
-        let Some(retry) = standing else {
+        let Some(retry) = record.retry.clone() else {
             let held = record
                 .request
                 .as_ref()
@@ -1152,12 +1140,11 @@ impl Gate<'_> {
         if landed {
             return Ok(None);
         }
-        let carried = |standing: Option<RetryRecord>| standing.or(released.clone());
         if retry.resent {
             let cause = "unconfirmed";
             let owed = self.notice_for(cause, None);
             self.set_retry(
-                |standing| carried(standing).map(|r| r.fallback(cause, None)),
+                |standing| standing.map(|r| r.fallback(cause, None)),
                 owed.as_ref(),
             )?;
             return Ok(Some(Verdict::new(
@@ -1173,7 +1160,7 @@ impl Gate<'_> {
             ..retry.clone()
         };
         let claimed = self.set_retry(
-            |standing| (carried(standing).as_ref() == Some(&retry)).then(|| resent.clone()),
+            |standing| (standing.as_ref() == Some(&retry)).then(|| resent.clone()),
             None,
         )?;
         if claimed {
@@ -1646,41 +1633,6 @@ fn head_record(path: &Path, doc: &Document, head: &str) -> Result<Option<HeadRec
         },
         Some(_) => Err(shape(path, "heads")),
     }
-}
-
-/// The error retry an earlier install recorded under
-/// `pr_approval.copilot_error_retries[head]`, as `{review_id, outcome}`
-/// with the review id written as text, read as the head's retry.
-fn released_retry(path: &Path, doc: &Document, head: &str) -> Result<Option<RetryRecord>> {
-    let Some(approval) = doc.get("pr_approval") else {
-        return Ok(None);
-    };
-    let Some(retries) = approval.get("copilot_error_retries") else {
-        return Ok(None);
-    };
-    let entry = match retries.get(head) {
-        None | Some(Value::Null) => return Ok(None),
-        Some(entry) => entry,
-    };
-    let refused = |cause: &str| {
-        Error::Runtime(agent_runtime::Error::RecordShape {
-            path: path.to_path_buf(),
-            field: "pr_approval/copilot_error_retries".into(),
-            reason: ShapeReason::TypeMismatch,
-            cause: cause.into(),
-        })
-    };
-    let outcome = match entry.get("outcome").and_then(Value::as_str) {
-        Some(word @ (REQUESTED | FALLBACK)) => word,
-        _ => return Err(refused("outcome is not requested or fallback")),
-    };
-    let review_id = match entry.get("review_id") {
-        Some(Value::String(text)) => text.parse::<u64>().ok(),
-        Some(Value::Number(number)) => number.as_u64(),
-        _ => None,
-    }
-    .ok_or_else(|| refused("review_id is not a review id"))?;
-    Ok(Some(RetryRecord::new(review_id, outcome)))
 }
 
 /// The location of a blocker of kind regression-against-main standing open

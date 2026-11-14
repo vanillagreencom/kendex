@@ -22,7 +22,7 @@ An admitted --run-id uses the runtime's declaration and base to resolve the mode
 
 A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_CMD. Without either declaration it uses the range/full command and records that mode. A scoped docs pass proves that snapshot. Required CI records pending, never a local CI pass.
 
---record reads mode, selection, verdict, identity, scope, fallback and wall time. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run. --require-proof binds the expected commit and its snapshot before admitting local or required-CI proof.
+--record reads mode, selection, verdict, identity, scope, fallback and wall time. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
 
 A live or unreadable start obligation refuses a second run. --stop ends only the recorded unit or command identities. A deadline or command exit 3 records no-verdict; a command's own 124 or 137 is a failure."
 )]
@@ -47,10 +47,6 @@ pub struct Args {
     pub last_pass: bool,
     #[arg(long)]
     pub live: bool,
-    #[arg(long)]
-    pub require_proof: Option<String>,
-    #[arg(long)]
-    pub expected_head: Option<String>,
     #[arg(long)]
     pub validate_mode: Option<String>,
     #[arg(long)]
@@ -168,18 +164,11 @@ fn arguments(args: &Args) -> Result<()> {
         Some("start options")
     } else if !start && !args.resolve_mode && !args.restack_check && args.base.is_some() {
         Some("--base")
-    } else if !args.resolve_mode && args.require_proof.is_some() {
-        Some("--require-proof")
-    } else if args.require_proof.is_none() && args.expected_head.is_some() {
-        Some("--expected-head")
     } else {
         None
     };
     if let Some(option) = unused {
         return Err(files::unreadable("option-unused", option));
-    }
-    if args.require_proof.is_some() && args.expected_head.is_none() {
-        return Err(files::unreadable("required", "--expected-head"));
     }
     if let Some(id) = &args.run_id {
         let bytes = id.as_bytes();
@@ -326,16 +315,6 @@ fn entry(
         ));
     }
     if args.resolve_mode {
-        if let Some(head) = &args.require_proof {
-            return Ok(require_proof(
-                &settings,
-                &worktree,
-                head,
-                args.expected_head.as_deref().unwrap(),
-                args.base.as_deref(),
-                env,
-            )?);
-        }
         return Ok(TextReply::new(
             format!(
                 "validate-mode={}",
@@ -508,135 +487,4 @@ fn entry(
     };
     let (text, exit) = files::wait(&run_dir.0, follow, &SystemClock)?;
     Ok(TextReply::new(text, exit))
-}
-
-fn require_proof(
-    settings: &Settings,
-    worktree: &Path,
-    head: &str,
-    expected: &str,
-    base: Option<&str>,
-    env: &Env,
-) -> Result<TextReply> {
-    let mut log = String::new();
-    let checkout =
-        super::git(worktree, "head", &["rev-parse", "HEAD"], &mut log)?.unwrap_or_default();
-    if checkout.trim() != expected {
-        return Ok(TextReply::new(
-            format!(
-                "validation-proof=missing cause=head-mismatch expected-head={expected} checkout-head={}",
-                checkout.trim()
-            ),
-            1,
-        ));
-    }
-    let tree = super::git(
-        worktree,
-        "tree",
-        &["rev-parse", &format!("{expected}^{{tree}}")],
-        &mut log,
-    )?
-    .unwrap_or_default();
-    // The proof's base is the merge base of HEAD with `--base`, or with the
-    // origin base branch where none is given: what the snapshot is read
-    // against, the restack check and the range read take. A base that
-    // cannot be read is no answer.
-    let base_ref = match base {
-        Some(base) => base.to_owned(),
-        None => match super::base_branch(settings, worktree, &mut log)? {
-            Some(branch) => format!("origin/{branch}"),
-            None => return Err(files::unreadable("proof-base-unresolved", "base-branch")),
-        },
-    };
-    let proof_base = super::git(
-        worktree,
-        "merge-base",
-        &["merge-base", "HEAD", &base_ref],
-        &mut log,
-    )?
-    .map(|sha| sha.trim().to_owned())
-    .filter(|sha| !sha.is_empty())
-    .ok_or_else(|| files::unreadable("proof-base-unresolved", format!("base={base_ref}")))?;
-    let scratch = super::Scratch::new(env)?;
-    let class = super::classify(settings, &scratch, worktree, Some(&proof_base), &mut log)?;
-    if class.tree != tree.trim() {
-        return Ok(TextReply::new(
-            format!(
-                "validation-proof=missing cause=tree-mismatch expected-head={expected} expected-tree={} checkout-tree={}",
-                tree.trim(),
-                if class.tree.is_empty() {
-                    "unreadable"
-                } else {
-                    &class.tree
-                }
-            ),
-            1,
-        ));
-    }
-    let mut req = request(Some(proof_base.clone()));
-    req.prove = true;
-    let settled = super::settle(settings, &scratch, worktree, &req)?;
-    let mode_line = format!("validate-mode={}", settled.mode.word());
-    let answer = |proof: String, exit: i32| TextReply::new(format!("{mode_line}\n{proof}"), exit);
-    if let files::LastPass::Pass(run) = files::last_pass(worktree)?
-        && run.get("head") == head
-        && run.outcome() == Some(crate::state::StageOutcome::Pass)
-        && crate::ops::proof::restack(worktree, &proof_base, env)?.1 == 0
-    {
-        return Ok(answer(
-            format!("validation-proof=tree-pass run-dir={}", run.dir.display()),
-            0,
-        ));
-    }
-    if settled.mode == ValidateMode::Ci {
-        return Ok(answer(
-            format!(
-                "validation-proof=ci verdict=pending head={expected} ci-event={}",
-                settled.ci_event
-            ),
-            0,
-        ));
-    }
-    let stages = files::stages(worktree)?;
-    let request = crate::ops::proof::ReadProof {
-        need: crate::ops::proof::Need::Submit,
-        tree: tree.trim().into(),
-        head: Some(expected.into()),
-        base: base.map(str::to_owned),
-        round: None,
-        exception: None,
-    };
-    let result = crate::ops::proof::read(
-        &stages,
-        &[],
-        &request,
-        &crate::ops::proof::Declaration::of(&settings.validate),
-        &mut |commit| {
-            super::git(
-                worktree,
-                "tree",
-                &["rev-parse", &format!("{commit}^{{tree}}")],
-                &mut log,
-            )
-            .ok()
-            .flatten()
-            .map(|s| s.trim().into())
-        },
-    );
-    if result.proof == crate::ops::proof::Verdict::Complete {
-        return Ok(answer(
-            format!(
-                "validation-proof=local-pass run-dir={}",
-                result.rows[0].run_dir
-            ),
-            0,
-        ));
-    }
-    Ok(answer(
-        format!(
-            "validation-proof=missing ci-fallback={}",
-            settled.ci_fallback.as_deref().unwrap_or("class-uncovered")
-        ),
-        1,
-    ))
 }

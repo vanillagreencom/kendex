@@ -614,25 +614,6 @@ pub fn below(rows: &[Row], root: u32, matches: &dyn Fn(&str) -> bool) -> Vec<(u3
     found
 }
 
-/// Whether every process under `pid` is a shell: a pane whose harness has
-/// exited and left only its shell reads `true`.
-pub fn only_shells_below(rows: &[Row], pid: u32) -> bool {
-    let children: HashMap<u32, Vec<&Row>> = rows.iter().fold(HashMap::new(), |mut m, r| {
-        m.entry(r.ppid).or_default().push(r);
-        m
-    });
-    let mut stack = vec![pid];
-    while let Some(p) = stack.pop() {
-        for child in children.get(&p).into_iter().flatten() {
-            if !is_shell(&child.name) {
-                return false;
-            }
-            stack.push(child.pid);
-        }
-    }
-    true
-}
-
 pub fn is_shell(name: &str) -> bool {
     matches!(
         name.trim_start_matches('-'),

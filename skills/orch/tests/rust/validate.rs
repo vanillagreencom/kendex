@@ -1184,13 +1184,6 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
         vec!["--worktree", "/absent", "--poll", "0"],
         vec!["--worktree", "/absent", "--poll", "1", "--poll", "2"],
         vec!["--worktree", "/absent", "--run-id", "bad"],
-        vec![
-            "--resolve-mode",
-            "--worktree",
-            "/absent",
-            "--require-proof",
-            "H",
-        ],
     ] {
         assert_eq!(w.entry(&args, &[]).status.code(), Some(2), "{args:?}");
     }
@@ -1256,25 +1249,6 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
         (
             vec!["--worktree", &wt, "--restack"],
             "option-unused cause=--restack",
-        ),
-        (
-            vec![
-                "--worktree",
-                &wt,
-                "--require-proof",
-                "H",
-                "--expected-head",
-                "H",
-            ],
-            "option-unused cause=--require-proof",
-        ),
-        (
-            vec!["--resolve-mode", "--worktree", &wt, "--expected-head", "H"],
-            "option-unused cause=--expected-head",
-        ),
-        (
-            vec!["--resolve-mode", "--worktree", &wt, "--require-proof", "H"],
-            "required cause=--expected-head",
         ),
         (
             vec!["--stop", "--worktree", &wt, "--run-dir", &empty],
@@ -2231,7 +2205,7 @@ fn an_unread_unit_start_remains_owed_and_a_confirmed_failed_unit_closes_stopped(
 }
 
 #[test]
-fn last_pass_reads_released_snapshots_and_later_red_or_unknown_order_invalidates_them() {
+fn last_pass_reads_recorded_snapshots_and_later_red_or_unknown_order_invalidates_them() {
     // A worktree with no run has no last pass.
     let w = World::new();
     let out = w.entry(
@@ -2654,8 +2628,12 @@ fn a_base_a_restack_left_unreachable_and_pruned_is_refused_by_name_and_runs_noth
     assert_eq!(runs, 0, "a refused start leaves no run directory");
 }
 
+/// An admitted entry run under its id and its round's base takes the
+/// narrowest declared mode, runs in the admitted directory, closes its stage
+/// with its verdict and marks the end notice; an id the round never admitted
+/// is refused.
 #[test]
-fn the_catalog_shim_consumes_the_real_admission_and_waits_for_its_runtime_run() {
+fn an_admitted_entry_run_resolves_its_mode_from_its_base_and_an_unadmitted_id_is_refused() {
     let w = World::new();
     let base = w.head();
     w.commit("src.rs");
@@ -2665,50 +2643,20 @@ fn the_catalog_shim_consumes_the_real_admission_and_waits_for_its_runtime_run() 
     ));
     let id = admitted["report"]["run_id"].as_str().unwrap();
     let dir = admitted["report"]["run_dir"].as_str().unwrap();
-    let scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("scripts");
-    let key_lib = scripts.join("../../agent-runtime/scripts/lib/key.sh");
-    let key = program("/bin/bash")
-        .arg("-c")
-        .arg(format!(
-            ". '{}' && agent_runtime_key '{}'",
-            key_lib.display(),
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .output()
-        .unwrap();
-    assert!(key.status.success(), "{}", stderr(&key));
-    let key = text(&key);
-    let cache = w.root.join("cache");
-    fs::create_dir_all(cache.join("bin")).unwrap();
-    std::os::unix::fs::symlink(
-        support::binary(),
-        cache.join("bin").join(format!("orch-runtime-{key}")),
-    )
-    .unwrap();
-    let mut command = program(scripts.join("dev-validate-run"));
-    command.args([
-        "--worktree",
-        w.worktree.to_str().unwrap(),
-        "--run-id",
-        id,
-        "--base",
-        &base,
-        "--poll",
-        "1",
-    ]);
-    for (k, v) in w.env() {
-        if k != "CHANGE_SCOPE_PATHS_CLI" {
-            command.env(k, v);
-        }
-    }
-    command
-        .env("DEV_VALIDATE_RANGE_CMD", "echo range")
-        .env("AGENT_RUNTIME_CACHE", &cache)
-        .current_dir(&w.worktree);
-    let out = command.output().unwrap();
+    let wt = w.worktree.display().to_string();
+    let out = w.entry(
+        &[
+            "--worktree",
+            &wt,
+            "--run-id",
+            id,
+            "--base",
+            &base,
+            "--poll",
+            "1",
+        ],
+        &[("DEV_VALIDATE_RANGE_CMD", "echo range")],
+    );
     assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
     assert_eq!(directory(&out), dir);
     assert!(!text(&out).contains("class-fallback="), "{}", text(&out));
@@ -2720,34 +2668,11 @@ fn the_catalog_shim_consumes_the_real_admission_and_waits_for_its_runtime_run() 
     assert_eq!(w.wait_closed(dir)["outcome"], "pass");
     w.wait_marked(dir);
     let out = w.entry(
-        &[
-            "--worktree",
-            w.worktree.to_str().unwrap(),
-            "--run-id",
-            "20300101T000000Z-unadmitted",
-        ],
+        &["--worktree", &wt, "--run-id", "20300101T000000Z-unadmitted"],
         &[],
     );
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("run-unadmitted"));
-    let mut detached = program(scripts.join("dev-validate-run"));
-    detached.args(["--worktree", w.worktree.to_str().unwrap(), "--poll", "1"]);
-    for (key, value) in w.env() {
-        detached.env(key, value);
-    }
-    let out = detached
-        .env("AGENT_RUNTIME_CACHE", &cache)
-        .current_dir(&w.root)
-        .output()
-        .unwrap();
-    let adir = directory(&out);
-    assert!(
-        out.status.success(),
-        "{} {} child={}",
-        text(&out),
-        stderr(&out),
-        run_file(&adir, "job.err")
-    );
+    assert!(stderr(&out).contains("run-unadmitted"), "{}", stderr(&out));
 }
 
 /// A detached start, ad hoc or admitted, follows its run for one call's
@@ -3108,43 +3033,32 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
                 stderr(&resolved)
             );
         }
-        // The proof read answers required CI pending with the event that
-        // proves the head.
+        // The proof read the workflows run answers an admitted round's
+        // required CI pending over the round's own run, which records the
+        // event that proves the head.
         if matches!(case, "required" | "queue-required") {
-            let wt = w.worktree.display().to_string();
+            let started = ok(&w.start(&["--base", &base], &extra));
+            assert_eq!(started["mode"], "ci", "{case}: {started}");
+            let run_dir = started["run_dir"].as_str().unwrap();
+            let tree = git(&w.worktree, &["rev-parse", "HEAD^{tree}"]);
             let head = w.head();
-            // Required CI answers before a local pass at the same tree, asked
-            // for another head than the pass's so no restack proof answers.
-            let proof_head = if case == "required" {
-                let local = w.local(&["--fresh"], &extra);
-                assert!(local.status.success(), "{}", stderr(&local));
-                base.clone()
-            } else {
-                head.clone()
-            };
-            let proof = w.entry(
+            let read = w.read_proof(
                 &[
-                    "--resolve-mode",
-                    "--worktree",
-                    &wt,
-                    "--require-proof",
-                    &proof_head,
-                    "--expected-head",
-                    &head,
+                    "--need", "submit", "--tree", &tree, "--head", &head, "--base", &base,
                 ],
                 &extra,
             );
-            assert_eq!(proof.status.code(), Some(0), "{case}: {}", stderr(&proof));
-            assert_eq!(field(&text(&proof), "validation-proof"), "ci", "{case}");
+            assert_eq!(read["proof"], "pending", "{case}: {read}");
+            assert_eq!(read["rows"][0]["mode"], "ci", "{case}: {read}");
+            assert_eq!(read["rows"][0]["run_dir"], run_dir, "{case}: {read}");
             assert_eq!(
-                field(&text(&proof), "ci-event"),
+                w.stage(run_dir)["proof"]["ci_event"],
                 if case == "required" {
                     "pull_request"
                 } else {
                     "merge_group"
                 },
-                "{case}: {}",
-                text(&proof)
+                "{case}"
             );
         }
         // Queue-only work is proved by the merge group's run.
@@ -3830,7 +3744,7 @@ fn snapshot_classification_preserves_the_index_timestamp_and_writes_no_shared_ob
 }
 
 #[test]
-fn released_bound_records_reuse_only_the_same_command_context_with_covered_paths_and_no_finding() {
+fn bound_records_reuse_only_the_same_command_context_with_covered_paths_and_no_finding() {
     use orch_runtime::ops::{
         proof::Declaration,
         validate::{Reuse, Want, reuse},
@@ -4342,106 +4256,14 @@ impl Drop for Group {
 }
 
 #[test]
-fn a_bare_pid_run_is_live_by_its_childs_argv_its_stop_ends_that_group_and_its_gone_child_is_lost() {
-    let w = World::new();
-    let wt = w.worktree.display().to_string();
-    let dir = w.worktree.join("tmp/dev-validate-released");
-    fs::create_dir_all(&dir).unwrap();
-    let run_dir = dir.display().to_string();
-    // A released run directory's records: the start and the runner record before
-    // its launch, then the child's own bare pid, written by the child.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    fs::write(
-        dir.join("start"),
-        format!(
-            "worktree={wt}\ntimeout-bin=timeout\nstart={now}\ntimeout-secs=3600\npoll-secs=30\ncap-secs=3640\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
-            w.head()
-        ),
-    )
-    .unwrap();
-    fs::write(
-        dir.join("runner"),
-        "runner=setsid\nline=runner=setsid reason=no-linger\n",
-    )
-    .unwrap();
-    let pid_file = dir.join("pid");
-    let _group = Group(pid_file.clone());
-    let started = program("setsid")
-        .args([
-            "-f",
-            "sh",
-            "-c",
-            "echo $$ > \"$1\"; exec perl -e 'sleep 60' -- planted --child --run-dir \"$2\"",
-            "child",
-            pid_file.to_str().unwrap(),
-            &run_dir,
-        ])
-        .status()
-        .unwrap();
-    assert!(started.success());
-    let live = || w.entry(&["--live", "--worktree", &wt], &[]);
-    until(|| live().status.code() == Some(0));
-    let pid = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
-    assert_eq!(text(&live()), format!("run-dir={run_dir} pid={pid}"));
-    let refused = w.local(&[], &[]);
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(
-        stderr(&refused).contains("run-live"),
-        "{}",
-        stderr(&refused)
-    );
-    let out = w.entry(&["--stop", "--worktree", &wt], &[]);
-    assert_eq!(
-        text(&out),
-        "state=stopped units=0 groups=1",
-        "{}",
-        stderr(&out)
-    );
-    until(|| live().status.code() == Some(1));
-    let out = w.entry(&["--wait", "--run-dir", &run_dir, "--budget", "5"], &[]);
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(field(&text(&out), "state"), "lost", "{}", text(&out));
-    let out = w.entry(&["--stop", "--worktree", &wt], &[]);
-    assert_eq!(
-        text(&out),
-        "state=stopped units=0 groups=0",
-        "{}",
-        stderr(&out)
-    );
-    assert_eq!(out.status.code(), Some(0));
-    // A process that took the child's number under another argv is not the
-    // run: never live, never stopped, and a wait reads the run as running.
-    fs::remove_file(dir.join("stop")).unwrap();
-    let other = Owned::sleep();
-    fs::write(&pid_file, format!("{}\n", other.0.id())).unwrap();
-    assert_eq!(live().status.code(), Some(1), "{}", text(&live()));
-    let out = w.entry(&["--stop", "--worktree", &wt], &[]);
-    assert_eq!(text(&out), "state=stopped units=0 groups=0");
-    let signal = program("kill")
-        .args(["-0", &other.0.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(signal.success(), "the other process runs on");
-    let out = w.entry(&["--wait", "--run-dir", &run_dir, "--budget", "2"], &[]);
-    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
-    // A runner record that names no runner a stop reads refuses.
-    fs::write(dir.join("runner"), "runner=unknown\n").unwrap();
-    let out = w.entry(&["--stop", "--worktree", &wt], &[]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(stderr(&out).contains("stop-unreadable"), "{}", stderr(&out));
-}
-
-#[test]
 fn a_shell_start_whose_child_never_ran_is_no_run_but_the_runtimes_unread_launch_is_held() {
     let w = World::new();
     let wt = w.worktree.display().to_string();
     let dir = w.worktree.join("tmp/dev-validate-unstarted");
     fs::create_dir_all(&dir).unwrap();
     let run_dir = dir.display().to_string();
-    // A released run directory's start and runner records, its child never run:
+    // A run directory's start and runner records with no error log and no
+    // executor's claim, its child never run:
     // started twenty seconds ago, past the ten-second launch grace.
     let started = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4617,133 +4439,6 @@ fn a_stop_of_an_ad_hoc_run_with_no_state_directory_ends_its_command() {
     assert_eq!(text(&out), "state=stopped units=0 groups=1");
     child.0.wait().unwrap();
     assert!(!Path::new(&absent).exists());
-}
-
-/// A child of this test under an argv of the row's choosing, its pid written
-/// by itself, ended with its group when the row ends.
-fn bare_child(dir: &Path, argv_tail: &[&str]) -> (Group, String) {
-    let pid_file = dir.join("pid");
-    let _ = fs::remove_file(&pid_file);
-    let group = Group(pid_file.clone());
-    let mut args = vec![
-        "-f".to_owned(),
-        "sh".to_owned(),
-        "-c".to_owned(),
-        "echo $$ > \"$1\"; shift; exec perl -e 'sleep 60' -- \"$@\"".to_owned(),
-        "child".to_owned(),
-        pid_file.display().to_string(),
-    ];
-    args.extend(argv_tail.iter().map(|a| (*a).to_owned()));
-    assert!(program("setsid").args(&args).status().unwrap().success());
-    until(|| fs::read_to_string(&pid_file).is_ok_and(|p| !p.trim().is_empty()));
-    let pid = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
-    (group, pid)
-}
-
-#[test]
-fn a_bare_pid_is_the_run_only_under_its_own_childs_whole_argv() {
-    let w = World::new();
-    let wt = w.worktree.display().to_string();
-    let dir = w.worktree.join("tmp/dev-validate-released");
-    fs::create_dir_all(&dir).unwrap();
-    let run_dir = dir.display().to_string();
-    fs::write(
-        dir.join("start"),
-        format!(
-            "worktree={wt}\ntimeout-bin=timeout\nstart={}\ntimeout-secs=3600\npoll-secs=30\ncap-secs=3640\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
-            epoch_now(),
-            w.head()
-        ),
-    )
-    .unwrap();
-    fs::write(
-        dir.join("runner"),
-        "runner=setsid\nline=runner=setsid reason=no-linger\n",
-    )
-    .unwrap();
-    let live = |extra: &[(&str, &str)]| w.entry(&["--live", "--worktree", &wt], extra);
-    let other_run = w
-        .worktree
-        .join("tmp/dev-validate-other")
-        .display()
-        .to_string();
-    for tail in [
-        // Another run's child: the run directory is not this one.
-        vec!["planted", "--child", "--run-dir", other_run.as_str()],
-        // This run directory, but no child's words before it.
-        vec!["planted", run_dir.as_str()],
-    ] {
-        let (_group, pid) = bare_child(&dir, &tail);
-        assert_eq!(
-            live(&[]).status.code(),
-            Some(1),
-            "{tail:?}: {}",
-            text(&live(&[]))
-        );
-        let out = w.entry(&["--stop", "--worktree", &wt], &[]);
-        assert_eq!(text(&out), "state=stopped units=0 groups=0", "{tail:?}");
-        assert!(
-            program("kill")
-                .args(["-0", &pid])
-                .status()
-                .unwrap()
-                .success(),
-            "{tail:?}: the process runs on"
-        );
-        fs::remove_file(dir.join("stop")).unwrap();
-        kill_group(&dir.join("pid"));
-    }
-    // A live child whose argv cannot be read is no other process: it is the
-    // run.
-    let blind = w.root.join("ps-refuses");
-    fs::create_dir_all(&blind).unwrap();
-    support::write_executable(&blind.join("ps"), "#!/bin/bash\nexit 1\n");
-    let (_group, pid) = bare_child(&dir, &["planted", run_dir.as_str()]);
-    let path = support::tool_path(&[&blind]);
-    let out = live(&[("PATH", &path)]);
-    assert_eq!(text(&out), format!("run-dir={run_dir} pid={pid}"));
-    kill_group(&dir.join("pid"));
-    // The run's own child that leads no group: no group is the run's, so the
-    // stop signals nothing and the process runs on.
-    let leader = dir.join("leader");
-    let _leader_group = Group(leader.clone());
-    let _ = fs::remove_file(dir.join("pid"));
-    // The inner shell is not the script's last command, so the outer shell
-    // forks it rather than replacing itself with it.
-    let script = "echo $$ > \"$1\"; shift; sh -c 'echo $$ > \"$1\"; shift; exec perl -e \"sleep 60\" -- \"$@\"' inner \"$@\"; wait";
-    assert!(
-        program("setsid")
-            .args(["-f", "sh", "-c", script, "leader"])
-            .arg(&leader)
-            .arg(dir.join("pid"))
-            .args(["planted", "--child", "--run-dir", &run_dir])
-            .status()
-            .unwrap()
-            .success()
-    );
-    until(|| fs::read_to_string(dir.join("pid")).is_ok_and(|p| !p.trim().is_empty()));
-    let pid = fs::read_to_string(dir.join("pid"))
-        .unwrap()
-        .trim()
-        .to_owned();
-    let out = w.entry(&["--stop", "--worktree", &wt], &[]);
-    assert_eq!(text(&out), "state=stopped units=0 groups=0");
-    assert!(
-        program("kill")
-            .args(["-0", &pid])
-            .status()
-            .unwrap()
-            .success(),
-        "the process runs on"
-    );
-    fs::remove_file(dir.join("stop")).unwrap();
-    kill_group(&leader);
-    // The run's own child under a long argv, read whole under an exported
-    // terminal width.
-    let (_group, pid) = bare_child(&dir, &["planted", "--child", "--run-dir", &run_dir]);
-    assert!(run_dir.len() > 80);
-    let out = live(&[("COLUMNS", "80")]);
-    assert_eq!(text(&out), format!("run-dir={run_dir} pid={pid}"));
 }
 
 #[test]
