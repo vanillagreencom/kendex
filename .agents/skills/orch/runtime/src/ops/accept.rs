@@ -235,7 +235,7 @@ fn completed_issue(path: &Path, r: &AcceptResult, settings: &Settings) -> Result
         agent_runtime::Error::refused("repo-unresolved", &[("item", item), ("cause", cause)]).into()
     };
     let project = &settings.roots.project;
-    if let Some(lane) = crate::validate::run::lane_record(settings, item)? {
+    if let Some(lane) = crate::send::lane_record(settings, item)? {
         let repo = crate::repo::of_lane(lane.repo.as_deref(), project)
             .map_err(|unread| unresolved(&unread.to_string()))?;
         return Ok(Some(Issue { repo, number }));

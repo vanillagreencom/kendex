@@ -25,6 +25,7 @@
 pub mod archive;
 pub mod effects;
 pub mod error;
+pub mod job_end;
 pub mod mailbox;
 pub mod marker;
 pub mod ops;

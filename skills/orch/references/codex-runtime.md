@@ -95,7 +95,7 @@ Codex starts no turn when a collaboration agent returns after its caller ended t
 Launch the single `dev-artifact-check` watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
 
 ```bash
-sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/dev-artifact-check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID]
+.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait -- .agents/skills/orch/scripts/dev-artifact-check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] < /dev/null
 ```
 
 A fix round appends `--expect-items-from-round`. This replaces the background watchdog, rather than adding a second one. Hold its completion through [waiter-launch.md § Completion](waiter-launch.md#completion), using `exec_command` and empty `write_stdin` polls in this turn. A tool return with a `session_id` requires another poll; one with an `exit_code` ended that command. A poll timeout requires the completion route's retry while `wait.exit` is empty. An agent's return message does not release this wait.
@@ -107,7 +107,7 @@ Read `wait.exit` and `wait.log` once the completion file is nonempty. Apply Roun
 For each incomplete reviewer, launch its single watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
 
 ```bash
-sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait -- .agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID] < /dev/null
 ```
 
 Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog). This replaces each background watchdog. Start [waiter-launch.md § Completion](waiter-launch.md#completion)'s foreground poll for each run before polling their sessions. Keep all completion waits inside this turn with `exec_command` and empty `write_stdin` polls, as [§ Delegated round wait](#delegated-round-wait) requires. After every tool return, sweep all run directories for nonempty `wait.exit` files and run § 3.2's filesystem sweep and due actions before the next poll. Read each completed run's `wait.exit` and `wait.log`; § 3.2 owns refusal replacement and § 3.1 owns artifact acceptance. Continue the review workflow in this turn; an agent message alone never releases a watchdog wait.
@@ -121,7 +121,7 @@ Use the installed `codex exec` interface: [CLI reference](https://developers.ope
 Prepare a fresh `[JOB_DIR]` through [waiter-launch.md § Launch](waiter-launch.md#launch), including its unchanged `launch.sh`. Save the complete `DELEGATION:` prompt as `[JOB_DIR]/delegation.md` with the harness file-write tool. Use the installed canonical role's full instructions and workflow, followed by review-pr's complete unchanged delegation with its exact minted artifact path, concrete range, decisions and re-review context. A role name or shortened review request is insufficient. Launch from the owned worktree:
 
 ```bash
-sh "[JOB_DIR]/launch.sh" "[JOB_DIR]/review" sh -c 'exec codex exec --ephemeral [CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS] --disable hooks --output-last-message "$1/last-message.md" - < "$1/delegation.md"' sh "[JOB_DIR]"
+.agents/skills/orch/scripts/orch-runtime launch-job --name review-[RUN_ID] --run [JOB_DIR]/review -- sh -c 'exec codex exec --ephemeral [CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS] --disable hooks --output-last-message "$1/last-message.md" - < "$1/delegation.md"' sh "[JOB_DIR]" < /dev/null
 ```
 
 The invocation-only `--disable hooks` prevents this separate session from delivering or acknowledging its parent's lane mail. `--ephemeral` controls persistence alone. Keep the override after the current selection flags; change no stored configuration, trust, account or home.

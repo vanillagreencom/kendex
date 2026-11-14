@@ -1,6 +1,6 @@
 //! Validation execution, stage completion and completion notices.
 
-use agent_runtime::record::{self, Locking};
+use agent_runtime::record::Locking;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,19 +12,12 @@ use serde::Serialize;
 
 use super::{KILL_GRACE, apply, item_of_run_dir, load};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Route, Sent};
-use crate::ops::mail::{KeyedSend, SendResult};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
 use crate::ops::{self, ReconcileRound, Request, job_ended, run_id_of};
-use crate::send::Keyed;
+use crate::send::{NoticeSend, send_notice};
 use crate::settings::Settings;
-use crate::state::{
-    self, FleetState, ItemState, Lane, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob,
-};
+use crate::state::{self, ItemState, Stage, StageKind, StageOutcome, Stop, ValidateJob};
 use agent_runtime::journal::Env;
-
-/// How long the mailbox program is given to take the notice.
-const NOTICE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long the launcher's stop is given: the setsid teardown's TERM grace
 /// and KILL, or the user manager's own stop of the unit.
@@ -592,164 +585,6 @@ fn read_left(run_dir: &Path, stopped: bool) -> Left {
         at,
         seconds,
         selection,
-    }
-}
-
-/// How a notice's send went: the owner word to mark the stage with, or a
-/// send held, the stage left owed for the next walk (a send whose outcome
-/// is not known, one the lane's record refuses for now, or a fleet record
-/// that cannot be read to route it).
-enum NoticeSend {
-    Marked(String),
-    Held,
-}
-
-/// Send the end notice `text` to the lane of `item` and answer the word its
-/// mark records. The fleet record picks the route. A session lane takes the
-/// `orch-runtime send` owner, which records the directive owed before the
-/// CLI and settles it under its own reconcile, so an irreversible send is
-/// never retried blindly. Every other lane takes the mailbox's outbound
-/// directive route, `lane-mail send --item ITEM --directive --file F
-/// --delivery-id <key>`, which writes the lane's own inbox (`to-lane.jsonl`)
-/// and judges the key under the lock, so a replay after a lost mark lands
-/// once and answers `delivery-repeated`. The mark is `sent` on a receipt or
-/// a repeated delivery, and `unsent:<cause>` where the route refused or
-/// never started: recorded, never a reason to hold the close. The send is
-/// held where its answer is not known, the replay under the key landing at
-/// most once, and where the fleet record cannot be read, since the mailbox
-/// route would send to a session lane with no owed record. The file the
-/// program reads the notice from is this walker's own scratch,
-/// `<key>.<the request's stamp>.notice`, created exclusively and removed by
-/// this walker alone, so a second walker of the same notice (the owed walk
-/// meeting the job's send in flight) never removes the file the first's
-/// program is about to read; the record carries the key, never the file.
-/// Both routes run `reach`'s program in its root.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the end notice's file, this walker's own under the state directory, created exclusively for the mailbox program to read and removed by this walker after its send"
-)]
-fn send_notice(
-    settings: &Settings,
-    reach: &Reach,
-    item: &str,
-    key: &str,
-    text: &str,
-    env: &Env,
-    locking: Locking,
-) -> NoticeSend {
-    use std::io::Write;
-    let dir = settings.state_dir.join("validate");
-    if let Err(e) = fs::create_dir_all(&dir) {
-        return NoticeSend::Marked(format!("unsent:notice-dir:{e}"));
-    }
-    let path = dir.join(format!("{key}.{}.notice", env.round_id()));
-    let written = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .and_then(|mut file| file.write_all(format!("{text}\n").as_bytes()));
-    if let Err(e) = written {
-        return NoticeSend::Marked(format!("unsent:notice-write:{e}"));
-    }
-    let mark = match lane_record(settings, item) {
-        Ok(Some(lane)) if lane.session_channel() => {
-            send_session(settings, reach, &lane, key, &path, env, locking)
-        }
-        Ok(Some(lane)) => send_directive(reach, item, Route::of(&lane), key, &path),
-        Ok(None) => send_directive(reach, item, Route::Local { root: None }, key, &path),
-        Err(_) => NoticeSend::Held,
-    };
-    let _ = fs::remove_file(&path);
-    mark
-}
-
-/// The lane of `item` from the fleet record where one stands. No fleet, or
-/// one with no record for `item`, is no lane: the notice's mailbox route
-/// then writes a local inbox, which is the channel every non-cloud lane
-/// reads, and the acceptance reads the item's own checkout. A fleet that
-/// cannot be read is `Err`: it may hold the item's lane.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the one read of an item's lane record from the fleet record: the notice send's route and the acceptance's repository"
-)]
-pub(crate) fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane>> {
-    let fleet = record::fleet_path(&settings.state_dir);
-    let Some(snapshot) = state::load(&fleet)? else {
-        return Ok(None);
-    };
-    let fleet = FleetState::view(&fleet, &snapshot.doc)?;
-    Ok(fleet.lanes.into_iter().find(|l| l.item == item))
-}
-
-/// The mailbox's outbound directive to a non-session lane by `route`, keyed
-/// by the run: `reach`'s program run in its root, a local lane's box left to
-/// the program's own lookup from there.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the validation job's one outbound send of the lane's end notice through the mailbox program, keyed by the run so a replay lands once"
-)]
-fn send_directive(
-    reach: &Reach,
-    item: &str,
-    route: Route<'_>,
-    key: &str,
-    file: &Path,
-) -> NoticeSend {
-    match Mailbox::new(reach.mail_program.clone())
-        .bounded(NOTICE_TIMEOUT)
-        .send_directive(item, route, file, Some(key), Some(&reach.mail_root))
-    {
-        Ok(Sent::Mailbox { .. } | Sent::Repeated { .. }) => NoticeSend::Marked("sent".to_owned()),
-        // The program routed the lane to its session itself: the send's own
-        // result marks it.
-        Ok(Sent::Session { send }) => NoticeSend::Marked(session_mark(send.result)),
-        Err(refusal) if refusal.wrote_nothing() => NoticeSend::Marked(format!("unsent:{refusal}")),
-        // The append may stand: the next walk sends again under the run's
-        // key, which reads a landed notice as a repeat.
-        Err(_) => NoticeSend::Held,
-    }
-}
-
-/// The owner word a session send's result marks the stage with: delivered
-/// is `sent`; an archived session or a failed send is terminal, the stage
-/// marked `unsent:session:<result>` and never retried blindly (the lane's
-/// `directive_send` keeps the receipt for the hosted stall close).
-fn session_mark(result: SendResult) -> String {
-    match result {
-        SendResult::Sent => "sent".to_owned(),
-        SendResult::Archived => "unsent:session:archived".to_owned(),
-        SendResult::Failed => "unsent:session:failed".to_owned(),
-    }
-}
-
-/// The session send owner for a cloud lane, keyed by the notice:
-/// `send::run_keyed` reads the lane's `directive_send` under this key inside
-/// its owed write, under the store's lock, so a replay (the stage still owed
-/// when the owed walk or the job's own retry meets it) takes what this
-/// notice's own send already settled, with no CLI call, whichever walker's
-/// settle it was: a send made `sent` and a found `sent` both mark `sent`;
-/// `archived` or `failed`, made or found, takes the terminal mark; a send
-/// found owed under this key is held until it settles (the verb's reconcile,
-/// or the operator's mark after the watch's `directive-send-unsettled` line),
-/// and one found unreadable is held too, never a reason to act. A refusal
-/// (the send's outcome unknown, another send still owed on the lane, the
-/// lane's record moved) holds the stage owed and sends nothing. The residual,
-/// stated and not claimed exactly-once: a crash after this send's settle,
-/// then another send to the same lane, then the replay, sends the notice
-/// twice, a repeated line in the session and not a harm.
-fn send_session(
-    settings: &Settings,
-    reach: &Reach,
-    lane: &Lane,
-    key: &str,
-    file: &Path,
-    env: &Env,
-    locking: Locking,
-) -> NoticeSend {
-    match crate::send::run_keyed(&lane.item, file, settings, reach, env, locking, key) {
-        Ok(Keyed::Sent(sent)) => NoticeSend::Marked(session_mark(sent.send.result)),
-        Ok(Keyed::Found(KeyedSend::Settled(result))) => NoticeSend::Marked(session_mark(result)),
-        Ok(Keyed::Found(KeyedSend::Owed | KeyedSend::Unreadable)) | Err(_) => NoticeSend::Held,
     }
 }
 

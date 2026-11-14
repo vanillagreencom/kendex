@@ -8,13 +8,6 @@ Run from the worktree root. Create a fresh directory under the current worktree'
 
 Use the harness file-write tool to save this script as `[RUN_DIR]/launch.sh`:
 
-```sh
-run_path=$1
-shift
-run_dir=${run_path%/*}
-.agents/skills/orch/scripts/orch-runtime launch-job --name "${run_path##*/}-${run_dir##*/waiter.}" --record "$run_path.runner" -- sh -c 'sed -n "s/^line=//p" "$0.runner" > "$0.log"; "$@" >> "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" < /dev/null
-```
-
 The job is the launch shell, whose argv carries the run path as its own word and which leads the process group of everything the job starts. `[WORD]` is the run path's last word: `wait`, or `review` for a [process-owned Codex reviewer](codex-runtime.md#process-owned-reviewers). The job's name, job-units.md's `NAME`, is `[WORD]-[RUN_ID]`, so every launch names a unit no other launch has. The launch passes no `--cap`: each waiter ends on its own budget, a `verify-pr` or review call ends when the operation answers, `queue-watch` ends at its `--max-wait`, and `copilot-wait` at the bound [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse) states. The runner records how the job runs in `[RUN_DIR]/[WORD].runner`, and the launch shell writes that record's runner line as the first line of `[RUN_DIR]/[WORD].log`.
 
 The runner adds no signal ignore of its own, where a job a non-interactive shell starts with `&` ignores INT and QUIT, which leaves a detached guard or waiter uninterruptible and makes its signal rows report false failures. Under `setsid` a signal the calling process already ignores stays ignored; a unit starts from the manager's dispositions, with SIGPIPE at its default.
@@ -22,7 +15,7 @@ The runner adds no signal ignore of its own, where a job a non-interactive shell
 Invoke it as one foreground shell-tool command. Replace `[WAITER_COMMAND_AND_ARGS]` with the workflow's complete command, including any `env -u` prefixes. Preserve its polling interval, budget and output flags:
 
 ```bash
-sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" [WAITER_COMMAND_AND_ARGS]
+.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- [WAITER_COMMAND_AND_ARGS] < /dev/null
 ```
 
 It prints the runner line and exits 0 once the job is started. Exit `6`, `launch-unconfirmed`, may have started the job: keep `[RUN_DIR]`, wait on its completion file as § Completion says, and launch no second waiter for it. Any other exit started nothing: report its `job-unit:` line, which names the cause (`missing-command commands=setsid` on a host with neither runner), and launch nothing on it.

@@ -4063,7 +4063,7 @@ fn job_verb(dir: &Path, path: Option<&Path>, args: &[&str]) -> std::process::Out
 
 /// A job `launch-job` starts where no manager lingers runs as a `setsid`
 /// group: the reply names the identity the record holds, the command's
-/// standard error lands in `--stderr`, and `stop-job` ends the group by
+/// standard error lands in the run's log, and `stop-job` ends the group by
 /// that record, then answers `stopped: null` once nothing runs. A record
 /// naming no identity, as an unread launch leaves it, is refused, never
 /// read as stopped.
@@ -4071,7 +4071,7 @@ fn job_verb(dir: &Path, path: Option<&Path>, args: &[&str]) -> std::process::Out
 fn a_launched_job_runs_as_its_recorded_group_and_stop_job_ends_it_by_that_record() {
     let dir = tempfile::tempdir().unwrap();
     let record = dir.path().join("wait.runner");
-    let err = dir.path().join("wait.err");
+    let log = dir.path().join("wait.log");
     let out = job_verb(
         dir.path(),
         None,
@@ -4079,10 +4079,8 @@ fn a_launched_job_runs_as_its_recorded_group_and_stop_job_ends_it_by_that_record
             "launch-job",
             "--name",
             "wait-row",
-            "--record",
-            "wait.runner",
-            "--stderr",
-            "wait.err",
+            "--run",
+            "wait",
             "--",
             "sh",
             "-c",
@@ -4101,7 +4099,7 @@ fn a_launched_job_runs_as_its_recorded_group_and_stop_job_ends_it_by_that_record
         "{text}"
     );
     wait_until("the job's stderr", secs(10), || {
-        std::fs::read_to_string(&err).is_ok_and(|t| t.lines().any(|l| l == "job-stderr"))
+        std::fs::read_to_string(&log).is_ok_and(|t| t.lines().any(|l| l == "job-stderr"))
     });
     let stop = |record: &str| job_verb(dir.path(), None, &["stop-job", "--record", record]);
     let out = stop("wait.runner");
@@ -4148,8 +4146,8 @@ fn a_launched_unit_is_started_or_possibly_started_and_never_refused_while_the_ma
                 "launch-job",
                 "--name",
                 "wait-row",
-                "--record",
-                "wait.runner",
+                "--run",
+                "wait",
                 "--",
                 "sleep",
                 "60",
@@ -4191,7 +4189,11 @@ fn a_launched_unit_is_started_or_possibly_started_and_never_refused_while_the_ma
         .trim()
         .parse()
         .unwrap();
-    end_sleeper(pid);
+    // The unit's leader is the job, whose command runs in its group.
+    let _ = std::process::Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pid}")])
+        .status();
+    wait_until("the unit's group ended", secs(10), || !live(pid));
     assert_eq!(out.status.code(), Some(75), "{}", stderr(&out));
     assert_eq!(reply(&out)["result"]["launch"], "unanswered");
 }
@@ -4204,10 +4206,7 @@ fn a_launch_that_starts_nothing_is_refused_and_its_record_says_nothing_runs() {
     let dir = tempfile::tempdir().unwrap();
     let empty = dir.path().join("no-tools");
     std::fs::create_dir_all(&empty).unwrap();
-    for (record, path) in [
-        ("wait.runner", Some(empty.as_path())),
-        ("missing/wait.runner", None),
-    ] {
+    for (run, path) in [("wait", Some(empty.as_path())), ("missing/wait", None)] {
         let out = job_verb(
             dir.path(),
             path,
@@ -4215,20 +4214,163 @@ fn a_launch_that_starts_nothing_is_refused_and_its_record_says_nothing_runs() {
                 "launch-job",
                 "--name",
                 "wait-row",
-                "--record",
-                record,
+                "--run",
+                run,
                 "--",
                 "sleep",
                 "60",
             ],
         );
-        assert_eq!(out.status.code(), Some(1), "{record}: {}", stderr(&out));
-        assert_eq!(refusal_key(&out), "job-launch-failed", "{record}");
+        assert_eq!(out.status.code(), Some(1), "{run}: {}", stderr(&out));
+        assert_eq!(refusal_key(&out), "job-launch-failed", "{run}");
     }
     let text = std::fs::read_to_string(dir.path().join("wait.runner")).unwrap();
     assert!(
         text.lines().any(|l| l == "status=setsid-unrun"),
         "the record says nothing runs: {text}"
+    );
+}
+
+/// `orch-runtime launch-job` in `root`, a checkout of its own, with `mail`
+/// as the mailbox program; the job's pid once the launch answers.
+fn job_in(root: &Path, mail: &Path, args: &[&str]) -> u32 {
+    let out = isolated()
+        .args(args)
+        .current_dir(root)
+        .env("LANE_MAIL_CLI", mail)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = reply(&out)["result"].clone();
+    assert_eq!(job["launch"], "started", "{job}");
+    job["pid"].as_u64().expect("the job's pid") as u32
+}
+
+/// The lines of a file the row reads whole.
+fn lines_of(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A job launched for its owner writes the runner line, the command's
+/// output and its exit code, then appends one `job-end` directive naming
+/// them to the owner lane's inbox through the shipped mailbox, and says so
+/// on its log's last line. A job launched for no owner writes the same
+/// files and sends nothing.
+#[test]
+fn a_job_launched_for_its_owner_appends_one_end_notice_to_the_owners_inbox_and_one_for_none_sends_nothing()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("work");
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    let mail = real_mail(&root);
+    let inbox = root.join("tmp/lane-mail/KEN-1/to-lane.jsonl");
+    let command = ["--", "sh", "-c", "echo hi; exit 3"];
+    let unowned = [
+        &["launch-job", "--name", "free-row", "--run", "free"][..],
+        &command[..],
+    ]
+    .concat();
+    let pid = job_in(&root, &mail, &unowned);
+    wait_until("the unowned job ended", secs(30), || !live(pid));
+    // The job reads its record's runner line as it starts, which may be
+    // before the launcher adds the identity it reads after the start.
+    let ran = |word: &str| {
+        let line = lines_of(&root.join(format!("{word}.runner")))
+            .iter()
+            .find_map(|l| l.strip_prefix("line=").map(str::to_owned))
+            .expect("the record's runner line");
+        let mut log = lines_of(&root.join(format!("{word}.log")));
+        assert!(
+            !log.is_empty() && log[0].starts_with("runner=setsid") && line.starts_with(&log[0]),
+            "{word}: {line} / {log:?}"
+        );
+        log.remove(0);
+        log
+    };
+    assert_eq!(ran("free"), ["hi"]);
+    assert_eq!(lines_of(&root.join("free.exit")), ["3"]);
+    assert!(lines_of(&inbox).is_empty(), "no owner, no notice");
+    let owned = [
+        &[
+            "launch-job",
+            "--name",
+            "owned-row",
+            "--run",
+            "owned",
+            "--owner",
+            "KEN-1",
+        ][..],
+        &command[..],
+    ]
+    .concat();
+    let pid = job_in(&root, &mail, &owned);
+    wait_until("the owned job ended", secs(30), || !live(pid));
+    assert_eq!(ran("owned"), ["hi", "job-end-notice=sent"]);
+    assert_eq!(lines_of(&root.join("owned.exit")), ["3"]);
+    let sent = lines_of(&inbox);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let notice: Value = serde_json::from_str(&sent[0]).unwrap();
+    assert_eq!(
+        notice["text"],
+        format!(
+            "job-end name=owned-row exit=3 log={} exit-file={}",
+            root.join("owned.log").display(),
+            root.join("owned.exit").display()
+        ),
+        "{notice}"
+    );
+    assert_eq!(notice["delivery_id"], "job-owned-row", "{notice}");
+}
+
+/// A job whose owner's mailbox refuses the notice by its keyed line still
+/// stands on its exit file, and its log's last line says the notice went
+/// unsent with the refusal.
+#[test]
+fn a_job_whose_end_notice_is_refused_keeps_its_exit_and_says_unsent_in_its_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    git_checkout(&root);
+    let mail = dir.path().join("lane-mail");
+    write_executable(
+        &mail,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$0.log\"\nprintf 'lane-mail: root-unresolved=KEN-1\\nThe lane root could not be resolved. Pass --root.\\n' >&2\nexit 2\n",
+    );
+    let pid = job_in(
+        &root,
+        &mail,
+        &[
+            "launch-job",
+            "--name",
+            "refused-row",
+            "--run",
+            "refused",
+            "--owner",
+            "KEN-1",
+            "--",
+            "sh",
+            "-c",
+            "echo done",
+        ],
+    );
+    wait_until("the job ended", secs(30), || !live(pid));
+    assert_eq!(lines_of(&root.join("refused.exit")), ["0"]);
+    let log = lines_of(&root.join("refused.log"));
+    let mark = log.last().cloned().unwrap_or_default();
+    assert!(
+        mark.starts_with("job-end-notice=unsent:") && mark.contains("root-unresolved=KEN-1"),
+        "{log:?}"
+    );
+    let calls = lines_of(&dir.path().join("lane-mail.log"));
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        calls[0].starts_with("send --item KEN-1 --directive --file ")
+            && calls[0].ends_with(" --delivery-id job-refused-row"),
+        "{calls:?}"
     );
 }
 

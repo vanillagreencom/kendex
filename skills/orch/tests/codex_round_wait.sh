@@ -6,8 +6,7 @@
 # Inputs: hooks/, skills/agent-runtime/, skills/agent-runtime/scripts/,
 # skills/change-scope/references/, skills/change-scope/scripts/,
 # skills/communication/references/reports.md, skills/mailbox/scripts/, skills/orch/SKILL.md,
-# skills/orch/references/codex-runtime.md, skills/orch/references/waiter-launch.md,
-# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
+# skills/orch/references/codex-runtime.md, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
 # skills/orch/workflows/review-pr.md, skills/orch/workflows/review.md, skills/reviewer/,
 # skills/reviewer/SKILL.md.
 set -euo pipefail
@@ -34,9 +33,6 @@ trap cleanup EXIT
 REAL_SLEEP="$(command -v sleep)"
 TIMEOUT="$(command -v timeout || command -v gtimeout)" || { echo 'rowless: codex_round_wait timeout=absent'; exit 0; }
 command -v setsid >/dev/null || { echo 'rowless: codex_round_wait setsid=absent'; exit 0; }
-
-awk '/^```sh$/ { active=1; blocks++; next } /^```$/ && active { active=0; next } active { print } END { if (blocks != 1 || active) exit 1 }' \
-  "$SKILL_DIR/references/waiter-launch.md" > "$TMP_ROOT/launch.sh"
 
 runtime="${CODEX_RUNTIME_UNDER_TEST:-$SKILL_DIR/references/codex-runtime.md}"
 awk '/^## Process-owned reviewers$/ { section=1; next } /^## / && section { section=0 }
@@ -94,10 +90,10 @@ PY
     printf '%s\n' 'Synthetic parent directive for hook isolation. Respond only HOOK_PROOF; do not run any tools.' > "$fixture/directive.md"
     (cd "$fixture" && "$SKILL_DIR/../mailbox/scripts/lane-mail" send --item FIXTURE-4642 --root "$fixture" --directive --file "$fixture/directive.md") > "$job/send.log" 2>&1
     printf '0\n' > "$fixture/tmp/lane-mail/FIXTURE-4642/to-lane.cursor"
-    cp "$TMP_ROOT/launch.sh" "$job/launch.sh"
     printf '%s\n' 'This is an isolated hook transport fixture. Run no tools. Respond only HOOK_PROOF. If a Stop hook continues the turn, respond HOOK_PROOF once more without running any tools.' > "$job/delegation.md"
     launch="$(cat "$TMP_ROOT/process-launch")"
     launch="${launch//\[JOB_DIR\]/$job}"
+    launch="${launch//\[RUN_ID\]/$native_case}"
     # Current lane selection is explicit; no auth/config file is inspected.
     flags='--model gpt-6.1-sol -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust -c features.hooks=true'
     launch="${launch//\[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS\]/$flags}"
@@ -177,6 +173,7 @@ set -euo pipefail
 cd "$ROUND_CASE"
 command="$(cat "$ROUND_SOURCE/$ROUND_COMMAND")"
 command="${command//\[RUN_DIR\]/$ROUND_CASE}"
+command="${command//\[RUN_ID\]/round}"
 command="${command//\[WORKTREE_PATH\]/$ROUND_CASE}"
 command="${command//\[ISSUE_ID\]/issue-3409}"
 command="${command//\[DEV_ROUND_ID\]/round-1}"
@@ -219,7 +216,7 @@ while IFS='|' read -r name kind caller dependency poll_source lands verdict cont
   [[ "$kind" == dev ]] || stub=orch-runtime
   mkdir -p "$case_dir/.agents/skills/orch/scripts"
   ln -s "$SKILL_DIR/scripts/lib" "$case_dir/.agents/skills/orch/scripts/lib"
-  # The launch script starts its job through the installed runtime's
+  # The round's launch line starts its job through the installed runtime's
   # `launch-job`, which the real runtime answers; the reviewer's stub stands
   # at the same path and passes that verb through.
   printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$SKILL_DIR/scripts/orch-runtime" > "$case_dir/.agents/skills/orch/scripts/orch-runtime"
@@ -233,7 +230,6 @@ if [[ "$ROUND_LANDS" == yes ]]; then cp "$ROUND_CASE/receipt" "$ROUND_CASE/tmp/$
 exec "$ROUND_CHECK" "$@"
 SH
   chmod +x "$case_dir/.agents/skills/orch/scripts/$stub" "$case_dir/.agents/skills/orch/scripts/orch-runtime"
-  cp "$TMP_ROOT/launch.sh" "$case_dir/launch.sh"
   case "$kind" in
     dev)
       command_source=command artifact=dev-return-issue-3409-round-1.json result_filter=.verdict
@@ -339,7 +335,6 @@ SH
     [[ -z "${CODEX_PROCESS_RESULT_ONLY:-}" || "$CODEX_PROCESS_RESULT_ONLY" == "$result" ]] || continue
     job="$process_work/tmp/$domain-$result"
     mkdir "$job"
-    cp "$TMP_ROOT/launch.sh" "$job/launch.sh"
     artifact="$("$SKILL_DIR/scripts/orch-runtime" review-artifact --text path --worktree "$process_work" --agent "$domain")"
     [[ ! -e "$artifact" ]] || rm -- "$artifact"
     jq -nc --arg agent "$domain" --arg head "$process_head" \
@@ -373,6 +368,7 @@ pathlib.Path(output).write_text('DELEGATION:\n' + role + '\n' + workflow + '\n' 
 PY
     launch="$(cat "$TMP_ROOT/process-launch")"
     launch="${launch//\[JOB_DIR\]/$job}"
+    launch="${launch//\[RUN_ID\]/$domain-$result}"
     process_flags='--model gpt-6.1-sol -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox'
     launch="${launch//\[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS\]/$process_flags}"
     (cd "$process_work" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CODEX_HOME="$TMP_ROOT/process-account" \

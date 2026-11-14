@@ -767,6 +767,7 @@
   ".agents/skills/orch/runtime/src/effects/pi-session-env.txt",
   ".agents/skills/orch/runtime/src/effects/stop.rs",
   ".agents/skills/orch/runtime/src/error.rs",
+  ".agents/skills/orch/runtime/src/job_end.rs",
   ".agents/skills/orch/runtime/src/lib.rs",
   ".agents/skills/orch/runtime/src/mailbox.rs",
   ".agents/skills/orch/runtime/src/main.rs",

@@ -172,20 +172,39 @@ enum Verb {
     },
     /// Start a command detached as a recorded job: a transient user unit
     /// where the user manager lingers, else a `setsid` group, the record
-    /// written whole before the start. Exit 0 started, 75 possibly started
-    /// (keep the record and start nothing again), 1 `job-launch-failed`
-    /// with nothing started. Reads no settings.
+    /// `PATH.runner` written whole before the start. The job writes the
+    /// runner line and the command's output to `PATH.log` and its exit code
+    /// to `PATH.exit`; with `--owner`, it then sends that lane a `job-end`
+    /// directive and writes how the send went as the log's last line. Exit 0
+    /// started, 75 possibly started (keep the record and start nothing
+    /// again), 1 `job-launch-failed` with nothing started. Reads settings
+    /// only with `--owner`.
     LaunchJob {
         /// The job's name, which names its unit.
         #[arg(long)]
         name: String,
-        /// The record naming how the job runs.
+        /// The run's path, which its files extend.
         #[arg(long)]
-        record: PathBuf,
-        /// A file the job's standard error is appended to.
+        run: PathBuf,
+        /// The lane item told of the job's end.
         #[arg(long)]
-        stderr: Option<PathBuf>,
+        owner: Option<String>,
         /// The command and its arguments, after `--`.
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
+    /// The job `launch-job` starts: run the command, write its exit, then
+    /// tell the owner.
+    #[command(hide = true)]
+    RunJob {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        run: PathBuf,
+        #[arg(long)]
+        owner: Option<String>,
+        #[command(flatten)]
+        reach: WatchReach,
         #[arg(last = true, required = true)]
         argv: Vec<String>,
     },
@@ -1924,19 +1943,53 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::LaunchJob {
             name,
-            record,
-            stderr,
+            run,
+            owner,
             argv,
         } => {
-            let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+            // The job and the notice name the run's files from wherever
+            // their reader stands.
+            let run = std::path::absolute(&run).map_err(|e| {
+                Error::Runtime(agent_runtime::Error::io("run-path", run.clone(), e))
+            })?;
+            let exe = std::env::current_exe().map_err(|e| {
+                Error::Runtime(agent_runtime::Error::io("current-exe", run.clone(), e))
+            })?;
+            let settings = owner
+                .as_ref()
+                .map(|_| resolve_settings(&flags))
+                .transpose()?;
+            let job = orch_runtime::job_end::argv(
+                &exe,
+                &name,
+                &run,
+                owner.as_deref().zip(settings.as_ref()),
+                &argv,
+            );
+            let job: Vec<&str> = job.iter().map(String::as_str).collect();
+            let record = orch_runtime::job_end::file(&run, "runner");
             let launch = agent_runtime::effects::job::launch_command(
                 &name,
                 &record,
-                &argv,
-                stderr.as_deref(),
+                &job,
+                Some(&orch_runtime::job_end::file(&run, "err")),
             );
             launched(&launch, &record)?
         }
+        Verb::RunJob {
+            name,
+            run,
+            owner,
+            reach,
+            argv,
+        } => serde_json::to_value(orch_runtime::job_end::run(
+            &name,
+            &run,
+            &argv,
+            owner.as_deref(),
+            || Ok((resolve_settings(&flags)?, reach.mailbox()?, Env::system()?)),
+            locking,
+        )?)?,
         Verb::StopJob { record } => {
             serde_json::json!({"stopped": agent_runtime::effects::job::stop_recorded(&record)?})
         }
