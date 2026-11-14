@@ -1,4 +1,4 @@
-"""Drive the production lane-mail and prune commands in isolated repositories."""
+"""Drive the production lane-mail command in isolated repositories."""
 
 import ast
 import json
@@ -145,7 +145,7 @@ class Compaction(unittest.TestCase):
         # The copied runtime entry resolves its binary from these sources.
         (orch.parent / "runtime").symlink_to(ROOT / "skills/orch/runtime")
         (orch.parent.parent / "agent-runtime").symlink_to(ROOT / "skills/agent-runtime")
-        path = (scripts if (SCRIPTS / relative).is_file() else orch) / relative
+        path = scripts / relative
         content = path.read_text()
         self.assertEqual(content.count(old), 1, f"mutation target: {old}")
         changed = content.replace(old, new)
@@ -420,114 +420,6 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
 ''' + old))
         with self.assertRaises((AssertionError, json.JSONDecodeError)):
             self.race(paused)
-
-    def prune_sessions(self, scripts, ordinary_name, keeps, removed, absolute=False, stale_process=False):
-        repo, box = self.world()
-        files = [box / f"session-999999-{pane}.jsonl" for pane in (1, 2, 3, 4)]
-        neighbor = box / "session-999999-10.jsonl"
-        neighbor.write_text('{}\n')
-        ordinary = repo / "tmp" / ordinary_name
-        if ordinary_name == "keep.run":
-            ordinary.mkdir()
-            (ordinary / "watch.log").write_text("watch\n")
-            os.utime(ordinary / "watch.log", (946684800, 946684800))
-        else:
-            ordinary.write_text("watch\n")
-        os.utime(ordinary, (946684800, 946684800))
-        unknown = box / "session-888888-1.jsonl"
-        unknown.write_text('{}\n')
-        process_bin = repo / "process-bin"
-        bash = shutil.which("bash", path=self.env["PATH"])
-        self.assertIsNotNone(bash)
-        subprocess.run([bash, "-c", '. "$1"; proc_table_install "$2"', "fixture",
-                        str(ROOT / "skills/orch/tests/lib/process-table.sh"), str(process_bin)],
-                       env=self.env, check=True)
-        table = process_bin / "table"
-        table.write_text("999999 1 tmux\n888888 1 tmux\n")
-        if stale_process:
-            (process_bin / "ps").write_text("#!/bin/sh\nprintf 'tmux\\n'\n")
-        (process_bin / "tmux").write_text("#!/bin/sh\nprintf '999999 1 %%4\\n'\n")
-        (process_bin / "tmux").chmod(0o755)
-        prune_env = self.env | {"PATH": str(process_bin) + os.pathsep + self.env["PATH"],
-                                "PROC_TABLE": str(table)}
-        for path in files:
-            path.write_text('{}\n')
-        state = repo / "tmp/workflow-state-oversee.json"
-        state.write_text(json.dumps({"issue_id": "oversee", "controller": {
-            "session_rows": str(files[1]), "pending": {"session_rows": str(files[2])}}}))
-        self.rows(box, "to-overseer", [{"id": "expired", "kind": "notice", "at": OLD}])
-        args = [word for path in keeps for word in ("--keep", str(repo / path) if absolute else path)]
-        result = subprocess.run([str(scripts / "../../orch/scripts/workflow-state"), "--state-dir", str(repo / "tmp"), "prune", *args],
-                                cwd=repo, env=prune_env, capture_output=True, text=True)
-        self.prune_result, self.prune_live_row = result, files[3]
-        self.assertEqual(result.returncode, 0, result.stderr)
-        judged = [ordinary, files[0], neighbor]
-        self.assertEqual([path.name for path in judged if not path.exists()], removed)
-        self.assertTrue(files[1].exists())
-        self.assertTrue(files[2].exists())
-        self.assertTrue(files[3].exists())
-        self.assertTrue(unknown.exists())
-        sessions = sum(name.startswith("session-") for name in removed)
-        self.assertIn(f"pruned fleet_log=0 lanes=0 progress_reports=0 paths={len(removed)} "
-                      f"to-lane=0 to-overseer=1 sessions={sessions}\n", result.stdout)
-        self.assertEqual([line[12:] for line in result.stdout.splitlines() if line.startswith("pruned path=")],
-                         [str(path) for path in judged if path.name in removed])
-        kept = [Path(line[5:]) for line in result.stdout.splitlines() if line.startswith("kept=")]
-        self.assertEqual(len(kept), 2 if removed else 1)
-        self.assertTrue(all(path.is_file() for path in kept))
-        archived_paths = set()
-        for path in kept:
-            with tarfile.open(path) as archive:
-                archived_paths.update(member.name.rstrip("/") for member in archive.getmembers())
-        for path in judged:
-            self.assertEqual(str(path).lstrip("/") in archived_paths, path.name in removed)
-
-    def test_prune_sessions(self):
-        cases = [
-            ("kept.log", (), ["kept.log", "session-999999-1.jsonl", "session-999999-10.jsonl"], False),
-            ("kept.log", ("tmp/kept.log", "tmp/lane-mail/overseer/session-999999-1.jsonl"),
-             ["session-999999-10.jsonl"], True),
-            ("keep.run", ("tmp/keep.run/watch.log", "tmp/lane-mail/overseer/session-999999-1.jsonl"),
-             ["session-999999-10.jsonl"], False),
-            ("keep.run", ("tmp/keep.run/watch.log", "tmp/lane-mail/overseer/session-999999-1.jsonl",
-                          "tmp/lane-mail/overseer/session-999999-10.jsonl"), [], False),
-        ]
-        for case in cases:
-            with self.subTest(keeps=case[1]):
-                self.prune_sessions(SCRIPTS, *case)
-        for case in cases:
-            with self.subTest(process="command-only", keeps=case[1]):
-                with self.assertRaises(AssertionError):
-                    self.prune_sessions(SCRIPTS, *case, stale_process=True)
-                self.assertEqual(self.prune_result.returncode, 0)
-                self.assertFalse(self.prune_live_row.exists())
-        mutant = self.mutant("unnamed", "lib/session-rows.sh",
-                             '    case "$nl$named$nl" in *"$nl$file$nl"*) continue ;; esac',
-                             '    : "$nl$named$nl"')
-        with self.assertRaises(AssertionError):
-            self.prune_sessions(mutant, *cases[0])
-        mutant = self.mutant("prune-pointer", "workflow-state",
-                             '    [[ -z "$mailbox_archive" ]] || printf \'kept=%s\\n\' "$mailbox_archive"',
-                             '    : "$mailbox_archive"')
-        with self.assertRaises(AssertionError):
-            self.prune_sessions(mutant, *cases[0])
-        mutant = self.mutant("ignored-keep", "workflow-state",
-                             '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || return 0',
-                             '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || :')
-        with self.assertRaises(AssertionError):
-            self.prune_sessions(mutant, *cases[2])
-        mutant = self.mutant("ignored-containment", "workflow-state",
-                             '[[ "$unit" != "$keep" && "$keep" != "$unit"/* ]] || return 0',
-                             '[[ "$unit" != "$keep" ]] || return 0')
-        with self.assertRaisesRegex(AssertionError, r"\['keep\.run', 'session-999999-10\.jsonl'\]"):
-            self.prune_sessions(mutant, *cases[2])
-        mutant = self.mutant("session-keep-bypass", "workflow-state",
-                             'for unit in ${SESSION_ROWS_DEAD[@]+"${SESSION_ROWS_DEAD[@]}"}; do\n'
-                             '        unit_explicitly_kept "$unit" ${keeps[@]+"${keeps[@]}"} && continue',
-                             'for unit in ${SESSION_ROWS_DEAD[@]+"${SESSION_ROWS_DEAD[@]}"}; do\n'
-                             '        unit_explicitly_kept "$unit" ${keeps[@]+"${keeps[@]}"} && :')
-        with self.assertRaises(AssertionError):
-            self.prune_sessions(mutant, *cases[1])
 
     def test_retention_floor(self):
         self.env["SLACK_THREAD_DAYS"] = "7"

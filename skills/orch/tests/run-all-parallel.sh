@@ -462,12 +462,14 @@ mkdir -p "$B/tmp" "$B.planted"
 printf '{"marker":"fixture"}\n' >"$B/tmp/workflow-state-oversee.json"
 printf '{"marker":"caller"}\n' >"$B.planted/workflow-state-oversee.json"
 # Bash 3.2 does not apply errexit to [[ ... ]]; each assertion exits explicitly.
-printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$("$WS" get oversee .marker)" == fixture ]] || exit 1\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$("$WS" get oversee .marker)" == caller ]] || exit 1\necho "pass: 2   fail: 0"\n' \
+# The planted suite reads the fleet record where a state reader resolves it:
+# under ORCH_STATE_DIR where one is set, else the checkout's tmp.
+printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$(jq -r .marker "${ORCH_STATE_DIR:-tmp}/workflow-state-oversee.json")" == fixture ]] || exit 1\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$(jq -r .marker "${ORCH_STATE_DIR:-tmp}/workflow-state-oversee.json")" == caller ]] || exit 1\necho "pass: 2   fail: 0"\n' \
   >"$B/state.sh"
-run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
+run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted"
 assert_eq "$RC" 0 "the suite reads fixture state and can set its own ORCH_STATE_DIR"
 mutate_file "$B/run-all.sh" 'unset ORCH_STATE_DIR' ': ORCH_STATE_DIR'
-run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
+run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted"
 assert_eq "rc=$RC failed=$(failed_of)" "rc=1 failed=state " "control: inherited lane state fails the fixture assertion"
 
 echo "=== 8. --battery runs another directory's suites and names its tree ==="

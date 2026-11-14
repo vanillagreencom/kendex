@@ -49,6 +49,8 @@ message() { # KEY VALUE
 
 command -v jq >/dev/null 2>&1 || { message missing-tools jq >&2; exit 1; }
 
+# shellcheck source=lib/copilot-session.sh
+. "${BASH_SOURCE[0]%/*}/lib/copilot-session.sh"
 # shellcheck source=lib/lane-context.sh
 . "${BASH_SOURCE[0]%/*}/lib/lane-context.sh"
 

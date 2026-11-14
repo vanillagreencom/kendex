@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# copilot-lane-context/extension.mjs, the Copilot extension agent-runtime's
+# agent-runtime's runtime/src/copilot-lane-context.mjs, the Copilot extension its
 # trust step installs in a Copilot fleet lane's COPILOT_HOME: run under node against a
 # fake @github/copilot-sdk/extension that joins a session named s1, delivers
 # the `session.usage_info` events a row lists and records what the extension
@@ -15,7 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-EXTENSION="$SCRIPTS_DIR/copilot-lane-context/extension.mjs"
+EXTENSION="$(cd "$TEST_DIR/../../agent-runtime/runtime/src" && pwd)/copilot-lane-context.mjs"
 TMP_ROOT="$(mktemp -d)" || { echo "copilot-lane-context: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "copilot-lane-context: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "copilot-lane-context: scratch=resolve-failed" >&2; exit 1; }

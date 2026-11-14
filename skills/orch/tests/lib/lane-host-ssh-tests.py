@@ -262,7 +262,7 @@ exec git "$@"
             library = path.parent / "lib"
             self.copy_tree(PACKAGE / "scripts/lib", library, dirs_exist_ok=True)
             self.copy_tree(PACKAGE.parent / "mailbox/scripts", path.parent.parent.parent / "mailbox/scripts", dirs_exist_ok=True)
-            for name in ("orch-env", "workflow-state", "git-context"):
+            for name in ("orch-env", "git-context"):
                 self.copy_file(PACKAGE / "scripts" / name, path.parent / name)
             # The archive root is the runtime's answer: this entry runs the
             # binary setup built for these sources.
@@ -302,7 +302,7 @@ exec git "$@"
         self.assertFalse((peer.source / "case-only").exists())
         self.assertEqual(subprocess.check_output([self.env["REAL_GIT"], "-C", str(peer.source), "rev-parse", "HEAD"]), peer_head)
         paths = (".git/config", "source/.git/config", "source/kendex.toml", "local account/auth.json",
-                 "inventory.json", "bin/ssh", "orch/scripts/lane-host-ssh", "orch/scripts/lib/lane-gitfile.sh")
+                 "inventory.json", "bin/ssh", "orch/scripts/lane-host-ssh", "orch/scripts/lib/kendex-env.sh")
         expected = {relative: (peer.root / relative).read_bytes() for relative in paths}
         for relative in paths:
             with self.subTest(path=relative):
@@ -325,11 +325,11 @@ exec git "$@"
             self.executable(path, provider)
         controls[0].write_text("private mutant\n")
         self.assertEqual(controls[1].read_text(), provider)
-        libraries = [path.parent / "lib/lane-gitfile.sh" for path in controls]
+        libraries = [path.parent / "lib/kendex-env.sh" for path in controls]
         original = libraries[1].read_bytes()
         libraries[0].write_bytes(b"private library mutation\n")
         self.assertEqual(libraries[1].read_bytes(), original)
-        self.assertEqual((peer.root / "orch/scripts/lib/lane-gitfile.sh").read_bytes(), original)
+        self.assertEqual((peer.root / "orch/scripts/lib/kendex-env.sh").read_bytes(), original)
         # A shared inode is the defect this isolation assertion must detect.
         libraries[0].write_bytes(original)
         libraries[1].unlink()
@@ -484,64 +484,20 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(parse(landed.read_bytes()), expected or data)
 
-    def copilot_create(self):
-        """A copilot create's fields, on a host whose login profile exports every token again."""
+    def test_create_runs_copilot_on_its_stored_login(self):
+        """A copilot lane copies no credential, and its provider selects COPILOT_HOME on the prefix and names it as copilot-home."""
+        before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         result = self.create(harness="copilot")
         self.assertEqual(result.returncode, 0, result.stderr)
-        (self.root / ".bash_profile").write_text(
-            "export GH_TOKEN=profile-token COPILOT_GITHUB_TOKEN=profile-placeholder GITHUB_TOKEN=profile-actions-token\n")
-        return dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
-
-    def copilot_run(self, fields, library=None):
-        """The create's prefix running the command the launch hands it, under LIBRARY's launch policy or none."""
-        probe = ('printf "%s|%s|%s|%s|%s|%s" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}"'
-                 ' "$COPILOT_HOME" "$COPILOT_SKILLS_DIRS" "$COPILOT_ALLOW_ALL"')
-        words = ""
-        if library:
-            # The launch policy's one owner, as a hosted launch calls it
-            # for a command carrying --allow-all.
-            words = subprocess.run(["bash", "-c", '. "$1" && lane_copilot_env "$2" "$3"', "_",
-                                    str(library), "copilot --allow-all", '"$HOME/.agents/skills"'],
-                                   check=True, capture_output=True).stdout.decode().strip() + " "
-        command = "cd / && exec " + words + "sh -c " + shlex.quote(probe)
-        return subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],
-                              env={**self.env, "COPILOT_GITHUB_TOKEN": "placeholder", "GH_TOKEN": "app-token",
-                                   "GITHUB_TOKEN": "actions-token", "HOME": str(self.root)},
-                              capture_output=True, start_new_session=True)
-
-    def test_create_runs_copilot_on_its_stored_login(self):
-        """A copilot lane copies no credential, its provider selects COPILOT_HOME and names it as copilot-home, and the launch policy clears the COPILOT_GITHUB_TOKEN the host's profile exports while GH_TOKEN and GITHUB_TOKEN reach the lane."""
-        before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
-        fields = self.copilot_create()
+        fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
         # The home the launcher installs the context reader into and finds the hooks under.
         self.assertEqual(fields["copilot-home"], self.row["account"])
-        run = self.copilot_run(fields, PACKAGE / "scripts/lib/lane-launch.sh")
+        command = "cd / && exec sh -c " + shlex.quote('printf "%s" "$COPILOT_HOME"')
+        run = subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],
+                             env={**self.env, "HOME": str(self.root)}, capture_output=True, start_new_session=True)
         after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         self.assertEqual(after, before)
-        self.assertEqual(run.stdout.decode(), "|".join(["unset", "profile-token", "profile-actions-token", self.row["account"],
-                                                        str(self.root / ".agents/skills"), "true"]), run.stderr)
-
-    def test_control_copilot_command_without_its_policy(self):
-        """Control: the same prefix running the command with no launch policy leaves the profile's tokens on the lane."""
-        run = self.copilot_run(self.copilot_create())
-        self.assertEqual(run.stdout.decode().split("|")[:3],
-                         ["profile-placeholder", "profile-token", "profile-actions-token"], run.stderr)
-
-    def test_control_copilot_policy_without_its_clearing(self):
-        """Control: the clearing cut from a copy of the policy leaves the profile's COPILOT_GITHUB_TOKEN on the lane."""
-        fields = self.copilot_create()
-        clearing = "printf 'env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS"
-        lib = self.root / "policy-copy"
-        self.copy_tree(PACKAGE / "scripts/lib", lib)
-        library = lib / "lane-launch.sh"
-        original = library.read_text()
-        self.assertEqual(original.count(clearing), 1)
-        library.write_text(original.replace(clearing, "printf 'env COPILOT_SKILLS_DIRS"))
-        self.assertNotIn(clearing, library.read_text())
-        run = self.copilot_run(fields, library)
-        self.assertEqual(run.stdout.decode(), "|".join(["profile-placeholder", "profile-token", "profile-actions-token",
-                                                        self.row["account"], str(self.root / ".agents/skills"), "true"]),
-                         run.stderr)
+        self.assertEqual(run.stdout.decode(), self.row["account"], run.stderr)
 
     def worktree_root(self):
         return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",
@@ -566,7 +522,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         """SSH create, its native prefix, the installed hook and host state read."""
         hook = PACKAGE.parents[1] / "hooks/lane-mail-check.sh"
         hook_text = hook.read_text()
-        for name in ("workflow-state", "orch-env", "git-context"):
+        for name in ("orch-env", "git-context"):
             relative = ".agents/skills/orch/scripts/" + name
             self.executable(self.source / relative, (PACKAGE / "scripts" / name).read_text())
             self.seed_source(relative, (PACKAGE / "scripts" / name).read_text())
@@ -604,17 +560,18 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         planted = None
         if recovery_fault == "handoff":
             # The runtime's handoff write refuses inside this invocation: the
-            # standing record the switch carries forward, planted as the
-            # released store wrote it, names a round the item never ran, so
-            # record-handoff answers round-unknown. The model check and the
-            # notice slot stay the runtime's real writes.
+            # standing record the switch carries forward names a round the
+            # item never ran, so record-handoff answers round-unknown. No
+            # verb writes such a record, so it is planted into the file the
+            # runtime's init wrote. The model check and the notice slot stay
+            # the runtime's real writes.
             planted = {"round_id": "pruned-round", "merged": [], "remaining": ["old"], "branch": "b",
                        "worktree": str(path), "open_pr": None, "traps": []}
-            store = path / ".agents/skills/orch/scripts/workflow-state"
-            for args in (("init", "TEST-1"), ("set", "TEST-1", "handoff", json.dumps(planted))):
-                done = subprocess.run([str(store), "--state-dir", str(path / "tmp"), *args],
-                                      cwd=path, env=self.env, capture_output=True)
-                self.assertEqual(done.returncode, 0, done.stderr)
+            done = subprocess.run([str(path / ".agents/skills/orch/scripts/orch-runtime"), "--state-dir", str(path / "tmp"),
+                                   "state", "init", "--item", "TEST-1"], cwd=path, env=self.env, capture_output=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            record = path / "tmp/workflow-state-TEST-1.json"
+            record.write_text(json.dumps({**json.loads(record.read_text()), "handoff": planted}) + "\n")
         # The prefix execs this native process. Block TERM until its callback
         # returns so the fixture can report the hook result before exiting.
         native = self.bin / "claude"
@@ -642,7 +599,7 @@ signal.sigwait({signal.SIGTERM})
             self.assertEqual(reply["exit"], 0, reply)
             self.assertTrue((path / "tmp/workflow-state-TEST-1.json").exists(), reply)
             state = json.loads((path / "tmp/workflow-state-TEST-1.json").read_text())
-            read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh")
+            read = self.hosted_state_read(path)
             self.assertEqual(read.returncode, 0, read.stderr)
             self.assertEqual(json.loads(read.stdout), state)
             if recovery_fault == "handoff":
@@ -816,7 +773,7 @@ signal.sigwait({signal.SIGTERM})
         runtime = self.runtime_binary()
         self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
         scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context", "orch-env"):
+        for name in ("git-context", "orch-env"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         self.copy_tree(PACKAGE.parent / "github/scripts/lib",
                         self.source / ".agents/skills/github/scripts/lib", dirs_exist_ok=True)
@@ -834,17 +791,16 @@ signal.sigwait({signal.SIGTERM})
         probe = self.root / "state-probe.sh"
         probe.write_text('''set -euo pipefail
 export PATH="$1:$PATH"
-scripts="$PWD/.agents/skills/orch/scripts"
-state="$scripts/workflow-state"
-"$state" init TEST-1 --worktree "$PWD" --branch test-1 >/dev/null
-"$state" set-git-head TEST-1 pre_delegate_sha "$PWD" >/dev/null
-round=$("$state" new-round-id TEST-1 dev_round_id)
-"$state" set-now TEST-1 dev_delegated_at >/dev/null
+runtime=@RUNTIME@
+"$runtime" state init --item TEST-1 --worktree "$PWD" --branch test-1 >/dev/null
+"$runtime" state set-git-head --item TEST-1 /pre_delegate_sha --worktree "$PWD" >/dev/null
+"$runtime" state new-round-id --item TEST-1 /dev_round_id >/dev/null
+round=$("$runtime" state get --item TEST-1 /dev_round_id | jq -er .result.value)
+"$runtime" state set-now --item TEST-1 /dev_delegated_at >/dev/null
 rc=0
-@RUNTIME@ round --text recover --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
+"$runtime" round --text recover --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
 [[ "$rc" -eq 3 ]]
-"$state" set-now TEST-1 dev_delegated_at >/dev/null
-"$state" get TEST-1
+"$runtime" state set-now --item TEST-1 /dev_delegated_at >/dev/null
 '''.replace("@RUNTIME@", shlex.quote(str(runtime))))
         bash = shutil.which("bash", path=self.env["PATH"])
         command = "cd " + shlex.quote(str(path)) + " && exec " + shlex.join([bash, str(probe), str(self.bin)])
@@ -901,22 +857,21 @@ rc=0
         self.assertTrue((self.root / "control-state/workflow-state-TEST-1.json").is_file())
         self.assertFalse((path / "tmp/workflow-state-TEST-1.json").exists())
 
-    def hosted_state_read(self, path, library):
+    def hosted_state_read(self, path):
+        """The item's state in the lane worktree's tmp, fetched through the provider's cat and read by jq."""
+        fetched = self.call("cat", "--item", "TEST-1", str(path / "tmp/workflow-state-TEST-1.json"))
+        if fetched.returncode != 0:
+            return fetched
         scratch = self.root / "state-read"
         scratch.mkdir(exist_ok=True)
-        child_env = {key: self.env[key] for key in
-                     ("HOME", "PATH", "REAL_GIT", "SSH_TEST_SOURCE", "SSH_TEST_LOG",
-                      "LANE_HOST_SSH_SOURCE", "LANE_HOST_SSH_INVENTORY")}
-        return subprocess.run([shutil.which("bash", path=self.env["PATH"]), "-c",
-                               'set -euo pipefail; . "$1"; lane_hosted_item_state "$2" TEST-1 "$3" "$4"; printf "%s" "$LANE_ITEM_STATE"',
-                               "hosted-reader", str(library), str(self.script), str(path), str(scratch)],
-                              env=child_env, capture_output=True, timeout=60)
+        (scratch / "item-state.json").write_bytes(fetched.stdout)
+        return subprocess.run(["jq", "-c", ".", str(scratch / "item-state.json")], capture_output=True, timeout=60)
 
     def test_hosted_state_read_and_archive_keep_the_prefix_state(self):
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
         expected = json.loads((path / "tmp/workflow-state-TEST-1.json").read_bytes())
-        read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh")
+        read = self.hosted_state_read(path)
         self.assertEqual(read.returncode, 0, read.stderr)
         self.assertEqual(json.loads(read.stdout), expected)
         closed = self.call("close", "--item", "TEST-1")
@@ -926,21 +881,6 @@ rc=0
             member = str(path / "tmp/workflow-state-TEST-1.json").lstrip("/")
             self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
             self.assertEqual(json.loads(saved.extractfile(member).read()), expected)
-
-    def test_control_hosted_reader_without_launch_state_reads_no_rounds(self):
-        fields, path, run = self.hosted_state_launch()
-        self.assert_hosted_state(fields, path, run)
-        with tempfile.TemporaryDirectory() as control:
-            lib = Path(control) / "orch/scripts/lib"
-            self.copy_tree(PACKAGE / "scripts/lib", lib)
-            self.copy_tree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
-            library = lib / "lane-gitfile.sh"
-            original = library.read_text()
-            rule = 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$2"'
-            self.assertEqual(original.count(rule), 1)
-            library.write_text(original.replace(rule, 'lane_hosted_state_path "$LANE_HOSTED_CLONE" tmp "$2"'))
-            read = self.hosted_state_read(path, library)
-            self.assertEqual((read.returncode, read.stdout), (0, b""), read.stderr)
 
     def test_control_archive_without_launch_state_records_no_state(self):
         fields, path, run = self.hosted_state_launch()

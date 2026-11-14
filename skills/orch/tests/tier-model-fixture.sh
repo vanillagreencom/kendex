@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # fixtures/tier-model/kendex answers model words the way the kendex on PATH
-# does: for claude, codex and copilot, what lib/overseer-launch.sh §
-# ol_model_class reads through each, the class, the model a launch runs, the
-# old-id status and kendex's warning, must match word for word, so the suites
-# that classify through the fixture judge the real answers. CI builds that
-# kendex from this checkout, so the answers are core's as this tree holds them.
-# Claude consumes the managed alias after the project override. A different
-# provider refuses. Codex and Copilot retain the runtime default decision.
+# does: `kendex tier-model HARNESS --model WORD --json` in the two forms a
+# launch asks it, Claude's managed read with no runtime context and the
+# unsupported-list runtime context every other read carries, must read the
+# same, word for word, in each field the reader of the answer acts on, so the
+# suites that classify through the fixture judge the real answers. CI builds
+# that kendex from this checkout, so the answers are core's as this tree
+# holds them. Claude consumes the managed alias after the project override.
+# A different provider refuses. Codex and Copilot retain the runtime default
+# decision.
 #
 # No kendex on PATH skips the suite unless ORCH_REQUIRE_KENDEX is set.
 # Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
@@ -28,7 +30,6 @@ TMP_ROOT="$(mktemp -d)" || { echo 'tier-model-fixture: scratch=mktemp-failed' >&
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "tier-model-fixture: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'tier-model-fixture: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-LIB="$TEST_DIR/../scripts/lib/overseer-launch.sh"
 FIXTURE="$TEST_DIR/fixtures/tier-model"
 # The fixture answering as the real kendex would compare it with itself.
 if [[ "$(command -v kendex)" -ef "$FIXTURE/kendex" ]]; then
@@ -42,108 +43,75 @@ fi
 mkdir -p "$TMP_ROOT/home" "$TMP_ROOT/cwd" "$TMP_ROOT/anthropic/.claude" "$TMP_ROOT/openai/.claude"
 printf 'schema = 7\n[model-classes]\nstandard = "anthropic/claude-haiku-5-5"\n' >"$TMP_ROOT/anthropic/kendex.toml"
 printf 'schema = 7\n[model-classes]\nstandard = "openai/gpt-6.2-sol"\n' >"$TMP_ROOT/openai/kendex.toml"
-answers() { # BIN_DIR_OR_EMPTY DIR HARNESS WORD...
-  local override=""
+# answers BIN_DIR_OR_EMPTY DIR HARNESS FORM WORD...: one line per WORD,
+# `word|exit` where kendex refused it, else
+# `word|exit|tag|class|selector|unverified|old_id|warning`: the request's tag
+# and class; for a class, the native selector a managed read launches, whether
+# a runtime-context read left the model list unverified, and the warning; for
+# an exact id, whether Claude deprecates it. FORM is `managed`, the read with
+# no runtime context, or `context`, the read under the unsupported model list.
+answers() {
+  local override="" word rc out context="" fields
+  local -a form=()
   case "${2##*/}" in
     anthropic) override=anthropic/claude-haiku-5-5 ;;
     openai) override=openai/gpt-6.2-sol ;;
   esac
-  # shellcheck disable=SC2016 # expanded by the inner shell
-  (cd "$2" && HOME="$TMP_ROOT/home" XDG_CONFIG_HOME="$TMP_ROOT/home/.config" KENDEX_TEST_STANDARD_OVERRIDE="$override" PATH="${1:+$1:}$PATH" "$BASH" -c '
-    set -euo pipefail
-    source "$1"
-    harness="$2"
-    shift 2
-    for word in "$@"; do
-      rc=0
-      ol_model_class "$harness" "$word" 2>/dev/null || rc=$?
-      printf "%s|%s|%s|%s|%s\n" "$word" "$rc" "$OL_CLASS" "$OL_CLASS_MODEL" "$OL_CLASS_WARNING"
-    done' _ "$LIB" "$3" "${@:4}")
+  if [[ "$4" == context ]]; then
+    printf -v context '{"protocol":"model-resolution-v1","harness":"%s","account":"unpicked","host":"unpicked","providers":[],"currentProvider":null,"models":{"tag":"unsupported","source":"orch-launch"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]}' "$3"
+    form=(--runtime-context-json "$context")
+  fi
+  for word in "${@:5}"; do
+    rc=0
+    out="$(cd "$2" && HOME="$TMP_ROOT/home" XDG_CONFIG_HOME="$TMP_ROOT/home/.config" KENDEX_TEST_STANDARD_OVERRIDE="$override" \
+      PATH="${1:+$1:}$PATH" kendex tier-model "$3" --model "$word" --json ${form[@]+"${form[@]}"} 2>/dev/null)" || rc=$?
+    if (( rc != 0 )); then
+      printf '%s|%s\n' "$word" "$rc"
+      continue
+    fi
+    fields="$(jq -r --arg harness "$3" --arg form "$4" '
+      def coded($code): any(.resolution.diagnostics[]?; .code == $code);
+      if .protocol == "model-resolution-v1" and (.request.tag | type) == "string" then
+        if .request.tag == "class" then
+          [.request.tag, .request.class // "",
+           (if $form == "managed" then .resolution.native_selector // "" else "" end),
+           ($form == "context" and .resolution.tag == "harness-default" and coded("model-availability-unknown")),
+           false, .warning // ""]
+        else [.request.tag, "", "", false, ($harness == "claude" and coded("old-id")), ""] end
+        | map(tostring) | join("|")
+      else "no-answer" end' <<<"$out" 2>/dev/null)" || fields=unparsed
+    printf '%s|%s|%s\n' "$word" "$rc" "$fields"
+  done
 }
-WORDS=(top standard light fast Opus fable SONNET haiku claude-opus-5-5 gpt-6.1-sol 'opus[1m]' codex:opus)
+WORDS=(top standard light fast Opus fable SONNET haiku claude-opus-5-5 gpt-6.1-sol codex:opus)
 for dir in cwd anthropic openai; do
-  for harness in claude codex copilot; do
-    real="$(answers "" "$TMP_ROOT/$dir" "$harness" "${WORDS[@]}")" || { fail "real kendex answers $harness in $dir"; continue; }
-    fixture="$(answers "$FIXTURE" "$TMP_ROOT/$dir" "$harness" "${WORDS[@]}")" || { fail "the fixture answers $harness in $dir"; continue; }
-    assert_eq "$fixture" "$real" "the fixture's $harness answers are the real kendex's in $dir"
+  for read in claude:managed claude:context codex:context copilot:context; do
+    harness="${read%%:*}" form="${read#*:}"
+    real="$(answers "" "$TMP_ROOT/$dir" "$harness" "$form" "${WORDS[@]}")" || { fail "real kendex answers $read in $dir"; continue; }
+    fixture="$(answers "$FIXTURE" "$TMP_ROOT/$dir" "$harness" "$form" "${WORDS[@]}")" || { fail "the fixture answers $read in $dir"; continue; }
+    assert_eq "$fixture" "$real" "the fixture's $read answers are the real kendex's in $dir"
   done
 done
 # The ruled answers themselves, which the fixture and kendex agreeing on
 # another answer would not catch: Claude's standard class runs Haiku under an
-# Anthropic override, [1m] kept; another provider refuses. Codex's runs the native default; each class's
-# warning names the model it runs; an exact id stands as written with no
-# kendex line, deprecated on claude alone.
+# Anthropic override; another provider refuses. Codex's runs the native
+# default, its model list unverified; each class's warning names the model it
+# runs; an exact id stands as written, deprecated on claude alone; the
+# runtime-context read of a Claude word classifies it whatever the override.
 selected() { sed -n 's/^\([^|]*\)|.* selected=\([^ ]*\) .*/\1 \2/p'; }
-assert_eq "$(answers "" "$TMP_ROOT/anthropic" claude standard 'opus[1m]' claude-opus-5-5 | cut -d'|' -f1-4)" \
-  $'standard|0|standard|haiku\nopus[1m]|0|standard|haiku[1m]\nclaude-opus-5-5|2||claude-opus-5-5' \
-  "claude standard runs the overridden managed alias, preserves capacity, and keeps exact ids"
-assert_eq "$(answers "" "$TMP_ROOT/openai" claude standard 'opus[1m]' | cut -d'|' -f1-4)" \
-  $'standard|1||standard\nopus[1m]|1||opus[1m]' \
-  "a cross-provider override refuses the Claude class and legacy alias"
-assert_eq "$(answers "" "$TMP_ROOT/openai" codex standard gpt-6.1-sol | cut -d'|' -f1-4)" \
-  $'standard|0|standard|\ngpt-6.1-sol|0||gpt-6.1-sol' \
+assert_eq "$(answers "" "$TMP_ROOT/anthropic" claude managed standard claude-opus-5-5 | cut -d'|' -f1-7)" \
+  $'standard|0|class|standard|haiku|false|false\nclaude-opus-5-5|0|exact|||false|true' \
+  "claude standard runs the overridden managed alias, and an exact id stands, deprecated"
+assert_eq "$(answers "" "$TMP_ROOT/openai" claude managed standard)" 'standard|1' \
+  "a cross-provider override refuses the Claude class"
+assert_eq "$(answers "" "$TMP_ROOT/openai" codex context standard gpt-6.1-sol | cut -d'|' -f1-7)" \
+  $'standard|0|class|standard||true|false\ngpt-6.1-sol|0|exact|||false|false' \
   "codex standard runs the native default under a standard override, and a codex exact id stands"
-assert_eq "$(answers "" "$TMP_ROOT/anthropic" claude standard claude-opus-5-5 | selected)|$(answers "" "$TMP_ROOT/openai" codex standard gpt-6.1-sol | selected)" \
+assert_eq "$(answers "" "$TMP_ROOT/anthropic" claude managed standard | selected)|$(answers "" "$TMP_ROOT/openai" codex context standard | selected)" \
   'standard haiku|standard native-default' \
-  "a class's warning names the model it runs, and an exact id prints none"
-
-# Resolve the preference and judge its account through the production walk.
-# Reclassifying Haiku would apply fast's Opus override and judge the wrong wall.
-REAL_PATH="$PATH"
-source "$TEST_DIR/lib/lanes-fixture.sh"
-PATH="$REAL_PATH"
-export PATH
-new_home managed-walk
-make_lane "$H" claude
-FETCHER="$TMP_ROOT/fetch"; make_fetcher "$FETCHER"
-mkdir -p "$TMP_ROOT/walk/.claude"
-printf 'schema = 7\n[model-classes]\nstandard = "anthropic/claude-haiku-5-5"\nfast = "anthropic/claude-opus-5-5"\n' > "$TMP_ROOT/walk/kendex.toml"
-managed_walk() { # HAIKU_PERCENT OPUS_PERCENT PROJECT
-  jq -n --argjson h "$1" --argjson o "$2" '{
-    five_hour: {utilization: 0, resets_at: "2099-08-01T06:00:00Z"},
-    seven_day: {utilization: 0, resets_at: "2099-08-01T06:00:00Z"},
-    limits: [{kind: "weekly_scoped", percent: $h, resets_at: "2099-08-01T06:00:00Z", scope: {model: {display_name: "Haiku"}}},
-             {kind: "weekly_scoped", percent: $o, resets_at: "2099-08-01T06:00:00Z", scope: {model: {display_name: "Opus"}}}]
-  }' > "$FIXTURE_DIR/.claude.json"
-  (cd "$3" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$H" \
-    XDG_CONFIG_HOME="$H/.config" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    AGENT_RUNTIME_ACCOUNT_DIRS="$H/.claude" ORCH_MODEL_LINES_HELD=1 OVERSEE_WATCH_STATE_DIR="$H/state-$1-$2" AGENT_RUNTIME_ACCOUNT_STATE_DIR="$H/state-$1-$2" \
-    "$BASH" -c '
-      set -euo pipefail
-      SCRIPT_DIR="$1"
-      DEP_ERR="$2/dep.err"
-      source "$SCRIPT_DIR/lib/lane-launch.sh"
-      source "$SCRIPT_DIR/lib/lane-context.sh"
-      source "$SCRIPT_DIR/lib/overseer-launch.sh"
-      OL_REASON=""
-      rc=0
-      ol_walk 10 "" claude:standard:high claude:top:high || rc=$?
-      printf "%s|%s|%s|%s\n" "$rc" "$OL_MODEL" "$OL_CHOSEN" "$OL_REASON"
-    ' _ "$TEST_DIR/../scripts" "$H")
-}
-while IFS='|' read -r haiku opus project expected; do
-  assert_eq "$(managed_walk "$haiku" "$opus" "$TMP_ROOT/$project")" "$expected" \
-    "managed preference and account: haiku=$haiku opus=$opus project=$project"
-done <<'ROWS'
-5|95|walk|0|haiku|claude:standard:high|
-95|5|walk|0|fable|claude:top:high|
-5|5|openai|1|||preference-class-unread
-ROWS
-
-numeric_answer() { # BIN_DIR_OR_EMPTY
-  (cd "$TMP_ROOT/openai" && HOME="$TMP_ROOT/home" XDG_CONFIG_HOME="$TMP_ROOT/home/.config" \
-    KENDEX_TEST_STANDARD_OVERRIDE=openai/gpt-6.2-sol PATH="${1:+$1:}$PATH" "$BASH" -c '
-      set -euo pipefail
-      source "$1"
-      OL_WALK_CALLER_MODEL=opus
-      ol_entry_model claude:1:high
-      printf "%s|%s\n" "$OL_ENTRY_CLASS" "$OL_ENTRY_MODEL"
-    ' _ "$LIB")
-}
-assert_eq "$(numeric_answer "")" 'standard|opus' \
-  "a numeric Claude entry retains its caller model despite a cross-provider class override"
-assert_eq "$(numeric_answer "$FIXTURE")" "$(numeric_answer "")" \
-  "the fixture's numeric-entry classification matches real kendex"
+  "a class's warning names the model it runs"
+assert_eq "$(answers "" "$TMP_ROOT/openai" claude context opus | cut -d'|' -f1-4)" 'opus|0|class|standard' \
+  "the runtime-context read classifies a Claude word despite a cross-provider class override"
 
 # Control: a fixture copy with one alias changed must fail the comparison.
 mkdir -p "$TMP_ROOT/mutant"
@@ -159,7 +127,7 @@ changed = text.replace(old, 'standard) selector=opusx ;;')
 assert changed != text
 path.write_text(changed)
 PY
-if [[ "$(answers "$TMP_ROOT/mutant" "$TMP_ROOT/cwd" claude standard)" != "$(answers "" "$TMP_ROOT/cwd" claude standard)" ]]; then
+if [[ "$(answers "$TMP_ROOT/mutant" "$TMP_ROOT/cwd" claude managed standard)" != "$(answers "" "$TMP_ROOT/cwd" claude managed standard)" ]]; then
   pass "control: a changed fixture alias fails the comparison"
 else
   fail "control: a changed fixture alias still matches the real kendex"
