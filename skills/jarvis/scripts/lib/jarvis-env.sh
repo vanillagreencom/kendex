@@ -4,7 +4,6 @@ set -euo pipefail
 JARVIS_LIB="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
 # Targets supply settings and session data, never dependency code.
 MAILBOX_LIB="$JARVIS_LIB/../../../mailbox/scripts/lib"
-ORCH_SCRIPTS="$JARVIS_LIB/../../../orch/scripts"
 [[ -r "$MAILBOX_LIB/kendex-env.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }
 source "$MAILBOX_LIB/kendex-env.sh"
 

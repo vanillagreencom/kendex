@@ -2,8 +2,7 @@
 # Private bridge to orch's model classes for a task, and the attach window.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
-SCRIPT_DIR="$ROOT/orch/scripts"
-for package in mailbox orch; do
+for package in mailbox; do
   if [[ ! -d "$ROOT/$package/scripts" ]]; then
     printf 'jarvis-session: dependency=%s\n' "$package" >&2
     exit 1

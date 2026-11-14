@@ -72,7 +72,7 @@ Offer the command for the required reach, run in the repository's main checkout.
 
 The directive install brings orch, mailbox and lane-mail-check's required hooks. On Copilot CLI, add `--hook lane-mail-start,lane-mail-prompt`.
 
-Before approval, say what the command installs, that it writes the checkout and commits nothing, and that a directive install can require a session restart for its hooks to reach the running agent. After approval, install and repeat [Reachable repositories](../SKILL.md#reachable-repositories)' judgment. After a directive install, the agent must still run orch's `oversee register`. Call it instructable only after a directive send prints its receipt.
+Before approval, say what the command installs, that it writes the checkout and commits nothing, and that a directive install can require a session restart for its hooks to reach the running agent. After approval, install and repeat [Reachable repositories](../SKILL.md#reachable-repositories)' judgment. After a directive install, the agent must still run `orch-runtime register --fleet`. Call it instructable only after a directive send prints its receipt.
 
 ## Control host setup
 
