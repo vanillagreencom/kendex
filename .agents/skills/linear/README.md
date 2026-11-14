@@ -1,6 +1,6 @@
 # Linear CLI
 
-A shell CLI for Linear issues, projects and planning data. Every read and write goes to the Linear API as it runs.
+A shell CLI for Linear issues, projects and planning data.
 
 ## Features
 
