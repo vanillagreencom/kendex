@@ -251,7 +251,6 @@ impl World {
                 interval: secs(240),
                 max_loops: 25,
                 since: None,
-                replace: None,
                 fresh: false,
             },
             me(),

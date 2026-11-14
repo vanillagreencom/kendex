@@ -1140,14 +1140,6 @@ impl Runner {
     }
 }
 
-/// The orch package's job-unit launcher, beside these tests.
-pub fn job_unit() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("scripts/lib/job-unit.sh")
-}
-
 /// Claude Code's project directory for `cwd` under `home`.
 pub fn project_dir(home: &Path, cwd: &Path) -> PathBuf {
     let slug: String = cwd
@@ -1709,27 +1701,6 @@ pub fn github_skill_under(root: &Path) {
     }
 }
 
-/// Installs the `lane-host` planted at `planted` where the runtime runs
-/// it, the orch scripts directory under the `project`: the fixture
-/// answers from and logs to the files beside the path it runs as, so those
-/// are linked to `planted` too.
-pub fn install_lane_host(project: &Path, planted: &Path) {
-    let orch = project.join(".agents/skills/orch");
-    assert!(
-        !std::fs::symlink_metadata(&orch).is_ok_and(|m| m.file_type().is_symlink()),
-        "{} links the repository's own orch: a fixture planted there would land in it",
-        orch.display()
-    );
-    let scripts = orch.join("scripts");
-    std::fs::create_dir_all(&scripts).unwrap();
-    for name in ["lane-host", "lane-host.json", "lane-host.log"] {
-        let link = scripts.join(name);
-        if std::fs::symlink_metadata(&link).is_err() {
-            std::os::unix::fs::symlink(planted.join(name), link).unwrap();
-        }
-    }
-}
-
 /// The host a row names as `name`, as the dispatch reaches it: the planted
 /// provider (`fixtures/lane-host/lane-host`) linked as `dir/<name>`, which
 /// answers from and logs to the files beside it under that name, its path
@@ -1791,13 +1762,6 @@ pub fn plant_accounts(
     now: u64,
 ) -> Vec<(String, String)> {
     std::fs::create_dir_all(root).unwrap();
-    if host.is_some() {
-        let link = root.join("lane-host");
-        if std::fs::symlink_metadata(&link).is_err() {
-            std::os::unix::fs::symlink(fixtures().join("lane-host/lane-host"), &link).unwrap();
-        }
-        install_lane_host(root, root);
-    }
     let Planted {
         mut env,
         provider_lines,

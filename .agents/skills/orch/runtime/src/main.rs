@@ -837,11 +837,6 @@ enum WatchOp {
         /// The stamp the heartbeat's `since=` carries.
         #[arg(long)]
         since: Option<String>,
-        /// A live runner's pid to stop and replace, or the pid of a
-        /// start-less repeat loop whose own pass started this runner and
-        /// ends it, whose release is waited out.
-        #[arg(long)]
-        replace: Option<u32>,
         /// A repository (`owner/repo`) the GitHub inventories read beside the
         /// lanes' own and the connected ones.
         #[arg(long = "repo")]
@@ -869,8 +864,6 @@ enum WatchOp {
         max_loops: Option<u32>,
         #[arg(long)]
         since: Option<String>,
-        #[arg(long)]
-        replace: Option<u32>,
         #[arg(long = "repo")]
         repos: Vec<String>,
     },
@@ -2520,7 +2513,6 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             interval,
             max_loops,
             since,
-            replace,
             repos,
             credential_selected,
             fresh,
@@ -2562,7 +2554,6 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                     interval: std::time::Duration::from_secs(interval),
                     max_loops,
                     since: since.clone(),
-                    replace,
                     fresh,
                 },
                 identity,
@@ -2632,7 +2623,6 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             interval,
             max_loops,
             since,
-            replace,
             repos,
         } => {
             let path = target_path(&target, &settings);
@@ -2651,7 +2641,6 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 ("--interval", interval.map(|n| n.to_string())),
                 ("--max-loops", max_loops.map(|n| n.to_string())),
                 ("--since", since),
-                ("--replace", replace.map(|n| n.to_string())),
             ];
             for (flag, value) in pairs {
                 if let Some(value) = value {

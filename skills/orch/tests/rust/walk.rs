@@ -56,18 +56,12 @@ impl World {
         std::fs::create_dir_all(dir.path().join("bin")).unwrap();
         std::fs::create_dir_all(dir.path().join("home")).unwrap();
         for (name, fixture) in [
-            ("lane-host", "lane-host/lane-host"),
             ("bin/curl", "usage-curl/curl"),
             ("bin/kendex", "kendex-launch/kendex"),
         ] {
-            let base = if fixture.starts_with("lane-host") {
-                fixtures()
-            } else {
-                account_fixtures()
-            };
-            std::os::unix::fs::symlink(base.join(fixture), dir.path().join(name)).unwrap();
+            std::os::unix::fs::symlink(account_fixtures().join(fixture), dir.path().join(name))
+                .unwrap();
         }
-        install_lane_host(dir.path(), dir.path());
         let base = [
             ("HOME", dir.path().join("home").display().to_string()),
             ("OVERSEE_WATCH_STATE_DIR", dir.path().display().to_string()),

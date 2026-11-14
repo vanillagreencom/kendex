@@ -71,7 +71,6 @@ fn flags() -> Flags {
         interval: secs(240),
         max_loops: 25,
         since: None,
-        replace: None,
         fresh: false,
     }
 }
@@ -137,10 +136,11 @@ fn watch_status_carries_the_claims_cwd_origin_and_the_log_for_the_hook() {
 }
 
 /// A claim is judged by its identity, never its pid alone: a claim whose
-/// identity reads live is refused `watch-running` and nothing is written; a
-/// dead pid and a reused pid under another start are both taken over, each
-/// with the event line naming the identity read, and the claim then names
-/// the taker.
+/// identity reads live is refused `watch-running` and nothing is written,
+/// and no flag of `watch start` or `watch run` names it to take over:
+/// `--replace` is a usage error; a dead pid and a reused pid under another
+/// start are both taken over, each with the event line naming the identity
+/// read, and the claim then names the taker.
 #[test]
 fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
     let dir = tempfile::tempdir().unwrap();
@@ -156,6 +156,22 @@ fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
         matches!(&refused, Err(e) if e.key() == "watch-running"),
         "{refused:?}"
     );
+    let state = paths.state.display().to_string();
+    let pid = sleeper.pid().to_string();
+    for verb in ["start", "run"] {
+        let out = watch_cmd(
+            dir.path(),
+            &["watch", verb, "--file", &state, "--replace", &pid],
+        );
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{verb}: {said}");
+        assert_eq!(
+            said.lines().next(),
+            Some("orch-runtime: usage"),
+            "{verb}: {said}"
+        );
+        assert!(out.stdout.is_empty(), "{verb}: no reply");
+    }
     assert_eq!(
         std::fs::read_to_string(&paths.pid).unwrap(),
         before,
@@ -1014,14 +1030,6 @@ fn every_event_renders_to_its_recorded_bytes() {
                 reason: watch::Takeover::Gone,
             },
             "EVENT watch-taken-over pid=4242 start=ticks:9 reason=gone",
-        ),
-        (
-            Event::WatchTakenOver {
-                pid: 4242,
-                start: Some(s("ticks:9")),
-                reason: watch::Takeover::Replace,
-            },
-            "EVENT watch-taken-over pid=4242 start=ticks:9 reason=replace",
         ),
         // The wake duty's own lines.
         (

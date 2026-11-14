@@ -1598,114 +1598,27 @@ fn state_remove_waits_on_the_records_lock_a_writer_holds() {
         .unwrap();
 }
 
-/// The shell store's `update` as the writer, held between its locked read
-/// and its move by a `jq` that waits for a release: `state remove` refuses
-/// `lock-timeout` and leaves the writer's temporary file; released, the
-/// writer lands its update, and the close-out then archives the record
-/// holding it and removes the record, its lock staying.
+/// A write lands first; the close-out is then held inside its archive by a
+/// `tar` that waits for a release, and a second `state set` starts against
+/// the held lock. It does not finish while the close-out holds the lock;
+/// released, the close-out ends and the writer refuses `record-missing` on
+/// the record it finds gone: nothing of the record but its lock stands,
+/// and the archive holds the landed write and not the late one.
 #[test]
-fn state_remove_keeps_a_shell_store_update_in_flight() {
+fn state_remove_leaves_a_write_waiting_on_its_lock_no_record_to_write() {
     let store = Store::new();
     support::git_checkout(store.dir.path());
     store.init(ITEM);
     store.init_fleet();
     let path = store.item_path(ITEM);
-    let tools = store.dir.path().join("bin");
-    fs::create_dir(&tools).unwrap();
-    let jq = tools.join("jq");
-    support::write_executable(
-        &jq,
-        r#"#!/bin/sh
-case "$*" in
-  *review_inflight*)
-    "$REAL_JQ" "$@" > "$HOLD_CAPTURE" || exit 1
-    : > "$HOLD_READY"
-    n=0
-    while [ ! -e "$HOLD_RELEASE" ]; do
-      n=$((n + 1))
-      [ "$n" -lt 3000 ] || exit 1
-      sleep 0.01
-    done
-    cat "$HOLD_CAPTURE" ;;
-  *) exec "$REAL_JQ" "$@" ;;
-esac
-"#,
-    );
-    let ready = store.dir.path().join("ready");
-    let release = store.dir.path().join("release");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
-    let mut writer = support::program(&script);
-    writer
-        .args(["--no-private-env", "--state-dir"])
-        .arg(store.state_dir())
-        .args(["update", ITEM, ".review_inflight = \"latest turn\""])
-        .env("PATH", support::tool_path(&[tools.as_path()]))
-        .env("REAL_JQ", real("jq"))
-        .env("HOLD_READY", &ready)
-        .env("HOLD_RELEASE", &release)
-        .env("HOLD_CAPTURE", store.dir.path().join("captured"))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped());
-    let mut writer = support::Owned(writer.spawn().unwrap());
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !ready.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the writer reached its locked read"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    let archive_root = store.dir.path().join("archive").display().to_string();
-    let remove = ["state", "remove", "--item", ITEM];
-    let (key, _) = refused_env(&store, &remove, &[("ORCH_ARCHIVE_ROOT", &archive_root)]);
-    assert_eq!(key, "lock-timeout");
-    fs::write(&release, "").unwrap();
-    let status = writer.0.wait().unwrap();
-    let mut cause = String::new();
-    std::io::Read::read_to_string(&mut writer.0.stderr.take().unwrap(), &mut cause).unwrap();
-    assert!(status.success(), "{cause}");
-    assert_eq!(store.doc(&path)["review_inflight"], "latest turn");
-    let closed = store.ok_env(&remove, &[("ORCH_ARCHIVE_ROOT", &archive_root)]);
-    let archive = closed["kept"].as_str().expect("the archive");
-    let held: Value = serde_json::from_str(&archived_file(archive, &path)).unwrap();
-    assert_eq!(held["review_inflight"], "latest turn");
-    assert!(!path.exists());
-    assert!(
-        agent_runtime::record::lock_path(&path).exists(),
-        "the lock stays"
-    );
-}
-
-/// An update lands first; the close-out is then held inside its archive by
-/// a `tar` that waits for a release, and a second shell `update` starts
-/// against the held lock. It does not finish while the close-out holds the
-/// lock; released, the close-out ends and the writer refuses on the record
-/// it finds gone, no record and no temporary file stand, and the archive
-/// holds the landed update and not the late one.
-#[test]
-fn state_remove_leaves_a_shell_update_waiting_on_its_lock_no_record_to_write() {
-    let store = Store::new();
-    support::git_checkout(store.dir.path());
-    store.init(ITEM);
-    store.init_fleet();
-    let path = store.item_path(ITEM);
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
-    let shell = |expr: &str| {
-        let mut command = support::program(&script);
-        command
-            .args(["--no-private-env", "--state-dir"])
-            .arg(store.state_dir())
-            .args(["update", ITEM, expr]);
-        command
-    };
-    let landed = shell(".landed = \"before the close-out\"")
-        .output()
-        .unwrap();
-    assert!(
-        landed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&landed.stderr)
-    );
+    store.ok(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        "/landed",
+        "before the close-out",
+    ]);
     let tools = store.dir.path().join("bin");
     fs::create_dir(&tools).unwrap();
     let tar = tools.join("tar");
@@ -1746,8 +1659,12 @@ exec "$REAL_TAR" "$@"
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let mut late = shell(".late = 1");
-    late.stdout(std::process::Stdio::null())
+    let mut late = support::isolated();
+    late.arg("--state-dir")
+        .arg(store.state_dir())
+        .args(["state", "set", "--item", ITEM, "/late", "1"])
+        .current_dir(store.dir.path())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut late = support::Owned(late.spawn().unwrap());
     // Bounded, and only the control's reach depends on it: a writer that
@@ -1766,16 +1683,19 @@ exec "$REAL_TAR" "$@"
     std::io::Read::read_to_string(&mut remove.0.stdout.take().unwrap(), &mut reply_text).unwrap();
     assert!(status.success(), "{reply_text}");
     let status = late.0.wait().unwrap();
-    let mut cause = String::new();
-    std::io::Read::read_to_string(&mut late.0.stderr.take().unwrap(), &mut cause).unwrap();
-    assert!(!status.success(), "the late writer wrote: {cause}");
-    assert!(
-        cause.starts_with("workflow-state: jq-failed")
-            || cause.starts_with("workflow-state: state-missing"),
-        "{cause}"
-    );
+    let mut late_reply = String::new();
+    std::io::Read::read_to_string(&mut late.0.stdout.take().unwrap(), &mut late_reply).unwrap();
+    assert!(!status.success(), "the late writer wrote: {late_reply}");
+    let refusal: Value = serde_json::from_str(&late_reply).unwrap();
+    assert_eq!(refusal["refusal"]["key"], "record-missing", "{late_reply}");
     assert!(!path.exists(), "no record recreated");
-    assert!(!PathBuf::from(format!("{}.tmp", path.display())).exists());
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let standing: Vec<String> = fs::read_dir(store.state_dir())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(&name))
+        .collect();
+    assert_eq!(standing, [format!("{name}.lock")], "the lock alone stands");
     let reply: Value = serde_json::from_str(&reply_text).unwrap();
     let archive = reply["result"]["kept"].as_str().expect("the archive");
     let held: Value = serde_json::from_str(&archived_file(archive, &path)).unwrap();
@@ -1833,137 +1753,10 @@ fn state_remove_retires_the_session_rows_of_a_pane_the_server_no_longer_holds() 
     assert_eq!(archived_file(archive, &dead), "{}\n");
 }
 
-/// An unlinked lock pathname would let a shell writer on the unlinked inode
-/// and a runtime writer on the new one both hold the lock once `state init`
-/// creates the key again. The close-out held at its archive while a shell
-/// `update` waits on the lock; released, the key is created again before
-/// the shell reads it, and a `state set` starts while the shell holds the
-/// lock: it waits, and the record keeps both writes.
-#[test]
-fn a_reinitialized_item_keeps_both_old_and_new_lock_writers() {
-    use std::process::Stdio;
-    if real("flock").is_empty() {
-        // Without flock(1) the shell's mkdir mutex is the lock, and the
-        // close-out never removes it.
-        return;
-    }
-    let store = Store::new();
-    support::git_checkout(store.dir.path());
-    store.init(ITEM);
-    store.init_fleet();
-    let tools = store.dir.path().join("tools");
-    fs::create_dir(&tools).unwrap();
-    let fixtures = [
-        (
-            "tar",
-            r#"#!/bin/sh
-: > "$TAR_READY"
-while [ ! -e "$TAR_RELEASE" ]; do sleep 0.01; done
-exec "$REAL_TAR" "$@"
-"#,
-        ),
-        (
-            "flock",
-            r#"#!/bin/sh
-: > "$WRITER_WAITING"
-"$REAL_FLOCK" "$@" || exit
-: > "$WRITER_ACQUIRED"
-while [ ! -e "$INIT_READY" ]; do sleep 0.01; done
-"#,
-        ),
-        (
-            "jq",
-            r#"#!/bin/sh
-case "$*" in
-  *review_a*)
-    "$REAL_JQ" "$@" > "$WRITER_CAPTURE" || exit 1
-    : > "$WRITER_READ"
-    while [ ! -e "$WRITER_RELEASE" ]; do sleep 0.01; done
-    cat "$WRITER_CAPTURE" ;;
-  *) exec "$REAL_JQ" "$@" ;;
-esac
-"#,
-        ),
-    ];
-    for (name, text) in fixtures {
-        let path = tools.join(name);
-        support::write_executable(&path, text);
-    }
-    let at = |name: &str| store.dir.path().join(name);
-    let wait = |file: &Path| {
-        let bound = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while !file.exists() {
-            assert!(std::time::Instant::now() < bound, "no {}", file.display());
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    };
-    let mut remove = support::isolated();
-    remove
-        .arg("--state-dir")
-        .arg(store.state_dir())
-        .args(["state", "remove", "--item", ITEM])
-        .env("ORCH_ARCHIVE_ROOT", store.dir.path().join("archive"))
-        .env("PATH", support::tool_path(&[&tools]))
-        .env("REAL_TAR", real("tar"))
-        .env("TAR_READY", at("tar.ready"))
-        .env("TAR_RELEASE", at("tar.release"))
-        .current_dir(store.dir.path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut remove = support::Owned(remove.spawn().unwrap());
-    wait(&at("tar.ready"));
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
-    let mut old = support::program(script);
-    old.args(["--no-private-env", "--state-dir"])
-        .arg(store.state_dir())
-        .args(["update", ITEM, ".review_a = \"old-lock\""])
-        .env("PATH", support::tool_path(&[&tools]))
-        .env("REAL_FLOCK", real("flock"))
-        .env("REAL_JQ", real("jq"))
-        .env("WRITER_WAITING", at("writer.waiting"))
-        .env("WRITER_ACQUIRED", at("writer.acquired"))
-        .env("INIT_READY", at("init.ready"))
-        .env("WRITER_CAPTURE", at("writer.capture"))
-        .env("WRITER_READ", at("writer.read"))
-        .env("WRITER_RELEASE", at("writer.release"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    let mut old = support::Owned(old.spawn().unwrap());
-    wait(&at("writer.waiting"));
-    fs::write(at("tar.release"), "").unwrap();
-    assert!(remove.0.wait().unwrap().success());
-    wait(&at("writer.acquired"));
-    store.init(ITEM);
-    fs::write(at("init.ready"), "").unwrap();
-    wait(&at("writer.read"));
-    let mut new = support::isolated();
-    new.arg("--state-dir")
-        .arg(store.state_dir())
-        .args(["state", "set", "--item", ITEM, "/review_b", "new-lock"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut new = support::Owned(new.spawn().unwrap());
-    // Bounded, and only the control's reach depends on it: a `set` that
-    // has not reached the lock by then waits on it all the same.
-    let held = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while std::time::Instant::now() < held && new.0.try_wait().unwrap().is_none() {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    fs::write(at("writer.release"), "").unwrap();
-    assert!(old.0.wait().unwrap().success());
-    assert!(new.0.wait().unwrap().success());
-    let doc = store.doc(&store.item_path(ITEM));
-    assert_eq!(doc["review_a"], "old-lock");
-    assert_eq!(
-        doc["review_b"], "new-lock",
-        "the write through a new inode was lost"
-    );
-}
-
-/// The record's content is compared at the removal, not only when the pass
+/// The record is judged again at the removal, not only when the pass
 /// selected it. `state remove` with no fleet state runs the pass; the stale
-/// record is selected, and the shell store updates it during the pass's own
-/// tmux read after that: the record stands, updated.
+/// record is selected, and a `state set` writes it during the pass's own
+/// tmux read after that: the record stands, written.
 #[test]
 fn retention_keeps_a_record_written_after_its_selection() {
     let store = Store::new();
@@ -1989,12 +1782,11 @@ fn retention_keeps_a_record_written_after_its_selection() {
         r#"#!/bin/sh
 if [ ! -e "$WROTE" ]; then
   : > "$WROTE"
-  /bin/bash "$STORE" --no-private-env --state-dir "$STATE" update KEN-9 '.review_turn = "resumed"' || exit
+  "$ORCH" --no-private-env --state-dir "$STATE" state set --item KEN-9 /review_turn resumed > /dev/null || exit
 fi
 exec "$REAL_TMUX" "$@"
 "#,
     );
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
     let out = support::isolated()
         .arg("--state-dir")
         .arg(store.state_dir())
@@ -2005,7 +1797,7 @@ exec "$REAL_TMUX" "$@"
         )
         .env("PATH", support::tool_path(&[&tools]))
         .env("REAL_TMUX", real("tmux"))
-        .env("STORE", script)
+        .env("ORCH", support::binary())
         .env("STATE", store.state_dir())
         .env("WROTE", store.dir.path().join("wrote"))
         .current_dir(store.dir.path())
@@ -2016,7 +1808,7 @@ exec "$REAL_TMUX" "$@"
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(store.dir.path().join("wrote").exists(), "the update ran");
+    assert!(store.dir.path().join("wrote").exists(), "the write ran");
     assert_eq!(store.doc(&record)["review_turn"], "resumed");
 }
 

@@ -553,7 +553,6 @@ fn the_quota_receipt_holds_tracker_reads_until_its_reset_and_nothing_else() {
             interval: secs(240),
             max_loops: 25,
             since: Some(SINCE.into()),
-            replace: None,
             fresh: false,
         },
         identity.clone(),
@@ -668,7 +667,6 @@ fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
             interval: secs(240),
             max_loops: 25,
             since: None,
-            replace: None,
             fresh: false,
         },
         identity.clone(),
@@ -1355,13 +1353,12 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
 
 /// The orch, github and mailbox packages' scripts installed where the watch
 /// runs its steps from (`<project>/.agents/skills/orch/scripts`), the
-/// shipped scripts the in-process cycle recorder starts (the github skill's
-/// `github.sh`, orch's `lane-host`) each behind a wrapper of its name that
-/// starts it under the test child's isolation: the world's `gh` fixture
-/// first on `PATH`, a fixture token, the scratch home its call slots count
-/// under and git's ceiling at the temporary root, so no checkout above the
-/// world is read and no real `gh` is reached; `ORCH_LANE_HOST` passes as its
-/// caller set it. The recorder's own `git` reads run in this process, so
+/// shipped script the in-process cycle recorder starts (the github skill's
+/// `github.sh`) behind a wrapper of its name that starts it under the test
+/// child's isolation: the world's `gh` fixture first on `PATH`, a fixture
+/// token, a scratch home and git's ceiling at the temporary root, so no
+/// checkout above the world is read and no real `gh` is reached. The
+/// recorder's own `git` reads run in this process, so
 /// the world's root holds a `.git` file git refuses (`invalid gitfile
 /// format`), which ends its discovery there: no repository above the world
 /// is read, fetched or written.
@@ -1388,30 +1385,22 @@ fn installed_cycle_recorder(world: &World) -> PathBuf {
     let root = std::env::temp_dir();
     let home = root.join("isolated-home");
     std::fs::create_dir_all(&home).unwrap();
-    for wrapped in [
-        skills.join("github/scripts/github.sh"),
-        scripts.join("lane-host"),
-    ] {
-        let shipped = wrapped.with_file_name(format!(
-            "{}.shipped",
-            wrapped.file_name().unwrap().to_string_lossy()
-        ));
-        std::fs::rename(&wrapped, &shipped).unwrap();
-        let wrapper = wrapped;
-        write_executable(
-            &wrapper,
-            format!(
-                "#!/bin/sh\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{ceiling}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=fixture-token ORCH_LANE_HOST=\"${{ORCH_LANE_HOST:-}}\" bash '{shipped}' \"$@\"\n",
-                path = tool_path(&[world.dir.path()]),
-                root = root.display(),
-                // The world's own `.git` ends discovery inside it; the
-                // temporary root above it is the ceiling past that.
-                ceiling = ceilings(&root).to_string_lossy(),
-                home = home.display(),
-                shipped = shipped.display(),
-            ),
-        );
-    }
+    let wrapper = skills.join("github/scripts/github.sh");
+    let shipped = wrapper.with_file_name("github.sh.shipped");
+    std::fs::rename(&wrapper, &shipped).unwrap();
+    write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{ceiling}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=fixture-token bash '{shipped}' \"$@\"\n",
+            path = tool_path(&[world.dir.path()]),
+            root = root.display(),
+            // The world's own `.git` ends discovery inside it; the
+            // temporary root above it is the ceiling past that.
+            ceiling = ceilings(&root).to_string_lossy(),
+            home = home.display(),
+            shipped = shipped.display(),
+        ),
+    );
     scripts
 }
 
@@ -3300,7 +3289,6 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
             interval: secs(240),
             max_loops: 25,
             since: Some(SINCE.into()),
-            replace: None,
             fresh: false,
         },
         identity.clone(),

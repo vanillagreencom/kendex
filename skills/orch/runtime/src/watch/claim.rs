@@ -4,26 +4,19 @@
 //! A second runner reads the claim's identity three-valued: live refuses
 //! `watch-running`, gone (a dead pid, or its pid reused under another
 //! start) is taken over, unreadable is refused and never taken. A record
-//! naming a pid with no start, the one a released repeat loop wrote, names
-//! no identity and is read by its pid alone: a pid no process holds reads
-//! gone and is taken over with `start=none`; a running pid reads unreadable
-//! (`start-missing`) and is never taken or signalled. The one start that
-//! takes it is a runner named to replace that pid: the loop's own pass
-//! starts that runner and ends the loop, whose exit releases the record,
-//! and the runner waits that release out.
+//! naming a pid with no start names no identity and is read by its pid
+//! alone: a pid no process holds reads gone and is taken over with
+//! `start=none`; a running pid reads unreadable (`start-missing`) and is
+//! never taken or signalled.
 //!
 //! One reader answers whether a record names an identity, [`Claim::names`]:
 //! the pid and the start, both.
-//!
-//! The record's `key=value` form is the one a released loop's record
-//! carries, with `start=` after its fields, so one reader reads both.
 //!
 //! The record is published by linking a whole, synced, pid-named temporary
 //! onto the record's path, which fails where a record already stands, so of
 //! two starts that both read the path free exactly one claims. A runner
 //! re-reads the record every slice and ends `watch-claim-moved` when it no
-//! longer names it, without touching what stands. `--replace <pid>` is a
-//! stop request on that identity waited out through the stop route below.
+//! longer names it, without touching what stands.
 //!
 //! A stop is a request file beside the claim naming the identity to stop;
 //! the runner reads it between duties and ends, releasing the claim. A
@@ -337,36 +330,6 @@ pub fn clear_stop(paths: &Paths) -> Result<()> {
     }
 }
 
-/// Wait, on `clock`, until the start-less record naming `pid` stands no
-/// more: removed, replaced, or naming a pid that reads gone. Nothing is
-/// sent: the loop that wrote it reads no stop request, and its own exit
-/// releases it.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the replacement's wait on the one injected clock for a start-less record's release"
-)]
-pub fn await_release(paths: &Paths, pid: u32, clock: &dyn Clock) -> Result<()> {
-    let deadline = clock.now() + STOP_BOUND;
-    loop {
-        match read(paths)? {
-            Some(claim) if claim.pid == pid && claim.start.is_none() => {
-                if read_live(&claim) == Reading::Gone {
-                    return Ok(());
-                }
-            }
-            Some(_) | None => return Ok(()),
-        }
-        if clock.now() >= deadline {
-            return Err(WatchError::StopTimeout {
-                pid,
-                start: "none".to_owned(),
-            }
-            .into());
-        }
-        clock.sleep(STOP_POLL);
-    }
-}
-
 /// How a stop ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "claim", rename_all = "kebab-case")]
@@ -579,61 +542,6 @@ mod tests {
         for (record, named, why) in rows {
             assert_eq!(record.names(&identity), named, "{why}");
         }
-    }
-
-    /// A clock whose waits pass no time and stand for the loop's exit: its
-    /// first wait removes the record, as the loop's trap does.
-    struct LoopExit<'a> {
-        record: &'a Path,
-        waits: std::sync::atomic::AtomicU32,
-    }
-
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the row's clock: the real instant, and the record's removal the loop's exit makes"
-    )]
-    impl Clock for LoopExit<'_> {
-        fn now(&self) -> std::time::Instant {
-            std::time::Instant::now()
-        }
-        fn wall(&self) -> std::time::SystemTime {
-            std::time::SystemTime::now()
-        }
-        fn sleep(&self, _: Duration) {
-            self.waits
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let _ = std::fs::remove_file(self.record);
-        }
-    }
-
-    #[test]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the row writes the record file it reads"
-    )]
-    fn a_replacement_waits_out_a_running_loops_start_less_record_until_its_exit_releases_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::of(&dir.path().join(FLEET_FILE_NAME)).unwrap();
-        let running = std::process::id();
-        std::fs::write(
-            &paths.pid,
-            format!(
-                "pid={running}\nstate={}\npane=%3\norigin=hand\nscript=/w\ncwd=/c\n",
-                paths.state.display()
-            ),
-        )
-        .unwrap();
-        let clock = LoopExit {
-            record: &paths.pid,
-            waits: std::sync::atomic::AtomicU32::new(0),
-        };
-        await_release(&paths, running, &clock).unwrap();
-        assert_eq!(
-            clock.waits.load(std::sync::atomic::Ordering::Relaxed),
-            1,
-            "held while the loop ran, released at its exit"
-        );
-        assert_eq!(read(&paths).unwrap(), None);
     }
 
     /// A stop request is read only by the identity it names: a request a

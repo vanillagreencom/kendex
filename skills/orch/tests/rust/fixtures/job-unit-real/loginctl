@@ -1,4 +1,0 @@
-#!/bin/bash
-# A `loginctl` reporting that the user manager does not linger, so
-# `job-unit.sh launch` takes its setsid route.
-echo no

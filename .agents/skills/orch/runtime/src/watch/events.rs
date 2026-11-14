@@ -26,9 +26,6 @@ pub enum Takeover {
     /// The claim's identity read gone: a dead pid, or its pid reused by a
     /// process with another start.
     Gone,
-    /// The launcher named the live runner for replacement (`--replace`),
-    /// and it released its claim.
-    Replace,
 }
 
 /// Which of an owner ask's tracker marks did not land: the ruling comment
@@ -57,7 +54,6 @@ impl Takeover {
     fn word(self) -> &'static str {
         match self {
             Takeover::Gone => "gone",
-            Takeover::Replace => "replace",
         }
     }
 }

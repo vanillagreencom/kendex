@@ -3143,7 +3143,7 @@ fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
     fleet["intents"] = json!([{
         "id": id, "op": "request-transfer", "target": "overseer:3", "created_at": "2026-01-29T15:20:00Z",
         "completed_at": "2026-01-29T15:21:00Z", "outcome": "failed",
-        "observation": {"retired": false, "note": "job-launch-failed", "cause": "job-unit: launch-failed status=7"},
+        "observation": {"retired": false, "note": "job-launch-failed", "cause": "launch-failed status=exited-7"},
         "notice": {"key": "job-launch-failed", "text": text, "owner": "owed"},
         "obligations": {"standing": [], "discharged": [{"obligation": {"kind": "job-sidecar", "record": job_record(&runner, id)}, "by": "launch-failed:7", "role": "job"}], "revision": 2}
     }]);
@@ -3225,7 +3225,7 @@ fn a_live_request_with_an_owed_notice_proceeds() {
         "id": id, "op": "request-transfer", "target": "overseer:2",
         "created_at": "2026-01-29T15:20:00Z",
         "completed_at": "2026-01-29T15:21:00Z", "outcome": "failed",
-        "observation": {"retired": false, "note": "job-launch-failed", "cause": "job-unit: launch-failed status=7"},
+        "observation": {"retired": false, "note": "job-launch-failed", "cause": "launch-failed status=exited-7"},
         "notice": {"key": "job-launch-failed", "text": text, "owner": "owed"},
         "obligations": {"standing": [], "discharged": [{"obligation": {"kind": "job-sidecar", "record": job_record(&runner, id)}, "by": "launch-failed:7", "role": "job"}], "revision": 2}
     }]);
@@ -4386,263 +4386,6 @@ fn a_job_whose_end_notice_is_refused_keeps_its_exit_and_says_unsent_in_its_log()
     );
 }
 
-/// A released `oversee-watch` repeat loop the row runs, its process group
-/// killed on drop where it still runs; a row that fails also stops the
-/// runtime watch a pass of the loop started, so neither outlives the row.
-struct ReleasedLoop<'a> {
-    child: std::process::Child,
-    runner: &'a Runner,
-    state: std::path::PathBuf,
-}
-
-impl Drop for ReleasedLoop<'_> {
-    fn drop(&mut self) {
-        if matches!(self.child.try_wait(), Ok(None)) {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", "--", &format!("-{}", self.child.id())])
-                .status();
-            let _ = self.child.wait();
-        }
-        if !std::thread::panicking() {
-            return;
-        }
-        let paths = orch_runtime::watch::claim::Paths::of(&self.state).unwrap();
-        let deadline = Instant::now() + SETTLE;
-        while Instant::now() < deadline {
-            if let Ok(Some(claim)) = orch_runtime::watch::claim::read(&paths)
-                && claim.start.is_some()
-                && live(claim.pid)
-            {
-                let _ = self.runner.run(&["watch", "stop", "--fleet"]);
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-}
-
-#[test]
-fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtime_watch() {
-    use std::os::unix::process::CommandExt;
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let (bin, env) = watch_world(runner.state_dir());
-    for fake in ["systemd-run", "systemctl", "loginctl"] {
-        std::fs::remove_file(bin.join(fake)).unwrap();
-    }
-    runner.tools = Some(bin);
-    runner.env.extend(env);
-    let state = runner
-        .state_dir()
-        .join(agent_runtime::record::FLEET_FILE_NAME);
-    let scripts = runner.state_dir().join("scripts");
-    std::fs::create_dir_all(&scripts).unwrap();
-    std::os::unix::fs::symlink(shipped_scripts().join("lib"), scripts.join("lib")).unwrap();
-    std::os::unix::fs::symlink(
-        runner.state_dir().join("orch-runtime"),
-        scripts.join("orch-runtime"),
-    )
-    .unwrap();
-    let entry = scripts.join("oversee-watch");
-    write_executable(
-        &entry,
-        std::fs::read_to_string(fixtures().join("released-watch-loop/oversee-watch")).unwrap(),
-    );
-    let err = runner.state_dir().join("loop.err");
-    let mut command = program(&entry);
-    runner.apply_env(&mut command);
-    command
-        .args(["--repeat", "1", "--state", &state.display().to_string()])
-        .args(["--since", "2026-01-01T00:00:00Z"])
-        .current_dir(runner.state_dir())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::fs::File::create(&err).unwrap())
-        .process_group(0);
-    let mut released = ReleasedLoop {
-        child: command.spawn().unwrap(),
-        runner: &runner,
-        state: state.clone(),
-    };
-    let loop_pid = released.child.id();
-    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
-    let claim = || orch_runtime::watch::claim::read(&paths).ok().flatten();
-    wait_until("the loop's start-less claim", SETTLE, || {
-        claim().is_some_and(|c| c.pid == loop_pid && c.start.is_none())
-    });
-    // The upgrade writes the shipped entry over the path the loop runs as
-    // each pass, renamed into place.
-    let next = scripts.join(".oversee-watch.next");
-    write_executable(
-        &next,
-        std::fs::read_to_string(shipped_scripts().join("oversee-watch")).unwrap(),
-    );
-    std::fs::rename(&next, &entry).unwrap();
-    let deadline = Instant::now() + SETTLE;
-    let status = loop {
-        if let Some(status) = released.child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the released loop never ended: {}",
-            std::fs::read_to_string(&err).unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    assert!(
-        status.success(),
-        "{status:?}: {}",
-        std::fs::read_to_string(&err).unwrap_or_default()
-    );
-    wait_until("the runtime's claim", SETTLE, || {
-        claim().is_some_and(|c| c.start.is_some() && live(c.pid))
-    });
-    let job = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner")).unwrap();
-    let claimed = claim().unwrap();
-    assert!(
-        job.lines().any(|l| l == format!("pid={}", claimed.pid)),
-        "the claim is the relaunched job's: {claimed:?}, {job}"
-    );
-    stop_live_watch(&runner, &state);
-}
-
-#[test]
-fn a_released_watch_loop_upgraded_before_setup_keeps_its_claim_until_the_runtime_is_built_then_migrates()
- {
-    use std::os::unix::process::CommandExt;
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let (bin, env) = watch_world(runner.state_dir());
-    for fake in ["systemd-run", "systemctl", "loginctl"] {
-        std::fs::remove_file(bin.join(fake)).unwrap();
-    }
-    runner.tools = Some(bin);
-    runner.env.extend(env);
-    // The package as an apply lays it out, the shipped wrapper between the
-    // entry and the binary: it answers `setup-required` until the binary
-    // its key names stands in the cache.
-    let package = runner.state_dir().join("package");
-    let scripts = package.join("orch/scripts");
-    std::fs::create_dir_all(&scripts).unwrap();
-    std::fs::create_dir_all(package.join("agent-runtime/scripts")).unwrap();
-    let shipped = shipped_scripts();
-    std::os::unix::fs::symlink(shipped.join("lib"), scripts.join("lib")).unwrap();
-    std::os::unix::fs::symlink(shipped.join("../runtime"), package.join("orch/runtime")).unwrap();
-    std::os::unix::fs::symlink(
-        shipped.join("../../agent-runtime/scripts/lib"),
-        package.join("agent-runtime/scripts/lib"),
-    )
-    .unwrap();
-    write_executable(
-        &scripts.join("orch-runtime"),
-        std::fs::read_to_string(shipped.join("orch-runtime")).unwrap(),
-    );
-    let cache = runner.state_dir().join("cache");
-    runner.env.push((
-        "AGENT_RUNTIME_CACHE".to_owned(),
-        cache.display().to_string(),
-    ));
-    let state = runner
-        .state_dir()
-        .join(agent_runtime::record::FLEET_FILE_NAME);
-    let entry = scripts.join("oversee-watch");
-    write_executable(
-        &entry,
-        std::fs::read_to_string(fixtures().join("released-watch-loop/oversee-watch")).unwrap(),
-    );
-    let err = runner.state_dir().join("loop.err");
-    let mut command = program(&entry);
-    runner.apply_env(&mut command);
-    command
-        .args(["--repeat", "1", "--state", &state.display().to_string()])
-        .args(["--since", "2026-01-01T00:00:00Z"])
-        .current_dir(runner.state_dir())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::fs::File::create(&err).unwrap())
-        .process_group(0);
-    let mut released = ReleasedLoop {
-        child: command.spawn().unwrap(),
-        runner: &runner,
-        state: state.clone(),
-    };
-    let loop_pid = released.child.id();
-    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
-    let claim = || orch_runtime::watch::claim::read(&paths).ok().flatten();
-    wait_until("the loop's start-less claim", SETTLE, || {
-        claim().is_some_and(|c| c.pid == loop_pid && c.start.is_none())
-    });
-    let next = scripts.join(".oversee-watch.next");
-    write_executable(
-        &next,
-        std::fs::read_to_string(shipped.join("oversee-watch")).unwrap(),
-    );
-    std::fs::rename(&next, &entry).unwrap();
-    // Two passes answer the wrapper's refusal and the loop runs on with its
-    // claim.
-    let refused =
-        format!("oversee-watch: watch-relaunch-failed pid={loop_pid} error=setup-required");
-    let said = || std::fs::read_to_string(&err).unwrap_or_default();
-    wait_until("two passes refused before setup", SETTLE, || {
-        said().lines().filter(|l| *l == refused).count() >= 2
-    });
-    assert!(
-        released.child.try_wait().unwrap().is_none(),
-        "the loop runs on: {}",
-        said()
-    );
-    assert!(
-        claim().is_some_and(|c| c.pid == loop_pid && c.start.is_none()),
-        "the loop keeps its claim: {:?}",
-        claim()
-    );
-    assert!(
-        !runner.state_dir().join("oversee-watch.runner").exists(),
-        "nothing was launched"
-    );
-    // Setup places the binary its key names; the next pass migrates.
-    let text = said();
-    let key = text
-        .lines()
-        .find_map(|l| l.strip_prefix("orch-runtime: setup-required key="))
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("the wrapper's own line names its key")
-        .to_owned();
-    std::fs::create_dir_all(cache.join("bin")).unwrap();
-    std::os::unix::fs::symlink(
-        runner.state_dir().join("orch-runtime"),
-        cache.join("bin").join(format!("orch-runtime-{key}")),
-    )
-    .unwrap();
-    let deadline = Instant::now() + SETTLE;
-    let status = loop {
-        if let Some(status) = released.child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the released loop never ended: {}",
-            said()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    assert!(status.success(), "{status:?}: {}", said());
-    let claimed = claim().expect("a claim stands once the loop has ended");
-    assert!(
-        claimed.start.is_some() && live(claimed.pid) && claimed.pid != loop_pid,
-        "the runtime's claim stood before the loop was told to end: {claimed:?}"
-    );
-    let job = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner")).unwrap();
-    assert!(
-        job.lines().any(|l| l == format!("pid={}", claimed.pid)),
-        "the claim is the relaunched job's: {claimed:?}, {job}"
-    );
-    stop_live_watch(&runner, &state);
-}
-
 #[test]
 fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reported() {
     let dir = tempfile::tempdir().unwrap();
@@ -5544,7 +5287,7 @@ fn the_reconcile_reads_a_launcher_record_three_valued() {
 /// answers the credential ladder and the usage fixture as `curl`, its
 /// answers under `usage-fixtures`; beside it the runtime wrapper the watch
 /// words name (the test binary, as the shipped wrapper execs the keyed
-/// binary), the report judge fixture, and the github skill under the
+/// binary), and the github skill under the
 /// project's install layout, whose ladder `watch run` runs before it
 /// claims. The op's environment reaches the job as the launcher's own.
 /// Returns `bin` and the environment the op carries for the watch.
@@ -5574,12 +5317,6 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
     )
     .unwrap();
     github_skill_under(dir);
-    let report = dir.join("oversee-report");
-    std::os::unix::fs::symlink(
-        fixtures().join("oversee-report-fixture/oversee-report"),
-        &report,
-    )
-    .unwrap();
     let wrapper = dir.join("orch-runtime");
     write_executable(
         &wrapper,
@@ -5596,10 +5333,6 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
                 .join("agent-runtime-built/agent-runtime")
                 .display()
                 .to_string(),
-        ),
-        (
-            "OVERSEE_WATCH_REPORT".to_owned(),
-            report.display().to_string(),
         ),
         ("ORCH_STATE_DIR".to_owned(), dir.display().to_string()),
         ("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()),
@@ -6059,10 +5792,9 @@ fn shipped_scripts() -> std::path::PathBuf {
 
 /// The checkout a launch of the workflow runs from, under the runner's
 /// state directory: `skills/orch/scripts` links every shipped script but
-/// the three this world answers for (`orch-runtime` is the wrapper
-/// `watch_world` wrote around the test binary, `lanes` nothing, `lane-host`
-/// the host fixture answering the local capabilities), and the sibling
-/// skills the scripts source are linked beside `orch`. The listing the
+/// the two this world answers for (`orch-runtime` is the wrapper
+/// `watch_world` wrote around the test binary, `lanes` nothing), and the
+/// sibling skills the scripts source are linked beside `orch`. The listing the
 /// launcher's pick reads through the runtime's judge lists `account` on
 /// `harness` as the one measured account, with room: its credential under
 /// the account and its usage from the usage fixture `watch_world` plants
@@ -6101,10 +5833,7 @@ fn launcher_checkout(
     for entry in std::fs::read_dir(&shipped).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if ["orch-runtime", "lanes", "lane-host"]
-            .iter()
-            .any(|n| name == *n)
-        {
+        if ["orch-runtime", "lanes"].iter().any(|n| name == *n) {
             continue;
         }
         symlink(entry.path(), scripts.join(name)).unwrap();
@@ -6124,19 +5853,6 @@ fn launcher_checkout(
         "FAKE_CARGO_LOG".to_owned(),
         dir.join("cargo.log").display().to_string(),
     ));
-    symlink(
-        fixtures().join("lane-host/lane-host"),
-        scripts.join("lane-host"),
-    )
-    .unwrap();
-    std::fs::write(
-        scripts.join("lane-host.json"),
-        json!({
-            "capabilities": {"stdout": "kind=local\tlaunch=tmux\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=local\tpool=plan\n"},
-        })
-        .to_string(),
-    )
-    .unwrap();
     let usage = dir.join("usage-fixtures");
     let (credential, body) = if harness == "codex" {
         (
@@ -8264,18 +7980,12 @@ impl MarksWorld {
         std::fs::create_dir_all(dir.path().join("bin")).unwrap();
         std::fs::create_dir_all(dir.path().join("home")).unwrap();
         for (name, fixture) in [
-            ("lane-host", "lane-host/lane-host"),
             ("bin/curl", "usage-curl/curl"),
             ("bin/kendex", "kendex-launch/kendex"),
         ] {
-            let base = if fixture.starts_with("lane-host") {
-                fixtures()
-            } else {
-                account_fixtures()
-            };
-            std::os::unix::fs::symlink(base.join(fixture), dir.path().join(name)).unwrap();
+            std::os::unix::fs::symlink(account_fixtures().join(fixture), dir.path().join(name))
+                .unwrap();
         }
-        install_lane_host(dir.path(), dir.path());
         let root = dir.path().display().to_string();
         let env = vec![
             (
@@ -9347,9 +9057,6 @@ fn walk_world_on(
         rows,
         now_secs(),
     ));
-    if host.is_some() {
-        install_lane_host(runner.state_dir(), &runner.state_dir().join("accounts"));
-    }
     env.push((
         "AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR".to_owned(),
         "0".to_owned(),

@@ -91,24 +91,13 @@ impl World {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("bin")).unwrap();
         std::fs::create_dir_all(dir.path().join("home")).unwrap();
-        for (name, fixture) in [
-            ("lane-host", "lane-host/lane-host"),
-            ("bin/curl", "usage-curl/curl"),
-        ] {
-            let base = if fixture.starts_with("lane-host") {
-                fixtures()
-            } else {
-                account_fixtures()
-            };
-            std::os::unix::fs::symlink(base.join(fixture), dir.path().join(name)).unwrap();
-        }
-        install_lane_host(dir.path(), dir.path());
-        // The github package's resolver names the checkout's origin.
         std::os::unix::fs::symlink(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../github"),
-            dir.path().join(".agents/skills/github"),
+            account_fixtures().join("usage-curl/curl"),
+            dir.path().join("bin/curl"),
         )
         .unwrap();
+        // The github package's resolver names the checkout's origin.
+        github_skill_under(dir.path());
         let roots = Roots {
             project: dir.path().to_path_buf(),
             common: dir.path().to_path_buf(),

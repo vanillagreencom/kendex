@@ -117,13 +117,10 @@ impl World {
         for (name, fixture) in [
             ("linear", "linear-fixture/linear.sh"),
             ("gh", "gh/gh"),
-            ("lane-host", "lane-host/lane-host"),
-            ("oversee-report", "oversee-report-fixture/oversee-report"),
             ("github.sh", "github-fixture/github.sh"),
         ] {
             std::os::unix::fs::symlink(fix.join(fixture), dir.path().join(name)).unwrap();
         }
-        install_lane_host(dir.path(), dir.path());
         let mail = real_mail(dir.path());
         let at = |name: &str| dir.path().join(name).display().to_string();
         // The accounts the listing lists are planted under `home` with
@@ -133,7 +130,6 @@ impl World {
         let env: Vec<(String, String)> = [
             ("ORCH_WATCH_MAIL_INTERVAL", "5".to_owned()),
             ("OVERSEE_WATCH_TRACKER", at("linear")),
-            ("OVERSEE_WATCH_REPORT", at("oversee-report")),
             ("LANE_MAIL_CLI", mail.display().to_string()),
             ("HOME", at("home")),
             ("OVERSEE_WATCH_STATE_DIR", at("")),
@@ -386,7 +382,6 @@ fn runner<'a>(world: &World, clock: &'a FakeClock) -> Runner<'a> {
             interval: secs(240),
             max_loops: 25,
             since: None,
-            replace: None,
             fresh: false,
         },
         me(),
@@ -2527,84 +2522,6 @@ fn real(name: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
-/// A record a writer holds mid-update, or one written since the pass judged
-/// it, stands. A stale record with no lane record and no worktree, the
-/// shell store's `update` held between its locked read and its move by a
-/// `jq` that waits for a release; the pass starts and is released into
-/// after the writer: the update lands and the record stands.
-#[test]
-fn retention_leaves_an_item_record_a_shell_writer_holds() {
-    let world = World::new();
-    let wall = FakeClock::new().wall_secs();
-    let record = world.path().join("workflow-state-KEN-9.json");
-    std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
-    set_modified(&record, wall - 10 * 86_400);
-    let tools = world.path().join("bin");
-    std::fs::create_dir(&tools).unwrap();
-    let jq = tools.join("jq");
-    write_executable(
-        &jq,
-        r#"#!/bin/sh
-case "$*" in
-  *late*)
-    "$REAL_JQ" "$@" > "$HOLD_CAPTURE" || exit 1
-    : > "$HOLD_READY"
-    n=0
-    while [ ! -e "$HOLD_RELEASE" ]; do
-      n=$((n + 1))
-      [ "$n" -lt 3000 ] || exit 1
-      sleep 0.01
-    done
-    cat "$HOLD_CAPTURE" ;;
-  *) exec "$REAL_JQ" "$@" ;;
-esac
-"#,
-    );
-    let ready = world.path().join("ready");
-    let release = world.path().join("release");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
-    let mut writer = program(&script);
-    writer
-        .args(["--no-private-env", "--state-dir"])
-        .arg(world.path())
-        .args(["update", "KEN-9", ".late = \"held\""])
-        .env("PATH", tool_path(&[tools.as_path()]))
-        .env("REAL_JQ", real("jq"))
-        .env("HOLD_READY", &ready)
-        .env("HOLD_RELEASE", &release)
-        .env("HOLD_CAPTURE", world.path().join("captured"))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped());
-    let mut writer = Owned(writer.spawn().unwrap());
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    while !ready.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the writer reached its locked read"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let pruned = std::thread::scope(|s| {
-        let pass = s.spawn(|| world.pass(wall));
-        // Bounded, and only the control's reach depends on it: a pass that
-        // has not reached the lock by then waits on it all the same.
-        let held = std::time::Instant::now() + Duration::from_secs(2);
-        while std::time::Instant::now() < held && !pass.is_finished() {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        std::fs::write(&release, "").unwrap();
-        pass.join().unwrap()
-    })
-    .unwrap();
-    let status = writer.0.wait().unwrap();
-    let mut cause = String::new();
-    std::io::Read::read_to_string(&mut writer.0.stderr.take().unwrap(), &mut cause).unwrap();
-    assert!(status.success(), "the writer's update: {cause}");
-    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
-    assert_eq!(doc["late"], "held");
-    assert!(!pruned.paths.contains(&record), "{:?}", pruned.paths);
-}
-
 /// One record whose lock stays held, a stale mutex on a host without
 /// `flock`, fails no other record's retention. The duty as the runner runs
 /// it under the mutex policy with a short wait, over an old record whose
@@ -2701,7 +2618,7 @@ args=("$@")
 while [[ "$1" != -T ]]; do shift; done
 record=$(grep 'workflow-state-KEN-9.json$' "$2")
 state="/${record%/*}"
-/bin/bash "$STORE" --no-private-env --state-dir "$state" update oversee '.lanes[1].status = "running" | .lanes[1].session_since = "new-session"'
+"$ORCH" --no-private-env --state-dir "$state" state set --fleet /lanes/1/status running /lanes/1/session_since new-session > /dev/null
 printf 'new turn\n' >> "$state/lane-mail/KEN-9/to-lane.jsonl"
 exec "$REAL_TAR" "${args[@]}"
 "#,
@@ -2715,10 +2632,7 @@ exec "$REAL_TAR" "${args[@]}"
             .env("RELAUNCH_CHILD", "1")
             .env("PATH", tool_path(&[dir.path()]))
             .env("REAL_TAR", real("tar"))
-            .env(
-                "STORE",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state"),
-            )
+            .env("ORCH", binary())
             .output()
             .unwrap();
         assert!(
