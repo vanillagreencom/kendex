@@ -984,11 +984,12 @@ impl<'a> Judge<'a> {
         }
         if let Seat::Jarvis { home, scripts, .. } = &self.seat {
             let package = scripts.parent().unwrap_or(scripts);
+            let home = shell_quoted(home);
             return Ok(format!(
-                "{agent}\nReach a safe point. Follow Succession in {}/workflows/session.md. Replace the handoff as that workflow requires, then run:\n  {} succeed --home {}",
+                "{agent}\nReach a safe point. Follow Succession in {}/workflows/session.md. An open voice request is not new work: before succeed, send each one a lane-mail notice with --progress on its ref that this session hands over and the next one continues it; list them with\n  {} --root {home}\nReplace the handoff as that workflow requires, then run:\n  {} succeed --home {home}",
                 package.display(),
+                shell_quoted(&scripts.join("owner-unanswered")),
                 shell_quoted(&scripts.join("jarvis-session")),
-                shell_quoted(home)
             ));
         }
         let context = json!({

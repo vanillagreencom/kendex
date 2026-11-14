@@ -717,6 +717,16 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
             assert_eq!(out.code, 2, "{name}: {}", out.stderr);
             let keyed = format!("context={}", case.tokens);
             assert_eq!(out.keyed(), [keyed.as_str()], "{name}: {}", out.stderr);
+            // An open voice request is announced on its ref before succeed.
+            assert!(
+                out.stderr.contains("--progress")
+                    && out.stderr.contains(&format!(
+                        "/.agents/skills/jarvis/scripts/owner-unanswered --root {}",
+                        world.checkout.display()
+                    )),
+                "{name}: {}",
+                out.stderr
+            );
             assert!(
                 out.stderr.contains(&succeed(&world)),
                 "{name}: {}",

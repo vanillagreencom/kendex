@@ -192,7 +192,7 @@ def unanswered(lane, over, logged, since, now, older):
     """
     owners = {row["id"]: row for row in lane if watch.owner_row(row)}
     replies = [(row["ref"], thread_key(row, owners) if in_thread(row) else None, row.get("at", ""))
-               for row in over if row.get("ref")]
+               for row in over if row.get("ref") and not row.get("progress")]
     closed = {row.get("re") for row in lane if row.get("mail_class") == "close"}
     paired = pairs(list(owners.values()))
     # A pair is one message: its ids cover together and it keys as its text.

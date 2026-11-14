@@ -390,6 +390,17 @@ class OwnerUnanswered(MailWorld):
                 finally:
                     case.doCleanups()
 
+    def test_a_progress_notice_leaves_a_request_listed(self):
+        """A progress notice on a request's ref is no answer; a final notice on it is."""
+        plain, self.env = self.env, self.clocked(-60)
+        text = "voice-request: caller=owner operation=op-1 conversation=conv-1 provenance=call"
+        request = self.owner(text, "--directive", "--delivery-id", "C1:1.0")
+        self.mail(self.home, "notice", "looking it up", "--to", "owner", "--ref", request, "--progress")
+        self.env = plain
+        self.assertEqual(self.check(), [text])
+        self.mail(self.home, "notice", "the answer", "--to", "owner", "--ref", request)
+        self.assertEqual(self.check(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
