@@ -554,6 +554,7 @@ fn the_quota_receipt_holds_tracker_reads_until_its_reset_and_nothing_else() {
             max_loops: 25,
             since: Some(SINCE.into()),
             replace: None,
+            fresh: false,
         },
         identity.clone(),
         Recorded {
@@ -668,6 +669,7 @@ fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
             max_loops: 25,
             since: None,
             replace: None,
+            fresh: false,
         },
         identity.clone(),
         Recorded {
@@ -3299,6 +3301,7 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
             max_loops: 25,
             since: Some(SINCE.into()),
             replace: None,
+            fresh: false,
         },
         identity.clone(),
         Recorded {

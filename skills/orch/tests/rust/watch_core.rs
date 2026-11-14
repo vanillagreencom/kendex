@@ -72,6 +72,7 @@ fn flags() -> Flags {
         max_loops: 25,
         since: None,
         replace: None,
+        fresh: false,
     }
 }
 

@@ -761,7 +761,10 @@ pub fn start_watch(
 /// A controller start's companion watch reaches the mailbox and server the
 /// start reaches: their flags join the watch words the request names, so
 /// the detached watch finds neither from the directory or environment it
-/// inherits.
+/// inherits. A start continuing no native session is a fleet's first start,
+/// and its watch is told so with `--fresh`: the effect launches it only
+/// once the controller stands and only where no watch lives, so the log an
+/// earlier fleet left is emptied there and never under a live reader.
 pub fn companion_reach(request: &mut Request, settings: &Settings) -> Result<()> {
     if let Request::StartController(r) = request
         && let Some(words) = &mut r.watch
@@ -769,6 +772,9 @@ pub fn companion_reach(request: &mut Request, settings: &Settings) -> Result<()>
         words.extend(agent_runtime::controller::run::reach_words(&fleet_reach(
             settings,
         )?));
+        if r.controller.resume.is_none() {
+            words.push("--fresh".to_owned());
+        }
     }
     Ok(())
 }

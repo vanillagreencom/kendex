@@ -966,6 +966,17 @@ impl EventLog {
     }
 }
 
+/// Empty the log, creating it where none stands: its next line is line 1.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the event log's one emptying, at a fleet's first start: the runner's own record beside the fleet state"
+)]
+pub fn empty(path: &Path) -> Result<()> {
+    File::create(path)
+        .map(drop)
+        .map_err(|e| record_error(path, "empty", e).into())
+}
+
 /// The log open for appending, created where none stands.
 #[allow(
     clippy::disallowed_methods,

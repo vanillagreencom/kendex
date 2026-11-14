@@ -123,8 +123,8 @@ pub struct Tick<'a> {
 /// back what it found; the runner writes.
 pub type Body<'a> = Box<dyn FnMut(&Tick) -> Result<Produced> + Send + 'a>;
 
-/// The runner's own flags: `--interval`, `--max-loops`, `--since` and
-/// `--replace`.
+/// The runner's own flags: `--interval`, `--max-loops`, `--since`,
+/// `--replace` and `--fresh`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flags {
     pub interval: Duration,
@@ -134,6 +134,9 @@ pub struct Flags {
     pub since: Option<String>,
     /// A live runner the launcher named for replacement.
     pub replace: Option<u32>,
+    /// A fleet's first start: the log is emptied once the claim is taken,
+    /// so a fresh reader from line 1 is handed no earlier fleet's line.
+    pub fresh: bool,
 }
 
 /// How a run ended.
@@ -374,6 +377,9 @@ impl<'a> Runner<'a> {
             interval_secs: self.cadences.long.every.as_secs(),
             max_loops: self.flags.max_loops,
         });
+        if self.flags.fresh {
+            events::empty(&self.paths.log)?;
+        }
         let mut log = EventLog::open(&self.paths.log)?;
         if let Some(event) = takeover {
             log.append(&[event])?;
@@ -756,6 +762,7 @@ mod tests {
                 max_loops: 25,
                 since: None,
                 replace: Some(held_pid),
+                fresh: false,
             },
             identity.clone(),
             Recorded {

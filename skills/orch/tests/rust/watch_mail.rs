@@ -252,6 +252,7 @@ impl World {
                 max_loops: 25,
                 since: None,
                 replace: None,
+                fresh: false,
             },
             me(),
             Recorded {

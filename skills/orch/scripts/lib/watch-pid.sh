@@ -17,12 +17,13 @@
 #                       the pid). A record with no start= line is the retired
 #                       repeat loop's, with its six fields; the entry stops
 #                       that watch before the runtime claims
-#   oversee-watch.argv  the runtime's: NUL-separated, watch-command-v1,
-#                       script, cwd, then its arguments; replaced whole at
-#                       each claim
-#   oversee-watch.log   the runtime's event log, appended after whatever a
-#                       launcher of the retired loop left there; no start
-#                       prints or removes it
+#   oversee-watch.argv  watch_pid_write's: NUL-separated, watch-command-v1,
+#                       script, cwd, then its arguments; the runtime writes
+#                       none
+#   oversee-watch.log   the runtime's event log: a fleet's first start
+#                       (`start-controller` continuing no session, where no
+#                       watch lives) empties it once its watch claims, and
+#                       every other start appends to it
 #   oversee-watch.err   the launcher's stderr file for the watch
 #                       (../../workflows/oversee.md § 4), appended on every
 #                       start; no start prints or removes it

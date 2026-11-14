@@ -5819,6 +5819,94 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     );
 }
 
+/// The lines an earlier fleet's watch left in the log.
+const EARLIER_FLEET: &str =
+    "EVENT owner-note from=an-earlier-fleet\nEVENT peer-note from=an-earlier-fleet kind=ask\n";
+
+/// The watch log a confirmed start leaves over [`EARLIER_FLEET`]'s lines in
+/// a fresh world on `stub`, read once the watch holding the fleet state is
+/// stopped and ended, so its start has run whole. `request` is the start,
+/// its `watch` the fleet's words; with `hand_watch` a hand `watch run`
+/// claims the fleet state first and the start adopts it.
+fn log_after_start(stub: &str, request: impl Fn(&Runner) -> Value, hand_watch: bool) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, stub);
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let work = runner.state_dir().to_path_buf();
+    let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
+    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+    std::fs::write(&paths.log, EARLIER_FLEET).unwrap();
+    let hand = hand_watch.then(|| {
+        let mut watch = isolated();
+        watch
+            .args(["--state-dir", &work.display().to_string()])
+            .args(["watch", "run", "--file", &state.display().to_string()])
+            .args(watch_reach(&runner, &work))
+            .current_dir(&work)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        runner.apply_env(&mut watch);
+        let watch = Owned(watch.spawn().expect("watch run"));
+        wait_until("the hand watch claimed", secs(20), || {
+            orch_runtime::watch::claim::read(&paths)
+                .ok()
+                .flatten()
+                .is_some_and(|c| live(c.pid))
+        });
+        watch
+    });
+    let mut start = request(&runner);
+    start["watch"] = watch_words(&state);
+    let report = effect_report(&runner.op_fleet(&start));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    stop_live_watch(&runner, &state);
+    if let Some(mut watch) = hand {
+        let _ = watch.0.wait();
+    }
+    std::fs::read_to_string(&paths.log).unwrap()
+}
+
+/// The watch log is emptied at a fleet's first start and kept at every
+/// other: a fresh session reads from line 1, so a log an earlier fleet left
+/// hands it that fleet's owner notes and asks to act on, while a resumed
+/// session or one whose watch outlived its controller follows the log from
+/// the line it stood at. A first start's watch claims, then empties the
+/// log; a resume's watch keeps it; a first start over a live watch adopts
+/// that watch, whose log stands.
+#[test]
+fn a_first_start_empties_the_watch_log_and_a_resume_or_a_start_over_a_live_watch_keeps_it() {
+    let kept = |log: &str| log.contains("from=an-earlier-fleet");
+    let first = log_after_start(
+        "stub-confirm",
+        |runner| json!({"op": "start-controller", "controller": pending(runner.state_dir())}),
+        false,
+    );
+    let id = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
+    let resumed = log_after_start(
+        "stub-resume",
+        |runner| {
+            let home = runner.state_dir();
+            plant_claude_session(home, home, id);
+            resume_request(home, "claude", home, id)
+        },
+        false,
+    );
+    let adopted = log_after_start(
+        "stub-confirm",
+        |runner| json!({"op": "start-controller", "controller": pending(runner.state_dir())}),
+        true,
+    );
+    assert_eq!(
+        (kept(&first), kept(&resumed), kept(&adopted)),
+        (false, true, true),
+        "first start: {first:?}\nresume: {resumed:?}\nover a live watch: {adopted:?}"
+    );
+}
+
 /// The mailbox CLI of the owner-notice assertions: a `notice` copies the
 /// runner's fleet file to `snapshot` as it stands at the call and logs the
 /// call's argv and the notice's first line to `log`, so a row reads what

@@ -850,6 +850,10 @@ enum WatchOp {
         /// under its selection.
         #[arg(long, hide = true)]
         credential_selected: bool,
+        /// A fleet's first start: the log an earlier fleet left is emptied
+        /// once the claim is taken.
+        #[arg(long, hide = true)]
+        fresh: bool,
         #[command(flatten)]
         reach: WatchReach,
     },
@@ -2519,6 +2523,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             replace,
             repos,
             credential_selected,
+            fresh,
             reach: _,
         } => {
             if !credential_selected {
@@ -2558,6 +2563,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                     max_loops,
                     since: since.clone(),
                     replace,
+                    fresh,
                 },
                 identity,
                 record,

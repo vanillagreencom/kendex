@@ -387,6 +387,7 @@ fn runner<'a>(world: &World, clock: &'a FakeClock) -> Runner<'a> {
             max_loops: 25,
             since: None,
             replace: None,
+            fresh: false,
         },
         me(),
         Recorded {
