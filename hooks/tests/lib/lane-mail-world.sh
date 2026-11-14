@@ -353,8 +353,8 @@ record_overseer() { # PANE SERVER [HOME] [START]
     '{server: $s, pane: $p, window: "@7", home: $h, session_id:"s1", launch_line: "claude -n overseer",
       harness_pid: $pid, harness_start: $started, server_socket: $socket}
      + (if $start == "none" then {} else {server_start: ($start | tonumber)} end)')"
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
-    set oversee controller "$record" >/dev/null)
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/orch-runtime" \
+    state set --fleet /controller "$record" >/dev/null)
 }
 
 # --- the overseer -----------------------------------------------------------
@@ -381,7 +381,7 @@ new_overseer() { # NAME [PANE] [SERVER]
   new_lane "$1" main
   unmark_lanes
   plant_judge
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/orch-runtime" state init --fleet >/dev/null)
   record_overseer "${2:-$OVERSEER_PANE}" "${3:-$OVERSEER_SERVER}"
 }
 
