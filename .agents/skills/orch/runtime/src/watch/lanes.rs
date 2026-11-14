@@ -1377,7 +1377,9 @@ fn observe_one(
     // turn and on two consecutive passes otherwise; the line carries the
     // stop's cause where the verdict kept one, so a turn its output limit
     // cut is told apart from a finished one, whose line carries none, else
-    // a Copilot lane's policy note, keyed as the asking line keys it.
+    // a Copilot lane's policy note, keyed as the asking line keys it. The
+    // `resume` row chains an API error's resume (`api-error|<key>`) to the
+    // failure after it (`told|<key>`), which the wake never serves.
     match &state {
         LaneState::Idle { capacity: true, .. } => {
             let key = hash_of(&slice).to_string();
@@ -1410,6 +1412,24 @@ fn observe_one(
             if prior == key || codex_after_turn {
                 out.changes
                     .push(set("lane-idle", lane, format!("{key}|reported")));
+                // A turn its provider's API ended, on a lane the wake reaches,
+                // is the wake's to resume once, with no line; the next such
+                // end is told and its row asks nothing more. A finished
+                // return ends the chain.
+                let api_error = cause.as_deref() == Some("api-error");
+                let asked = get(wake::RESUME_KIND)
+                    .is_some_and(|row| matches!(row.split('|').next(), Some("api-error" | "told")));
+                if api_error && !asked && wake::reaches(obs.lane) {
+                    out.changes
+                        .push(set(wake::RESUME_KIND, lane, format!("api-error|{key}")));
+                    return reading;
+                }
+                if !api_error {
+                    out.changes.push(clear(wake::RESUME_KIND, lane));
+                } else if asked {
+                    out.changes
+                        .push(set(wake::RESUME_KIND, lane, format!("told|{key}")));
+                }
                 out.events.push(Event::IdleAfterReturn {
                     lane: lane.clone(),
                     note,

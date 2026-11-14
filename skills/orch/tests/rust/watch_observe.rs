@@ -747,15 +747,22 @@ fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
     assert!(lines(&again).is_empty(), "{:?}", lines(&again));
 }
 
-/// A pane whose `claude` process draws the screen it starts on and redraws
-/// the pane whole with each screen file whose path is typed into it
-/// ([`redraw`]), so a row moves a lane's screen under one live identity.
-fn redrawing_claude(server: &Server, dir: &Path, name: &str, screen: &str) -> (String, Identity) {
+/// A pane whose process, named `program` for the harness it stands for,
+/// draws the screen it starts on and redraws the pane whole with each
+/// screen file whose path is typed into it ([`redraw`]), so a row moves a
+/// lane's screen under one live identity.
+fn redrawing(
+    server: &Server,
+    dir: &Path,
+    name: &str,
+    program: &str,
+    screen: &str,
+) -> (String, Identity) {
     let bin = dir.join(format!("{name}-bin"));
     std::fs::create_dir_all(&bin).unwrap();
-    let claude = bin.join("claude");
+    let drawer = bin.join(program);
     write_executable(
-        &claude,
+        &drawer,
         "#!/bin/bash\ndraw() { printf '\\033[2J\\033[H'; while IFS= read -r l; do printf '%s\\n' \"$l\"; done < \"$1\"; }\ndraw \"$1\"\nwhile IFS= read -r f; do draw \"$f\"; done\n",
     );
     let first = dir.join(format!("{name}-screen-0.txt"));
@@ -763,13 +770,13 @@ fn redrawing_claude(server: &Server, dir: &Path, name: &str, screen: &str) -> (S
     let pane = server.open_window(
         name,
         dir,
-        &format!("exec {} {}", claude.display(), first.display()),
+        &format!("exec {} {}", drawer.display(), first.display()),
     );
-    let identity = await_named(server, &pane, "claude");
+    let identity = await_named(server, &pane, program);
     (pane, identity)
 }
 
-/// The screen `screen` drawn into `pane` through [`redrawing_claude`], read
+/// The screen `screen` drawn into `pane` through [`redrawing`], read
 /// back once `needle` is on it.
 fn redraw(server: &Server, pane: &str, dir: &Path, file: &str, screen: &str, needle: &str) {
     let path = dir.join(file);
@@ -790,7 +797,7 @@ fn a_wall_that_cleared_and_came_back_with_the_same_banner_is_reported_again() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let (pane, identity) = redrawing_claude(&server, dir.path(), "gh-4", &wall_screen(BANNER));
+    let (pane, identity) = redrawing(&server, dir.path(), "gh-4", "claude", &wall_screen(BANNER));
     await_drawn(&server, &pane, "weekly limit");
     fleet.set_lanes(vec![lane_record(
         "KEN-4",
@@ -840,10 +847,10 @@ fn a_passed_wall_asks_the_wake_for_one_resume_and_a_resume_answered_by_the_same_
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let (pane, identity) = redrawing_claude(&server, dir.path(), "gh-4", &wall_screen(BANNER));
+    let (pane, identity) = redrawing(&server, dir.path(), "gh-4", "claude", &wall_screen(BANNER));
     await_drawn(&server, &pane, "weekly limit");
     let (unreached, unreached_identity) =
-        redrawing_claude(&server, dir.path(), "gh-5", &wall_screen(BANNER));
+        redrawing(&server, dir.path(), "gh-5", "claude", &wall_screen(BANNER));
     await_drawn(&server, &unreached, "weekly limit");
     let mut no_account = lane_record(
         "KEN-5",
@@ -1603,28 +1610,71 @@ fn a_codex_capacity_refusal_is_model_capacity_once() {
     assert!(lines(&second).is_empty(), "{:?}", lines(&second));
 }
 
-/// A Codex turn its provider's API ended (the screen a real hosted lane's
-/// pane drew) is no finished return: the idle line carries
-/// `cause=api-error`, once.
+/// The screen a real hosted Codex lane's pane drew when its provider's API
+/// ended its turn.
+fn codex_api_error_screen() -> PathBuf {
+    fixtures()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("fixtures/oversee-watch/codex-api-error.txt")
+}
+
+/// A Codex turn its provider's API ended, on a hosted lane, which the wake
+/// does not type into, is no finished return: the idle line carries
+/// `cause=api-error`, once, and no resume is asked.
 #[test]
 fn a_codex_api_error_turn_end_is_no_finished_return() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let codex = named_sleep(dir.path(), "codex");
-    let fixture = fixtures()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("fixtures/oversee-watch/codex-api-error.txt");
-    let line = format!("cat {}; exec {} 600", fixture.display(), codex.display());
-    let pane = server.open_window("gh-7", dir.path(), &format!("bash -c \"{line}\""));
-    let identity = await_named(&server, &pane, "codex");
+    let line = format!(
+        "cat {}; exec bash --norc --noprofile",
+        codex_api_error_screen().display()
+    );
+    let pane = server.open_window("gh-7", dir.path(), &line);
+    await_drawn(&server, &pane, "Bad Request");
+    let mut hosted = hosted_lane(dir.path(), "KEN-7", "gh-7", "/remote/KEN-7");
+    hosted["harness"] = json!("codex");
+    hosted["launch"] = json!({"pane": pane, "server": server.pid});
+    fleet.set_lanes(vec![hosted]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (
+            &format!("{} capabilities", provider(dir.path())),
+            ok(SSH_LINE),
+        ),
+        ("status --item KEN-7 --harness codex", ok("running\n")),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let told: Vec<String> = (0..3)
+        .flat_map(|_| event_lines(&driver.pass(&state)))
+        .filter(|l| l.starts_with("EVENT idle-after-return"))
+        .collect();
+    assert_eq!(told, vec!["EVENT idle-after-return gh-7 cause=api-error"]);
+    assert_eq!(driver.baseline.get("resume", "gh-7"), None);
+}
+
+/// A Codex turn its provider's API ended, on a local lane the wake types
+/// into, asks the wake for one resume (`resume=api-error|<key>`) with no
+/// line; the resumed turn ending on an API error again is told once with
+/// its tail and its row asks nothing more (`told|<key>`); a finished return
+/// then ends the chain, so a later API error is resumed again.
+#[test]
+fn a_codex_api_error_is_resumed_once_and_a_second_failure_is_told() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let first = std::fs::read_to_string(codex_api_error_screen()).unwrap();
+    let (pane, identity) = redrawing(&server, dir.path(), "gh-8", "codex", &first);
     await_drawn(&server, &pane, "Bad Request");
     fleet.set_lanes(vec![lane_record(
-        "KEN-7",
-        "gh-7",
+        "KEN-8",
+        "gh-8",
         "codex",
         &server,
         &pane,
@@ -1633,10 +1683,66 @@ fn a_codex_api_error_turn_end_is_no_finished_return() {
     )]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
-    let told: Vec<String> = (0..3)
-        .flat_map(|_| event_lines(&driver.pass(&state)))
-        .collect();
-    assert_eq!(told, vec!["EVENT idle-after-return gh-7 cause=api-error"]);
+    let resume = |driver: &LaneDriver<'_>| driver.baseline.get("resume", "gh-8").map(str::to_owned);
+    let asked = |row: Option<String>, word: &str| {
+        row.as_deref()
+            .is_some_and(|r| r.starts_with(&format!("{word}|")))
+    };
+    for _ in 0..3 {
+        let quiet = driver.pass(&state);
+        assert!(event_lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    }
+    let first_ask = resume(&driver);
+    assert!(asked(first_ask.clone(), "api-error"), "{first_ask:?}");
+    let error = "\u{25a0} {\"detail\":\"Bad Request\"}";
+    let composer = "\u{203a} Ask Codex to do anything";
+    redraw(
+        &server,
+        &pane,
+        dir.path(),
+        "gh-8-screen-1.txt",
+        &format!("\u{203a} Resume the orch workflow for KEN-8\n{error}\n{composer}\n"),
+        "Resume the orch",
+    );
+    let told = driver.pass(&state);
+    assert_eq!(
+        lines(&told),
+        vec![
+            "EVENT idle-after-return gh-8 cause=api-error",
+            error,
+            composer,
+        ]
+    );
+    assert!(asked(resume(&driver), "told"), "{:?}", resume(&driver));
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    redraw(
+        &server,
+        &pane,
+        dir.path(),
+        "gh-8-screen-2.txt",
+        &format!(
+            "\u{203a} Resume the orch workflow for KEN-8\n\u{2022} Validation passed.\n{composer}\n"
+        ),
+        "Validation passed",
+    );
+    assert_eq!(
+        event_lines(&driver.pass(&state)),
+        vec!["EVENT idle-after-return gh-8"]
+    );
+    assert_eq!(resume(&driver), None);
+    redraw(
+        &server,
+        &pane,
+        dir.path(),
+        "gh-8-screen-3.txt",
+        &format!("\u{203a} Run the socket suite\n{error}\n{composer}\n"),
+        "socket suite",
+    );
+    let again = driver.pass(&state);
+    assert!(event_lines(&again).is_empty(), "{:?}", lines(&again));
+    let second_ask = resume(&driver);
+    assert!(asked(second_ask.clone(), "api-error"), "{second_ask:?}");
+    assert_ne!(second_ask, first_ask);
 }
 
 /// A Pi lane is judged from its rows, since its carrier's drawing cannot

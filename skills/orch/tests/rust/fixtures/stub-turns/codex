@@ -8,7 +8,9 @@
 # named by the `--session-id` it is given, and records each line it reads
 # as one user turn there (an `event_msg` row completing a `UserMessage`
 # item), then draws the composer again. STUB_TURNS_LINES names a file every
-# line read is also appended to. It stands until its stdin closes.
+# line read is also appended to; STUB_TURNS_ENDED a file whose lines are
+# drawn above the first composer, as a session whose last turn ended on
+# them. It stands until its stdin closes.
 lines="${STUB_TURNS_LINES:-}"
 session="stub-$$"
 while [ $# -gt 0 ]; do
@@ -24,6 +26,9 @@ if [ -n "${CODEX_HOME:-}" ]; then
   rollout="$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$session.jsonl"
   printf '{"timestamp":"%s","type":"session_meta","payload":{"id":"%s","cwd":"%s","parent_thread_id":null,"source":"cli"}}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" > "$rollout"
+fi
+if [ -n "${STUB_TURNS_ENDED:-}" ]; then
+  while IFS= read -r drawn; do printf '%s\n' "$drawn"; done < "$STUB_TURNS_ENDED"
 fi
 printf '\xe2\x80\xba Ask Codex to do anything\n'
 while IFS= read -r line; do

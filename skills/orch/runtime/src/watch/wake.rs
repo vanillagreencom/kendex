@@ -18,12 +18,14 @@
 //! writes no row of its own.
 //!
 //! Resume: the lanes duty sets a row of kind [`RESUME_KIND`], its identity
-//! the lane's name, its value the wall it asks a resume for
+//! the lane's name, its value the turn end it asks a resume for: a wall
 //! (`usage-limit|<identity>|<reset>`), for a lane [`resumable`] names whose
-//! wall's reset passed. The wake reads the lane's account through the close's
-//! own account read and, once it reads room, types the resume sentence before
-//! the inbox line into the pane past its usage banner (`deliver
-//! --account-room`), once per row value: the mark keeps the value typed.
+//! wall's reset passed, or an API error (`api-error|<key>`), for a lane
+//! [`reaches`] names. The wake types the resume sentence before the inbox
+//! line once per row value: the mark keeps the value typed. A wall's resume
+//! waits for the lane's account, read through the close's own account read,
+//! to read room, and is typed past its usage banner (`deliver
+//! --account-room`).
 //!
 //! The duty starts no detached process: nothing new charges the lane cap.
 //!
@@ -78,31 +80,51 @@ fn line_for(target: &str) -> String {
     )
 }
 
-/// A resume the lanes duty asked: its row's value, which the mark keeps
-/// once typed, and the cause the row names.
+/// A resume the lanes duty asked for the lane `lane`: its row's value,
+/// which the mark keeps once typed, and the cause the row names.
 struct Resume {
+    lane: String,
     row: String,
     cause: &'static str,
     /// How the session's last turn ended, as the sentence says it.
     ended: &'static str,
+    /// Whether the turn ended at a wall: its pane stands at a usage banner
+    /// only the account's reading with room judges past.
+    wall: bool,
 }
 
 impl Resume {
     /// The resume a row's value asks for; none for a cause the wake does
-    /// not resume.
-    fn of(row: &str) -> Option<Resume> {
-        let (cause, ended) = match row.split('|').next()? {
+    /// not resume (`told|…`, an API error's resume already answered by the
+    /// same end).
+    fn of(lane: &str, row: &str) -> Option<Resume> {
+        let (cause, ended, wall) = match row.split('|').next()? {
             "usage-limit" => (
                 "usage-limit",
                 "its account's usage limit, which has since reset",
+                true,
             ),
+            "api-error" => ("api-error", "an API error", false),
             _ => return None,
         };
         Some(Resume {
+            lane: lane.to_owned(),
             row: row.to_owned(),
             cause,
             ended,
+            wall,
         })
+    }
+
+    /// Whether the wake resumes `lane` for this cause: a wall's resume
+    /// spends an account its reading measures, an API error's any lane the
+    /// wake types into.
+    fn reaches(&self, lane: &Lane) -> bool {
+        if self.wall {
+            resumable(lane)
+        } else {
+            reaches(lane)
+        }
     }
 
     /// The line typed for `target`: the resume sentence, then the inbox
@@ -116,11 +138,17 @@ impl Resume {
     }
 }
 
+/// Whether the wake types into `lane` at all; the lanes duty asks an API
+/// error's resume for such a lane alone.
+pub fn reaches(lane: &Lane) -> bool {
+    // The socket only names where a paste would go.
+    lane_target(lane, Path::new("")).is_some()
+}
+
 /// Whether the wake resumes `lane` at a passed wall: a lane it types into,
 /// spending an account the wall's account reading measures. The lanes duty
-/// asks a resume for such a lane alone.
+/// asks a wall's resume for such a lane alone.
 pub fn resumable(lane: &Lane) -> bool {
-    // The socket only names where a paste would go.
     lane_target(lane, Path::new(""))
         .is_some_and(|target| crate::effects::room_measured(lane, Some(target.harness)).is_some())
 }
@@ -349,14 +377,14 @@ impl Wake {
         // A resume goes first: its line runs the inbox read too, so the
         // unread state it types for stands marked when the mail is served.
         for (name, row) in resumes {
-            let Some(resume) = Resume::of(&row) else {
+            let Some(resume) = Resume::of(&name, &row) else {
                 continue;
             };
             let Some(lane) = fleet
                 .lanes
                 .iter()
                 .find(|l| super::lanes::lane_name(l) == name)
-                .filter(|l| resumable(l) && !crate::ops::wake::turn_runs(l, &host))
+                .filter(|l| resume.reaches(l) && !crate::ops::wake::turn_runs(l, &host))
             else {
                 continue;
             };
@@ -368,15 +396,16 @@ impl Wake {
                 continue;
             }
             // The local listing: the wake types into local lanes alone.
-            let room = crate::effects::account_room(
-                &self.settings,
-                &self.fleet,
-                "local",
-                lane,
-                Some(target.harness),
-                tick.wall,
-            );
-            if room != "room" {
+            if resume.wall
+                && crate::effects::account_room(
+                    &self.settings,
+                    &self.fleet,
+                    "local",
+                    lane,
+                    Some(target.harness),
+                    tick.wall,
+                ) != "room"
+            {
                 continue;
             }
             let state = unread
@@ -523,9 +552,9 @@ impl Wake {
 
     /// A new unread state, or the resume `resume` asks: the target read
     /// idle, marked, typed where its harness has a route and confirmed, the
-    /// outcome and the owner's word written with the mark. A resume reads
-    /// the pane past its usage banner, types its sentence before the inbox
-    /// line and says `resume=` on its line, with no `idle-unread`; every
+    /// outcome and the owner's word written with the mark. A resume types its
+    /// sentence before the inbox line and says `resume=` on its line, with no
+    /// `idle-unread`; a wall's reads the pane past its usage banner; every
     /// mark carries the last resume typed for the target.
     fn first_pass(
         &self,
@@ -568,9 +597,12 @@ impl Wake {
                 resume: said.clone(),
             })
         };
-        let room = resume.is_some();
+        let room = resume.is_some_and(|r| r.wall);
         let events = match self.read(target, room)? {
-            Read::Refused => return Ok(()),
+            Read::Refused => {
+                self.untyped(&name, standing.as_ref(), resume, &mark, record, produced)?;
+                return Ok(());
+            }
             Read::Limit { harness, cause } => limit(&mut mark, harness, cause),
             Read::Idle { turns } => {
                 mark.turns_before = turns;
@@ -598,7 +630,16 @@ impl Wake {
                     Paste::Refused => {
                         // Nothing was typed: the mark that stood before
                         // stands again.
-                        self.write(record, &name, standing)?;
+                        if !self.untyped(
+                            &name,
+                            standing.as_ref(),
+                            resume,
+                            &mark,
+                            record,
+                            produced,
+                        )? {
+                            self.write(record, &name, standing)?;
+                        }
                         return Ok(());
                     }
                 }
@@ -608,6 +649,41 @@ impl Wake {
         self.write(record, &name, Some(mark))?;
         produced.events.extend(events);
         Ok(())
+    }
+
+    /// A read or paste refused before anything was typed, for an API error's
+    /// resume: the lanes duty left that end's line to the resume, so the
+    /// line is told here instead, once, and the target's mark keeps the
+    /// resume, so it is never typed afterwards. Where none stood, the mark
+    /// stands for no unread state, so a mail wake for the target is still
+    /// new. Answers whether it told; a wall's resume waits for the next pass.
+    fn untyped(
+        &self,
+        name: &str,
+        standing: Option<&WakeMark>,
+        resume: Option<&Resume>,
+        mark: &WakeMark,
+        record: &mut WakeRecord,
+        produced: &mut Produced,
+    ) -> Result<bool> {
+        let Some(resume) = resume.filter(|r| !r.wall) else {
+            return Ok(false);
+        };
+        let kept = WakeMark {
+            resume: Some(resume.row.clone()),
+            ..standing.cloned().unwrap_or_else(|| WakeMark {
+                unread: String::new(),
+                turns_before: 0,
+                outcome: None,
+                ..mark.clone()
+            })
+        };
+        self.write(record, name, Some(kept))?;
+        produced.events.push(Event::IdleAfterReturn {
+            lane: resume.lane.clone(),
+            note: Some(format!("cause={}", resume.cause)),
+        });
+        Ok(true)
     }
 
     /// Read the target through `deliver --no-paste`; `room` passes the

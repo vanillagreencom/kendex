@@ -758,12 +758,10 @@ fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
 }
 
-#[test]
-fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
+/// The real agent-runtime under a tmux that refuses its first load-buffer,
+/// before any paste, and the file whose presence says it refused.
+fn refusing_once(fleet: &Fleet) -> (PathBuf, PathBuf) {
     let real = agent_runtime();
-    let fleet = Fleet::new();
-    // The tmux the agent-runtime runs refuses its first load-buffer, before
-    // any paste.
     let shims = fleet.root.join("refusing-tmux");
     std::fs::create_dir(&shims).unwrap();
     let count = fleet.root.join("load-count");
@@ -784,6 +782,13 @@ fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
             real.display()
         ),
     );
+    (refusing, count)
+}
+
+#[test]
+fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
+    let fleet = Fleet::new();
+    let (refusing, count) = refusing_once(&fleet);
     let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
     fleet.server.await_composer(&pane.id);
     fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
@@ -861,6 +866,81 @@ fn an_idle_codex_lane_is_typed_one_line_confirmed_by_a_user_turn_in_its_own_roll
     assert_eq!(codex_turns(&fleet.home, "lead-3").len(), 1, "typed once");
     let lane: orch_runtime::state::Lane = serde_json::from_value(lane).unwrap();
     assert!(wake::resumable(&lane));
+}
+
+/// The lanes duty's resume row for a Codex lane whose turn its provider's
+/// API ended: the sentence and the inbox line are typed into the session at
+/// its error screen, with no account reading (none is planted, so a wall's
+/// resume would wait), confirmed by a user turn in its own rollout, once,
+/// `wake-delivered <item> resume=api-error`; a `told` row is never served. A
+/// lane whose paste is refused is told its idle line with the cause instead,
+/// once, and its mark keeps the resume, so nothing is typed on a later pass.
+#[test]
+fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_is_told_once() {
+    let fleet = Fleet::new();
+    let ended = fleet.root.join("api-error.txt");
+    std::fs::write(
+        &ended,
+        "Ran .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-3\n\u{25a0} {\"detail\":\"Bad Request\"}\n",
+    )
+    .unwrap();
+    let ended = ended.display().to_string();
+    let pane = fleet.open("KEN-3", "codex", "lead-3", &[("STUB_TURNS_ENDED", &ended)]);
+    let refused = fleet.open("KEN-4", "codex", "lead-4", &[("STUB_TURNS_ENDED", &ended)]);
+    await_codex_composer(&fleet, &pane.id);
+    await_codex_composer(&fleet, &refused.id);
+    fleet.set_lanes(vec![
+        fleet.lane("KEN-3", "codex", &pane),
+        fleet.lane("KEN-4", "codex", &refused),
+    ]);
+    let clock = FakeClock::new();
+    let resume = |lane: &str, value: &str| {
+        let mut baseline = Baseline::default();
+        baseline.apply(Change::Set {
+            kind: wake::RESUME_KIND.into(),
+            identity: lane.into(),
+            value: value.into(),
+        });
+        baseline
+    };
+    let asked = "api-error|%1|42|cause=api-error";
+    let mut body = fleet.body();
+    let resumed = run_once(&mut body, &resume("KEN-3", asked), &clock).unwrap();
+    assert_eq!(
+        rendered(&resumed),
+        vec!["EVENT wake-delivered KEN-3 resume=api-error"]
+    );
+    let typed = codex_turns(&fleet.home, "lead-3");
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(
+        typed[0].starts_with("Resume the orch workflow for KEN-3 from where this session stopped: your last turn ended on an API error. Run .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-3 "),
+        "{typed:?}"
+    );
+    assert_eq!(
+        fleet.mark("KEN-3").and_then(|m| m.resume).as_deref(),
+        Some(asked)
+    );
+    let repeat = run_once(&mut body, &resume("KEN-3", asked), &clock).unwrap();
+    assert_eq!(rendered(&repeat), Vec::<String>::new());
+    let told = run_once(&mut body, &resume("KEN-3", "told|%1|43"), &clock).unwrap();
+    assert_eq!(rendered(&told), Vec::<String>::new());
+    assert_eq!(codex_turns(&fleet.home, "lead-3").len(), 1, "typed once");
+    let (refusing, count) = refusing_once(&fleet);
+    let mut body = wake::body(&fleet.fleet_file(), &settings_in(&fleet.root, &refusing));
+    let state = resume("KEN-4", asked);
+    let unserved = run_once(&mut body, &state, &clock).unwrap();
+    assert!(count.exists(), "the load was refused");
+    assert_eq!(
+        rendered(&unserved),
+        vec!["EVENT idle-after-return KEN-4 cause=api-error"]
+    );
+    assert_eq!(
+        fleet.mark("KEN-4").and_then(|m| m.resume).as_deref(),
+        Some(asked)
+    );
+    let later = run_once(&mut body, &state, &clock).unwrap();
+    assert_eq!(rendered(&later), Vec::<String>::new());
+    assert_eq!(codex_turns(&fleet.home, "lead-4"), Vec::<String>::new());
 }
 
 /// Wait until the Codex stub in `pane` has drawn its composer line.
