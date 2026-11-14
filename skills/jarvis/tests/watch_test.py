@@ -1779,11 +1779,7 @@ with open(sys.argv[1], "ab") as out:
                 self.assertIn("delivery after "+type(error).__name__, self.inbox()[-1]["text"])
 
     def test_dependency_failure_denies_presence_with_cause(self):
-        orch = self.packages / "orch"
-        orch.unlink()
-        env_reader = orch / "scripts/lib/kendex-env.sh"
-        env_reader.parent.mkdir(parents=True)
-        env_reader.symlink_to(REPO / "skills/orch/scripts/lib/kendex-env.sh")
+        self.packages.joinpath("agent-runtime").unlink()
         expected = ["presence-live", "refusal", "dependency"]
         original_run = self.module.run
         mailbox_env = self.packages / "mailbox/scripts/lib/kendex-env.sh"

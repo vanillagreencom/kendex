@@ -347,7 +347,7 @@ OVERSEER_SERVER_START=1790000000
 OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
 record_overseer() { # PANE SERVER [HOME] [START]
   local record started home="${3:-$OVERSEER_HOME_DIR}"
-  started="$(ps -o lstart= -p "$TMUX_PANE_PID")" || return 1
+  started="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$TMUX_PANE_PID")" || return 1
   record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" --arg start "${4:-$OVERSEER_SERVER_START}" \
     --arg pid "$TMUX_PANE_PID" --arg started "lstart:$started" --arg socket "$TMP_ROOT/tmux-server" \
     '{server: $s, pane: $p, window: "@7", home: $h, session_id:"s1", launch_line: "claude -n overseer",
