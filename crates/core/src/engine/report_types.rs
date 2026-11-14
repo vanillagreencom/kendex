@@ -254,9 +254,10 @@ pub struct ItemWarning {
     pub remediation: Option<String>,
     /// The technical cause, verbatim: the failed command and what it
     /// printed, or the keyed diagnostic line a reader tells the warning
-    /// apart by. `message` says what it means to a person; this is what the
-    /// terminal prints under the warning's fix, and under the warning in a
-    /// verbose updates listing.
+    /// apart by. `message` says what it means to a person. The terminal
+    /// prints this line beneath the warning and its fix, if any; a
+    /// model-resolution warning prints this line alone, once per run. An
+    /// updates listing shows it beneath the warning with `--verbose`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -745,16 +746,25 @@ impl EngineReport {
     }
 
     /// Every package this pass's request reaches, whether it installs or
-    /// not: [`EngineReport::asked_for`], and each member a set it asked for
+    /// not: [`EngineReport::asked_for`], each member a set it asked for
     /// carries that the set's catalog does not offer
-    /// ([`EngineReport::unoffered`]). What an operation reports as its own
-    /// result. A member the person took out of a set is in neither, and
-    /// neither is a package its catalog retired.
+    /// ([`EngineReport::unoffered`]), and under [`Asked::Named`] each item
+    /// it names, whatever that item's standing, so one its catalog retired
+    /// keeps its notice. What an operation reports as its own result. A
+    /// member the person took out of a set is in none of these, and
+    /// neither is a set member or requirement its catalog retired, nor
+    /// under [`Asked::Declared`] any package its catalog retired.
     pub fn requested(&self) -> BTreeSet<(ItemKind, String)> {
         let mut requested = self.asked_for();
         match &self.asked {
             Asked::Declared => requested.extend(self.unoffered.keys().cloned()),
-            Asked::Named(named) => requested.extend(named_requirements(&self.unoffered, named)),
+            Asked::Named(named) => {
+                requested.extend(named_requirements(&self.unoffered, named));
+                requested.extend(named.iter().filter_map(|held| match held {
+                    Held::Item { kind, name } => Some((*kind, name.clone())),
+                    Held::Set { .. } => None,
+                }));
+            }
         }
         requested
     }

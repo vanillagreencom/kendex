@@ -1946,6 +1946,9 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
     // It requires `helper`, and a set it installs, `kit`, carries `upd`
     // and `absent`, which the catalog does not offer. Each link below
     // leaves a project the catalog stands outside, as `ship`'s does.
+    // The template also names `old`, which the catalog has since retired
+    // while keeping its files: nothing installs it, and its notice is all
+    // the install says of it.
     let market = home.join("market");
     fs::create_dir_all(market.join("skills/gh")).unwrap();
     fs::write(
@@ -1955,13 +1958,18 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
     .unwrap();
     super::skill(&market.join("skills"), "helper", "[h](../../nowhere/h.md)");
     super::skill(&market.join("skills"), "upd", "plain bytes");
+    super::skill(&market.join("skills"), "old", "plain bytes");
     fs::write(
         market.join("kendex.toml"),
-        "[marketplace]\nname = \"market\"\n[bundles.kit]\nskills = [\"upd\", \"absent\"]\n",
+        "[marketplace]\nname = \"market\"\n[bundles.kit]\nskills = [\"upd\", \"absent\"]\n[retired.skills]\nold = \"use gh\"\n",
     )
     .unwrap();
     let mut saved = saved.template;
-    for (kind, name) in [(MemberKind::Skill, "gh"), (MemberKind::Bundle, "kit")] {
+    for (kind, name) in [
+        (MemberKind::Skill, "gh"),
+        (MemberKind::Skill, "old"),
+        (MemberKind::Bundle, "kit"),
+    ] {
         saved.members.push(Member {
             kind,
             name: name.to_owned(),
@@ -2044,7 +2052,10 @@ fn a_shared_copy_reaches_the_installing_scopes_file() {
                 true,
             )
         };
-        let mut expected = vec![(ItemKind::Skill, "absent".to_owned(), None, true)];
+        let mut expected = vec![
+            (ItemKind::Skill, "absent".to_owned(), None, true),
+            (ItemKind::Skill, "old".to_owned(), None, false),
+        ];
         if leaves {
             expected.extend([
                 unrepresentable("helper", "../../nowhere/h.md"),
