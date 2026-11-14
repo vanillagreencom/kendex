@@ -166,6 +166,33 @@ fn pi_captures_judge_idle_at_rest_and_working_mid_turn() {
     ));
 }
 
+/// `judge` over a capture file answers the screen's state with exit 0,
+/// `working` as much as `idle`, so a sender reads the state and never the
+/// exit status; a harness it has no rule for is a refusal, exit 1.
+#[test]
+fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/rust/fixtures");
+    let ask = |screen: &str, harness: &str| {
+        let screen = fixtures.join(screen);
+        reply_of(&[
+            "judge".as_ref(),
+            "--screen".as_ref(),
+            screen.as_os_str(),
+            "--harness".as_ref(),
+            harness.as_ref(),
+        ])
+    };
+    let (code, reply) = ask("pi-idle.txt", "pi");
+    assert_eq!(reply["result"]["state"], "idle", "{reply}");
+    assert_eq!(code, Some(0), "{reply}");
+    let (code, reply) = ask("pi-working.txt", "pi");
+    assert_eq!(reply["result"]["state"], "working", "{reply}");
+    assert_eq!(code, Some(0), "{reply}");
+    let (code, reply) = ask("pi-idle.txt", "nope");
+    assert_eq!(reply["refusal"]["key"], "harness-unknown", "{reply}");
+    assert_eq!(code, Some(1), "{reply}");
+}
+
 /// The three marker-drawing harnesses at rest, as the native probe's
 /// `inspect` captured them after the first turn: each reads
 /// idle under its own composer rule. Codex's `›` line is no other

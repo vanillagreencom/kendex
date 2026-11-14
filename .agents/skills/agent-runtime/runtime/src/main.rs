@@ -168,11 +168,12 @@ enum Verb {
         #[arg(long, default_value_t = 10)]
         grace_secs: u64,
     },
-    /// Judge a captured screen held in a file (fixtures and probes), drawn
-    /// by the named harness. The screen alone is judged: `--process` is the
-    /// caller's own reading of the pane (`harness-up` asserts the harness
-    /// holds it), which a live `inspect` reads from the pane's foreground
-    /// process instead.
+    /// Judge a captured screen held in a file, drawn by the named harness: a
+    /// sender asks it, over the provider's own capture of a lane's screen,
+    /// whether the lane takes input, and input is allowed only for `idle`.
+    /// The screen alone is judged: `--process` is the caller's own reading of
+    /// the pane (`harness-up` asserts the harness holds it), which a live
+    /// `inspect` reads from the pane's foreground process instead.
     Judge {
         #[arg(long)]
         screen: PathBuf,
