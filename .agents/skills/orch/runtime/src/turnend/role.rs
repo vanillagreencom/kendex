@@ -4,13 +4,12 @@
 //! both: a managed Jarvis session the record binds as its home's overseer
 //! is judged as Jarvis and still keeps the binding's duties.
 
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use agent_runtime::controller::heal::Heal;
 use agent_runtime::controller::status::{self, CallerKey};
-use agent_runtime::host::{self, Place, tmux};
+use agent_runtime::host::tmux;
 use agent_runtime::journal::Env;
 use agent_runtime::record::{self, Locking};
 use serde_json::Value;
@@ -22,40 +21,6 @@ use super::payload::{Caller, Payload};
 use super::{Arm, Flow, Turn, Vars};
 use crate::ops::store::{self, Write};
 use crate::settings::Settings;
-
-/// Jarvis's identity of a session, read by Jarvis's own record reader and
-/// terminal check: `Session(DIR)` of `lib/session.py` reads the record the
-/// launch names and asks the session's terminal whether it is the record's
-/// live pane. Arguments: the owner's path, the directory, the launch's record
-/// and generation, the harness, the native session, the caller's socket, its
-/// pane, and `default` where the session names no launch, so the record is
-/// the one `Session(DIR)` finds. Exit 1 where it names no session for the
-/// caller; a record it cannot read raises, and its words are on stderr.
-const JARVIS_IDENTITY: &str = r#"import json
-from pathlib import Path
-import runpy
-import sys
-
-owner = runpy.run_path(sys.argv[1])
-session = owner["Session"](sys.argv[2])
-default = sys.argv[9] == "default"
-if (not default or sys.argv[3]) and session.path != Path(sys.argv[3]):
-    sys.exit(1)
-record = session.read()
-if not record or record["state"] not in ("starting", "running") or record.get("harness") != sys.argv[5]:
-    sys.exit(1)
-identity = record.get("pending") or {}
-terminal = record.get("terminal") or {}
-if (((not default or sys.argv[4]) and str(identity.get("generation")) != sys.argv[4])
-        or identity.get("native_session_id") != sys.argv[6]
-        or terminal.get("server") != sys.argv[7]
-        or (sys.argv[8] and terminal.get("pane") != sys.argv[8])
-        or not session.terminal(record)):
-    sys.exit(1)
-print(json.dumps({"home": session.home, "account_home": record.get("effective_home") or record.get("account"),
-                  "pane": terminal["pane"], "state": record["state"],
-                  "record": str(session.path), "generation": identity.get("generation")}))
-"#;
 
 /// The caller's session as every record keys it: the tmux server answering
 /// the socket `$TMUX` names, its start, and the pane the caller sits on.
@@ -71,14 +36,6 @@ pub(super) struct Key {
     pub pane: String,
 }
 
-/// The Jarvis runtime record a launch names, and the generation it launched.
-#[allow(dead_code, reason = "read by the rows' writer")]
-#[derive(Debug, Clone)]
-pub(super) struct Launch {
-    pub record: PathBuf,
-    pub generation: Option<String>,
-}
-
 /// What a session with no lane item is.
 #[allow(
     dead_code,
@@ -91,8 +48,6 @@ pub(super) struct Role {
     /// Why no key was made for the pane `TMUX_PANE` names: the server
     /// `$TMUX` names did not answer.
     pub unkeyed: Option<String>,
-    /// The Jarvis record named by the launch, or by the pane recovery.
-    pub jarvis: Option<Launch>,
     pub kind: Kind,
     pub binding: Binding,
 }
@@ -136,7 +91,8 @@ pub(super) struct Controller {
     pub home: String,
 }
 
-/// A managed Jarvis session as Jarvis's own record reader names it.
+/// A managed Jarvis session: the bound controller whose record names the
+/// Jarvis seat, its home the record's working directory.
 #[allow(dead_code, reason = "read by the controllers' turn ends")]
 #[derive(Debug)]
 pub(super) struct Jarvis {
@@ -148,8 +104,7 @@ pub(super) struct Jarvis {
 /// already names it, and no record keys a lane by its pane. Where a session
 /// in tmux has no pane named, its lead's row, turn end, tool call, context
 /// reading or automatic compaction recovers the pane the fleet record binds
-/// to its native session, else the pane of the managed Jarvis session
-/// Jarvis's own reader finds for it. A session neither names is unjudged:
+/// to its native session. A session it names on no pane is unjudged:
 /// a context reading or a compaction is refused, and any other event tells
 /// it once, the told file under the home's cache keeping it from being
 /// told again; a later recovery judges it again.
@@ -157,25 +112,20 @@ pub(super) fn session_pane(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &
     if lane.item.is_some() {
         return Ok(());
     }
-    let launch = vars.jarvis_record.clone().map(|record| Launch {
-        record,
-        generation: vars.jarvis_generation.clone(),
-    });
     let recovers = match &turn.arm {
         Some(Arm::Row { .. } | Arm::Stop | Arm::Deliver | Arm::Halt | Arm::Usage) => true,
         Some(Arm::Compact) => payload.trigger == "auto",
         _ => false,
     };
-    let (key, jarvis) = match vars.tmux_pane.as_deref() {
-        Some(pane) => (key_on(vars, pane), launch),
+    let key = match vars.tmux_pane.as_deref() {
+        Some(pane) => key_on(vars, pane),
         None if vars.tmux_socket.is_some() && recovers && turn.caller != Caller::Subagent => {
-            match recovered(turn, vars, lane, payload, launch.as_ref()) {
-                Ok((key, Some(jarvis))) => (Some(key), Some(jarvis)),
-                Ok((key, None)) => (Some(key), launch),
+            match recovered(turn, vars, lane, payload) {
+                Ok(key) => Some(key),
                 Err(cause) => return unjudged(turn, vars, lane, payload, &cause),
             }
         }
-        None => (None, launch),
+        None => None,
     };
     // A named pane on a socket that is set keys nothing only where its
     // server did not answer.
@@ -186,7 +136,6 @@ pub(super) fn session_pane(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &
     turn.role = Rc::new(Role {
         key,
         unkeyed,
-        jarvis,
         ..Role::default()
     });
     Ok(())
@@ -195,42 +144,12 @@ pub(super) fn session_pane(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &
 /// The pane a session that lost `TMUX_PANE` sits on, on the server
 /// `$TMUX`'s socket answers: the fleet record's controller pane where the
 /// record names this native session and, read again with that pane as the
-/// caller's, binds it there; else the pane of the managed Jarvis session
-/// Jarvis's own reader finds running for this session by its home, with
-/// its record and generation. `Err` with why neither was recovered.
-fn recovered(
-    turn: &mut Turn,
-    vars: &Vars,
-    lane: &Lane,
-    payload: &Payload,
-    launch: Option<&Launch>,
-) -> Result<(Key, Option<Launch>), String> {
-    let mut cause = "no controller record binds this native session to a live pane".to_owned();
+/// caller's, binds it there. `Err` with why none was recovered.
+fn recovered(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload) -> Result<Key, String> {
+    let cause = "no controller record binds this native session to a live pane";
     let settings = marks::marks_settings(turn, &lane.root, vars.private_env)
         .map_err(|e| format!("{cause}; the settings could not be loaded: {e}"))?;
-    if let Some(key) = controller_pane(turn, vars, &settings, payload) {
-        return Ok((key, None));
-    }
-    let ask = Ask {
-        launch,
-        pane: "",
-        default: true,
-    };
-    match jarvis_identity(turn, vars, &settings, &lane.root, payload, &ask) {
-        Ok(Some(identity)) => {
-            let key = key_on(vars, &identity.pane);
-            if let (Some(key), Some(generation)) = (key, identity.generation) {
-                let jarvis = Launch {
-                    record: identity.record,
-                    generation: Some(generation),
-                };
-                return Ok((key, Some(jarvis)));
-            }
-        }
-        Ok(None) => {}
-        Err(words) => cause = format!("{cause}; {}", words.trim_end()),
-    }
-    Err(cause)
+    controller_pane(turn, vars, &settings, payload).ok_or_else(|| cause.to_owned())
 }
 
 /// The fleet record's controller pane for this native session: one status
@@ -358,10 +277,10 @@ fn key_on(vars: &Vars, pane: &str) -> Option<Key> {
 /// a session with no lane item that sits on a keyed pane. The fleet record
 /// is read through the controller's own status read; a record that is
 /// missing or cannot be read binds nothing, as settings that cannot be
-/// loaded place none. Who the session is comes after: a managed Jarvis
-/// session is Jarvis whatever the record binds; else the controller the
-/// record binds at a repository's root is the overseer; else the session
-/// is no controller.
+/// loaded place none. Who the session is comes after: at a turn end or a
+/// context reading, the bound controller whose record names the Jarvis
+/// seat is Jarvis; else the controller the record binds at a repository's
+/// root is the overseer; else the session is no controller.
 pub(super) fn read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload) {
     if lane.item.is_some() || turn.caller == Caller::Subagent {
         return;
@@ -373,176 +292,33 @@ pub(super) fn read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload)
         return;
     };
     let binding = controller(turn, vars, &settings, payload, &key);
-    let kind = match jarvis(turn, vars, &settings, lane, payload, &key) {
-        Some(jarvis) => Kind::Jarvis(jarvis),
-        None => match (&binding, &lane.common) {
-            (Binding::Bound(_), Some(_)) => Kind::Overseer,
-            _ => Kind::None,
-        },
+    let kind = match (&binding, &lane.common) {
+        (Binding::Bound(bound), _) if jarvis_seat(turn, payload, bound) => Kind::Jarvis(Jarvis {
+            home: PathBuf::from(bound.recorded["cwd"].as_str().unwrap_or_default()),
+            account_home: bound.home.clone(),
+        }),
+        (Binding::Bound(_), Some(_)) => Kind::Overseer,
+        _ => Kind::None,
     };
     turn.role = Rc::new(Role {
         key: Some(key),
         unkeyed: turn.role.unkeyed.clone(),
-        jarvis: turn.role.jarvis.clone(),
         kind,
         binding,
     });
 }
 
-/// The managed Jarvis session the caller is, at a turn end or a context
-/// reading of a session whose launch names its Jarvis record: the record
-/// Jarvis's own reader finds running for this session on its live pane. A
-/// record that reader cannot read is told and names no session.
-fn jarvis(
-    turn: &mut Turn,
-    vars: &Vars,
-    settings: &Settings,
-    lane: &Lane,
-    payload: &Payload,
-    key: &Key,
-) -> Option<Jarvis> {
-    if !matches!(turn.arm, Some(Arm::Stop | Arm::Usage)) || payload.session.is_empty() {
-        return None;
-    }
-    let launch = turn.role.jarvis.clone()?;
-    let ask = Ask {
-        launch: Some(&launch),
-        pane: &key.pane,
-        default: false,
-    };
-    match jarvis_identity(turn, vars, settings, &lane.root, payload, &ask) {
-        Ok(Some(identity)) if identity.state == "running" => Some(Jarvis {
-            home: identity.home,
-            account_home: identity.account_home,
-        }),
-        Ok(_) => None,
-        Err(cause) => {
-            turn.note(&Said::JarvisRecordUnread(launch.record), &cause);
-            None
-        }
-    }
+/// Whether the bound controller is the Jarvis seat, read at a turn end or a
+/// context reading: its record names the seat its start named, which every
+/// hand-over keeps.
+fn jarvis_seat(turn: &Turn, payload: &Payload, bound: &Controller) -> bool {
+    matches!(turn.arm, Some(Arm::Stop | Arm::Usage))
+        && !payload.session.is_empty()
+        && bound.recorded["seat"].as_str() == Some(JARVIS_SEAT)
 }
 
-/// A managed session as Jarvis's own reader names it.
-struct Identity {
-    home: PathBuf,
-    account_home: String,
-    state: String,
-    pane: String,
-    record: PathBuf,
-    /// The launching generation where the record spells it as a number.
-    generation: Option<String>,
-}
-
-/// What Jarvis's reader is asked to match: the launch's record and
-/// generation, the caller's pane (empty: any), and whether a session that
-/// names no launch is found by its home.
-struct Ask<'a> {
-    launch: Option<&'a Launch>,
-    pane: &'a str,
-    default: bool,
-}
-
-/// Jarvis's identity of the caller ([`JARVIS_IDENTITY`]), by the owner
-/// beside the mailbox reader the settings name, within what is left of the
-/// turn end's deadline: `Ok(None)` where no owner is installed there or it
-/// names no session for the caller, `Err` with its words where it could not
-/// answer.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the turn end's one read of Jarvis's identity, Jarvis's own record reader and terminal check through the one runner, until the Jarvis callers move onto the controller's status read; it acts on nothing"
-)]
-fn jarvis_identity(
-    turn: &Turn,
-    vars: &Vars,
-    settings: &Settings,
-    root: &Path,
-    payload: &Payload,
-    ask: &Ask,
-) -> Result<Option<Identity>, String> {
-    let Ask {
-        launch,
-        pane,
-        default,
-    } = *ask;
-    let skills = settings
-        .lane_mail_cli
-        .parent()
-        .filter(|scripts| scripts.ends_with("mailbox/scripts"))
-        .and_then(Path::parent)
-        .and_then(Path::parent);
-    let Some(owner) = skills.map(|skills| skills.join("jarvis/scripts/lib/session.py")) else {
-        return Ok(None);
-    };
-    let socket = vars.tmux_socket.as_deref().unwrap_or(Path::new(""));
-    let record = launch.map_or(Some(""), |launch| launch.record.to_str());
-    let generation = launch.and_then(|launch| launch.generation.as_deref());
-    let (Some(owner_word), Some(root), Some(record), Some(socket)) =
-        (owner.to_str(), root.to_str(), record, socket.to_str())
-    else {
-        return Ok(None);
-    };
-    match std::fs::metadata(&owner) {
-        Ok(meta) if meta.is_file() => {}
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            return Err(format!("{}: {e}", owner.display()));
-        }
-        Ok(_) | Err(_) => return Ok(None),
-    }
-    let Some(bound) = turn.deadline.left() else {
-        return Ok(None);
-    };
-    let mode = if default { "default" } else { "" };
-    let args = [
-        "-I",
-        "-c",
-        JARVIS_IDENTITY,
-        owner_word,
-        root,
-        record,
-        generation.unwrap_or_default(),
-        marks::harness_word(turn.harness),
-        &payload.session,
-        socket,
-        pane,
-        mode,
-    ];
-    let env = [("JARVIS_BASH", OsStr::new("bash"))];
-    let out = host::run_tagged_in(
-        "turn-end",
-        "python3",
-        Path::new("python3"),
-        "jarvis-identity",
-        &args,
-        Place {
-            cwd: None,
-            env: &env,
-        },
-        bound,
-    )
-    .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        let words = host::stderr_text(&out);
-        return if words.trim().is_empty() {
-            Ok(None)
-        } else {
-            Err(words)
-        };
-    }
-    let Ok(answer) = serde_json::from_str::<Value>(&host::stdout_text(&out)) else {
-        return Ok(None);
-    };
-    let text = |field: &str| answer[field].as_str().unwrap_or_default().to_owned();
-    let generation = &answer["generation"];
-    Ok(Some(Identity {
-        home: PathBuf::from(text("home")),
-        account_home: text("account_home"),
-        state: text("state"),
-        pane: text("pane"),
-        record: PathBuf::from(text("record")),
-        generation: generation.is_number().then(|| generation.to_string()),
-    }))
-}
+/// The seat word a Jarvis start names on its controller record.
+const JARVIS_SEAT: &str = "jarvis";
 
 /// What the fleet record at this root binds of the caller: its controller
 /// where the record names the caller's pane on its server's start, or on no

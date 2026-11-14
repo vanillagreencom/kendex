@@ -219,12 +219,13 @@ fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
     ];
     for case in cases {
         let world = TurnWorld::new();
-        let (mut env, account) = if case.jarvis {
-            jarvis_on(&world, RUNNING)
+        let mut env = if case.jarvis {
+            jarvis_on(&world, true).0
         } else {
-            claude_on(&world, PANE)
+            let (env, account) = claude_on(&world, PANE);
+            world.plant_fleet(world.controller(PANE, "claude", &account, SESSION));
+            env
         };
-        world.plant_fleet(world.controller(PANE, "claude", &account, SESSION));
         let watch = Owned::sleep();
         let (held_processes, setting) = (case.plant)(&world, &watch);
         env.extend(setting);

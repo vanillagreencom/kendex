@@ -555,7 +555,7 @@ impl Successor {
                 account: self.account.as_deref(),
                 model: self.model.as_deref(),
                 effort: self.effort.as_deref(),
-                agent: Some("controller"),
+                agent: Some(crate::launch::CONTROLLER_AGENT),
                 cwd: &self.cwd,
                 brief: None,
                 permission: self.permission,

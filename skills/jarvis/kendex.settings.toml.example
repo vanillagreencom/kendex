@@ -29,7 +29,7 @@ JARVIS_UNATTENDED_HARNESSES = ""
 SLACK_JARVIS_SESSION_FILE = ""
 # Report minute cadence and delivery use orch's settings. Issue-count cadence
 # requires fleet state, which the Jarvis report reader does not supply.
-ORCH_REPORT_EVERY_MINUTES = "120"
+ORCH_REPORT_EVERY_MINUTES = "0"
 # Empty permits checkpoints at any hour; otherwise they arrive after the
 # quiet window in ORCH_OWNER_TIME_ZONE.
 ORCH_REPORT_QUIET_HOURS = "0-7"

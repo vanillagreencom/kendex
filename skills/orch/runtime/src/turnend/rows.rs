@@ -1,5 +1,5 @@
-//! A session's own event rows: a session with no lane item, a Pi lane's
-//! turn and a managed Jarvis session, each written through agent-runtime's
+//! A session's own event rows: a session with no lane item and a Pi lane's
+//! turn, each written through agent-runtime's
 //! rows writer, which owns the rows' shapes, the stamps and their locks. A
 //! row or a stamp that could not be written is reported and passed: a
 //! session's events never stop the session.
@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::UNIX_EPOCH;
 
-use agent_runtime::rows::{self, Fields, LaneRow, Launch, SessionRow, TurnEvent, Unwritten};
+use agent_runtime::rows::{self, Fields, LaneRow, SessionRow, TurnEvent, Unwritten};
 use serde_json::Value;
 
 use super::answer::{Harness, Said};
 use super::identity::Lane;
 use super::payload::{Caller, Payload};
-use super::role::{self, Key};
+use super::role::Key;
 use super::{Arm, Flow, Turn, Vars};
 
 /// A session with no lane item writes its own event row into the overseer
@@ -48,7 +48,6 @@ pub(super) fn session_row(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &P
     };
     let written = Written {
         key,
-        jarvis: role.jarvis.as_ref(),
         event: &event,
         account: &account(turn.harness, vars),
         at: wall_secs(),
@@ -57,23 +56,21 @@ pub(super) fn session_row(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &P
     Ok(())
 }
 
-/// One session row's facts past the role: the key, the Jarvis launch, the
-/// event its arm names, the account and the time.
+/// One session row's facts past the role: the key, the event its arm
+/// names, the account and the time.
 struct Written<'a> {
     key: &'a Key,
-    jarvis: Option<&'a role::Launch>,
     event: &'a str,
     account: &'a str,
     at: u64,
 }
 
 impl Written<'_> {
-    /// The row and, at a Jarvis launch's SessionStart, its start stamp,
-    /// once `top_level` says this session is its pane's top-level harness.
-    /// A lane item writes no session row whichever caller asks: its rows
-    /// are its own mailbox's. Nothing is written where the overseer
-    /// mailbox directory is absent, since no fleet made it and no reader
-    /// looks, unless a Jarvis launch awaits the start.
+    /// The row, once `top_level` says this session is its pane's
+    /// top-level harness. A lane item writes no session row whichever
+    /// caller asks: its rows are its own mailbox's. Nothing is written where
+    /// the overseer mailbox directory is absent, since no fleet made it and
+    /// no reader looks.
     fn session(
         &self,
         turn: &mut Turn,
@@ -86,9 +83,8 @@ impl Written<'_> {
         }
         let dir = overseer_box(lane);
         // Read as the shell's `-d` reads it: a directory this cannot read
-        // is no fleet's, and the Jarvis start below still runs.
-        let boxed = std::fs::metadata(&dir).is_ok_and(|meta| meta.is_dir());
-        if !boxed && self.jarvis.is_none() {
+        // is no fleet's.
+        if !std::fs::metadata(&dir).is_ok_and(|meta| meta.is_dir()) {
             return;
         }
         let unwritten = Said::RowsUnwritten(lane.root.clone());
@@ -107,48 +103,26 @@ impl Written<'_> {
         let harness = harness_word(turn.harness);
         let session_id = either(payload, "session_id", "sessionId");
         let transcript = either(payload, "transcript_path", "transcriptPath");
-        let mut causes = Vec::new();
-        if event == "SessionStart"
-            && let Some(jarvis) = self.jarvis
-        {
-            let launch = launch(jarvis, self.key, harness);
-            let started = rows::jarvis_start(
-                &launch,
+        let row = SessionRow {
+            event,
+            harness,
+            account: self.account,
+            at: self.at,
+            fields: Fields {
                 session_id,
-                transcript,
-                self.account,
-                self.at,
-                rows::host_locking(),
-            );
-            if let Err(e) = started {
-                causes.push(e.to_string());
-            }
-        }
-        if boxed {
-            let row = SessionRow {
-                event,
-                harness,
-                account: self.account,
-                at: self.at,
-                fields: Fields {
-                    session_id,
-                    transcript_path: transcript,
-                    cwd: text(payload, "cwd"),
-                    source: text(payload, "source"),
-                    model: text(payload, "model"),
-                    reason: text(payload, "reason"),
-                    error: text(payload, "error"),
-                    error_details: text(payload, "error_details"),
-                    message: text(payload, "last_assistant_message"),
-                },
-            };
-            let file = rows::session_file(&dir, self.key.server, &self.key.pane);
-            if let Err(e) = rows::write_session(&file, &row, rows::host_locking()) {
-                causes.push(e.to_string());
-            }
-        }
-        if !causes.is_empty() {
-            turn.note(&unwritten, &causes.join("\n"));
+                transcript_path: transcript,
+                cwd: text(payload, "cwd"),
+                source: text(payload, "source"),
+                model: text(payload, "model"),
+                reason: text(payload, "reason"),
+                error: text(payload, "error"),
+                error_details: text(payload, "error_details"),
+                message: text(payload, "last_assistant_message"),
+            },
+        };
+        let file = rows::session_file(&dir, self.key.server, &self.key.pane);
+        if let Err(e) = rows::write_session(&file, &row, rows::host_locking()) {
+            turn.note(&unwritten, &e.to_string());
         }
     }
 }
@@ -187,48 +161,6 @@ pub(super) fn lane_row(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Pay
     Ok(())
 }
 
-/// A managed Jarvis session's tool call or turn end stamps its launch's
-/// record as the Start brief taken, or a Codex or Copilot turn end before
-/// the brief as the kickoff ended, which the Jarvis launch worker reads.
-/// Its own place, ahead of every check that may end the run, since a
-/// Jarvis session is rarely a lane or a fleet's overseer. A Copilot call
-/// no lead record vouches for stamps too: the stamp lands only under the
-/// session id the record's own start bound. A named pane whose server did
-/// not answer keys no stamp, and that is told.
-pub(super) fn jarvis_row(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Payload) -> Flow {
-    if turn.caller == Caller::Subagent || lane.item.is_some() {
-        return Ok(());
-    }
-    let role = Rc::clone(&turn.role);
-    let Some(jarvis) = &role.jarvis else {
-        return Ok(());
-    };
-    let Some(event) = turn_event(turn) else {
-        return Ok(());
-    };
-    let Some(key) = &role.key else {
-        if let Some(cause) = &role.unkeyed {
-            turn.note(&Said::JarvisRowsUnwritten(jarvis.record.clone()), cause);
-        }
-        return Ok(());
-    };
-    let launch = launch(jarvis, key, harness_word(turn.harness));
-    let taken = rows::jarvis_taken(
-        &launch,
-        event,
-        either(payload, "session_id", "sessionId"),
-        text(payload, "pi_run_outcome"),
-        rows::host_locking(),
-    );
-    if let Err(e) = taken {
-        turn.note(
-            &Said::JarvisRowsUnwritten(jarvis.record.clone()),
-            &e.to_string(),
-        );
-    }
-    Ok(())
-}
-
 /// The turn event a turn end or a tool call stamps and rows.
 fn turn_event(turn: &Turn) -> Option<TurnEvent> {
     match turn.arm {
@@ -245,16 +177,6 @@ fn turn_event(turn: &Turn) -> Option<TurnEvent> {
             | Arm::Prompt,
         )
         | None => None,
-    }
-}
-
-fn launch<'a>(jarvis: &'a role::Launch, key: &'a Key, harness: &'a str) -> Launch<'a> {
-    Launch {
-        record: &jarvis.record,
-        generation: jarvis.generation.as_deref().unwrap_or_default(),
-        server: key.server,
-        pane: &key.pane,
-        harness,
     }
 }
 
@@ -363,9 +285,7 @@ mod tests {
     /// payload's camelCase fields; a lane item writes no session row; a
     /// session nested under another harness writes none; a process table
     /// that could not be read is reported under `rows-unwritten`; a
-    /// checkout with no overseer mailbox directory writes and says nothing,
-    /// unless a Jarvis launch awaits its start, which only a SessionStart
-    /// stamps and whose refusal is the one cause told.
+    /// checkout with no overseer mailbox directory writes and says nothing.
     #[test]
     fn the_row_arm_writes_a_session_row_and_a_lane_writes_none() {
         let root = tempfile::tempdir().unwrap();
@@ -380,7 +300,6 @@ mod tests {
         };
         let written = Written {
             key: &key,
-            jarvis: None,
             event: "SessionStart",
             account: "/h/.copilot",
             at: 3,
@@ -453,45 +372,6 @@ mod tests {
             Err(Unwritten::TableUnread("proc-unreadable")),
         );
         assert_eq!(boxless.stderr, "");
-        // A Jarvis launch's later event takes no start stamp.
-        let fresh = root.path().join("fresh-session.json");
-        let awaited = serde_json::json!({"harness": "copilot",
-            "pending": {"generation": "g1", "server": 4242, "pane": "%5"}})
-        .to_string();
-        std::fs::write(&fresh, &awaited).unwrap();
-        let fresh_launch = role::Launch {
-            record: fresh.clone(),
-            generation: Some("g1".to_owned()),
-        };
-        let later = Written {
-            jarvis: Some(&fresh_launch),
-            event: "Stop",
-            ..written
-        };
-        later.session(&mut boxless, &lane(None), &payload, Ok(true));
-        assert_eq!(std::fs::read_to_string(&fresh).unwrap(), awaited);
-        assert_eq!(boxless.stderr, "");
-        let record = root.path().join("jarvis-session.json");
-        std::fs::write(
-            &record,
-            serde_json::json!({"harness": "copilot",
-                "pending": {"generation": "g1", "server": 4242, "pane": "%5", "native_session_id": "pre"}})
-            .to_string(),
-        )
-        .unwrap();
-        let jarvis = role::Launch {
-            record: record.clone(),
-            generation: Some("g1".to_owned()),
-        };
-        let launched = Written {
-            jarvis: Some(&jarvis),
-            ..written
-        };
-        launched.session(&mut boxless, &lane(None), &payload, Ok(true));
-        assert!(!dir.exists());
-        assert_eq!(keyed(&boxless), [unwritten]);
-        assert!(boxless.stderr.contains("jarvis-identity=mismatch"));
-        assert!(!boxless.stderr.contains("-failed"), "{}", boxless.stderr);
     }
 
     fn keyed(turn: &Turn) -> Vec<String> {
@@ -561,85 +441,6 @@ mod tests {
         assert_eq!(
             keyed(&pi),
             [format!("lane-rows-unwritten={}", mailbox.display())]
-        );
-    }
-
-    /// A managed Jarvis session's Codex turn end before the brief stamps
-    /// its launch's kickoff end under the key and generation its role
-    /// names; a subagent's turn end, a lane item's and a session start
-    /// stamp nothing; a record the stamp
-    /// cannot read is reported under `jarvis-rows-unwritten`.
-    #[test]
-    fn a_jarvis_sessions_turn_end_stamps_its_launch_and_a_subagents_nothing() {
-        let root = tempfile::tempdir().unwrap();
-        let record = root.path().join("jarvis-session.json");
-        std::fs::write(
-            &record,
-            serde_json::json!({"harness": "codex", "state": "starting",
-                "pending": {"generation": "g7", "server": 4242, "pane": "%3",
-                    "native_session_id": "sid", "started_at": 1}})
-            .to_string(),
-        )
-        .unwrap();
-        let role = |record: &Path| {
-            Rc::new(role::Role {
-                key: Some(Key {
-                    socket: root.path().join("socket"),
-                    server: 4242,
-                    start: 1,
-                    pane: "%3".to_owned(),
-                }),
-                unkeyed: None,
-                jarvis: Some(role::Launch {
-                    record: record.to_path_buf(),
-                    generation: Some("g7".to_owned()),
-                }),
-                ..role::Role::default()
-            })
-        };
-        let lane = Lane {
-            root: root.path().to_path_buf(),
-            common: None,
-            mail_root: root.path().join("tmp/lane-mail"),
-            item: None,
-        };
-        let vars = Vars::read(false);
-        let payload = Payload::decode(br#"{"session_id":"sid"}"#, false)
-            .unwrap_or_else(|_| panic!("the payload decodes"));
-        let pending = || -> Value {
-            serde_json::from_str::<Value>(&std::fs::read_to_string(&record).unwrap()).unwrap()
-                ["pending"]
-                .clone()
-        };
-        let mut subagent = turn(Harness::Codex, Arm::Stop);
-        subagent.caller = Caller::Subagent;
-        subagent.role = role(&record);
-        jarvis_row(&mut subagent, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
-        let item = Lane {
-            root: root.path().to_path_buf(),
-            common: None,
-            mail_root: root.path().join("tmp/lane-mail"),
-            item: Some("ken-1".to_owned()),
-        };
-        let mut in_lane = turn(Harness::Codex, Arm::Stop);
-        in_lane.role = role(&record);
-        jarvis_row(&mut in_lane, &vars, &item, &payload).unwrap_or_else(|_| panic!("passes"));
-        let mut start = turn(Harness::Codex, Arm::Start);
-        start.role = role(&record);
-        jarvis_row(&mut start, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
-        assert_eq!(pending().get("kickoff_ended"), None);
-        let mut lead = turn(Harness::Codex, Arm::Stop);
-        lead.role = role(&record);
-        jarvis_row(&mut lead, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
-        assert_eq!(pending()["kickoff_ended"], Value::Bool(true));
-        assert_eq!(lead.stderr, "");
-        let unreadable = root.path().join("a-directory");
-        std::fs::create_dir(&unreadable).unwrap();
-        lead.role = role(&unreadable);
-        jarvis_row(&mut lead, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
-        assert_eq!(
-            keyed(&lead),
-            [format!("jarvis-rows-unwritten={}", unreadable.display())]
         );
     }
 }

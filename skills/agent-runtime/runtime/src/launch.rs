@@ -146,18 +146,16 @@ pub struct LaunchCommand {
 }
 
 /// The names every launch clears, so the child never writes the launching
-/// session's records or answers as it, and finds no desktop through them: a
-/// tmux window takes the server's environment, so the scrub rides in the
-/// rendered line and not in the launcher's process. Claude Code's nested
-/// marker, session ids and project root; Codex's thread and sandbox
-/// markers; Pi's subagent role and parent session; the Jarvis runtime
-/// record; the desktop session's display names, through which a key,
-/// pointer or capture tool would find the owner's screen. Account and home
+/// session's records or answers as it: a tmux window takes the server's
+/// environment, so the scrub rides in the rendered line and not in the
+/// launcher's process. Claude Code's nested marker, session ids and project
+/// root; Codex's thread and sandbox markers; Pi's subagent role and parent
+/// session. Account and home
 /// variables are not listed: the launch sets the child's own after the
 /// scrub. A variable of the opener's own, such as the model a session
 /// declares to its review, is the opener's to clear or set
 /// (`LaunchIntent::env_remove`, `LaunchIntent::env`).
-pub const LAUNCH_SCRUB: [&str; 15] = [
+pub const LAUNCH_SCRUB: [&str; 10] = [
     "CLAUDECODE",
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_SESSION_ID",
@@ -168,12 +166,19 @@ pub const LAUNCH_SCRUB: [&str; 15] = [
     "PI_SUBAGENT_CHILD_AGENT",
     "PI_SUBAGENT_PARENT_SESSION_ID",
     "PI_BRIDGE_PARENT_SESSION_ID",
-    "JARVIS_RECORD",
-    "JARVIS_GENERATION",
-    "WAYLAND_DISPLAY",
-    "DISPLAY",
-    "HYPRLAND_INSTANCE_SIGNATURE",
 ];
+
+/// The desktop session's display names, through which a key, pointer or
+/// capture tool finds the owner's screen. A worker's launch clears them; a
+/// controller acts on the owner's desktop, so its launch keeps what its
+/// window's environment holds, which is the server environment its opener
+/// started.
+pub const DESKTOP_DISPLAY: [&str; 3] =
+    ["WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"];
+
+/// The name a controller's launch gives its session, the one launch that
+/// keeps the desktop's display names.
+pub const CONTROLLER_AGENT: &str = "controller";
 
 /// The variables a launch declares the model it pins under, read back by
 /// `agent-runtime session model` where the session's own record names none,
@@ -217,7 +222,12 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     let mut args: Vec<String> = Vec::new();
     let mut env = intent.env.clone();
     let mut env_remove = intent.env_remove.clone();
-    for name in LAUNCH_SCRUB {
+    let desktop: &[&str] = if intent.agent.as_deref() == Some(CONTROLLER_AGENT) {
+        &[]
+    } else {
+        &DESKTOP_DISPLAY
+    };
+    for &name in LAUNCH_SCRUB.iter().chain(desktop) {
         if !env_remove.iter().any(|n| n == name) {
             env_remove.push(name.to_owned());
         }
@@ -603,6 +613,7 @@ mod tests {
             .env("COPILOT_GITHUB_TOKEN", "ghp_placeholder");
         for name in LAUNCH_SCRUB
             .iter()
+            .chain(&DESKTOP_DISPLAY)
             .copied()
             .chain([LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR])
             .chain(i.env_remove.iter().map(String::as_str))
@@ -784,8 +795,8 @@ mod tests {
             i.env
                 .insert("OPENER_DECLARED".into(), "the opener's".into());
             let env = child_env(dir.path(), i);
-            for name in LAUNCH_SCRUB {
-                let left = env.get(name);
+            for name in LAUNCH_SCRUB.iter().chain(&DESKTOP_DISPLAY) {
+                let left = env.get(*name);
                 assert!(left.is_none(), "{h}: {name} reached the child as {left:?}");
             }
             assert_eq!(
@@ -794,6 +805,32 @@ mod tests {
                 "{h}"
             );
             assert!(!env.contains_key("OPENER_CLEARED"), "{h}");
+        }
+    }
+
+    /// A controller acts on the owner's desktop: its child reads the display
+    /// names its window holds, where a lane's child on the same window reads
+    /// none. The identity scrub holds for both.
+    #[test]
+    fn a_controller_keeps_the_display_its_window_holds_and_a_lane_finds_none() {
+        let dir = tempfile::tempdir().unwrap();
+        for h in Harness::ALL {
+            for (agent, display) in [(CONTROLLER_AGENT, Some("parent")), ("KEN-7", None)] {
+                let mut i = bare(h);
+                i.home = Some(dir.path().join(format!(".1{h}")));
+                i.agent = Some(agent.into());
+                let env = child_env(dir.path(), i);
+                for name in DESKTOP_DISPLAY {
+                    assert_eq!(
+                        env.get(name).map(String::as_str),
+                        display,
+                        "{h} {agent}: {name}"
+                    );
+                }
+                for name in LAUNCH_SCRUB {
+                    assert!(!env.contains_key(name), "{h} {agent}: {name}");
+                }
+            }
         }
     }
 

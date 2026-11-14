@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Surface: ol_walk and its Jarvis select consumer over the runtime's account
+# Surface: ol_walk over the runtime's account
 # judge, its replies planted from fixtures/accounts-pick; the rows that ask
 # the retained `lanes pick` directly run it over the usage fixture.
 # Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
-# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/jarvis/scripts/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md,
 # skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 # Only the usage endpoint is a fixture.
 set -euo pipefail
@@ -74,11 +74,6 @@ selection() {
   # Codex accounts have 78%, 80% and 82%; the real picker selects 82%.
   ol_walk 50 "$H/.claude" claude::high codex::high || rc=$?
   assert_eq "$rc|$OL_CHOSEN|$OL_LANE_DIR" "0|codex::high|$H/.2codex" 'mixed walk selects readable above-trigger account' "$DEP_ERR"
-  rc=0
-  result="$(ORCH_OVERSEER_HEADROOM_PCT=50 ORCH_OVERSEER_PREFERENCE=claude::high,codex::high \
-    "$BASH" "$SKILLS/jarvis/scripts/lib/session-backend.sh" select claude "$H/.claude" "$H/work" '' high 2>"$TMP_ROOT/select.err")" || rc=$?
-  result="$(jq -r '[.harness,.account] | join("|")' <<<"$result")"
-  assert_eq "$rc|$result" "0|codex|$H/.2codex" 'Jarvis selects the same above-trigger account' "$TMP_ROOT/select.err"
 }
 
 exclusions() {
@@ -107,18 +102,6 @@ exclusions() {
   got="$(jq -r --arg account "$H/.claude" '[.walled,.unmeasured,.seats,(.exclusions[]? | select(.config_dir == $account) | .reason)] | map(tostring) | join("|")' <<<"$result")"
   line="$(awk '$1 == "lanes:" {print $2; exit}' "$TMP_ROOT/seat.err")"
   assert_eq "$rc|$line|$got" '3|no-candidate|0|1|1|seat-reserve' 'ordinary picker preserves its summary and names the reserved exclusion' "$TMP_ROOT/seat.err"
-  rc=0
-  ORCH_OVERSEER_HEADROOM_PCT=90 ORCH_OVERSEER_PREFERENCE=claude::high,codex::high \
-    "$BASH" "$SKILLS/jarvis/scripts/lib/session-backend.sh" select claude "$H/.claude" "$H/work" '' high \
-    >"$TMP_ROOT/select.out" 2>"$TMP_ROOT/select.err" || rc=$?
-  got="$(sed -n 's/^jarvis-session: successor-lane-excluded //p' "$TMP_ROOT/select.err" | LC_ALL=C sort)"
-  result="$(printf 'entry=%s lane=%s reason=%s\n' \
-    claude::high "$H/.unreadclaude" unmeasured \
-    codex::high "$H/.codex" walled \
-    codex::high "$H/.1codex" walled \
-    codex::high "$H/.2codex" walled \
-    caller "$H/.unreadclaude" unmeasured | LC_ALL=C sort)"
-  assert_eq "$rc|$got" "1|$result" 'Jarvis emits all walk exclusion fields on refusal' "$TMP_ROOT/select.err"
 }
 
 skip_details() {

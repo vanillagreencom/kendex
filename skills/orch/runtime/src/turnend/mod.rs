@@ -144,10 +144,9 @@ struct Vars {
     pwd: PathBuf,
     /// The item a lane's launch brief set (`LANE_MAIL_ITEM`).
     item: Option<String>,
-    /// A managed Jarvis session names its record (`JARVIS_RECORD`) and the
-    /// generation that launched it (`JARVIS_GENERATION`).
-    jarvis_record: Option<PathBuf>,
-    jarvis_generation: Option<String>,
+    /// The launch declared a controller (`AGENT_RUNTIME_LAUNCH_AGENT`), whose
+    /// home need not be a repository.
+    controller_launch: bool,
     /// In tmux with no pane named, where a controller's identity is read
     /// with no lane discovery.
     tmux_without_pane: bool,
@@ -170,9 +169,8 @@ impl Vars {
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_default(),
             item: set("LANE_MAIL_ITEM").map(|item| item.to_string_lossy().into_owned()),
-            jarvis_record: set("JARVIS_RECORD").map(PathBuf::from),
-            jarvis_generation: set("JARVIS_GENERATION")
-                .map(|generation| generation.to_string_lossy().into_owned()),
+            controller_launch: set(agent_runtime::launch::LAUNCH_AGENT_VAR)
+                .is_some_and(|agent| agent == "controller"),
             tmux_without_pane: set("TMUX").is_some() && set("TMUX_PANE").is_none(),
             tmux_socket: set("TMUX").map(|tmux| {
                 let tmux = tmux.to_string_lossy().into_owned();
@@ -502,7 +500,6 @@ fn judged(
         | Arm::Prompt => {}
     }
     rows::lane_row(turn, vars, lane, payload)?;
-    rows::jarvis_row(turn, vars, lane, payload)?;
     let lead = turn.caller == Caller::Lead;
     if *arm == Arm::Start && turn.harness == Harness::Copilot && lead {
         controller::context_reader_check(turn, vars, lane, payload)?;

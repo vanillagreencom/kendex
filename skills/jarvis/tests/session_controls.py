@@ -12,22 +12,33 @@ SESSION = "jarvis/scripts/lib/session.py"
 BACKEND = "jarvis/scripts/lib/session-backend.sh"
 # The instrument is session_test.py: each control proves its case goes red.
 CONTROLS = (
-    # Without the name check, Start acts on a foreign tmux session named jarvis.
-    ("name ownership", SESSION, 'if existing.returncode == 0:', 'if False:', "test_unrelated_session_conflicts"),
-    ("manager policy", SESSION, 'if policy:', 'if policy and False:',
-     "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
-    ("private pane transport", SESSION,
-     'yield [sys.executable, "-B", "-X", "utf8", "-c", receiver, address]',
-     'yield [sys.executable, "-B", "-X", "utf8", "-c", receiver, address, self.env.get("HTTPS_PROXY", "")]',
-     "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
-    ("native pane terminal", SESSION, "('TERM', 'TMUX', 'TMUX_PANE')", "('TMUX', 'TMUX_PANE')",
-     "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
-    # A respawned first-launch pane is a second pane process, not the created one.
-    ("launch respawn", SESSION, 'self.tmux("wait-for", "-S", channel)',
-     'with self.pane_command([BASH, "--noprofile", "--norc", "-c", prepared["line"]]) as command:\n'
-     '                        self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home, *command)',
-     "test_first_launch_runs_in_its_created_pane"),
-    # Attach outside tmux execs a client on the recorded socket and session.
+    # Without the home's own server named, a start opens nothing anywhere.
+    ("private server", SESSION, '"--mail-root", self.home, "--socket", socket]', '"--mail-root", self.home]',
+     "test_start_status_stop_and_resume_on_the_controller_record"),
+    # A record that still names a pane is no live controller once its harness died.
+    ("running is live", SESSION, 'if not (status or {}).get("live") or not socket or not pane:',
+     "if not socket or not pane:", "test_start_status_stop_and_resume_on_the_controller_record"),
+    # Without the seat on its start, the turn end hands Jarvis orch's succession.
+    ("seat", SESSION, "self.detach(dict(pending, window=SESSION_NAME, seat=SEAT), socket, start_brief(private))",
+     "self.detach(dict(pending, window=SESSION_NAME), socket, start_brief(private))",
+     "test_start_status_stop_and_resume_on_the_controller_record"),
+    # A resume Start opens a new native session.
+    ("resume", SESSION, 'resumable = (args.mode == "resume"', 'resumable = (False',
+     "test_start_status_stop_and_resume_on_the_controller_record"),
+    # A sign-in failure reads as a launch failure, with nothing to do.
+    ("sign-in", SESSION, 'BLOCKED_NOTES = {"successor-not-signed-in": "sign-in-required",',
+     'BLOCKED_NOTES = {"successor-not-signed-in-unread": "sign-in-required",',
+     "test_a_start_whose_account_cannot_sign_in_asks_for_the_sign_in"),
+    # Off no longer holds a Start.
+    ("app-off", SESSION, '            if record.get("app_off"):\n                self.write(record)',
+     '            if False:\n                self.write(record)',
+     "test_app_off_blocks_starts_and_a_repeated_boot_never_relaunches"),
+    # The same boot starts the session again.
+    ("boot", SESSION, 'if boot and record and record.get("boot") == boot:', "if False:",
+     "test_app_off_blocks_starts_and_a_repeated_boot_never_relaunches"),
+    # A released record is read as a controller's.
+    ("record form", SESSION, 'record.get("v") != 2', 'record.get("v") not in (1, 2)',
+     "test_a_record_of_another_form_is_unreadable"),
     ("attach line", SESSION, '"attach-session", "-t", "=" + terminal["session"]]',
      '"attach-session", "-t", "=" + terminal["session"] + "-"]', "test_attach_outside_tmux"),
     # Inside tmux, the outside route would nest a client in the caller's pane.
@@ -56,15 +67,13 @@ CONTROLS = (
      "test_attach_refuses_a_terminal_that_does_not_open"),
     ("no controller", SESSION, 'if not terminal:\n            raise Refusal("no-controller")',
      'if False:\n            raise Refusal("no-controller")', "test_attach_refuses_without_a_controller"),
-    ("brief replacement", SESSION, 'record["private_brief"] = private',
-     'record["private_brief"] = record.get("private_brief")', "test_update_brief"),
 )
 
 
 def run_case(skills, env, test, *flags):
     return subprocess.run([os.environ["JARVIS_TEST_BASH"], str(skills / "jarvis/tests/session.test.sh"), *flags,
                            *("SessionContract." + name for name in test)], env=env, capture_output=True, text=True,
-                          timeout=90 * len(test))
+                          timeout=180 * len(test))
 
 
 def main():
@@ -72,6 +81,9 @@ def main():
         skills = Path(allocation).resolve() / "skills"
         for package in ("jarvis", "orch", "mailbox", "github"):
             shutil.copytree(ROOT / "skills" / package / "scripts", skills / package / "scripts")
+        # The runtimes' sources key their built binaries.
+        (skills / "agent-runtime").symlink_to(ROOT / "skills/agent-runtime", target_is_directory=True)
+        (skills / "orch/runtime").symlink_to(ROOT / "skills/orch/runtime", target_is_directory=True)
         shutil.copytree(ROOT / "skills/jarvis/tests", skills / "jarvis/tests", ignore=shutil.ignore_patterns("__pycache__"))
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}

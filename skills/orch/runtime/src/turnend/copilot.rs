@@ -1,8 +1,7 @@
 //! A Copilot session's compaction and context reading, which its hooks hand
 //! to the turn end beside the turn end itself. Each is recorded in the box
-//! the session's turn end reads it from: a launched lane's mailbox, the
-//! overseer mailbox under the bound controller's key, or the lead record of
-//! a managed Jarvis session the fleet record does not bind.
+//! the session's turn end reads it from: a launched lane's mailbox, or the
+//! overseer mailbox under the bound controller's key.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -12,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::answer::{Harness, Said};
 use super::identity::Lane;
-use super::payload::{Caller, Leads, Payload};
+use super::payload::{Caller, Payload};
 use super::role::{self, Binding, Kind};
 use super::{Flow, Turn, Vars, controller, marks};
 use crate::marker::CONTEXT_RECORD;
@@ -91,10 +90,7 @@ pub(super) fn usage_read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Pa
         payload.field("token_limit"),
     )
     .map_err(|cause| turn.refuse(Said::PayloadInvalid, cause))?;
-    let key = match &kept {
-        Kept::Mailbox { key, .. } => key.clone(),
-        Kept::Lead => None,
-    };
+    let Kept::Mailbox { dir, key } = kept;
     let record = ContextRecord {
         harness: Some("copilot".to_owned()),
         tokens: Some(tokens),
@@ -106,16 +102,6 @@ pub(super) fn usage_read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Pa
         transcript: (!payload.transcript.is_empty()).then(|| payload.transcript.clone()),
         gap: None,
         at: Some(record_stamp()),
-    };
-    let dir = match kept {
-        Kept::Mailbox { dir, .. } => dir,
-        Kept::Lead => {
-            let leads = Leads::under(&vars.home);
-            let Err((file, cause)) = leads.keep_reading(&payload.session, &record) else {
-                return Ok(());
-            };
-            return Err(turn.refuse(Said::JarvisReadingUnkept(file), &cause));
-        }
     };
     let Err(cause) = record.write_to(&dir) else {
         return Ok(());
@@ -140,16 +126,13 @@ enum Kept {
     /// A mailbox directory, its records carrying `key` where the overseer
     /// mailbox keys them by the bound controller's pane.
     Mailbox { dir: PathBuf, key: Option<String> },
-    /// The lead record of a managed Jarvis session the fleet record does not
-    /// bind, which keeps its reading out of the overseer's box.
-    Lead,
 }
 
 /// The box a Copilot session's reading and compaction flag are recorded
 /// in, the one its turn end reads: a launched lane's mailbox; for a session
 /// with no lane item, the box follows the binding, the overseer mailbox
 /// under the caller's key where the fleet record binds the overseer or a
-/// managed Jarvis session, and an unbound Jarvis session's lead record.
+/// managed Jarvis session.
 /// `None` for any other session, which passes silently, and where the
 /// settings naming the overseer mailbox do not load.
 fn gated_box(turn: &mut Turn, vars: &Vars, lane: &Lane) -> Flow<Option<Kept>> {
@@ -174,8 +157,9 @@ fn gated_box(turn: &mut Turn, vars: &Vars, lane: &Lane) -> Flow<Option<Kept>> {
             let key = Some(controller::caller_key(key));
             Ok(Some(Kept::Mailbox { dir, key }))
         }
-        (Kind::Jarvis(_), Binding::None | Binding::Lost(_)) => Ok(Some(Kept::Lead)),
-        (Kind::None, _) | (Kind::Overseer, Binding::None | Binding::Lost(_)) => Ok(None),
+        (Kind::None, _) | (Kind::Overseer | Kind::Jarvis(_), Binding::None | Binding::Lost(_)) => {
+            Ok(None)
+        }
     }
 }
 

@@ -65,6 +65,8 @@ enum Verb {
     },
     /// Open a tmux window on the named socket and session, start the
     /// harness the intent file describes in it, and write the launch record.
+    /// An intent naming its account and no home runs under the home that
+    /// account names, its trust record for the directory written first.
     Launch {
         #[arg(long)]
         intent: PathBuf,
@@ -1633,11 +1635,12 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         } => {
             let text =
                 std::fs::read_to_string(&intent).map_err(|e| Error::io("read", &intent, e))?;
-            let intent: LaunchIntent =
+            let mut intent: LaunchIntent =
                 serde_json::from_str(&text).map_err(|source| Error::Json {
                     path: intent.clone(),
                     source,
                 })?;
+            prepare_home(&mut intent)?;
             let command = launch::build(&intent)?;
             if let Some(brief) = &command.brief_path
                 && !brief.is_file()
@@ -2138,6 +2141,27 @@ impl HandOverSettings {
             opener_session: |_| Ok(None),
         }
     }
+}
+
+/// A launch that names its account and no home runs, before its window
+/// opens, under the home that account names with the trust record its
+/// directory needs, as a lane's and a controller's do.
+fn prepare_home(intent: &mut LaunchIntent) -> Result<()> {
+    let (Some(account), None) = (intent.account.as_deref(), intent.home.as_ref()) else {
+        return Ok(());
+    };
+    let home = agent_runtime::effects::prepare::opener_home(
+        intent.harness,
+        account,
+        intent.model.as_deref(),
+        &intent.cwd,
+        launch::full_bypass(intent.harness, intent.permission, &intent.extra_args),
+    )?;
+    if let Some(home) = home {
+        intent.home = Some(home);
+        intent.account = None;
+    }
+    Ok(())
 }
 
 /// A controller start launches no companion of agent-runtime's own: a

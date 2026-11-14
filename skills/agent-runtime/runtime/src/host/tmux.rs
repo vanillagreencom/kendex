@@ -290,6 +290,13 @@ pub fn inherited(server: &Server, session: &str, name: &str) -> Result<Option<St
     Ok(None)
 }
 
+/// `name` as a window name that keeps its spelling: tmux expands formats in
+/// a window's `-n` name, so a name spelling a format would show its
+/// expansion, another window's name among them.
+fn literal(name: &str) -> String {
+    name.replace('#', "##")
+}
+
 /// Open a new window in `session` at the default shell, detached, named
 /// `name` in `cwd`, and return the pane. The pane id comes from the
 /// creating call's own `-P -F` answer, no second command, so the caller
@@ -316,6 +323,7 @@ pub fn new_window(
     confirm(server).map_err(unopened)?;
     let socket = server.socket.display().to_string();
     let target = format!("={session}:");
+    let name = literal(name);
     let cwd_display = cwd.display().to_string();
     let output = run_with(
         "tmux",
@@ -331,7 +339,7 @@ pub fn new_window(
             "-t",
             &target,
             "-n",
-            name,
+            &name,
             "-c",
             &cwd_display,
         ],

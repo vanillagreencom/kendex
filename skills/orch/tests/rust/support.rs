@@ -1930,11 +1930,8 @@ pub const TURN_SERVER_START: u64 = 1_700_000_000;
 
 /// Every form the turn-end world's `tmux` stand-in answers, as the shell
 /// `case` reads its arguments joined, and its answer: the server read a turn
-/// end makes, then the reads Jarvis's terminal check makes through orch's
-/// `tmux_pane_live` and Jarvis's `session-backend.sh live` (the server's pid,
-/// its pane list, and one field of a pane). `$answer` is the planted server,
-/// `$panes` the planted pane list; a per-pane form names the field the
-/// planted pane answers. Every other call is refused.
+/// end makes, and the server's pid. `$answer` is the planted server. Every
+/// other call is refused.
 pub const TURN_TMUX_TABLE: &[(&str, &str)] = &[
     (
         "'display-message -p #{pid} #{start_time}'",
@@ -1944,33 +1941,16 @@ pub const TURN_TMUX_TABLE: &[(&str, &str)] = &[
         "'display-message -p #{pid}'",
         "read -r pid _ <'$answer'; printf '%s\\n' \"$pid\"; exit 0",
     ),
-    (
-        "'list-panes -a -F #{pid} #{start_time} #{pane_id} #{pane_dead}'",
-        "exec cat '$panes'",
-    ),
-    (
-        "\"display-message -p -t $4 #{session_name}\"",
-        "field=session_name",
-    ),
-    (
-        "\"display-message -p -t $4 #{window_id}\"",
-        "field=window_id",
-    ),
-    (
-        "\"display-message -p -t $4 #{@jarvis-generation}\"",
-        "field=generation",
-    ),
 ];
 
 /// A turn end's planted world for a session with no lane item: a fleet's
 /// checkout, the user's home, the fleet record under the checkout's state
-/// directory, a Jarvis record under the root's state directory, and a `tmux`
-/// stand-in first on `PATH`. The stand-in answers the forms of
-/// [`TURN_TMUX_TABLE`] on the world's socket alone, named by `-S` or else by
-/// `$TMUX`: the server read with the pid of a process the world holds that
-/// the kernel names `tmux` and the start the row plants, and the pane reads
-/// from the panes the row plants; it logs every call and refuses every
-/// other, so no row reaches a real server. The fleet record's controller
+/// directory, and a `tmux` stand-in first on `PATH`. The stand-in answers
+/// the forms of [`TURN_TMUX_TABLE`] on the world's socket alone, named by
+/// `-S` or else by `$TMUX`: the server read with the pid of a process the
+/// world holds that the kernel names `tmux` and the start the row plants;
+/// it logs every call and refuses every other, so no row reaches a real
+/// server. The fleet record's controller
 /// names a harness process the world holds, so its liveness is read off a
 /// live process and never asks a server.
 pub struct TurnWorld {
@@ -2048,95 +2028,14 @@ impl TurnWorld {
             .map(|(form, answer)| format!("  {form}) {answer} ;;\n"))
             .collect();
         let text = format!(
-            "#!/bin/sh\nsocket=${{TMUX%%,*}}\nif [ \"$1\" = -S ]; then socket=$2; shift 2; fi\nprintf '%s\\n' \"$*\" >>'{calls}'\nif [ \"$socket\" != '{socket}' ]; then\n  printf 'no server running on %s\\n' \"$socket\" >&2\n  exit 1\nfi\nfield=\ncase \"$*\" in\n{table}esac\nif [ -n \"$field\" ]; then\n  [ -f \"$planted/$4/$field\" ] || {{ printf \"can't find pane: %s\\n\" \"$4\" >&2; exit 1; }}\n  exec cat \"$planted/$4/$field\"\nfi\nprintf 'tmux stand-in: no answer for: %s\\n' \"$*\" >&2\nexit 1\n",
+            "#!/bin/sh\nsocket=${{TMUX%%,*}}\nif [ \"$1\" = -S ]; then socket=$2; shift 2; fi\nprintf '%s\\n' \"$*\" >>'{calls}'\nif [ \"$socket\" != '{socket}' ]; then\n  printf 'no server running on %s\\n' \"$socket\" >&2\n  exit 1\nfi\ncase \"$*\" in\n{table}esac\nprintf 'tmux stand-in: no answer for: %s\\n' \"$*\" >&2\nexit 1\n",
             calls = world.root.join("tmux-calls").display(),
             socket = world.socket.display(),
         )
-        .replace("$answer", &world.root.join("tmux-server").display().to_string())
-        .replace("$panes", &world.root.join("tmux-panes").display().to_string())
-        .replace("$planted", &world.root.join("tmux-pane").display().to_string());
+        .replace("$answer", &world.root.join("tmux-server").display().to_string());
         write_executable(&world.stand_ins().join("tmux"), text);
         world.serve(TURN_SERVER_START);
         world
-    }
-
-    /// Plants `pane` on the stand-in's server at the start it serves now:
-    /// its row in the server's pane list, dead or alive, and the session
-    /// name, window id and Jarvis generation a per-pane read answers.
-    pub fn plant_pane(
-        &self,
-        pane: &str,
-        session: &str,
-        window: &str,
-        generation: &str,
-        dead: bool,
-    ) {
-        use std::io::Write;
-        let served = std::fs::read_to_string(self.root.join("tmux-server")).unwrap();
-        let mut panes = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.root.join("tmux-panes"))
-            .unwrap();
-        writeln!(panes, "{} {pane} {}", served.trim_end(), u8::from(dead)).unwrap();
-        let dir = self.root.join("tmux-pane").join(pane);
-        std::fs::create_dir_all(&dir).unwrap();
-        for (field, value) in [
-            ("session_name", session),
-            ("window_id", window),
-            ("generation", generation),
-        ] {
-            std::fs::write(dir.join(field), format!("{value}\n")).unwrap();
-        }
-    }
-
-    /// Installs Jarvis's session owner under `project`'s `.agents/skills`
-    /// as a package install lays it: the `scripts` of jarvis, and of the
-    /// mailbox and orch it sources beside it, each linked to this
-    /// checkout's own; the checkout's git excludes the install.
-    pub fn install_jarvis(&self, project: &Path) {
-        let skills = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .unwrap();
-        for name in ["jarvis", "mailbox", "orch"] {
-            let package = project.join(".agents/skills").join(name);
-            std::fs::create_dir_all(&package).unwrap();
-            std::os::unix::fs::symlink(skills.join(name).join("scripts"), package.join("scripts"))
-                .unwrap();
-        }
-        let exclude = project.join(".git/info/exclude");
-        if exclude.parent().unwrap().is_dir() {
-            let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
-            text.push_str("/.agents/\n");
-            std::fs::write(&exclude, text).unwrap();
-        }
-    }
-
-    /// A running Jarvis record of a `harness` session with the native id
-    /// `session`, launched as `generation` with `account` its account
-    /// directory, on `pane` (window `@7`) of the stand-in's server at its
-    /// planted start: what [`TurnWorld::plant_jarvis`] completes and
-    /// [`TurnWorld::plant_pane`] answers for.
-    pub fn jarvis_session(
-        &self,
-        pane: &str,
-        harness: &str,
-        session: &str,
-        generation: &str,
-        account: &Path,
-    ) -> Value {
-        json!({
-            "state": "running",
-            "reason": "resumed",
-            "harness": harness,
-            "account": account.display().to_string(),
-            "generation": generation,
-            "pending": { "generation": generation, "native_session_id": session, "started_at": 1 },
-            "terminal": { "server": self.socket.display().to_string(), "pane": pane, "window": "@7" },
-            "server_pid": self.server_pid(),
-            "server_started_at": TURN_SERVER_START,
-        })
     }
 
     /// The directory first on the verb's `PATH`.
@@ -2302,34 +2201,6 @@ impl TurnWorld {
 
     pub fn fleet(&self) -> Value {
         serde_json::from_str(&std::fs::read_to_string(self.fleet_path()).unwrap()).unwrap()
-    }
-
-    /// The Jarvis runtime record of the managed home `home`, where Jarvis's
-    /// own reader looks for it under the root's state directory, holding
-    /// `record` with the home and record version Jarvis writes.
-    pub fn plant_jarvis(&self, home: &Path, mut record: Value) -> PathBuf {
-        let home = std::fs::canonicalize(home).unwrap();
-        let out = program("python3")
-            .args([
-                "-I",
-                "-c",
-                "import hashlib, os, sys; print(hashlib.sha256(os.fsencode(sys.argv[1])).hexdigest())",
-            ])
-            .arg(&home)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        let key = String::from_utf8(out.stdout).unwrap();
-        let path = self
-            .root
-            .join("state/kendex/jarvis")
-            .join(key.trim())
-            .join("jarvis-session.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        record["v"] = json!(1);
-        record["home"] = json!(home.display().to_string());
-        std::fs::write(&path, record.to_string()).unwrap();
-        path
     }
 
     /// The verb run from `dir` under `harness`'s install, with `env` added.

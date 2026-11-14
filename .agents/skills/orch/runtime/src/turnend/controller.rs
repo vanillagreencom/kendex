@@ -40,13 +40,15 @@ pub(super) fn turn_end(turn: &mut Turn, lane: &Lane, vars: &Vars, payload: &Payl
         return Ok(());
     };
     match (&role.kind, &role.binding) {
-        (Kind::Jarvis(jarvis), binding) => {
-            let bound = match binding {
-                Binding::Bound(controller) => Some((caller_key(key), controller)),
-                Binding::Lost(_) | Binding::None => None,
-            };
-            jarvis_marks(turn, lane, vars, payload, jarvis, bound)
-        }
+        (Kind::Jarvis(jarvis), Binding::Bound(controller)) => jarvis_marks(
+            turn,
+            lane,
+            vars,
+            payload,
+            jarvis,
+            (caller_key(key), controller),
+        ),
+        (Kind::Jarvis(_), Binding::Lost(_) | Binding::None) => Ok(()),
         (Kind::Overseer, Binding::Bound(controller)) => {
             overseer(turn, lane, vars, payload, key, controller)
         }
@@ -61,8 +63,8 @@ pub(super) fn turn_end(turn: &mut Turn, lane: &Lane, vars: &Vars, payload: &Payl
 /// A managed Jarvis session's turn end: its context mark alone, judged on
 /// the reading of the transcript bound to its account home, with no
 /// handoff record, fleet state or account behind it; a reached mark is
-/// handed Jarvis's own succession. Where the fleet record binds it, keyed
-/// as `bound` names with its controller, the watch's facts follow the
+/// handed Jarvis's own succession. The fleet record binds it, keyed as
+/// `bound` names with its controller, so the watch's facts follow the
 /// binding: its wake, its Stop row, and its reading or gap recorded in the
 /// overseer mailbox.
 fn jarvis_marks(
@@ -71,28 +73,24 @@ fn jarvis_marks(
     vars: &Vars,
     payload: &Payload,
     jarvis: &Jarvis,
-    bound: Option<(String, &Controller)>,
+    bound: (String, &Controller),
 ) -> Flow {
     let Ok(settings) = marks::marks_settings(turn, &lane.root, vars.private_env) else {
         return Ok(());
     };
-    let (bound, controller) = bound.unzip();
-    if let Some(controller) = controller {
-        super::wake::check(turn, vars, lane, payload, &controller.fleet)?;
-        rows::session_row(turn, vars, lane, payload)?;
-    }
+    let (key, controller) = bound;
+    super::wake::check(turn, vars, lane, payload, &controller.fleet)?;
+    rows::session_row(turn, vars, lane, payload)?;
     let mailbox = overseer_dir(&settings.roots.common);
     let scripts = jarvis_scripts(&settings.lane_mail_cli);
     let seat = Seat::Jarvis {
-        key: bound.clone(),
+        key: Some(key.clone()),
         home: jarvis.home.clone(),
         scripts,
     };
     let judge = Judge::controller(lane, vars, payload, settings, PathBuf::new(), mailbox, seat);
     let gap = |turn: &mut Turn, gap: &str| {
-        if let Some(key) = &bound {
-            gap_record(turn, &judge.mailbox, &payload.session, key, gap);
-        }
+        gap_record(turn, &judge.mailbox, &payload.session, &key, gap);
     };
     let transcript = &payload.transcript;
     let owned = transcript_owned(

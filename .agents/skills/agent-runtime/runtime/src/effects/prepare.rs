@@ -401,6 +401,25 @@ pub fn launch_home(
     })
 }
 
+/// The home a launch outside the fleet runs under on `account`, its trust
+/// record for `cwd` made there as [`launch_home`] makes it: the account where
+/// its variable is the harness's home, else `None`, the account riding in
+/// its own variable under a home that asks no trust. No harness gate is
+/// asked, since it judges what a lane's or a controller's session needs, and
+/// no runtime is built.
+pub fn opener_home(
+    harness: Harness,
+    account: &Path,
+    model: Option<&str>,
+    cwd: &Path,
+    bypass: bool,
+) -> Result<Option<PathBuf>> {
+    if harness.account_var(model) != harness.home_var() {
+        return Ok(None);
+    }
+    prepare_trust(harness, account, cwd, bypass).map(|trusted| Some(trusted.home))
+}
+
 /// The runtimes of `cwd`'s own install, built through the `setups` the
 /// opener names before the window opens, so the harness's first turn end,
 /// which reads its mail through them, never meets the sources unbuilt; a

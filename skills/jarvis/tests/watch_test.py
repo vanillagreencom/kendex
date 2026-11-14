@@ -1442,13 +1442,10 @@ with open(sys.argv[1], "ab") as out:
             self.assertEqual(watch.log.read_bytes(), b"")
 
     def test_report_deadline_restart_and_receipt(self):
-        clock = self.root / "clock"
-        clock.write_text("1059\n")
-        real_date = shutil.which("date")
-        self.executable("date", '#!/bin/sh\nif [ "$*" = "-u +%s" ]; then cat ' +
-                        shlex.quote(str(clock)) + '\nelse exec ' + shlex.quote(real_date) + ' "$@"; fi\n')
+        base = int(time.time())
+        utc = lambda moment: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(moment))
         self.home.joinpath("kendex.settings.toml").write_text(
-            '[env]\nORCH_REPORT_EVERY_MINUTES="1"\nORCH_REPORT_QUIET_HOURS=""\n'
+            '[env]\nORCH_REPORT_EVERY_MINUTES="60"\nORCH_REPORT_QUIET_HOURS=""\n'
             'ORCH_REPORT_EVERY_ISSUES="1"\nORCH_CONNECTED_REPOS="owner/repo"\n')
         github_calls = self.root / "github.calls"
         self.executable("gh", '#!/bin/sh\nprintf "%s\\n" "$*" >> ' +
@@ -1457,23 +1454,23 @@ with open(sys.argv[1], "ab") as out:
                 contextlib.redirect_stdout(io.StringIO()):
             session = load(self.scripts / "lib/session.py").Session(self.home)
             session.path.parent.mkdir(parents=True)
-            session.write(dict(v=1, home=str(self.home), harness="claude", account=str(self.root),
-                               state="running", reason="existing", report_started_at=1000))
             watch = self.watch()
             watch.next_presence["local"] = 1000000
             pending = Future()
             # A queued acknowledgement proves the report read completed;
-            # injected clock changes, rather than sleeps, cross the deadline.
+            # planted session starts, half an hour and an hour and a half
+            # old, rather than sleeps, cross the deadline.
             with ThreadPoolExecutor(max_workers=1) as passes:
-                for now, stamp in ((0, 1059), (30, 1060)):
-                    clock.write_text(str(stamp) + "\n")
+                for now, start in ((0, base - 1800), (30, base - 5400)):
+                    session.write(dict(v=2, home=str(self.home), harness="claude", account=str(self.root),
+                                       state="running", reason="existing", report_started_at=start))
                     watch._poll(passes, pending, now)
                     passes.submit(lambda: None).result(timeout=30)
                     watch._poll(passes, pending, now)
                     watch.batch(now + 15)
-                    if stamp == 1059:
+                    if now == 0:
                         self.assertEqual(self.inbox(), [])
-            due = "EVENT report-due reason=minutes since=1970-01-01T00:16:40Z\n"
+            due = "EVENT report-due reason=minutes since=" + utc(base - 5400) + "\n"
             self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")])
             with patch.dict(os.environ, ORCH_REPORT="off"):
                 self.assertIsNone(watch.report())
@@ -1491,7 +1488,7 @@ with open(sys.argv[1], "ab") as out:
             self.assertEqual(path.returncode, 0, path.stderr)
             report = Path(path.stdout.strip())
             report.write_text("checkpoint readings\n")
-            os.utime(report, (1060, 1060))
+            os.utime(report, (base - 1800, base - 1800))
             summary = self.root / "summary"
             summary.write_text("checkpoint\n")
             self.intercept_mail("exit 1")
@@ -1502,9 +1499,9 @@ with open(sys.argv[1], "ab") as out:
             shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
             self.mail(self.home, "notice", "checkpoint", "--to", "owner", "--attach", str(report))
             self.assertIsNone(self.watch().report())
-            clock.write_text("1120\n")
+            os.utime(report, (base - 3700, base - 3700))
             self.assertEqual(self.watch().report(),
-                             "EVENT report-due reason=minutes since=1970-01-01T00:17:40Z\n")
+                             "EVENT report-due reason=minutes since=" + utc(base - 3700) + "\n")
             self.assertFalse(github_calls.exists(), "stateless report polling reached GitHub")
 
     def test_slow_acquisition_does_not_extend_settle(self):

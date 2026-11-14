@@ -1,6 +1,6 @@
 //! Process tests of who a session with no lane item is at its turn end: the
-//! controller the fleet record binds, a managed Jarvis session, and the pane
-//! a session that lost `TMUX_PANE` recovers. Every row runs the real
+//! controller the fleet record binds and the pane a session that lost
+//! `TMUX_PANE` recovers. Every row runs the real
 //! `orch-runtime turn-end` in a [`support::TurnWorld`].
 #![allow(
     clippy::disallowed_methods,
@@ -30,31 +30,6 @@ fn claude_on(world: &TurnWorld, pane: &str) -> (Vec<(String, String)>, PathBuf) 
         account.display().to_string(),
     ));
     (env, account)
-}
-
-/// A managed Jarvis session of Claude on the world's pane `PANE` whose home
-/// is the fleet's checkout: Jarvis's session owner installed there, its pane
-/// live in Jarvis's session at generation 4, its running record. The
-/// launch's environment, the account directory and the record's path.
-fn jarvis_on(world: &TurnWorld) -> (Vec<(String, String)>, PathBuf, PathBuf) {
-    let (mut env, account) = claude_on(world, PANE);
-    world.install_jarvis(&world.checkout);
-    world.plant_pane(PANE, "jarvis", "@7", "4", false);
-    let session = world.jarvis_session(PANE, "claude", SESSION, "4", &account);
-    let record = world.plant_jarvis(&world.checkout, session);
-    env.push(("JARVIS_RECORD".to_owned(), record.display().to_string()));
-    env.push(("JARVIS_GENERATION".to_owned(), "4".to_owned()));
-    (env, account, record)
-}
-
-/// The reads Jarvis's terminal check makes of the pane `PANE`.
-fn terminal_reads() -> Vec<String> {
-    let mut reads =
-        vec!["list-panes -a -F #{pid} #{start_time} #{pane_id} #{pane_dead}".to_owned()];
-    for field in ["#{session_name}", "#{window_id}", "#{@jarvis-generation}"] {
-        reads.push(format!("display-message -p -t {PANE} {field}"));
-    }
-    reads
 }
 
 /// A turn end of the session `SESSION` from the fleet's checkout.
@@ -220,100 +195,6 @@ fn a_record_missing_its_start_harness_or_session_is_healed_once_and_an_unwritabl
 }
 
 #[test]
-fn a_managed_jarvis_session_registered_as_its_homes_overseer_is_judged_as_jarvis() {
-    // The fleet record binds the Jarvis session at the checkout's root and
-    // lacks its native session: Jarvis's own reader is asked first all the
-    // same, its terminal check reading the session's pane through the
-    // stand-in, and the heal shows the binding kept. A record Jarvis's
-    // reader cannot read is told and asks no terminal; the turn end's stamp
-    // cannot take that record either and tells it too. Jarvis's reader is
-    // asked at a turn end or a context reading alone.
-    for unreadable in [false, true] {
-        let world = TurnWorld::new();
-        let (env, account, record) = jarvis_on(&world);
-        if unreadable {
-            fs::write(&record, "{").unwrap();
-        }
-        world.plant_fleet(world.controller(PANE, "claude", &account, ""));
-        let out = stop(&world, &env);
-        assert_eq!(out.code, 0, "unreadable {unreadable}: {}", out.stderr);
-        let told = if unreadable {
-            vec![
-                format!("jarvis-record-unread={}", record.display()),
-                format!("jarvis-rows-unwritten={}", record.display()),
-            ]
-        } else {
-            Vec::new()
-        };
-        assert_eq!(out.keyed(), told, "unreadable {unreadable}: {}", out.stderr);
-        assert_eq!(
-            world.fleet()["overseer"]["session_id"],
-            SESSION,
-            "unreadable {unreadable}: the binding is not kept"
-        );
-        let calls = world.tmux_calls();
-        let mut answered = terminal_reads();
-        answered.push("display-message -p #{pid} #{start_time}".to_owned());
-        answered.push("display-message -p #{pid}".to_owned());
-        assert!(
-            calls.iter().all(|call| answered.contains(call)),
-            "unreadable {unreadable}: a read the table does not hold: {calls:?}"
-        );
-        for read in terminal_reads() {
-            assert_eq!(
-                calls.contains(&read),
-                !unreadable,
-                "unreadable {unreadable}: {read}: {calls:?} {}",
-                out.stderr
-            );
-        }
-    }
-
-    // A launch naming its record where no session owner is installed beside
-    // the mailbox reader names no Jarvis session and tells nothing.
-    let world = TurnWorld::new();
-    let (mut env, account) = claude_on(&world, PANE);
-    let session = world.jarvis_session(PANE, "claude", SESSION, "4", &account);
-    let record = world.plant_jarvis(&world.checkout, session);
-    env.push(("JARVIS_RECORD".to_owned(), record.display().to_string()));
-    env.push(("JARVIS_GENERATION".to_owned(), "4".to_owned()));
-    world.plant_fleet(world.controller(PANE, "claude", &account, ""));
-    let out = stop(&world, &env);
-    assert_eq!(out.code, 0, "no owner: {}", out.stderr);
-    assert!(out.keyed().is_empty(), "no owner: {}", out.stderr);
-    assert_eq!(world.fleet()["overseer"]["session_id"], SESSION, "no owner");
-
-    // A launch naming a generation its record no longer holds is read and
-    // names no Jarvis session; nothing is told.
-    let world = TurnWorld::new();
-    let (mut env, account, _) = jarvis_on(&world);
-    env.retain(|(name, _)| name != "JARVIS_GENERATION");
-    env.push(("JARVIS_GENERATION".to_owned(), "3".to_owned()));
-    world.plant_fleet(world.controller(PANE, "claude", &account, ""));
-    let out = stop(&world, &env);
-    assert_eq!(out.code, 0, "stale generation: {}", out.stderr);
-    assert!(out.keyed().is_empty(), "stale generation: {}", out.stderr);
-    assert_eq!(
-        world.fleet()["overseer"]["session_id"],
-        SESSION,
-        "stale generation"
-    );
-
-    // A tool call of the Jarvis session asks Jarvis's reader nothing.
-    let world = TurnWorld::new();
-    let (env, account, _) = jarvis_on(&world);
-    world.plant_fleet(world.controller(PANE, "claude", &account, ""));
-    let payload = json!({ "session_id": SESSION, "hook_event_name": "PostToolUse" }).to_string();
-    let out = world.turn(&world.checkout, "claude", &["deliver"], &payload, &env);
-    assert_eq!(out.code, 0, "tool call: {}", out.stderr);
-    assert!(out.keyed().is_empty(), "tool call: {}", out.stderr);
-    let calls = world.tmux_calls();
-    for read in terminal_reads() {
-        assert!(!calls.contains(&read), "tool call: {read}: {calls:?}");
-    }
-}
-
-#[test]
 fn a_session_in_tmux_with_no_pane_takes_its_controllers_pane_and_one_neither_names_is_told_once() {
     // Each world's session runs in tmux with `TMUX_PANE` lost. The file that
     // tells a session once that it is unjudged, under the home's cache.
@@ -347,29 +228,8 @@ fn a_session_in_tmux_with_no_pane_takes_its_controllers_pane_and_one_neither_nam
     );
     assert!(fs::metadata(told(&world)).is_err(), "controller: told");
 
-    // No fleet record; the managed Jarvis session at the checkout runs on
-    // `PANE` and the launch's variables are lost too: Jarvis's own reader
-    // finds the session by its home and names its pane.
-    let world = TurnWorld::new();
-    let (env, account) = paneless(&world);
-    world.install_jarvis(&world.checkout);
-    world.plant_pane(PANE, "jarvis", "@7", "4", false);
-    let mut session = world.jarvis_session(PANE, "claude", SESSION, "4", &account);
-    session["generation"] = json!(4);
-    session["pending"]["generation"] = json!(4);
-    world.plant_jarvis(&world.checkout, session);
-    let out = stop(&world, &env);
-    assert_eq!(out.code, 0, "jarvis: {}", out.stderr);
-    assert_eq!(out.stdout, "", "jarvis: {}", out.stderr);
-    assert!(out.keyed().is_empty(), "jarvis: {}", out.stderr);
-    let calls = world.tmux_calls();
-    for read in terminal_reads() {
-        assert!(calls.contains(&read), "jarvis: {read}: {calls:?}");
-    }
-    assert!(fs::metadata(told(&world)).is_err(), "jarvis: told");
-
     // The record names this native session on `PANE` at another start of
-    // its server, and no Jarvis session stands: a subagent's turn end is not
+    // its server: a subagent's turn end is not
     // told, the session is told once through Claude's visible warning, and
     // its next turn end passes.
     let world = TurnWorld::new();

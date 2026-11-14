@@ -100,9 +100,6 @@ pub enum Said {
     /// The heal of the fleet record the caller's key, `<server> <pane>`,
     /// is bound to could not be written.
     RecordUnhealed(String),
-    /// Jarvis's own reader could not read the managed session record the
-    /// launch names.
-    JarvisRecordUnread(PathBuf),
     /// A session in tmux names no pane and none was recovered for it.
     SessionUnjudged,
     /// The file that tells a session once that it is unjudged could not be
@@ -217,8 +214,6 @@ pub enum Said {
     /// A Pi lane's turn row could not be written into its mailbox
     /// directory.
     LaneRowsUnwritten(PathBuf),
-    /// A Jarvis launch record could not take this session's stamp.
-    JarvisRowsUnwritten(PathBuf),
     /// The reader's events listing ended other than with its answer.
     Events(String),
     EventsEnvelope,
@@ -304,9 +299,6 @@ pub enum Said {
         record: PathBuf,
         removed: bool,
     },
-    /// The lead record an unbound Copilot Jarvis session's reading could
-    /// not be written to.
-    JarvisReadingUnkept(PathBuf),
     /// The flag a Copilot lead's automatic compaction could not be written
     /// to.
     CompactionUnflagged(PathBuf),
@@ -427,9 +419,6 @@ impl Said {
                 ),
             ),
             Said::RecordUnhealed(key) => ("record-unhealed", key.clone()),
-            Said::JarvisRecordUnread(record) => {
-                ("jarvis-record-unread", record.display().to_string())
-            }
             Said::SessionUnjudged => ("session-unjudged", "missing-pane".to_owned()),
             Said::SessionUnjudgedCache(told) => {
                 ("session-unjudged-cache", told.display().to_string())
@@ -480,9 +469,6 @@ impl Said {
             }
             Said::RowsUnwritten(root) => ("rows-unwritten", root.display().to_string()),
             Said::LaneRowsUnwritten(dir) => ("lane-rows-unwritten", dir.display().to_string()),
-            Said::JarvisRowsUnwritten(record) => {
-                ("jarvis-rows-unwritten", record.display().to_string())
-            }
             Said::Events(status) => ("events", status.clone()),
             Said::EventsEnvelope => ("events", "envelope".to_owned()),
             Said::HandoffUnanswered => ("handoff-unanswered", "settings".to_owned()),
@@ -507,9 +493,6 @@ impl Said {
             Said::StopCause(cause) => ("stop-cause", (*cause).to_owned()),
             Said::ReadingUnowned(session) => ("session-unrecorded", session.clone()),
             Said::ReadingUnkept { record, .. } => {
-                ("context-unrecorded", record.display().to_string())
-            }
-            Said::JarvisReadingUnkept(record) => {
                 ("context-unrecorded", record.display().to_string())
             }
             Said::CompactionUnflagged(flag) => {
@@ -584,7 +567,6 @@ impl Said {
             ),
             Said::SessionUnbound { .. } => "the fleet record names this session's pane, and the native session it records is another one, so this session is not the fleet's controller: it reads no overseer mail and judges no controller marks. Registering this session as the controller binds it".to_owned(),
             Said::RecordUnhealed(_) => "the fleet record names this session's pane and lacks a fact this session knows, its tmux server's start, its harness, its launch home or its native session id, and writing those into the record failed; this caller reads no overseer mail, writes no context or gap and judges no marks until a later turn end or tool call records the binding. The writer's words follow:".to_owned(),
-            Said::JarvisRecordUnread(_) => "The managed Jarvis session record could not be read. Its succession mark is unjudged:".to_owned(),
             Said::SessionUnjudged => "this session is unjudged because TMUX_PANE is absent and no controller identity could be recovered".to_owned(),
             Said::SessionUnjudgedCache(_) => "the file that keeps this unjudged session from being told again could not be written, so its next event tells it again:".to_owned(),
             Said::LeadUnnamed => "this Copilot session start names no session id this hook can record, so the session's tool calls read as a caller it cannot name: they are handed no mail, and a halt's refusal does not show the command that reads it, which the turn end still hands over".to_owned(),
@@ -746,7 +728,6 @@ impl Said {
             ),
             Said::RowsUnwritten(_) => "this session's event row could not be written, so the overseer judgement reads what the file already holds or, with no row, the pane, the named fallback; the session goes on:".to_owned(),
             Said::LaneRowsUnwritten(_) => "this Pi lane's turn row could not be written, so oversee-watch and lanes state judge the lane from the rows the file already holds; the lane goes on:".to_owned(),
-            Said::JarvisRowsUnwritten(_) => "the Jarvis launch record named above could not take this session's Start stamp, so its launch worker judges this session from its pane until a later tool call, or on Claude Code, Codex or Copilot CLI a turn end, writes it, and on Codex and Copilot CLI holds the brief until a later turn end writes the kickoff's end; the session goes on:".to_owned(),
             Said::Events(status) => format!(
                 "the lane mailbox reader's events listing exited {status}, so whether this lane sent anything this turn is unknown; the turn ends unjudged rather than held, because nothing a lane does at its turn end repairs its mailbox:"
             ),
@@ -851,10 +832,6 @@ impl Said {
                 removed: false,
             } => format!(
                 "this Copilot session's context reading could not be written to {}, and the earlier reading standing there could not be removed either, so its next turn end still judges that older figure, which can lie below the mark this reading crossed, until a later reading is recorded; repair the directory. The causes follow:",
-                record.display()
-            ),
-            Said::JarvisReadingUnkept(record) => format!(
-                "The context reading could not be written to {}. A Jarvis Stop judges only a reading the shared reader can take; the write cause follows:",
                 record.display()
             ),
             Said::CompactionUnflagged(flag) => format!(

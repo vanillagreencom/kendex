@@ -628,44 +628,34 @@ fn a_copilot_overseers_start_with_no_context_reader_is_told_so() {
     }
 }
 
-/// The state and reason of a running Jarvis record.
-const RUNNING: (&str, &str) = ("running", "resumed");
-
 /// A managed Jarvis session of Claude on the world's pane `PANE` whose home
-/// is the fleet's checkout, as T4a's role rows plant it: Jarvis's session
-/// owner installed there, its pane live in Jarvis's session at generation
-/// 4, its record in the form the package's `jarvis-session start` writes
-/// (`origin` manual) at `state` and its reason. The launch's environment
-/// and its account directory.
-fn jarvis_on(world: &TurnWorld, state: (&str, &str)) -> (Vec<(String, String)>, PathBuf) {
-    let (mut env, account) = claude_on(world, PANE);
-    world.install_jarvis(&world.checkout);
-    world.plant_pane(PANE, "jarvis", "@7", "4", false);
-    let mut session = world.jarvis_session(PANE, "claude", SESSION, "4", &account);
-    session["origin"] = json!("manual");
-    session["state"] = json!(state.0);
-    session["reason"] = json!(state.1);
-    let record = world.plant_jarvis(&world.checkout, session);
-    env.push(("JARVIS_RECORD".to_owned(), record.display().to_string()));
-    env.push(("JARVIS_GENERATION".to_owned(), "4".to_owned()));
+/// is the fleet's checkout: the fleet record binds it as the home's
+/// controller and names the seat its start named, `jarvis` where `seat`
+/// says so. The session's environment and its account directory.
+fn jarvis_on(world: &TurnWorld, seat: bool) -> (Vec<(String, String)>, PathBuf) {
+    let (env, account) = claude_on(world, PANE);
+    let mut member = world.controller(PANE, "claude", &account, SESSION);
+    if seat {
+        member["seat"] = json!("jarvis");
+    }
+    world.plant_fleet(member);
     (env, account)
 }
 
 /// A managed Jarvis session past its context mark is held and handed
 /// Jarvis's own succession, never the repository overseer's, naming each
-/// attached agent still out for it to let finish; below the mark
-/// it passes, recording its reading only where the fleet record binds it;
-/// a transcript under another account home is said and passed. A session
-/// whose record still reads its launch, `starting`, is not yet judged as
-/// Jarvis and passes silently past the mark.
+/// attached agent still out for it to let finish; below the mark it passes,
+/// recording its reading in the overseer mailbox under its key; a
+/// transcript under another account home is said and passed. The same
+/// controller whose record names no seat is the overseer, never told
+/// Jarvis's succession.
 #[test]
 fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
     struct Case {
         name: &'static str,
         tokens: u64,
         home: &'static str,
-        bound: bool,
-        state: (&'static str, &'static str),
+        seat: bool,
         refused: bool,
     }
     let cases = [
@@ -673,57 +663,40 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
             name: "past the mark",
             tokens: 650_000,
             home: "claude-1",
-            bound: false,
-            state: RUNNING,
+            seat: true,
             refused: true,
-        },
-        Case {
-            name: "past the mark, bound as its home's overseer",
-            tokens: 650_000,
-            home: "claude-1",
-            bound: true,
-            state: RUNNING,
-            refused: true,
-        },
-        Case {
-            name: "below the mark, bound",
-            tokens: 50_000,
-            home: "claude-1",
-            bound: true,
-            state: RUNNING,
-            refused: false,
         },
         Case {
             name: "below the mark",
             tokens: 50_000,
             home: "claude-1",
-            bound: false,
-            state: RUNNING,
+            seat: true,
             refused: false,
         },
         Case {
             name: "under another account home",
             tokens: 650_000,
             home: "other",
-            bound: false,
-            state: RUNNING,
+            seat: true,
             refused: false,
         },
         Case {
-            name: "past the mark, its record still starting",
+            name: "past the mark, no seat named",
             tokens: 650_000,
             home: "claude-1",
-            bound: false,
-            state: ("starting", "launching"),
+            seat: false,
             refused: false,
         },
     ];
+    let succeed = |world: &TurnWorld| {
+        format!(
+            "/.agents/skills/jarvis/scripts/jarvis-session succeed --home {}",
+            world.checkout.display()
+        )
+    };
     for case in cases {
         let world = TurnWorld::new();
-        let (env, account) = jarvis_on(&world, case.state);
-        if case.bound {
-            world.plant_fleet(world.controller(PANE, "claude", &account, SESSION));
-        }
+        let (env, _) = jarvis_on(&world, case.seat);
         let path = world
             .root
             .join("accounts")
@@ -732,15 +705,23 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
         let named = transcript(&path, &[claude_usage(case.tokens)]);
         let out = stop(&world, &env, Some(&named));
         let name = case.name;
+        if !case.seat {
+            assert!(
+                !out.stderr.contains("jarvis-session"),
+                "{name}: the overseer told Jarvis's succession: {}",
+                out.stderr
+            );
+            continue;
+        }
         if case.refused {
             assert_eq!(out.code, 2, "{name}: {}", out.stderr);
             let keyed = format!("context={}", case.tokens);
             assert_eq!(out.keyed(), [keyed.as_str()], "{name}: {}", out.stderr);
-            let succeed = format!(
-                "/.agents/skills/jarvis/scripts/jarvis-session succeed --home {}",
-                world.checkout.display()
+            assert!(
+                out.stderr.contains(&succeed(&world)),
+                "{name}: {}",
+                out.stderr
             );
-            assert!(out.stderr.contains(&succeed), "{name}: {}", out.stderr);
             assert!(
                 !out.stderr.contains("successor --fleet"),
                 "{name}: {}",
@@ -750,32 +731,27 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
             assert_eq!(out.code, 0, "{name}: {}", out.stderr);
             // Below the token cap a Claude reading with compaction on names
             // no window, so the percentage mark is said unmeasured.
-            let told = if case.state != RUNNING {
-                Vec::new()
-            } else if case.home == "other" {
+            let told = if case.home == "other" {
                 vec![format!("transcript-unowned={}", named.display())]
             } else {
                 vec!["window-unread=claude-opus-4-5".to_owned()]
             };
             assert_eq!(out.keyed(), told, "{name}: {}", out.stderr);
         }
-        let record = box_record(&world);
-        if case.bound {
-            let record = record.unwrap_or_else(|| panic!("{name}: no record"));
+        if case.home != "other" {
+            let record = box_record(&world).unwrap_or_else(|| panic!("{name}: no record"));
             assert_eq!(record["tokens"], json!(case.tokens), "{name}: {record}");
             assert_eq!(
                 record["pane_key"],
                 json!(caller_key(&world, PANE)),
                 "{name}"
             );
-        } else {
-            assert_eq!(record, None, "{name}: an unbound session recorded");
         }
     }
     // An attached agent still out is named, as a lane's and the overseer's
     // are, so the session lets it finish before its succession.
     let world = TurnWorld::new();
-    let (env, account) = jarvis_on(&world, RUNNING);
+    let (env, account) = jarvis_on(&world, true);
     let path = account.join(format!("projects/p/{SESSION}.jsonl"));
     let named = transcript(&path, &[claude_usage(650_000)]);
     let payload = json!({ "session_id": SESSION, "transcript_path": named.display().to_string(),
@@ -798,7 +774,7 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
 fn a_jarvis_session_whose_mark_cannot_be_judged_is_told_and_passed() {
     for setting in [true, false] {
         let world = TurnWorld::new();
-        let (mut env, account) = jarvis_on(&world, RUNNING);
+        let (mut env, account) = jarvis_on(&world, true);
         if setting {
             env.push(("ORCH_HANDOFF_CONTEXT_PCT".to_owned(), "most".to_owned()));
         }
@@ -829,51 +805,6 @@ fn a_jarvis_session_whose_mark_cannot_be_judged_is_told_and_passed() {
             out.stderr
         );
     }
-}
-
-/// A managed Pi Jarvis session the fleet record does not bind takes no
-/// window from the overseer mailbox: the overseer's record for this session
-/// and model is left unread, so with Pi's compaction off and no window
-/// named elsewhere, the percentage mark is said unmeasured.
-#[test]
-fn an_unbound_pi_jarvis_session_reads_no_window_from_the_overseer_box() {
-    let world = TurnWorld::new();
-    let agent = world.root.join("pi-agent");
-    fs::create_dir_all(&agent).unwrap();
-    fs::write(
-        agent.join("settings.json"),
-        r#"{"compaction":{"enabled":false}}"#,
-    )
-    .unwrap();
-    // Pi's registry answers no window: a `node` stand-in first on `PATH`.
-    write_executable(&world.stand_ins().join("node"), "#!/bin/sh\nexit 4\n");
-    world.install_jarvis(&world.checkout);
-    world.plant_pane(PANE, "jarvis", "@7", "4", false);
-    let mut session = world.jarvis_session(PANE, "pi", SESSION, "4", &agent);
-    session["origin"] = json!("manual");
-    let record = world.plant_jarvis(&world.checkout, session);
-    let mut env = world.on_pane(PANE);
-    env.push((
-        "PI_CODING_AGENT_DIR".to_owned(),
-        agent.display().to_string(),
-    ));
-    env.push(("JARVIS_RECORD".to_owned(), record.display().to_string()));
-    env.push(("JARVIS_GENERATION".to_owned(), "4".to_owned()));
-    let planted = json!({"harness": "pi", "model": "p/m", "tokens": 1, "window": 1000,
-        "session_id": SESSION, "pane_key": caller_key(&world, PANE), "gap": null,
-        "at": "2026-11-12T00:00:00Z"})
-    .to_string();
-    fs::create_dir_all(overseer_box(&world)).unwrap();
-    fs::write(overseer_box(&world).join("context.json"), &planted).unwrap();
-    let line = json!({"type": "message", "message": {"role": "assistant", "model": "m",
-        "provider": "p", "usage": {"input": 1, "output": 7, "cacheRead": 942, "cacheWrite": 0}}});
-    let named = transcript(&world.root.join("pi/session.jsonl"), &[line]);
-    let payload = json!({ "session_id": SESSION, "transcript_path": named.display().to_string() });
-    let out = world.turn(&world.checkout, "pi", &[], &payload.to_string(), &env);
-    assert_eq!(out.code, 0, "{}", out.stderr);
-    assert_eq!(out.keyed(), ["window-unread=p/m"], "{}", out.stderr);
-    let standing = fs::read_to_string(overseer_box(&world).join("context.json")).unwrap();
-    assert_eq!(standing, planted, "the overseer's record moved");
 }
 
 /// A Claude Haiku usage line summing to `tokens`.
