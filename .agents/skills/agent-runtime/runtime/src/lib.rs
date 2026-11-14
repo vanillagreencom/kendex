@@ -46,6 +46,7 @@ pub mod record;
 pub mod rows;
 pub mod session;
 pub mod settings;
+pub mod subagent;
 #[allow(
     clippy::disallowed_methods,
     reason = "the trust module defines the trust write, and its own rows run it"

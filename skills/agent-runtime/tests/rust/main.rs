@@ -2093,3 +2093,37 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     assert_eq!(answer["result"]["generation"], 4);
     assert_eq!(fleet()["overseer"]["pane"], pane.pane);
 }
+
+/// The room a session inside a lane reads is its own `CODEX_HOME`'s, never
+/// the default home under `HOME`.
+#[test]
+fn subagent_room_reads_the_config_under_codex_home() {
+    let root = tempfile::tempdir().unwrap();
+    let codex_home = root.path().join("lane-home");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    std::fs::write(
+        codex_home.join("config.toml"),
+        "[features.multi_agent_v2]\nmax_concurrent_threads_per_session = 8\n",
+    )
+    .unwrap();
+    let out = Command::new(binary())
+        .args(["subagent", "room", "--harness", "codex"])
+        .env_clear()
+        .env("HOME", root.path())
+        .env("CODEX_HOME", &codex_home)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(
+        reply["result"],
+        serde_json::json!({
+            "config_path": codex_home.join("config.toml"),
+            "effective_cap": 8,
+            "cap_source": "config",
+            "in_use": "unread",
+        })
+    );
+}

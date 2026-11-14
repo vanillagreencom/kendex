@@ -235,6 +235,19 @@ fn private_dir(path: &Path, key: &'static str, harness: Harness) -> Result<()> {
 /// outright, `Some(false)` an answer for the directory that is not trust,
 /// `None` the config does not say (no file, no table, no key).
 fn codex_trusted(config: &Path, dir: &Path, harness: Harness) -> Result<Option<bool>> {
+    Ok(config_value(config, &codex_section(dir), "trust_level", harness)?.map(|v| v == "trusted"))
+}
+
+/// The value of `key` under `section` in a harness's TOML config, read the
+/// one way every reader of a harness's configuration reads it: `None` where
+/// the file or the key is absent, `config-unreadable` where the file stands
+/// and cannot be read.
+pub(crate) fn config_value(
+    config: &Path,
+    section: &str,
+    key: &str,
+    harness: Harness,
+) -> Result<Option<String>> {
     let text = match present(config) {
         Present::Absent => return Ok(None),
         Present::Unreadable(cause) => {
@@ -242,7 +255,7 @@ fn codex_trusted(config: &Path, dir: &Path, harness: Harness) -> Result<Option<b
         }
         Present::File => read(config, harness)?,
     };
-    Ok(toml_value(&text, &codex_section(dir), "trust_level").map(|v| v == "trusted"))
+    Ok(toml_value(&text, section, key))
 }
 
 fn codex_section(dir: &Path) -> String {

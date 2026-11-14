@@ -230,7 +230,6 @@
     "skills/orch/tests/run-all-parallel.sh": "mixed",
     "skills/orch/tests/secret-value.test.sh": "linux-duplicate",
     "skills/orch/tests/settings-literal-strings.sh": "linux-duplicate",
-    "skills/orch/tests/spawn_adapter.sh": "linux-duplicate",
     "skills/orch/tests/state-archive.sh": "linux-duplicate",
     "skills/orch/tests/sync_base.sh": "linux-duplicate",
     "skills/orch/tests/tmux-pane-live.sh": "mixed",

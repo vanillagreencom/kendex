@@ -34,6 +34,7 @@ use agent_runtime::record::{self, Expect};
 use agent_runtime::rows;
 use agent_runtime::session;
 use agent_runtime::settings;
+use agent_runtime::subagent;
 
 const RECORD_VERSION: u64 = 1;
 const RECORD_VERSIONS: &[u64] = &[1];
@@ -212,6 +213,32 @@ enum Verb {
     Session {
         #[command(subcommand)]
         op: SessionOp,
+    },
+    /// A subagent the calling session spawns inside its harness: the spawn
+    /// parameters for a canonical agent name, and the thread room.
+    Subagent {
+        #[command(subcommand)]
+        op: SubagentOp,
+    },
+}
+
+#[derive(Subcommand)]
+enum SubagentOp {
+    /// The spawn parameters for the canonical hyphenated agent name `name`
+    /// and the record keyed on it; `--fallback-reason` spawns the generic
+    /// worker in its place and records why.
+    Spawn {
+        #[arg(long, value_parser = harness_word)]
+        harness: Harness,
+        name: String,
+        #[arg(long)]
+        fallback_reason: Option<String>,
+    },
+    /// The thread cap the harness home's config sets, read from the home
+    /// its variable names, else the default one; the count in use is unread.
+    Room {
+        #[arg(long, value_parser = harness_word)]
+        harness: Harness,
     },
 }
 
@@ -2032,6 +2059,28 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         Verb::Accounts { op } => accounts_verb(op),
         Verb::Controller { op } => controller_verb(op),
         Verb::Session { op } => session_verb(op),
+        Verb::Subagent { op } => match op {
+            SubagentOp::Spawn {
+                harness,
+                name,
+                fallback_reason,
+            } => Ok(serde_json::to_value(subagent::spawn(
+                harness,
+                &name,
+                fallback_reason.as_deref(),
+            )?)
+            .unwrap_or_default()),
+            SubagentOp::Room { harness } => {
+                let home = std::env::var_os(harness.home_var())
+                    .filter(|home| !home.is_empty())
+                    .map(PathBuf::from)
+                    .or_else(|| session::default_home(harness));
+                Ok(
+                    serde_json::to_value(subagent::room(harness, home.as_deref())?)
+                        .unwrap_or_default(),
+                )
+            }
+        },
     }
 }
 
