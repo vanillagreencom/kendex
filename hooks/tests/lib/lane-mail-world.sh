@@ -341,15 +341,17 @@ OVERSEER_SERVER_START=1790000000
 # server's by default, and `none` for a record carrying no start. The harness
 # identity is this suite's own shell, as a registration records the harness
 # in its pane: the controller's status read takes its liveness from that
-# process and asks no pane of the stand-in.
+# process and asks no pane of the stand-in. The record names the socket its
+# server answers on, which the tmux stand-in answers on, so a status read
+# that names no socket of its own binds the recorded pane.
 OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
 record_overseer() { # PANE SERVER [HOME] [START]
   local record started home="${3:-$OVERSEER_HOME_DIR}"
   started="$(ps -o lstart= -p "$TMUX_PANE_PID")" || return 1
   record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" --arg start "${4:-$OVERSEER_SERVER_START}" \
-    --arg pid "$TMUX_PANE_PID" --arg started "lstart:$started" \
+    --arg pid "$TMUX_PANE_PID" --arg started "lstart:$started" --arg socket "$TMP_ROOT/tmux-server" \
     '{server: $s, pane: $p, window: "@7", home: $h, session_id:"s1", launch_line: "claude -n overseer",
-      harness_pid: $pid, harness_start: $started}
+      harness_pid: $pid, harness_start: $started, server_socket: $socket}
      + (if $start == "none" then {} else {server_start: ($start | tonumber)} end)')"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
     set oversee overseer "$record" >/dev/null)

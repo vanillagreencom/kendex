@@ -170,7 +170,7 @@ impl Vars {
                 .unwrap_or_default(),
             item: set("LANE_MAIL_ITEM").map(|item| item.to_string_lossy().into_owned()),
             controller_launch: set(agent_runtime::launch::LAUNCH_AGENT_VAR)
-                .is_some_and(|agent| agent == "controller"),
+                .is_some_and(|agent| agent == agent_runtime::launch::CONTROLLER_AGENT),
             tmux_without_pane: set("TMUX").is_some() && set("TMUX_PANE").is_none(),
             tmux_socket: set("TMUX").map(|tmux| {
                 let tmux = tmux.to_string_lossy().into_owned();

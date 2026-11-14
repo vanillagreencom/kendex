@@ -18,42 +18,32 @@ jarvis_load() {
   export JARVIS_WAKE_SETTLE_SECS="${JARVIS_WAKE_SETTLE_SECS:-15}"
 }
 
+# Presence: the session the native turn end last stamped into the overseer
+# mailbox's context record is the fleet record's controller, live, bound to
+# that pane on its server's recorded start, of that harness, under the
+# native id the record names. agent-runtime's status read answers all of it;
+# a read it cannot make is never presence.
 jarvis_live() {
-  local root="$1" pane server native harness account rows record start
-  SCRIPT_DIR="$ORCH_SCRIPTS"
-  DEP_ERR=/dev/stderr
-  [[ -r "$SCRIPT_DIR/lib/lane-context.sh" && -r "$SCRIPT_DIR/lib/overseer-launch.sh" ]] || {
-    echo 'jarvis: dependency=orch-missing' >&2; return 1;
-  }
-  source "$SCRIPT_DIR/lib/lane-context.sh"
-  source "$SCRIPT_DIR/lib/overseer-launch.sh"
+  local root="$1" runtime="$JARVIS_LIB/../../../agent-runtime/scripts/agent-runtime"
+  local box harness server pane session at record status
+  [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; return 1; }
+  [[ -x "$runtime" ]] || { echo 'jarvis: dependency=agent-runtime-missing' >&2; return 1; }
+  source "$MAILBOX_LIB/common-root.sh"
   cd -- "$root" || return 1
-  ol_record_read || return 1
-  [[ "$OL_PRIOR" != null ]] || return 1
-  record="$OL_PRIOR"
-  pane="$(jq -er '.pane' <<<"$record")" || return 1
-  native="$(jq -er '.session_id | strings | select(length > 0)' <<<"$record")" || return 1
-  harness="$(jq -er '.harness' <<<"$record")" || return 1
-  account="$(jq -r '.home // ""' <<<"$record")" || return 1
-  jq -e '.exit == null' <<<"$record" >/dev/null || return 1
-  ol_session_inspect "$pane" || return 1
-  [[ "$OL_INSPECT_LIVE" == true ]] || return 1
-  server="$OL_INSPECT_SERVER"
-  start="$OL_INSPECT_START"
-  [[ -n "$start" ]] || start="$(ol_session_start "$server" "$pane")" || return 1
-  jq -e --arg server "$server" --arg start "$start" --arg pane "$pane" \
-    "$OL_JQ_DEFS"' ol_names($server; $start; $pane)' <<<"$record" >/dev/null || return 1
-  rows="$(session_rows_overseer_file "$root" "$server" "$pane")" || return 1
-  session_rows_last "$rows" SessionStart || return 1
-  jq -e --arg harness "$harness" --arg home "$account" --arg session "$native" \
-    "$OL_JQ_DEFS"' .session_id == $session and ol_native_match($harness; $home; $session)' \
-    <<<"${SESSION_ROW:-null}" >/dev/null || return 1
-  record="$(cat -- "$(lane_context_overseer_box "$root")/$LANE_CONTEXT_RECORD")" || return 1
-  lane_context_record_fields "$record" || return 1
-  [[ "$LANE_CTX_HARNESS" == "$harness" && "$LANE_CTX_PANE_KEY" == "$server $pane" && "$LANE_CTX_SESSION" == "$native" ]] || return 1
+  box="$(mailbox_common_root "$root")" || box="$root"
+  IFS=$'\t' read -r harness server pane session at < <(jq -er '
+    select(all(.harness, .session_id, .at; type == "string" and length > 0)
+      and (.pane_key | type == "string" and test("^[^ \t]+ [^ \t]+$")))
+    | [.harness, (.pane_key | split(" ") | .[0], .[1]), .session_id, .at] | @tsv' \
+    "$box/tmp/lane-mail/overseer/context.json") || return 1
+  record="$(mailbox_fleet_record full "$root")" || return 1
+  status="$("$runtime" controller status --record "$record" --server="$server" --pane="$pane" \
+    --harness="$harness" --session="$session")" || return 1
+  jq -e '.result | .live and .binding == "bound" and .native_match
+    and (.recorded.session_id | type == "string" and length > 0)' <<<"$status" >/dev/null || return 1
   # No native route exposes an external health acknowledgement here. Fresh
   # context is sufficient, including work that only invokes existing hooks.
-  printf '%s\n' "$LANE_CTX_AT"
+  printf '%s\n' "$at"
 }
 
 case "${1:-}" in
