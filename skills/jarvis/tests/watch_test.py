@@ -1477,13 +1477,15 @@ with open(sys.argv[1], "ab") as out:
             for minutes in ("0", ""):
                 with self.subTest(minutes=minutes), patch.dict(os.environ, ORCH_REPORT_EVERY_MINUTES=minutes):
                     self.assertIsNone(watch.report())
-            successor = self.watch()
-            for result in (successor.report(),
-                           "EVENT report-due reason=issues since=1970-01-01T00:16:40Z landed=2\n",
-                           "EVENT report-due reason=issues since=1970-01-01T00:16:40Z landed=3\n"):
-                successor.accept_report(result)
+            successor = self.module.Watch(self.home, BASH, self.settings | {"ORCH_REPORT_EVERY_MINUTES": "60"})
+            for offset, minutes in ((0, "60"), (3600, "0"), (3600, "60"), (3600, "60")):
+                self.clock(offset)
+                successor.settings["ORCH_REPORT_EVERY_MINUTES"] = minutes
+                successor.accept_report(successor.report())
+            self.bin.joinpath("date").unlink()
             successor.batch(60)
-            self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")])
+            successor.batch(75)
+            self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")] * 2)
             path = self.command([REPO / "skills/orch/scripts/workflow-state", "progress-report-path"])
             self.assertEqual(path.returncode, 0, path.stderr)
             report = Path(path.stdout.strip())
@@ -2072,7 +2074,7 @@ with open(sys.argv[1], "ab") as out:
     def test_instrument_control(self):
         # Each planted defect, in a disposable producer copy, turns its row red.
         gate = "if self.unanswered_pending is None and waiting and now >= self.next_unanswered:"
-        report = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
+        report = 'if result and (report_key(result) != (held := self.cursors.get("report", {})).get("event") or 0 < int(self.settings.get("ORCH_REPORT_EVERY_MINUTES") or 0) * 60 <= epoch() - held.get("posted", 0)):'
         keep = 'if row["id"] not in checked_ids or row["id"] in listed]'
         window = '"--since", min(row["at"] for row in waiting)'
         unlisted = 'alone = side == "local" and home not in roots'

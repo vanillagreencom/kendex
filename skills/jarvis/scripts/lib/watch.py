@@ -1030,8 +1030,8 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             self.state.pop("report_failure", None)
             # Retain the emitted event's identity in the existing pass cursor,
             # so restart reads only the uncheckpointed tail, never a due row.
-            if result and report_key(result) != self.cursors.get("report", {}).get("event"):
-                self.append(pass_output("report", {"event": report_key(result)}, [(None, result)]))
+            if result and (report_key(result) != (held := self.cursors.get("report", {})).get("event") or 0 < int(self.settings.get("ORCH_REPORT_EVERY_MINUTES") or 0) * 60 <= epoch() - held.get("posted", 0)):
+                self.append(pass_output("report", {"event": report_key(result), "posted": epoch()}, [(None, result)]))
 
     def relay_status(self):
         try:
