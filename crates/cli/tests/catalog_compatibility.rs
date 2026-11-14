@@ -123,7 +123,7 @@ fn incompatible_scope_stops_the_selected_command_before_any_install_write() {
             write(
                 &scope,
                 &format!(
-                    "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.{name}]\nsource = 'cat'\n",
+                    "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.{name}]\nsource = 'cat'\n",
                     source_path(&catalog)
                 ),
             );
@@ -187,7 +187,7 @@ fn compatible_subscription_tip_does_not_hide_an_incompatible_item_or_bundle_pin(
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 7\n[sources.cat]\nrepo = 'file://{}'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n{table}\nsource = 'cat'\nrev = '{pin}'\n",
+                "schema = 8\n[sources.cat]\nrepo = 'file://{}'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n{table}\nsource = 'cat'\nrev = '{pin}'\n",
                 catalog.display()
             ),
         );
@@ -305,7 +305,7 @@ fn held_removal_world(
         write(
             &path,
             &format!(
-                "schema = 7\n[sources.cat]\nrepo = '{repo}'\nrev = '{tip}'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.good]\nsource = 'cat'\n[skills.surviving]\nsource = 'cat'\n"
+                "schema = 8\n[sources.cat]\nrepo = '{repo}'\nrev = '{tip}'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.good]\nsource = 'cat'\n[skills.surviving]\nsource = 'cat'\n"
             ),
         );
     }
@@ -463,7 +463,7 @@ fn source_changes_check_every_post_change_scope_before_install_writes() {
             write(
                 &path,
                 &format!(
-                    "schema = 7\n[sources.cat]\n{}\n[sources.spare]\n{}\nenabled = {}\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n",
+                    "schema = 8\n[sources.cat]\n{}\n[sources.spare]\n{}\nenabled = {}\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n",
                     source_path(catalog),
                     source_path(&compatible),
                     action != "enable"

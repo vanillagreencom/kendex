@@ -138,6 +138,7 @@ pub(crate) fn member_decl(bundle: &ItemDecl) -> ItemDecl {
         rev: bundle.rev.clone(),
         enabled: bundle.enabled,
         env: None,
+        links: None,
     }
 }
 
@@ -252,26 +253,7 @@ fn installable(
         }
         // A retired member is planned, for the item pass to keep or prune.
         if let Offer::NotOffered | Offer::Silent = catalog.offer(member.kind, &member.name) {
-            let message = format!(
-                "the bundle {name} carries {}, which the catalog '{}' does not offer",
-                member.name, decl.source
-            );
-            state.mark_incomplete_for(format!(
-                "{} '{}': {message}",
-                member.kind.name(),
-                member.name
-            ));
-            state.warnings.push(ItemWarning {
-                kind: member.kind,
-                name: member.name.clone(),
-                harness: None,
-                message,
-                remediation: Some(format!(
-                    "add {} to that catalog, or drop it from the bundle {name}",
-                    member.name
-                )),
-                detail: None,
-            });
+            unoffered(name, &decl.source, member, state);
             continue;
         }
         let mut member_decl = member_decl(decl);
@@ -307,6 +289,44 @@ fn installable(
     let set = bundle_ref(name, &decl.source);
     state.read_bundles.insert(set, bundle.members);
     installable
+}
+
+/// A member the set carries that its catalog does not offer: the set is
+/// incomplete, the member warns, and it stays among what the set asked for
+/// (`DesiredState::unoffered`), since nothing derives it.
+fn unoffered(
+    name: &str,
+    source: &str,
+    member: &crate::source::bundles::BundleMember,
+    state: &mut DesiredState,
+) {
+    let message = format!(
+        "the bundle {name} carries {}, which the catalog '{source}' does not offer",
+        member.name
+    );
+    state.mark_incomplete_for(format!(
+        "{} '{}': {message}",
+        member.kind.name(),
+        member.name
+    ));
+    state.warnings.push(ItemWarning {
+        kind: member.kind,
+        name: member.name.clone(),
+        harness: None,
+        message,
+        remediation: Some(format!(
+            "add {} to that catalog, or drop it from the bundle {name}",
+            member.name
+        )),
+        detail: None,
+    });
+    state
+        .unoffered
+        .entry((member.kind, member.name.clone()))
+        .or_default()
+        .insert(crate::lock::Reason::MemberOf {
+            bundle: bundle_ref(name, source),
+        });
 }
 
 /// A declared set its catalog retired. Short of a prune, what it installed

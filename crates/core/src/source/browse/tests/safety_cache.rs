@@ -58,7 +58,7 @@ fn fixture_at(dir: &str) -> (tempfile::TempDir, Env, Scope) {
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("kendex.toml"),
-        format!("schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n"),
+        format!("schema = 8\n[sources.cat]\nrepo = \"{REPO}\"\n"),
     )
     .unwrap();
     crate::remote::sync(&env, REPO, None).unwrap();

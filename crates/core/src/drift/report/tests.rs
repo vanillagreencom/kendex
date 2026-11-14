@@ -1210,7 +1210,7 @@ fn a_command_declaration_read_past_the_deadline_is_not_checked() {
     std::fs::write(
         crate::manifest::manifest_path(&env, &scope),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
             crate::test_util::source_path(&catalog)
         ),
     )

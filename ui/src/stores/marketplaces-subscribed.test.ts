@@ -1,9 +1,21 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { commands, type DirectoryRow, type MarketplaceRow } from "@/bindings";
+import {
+  commands,
+  type DirectoryRow,
+  type ItemWarning,
+  type MarketplaceRow,
+} from "@/bindings";
+import { UNKNOWN_COMPLETION_STEP } from "@/lib/copy";
+import {
+  keptNotInstalledTitle,
+  keptRecordedStep,
+  unsubscribeUnknownTitle,
+} from "@/lib/copy-marketplaces";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useMarketplacesStore } from "./marketplaces";
 import { rowSubscribed, subscribedKeys } from "./marketplaces-shared";
+import { useProblemsStore } from "./problems";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -62,6 +74,19 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   mode: null,
   recordsUnreadable: false,
 });
+
+/** A link the keep held as written, with its fix: the keep's own report. */
+const kept: ItemWarning = {
+  kind: "skill",
+  name: "house-style",
+  message:
+    "SKILL.md links to ../../memory/x.md, which may no longer reach its file",
+  remediation: "Use an absolute path.",
+  detail: "skill-link-kept: SKILL.md: ../../memory/x.md",
+};
+// The line `sayWritten` gives a warning, which the person reads with its fix
+// beneath it.
+const keptToast = `${kept.name}: ${kept.message}`;
 
 describe("a Community row's Subscribed marker", () => {
   beforeEach(() => {
@@ -192,7 +217,7 @@ describe("a Community row's Subscribed marker", () => {
     useMarketplacesStore.setState({ rows: [], read: READ_LANDED });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "error",
-      error: "an edited package is in the way",
+      error: { phase: "refused", message: "an edited package is in the way" },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -201,7 +226,7 @@ describe("a Community row's Subscribed marker", () => {
 
     const outcome = await useMarketplacesStore
       .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
+      .unsubscribe({ scope: "global" }, "kit", "Acme Kit", false, false);
     await useMarketplacesStore.getState().load();
 
     expect(useMarketplacesStore.getState().error).toBeNull();
@@ -217,12 +242,12 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "error",
-      error: "an edited package is in the way",
+      error: { phase: "refused", message: "an edited package is in the way" },
     });
 
     const ok = await useMarketplacesStore
       .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
+      .unsubscribe({ scope: "global" }, "kit", "Acme Kit", false, false);
 
     // The refusal comes back from the call — the dialog reads it there, not
     // out of the shared slot, which every landing read clears.
@@ -245,7 +270,7 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "ok",
-      data: {},
+      data: { warnings: [] },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -254,7 +279,7 @@ describe("a Community row's Subscribed marker", () => {
 
     const ok = await useMarketplacesStore
       .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
+      .unsubscribe({ scope: "global" }, "kit", "Acme Kit", false, false);
 
     expect(ok).toEqual({ done: true });
     const live = subscribedKeys(useMarketplacesStore.getState().rows);
@@ -262,14 +287,13 @@ describe("a Community row's Subscribed marker", () => {
     expect(rowSubscribed({ ...listed, subscribed: true }, live)).toBe(false);
   });
 
-  // The one reason marketplace_unsubscribe answers with anything at all:
-  // a package leaving with its source may have armed this repository, and
-  // its uninstaller ran. Rust proves it produces the lines; this proves
-  // the window shows them.
-  it("relays an unsubscribe's removal report when a package left", async () => {
+  // Rust produces removal reports and detach warnings; the window must present both.
+  it("relays an unsubscribe's removal reports and capture warnings", async () => {
     const rows = [
       {
         name: "uninstaller ran",
+        keep: false,
+        warnings: [],
         undone: [
           "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
@@ -277,7 +301,20 @@ describe("a Community row's Subscribed marker", () => {
           ["commit-guards: running scripts/install-git-hooks --uninstall"],
         ],
       },
-      { name: "no armed package left", undone: undefined, calls: [] },
+      {
+        name: "no armed package left",
+        keep: false,
+        warnings: [],
+        undone: undefined,
+        calls: [],
+      },
+      {
+        name: "the keep kept a link as written",
+        keep: true,
+        warnings: [kept],
+        undone: undefined,
+        calls: [[keptToast, { description: kept.remediation }]],
+      },
     ];
     expect(rows.length).toBeGreaterThan(0);
     for (const entry of rows) {
@@ -288,7 +325,10 @@ describe("a Community row's Subscribed marker", () => {
       });
       vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
         status: "ok",
-        data: entry.undone === undefined ? {} : { undone: entry.undone },
+        data: {
+          warnings: entry.warnings,
+          ...(entry.undone === undefined ? {} : { undone: entry.undone }),
+        },
       });
       vi.mocked(commands.marketplacesOverview).mockResolvedValue({
         status: "ok",
@@ -296,10 +336,82 @@ describe("a Community row's Subscribed marker", () => {
       });
       await useMarketplacesStore
         .getState()
-        .unsubscribe({ scope: "global" }, "kit", false, false);
+        .unsubscribe({ scope: "global" }, "kit", "Acme Kit", entry.keep, false);
       expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
         entry.calls,
       );
+    }
+  });
+
+  // Either the write landed with a step behind it failing, or nothing says
+  // whether it ran: the keep's install failed after the keep, or the call
+  // failed on its way and the transport folded it into a bare string. Neither
+  // is a refusal, so the dialog closes, the error dialog says the stop once,
+  // what a recorded keep reported still reaches the window, and the rows are
+  // read again.
+  it("closes on an unsubscribe that may have landed and says what stopped", async () => {
+    const rows = [
+      {
+        name: "a recorded keep",
+        error: {
+          phase: "recorded" as const,
+          message: "the render of skill gh failed",
+          written: [kept],
+        },
+        title: keptNotInstalledTitle,
+        steps: (marketplace: string) => [keptRecordedStep(marketplace)],
+        message: "the render of skill gh failed",
+        calls: [[keptToast, { description: kept.remediation }]],
+      },
+      {
+        name: "a call that never answered",
+        error: "connection reset",
+        title: unsubscribeUnknownTitle,
+        steps: () => [UNKNOWN_COMPLETION_STEP],
+        message: "connection reset",
+        calls: [],
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const entry of rows) {
+      useProblemsStore.getState().closeError();
+      vi.mocked(toast.message).mockClear();
+      vi.mocked(toast.success).mockClear();
+      vi.mocked(commands.marketplacesOverview).mockClear();
+      useMarketplacesStore.setState({
+        rows: [row("Acme/Kit", "acme/kit")],
+        read: READ_LANDED,
+        error: null,
+      });
+      vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+        status: "error",
+        error: entry.error,
+      });
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: [],
+      });
+
+      const outcome = await useMarketplacesStore
+        .getState()
+        .unsubscribe({ scope: "global" }, "kit", "Acme Kit", true, false);
+
+      expect(outcome, entry.name).toEqual({ done: true });
+      expect(useMarketplacesStore.getState().error, entry.name).toBeNull();
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open, entry.name).toBe(true);
+      // Named by the name the page shows, in its title and its step, never
+      // the alias the engine is sent: the two differ here.
+      expect(dialog.title, entry.name).toBe(entry.title("Acme Kit"));
+      expect(dialog.title, entry.name).not.toBe(entry.title("kit"));
+      expect(dialog.message, entry.name).toBe(entry.message);
+      expect(dialog.steps, entry.name).toEqual(entry.steps("Acme Kit"));
+      expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
+        entry.calls,
+      );
+      expect(toast.success, entry.name).not.toHaveBeenCalled();
+      expect(commands.marketplacesOverview, entry.name).toHaveBeenCalled();
+      expect(useMarketplacesStore.getState().rows, entry.name).toEqual([]);
     }
   });
 

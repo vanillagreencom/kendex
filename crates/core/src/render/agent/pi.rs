@@ -37,9 +37,7 @@ pub fn generate(agent: &EffectiveAgent) -> Result<RenderedAgent, String> {
     let mut warnings = Vec::new();
     let effort = effort(agent);
     let (model, model_warning) = model(agent, effort);
-    warnings.extend(model_warning.map(|w| {
-        crate::render::RenderWarning::with_fix(w, "use a provider/model id or a tier alias")
-    }));
+    warnings.extend(model_warning);
     if let Some(model) = model {
         out.push_str(&format!("model: {}\n", yaml_scalar(&model)));
     }
@@ -76,7 +74,10 @@ fn effort<'b>(agent: &'b EffectiveAgent<'_>) -> Option<&'b str> {
 
 /// Preserve class intent for the child dispatcher. The effort suffix uses
 /// the same native field as exact ids, without selecting a version here.
-fn model(agent: &EffectiveAgent, effort: Option<&str>) -> (Option<String>, Option<String>) {
+fn model(
+    agent: &EffectiveAgent,
+    effort: Option<&str>,
+) -> (Option<String>, Option<crate::render::RenderWarning>) {
     let model = agent.model_request();
     let resolved = crate::harness::models::render_model(
         crate::model::HarnessId::Pi,

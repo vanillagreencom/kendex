@@ -163,7 +163,7 @@ fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
                 "\n[skill-instructions]\nall = '''\r\nkept first\r\nkept second\r\n'''\n\n[command-instructions]\nall = \"\"\"\nnew first\nnew second\n\"\"\"",
             );
         }
-        let expected = f.original.replacen("schema = 6", "schema = 7", 1);
+        let expected = f.original.replacen("schema = 6", "schema = 8", 1);
         fs::write(&f.manifest_path, &expected).unwrap();
         let current = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
         fs::write(&f.manifest_path, &f.original).unwrap();
@@ -174,7 +174,8 @@ fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
             .unwrap();
         assert_eq!(loaded.schema, MANIFEST_SCHEMA);
         assert_eq!(loaded.migrated_text.as_deref(), Some(expected.as_str()));
-        assert_eq!(loaded.migration_notes.len(), 1);
+        // One account per step from schema 6.
+        assert_eq!(loaded.migration_notes.len(), 2);
         assert!(migrated.notes.ends_with(&loaded.migration_notes));
         assert_eq!(fs::read_to_string(&f.manifest_path).unwrap(), f.original);
         assert_eq!(

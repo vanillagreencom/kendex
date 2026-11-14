@@ -15,15 +15,79 @@ pub struct BodyPaths<'a> {
 /// Map catalog-relative targets into the consumer tree. Fork capture uses the
 /// same operation with the file and root pairs reversed.
 pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWarning>) {
+    let (text, unrepresentable) = rebase_links(text, paths, false, |_| false);
+    (
+        text,
+        unrepresentable
+            .iter()
+            .map(|target| unrepresentable_link(target))
+            .collect(),
+    )
+}
+
+/// The key of [`unrepresentable_link`]'s diagnostic line, which a reader
+/// of a plan's warnings tells this warning apart by.
+pub(crate) const UNREPRESENTABLE_LINK: &str = "agent-link-unrepresentable";
+
+/// The warning a render gives a link it kept because no spelling from the
+/// rendered file reaches its target inside the roots.
+pub(crate) fn unrepresentable_link(target: &str) -> RenderWarning {
+    RenderWarning::with_fix(
+        format!("The link to {target} can't reach its file from where this is installed"),
+        "Keep the link target inside the catalog and the installed folder, or use an absolute path or URL.",
+    )
+    .with_detail(format!("{UNREPRESENTABLE_LINK}: {target}"))
+}
+
+/// The skill form of [`rebase`]: a link `keep` claims, or whose spelling
+/// already reaches the target from the rendered file, keeps every byte.
+/// Returns the targets, as written, of the links kept because they cannot
+/// be represented inside the roots.
+pub(crate) fn rebase_skill(
+    text: &str,
+    paths: BodyPaths<'_>,
+    keep: impl Fn(&Path) -> bool,
+) -> (String, Vec<String>) {
+    rebase_links(text, paths, true, keep)
+}
+
+/// Each relative link destination respelled from `file` to itself, so two
+/// texts compare by the targets their links resolve to.
+pub(crate) fn compare_skill_links(text: &str, file: &Path) -> String {
+    let root = file.ancestors().last().unwrap_or(file);
+    rebase_links(
+        text,
+        BodyPaths {
+            source: file,
+            rendered: file,
+            source_root: root,
+            install_root: root,
+        },
+        false,
+        |_| false,
+    )
+    .0
+}
+
+fn rebase_links(
+    text: &str,
+    paths: BodyPaths<'_>,
+    preserve_spelling: bool,
+    keep: impl Fn(&Path) -> bool,
+) -> (String, Vec<String>) {
     let mut links = relative_links(text);
     links.sort_by_key(|link| link.range.as_ref().map(|range| range.start));
     links.dedup_by(|left, right| left.range == right.range && left.target == right.target);
     let mut out = String::new();
-    let mut warnings = Vec::new();
+    let mut unrepresentable = Vec::new();
     let mut copied = 0;
     for link in links {
-        let target = decoded(&link.path, '/')
-            .and_then(|path| crate::fs::resolved(paths.source, Path::new(&path)))
+        let resolved = decoded(&link.path, '/')
+            .and_then(|path| crate::fs::resolved(paths.source, Path::new(&path)));
+        if resolved.as_ref().is_some_and(|target| keep(target)) {
+            continue;
+        }
+        let target = resolved
             .and_then(|path| {
                 path.strip_prefix(paths.source_root)
                     .ok()
@@ -40,12 +104,17 @@ pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWar
                 })
             });
         let (Some(target), Some(range)) = (target, link.range) else {
-            warnings.push(RenderWarning::with_fix(
-                format!("agent-link-unrepresentable: {}", link.target),
-                "keep the link target inside the catalog and the rendered scope, or use an absolute path or URL",
-            ));
+            unrepresentable.push(link.target.clone());
             continue;
         };
+        if preserve_spelling
+            && decoded(&link.path, '/').is_some_and(|path| {
+                crate::fs::resolved(paths.rendered, Path::new(&path))
+                    == crate::fs::resolved(paths.rendered, &target)
+            })
+        {
+            continue;
+        }
         if range.start < copied {
             continue;
         }
@@ -71,7 +140,7 @@ pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWar
         copied = range.end;
     }
     out.push_str(&text[copied..]);
-    (out, warnings)
+    (out, unrepresentable)
 }
 
 #[cfg(test)]

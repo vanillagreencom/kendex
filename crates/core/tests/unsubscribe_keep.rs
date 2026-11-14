@@ -3,7 +3,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::Path;
@@ -68,7 +68,7 @@ fn world_at(
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 8\n\n[sources.cat]\n{}\n{extra_sources}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
             source_path(&catalog)
         ),
     )
@@ -235,4 +235,222 @@ fn keeping_a_package_refuses_a_local_source_reached_through_a_link() {
         before,
         "a refused keep leaves the subscription declared"
     );
+}
+
+/// What `.agents/skills/ship/SKILL.md`'s first link reaches, read from the
+/// physical tree.
+#[allow(clippy::unwrap_used)]
+fn reached(tree: &Path) -> std::path::PathBuf {
+    let text = fs::read_to_string(tree.join("SKILL.md")).unwrap();
+    let spelled = text
+        .lines()
+        .find_map(|line| line.strip_prefix("[m](")?.strip_suffix(')'))
+        .unwrap();
+    fs::canonicalize(fs::canonicalize(tree).unwrap().join(spelled)).unwrap()
+}
+
+/// Keeping a path catalog's skills converts their links while the catalog
+/// still says where they were read from: the kept tree reaches the
+/// catalog's file at the root and at a nested catalog alike, and a target
+/// outside the project keeps its bytes and is reported.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn keeping_a_path_catalogs_skill_keeps_every_link_target() {
+    // (catalog location relative to the project, stored spelling)
+    for (location, stored) in [
+        (".", "../../../memory/x.md"),
+        ("vendor/catalog", "../../../vendor/catalog/memory/x.md"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("dev/app");
+        let catalog = project.join(location);
+        skill(
+            &catalog,
+            "ship",
+            "[m](../../memory/x.md)\n[out](../../../../../../outside.md)",
+        );
+        fs::create_dir_all(catalog.join("memory")).unwrap();
+        fs::write(catalog.join("memory/x.md"), "Memory.\n").unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 8\n[sources.cat]\npath = {location:?}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n[skills.ship]\nsource = \"cat\"\n"
+            ),
+        )
+        .unwrap();
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        apply_now(&env, &scope);
+        let installed = project.join(".agents/skills/ship");
+        let target = fs::canonicalize(catalog.join("memory/x.md")).unwrap();
+        assert_eq!(reached(&installed), target, "{location} before");
+
+        let kept = kendex_core::engine::detach::source(&env, &scope, "cat").unwrap();
+        let reported: Vec<Option<&str>> = kept
+            .warnings
+            .iter()
+            .map(|warning| warning.detail.as_deref())
+            .collect();
+        assert_eq!(
+            reported,
+            [Some(
+                "skill-link-kept: SKILL.md: ../../../../../../outside.md"
+            )],
+            "{location}"
+        );
+        apply::execute(&env, &kept).unwrap();
+        let resync = kendex_core::engine::detach::resync_kept(&env, &scope).unwrap();
+        apply::execute(&env, &resync.plan).unwrap();
+
+        let manifest = manifest_of(&env, &scope);
+        assert_eq!(
+            manifest.skills["ship"].links,
+            Some(manifest::SkillLinks::SharedTree),
+            "{location}"
+        );
+        let local = kendex_core::source::local_source_root(&env, &scope).join("skills/ship");
+        assert!(
+            fs::read_to_string(local.join("SKILL.md"))
+                .unwrap()
+                .contains(&format!("[m]({stored})")),
+            "{location}"
+        );
+        assert_eq!(reached(&installed), target, "{location} after");
+    }
+}
+
+/// Keeping a fetched catalog's skill reads its links from the places they
+/// were delivered to. One place converts, so a Pi copy at depth four still
+/// reaches its file after the resync; two places that read the same bytes
+/// as different targets keep the bytes untagged, each copy unchanged, and
+/// the detach says so.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn keeping_a_fetched_skill_keeps_what_each_delivered_copy_read() {
+    use kendex_core::engine::desired::own_dir;
+    use kendex_core::model::{HarnessId, ItemKind};
+    // (row, global, harnesses, link, tagged, linked .agents)
+    let rows = [
+        (
+            "one Pi copy",
+            true,
+            vec![HarnessId::Pi],
+            "../../../../memory/x.md",
+            true,
+            false,
+        ),
+        (
+            "Claude and Cursor copies",
+            false,
+            vec![HarnessId::Claude, HarnessId::Cursor],
+            "../../agents/x.md",
+            false,
+            false,
+        ),
+        (
+            "Codex below a linked .agents",
+            true,
+            vec![HarnessId::Codex],
+            "../../../memory/x.md",
+            true,
+            true,
+        ),
+    ];
+    for (row, global, harnesses, link, tagged, linked_agents) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        if linked_agents {
+            fs::create_dir_all(home.join("dotfiles/.agents")).unwrap();
+            std::os::unix::fs::symlink(home.join("dotfiles/.agents"), home.join(".agents"))
+                .unwrap();
+        }
+        let git = home.join("git");
+        let env = Env::fake(&home, FakeOs::Linux)
+            .with_var("KENDEX_GIT_BASE", &format!("file://{}", git.display()));
+        let project = home.join("dev/app");
+        fs::create_dir_all(project.join(".claude")).unwrap();
+        let catalog = git.join("acme/catalog");
+        skill(&catalog, "ship", &format!("[m]({link})"));
+        fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        test_util::git(&catalog, &["init", "-q"]);
+        test_util::git(&catalog, &["add", "-A"]);
+        test_util::git(&catalog, &["commit", "-qm", "catalog"]);
+        kendex_core::remote::sync(&env, "acme/catalog", None).unwrap();
+        let scope = match global {
+            true => Scope::Global,
+            false => Scope::Project {
+                root: project.clone(),
+            },
+        };
+        let names = harnesses
+            .iter()
+            .map(|harness| format!("{:?}", harness.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let method = if linked_agents { "symlink" } else { "copy" };
+        let manifest_file = manifest::manifest_path(&env, &scope);
+        fs::create_dir_all(manifest_file.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_file,
+            format!(
+                "schema = 8\n[sources.cat]\nrepo = \"acme/catalog\"\n[install]\nharnesses = [{names}]\nmethod = \"{method}\"\n[skills.ship]\nsource = \"cat\"\n"
+            ),
+        )
+        .unwrap();
+        apply_now(&env, &scope);
+        let copies: Vec<std::path::PathBuf> = harnesses
+            .iter()
+            .map(|harness| {
+                if linked_agents {
+                    env.global_skills_dir().join("ship")
+                } else {
+                    own_dir(&env, &scope, *harness, ItemKind::Skill)
+                        .unwrap()
+                        .join("ship")
+                }
+            })
+            .collect();
+        for copy in &copies {
+            let target = copy.join(link);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(&target, "Target.\n").unwrap();
+        }
+        let before: Vec<std::path::PathBuf> = copies.iter().map(|copy| reached(copy)).collect();
+        let before_bytes = fs::read(copies[0].join("SKILL.md")).unwrap();
+        if linked_agents {
+            fs::create_dir_all(home.join("memory")).unwrap();
+            fs::write(home.join("memory/x.md"), "Lexical target.\n").unwrap();
+        }
+
+        let kept = kendex_core::engine::detach::source(&env, &scope, "cat").unwrap();
+        let apart = kept.warnings.iter().any(|warning| {
+            warning
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("skill-links-delivered-apart:"))
+        });
+        assert_eq!(apart, !tagged, "{row}");
+        apply::execute(&env, &kept).unwrap();
+        let resync = kendex_core::engine::detach::resync_kept(&env, &scope).unwrap();
+        apply::execute(&env, &resync.plan).unwrap();
+
+        let manifest = manifest_of(&env, &scope);
+        let expected = tagged.then_some(manifest::SkillLinks::SharedTree);
+        assert_eq!(manifest.skills["ship"].links, expected, "{row}");
+        let after: Vec<std::path::PathBuf> = copies.iter().map(|copy| reached(copy)).collect();
+        assert_eq!(after, before, "{row}");
+        if linked_agents {
+            let local =
+                kendex_core::source::local_source_root(&env, &scope).join("skills/ship/SKILL.md");
+            assert_eq!(fs::read(local).unwrap(), before_bytes, "{row} stored");
+            assert_eq!(
+                fs::read(copies[0].join("SKILL.md")).unwrap(),
+                before_bytes,
+                "{row} rendered"
+            );
+        }
+    }
 }

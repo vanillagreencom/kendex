@@ -14,8 +14,8 @@ fn only_a_readable_older_root_schema_is_outdated() {
     let env = Env::fake(&home, FakeOs::Linux);
     let rows = [
         ("older", Some("schema = 6\n"), true),
-        ("current", Some("schema = 7\n"), false),
-        ("newer", Some("schema = 8\n"), false),
+        ("current", Some("schema = 8\n"), false),
+        ("newer", Some("schema = 9\n"), false),
         ("no-file", None, false),
         ("unparsable", Some("schema = 6\n["), false),
         ("gone", None, false),
@@ -62,7 +62,7 @@ fn only_a_readable_older_root_schema_is_outdated() {
     }
     assert_eq!(outdated, vec![home.join("older")]);
 
-    fs::write(home.join("older/kendex.toml"), "schema = 7\n").expect("upgraded manifest");
+    fs::write(home.join("older/kendex.toml"), "schema = 8\n").expect("upgraded manifest");
     assert!(manifest::outdated_projects(&env).is_empty());
     fs::write(env.settings_file(), "schema = [").expect("broken settings");
     assert!(manifest::outdated_projects(&env).is_empty());

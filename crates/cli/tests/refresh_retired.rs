@@ -43,7 +43,7 @@ const BY_SET: &str = "[bundles.ship]\nsource = \"cat\"\n";
 /// The consumer's manifest on `harnesses`, declaring `declared`.
 fn manifest(catalog: &Path, harnesses: &str, declared: &str) -> String {
     format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n{declared}",
+        "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n{declared}",
         source_path(catalog)
     )
 }
@@ -487,7 +487,7 @@ fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 7\n[sources.cat]\n{}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+                "schema = 8\n[sources.cat]\n{}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
                 source_path(&catalog)
             ),
         );
@@ -592,7 +592,7 @@ fn verify_names_the_withholding_of_a_hook_requiring_a_retired_hook() {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[hooks.boss]\nsource = \"cat\"\n",
+            "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[hooks.boss]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     );
@@ -668,7 +668,7 @@ fn retired_beside_a_namesake(home: &Path, at: At) -> (PathBuf, PathBuf, PathBuf,
         &HOOK.replace("name: check", "name: deploy"),
     );
     let declared = format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.deploy]\nsource = \"cat\"\n",
+        "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.deploy]\nsource = \"cat\"\n",
         source_path(&catalog)
     );
     let (manifest, root, scope) = match at {
@@ -819,7 +819,7 @@ fn verify_names_the_kind_and_scope_of_a_global_left_over_removal() {
     assert_ne!(undeclared, declared, "the skill's declaration stays");
     write(&manifest, &undeclared);
     let project = home.join("consumer");
-    write(&project.join("kendex.toml"), "schema = 7\n");
+    write(&project.join("kendex.toml"), "schema = 8\n");
     repository(&project);
 
     let verified = kendex(&home, &project, &["verify", "--scope", "global"]);

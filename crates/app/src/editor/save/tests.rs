@@ -26,10 +26,11 @@ fn a_schema_6_editor_draft_migrates_and_returns_its_note_after_serde() {
     let applied = write_customize(&env, scope, Some((draft, read.base)), None, None).unwrap();
     assert!(applied.error.is_none());
     assert!(applied.notes.ends_with(&notes));
-    assert_eq!(notes.len(), 1);
+    // One account per step from schema 6.
+    assert_eq!(notes.len(), 2);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
-        original.replacen("schema = 6", "schema = 7", 1)
+        original.replacen("schema = 6", "schema = 8", 1)
     );
 }
 
@@ -453,7 +454,7 @@ fn scope_with_settings_skill() -> (tempfile::TempDir, Env, Scope) {
     std::fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.review]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.review]\nsource = \"cat\"\n",
             source_path(&tmp.path().join("catalog"))
         ),
     )

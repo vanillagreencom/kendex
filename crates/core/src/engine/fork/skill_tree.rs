@@ -21,6 +21,13 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// shared tree may hold another tool's skill of the same name; taking the
 /// shared one first would hand back bytes belonging to whichever tool
 /// happens to share the name, not the one asked for.
+///
+/// The answer is the place a fork may capture and clear, spelled as the
+/// scope spells it and never resolved: a shared tree the person replaced
+/// with a link to a folder of their own is that link, which the fork
+/// refuses, not the folder it reaches. Links in the bytes are read from
+/// the same spelling, which is the one the scope's stored readings and
+/// their bounds are in.
 pub(crate) fn skill_content_path(
     env: &Env,
     scope: &Scope,
@@ -34,9 +41,8 @@ pub(crate) fn skill_content_path(
     {
         let native = dir.join(&installed);
         // A real directory here is this tool's own tree: its copy, or the
-        // shared tree where this tool reads that itself. A symlink is
-        // followed to the shared canonical tree it reads instead.
-        // Resolving it gives a real directory either way, never the wrong
+        // shared tree where this tool reads that itself. A symlink stands
+        // for the shared canonical tree it reads instead, never the wrong
         // tool's bytes.
         if native.is_symlink() {
             if let Ok(target) = std::fs::read_link(&native) {
@@ -51,7 +57,7 @@ pub(crate) fn skill_content_path(
                 // content, and reading (then trashing) it would expose and
                 // move whatever it happens to point at.
                 if resolved.is_dir() && managed_skill_tree(env, scope, name, &resolved) {
-                    return Some(resolved);
+                    return Some(skill_canonical(env, scope, name));
                 }
             }
         } else if native.is_dir() {

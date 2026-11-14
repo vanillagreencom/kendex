@@ -11,7 +11,7 @@ import { adoptedToastLabel } from "@/lib/copy";
 import { replacedToastLabel } from "@/lib/copy-in-the-way";
 import { writingRepo } from "@/lib/rescan";
 import { sameScope } from "@/lib/scope";
-import { sayUndone, sayUnfinished } from "@/lib/undone";
+import { sayUndone, sayUnfinished, sayWritten } from "@/lib/undone";
 import { type ErrorAction, useProblemsStore } from "./problems";
 
 /** One scope's view, swapped for the fresh one a command handed back.
@@ -123,6 +123,8 @@ export function auditRunner(
           // answer is still that it worked: the write stands, and a run
           // over a page carries on against the fresh view it handed back.
           sayUnfinished(opts.subject, response.data.unfinished);
+          // What an adopt kept as written, which only the write can say.
+          sayWritten(response.data.written);
           return true;
         }
         // The dialog and nowhere else: the audit store's `read` is the

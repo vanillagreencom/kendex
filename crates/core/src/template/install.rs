@@ -89,6 +89,9 @@ pub struct ResolvedCopy {
     pub copy: String,
     /// The marketplace the bytes came from, where they came from one.
     pub from: Option<String>,
+    /// The reading the copy's links hold, which its declaration records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::manifest::SkillLinks>,
 }
 
 /// A member this machine cannot install, and why. A template carrying one
@@ -132,7 +135,7 @@ impl Resolution {
 
 /// What one template install did. Read after the write: the parts are
 /// what landed, not what was asked for.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateInstall {
     /// The repositories subscribed to along the way, in the order they
@@ -149,6 +152,7 @@ pub struct TemplateInstall {
     pub copied: Vec<String>,
     /// What a step said while it worked.
     pub notes: Vec<String>,
+    pub warnings: Vec<crate::engine::ItemWarning>,
     /// Why the run stopped short of the whole template, or null where it
     /// finished. What `subscribed` and `declared` name is on disk either
     /// way, and `copied` names bytes that may sit ahead of a render that
@@ -156,6 +160,24 @@ pub struct TemplateInstall {
     /// refusal, and it is why a run that stopped still answers rather
     /// than throwing its own record away.
     pub stopped: Option<String>,
+}
+
+impl TemplateInstall {
+    /// Fold in one step's report. The step plans the whole destination, so
+    /// its warnings name every package there, standing ones included, and
+    /// each step repeats them. The install carries only those about what
+    /// this step's request reached ([`crate::engine::EngineReport::requested`]);
+    /// the rest stay with the scope's own reading.
+    fn rendered(&mut self, report: crate::engine::EngineReport) {
+        let requested = report.requested();
+        self.notes.extend(report.notes);
+        self.warnings.extend(
+            report
+                .warnings
+                .into_iter()
+                .filter(|warning| requested.contains(&(warning.kind, warning.name.clone()))),
+        );
+    }
 }
 
 /// Read a template against this machine: which repositories carry its
@@ -232,7 +254,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                     }),
                 }
             }
-            MemberSource::Copy { copy, from, .. } => {
+            MemberSource::Copy { copy, from, .. } | MemberSource::SharedCopy { copy, from, .. } => {
                 let Some(kind) = member.kind.item() else {
                     missing.push(MissingMember {
                         kind: member.kind,
@@ -250,6 +272,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         enabled: member.enabled,
                         copy: copy.clone(),
                         from: from.clone(),
+                        links: member.source.links(),
                     }),
                     Err(error) => missing.push(MissingMember {
                         kind: member.kind,
@@ -544,11 +567,16 @@ fn two_claims(name: &str, claimants: &[&super::Member]) -> String {
         }
         MemberSource::Copy {
             from: Some(repo), ..
+        }
+        | MemberSource::SharedCopy {
+            from: Some(repo), ..
         } => format!(
             "as this template's own copy of {}'s",
             crate::names::shown(repo)
         ),
-        MemberSource::Copy { from: None, .. } => "as this template's own copy".to_owned(),
+        MemberSource::Copy { from: None, .. } | MemberSource::SharedCopy { from: None, .. } => {
+            "as this template's own copy".to_owned()
+        }
     };
     let shown = crate::names::shown(name);
     let each: Vec<String> = claimants
@@ -566,7 +594,7 @@ fn which_of(member: &super::Member) -> super::MemberWhich {
         MemberSource::Marketplace { repo, .. } => {
             super::MemberWhich::Marketplace { repo: repo.clone() }
         }
-        MemberSource::Copy { .. } => super::MemberWhich::Copy,
+        MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => super::MemberWhich::Copy,
     }
 }
 
@@ -902,7 +930,7 @@ fn install_group(
     // Notes are what a step said while it worked, not a claim about a
     // write, so they travel whether or not the plan had anything in
     // it.
-    landed.install.notes.extend(report.notes);
+    landed.install.rendered(report);
     // The saved switch, applied to the declarations the add just
     // wrote. `AddRequest` carries no per-item flag, so the state is
     // put on the declaration the way the copy path does — one pass
@@ -983,6 +1011,7 @@ fn install_local(
             rev: None,
             enabled: copy.enabled,
             env: None,
+            links: copy.links,
         };
         manifest
             .declared_mut(copy.kind)
@@ -1039,7 +1068,7 @@ fn install_local(
     landed.commit(env, &report.plan, |install| {
         install.declared.extend(declared);
     })?;
-    landed.install.notes.extend(report.notes);
+    landed.install.rendered(report);
     Ok(())
 }
 

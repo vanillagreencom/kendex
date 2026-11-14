@@ -47,7 +47,7 @@ fn world() -> World {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )

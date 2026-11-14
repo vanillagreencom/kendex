@@ -5,10 +5,12 @@
 use std::path::PathBuf;
 
 use crate::apply::{Op, PlannedOp, Pre};
+use crate::engine::ItemWarning;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, SkillLinks};
 use crate::model::{ItemKind, Scope};
+use crate::render::skill::links;
 
 use super::ClosureItem;
 use crate::engine::agent_carry::{AgentCarry, agent_carry};
@@ -16,18 +18,29 @@ use crate::engine::agent_carry::{AgentCarry, agent_carry};
 /// `(relative path, bytes)` pairs ready to write under the local target.
 type SourceFiles = Vec<(PathBuf, Vec<u8>)>;
 
+/// What one kept item stores: its files, ready to write under the local
+/// target, the reading its links were stored in, the catalog tables an
+/// agent's rendering depended on, and what the link conversion reports.
+pub(super) struct SourceForm {
+    pub(super) files: SourceFiles,
+    pub(super) links: Option<SkillLinks>,
+    pub(super) carry: Option<AgentCarry>,
+    pub(super) warnings: Vec<ItemWarning>,
+}
+
 /// One item's source-form files, read through the sealed catalog at the commit
 /// it was installed from: the skill's tree, or the single file the other kinds
-/// keep. `(relative path, bytes)`, ready to write under the local target —
-/// plus, for an agent, the catalog tables its rendering depended on.
+/// keep. A skill's links are converted into the local source's shared-tree
+/// reading while the catalog still says where they were read from.
 pub(super) fn source_form(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
+    lock: &crate::lock::Lock,
     item: &ClosureItem,
     commit: Option<&str>,
     in_scope: &crate::engine::ScopeSkills,
-) -> Result<(SourceFiles, Option<AgentCarry>)> {
+) -> Result<SourceForm> {
     let resolved =
         crate::source::require_ready_at(env, scope, &item.decl.source, manifest, commit)?;
     let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
@@ -53,13 +66,18 @@ pub(super) fn source_form(
                         .then(|| parent.to_path_buf())
                 })
                 .collect();
-            Ok((
-                files
-                    .into_iter()
-                    .filter(|(rel, _)| !nested.iter().any(|dir| rel.starts_with(dir)))
-                    .collect(),
-                None,
-            ))
+            let files: SourceFiles = files
+                .into_iter()
+                .filter(|(rel, _)| !nested.iter().any(|dir| rel.starts_with(dir)))
+                .collect();
+            let (files, links, warnings) =
+                stored_links(env, scope, manifest, lock, item, &path, &sealed, files);
+            Ok(SourceForm {
+                files,
+                links,
+                carry: None,
+                warnings,
+            })
         }
         _ => {
             let bytes = sealed.read(&path)?;
@@ -71,7 +89,99 @@ pub(super) fn source_form(
                 .file_name()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(&item.name));
-            Ok((vec![(file, bytes)], carry))
+            Ok(SourceForm {
+                files: vec![(file, bytes)],
+                links: None,
+                carry,
+                warnings: Vec::new(),
+            })
+        }
+    }
+}
+
+/// A kept skill's files in the reading the local source stores them in.
+///
+/// A path catalog's links are read from the item directory. A fetched
+/// catalog's bytes were delivered as they are, so each place they were
+/// delivered to read them from there: where those places agree the tree is
+/// converted, and where they disagree, or nothing records them, the bytes
+/// are kept untagged so every place keeps reading what it was delivered.
+#[allow(clippy::too_many_arguments)]
+fn stored_links(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &crate::lock::Lock,
+    item: &ClosureItem,
+    path: &std::path::Path,
+    sealed: &crate::source_read::SealedSource,
+    files: SourceFiles,
+) -> (SourceFiles, Option<SkillLinks>, Vec<ItemWarning>) {
+    let destination = links::shared_tree(env, scope, &item.name);
+    let converted = match links::declared(
+        env,
+        scope,
+        manifest,
+        (&item.decl).into(),
+        &item.name,
+        path,
+        sealed,
+    ) {
+        links::Reading::Fixed { position, siblings } => {
+            let (files, kept) = links::convert(
+                links::Origin::new(position, files, siblings, Vec::new()),
+                &destination,
+            );
+            let warnings = kept
+                .iter()
+                .map(|link| links::kept_warning(&item.name, link))
+                .collect();
+            return (files, Some(SkillLinks::SharedTree), warnings);
+        }
+        links::Reading::Opaque => {
+            let mut origins = links::delivered(env, scope, lock, item.kind, &item.name)
+                .into_iter()
+                .map(|position| {
+                    links::Origin::new(
+                        position,
+                        files.clone(),
+                        links::Siblings::SkillsDirectory,
+                        Vec::new(),
+                    )
+                });
+            match origins.next() {
+                Some(first) => links::agreed(first, origins, &destination),
+                None => return (files, None, Vec::new()),
+            }
+        }
+        // A catalog subscription is never the local store itself.
+        links::Reading::AsDelivered => return (files, None, Vec::new()),
+    };
+    match converted {
+        links::Converted::Agreed { files, kept } => {
+            let warnings = kept
+                .iter()
+                .map(|link| links::kept_warning(&item.name, link))
+                .collect();
+            (files, Some(SkillLinks::SharedTree), warnings)
+        }
+        links::Converted::Disagree { positions } => {
+            let warning = ItemWarning {
+                kind: ItemKind::Skill,
+                name: item.name.clone(),
+                harness: None,
+                message: "Kept as delivered, because its installed copies read its links differently; each copy keeps reading what it read before".to_owned(),
+                remediation: None,
+                detail: Some(format!(
+                    "skill-links-delivered-apart: {}",
+                    positions
+                        .iter()
+                        .map(|position| position.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            };
+            (files, None, vec![warning])
         }
     }
 }

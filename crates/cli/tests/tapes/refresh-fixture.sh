@@ -17,7 +17,7 @@ project() { # NAME
   local project="$home/dev/$1"
   mkdir -p "$project"
   cat >"$project/kendex.toml" <<TOML
-schema = 7
+schema = 8
 
 [sources.cat]
 path = "$catalog"

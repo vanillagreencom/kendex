@@ -253,10 +253,33 @@ pub struct ItemWarning {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remediation: Option<String>,
     /// The technical cause, verbatim: the failed command and what it
-    /// printed. `message` says what it means to a person; this is for
-    /// `--verbose` and `--json`.
+    /// printed, or the keyed diagnostic line a reader tells the warning
+    /// apart by. `message` says what it means to a person. The terminal
+    /// prints this line beneath the warning and its fix, if any; a
+    /// model-resolution warning prints this line alone, once per run. An
+    /// updates listing shows it beneath the warning with `--verbose`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+/// A writer's plan with what its link conversion kept: the links whose
+/// bytes it wrote as they were because no spelling from the destination
+/// reaches their targets inside its bound. The plan is what a caller
+/// previews and executes, so the type reads as one; the warnings are the
+/// writer's own report, which only it can give and every caller delivers
+/// beside the execution.
+#[derive(Debug)]
+pub struct WritePlan {
+    pub plan: Plan,
+    pub warnings: Vec<ItemWarning>,
+}
+
+impl std::ops::Deref for WritePlan {
+    type Target = Plan;
+
+    fn deref(&self) -> &Plan {
+        &self.plan
+    }
 }
 
 /// Whether the pass could account for the full declared installation set.
@@ -471,6 +494,10 @@ pub struct EngineReport {
     /// or required by another package. A package every tool refused is
     /// in it; one its catalog retired is not.
     pub wanted: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
+    /// Members a declared set carries that its catalog does not offer, by
+    /// kind and name, each with the set that carries it. Asked for and not
+    /// installable, so not in `wanted`; each has its warning in `warnings`.
+    pub unoffered: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
     /// What the request behind this pass asked for.
     pub asked: Asked,
     /// What a disowning removal changes in kendex.toml: `Some` exactly
@@ -654,6 +681,7 @@ impl EngineReport {
             registrations: Registrations::default(),
             installations: BTreeMap::new(),
             wanted: BTreeMap::new(),
+            unoffered: BTreeMap::new(),
             stood_in: StoodInRecord::default(),
             record: Lock::default(),
             held: Vec::new(),
@@ -715,6 +743,30 @@ impl EngineReport {
             Asked::Named(named) => named,
         };
         named_requirements(&self.wanted, named)
+    }
+
+    /// Every package this pass's request reaches, whether it installs or
+    /// not: [`EngineReport::asked_for`], each member a set it asked for
+    /// carries that the set's catalog does not offer
+    /// ([`EngineReport::unoffered`]), and under [`Asked::Named`] each item
+    /// it names, whatever that item's standing, so one its catalog retired
+    /// keeps its notice. What an operation reports as its own result. A
+    /// member the person took out of a set is in none of these, and
+    /// neither is a set member or requirement its catalog retired, nor
+    /// under [`Asked::Declared`] any package its catalog retired.
+    pub fn requested(&self) -> BTreeSet<(ItemKind, String)> {
+        let mut requested = self.asked_for();
+        match &self.asked {
+            Asked::Declared => requested.extend(self.unoffered.keys().cloned()),
+            Asked::Named(named) => {
+                requested.extend(named_requirements(&self.unoffered, named));
+                requested.extend(named.iter().filter_map(|held| match held {
+                    Held::Item { kind, name } => Some((*kind, name.clone())),
+                    Held::Set { .. } => None,
+                }));
+            }
+        }
+        requested
     }
 
     /// What the plan says of an item it writes on no tool and withholds

@@ -55,7 +55,7 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"opencode\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"opencode\"]\nmethod = \"symlink\"\n\n{declarations}",
             source_path(&source)
         ),
     )
@@ -185,7 +185,7 @@ fn a_global_server_lands_in_the_global_config_with_the_schema_line() {
     fs::write(
         &manifest,
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"opencode\"]\nmethod = \"symlink\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"opencode\"]\nmethod = \"symlink\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
             source_path(&f.source)
         ),
     )

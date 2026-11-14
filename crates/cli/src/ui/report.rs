@@ -408,19 +408,28 @@ pub fn warning(text: &str) {
     print(Status::Decision, |style| style.warning_block(text));
 }
 
-/// Whether a render warning describes the model substitution for the run,
-/// rather than a problem with one installed agent.
-pub fn is_run_model_warning(text: &str) -> bool {
-    text.starts_with(kendex_core::harness::models::MODEL_WARNING_PREFIX)
+/// The protocol line of a render warning that describes the model
+/// substitution for the run, rather than a problem with one installed
+/// agent. The line is the warning's detail; its message is the person's.
+fn run_model_line(warning: &kendex_core::engine::ItemWarning) -> Option<&str> {
+    warning
+        .detail
+        .as_deref()
+        .filter(|line| line.starts_with(kendex_core::harness::models::MODEL_WARNING_PREFIX))
+}
+
+/// Whether a render warning describes the model substitution for the run.
+pub fn is_run_model_warning(warning: &kendex_core::engine::ItemWarning) -> bool {
+    run_model_line(warning).is_some()
 }
 
 /// Print the model substitution once at delivery. Silent previews and
 /// repeated compact/verbose drawings must not consume this notice.
 /// The notice stays one protocol line in both output modes.
-pub fn run_model_warning(text: &str) {
-    if is_run_model_warning(text) {
+pub fn run_model_warning(warning: &kendex_core::engine::ItemWarning) {
+    if let Some(line) = run_model_line(warning) {
         static WARNING: std::sync::Once = std::sync::Once::new();
-        WARNING.call_once(|| super::stderr(&[escaped(text)]));
+        WARNING.call_once(|| super::stderr(&[escaped(line)]));
     }
 }
 

@@ -182,11 +182,18 @@ fn run_unsubscribe(
         // Its re-sync is a second transaction, which can fail with the
         // first one already on disk.
         (_, true) => {
-            let plan = detach::source(env, &scope, name)?;
-            kendex_core::apply::execute(env, &plan)?;
+            let kept = detach::source(env, &scope, name)?;
+            kendex_core::apply::execute(env, &kept)?;
+            ui::stderr(&super::engine_common::warning_lines(&style, &kept.warnings));
             detach::resync_kept(env, &scope)
                 .map_err(Into::into)
-                .and_then(|resync| apply_report_accounted(env, &resync, None))
+                .and_then(|resync| {
+                    ui::stderr(&super::engine_common::warning_lines(
+                        &style,
+                        &detach::kept_resync_warnings(&closure, &resync),
+                    ));
+                    apply_report_accounted(env, &resync, None)
+                })
                 .and_then(|wrote| wrote.after.map_err(AfterFailed::into_error))
         }
         (_, false) => {

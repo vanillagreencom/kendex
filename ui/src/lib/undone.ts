@@ -1,6 +1,7 @@
 // The lines a write's answer accounts for, and why that account is short.
 // They are Rust's; this side only puts them on the screen.
 import { toast } from "sonner";
+import type { ItemWarning } from "@/bindings";
 import { UNFINISHED_STEP, unfinishedTitle } from "@/lib/copy";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useProblemsStore } from "@/stores/problems";
@@ -38,6 +39,19 @@ export function sayUnfinished(
  *  names the manual remedy. */
 export function sayUndone(undone: string[] | undefined) {
   for (const line of undone ?? []) toast.message(line);
+}
+
+/** Say what a write reported about itself: the links an adopt, a fork or a
+ *  template save kept as written, each with its fix. Only the write can say
+ *  them, since the files read the same afterwards whether a link was
+ *  converted or kept, so a toast carries them and nothing keeps them.
+ *  Absent, it says nothing. */
+export function sayWritten(written: ItemWarning[] | undefined): void {
+  for (const warning of written ?? []) {
+    toast.message(`${warning.name}: ${warning.message}`, {
+      description: warning.remediation ?? undefined,
+    });
+  }
 }
 
 /** The lines of `value`, or nothing if it is not a list of them. */

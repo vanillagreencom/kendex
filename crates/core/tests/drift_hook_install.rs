@@ -65,7 +65,7 @@ fn declare_on(w: &World, source_extra: &str, tools: &str, body: &str) {
     fs::write(
         &path,
         format!(
-            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = {tools}\nmethod = \"symlink\"\n\n{body}"
+            "schema = 8\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = {tools}\nmethod = \"symlink\"\n\n{body}"
         ),
     )
     .unwrap();

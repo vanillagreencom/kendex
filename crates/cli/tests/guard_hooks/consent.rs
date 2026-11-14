@@ -149,7 +149,7 @@ fn check_runs_nothing_where_no_project_declared_the_package() {
     let tmp = spaced_fixture();
     let home = &rooted(&tmp);
     let root = repo(home);
-    std::fs::write(root.join("kendex.toml"), "schema = 7\n").unwrap();
+    std::fs::write(root.join("kendex.toml"), "schema = 8\n").unwrap();
     install_package_undeclared(&root, &["commit-guards"]);
     arm_by_hand(&root);
     assert!(

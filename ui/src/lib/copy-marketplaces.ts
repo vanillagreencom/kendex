@@ -1,5 +1,5 @@
 import type { Scope } from "@/bindings";
-import { CHECK_FOR_UPDATES_LABEL } from "@/lib/copy";
+import { CHECK_FOR_UPDATES_LABEL, unknownCompletionTitle } from "@/lib/copy";
 import { listed } from "@/lib/listed";
 import { placeWord } from "@/lib/place-word";
 // Marketplaces copy: the Subscribed tab's read states and Home's tile
@@ -276,6 +276,19 @@ export const editedOnDiskLine = (packages: string): string =>
   `Files edited on disk: ${packages}.`;
 export const UNSUBSCRIBE_EDITED_NEXT =
   "Before you unsubscribe, keep each edited package as your own copy or discard its edits. Open it in My Library to choose.";
+// The keep landed and the install of the kept copies behind it did not.
+// One error dialog says both halves, the half that failed as its title and
+// the half that stands as its step, as an install beside does
+// (`besideNotInstalledTitle`). Both name the marketplace as the unsubscribe
+// dialog does, never by the alias the engine is sent.
+export const keptNotInstalledTitle = (marketplace: string): string =>
+  `Your copies of the packages from ${marketplace} didn't install`;
+export const keptRecordedStep = (marketplace: string): string =>
+  `You are unsubscribed from ${marketplace}, and My Library lists its packages under Your own. The page shows what is on disk now.`;
+// An unsubscribe whose answer never came back, said as any write is whose
+// completion is unknown, and titled by the marketplace's name.
+export const unsubscribeUnknownTitle = (marketplace: string): string =>
+  unknownCompletionTitle(`unsubscribing from ${marketplace}`);
 
 // The Community tab's two directories.
 export const DIRECTORY_CHECK_AGAIN_LABEL = "Check kendex.ai again";
@@ -302,6 +315,7 @@ export const IMPORT_HELP =
 export const IMPORT_READING = "Finding packages on this computer…";
 export const IMPORT_NOTHING =
   "No packages to import. Install or create a package first.";
+export const IMPORT_LINKS_KEPT = "Links to check";
 const licenseOrNone = (license: string | null): string =>
   license ? license : "no license found";
 export const fromMarketplaceLabel = (

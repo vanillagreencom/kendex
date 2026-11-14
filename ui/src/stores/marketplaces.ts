@@ -6,6 +6,13 @@ import {
   type MarketplaceRow,
   type Scope,
 } from "@/bindings";
+import { UNKNOWN_COMPLETION_STEP } from "@/lib/copy";
+import {
+  keptNotInstalledTitle,
+  keptRecordedStep,
+  unsubscribeUnknownTitle,
+} from "@/lib/copy-marketplaces";
+import { landingStop } from "@/lib/landing-stopped";
 import {
   READ_PENDING,
   type ReadState,
@@ -13,8 +20,8 @@ import {
   readOrder,
 } from "@/lib/read-state";
 import { writingRepo } from "@/lib/rescan";
-import { settled } from "@/lib/settled";
-import { saying, sayUndone } from "@/lib/undone";
+import { NO_REASON_GIVEN, settled } from "@/lib/settled";
+import { saying, sayUndone, sayWritten } from "@/lib/undone";
 import { catalogReads } from "./marketplaces-catalog-reads";
 import { type InstallActions, installActions } from "./marketplaces-install";
 import {
@@ -24,6 +31,7 @@ import {
   subscription,
 } from "./marketplaces-shared";
 import { sourceActions } from "./marketplaces-sources";
+import { useProblemsStore } from "./problems";
 
 export {
   bundleKey,
@@ -95,9 +103,13 @@ interface MarketplacesState extends InstallActions, CatalogCaches {
    * the app, and it needs a subscription to ask about — so this makes one
    * and hands it over, and the reader still answers where the packages go. */
   subscribeForInstall: (repo: string) => Promise<Catalog | null>;
+  /** Unsubscribe `scope` from `source`, the alias the engine addresses.
+   *  `name` is what the page titles the marketplace, which the failures
+   *  this says are titled by. */
   unsubscribe: (
     scope: Scope,
     source: string,
+    name: string,
     keep: boolean,
     discardEdits: boolean,
   ) => Promise<UnsubscribeOutcome>;
@@ -204,7 +216,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     return subscription(scope, outcome.name);
   },
 
-  unsubscribe: (scope, source, keep, discardEdits) =>
+  unsubscribe: (scope, source, name, keep, discardEdits) =>
     writingRepo(
       async () => {
         let response: Awaited<
@@ -221,16 +233,54 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
           set({ busy: false });
         }
         if (response.status === "error") {
-          set({ error: response.error });
-          return { error: response.error };
+          const stop = landingStop(response.error);
+          switch (stop.phase) {
+            case "refused":
+              set({ error: stop.message });
+              return { error: stop.message };
+            case "recorded":
+              // The keep landed and the install behind it did not, so the
+              // subscription is gone and the packages are the person's own:
+              // the dialog closes, the error dialog says what did not
+              // install, and the rows are read again below like any landing.
+              set({ error: null });
+              useProblemsStore.getState().showError({
+                title: keptNotInstalledTitle(name),
+                message: stop.message === "" ? NO_REASON_GIVEN : stop.message,
+                steps: [keptRecordedStep(name)],
+              });
+              sayWritten(stop.written);
+              break;
+            case "unknown":
+              // The call failed on its way, so the unsubscribe may have
+              // landed. Held open as a refusal, the dialog would invite
+              // asking again over a subscription already gone: it closes,
+              // the error dialog says nothing is known, and the rows are
+              // read again below.
+              set({ error: null });
+              useProblemsStore.getState().showError({
+                title: unsubscribeUnknownTitle(name),
+                message: stop.message,
+                steps: [UNKNOWN_COMPLETION_STEP],
+              });
+              break;
+            default: {
+              const unread: never = stop;
+              throw new Error(
+                `unsubscribe: unread stop ${JSON.stringify(unread)}`,
+              );
+            }
+          }
+        } else {
+          set({ error: null });
+          toast.success(
+            keep
+              ? `Unsubscribed from '${source}'. Its packages stay installed as your own copies`
+              : `Unsubscribed from '${source}'`,
+          );
+          saying(response);
+          sayWritten(response.data.warnings);
         }
-        set({ error: null });
-        toast.success(
-          keep
-            ? `Unsubscribed from '${source}'. Its packages stay installed as your own copies`
-            : `Unsubscribed from '${source}'`,
-        );
-        saying(response);
         // A page carried on as this subscription must stop pointing at it, and
         // every other derived read goes with it.
         dropCatalogCaches(set);

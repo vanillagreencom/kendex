@@ -1,4 +1,4 @@
-schema = 7
+schema = 8
 
 [install]
 harnesses = ["claude", "pi"]

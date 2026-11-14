@@ -7,6 +7,7 @@ use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
 mod keys;
+pub(crate) mod links;
 mod rendered;
 pub(crate) use keys::{KeysUnreadable, dropped_metadata, installed_keys};
 pub(crate) use rendered::with_name;
@@ -80,22 +81,6 @@ fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
 pub enum SkillText {
     Exact,
     Repaired,
-}
-
-/// The rendered skill: every file of the source tree but the top-level
-/// entries no consumer reads ([`crate::source_read::NOT_RENDERED`]) — read through the
-/// sealed source, so a hostile catalog cannot smuggle host files in — with
-/// `[skill-instructions]` injected into SKILL.md. Returned as
-/// (relative path, bytes) so apply can materialize it transactionally,
-/// with how SKILL.md read as text beside it.
-pub fn render_skill(
-    sealed: &SealedSource,
-    source_dir: &Path,
-    manifest: &Manifest,
-    name: &str,
-) -> Result<(Rendered, SkillText)> {
-    let instructions = skill_instructions(manifest, name);
-    with_instructions(sealed, source_dir, instructions.as_deref())
 }
 
 /// Shared skill directories must fit older Codex loaders too. Only the
@@ -208,7 +193,7 @@ pub(crate) fn authored_form(
 /// The tree with SKILL.md's text rewritten by `rewrite`, every other file
 /// as it is; a SKILL.md that is not text is left as it is, for the
 /// validators to name.
-fn with_skill_text(mut files: Files, rewrite: impl Fn(&str) -> String) -> Files {
+pub(crate) fn with_skill_text(mut files: Files, rewrite: impl Fn(&str) -> String) -> Files {
     for (rel, bytes) in &mut files {
         if rel == Path::new(SKILL_FILE)
             && let Ok(text) = std::str::from_utf8(bytes)
@@ -238,7 +223,12 @@ pub fn render_authored(sealed: &SealedSource, source_dir: &Path) -> Result<Files
     Ok(with_instructions(sealed, source_dir, None)?.0.into_files())
 }
 
-fn with_instructions(
+/// The rendered skill: every file of the source tree but the top-level
+/// entries no consumer reads ([`crate::source_read::NOT_RENDERED`]) — read
+/// through the sealed source, so a hostile catalog cannot smuggle host files
+/// in — with `instructions` injected into SKILL.md, and how SKILL.md read as
+/// text beside it.
+pub(crate) fn with_instructions(
     sealed: &SealedSource,
     source_dir: &Path,
     instructions: Option<&str>,
@@ -365,7 +355,12 @@ mod tests {
                     + &body;
                 std::fs::write(src.join(SKILL_FILE), &text).unwrap();
                 let sealed = SealedSource::open(&root).unwrap();
-                let (source, _) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+                let (source, _) = with_instructions(
+                    &sealed,
+                    &src,
+                    skill_instructions(&manifest, "github").as_deref(),
+                )
+                .unwrap();
                 let rendered = Rendered::new(vec![(
                     PathBuf::from(SKILL_FILE),
                     bounded_description(std::str::from_utf8(&source.files()[0].1).unwrap())
@@ -497,7 +492,12 @@ mod tests {
 
         let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
         let src = sealed.root().join("github");
-        let (rendered, read_as) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+        let (rendered, read_as) = with_instructions(
+            &sealed,
+            &src,
+            skill_instructions(&manifest, "github").as_deref(),
+        )
+        .unwrap();
         assert_eq!(read_as, SkillText::Exact);
         assert_eq!(rendered.files().len(), 2);
         let skill_md = rendered

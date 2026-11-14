@@ -199,6 +199,7 @@ pub(super) fn shared_capture_ops(
     name: &str,
     shared: &SharedTarget,
     local_item: &Path,
+    conversion: Option<&super::Conversion>,
 ) -> Result<Vec<PlannedOp>> {
     let mut ops = Vec::new();
     if local_item.exists() {
@@ -218,7 +219,10 @@ pub(super) fn shared_capture_ops(
             .into(),
         op: Op::WriteTree {
             root: local_item.to_path_buf(),
-            files: crate::capture::read_tree(&shared.target)?,
+            files: match conversion {
+                Some(conversion) => conversion.files.clone(),
+                None => crate::capture::read_tree(&shared.target)?,
+            },
             pre: Pre::Absent,
         },
     });

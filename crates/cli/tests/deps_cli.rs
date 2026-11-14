@@ -227,7 +227,7 @@ fn a_consumer_agent_source_wins_and_stays_after_the_skill_leaves() {
     fs::write(project.join("agents/operator.md"),
         "---\nname: operator\ndescription: follows the consumer\n---\nFollow the consumer instructions.\n").unwrap();
     fs::write(project.join("kendex.toml"),
-        "schema = 7\n[sources.consumer]\npath = \".\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[agents.operator]\nsource = \"consumer\"\n").unwrap();
+        "schema = 8\n[sources.consumer]\npath = \".\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[agents.operator]\nsource = \"consumer\"\n").unwrap();
     skill(&home, "team", "dependencies:\n  agents: [operator]\n");
     agent(&home, "operator");
     let catalog = home.join("catalog");
@@ -429,7 +429,7 @@ fn all_scopes_are_checked_for_consent_before_the_first_write() {
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         manifest,
-        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
+        "schema = 8\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
     )
     .unwrap();
     let package = home.join("catalog/pi-extensions/pi-widgets");

@@ -17,12 +17,31 @@ use crate::error::{CoreError, Result};
 const MAX_CAPTURE_FILES: usize = 2000;
 const MAX_CAPTURE_BYTES: u64 = 100 * 1024 * 1024;
 
-pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+/// A captured tree: `(relative path, bytes)` per regular file.
+type Tree = Vec<(PathBuf, Vec<u8>)>;
+
+pub(crate) fn read_tree(root: &Path) -> Result<Tree> {
+    read(root, None)
+}
+
+/// The regular files of a tree a move carries whole, and the links inside
+/// it as `(relative path, target it holds)`, which the move carries as they
+/// are and no reader follows.
+pub(crate) fn read_tree_beside_links(root: &Path) -> Result<(Tree, Vec<(PathBuf, PathBuf)>)> {
+    let mut links = Vec::new();
+    let files = read(root, Some(&mut links))?;
+    Ok((files, links))
+}
+
+type Links = Vec<(PathBuf, PathBuf)>;
+
+fn read(root: &Path, mut links: Option<&mut Links>) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     fn walk(
         dir: &Path,
         rel: &Path,
         files: &mut Vec<(PathBuf, Vec<u8>)>,
         bytes: &mut u64,
+        links: &mut Option<&mut Links>,
     ) -> Result<()> {
         for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
             // A per-entry read error is not silently skipped: dropping it
@@ -39,13 +58,18 @@ pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
             // than silently drop it (and then trash the original), refuse —
             // nothing the user asked to keep is lost without a word.
             if path.is_symlink() {
+                if let Some(links) = links.as_deref_mut() {
+                    let target = fs::read_link(&path).map_err(|e| CoreError::io(&path, e))?;
+                    links.push((rel, target));
+                    continue;
+                }
                 return Err(CoreError::ForeignSymlink {
                     points_to: fs::read_link(&path).unwrap_or_default(),
                     target: path,
                 });
             }
             if path.is_dir() {
-                walk(&path, &rel, files, bytes)?;
+                walk(&path, &rel, files, bytes, links)?;
                 continue;
             }
             // A FIFO would block the read forever and a device is not
@@ -87,7 +111,7 @@ pub(crate) fn read_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     }
     let mut files = Vec::new();
     let mut bytes = 0;
-    walk(root, Path::new(""), &mut files, &mut bytes)?;
+    walk(root, Path::new(""), &mut files, &mut bytes, &mut links)?;
     Ok(files)
 }
 

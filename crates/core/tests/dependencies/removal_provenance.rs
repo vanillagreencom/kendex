@@ -825,7 +825,7 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
             fs::write(
                 f.project.join("kendex.toml"),
                 format!(
-                    "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[{section}.{name}]\nsource = \"other\"\n",
+                    "schema = 8\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[{section}.{name}]\nsource = \"other\"\n",
                     source_path(&f.source),
                     source_path(&other),
                     harness.name()
@@ -1184,7 +1184,7 @@ fn leaf_held_by_an_unread_source(mid_edited: bool) -> Fixture {
     fs::write(
         f.project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[skills.leaf]\nsource = \"other\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[skills.leaf]\nsource = \"other\"\n",
             source_path(&f.source),
             source_path(&other)
         ),
@@ -1792,7 +1792,7 @@ fn guards_held_by_an_unread_source() -> Fixture {
     fs::write(
         f.project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n{SET}\n[skills.guards]\nsource = \"other\"\nharnesses = [\"codex\"]\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n{SET}\n[skills.guards]\nsource = \"other\"\nharnesses = [\"codex\"]\n",
             source_path(&f.source),
             source_path(&other)
         ),
@@ -2286,7 +2286,7 @@ fn github_held_by_an_unread_source() -> Fixture {
     fs::write(
         f.project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"other\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"other\"\n",
             source_path(&f.source),
             source_path(&other)
         ),

@@ -143,7 +143,7 @@ pub use report_types::{
     Asked, DeclarationStatus, Disowned, DriftCause, DriftRow, DriftState, DroppedDeclaration,
     EngineReport, ExcludedHook, ForkEdit, Held, HeldPin, Installation, ItemWarning, PiUnsettled,
     Pin, PinnedHook, PlanOptions, Reach, Registrations, RetiredStanding, RowRemedy, StoodIn,
-    StoodInRecord, Targets,
+    StoodInRecord, Targets, WritePlan,
 };
 
 pub(super) struct PlanOwnership {
@@ -515,6 +515,7 @@ fn report(
         scope_errors,
         installations,
         wanted,
+        unoffered: state.unoffered,
         stood_in: readings.stood_in(lock),
         record: new_lock,
         held,

@@ -19,6 +19,9 @@ pub(crate) use blocks::{Block, code_by_line};
 pub struct RenderWarning {
     pub message: String,
     pub remediation: Option<String>,
+    /// The diagnostic line a terminal reader keys on, as
+    /// [`crate::engine::ItemWarning::detail`] carries it.
+    pub detail: Option<String>,
 }
 
 impl RenderWarning {
@@ -26,6 +29,7 @@ impl RenderWarning {
         RenderWarning {
             message: message.into(),
             remediation: None,
+            detail: None,
         }
     }
 
@@ -33,6 +37,14 @@ impl RenderWarning {
         RenderWarning {
             message: message.into(),
             remediation: Some(remediation.into()),
+            detail: None,
+        }
+    }
+
+    pub fn with_detail(self, detail: impl Into<String>) -> RenderWarning {
+        RenderWarning {
+            detail: Some(detail.into()),
+            ..self
         }
     }
 }
