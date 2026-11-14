@@ -1314,9 +1314,23 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
     Ok(json!({"event":"report-written","path":target,"notice_id":notice,"body":body}))
 }
 
+/// The due line the row holds and the epoch second it was last posted at.
+fn held(value: &str) -> Option<(&str, u64)> {
+    let (line, at) = value.rsplit_once(" posted=")?;
+    Some((line, clock::epoch_secs(at)?))
+}
+
 fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     let line = due(ctx, tick.wall, None)?;
     let prior = tick.baseline.get(DUE_ROW, FLEET);
+    // A due no sent report answers is posted again each interval: a
+    // controller that missed one post is told at the next.
+    let every = Policy::of(&ctx.settings)?.minutes.saturating_mul(60);
+    let standing = |line: &str| {
+        prior.and_then(held).is_some_and(|(held, at)| {
+            held == line && (every == 0 || tick.wall.saturating_sub(at) < every)
+        })
+    };
     let mut produced = Produced::default();
     match line {
         None => {
@@ -1327,7 +1341,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                 });
             }
         }
-        Some(line) if prior == Some(line.as_str()) => {}
+        Some(line) if standing(&line) => {}
         Some(line) => {
             produced
                 .events
@@ -1346,7 +1360,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
             produced.changes.push(Change::Set {
                 kind: DUE_ROW.to_owned(),
                 identity: FLEET.to_owned(),
-                value: line,
+                value: format!("{line} posted={}", clock::iso_utc(tick.wall)),
             });
         }
     }

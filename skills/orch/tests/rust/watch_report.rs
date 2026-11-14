@@ -2,7 +2,8 @@
 //! `verifying` lines and `verifying-deadline` events on the recorded watch's
 //! own fixtures, recorded once; a deadline
 //! row that moves only after its event line is durable; `report-due` once
-//! per due with its reason and `report-unjudged` on a bad answer; both
+//! per due and again each interval it stands, with its reason, and
+//! `report-unjudged` on a bad answer; both
 //! duties indifferent to the controller's state; the heartbeat's body under
 //! busy mail, carrying the capacity line and moving no due time, and saying
 //! `unread` for every list no duty has read; and retention judging each
@@ -670,7 +671,10 @@ fn report_due_prints_once_and_file_cadence_clears_it_without_a_script_answer() {
     let mut want = vec![format!("EVENT {due}")];
     want.extend(REPORT_BODY.iter().map(|l| (*l).to_owned()));
     assert_eq!(rendered(&produced), want);
-    assert_eq!(baseline.get("report-due", "fleet"), Some(due));
+    assert_eq!(
+        baseline.get("report-due", "fleet"),
+        Some(format!("{due} posted=2026-10-02T00:00:01Z").as_str())
+    );
     let again = pass(Duty::Report, &mut body, &mut baseline, &clock, now + 240).unwrap();
     assert!(again.events.is_empty());
     let dir = &world.settings.store.progress_report_dir;
@@ -685,6 +689,40 @@ fn report_due_prints_once_and_file_cadence_clears_it_without_a_script_answer() {
     std::fs::create_dir_all(&mailbox).unwrap();
     std::fs::create_dir(mailbox.join("to-overseer.jsonl")).unwrap();
     assert!(pass(Duty::Report, &mut body, &mut baseline, &clock, now + 600).is_err());
+}
+
+/// A due that no sent report answers is told again: a controller that
+/// missed its post is not left silent until the next report. With the due
+/// standing on one `since`, the duty posts it, keeps quiet until a whole
+/// interval has passed since that post, posts it again at the interval with
+/// its span lines, and keeps quiet once more.
+#[test]
+fn a_standing_due_is_posted_again_each_interval_until_a_report_is_sent() {
+    let world = World::new();
+    world.write_fleet(&report_fleet(None));
+    let clock = FakeClock::new();
+    let now = epoch("2026-10-02T00:00:01Z");
+    let every = 120 * 60;
+    let mut ctx = world.report_context();
+    set_report(&mut ctx, report::MINUTES_KEY, "120");
+    let mut body = report::body(ctx);
+    let mut baseline = Baseline::default();
+    let mut want = vec!["EVENT report-due reason=minutes since=2026-09-20T00:00:00Z".to_owned()];
+    want.extend(REPORT_BODY.iter().map(|l| (*l).to_owned()));
+    let mut at =
+        |wall| rendered(&pass(Duty::Report, &mut body, &mut baseline, &clock, wall).unwrap());
+    assert_eq!(at(now), want, "the first post");
+    assert_eq!(
+        at(now + every - 1),
+        Vec::<String>::new(),
+        "not before the interval"
+    );
+    assert_eq!(at(now + every), want, "the second post, at the interval");
+    assert_eq!(
+        at(now + every + 60),
+        Vec::<String>::new(),
+        "quiet after the second post"
+    );
 }
 
 /// Neither verification nor the report waits on a controller. The same
@@ -2954,8 +2992,9 @@ fn ended_lane_world(world: &World, wall: u64) -> PathBuf {
 /// can still write or bind every other entry of the state directory, and a
 /// later pass keeps them once their item's record and row are gone. An
 /// ended lane and an expired item with no lane, each with its record past
-/// the retention, and every such entry ten days old: the two records and
-/// the row leave, and through a second pass everything else stands.
+/// the retention, and every such entry ten days old, among them the script
+/// the validation command names: the two records and the row leave, and
+/// through a second pass everything else stands.
 #[test]
 fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
     let world = World::new();
@@ -2966,7 +3005,13 @@ fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
     let expired = dir.join("workflow-state-KEN-5.json");
     std::fs::write(&expired, "{}\n").unwrap();
     set_modified(&expired, wall - 10 * 86_400);
+    let script = dir.join("validate-KEN-9.sh");
+    let settings = world.settings_with(&[(
+        "DEV_VALIDATE_CMD".to_owned(),
+        format!("bash {}", script.display()),
+    )]);
     let stays = [
+        script.clone(),
         dir.join("completion-summary-KEN-5.md"),
         dir.join("audit-KEN-5.json"),
         dir.join("lane-status-KEN-9.md"),
@@ -2990,7 +3035,7 @@ fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
             set_modified(at, wall - 10 * 86_400);
         }
     }
-    duty_pass(&world, &world.settings, &clock, wall);
+    duty_pass(&world, &settings, &clock, wall);
     assert!(!record.exists(), "the ended lane's record leaves");
     assert!(!expired.exists(), "the expired item's record leaves");
     assert!(
@@ -3004,7 +3049,7 @@ fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
     for path in &stays {
         assert!(path.exists(), "{} stands", path.display());
     }
-    duty_pass(&world, &world.settings, &clock, wall);
+    duty_pass(&world, &settings, &clock, wall);
     for path in &stays {
         assert!(path.exists(), "next pass: {} stands", path.display());
     }
