@@ -73,7 +73,7 @@ class Presence(unittest.TestCase):
                     started = subprocess.run([real_ps, "-o", "lstart=", "-p", str(process.pid)], check=True, text=True,
                                              capture_output=True, env=dict(os.environ, LC_ALL="C", TZ="UTC")).stdout
                     subprocess.run([str(root / ".agents/skills/orch/scripts/workflow-state"), "update", "oversee",
-                                    ".overseer.harness_pid = %s | .overseer.harness_start = %s"
+                                    ".controller.harness_pid = %s | .controller.harness_start = %s"
                                     % (json.dumps(str(process.pid)), json.dumps("lstart:" + started.strip()))],
                                    cwd=root, env=os.environ, check=True, capture_output=True)
         state = Harness()
@@ -179,11 +179,11 @@ class Presence(unittest.TestCase):
                 no_renew(epoch+480)
             state.write_text("idle")
             workflow = root / ".agents/skills/orch/scripts/workflow-state"
-            subprocess.run([str(workflow), "update", "oversee", '.overseer.session_id = null'],
+            subprocess.run([str(workflow), "update", "oversee", '.controller.session_id = null'],
                            cwd=root, env=os.environ, check=True, capture_output=True)
             self.assertFalse(watch.live(epoch+480))
             no_renew(epoch+480)
-            subprocess.run([str(workflow), "update", "oversee", '.overseer.session_id = "s1"'],
+            subprocess.run([str(workflow), "update", "oversee", '.controller.session_id = "s1"'],
                            cwd=root, env=os.environ, check=True, capture_output=True)
             def warnings():
                 # Delivered warnings leave the input log; the mailbox owns their receipts.

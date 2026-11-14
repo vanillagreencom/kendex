@@ -354,7 +354,7 @@ record_overseer() { # PANE SERVER [HOME] [START]
       harness_pid: $pid, harness_start: $started, server_socket: $socket}
      + (if $start == "none" then {} else {server_start: ($start | tonumber)} end)')"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
-    set oversee overseer "$record" >/dev/null)
+    set oversee controller "$record" >/dev/null)
 }
 
 # --- the overseer -----------------------------------------------------------

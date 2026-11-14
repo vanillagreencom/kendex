@@ -2959,7 +2959,7 @@ fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stal
         "state",
         "set",
         "--fleet",
-        "/overseer",
+        "/controller",
         &overseer.to_string(),
     ]);
     let bound = store.write_file("overseer.json", &overseer.to_string());
@@ -3000,7 +3000,13 @@ fn the_heal_fills_only_the_session_the_record_names_and_refuses_any_other() {
         let store = Store::new();
         store.init_fleet();
         let record = json!({"server": "7000", "pane": "%9", "harness": harness, "home": home, "session_id": session});
-        store.ok(&["state", "set", "--fleet", "/overseer", &record.to_string()]);
+        store.ok(&[
+            "state",
+            "set",
+            "--fleet",
+            "/controller",
+            &record.to_string(),
+        ]);
         let args = [
             "state",
             "heal",
@@ -3021,7 +3027,7 @@ fn the_heal_fills_only_the_session_the_record_names_and_refuses_any_other() {
         let row = format!("{harness}|{home}|{session}|{caller_home}|{caller_session}");
         if heals {
             store.ok(&args);
-            let after = &store.doc(&store.fleet_path())["overseer"];
+            let after = &store.doc(&store.fleet_path())["controller"];
             let home = if home.is_empty() { caller_home } else { home };
             assert_eq!(
                 [
@@ -3041,7 +3047,11 @@ fn the_heal_fills_only_the_session_the_record_names_and_refuses_any_other() {
         } else {
             let (key, _) = store.refused(&args);
             assert_eq!(key, "overseer-native-unbound", "{row}");
-            assert_eq!(store.doc(&store.fleet_path())["overseer"], record, "{row}");
+            assert_eq!(
+                store.doc(&store.fleet_path())["controller"],
+                record,
+                "{row}"
+            );
         }
     }
     let store = Store::new();
@@ -3068,7 +3078,7 @@ fn the_heal_fills_only_the_session_the_record_names_and_refuses_any_other() {
         "state",
         "set",
         "--fleet",
-        "/overseer",
+        "/controller",
         r#"{"server":"7000","pane":"%9","server_start":1}"#,
     ]);
     assert_eq!(heal("1790000000", "%9"), "overseer-native-unbound");
@@ -3077,7 +3087,7 @@ fn the_heal_fills_only_the_session_the_record_names_and_refuses_any_other() {
         "state",
         "set",
         "--fleet",
-        "/overseer",
+        "/controller",
         r#"{"server":"7000","pane":"%9"}"#,
     ]);
     assert_eq!(heal("soon", "%9"), "server-start-invalid");

@@ -103,7 +103,7 @@ class TaskContract(unittest.TestCase):
         ticks = Path("/proc", holder, "stat").read_text().rsplit(")", 1)[1].split()[19]
         fleet = self.root / "orch-state/workflow-state-oversee.json"
         fleet.parent.mkdir(parents=True)
-        fleet.write_text(json.dumps({"overseer": {
+        fleet.write_text(json.dumps({"controller": {
             "runtime": "tmux", "generation": 1, "server": server, "server_start": int(started), "server_socket": socket,
             "pane": pane, "harness": "claude", "account": str(self.root / "controller-account"), "harness_pid": holder,
             "harness_start": "ticks:" + ticks, "cwd": str(self.home), "seat": "jarvis"}}))

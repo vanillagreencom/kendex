@@ -420,7 +420,7 @@ fn controller(
         )
     });
     match written {
-        Ok(healed) => Binding::Bound(controller(healed["overseer"].clone())),
+        Ok(healed) => Binding::Bound(controller(healed["controller"].clone())),
         Err(e) => {
             let caller_key = format!("{} {}", key.server, key.pane);
             turn.note(&Said::RecordUnhealed(caller_key), &e.to_string());

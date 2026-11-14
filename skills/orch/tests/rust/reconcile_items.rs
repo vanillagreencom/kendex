@@ -1076,7 +1076,7 @@ fn repair_passes(mode: &str, agent_runtime: &std::path::Path) {
     // owner answer goes to; one with no server, so no tmux server is read.
     let mut record: Value =
         serde_json::from_str(include_str!("fixtures/workflow-state-oversee.json")).unwrap();
-    record["overseer"] = json!({"runtime": "tmux", "harness": "claude"});
+    record["controller"] = json!({"runtime": "tmux", "harness": "claude"});
     record["lanes"] = json!([]);
     let fleet = world.dir.path().join("tmp/workflow-state-oversee.json");
     fs::write(&fleet, record.to_string()).unwrap();

@@ -11,7 +11,7 @@ sk_bind "$ROOT"
 CH="$(sk_channel "$ROOT")"
 sk_poll "$ROOT"
 RECORD="$ROOT/tmp/workflow-state-oversee.json"
-generation() { jq -c ".overseer.generation = $1" "$RECORD" > "$SK_TMP/record" && mv -- "$SK_TMP/record" "$RECORD"; } # N
+generation() { jq -c ".controller.generation = $1" "$RECORD" > "$SK_TMP/record" && mv -- "$SK_TMP/record" "$RECORD"; } # N
 post() { sk_run -- post --root "$ROOT" --text "$1" ${2:+--thread "$2"}; sk_state ".messages.${CH}[-1].ts"; } # TEXT [THREAD]
 reply() { REPLY="$(sk_inject "$CH" U001 "$1" "$2")"; sk_event "$ROOT" "$CH" "$REPLY"; } # TEXT THREAD
 # The [author, ts] pairs of the delivered reply's parent.thread.
@@ -45,13 +45,13 @@ done
 # at the relay's own read of the record.
 generation '"x"'
 reply 'Unreadable reader.' "$ROOT_TS" 2>"$SK_TMP/refused.err"
-assert_eq "$RC=$(carried "$REPLY")=$(grep -c 'fleet record .overseer.generation' "$SK_TMP/refused.err")" "1==1" \
+assert_eq "$RC=$(carried "$REPLY")=$(grep -c 'fleet record .controller.generation' "$SK_TMP/refused.err")" "1==1" \
   "a record whose generation cannot be read refuses the delivery at the relay's read"
 
 # Controls plant defects in copies of the runtime, never in the checkout.
 sk_mutant reader relay.py 'raise Refusal\("lane-mail-failed", f"\{command\} \{\(proc[^\n]*' 'return 0'
 reply 'Read as zero.' "$ROOT_TS" 2>"$SK_TMP/refused.err"
-assert_eq "$RC=$(grep -c 'fleet record .overseer.generation' "$SK_TMP/refused.err")" "1=0" \
+assert_eq "$RC=$(grep -c 'fleet record .controller.generation' "$SK_TMP/refused.err")" "1=0" \
   "control: reading an unreadable generation as 0 leaves the refusal to lane-mail's own record read"
 sk_bin_reset
 generation 2

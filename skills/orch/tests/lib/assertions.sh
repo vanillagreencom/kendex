@@ -37,9 +37,9 @@ assertion_timing() { # RESULT NAME
 fixture_succession_handoff() { # STATE HANDOFF
   local state="$1" handoff="$2" generation
   [[ -f "$state" ]] || return 0
-  jq '.overseer.generation //= 1' "$state" > "$state.fixture" || return 1
+  jq '.controller.generation //= 1' "$state" > "$state.fixture" || return 1
   mv -- "$state.fixture" "$state" || return 1
-  generation="$(jq -er '.overseer.generation' "$state")" || return 1
+  generation="$(jq -er '.controller.generation' "$state")" || return 1
   mkdir -p -- "${handoff%/*}" || return 1
   printf 'Start here: 2026-10-01T00:00:00Z generation=%s\n' "$generation" > "$handoff"
 }

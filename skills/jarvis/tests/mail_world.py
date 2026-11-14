@@ -27,7 +27,7 @@ def make_project(path, overseer=True):
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "ORCH_", "KENDEX_"))}
         state = REPO / "skills/orch/scripts/workflow-state"
         subprocess.run([str(state), "init", "oversee"], cwd=path, env=clean, check=True, capture_output=True)
-        subprocess.run([str(state), "set", "oversee", "overseer", os.environ.get("MAIL_WORLD_OVERSEER") or json.dumps({"pane": "%1", "server": str(os.getpid())})],
+        subprocess.run([str(state), "set", "oversee", "controller", os.environ.get("MAIL_WORLD_OVERSEER") or json.dumps({"pane": "%1", "server": str(os.getpid())})],
                        cwd=path, env=clean, check=True, capture_output=True)
     return path
 

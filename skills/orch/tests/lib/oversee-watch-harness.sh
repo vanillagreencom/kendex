@@ -55,7 +55,7 @@ git -C "$TMP_ROOT/repo" config maintenance.auto false
 CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
   || { echo "oversee-watch harness: case repository root not found" >&2; exit 1; }
 mkdir -p "$CASE_REPO_ROOT/tmp"
-printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/workflow-state-oversee.json"
+printf '{"controller":{"server":"7000","pane":"%%0"}}\n' > "$CASE_REPO_ROOT/tmp/workflow-state-oversee.json"
 
 # gh stub, driven by files in $STUB_DIR:
 #   merged.json   body for `pr list --state merged` (default: []);

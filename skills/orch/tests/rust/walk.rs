@@ -159,7 +159,7 @@ impl World {
             "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []
         });
         if let Some(account) = overseer_account {
-            fleet["overseer"] = json!({"account": account});
+            fleet["controller"] = json!({"account": account});
         }
         std::fs::write(
             self.path().join(FLEET_FILE_NAME),

@@ -2255,7 +2255,7 @@ fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successo
     runner.transfer_started(&transfer_request(&server, runner.state_dir()));
     let intent = runner.wait_intent_settled("request-transfer:", secs(40));
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    assert_eq!(runner.fleet()["overseer"]["generation"], 4, "published");
+    assert_eq!(runner.fleet()["controller"]["generation"], 4, "published");
     assert_eq!(
         watch::claim::read(&paths).unwrap().unwrap(),
         claim_before,
@@ -2725,7 +2725,7 @@ fn a_watch_under_a_checkout_with_its_own_mailbox_alerts_and_asks_only_what_its_s
     let server = Owned::sleep();
     let now = agent_runtime::journal::Env::system().unwrap().iso();
     let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
-    fleet["overseer"] = json!({
+    fleet["controller"] = json!({
         "generation": 1, "server": server.pid(), "pane": "%1",
         "window": "overseer", "harness": "claude"
     });

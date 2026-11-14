@@ -2145,7 +2145,7 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     let (code, answer) = adopt(&pane.pane);
     assert_eq!(code, Some(0), "{answer}");
     assert_eq!(answer["result"], json!({"generation": 1, "healed": false}));
-    let overseer = fleet()["overseer"].clone();
+    let overseer = fleet()["controller"].clone();
     assert_eq!(overseer["pane"], pane.pane);
     assert_eq!(overseer["server"], pane.server_pid.to_string());
     assert_eq!(overseer["server_start"], pane.server_start);
@@ -2159,7 +2159,7 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     // The same pane again: healed, the generation kept.
     let (_, answer) = adopt(&pane.pane);
     assert_eq!(answer["result"]["healed"], true, "{answer}");
-    assert_eq!(fleet()["overseer"]["generation"], 1);
+    assert_eq!(fleet()["controller"]["generation"], 1);
     // A pane whose foreground is no harness.
     let idle = pane
         .tmux(&[
@@ -2181,7 +2181,7 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     let live = Held(Command::new("sleep").arg("600").spawn().unwrap());
     let identity = identity_reading(live.0.id());
     let mut doc = fleet();
-    doc["overseer"] = json!({
+    doc["controller"] = json!({
         "runtime": "tmux",
         "generation": 3,
         "server": pane.server_pid.to_string(),
@@ -2198,13 +2198,13 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     let (code, answer) = adopt(&pane.pane);
     assert_eq!(code, Some(1), "{answer}");
     assert_eq!(answer["refusal"]["key"], "overseer-live", "{answer}");
-    assert_eq!(fleet()["overseer"]["pane"], "%99", "nothing written");
+    assert_eq!(fleet()["controller"]["pane"], "%99", "nothing written");
     // That controller gone: adopted at the next generation.
     drop(live);
     let (code, answer) = adopt(&pane.pane);
     assert_eq!(code, Some(0), "{answer}");
     assert_eq!(answer["result"]["generation"], 4);
-    assert_eq!(fleet()["overseer"]["pane"], pane.pane);
+    assert_eq!(fleet()["controller"]["pane"], pane.pane);
 }
 
 /// The room a session inside a lane reads is its own `CODEX_HOME`'s, never

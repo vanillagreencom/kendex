@@ -92,7 +92,7 @@ plant_record() { # DIR OVERSEER|-
     audit_issues_created: [], pr_review_baseline: null,
     pr_comment_review: {iterations: 0, fixes: [], issues_created: [], skipped: []},
     post_pr_budgets: {review_wait: null, ci_fix: null}, post_pr_stop: null}
-    + (if $overseer == "-" then {} else {overseer: ($overseer | fromjson)} end)' > "$1/workflow-state-oversee.json"
+    + (if $overseer == "-" then {} else {controller: ($overseer | fromjson)} end)' > "$1/workflow-state-oversee.json"
 }
 checkout sender
 plant_record "$TMP_ROOT/sender/tmp" '{"window":"@1"}'
@@ -276,7 +276,7 @@ plant_record "$TMP_ROOT/sender/tmp" '{"window":"@1"}'
 record none
 printf '[env]\nORCH_STATE_DIR = "fleet-state"\n' > "$PEER/kendex.settings.toml"
 (cd "$PEER" && "$ORCH_RUNTIME" --no-private-env state init --fleet >/dev/null &&
-  "$ORCH_RUNTIME" --no-private-env state set --fleet /overseer "$(pane_record "$REAL_RUNNING")" >/dev/null) ||
+  "$ORCH_RUNTIME" --no-private-env state set --fleet /controller "$(pane_record "$REAL_RUNNING")" >/dev/null) ||
   { echo "lane-mail-peer-reader: the runtime wrote no record" >&2; exit 1; }
 send 'Runtime record.'
 assert_eq "$RC ${OUT%% id=*} lines=$LINES $(first_err)" \

@@ -4125,7 +4125,7 @@ fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
         })
     };
     let mut fleet = runner.fleet();
-    fleet["overseer"] = json!({"server_socket": controller.socket.display().to_string()});
+    fleet["controller"] = json!({"server_socket": controller.socket.display().to_string()});
     fleet["lanes"] = json!([
         record("KEN-2", "gh-2", json!({"pane": pane, "server": server.pid})),
         // A live process no socket answers for: its server cannot be told

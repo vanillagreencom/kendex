@@ -142,7 +142,7 @@ sk_new_root() {
   mkdir -p "$root/.agents/skills/mailbox"
   ln -sfn "$SK_ROOT/skills/mailbox/scripts" "$root/.agents/skills/mailbox/scripts"
   mkdir -p "$root/tmp"
-  printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$root/tmp/workflow-state-oversee.json"
+  printf '{"controller":{"server":"7000","pane":"%%0"}}\n' > "$root/tmp/workflow-state-oversee.json"
   # Ordinary Slack cases have a working tracker that matches none of their ids.
   # Tracker-link cases replace these keys or plant their own read failure.
   printf '{"urlKey":"workspace","keys":["FIXTURE"]}\n' > "$root/linear.json"

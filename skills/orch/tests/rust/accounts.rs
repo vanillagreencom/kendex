@@ -2212,7 +2212,7 @@ impl Producer {
         let path = self.path().join("state").join(FLEET_FILE_NAME);
         let mut fleet: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        fleet["overseer"] = json!({"server": 1, "pane": "%9", "harness": harness});
+        fleet["controller"] = json!({"server": 1, "pane": "%9", "harness": harness});
         std::fs::write(&path, fleet.to_string()).unwrap();
         let mut command = self.command(env);
         command
@@ -2272,7 +2272,7 @@ fn a_succession_over_a_fleet_record_orch_cannot_read_whole_is_refused() {
     let path = producer.path().join("state").join(FLEET_FILE_NAME);
     let fleet = json!({
         "issue_id": "oversee", "triaged": "unread", "launch_queue": [], "lanes": [],
-        "fleet_log": [], "overseer": {"server": 1, "pane": "%9", "harness": "claude"},
+        "fleet_log": [], "controller": {"server": 1, "pane": "%9", "harness": "claude"},
     });
     std::fs::write(&path, fleet.to_string()).unwrap();
     let before = std::fs::read(&path).unwrap();

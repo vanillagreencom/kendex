@@ -29,7 +29,7 @@ unset CODEX_HOME CLAUDE_CONFIG_DIR TMUX TMUX_PANE
 cd -- "$H/work"
 make_lane "$H" claude
 make_lane "$H" unreadclaude
-jq -n --arg account "$H/.claude" '{overseer:{account:$account}}' > "$ORCH_STATE_DIR/workflow-state-oversee.json"
+jq -n --arg account "$H/.claude" '{controller:{account:$account}}' > "$ORCH_STATE_DIR/workflow-state-oversee.json"
 claude_usage 57 30 5 Opus > "$FIXTURE_DIR/.claude.json"
 for row in 'codex:22' '1codex:20' '2codex:18'; do
   name="${row%:*}" used="${row#*:}"

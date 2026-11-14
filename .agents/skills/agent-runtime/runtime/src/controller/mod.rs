@@ -26,7 +26,7 @@ pub mod views;
 
 /// The record's member that holds the controller: every read and write of
 /// it in this crate names it through this one constant.
-pub const MEMBER: &str = "overseer";
+pub const MEMBER: &str = "controller";
 
 /// One write of the controller document at `path`: `change` applied to the
 /// document as read and stored under its lock, applied again to a fresh

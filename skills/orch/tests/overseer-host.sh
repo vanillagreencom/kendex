@@ -379,7 +379,7 @@ identity_record() { # PANE MODE
     --arg pid "$LIVE_PID" --arg process_start "$LIVE_START" --arg dead "$DEAD_PID" --arg dead_start "$DEAD_START" --arg mode "$2" '
     {server: $server, server_start: $start, pane: $pane, generation: 1} as $base
     | ($base + {harness_pid: $dead, harness_start: $dead_start}) as $done
-    | {issue_id: "oversee", overseer: ($base +
+    | {issue_id: "oversee", controller: ($base +
       (if $mode == "live" or $mode == "old-exit" then {harness_pid: $pid, harness_start: $process_start}
        elif $mode == "dead" then {harness_pid: $dead, harness_start: $dead_start}
        elif $mode == "reused" then {harness_pid: $pid, harness_start: "earlier start"}

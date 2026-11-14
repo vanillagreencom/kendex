@@ -48,7 +48,7 @@ SDK
   # not process ancestry or initial native authorization.
   if [[ -f "$root/tmp/workflow-state-oversee.json" ]]; then
     (cd -- "$root" && ORCH_STATE_DIR="$root/tmp" "$scripts/workflow-state" update oversee \
-      'if (.overseer | type) == "object" then .overseer.session_id = "s1" else . end' >/dev/null) || return 1
+      'if (.controller | type) == "object" then .controller.session_id = "s1" else . end' >/dev/null) || return 1
   fi
   FLOW_START="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" AGENT_RUNTIME_CACHE="$cache" \
     ORCH_STATE_DIR="$root/tmp" "$@" bash "$root/.github/hooks/lane-mail-start.sh" <<<"$payload")" || return 1

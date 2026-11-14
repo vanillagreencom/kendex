@@ -525,7 +525,7 @@ fn a_controllers_switch_marks_its_recovery_started_before_it_asks_its_successor(
         out.stderr
     );
     let fleet = world.fleet();
-    let check = &fleet["overseer"]["model_check"];
+    let check = &fleet["controller"]["model_check"];
     assert_eq!(check["outcome"], "switched", "{fleet}");
     assert_eq!(check["recovery_started"], true, "{fleet}");
     let reads = "display-message -p #{pid} #{start_time}";

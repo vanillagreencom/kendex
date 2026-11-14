@@ -462,8 +462,8 @@ fn dead_session_rows(
     record: &Document,
 ) -> Result<Vec<PathBuf>> {
     let named: Vec<PathBuf> = [
-        "/overseer/session_rows",
-        "/overseer/pending/session_rows",
+        "/controller/session_rows",
+        "/controller/pending/session_rows",
         "/pending/session_rows",
     ]
     .iter()

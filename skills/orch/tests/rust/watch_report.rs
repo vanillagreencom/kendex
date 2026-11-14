@@ -639,7 +639,7 @@ fn report_fleet(overseer: Option<Value>) -> Value {
         ]
     });
     if let Some(overseer) = overseer {
-        fleet["overseer"] = overseer;
+        fleet["controller"] = overseer;
     }
     fleet
 }
@@ -2853,7 +2853,7 @@ fn retention_keeps_a_session_rows_file_the_fleet_names() {
     let unnamed = rows(99_994);
     world.write_fleet(&json!({
         "issue_id": "oversee", "launch_queue": [], "lanes": [], "fleet_log": [],
-        "overseer": {"session_rows": named[0], "pending": {"session_rows": named[1]}},
+        "controller": {"session_rows": named[0], "pending": {"session_rows": named[1]}},
         "pending": {"session_rows": named[2]}
     }));
     let pruned = world.pass(wall).unwrap();

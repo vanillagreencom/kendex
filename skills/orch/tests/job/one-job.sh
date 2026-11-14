@@ -148,7 +148,7 @@ launch_lane() { # NAME ROOT REQUEST
   PID="$(jq -r '.result.effect.report.lane.launch.pid' <<<"$launched")"
   PANE="$(jq -r '.result.effect.report.lane.launch.pane' <<<"$launched")"
   cmdline="$(tr '\0' ' ' < "/proc/$PID/cmdline" 2>/dev/null || echo unreadable)"
-  assert_eq "$(case "$cmdline" in *"$STUB"*) echo stub ;; *) echo "$cmdline" ;; esac)" stub "$1: the recorded pid is the stub harness"
+  assert_eq "$(case "$cmdline" in (*"$STUB"*) echo stub ;; (*) echo "$cmdline" ;; esac)" stub "$1: the recorded pid is the stub harness"
 }
 
 # close_lane NAME ROOT GROUND — one close-owned-resources op on GROUND, the

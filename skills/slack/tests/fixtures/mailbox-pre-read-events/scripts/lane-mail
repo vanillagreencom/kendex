@@ -1532,7 +1532,7 @@ lm_require_overseer() { # full|data ROOT
   [ -n "$path" ] || refuse overseer-unreadable "$root"
   LM_OVERSEER_RECORD=null
   if [ -e "$path" ]; then
-    LM_OVERSEER_RECORD="$(lm_overseer_state "$scope" "$root" get oversee '.overseer // null')" ||
+    LM_OVERSEER_RECORD="$(lm_overseer_state "$scope" "$root" get oversee '.controller // null')" ||
       refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/reader.err")"
   fi
   if [ "$LM_OVERSEER_RECORD" = null ]; then

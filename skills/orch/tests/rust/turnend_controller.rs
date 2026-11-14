@@ -975,7 +975,7 @@ fn a_bound_session_outside_a_repository_meets_nothing_past_the_mark() {
     let fleet = dir.join("tmp").join(agent_runtime::record::FLEET_FILE_NAME);
     fs::create_dir_all(fleet.parent().unwrap()).unwrap();
     let member = world.controller(PANE, "claude", &account, SESSION);
-    fs::write(&fleet, json!({ "overseer": member }).to_string()).unwrap();
+    fs::write(&fleet, json!({ "controller": member }).to_string()).unwrap();
     let path = account.join(format!("projects/p/{SESSION}.jsonl"));
     let named = transcript(&path, &[claude_usage(650_000)]);
     let payload = json!({ "session_id": SESSION, "transcript_path": named.display().to_string() });

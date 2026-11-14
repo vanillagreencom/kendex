@@ -49,7 +49,7 @@ new_repo() { # NAME
   ln -sfn "$REPO_ROOT/skills/mailbox/scripts" "$LANE/.agents/skills/mailbox/scripts"
   BOX="$LANE/tmp/lane-mail/overseer"
   mkdir -p "$LANE/tmp"
-  printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"
+  printf '{"controller":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"
 }
 
 RC=0

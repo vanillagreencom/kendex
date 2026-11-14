@@ -158,7 +158,7 @@ LAUNCHER = SCRIPTS / "slack"
 GENERATION_READ = r'''
 . "$1" || exit 1
 fleet="$(mailbox_fleet_record full "$2")" || exit 1
-exec jq -r '.overseer.generation // 0' -- "$fleet"
+exec jq -r '.controller.generation // 0' -- "$fleet"
 '''
 # Seconds the relay waits for Slack's `hello` on a new connection.
 HELLO_SECONDS = 10
@@ -464,7 +464,7 @@ def reader_generation(root: Path) -> int:
     places it. A record from before generations reads as 0. A failed read,
     an absent record among them, refuses as a refused lane-mail write does,
     so the message is read again on the next poll."""
-    command = "fleet record .overseer.generation"
+    command = "fleet record .controller.generation"
     try:
         proc = subprocess.run(["bash", "-c", GENERATION_READ, "reader-generation", str(MAILBOX_READ_FILES[2]), str(root)],
                               cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

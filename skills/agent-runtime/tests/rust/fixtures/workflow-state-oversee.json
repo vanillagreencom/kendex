@@ -37,7 +37,7 @@
   "tmux": {
     "session": "kendex-fleet"
   },
-  "overseer": {
+  "controller": {
     "runtime": "tmux",
     "generation": 3,
     "server": "41020",

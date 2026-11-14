@@ -59,7 +59,7 @@ def root(name, api=None):
     # The native reader-generation command reads the fixture's overseer.
     (path / '.agents').symlink_to(base / '.agents', target_is_directory=True)
     (path / 'tmp').mkdir()
-    (path / 'tmp/workflow-state-oversee.json').write_text('{"overseer":{"generation":0}}')
+    (path / 'tmp/workflow-state-oversee.json').write_text('{"controller":{"generation":0}}')
     (path / 'linear.json').write_bytes((base / 'linear.json').read_bytes())
     write_binding(path, Binding('C001', 'fixture', str(now), settings.owners, {settings.owners[0]: 'U001'}))
     return RootRelay(path, settings, Presence('', 600), api or Capture(), lambda: now + 100)

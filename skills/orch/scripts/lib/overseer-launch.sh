@@ -1071,9 +1071,9 @@ ol_record_get() { # [OUT_VAR]
   if [[ -n "${PROJECT_ROOT:-}" ]]; then
     state_file="$( { source "$SCRIPT_DIR/workflow-state" && workflow_state_path oversee; } 2>/dev/null)" || return 1
     [[ -f "$state_file" ]] || return 1
-    _org_record="$(jq -r '.overseer // null' "$state_file" 2>"$DEP_ERR")" || return 2
+    _org_record="$(jq -r '.controller // null' "$state_file" 2>"$DEP_ERR")" || return 2
   else
-    _org_record="$("$SCRIPT_DIR/workflow-state" get oversee '.overseer // null' 2>"$DEP_ERR")" || return 1
+    _org_record="$("$SCRIPT_DIR/workflow-state" get oversee '.controller // null' 2>"$DEP_ERR")" || return 1
   fi
   if [[ -n "${1:-}" ]]; then printf -v "$1" '%s' "${_org_record:-null}"
   else printf '%s\n' "${_org_record:-null}"; fi
@@ -1145,7 +1145,7 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
          fresh: ($fresh | field_names)}' 2>"$DEP_ERR")" || return 1
   record="$(jq -c '.record' <<<"$result" 2>"$DEP_ERR")" || return 1
   fields="$(jq -r '[.record.generation, .retained, .fresh] | @tsv' <<<"$result" 2>"$DEP_ERR")" || return 1
-  "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
+  "$SCRIPT_DIR/workflow-state" set oversee controller "$record" >/dev/null 2>"$DEP_ERR" || return 1
   IFS=$'\t' read -r OL_GENERATION OL_RECORD_RETAINED OL_RECORD_FRESH <<<"$fields"
 }
 

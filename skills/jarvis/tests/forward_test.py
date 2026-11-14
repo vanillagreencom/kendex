@@ -136,7 +136,7 @@ class Forward(MailWorld):
     def unregister(self, root):
         """Clear ROOT's overseer record, as a main session that ended leaves it."""
         env = {k: v for k, v in self.env.items() if not k.startswith("JARVIS_")}
-        result = self.command([WORKFLOW_STATE, "set", "oversee", "overseer", "null"], root, env)
+        result = self.command([WORKFLOW_STATE, "set", "oversee", "controller", "null"], root, env)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def compact_all(self, root):

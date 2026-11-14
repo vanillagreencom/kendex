@@ -856,7 +856,7 @@ class SessionContract(unittest.TestCase):
         return [json.loads(line)["prompt"] for line in self.rows.read_text().splitlines() if "prompt" in json.loads(line)]
 
     def controller(self):
-        return json.loads(self.fleet.read_text())["overseer"]
+        return json.loads(self.fleet.read_text())["controller"]
 
     def windows(self):
         return subprocess.run(["tmux", "-L", self.label, "list-windows", "-t", "=jarvis", "-F", "#{window_id}"],

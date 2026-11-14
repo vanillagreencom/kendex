@@ -298,7 +298,7 @@ impl Fleet {
 
     fn set_overseer(&self, overseer: Value) {
         let mut fleet = self.read_fleet();
-        fleet["overseer"] = overseer;
+        fleet["controller"] = overseer;
         self.write_fleet(&fleet);
     }
 

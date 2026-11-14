@@ -90,7 +90,7 @@ session_rows_dead() { # BOX FLEET_STATE
 '
   SESSION_ROWS_DEAD=()
   if [ -f "$2" ]; then
-    named="$(jq -r '[.overseer.session_rows, .overseer.pending.session_rows,
+    named="$(jq -r '[.controller.session_rows, .controller.pending.session_rows,
       .pending.session_rows] | .[] | strings' "$2")" || return 2
   fi
   for file in "$1"/session-*-*.jsonl; do

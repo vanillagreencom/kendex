@@ -182,7 +182,7 @@ class OwnerNote(MailWorld):
                                              [] if host else [("app", True)])
                     root = sides["remote" if host else "local"][0]
                     state = root / ".agents/skills/orch/scripts/workflow-state"
-                    result = self.command([state, "set", "oversee", "overseer", json.dumps(record)], root)
+                    result = self.command([state, "set", "oversee", "controller", json.dumps(record)], root)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     if name == "older":
                         installed = root / ".agents/skills/mailbox/scripts"

@@ -3643,7 +3643,7 @@ overseer_seats() { # [HARNESS]
 	while IFS= read -r f; do
 		[[ -n "$f" && -e "$f" ]] || continue
 		SEATS_STATE="$f"
-		account="$(jq -r '.overseer.account // empty' <"$f")" || return 1
+		account="$(jq -r '.controller.account // empty' <"$f")" || return 1
 		[[ -n "$account" ]] || continue
 		lane_canon "$account" || return 1
 		SEATS+="$LANE_CANON"$'\n'

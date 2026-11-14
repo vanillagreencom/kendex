@@ -987,7 +987,7 @@ impl Record for FleetState {
     fn view(path: &Path, doc: &Document) -> Result<Self> {
         Ok(FleetState {
             lanes: field(path, doc, "lanes")?.unwrap_or_default(),
-            overseer: field(path, doc, "overseer")?,
+            overseer: field(path, doc, "controller")?,
             fleet_log: field(path, doc, "fleet_log")?.unwrap_or_default(),
             triaged: field(path, doc, "triaged")?.unwrap_or_default(),
             launch_queue: field(path, doc, "launch_queue")?.unwrap_or_default(),
@@ -1309,7 +1309,7 @@ mod tests {
                         "stopped",
                     );
                     set(
-                        object_mut(&path, &mut doc, "overseer").unwrap(),
+                        object_mut(&path, &mut doc, "controller").unwrap(),
                         "generation",
                         4,
                     );
@@ -1324,7 +1324,7 @@ mod tests {
             );
             assert_eq!(after["cycles"], Value::from(5), "{name}");
             for (key, value) in &before {
-                if key == "cycles" || key == "stages" || key == "lanes" || key == "overseer" {
+                if key == "cycles" || key == "stages" || key == "lanes" || key == "controller" {
                     continue;
                 }
                 assert_eq!(&after[key], value, "{name}: {key}");
@@ -1346,8 +1346,8 @@ mod tests {
                     assert_eq!(keys(a), keys(b), "{name}: lane key sequence");
                     assert_eq!(a["status"], Value::from("stopped"));
                     let (b, a) = (
-                        before["overseer"].as_object().unwrap(),
-                        after["overseer"].as_object().unwrap(),
+                        before["controller"].as_object().unwrap(),
+                        after["controller"].as_object().unwrap(),
                     );
                     assert_eq!(keys(a), keys(b), "{name}: overseer key sequence");
                     assert_eq!(a["generation"], Value::from(4));
@@ -1394,10 +1394,10 @@ mod tests {
         let after = object(&path);
         assert_eq!(keys(after["lanes"][0].as_object().unwrap()), hand_keys);
         assert_eq!(
-            keys(after["overseer"].as_object().unwrap()),
-            keys(before["overseer"].as_object().unwrap())
+            keys(after["controller"].as_object().unwrap()),
+            keys(before["controller"].as_object().unwrap())
         );
-        assert!(after["overseer"].get("generation").is_none());
+        assert!(after["controller"].get("generation").is_none());
         assert_eq!(after["lanes"][1]["status"], Value::from("stopped"));
     }
 

@@ -1094,7 +1094,7 @@ impl Runner {
             serde_json::to_string_pretty(value).unwrap(),
         )
         .unwrap();
-        if value["overseer"]["generation"].is_u64() {
+        if value["controller"]["generation"].is_u64() {
             self.snapshot(&self.state_dir().join("tmp/handoffs/OVERSEER-HANDOFF.md"));
         }
     }
@@ -1350,8 +1350,8 @@ pub fn transfer_request(server: &Server, cwd: &Path) -> Value {
 /// the successor pending.
 pub fn plant_transfer(runner: &Runner, server: &Server, pid: u32, start: &str) {
     let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(pid, start, server, runner.state_dir());
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    fleet["controller"] = overseer_record(pid, start, server, runner.state_dir());
+    fleet["controller"]["pending"] = pending(runner.state_dir());
     runner.write_fleet(&fleet);
 }
 
@@ -2196,7 +2196,7 @@ impl TurnWorld {
     pub fn plant_fleet(&self, member: Value) {
         let path = self.fleet_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, json!({ "overseer": member }).to_string()).unwrap();
+        std::fs::write(&path, json!({ "controller": member }).to_string()).unwrap();
     }
 
     pub fn fleet(&self) -> Value {

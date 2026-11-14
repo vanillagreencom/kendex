@@ -47,7 +47,7 @@ new_lane() { # NAME
   mkdir -p "$LANE/.agents/skills/mailbox"
   ln -sfn "$REPO_ROOT/skills/mailbox/scripts" "$LANE/.agents/skills/mailbox/scripts"
   mkdir -p "$LANE/tmp"
-  printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"
+  printf '{"controller":{"server":"7000","pane":"%%0"}}\n' > "$LANE/tmp/workflow-state-oversee.json"
 }
 
 RC=0

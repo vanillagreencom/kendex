@@ -1202,7 +1202,7 @@ fn every_verb_taking_a_harness_refuses_one_outside_the_four_by_its_name_and_writ
     let fleet = Fleet::new(4);
     fleet.init_fleet();
     let mut doc = fleet.fleet();
-    doc["overseer"] = json!({"server": "11", "pane": "%1", "server_start": null});
+    doc["controller"] = json!({"server": "11", "pane": "%1", "server_start": null});
     std::fs::write(fleet.fleet_path(), doc.to_string()).unwrap();
     let before = fleet.fleet();
     let mut launch_lane = launch("KEN-A", fleet.state_dir());
@@ -3065,7 +3065,7 @@ fn a_close_reads_its_lane_on_the_controllers_recorded_server() {
     let start = harness.start();
     end(&mut harness);
     let mut state = fleet.fleet();
-    state["overseer"] = json!({"server_socket": controller.socket.display().to_string()});
+    state["controller"] = json!({"server_socket": controller.socket.display().to_string()});
     state["intents"] = json!([]);
     state["lanes"] = json!([{
         "item": "KEN-C", "window": "fleet:gh-c", "harness": "claude",

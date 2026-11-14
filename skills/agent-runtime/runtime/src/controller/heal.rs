@@ -90,5 +90,5 @@ pub fn heal(doc: &mut Document, heal: &Heal) -> Result<Value> {
             record.insert(key.to_owned(), json!(given));
         }
     }
-    Ok(json!({"overseer": Value::Object(record.clone())}))
+    Ok(json!({"controller": Value::Object(record.clone())}))
 }

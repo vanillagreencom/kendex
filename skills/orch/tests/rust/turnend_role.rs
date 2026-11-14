@@ -134,7 +134,7 @@ fn the_fleet_records_pane_on_its_server_start_names_the_overseer_and_a_native_mi
             Vec::new()
         };
         assert_eq!(out.keyed(), told, "{}: {}", case.name, out.stderr);
-        let after = &world.fleet()["overseer"];
+        let after = &world.fleet()["controller"];
         if case.healed {
             assert_eq!(after["session_id"], SESSION, "{}", case.name);
             assert_eq!(after["server_start"], json!(case.served), "{}", case.name);
@@ -168,7 +168,11 @@ fn a_record_missing_its_start_harness_or_session_is_healed_once_and_an_unwritabl
         let out = stop(&world, &env);
         assert_eq!(out.code, 0, "{field}: {}", out.stderr);
         assert!(out.keyed().is_empty(), "{field}: {}", out.stderr);
-        assert_eq!(world.fleet()["overseer"][field], healed(&world), "{field}");
+        assert_eq!(
+            world.fleet()["controller"][field],
+            healed(&world),
+            "{field}"
+        );
         let written = fs::read(world.fleet_path()).unwrap();
         let again = stop(&world, &env);
         assert!(again.keyed().is_empty(), "{field}: {}", again.stderr);
@@ -191,7 +195,7 @@ fn a_record_missing_its_start_harness_or_session_is_healed_once_and_an_unwritabl
     assert_eq!(out.code, 0, "{}", out.stderr);
     let unhealed = format!("record-unhealed={} {PANE}", world.server_pid());
     assert_eq!(out.keyed(), [unhealed.as_str()], "{}", out.stderr);
-    assert_eq!(world.fleet()["overseer"], member, "the record moved");
+    assert_eq!(world.fleet()["controller"], member, "the record moved");
 }
 
 #[test]
@@ -222,7 +226,7 @@ fn a_session_in_tmux_with_no_pane_takes_its_controllers_pane_and_one_neither_nam
     assert_eq!(out.stdout, "", "controller: {}", out.stderr);
     assert!(out.keyed().is_empty(), "controller: {}", out.stderr);
     assert_eq!(
-        world.fleet()["overseer"]["server_start"],
+        world.fleet()["controller"]["server_start"],
         json!(TURN_SERVER_START),
         "controller: the recovered pane keyed nothing"
     );
@@ -265,7 +269,7 @@ fn a_session_in_tmux_with_no_pane_takes_its_controllers_pane_and_one_neither_nam
     assert_eq!(again.code, 0, "neither again: {}", again.stderr);
     assert_eq!(again.stdout, "", "neither again: told twice");
     assert_eq!(
-        world.fleet()["overseer"]["server_start"],
+        world.fleet()["controller"]["server_start"],
         json!(TURN_SERVER_START)
     );
 

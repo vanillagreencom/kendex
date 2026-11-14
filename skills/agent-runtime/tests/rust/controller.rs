@@ -252,7 +252,7 @@ fn a_request_the_hand_over_refuses_before_any_intent_writes_nothing() {
         json!({"expected": expected(), "successor": successor(), "brief_file": "/r/brief.md"});
     let mut moved = expected();
     moved["pane"] = json!("%9");
-    let no_overseer = FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
+    let no_overseer = FLEET.replacen("\"controller\"", "\"overseer_was\"", 1);
     // (verb, record, request, settings, refusal key, a field it names)
     type Row<'a> = (
         &'a str,
@@ -509,7 +509,8 @@ fn a_job_inside_a_checkout_notifies_only_the_mailbox_its_request_names() {
 /// recorded harness process), the recorded start and the open controller
 /// intents; with the caller group, how the record stands to the caller's
 /// pane (bound on the caller's server started at the recorded start,
-/// unstarted on a record with no start, other, none with no controller),
+/// unstarted on a record with no start, other, none with no controller; a
+/// record holding it under another member, `overseer` among them, has none),
 /// whether the record's native identity admits the caller's session, and
 /// the launch a model check is bound to. A record with no document refuses
 /// `record-missing`; a server is asked only on the record's socket.
@@ -540,11 +541,21 @@ fn controller_status_reads_the_record_and_how_it_stands_to_the_callers_pane() {
         .replacen("\"41388\"", &format!("\"{}\"", child.id()), 1)
         .replacen("ticks:9912345", &format!("ticks:{ticks}"), 1);
     let unstarted = FLEET.replacen("\"server_start\": 1769590000", "\"server_start\": null", 1);
-    let no_overseer = FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
+    let no_overseer = FLEET.replacen("\"controller\"", "\"overseer_was\"", 1);
+    let overseer_member = FLEET.replacen("\"controller\"", "\"overseer\"", 1);
     // (record, the start the caller's server answers, caller pane, caller
     // session, live, binding, native_match)
     type Row<'a> = (&'a str, u64, &'a str, &'a str, bool, Option<&'a str>, bool);
     let rows: Vec<Row> = vec![
+        (
+            &overseer_member,
+            started,
+            "%7",
+            session,
+            false,
+            Some("none"),
+            true,
+        ),
         (FLEET, started, "", "", false, None, false),
         (FLEET, started, "%7", session, false, Some("bound"), true),
         (
@@ -615,7 +626,7 @@ fn controller_status_reads_the_record_and_how_it_stands_to_the_callers_pane() {
         assert_eq!(result["live"], live, "{row}");
         assert_eq!(result["open_intents"], json!([]), "{row}");
         assert_eq!(result["binding"].as_str(), binding, "{row}");
-        if fleet == no_overseer {
+        if fleet == no_overseer || fleet == overseer_member {
             assert_eq!(result["recorded"], Value::Null, "{row}");
             continue;
         }
@@ -654,7 +665,7 @@ impl Drop for Reaped {
 
 /// The recorded start a fixture text carries.
 fn world_start(fleet: &str) -> Value {
-    serde_json::from_str::<Value>(fleet).unwrap()["overseer"]["server_start"].clone()
+    serde_json::from_str::<Value>(fleet).unwrap()["controller"]["server_start"].clone()
 }
 
 /// The job a transfer or a stop runs in reads the request its launcher
@@ -910,7 +921,7 @@ fn the_flag_forms_reach_the_named_server_and_walk_the_called_preference() {
 /// The fixture record with its controller's native id and home unrecorded.
 fn unhealed() -> String {
     let mut doc: Value = serde_json::from_str(FLEET).unwrap();
-    let member = doc["overseer"].as_object_mut().unwrap();
+    let member = doc["controller"].as_object_mut().unwrap();
     member.remove("session_id");
     member.remove("home");
     serde_json::to_string_pretty(&doc).unwrap()
@@ -964,13 +975,13 @@ fn the_heal_fills_only_the_session_the_record_names() {
         String::from_utf8_lossy(&out.stderr)
     );
     let doc: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
-    let member = &doc["overseer"];
+    let member = &doc["controller"];
     assert_eq!(member["session_id"], "S-1");
     assert_eq!(member["home"], "/h/claude");
     assert_eq!(member["harness"], "claude");
     assert_eq!(member["server_start"], 1769590000);
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(&reply["result"]["overseer"], member);
+    assert_eq!(&reply["result"]["controller"], member);
     let unstarted = unhealed().replace("\"server_start\": 1769590000,", "\"server_start\": null,");
     assert!(unstarted.contains("\"server_start\": null,"));
     world.record(&record, &unstarted);
@@ -1008,8 +1019,8 @@ fn the_controllers_model_check_is_acquired_once_per_launch() {
     let record = world.root().join("workflow-state-oversee.json");
     world.record(&record, FLEET);
     let doc: Value = serde_json::from_str(FLEET).unwrap();
-    let session = doc["overseer"]["session_id"].as_str().unwrap().to_owned();
-    let read = write(&world.root().join("expected.json"), &doc["overseer"]);
+    let session = doc["controller"]["session_id"].as_str().unwrap().to_owned();
+    let read = write(&world.root().join("expected.json"), &doc["controller"]);
     let check = |outcome: &str, expected: &Path| {
         let mut words = args(&["model-check", "record"], &record, None);
         words.extend([
@@ -1052,7 +1063,7 @@ fn the_controllers_model_check_is_acquired_once_per_launch() {
     assert_eq!(key, "model-check-missing");
     // The reader read the same session and model on another pane: only the
     // launch it is bound to moved.
-    let mut elsewhere = doc["overseer"].clone();
+    let mut elsewhere = doc["controller"].clone();
     elsewhere["pane"] = json!("%9");
     let moved = write(&world.root().join("moved.json"), &elsewhere);
     let before = std::fs::read_to_string(&record).unwrap();
@@ -1116,7 +1127,7 @@ fn a_resume_continues_the_recorded_session_and_pi_names_its_file() {
     let work = world.root().join("w");
     let id = "7a1c0e2d-4b3f-4e5a-8d6c-1f2e3d4c5b6a";
     let mut doc: Value = serde_json::from_str(FLEET).unwrap();
-    let member = doc["overseer"].as_object_mut().unwrap();
+    let member = doc["controller"].as_object_mut().unwrap();
     member.insert("harness".into(), json!("pi"));
     member.insert("home".into(), json!(pi_root.display().to_string()));
     member.insert("cwd".into(), json!(work.display().to_string()));
@@ -1147,7 +1158,7 @@ fn a_resume_continues_the_recorded_session_and_pi_names_its_file() {
     // On a model Pi's root bills, the account is the root the start's launch
     // runs on and the record's home is not read: the file is found under the
     // account, never under another home or the default one.
-    let member = doc["overseer"].as_object_mut().unwrap();
+    let member = doc["controller"].as_object_mut().unwrap();
     member.insert("model".into(), json!("anthropic/claude-fable-5-1"));
     member.insert("account".into(), json!(pi_root.display().to_string()));
     member.insert(
@@ -1161,14 +1172,14 @@ fn a_resume_continues_the_recorded_session_and_pi_names_its_file() {
         answer(&world.controller(world.root(), &words, &[("PI_CODING_AGENT_DIR", &default)]));
     assert_eq!(billed["resume_file"], file.display().to_string());
 
-    doc["overseer"]
+    doc["controller"]
         .as_object_mut()
         .unwrap()
         .insert("session_id".into(), Value::Null);
     world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
     let (key, _) = refusal(&resume());
     assert_eq!(key, "session-unrecorded");
-    doc["overseer"].as_object_mut().unwrap().remove("harness");
+    doc["controller"].as_object_mut().unwrap().remove("harness");
     world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
     let (key, _) = refusal(&resume());
     assert_eq!(key, "harness-unnamed");

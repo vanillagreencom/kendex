@@ -344,13 +344,13 @@ fn reconcile_marks_a_transfer_intent_stale_when_the_generation_moved() {
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
     let mut fleet = runner.fleet();
-    fleet["overseer"] = json!({"runtime": "tmux", "generation": 4, "pane": "%0"});
+    fleet["controller"] = json!({"runtime": "tmux", "generation": 4, "pane": "%0"});
     fleet["intents"] = json!([transfer_intent(None, None)]);
     runner.write_fleet(&fleet);
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["reconciled"], "intent-stale");
     assert_eq!(report["intent"]["observed_generation"], 4);
-    assert_eq!(runner.fleet()["overseer"]["generation"], 4, "unmoved");
+    assert_eq!(runner.fleet()["controller"]["generation"], 4, "unmoved");
 }
 
 #[test]
@@ -883,8 +883,8 @@ fn transfer_fleet(
     phase: Option<Value>,
 ) -> Value {
     let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(predecessor.0, predecessor.1, server, runner.state_dir());
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    fleet["controller"] = overseer_record(predecessor.0, predecessor.1, server, runner.state_dir());
+    fleet["controller"]["pending"] = pending(runner.state_dir());
     fleet["intents"] = json!([transfer_intent(phase, Some(original_pending()))]);
     fleet
 }
@@ -1334,11 +1334,11 @@ fn the_reconcile_matrix_is_total() {
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["retired"], false);
                 assert_eq!(
-                    runner.fleet()["overseer"]["pending"],
+                    runner.fleet()["controller"]["pending"],
                     original_pending(),
                     "the original pending is put back"
                 );
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -1353,7 +1353,7 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["retired"], true);
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -1390,7 +1390,7 @@ fn the_reconcile_matrix_is_total() {
                     1,
                     "the runner was stopped and its window closed"
                 );
-                assert_eq!(runner.fleet()["overseer"]["pending"], original_pending());
+                assert_eq!(runner.fleet()["controller"]["pending"], original_pending());
             },
         },
         Cell {
@@ -1420,7 +1420,7 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, server, report| {
                 assert_eq!(report["intent"]["observation"]["retired"], true);
-                let overseer = runner.fleet()["overseer"].clone();
+                let overseer = runner.fleet()["controller"].clone();
                 assert_eq!(overseer["generation"], 4);
                 let pane = overseer["pane"].as_str().unwrap().to_owned();
                 assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
@@ -1443,7 +1443,7 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["retired"], true);
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -1473,7 +1473,7 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["note"], "pane-unobservable");
-                let overseer = runner.fleet()["overseer"].clone();
+                let overseer = runner.fleet()["controller"].clone();
                 assert_eq!(overseer["generation"], 3);
                 assert_eq!(
                     overseer["pending"]["runner"]["pane"], "%1",
@@ -1505,7 +1505,7 @@ fn the_reconcile_matrix_is_total() {
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["retired"], true);
                 assert_eq!(report["intent"]["observation"]["cause"], "server-gone");
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -1538,8 +1538,8 @@ fn the_reconcile_matrix_is_total() {
                     report["intent"]["observation"]["note"],
                     "successor-not-idle"
                 );
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
-                assert!(runner.fleet()["overseer"]["pending"]["runner"].is_object());
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
+                assert!(runner.fleet()["controller"]["pending"]["runner"].is_object());
             },
         },
         Cell {
@@ -1563,7 +1563,7 @@ fn the_reconcile_matrix_is_total() {
                     (GONE_PID as u32, "ticks:1"),
                     Some(phase("window-opened", server, &pane, since, None)),
                 );
-                fleet["overseer"]["pending"]["cwd"] = json!("/nonexistent/successor/dir");
+                fleet["controller"]["pending"]["cwd"] = json!("/nonexistent/successor/dir");
                 Planted {
                     fleet,
                     owned: vec![],
@@ -1572,7 +1572,7 @@ fn the_reconcile_matrix_is_total() {
             check: |runner, server, report| {
                 assert_eq!(report["intent"]["observation"]["note"], "cwd-missing");
                 assert_eq!(report["intent"]["observation"]["retired"], true);
-                let overseer = runner.fleet()["overseer"].clone();
+                let overseer = runner.fleet()["controller"].clone();
                 assert_eq!(overseer["generation"], 3);
                 let kept = overseer["pending"]["runner"]["pane"].as_str().unwrap();
                 assert!(
@@ -1602,7 +1602,10 @@ fn the_reconcile_matrix_is_total() {
                     (GONE_PID as u32, "ticks:1"),
                     Some(phase("window-opened", server, &pane, since, None)),
                 );
-                fleet["overseer"].as_object_mut().unwrap().remove("pending");
+                fleet["controller"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("pending");
                 Planted {
                     fleet,
                     owned: vec![],
@@ -1611,7 +1614,7 @@ fn the_reconcile_matrix_is_total() {
             check: |runner, server, report| {
                 assert_eq!(report["intent"]["observation"]["note"], "pending-missing");
                 assert_eq!(report["intent"]["observation"]["runner"], "stopped");
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
                 assert_eq!(server.panes().len(), 1, "the runner's window is closed");
             },
         },
@@ -1652,7 +1655,7 @@ fn the_reconcile_matrix_is_total() {
                     runner.stub_turns(runner.state_dir(), runner.state_dir()),
                     vec!["HANDOFF".to_owned()]
                 );
-                assert_eq!(runner.fleet()["overseer"]["generation"], 4);
+                assert_eq!(runner.fleet()["controller"]["generation"], 4);
             },
         },
         Cell {
@@ -1687,7 +1690,7 @@ fn the_reconcile_matrix_is_total() {
                     report["intent"]["observation"]["note"],
                     "successor-not-idle"
                 );
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -1763,9 +1766,9 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["note"], "brief-unconfirmed");
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
                 assert!(
-                    runner.fleet()["overseer"]["pending"]["runner"].is_object(),
+                    runner.fleet()["controller"]["pending"]["runner"].is_object(),
                     "the runner is kept"
                 );
             },
@@ -1801,7 +1804,7 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["note"], "brief-unconfirmed");
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -1830,9 +1833,9 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["note"], "pane-unobservable");
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
                 assert_eq!(
-                    runner.fleet()["overseer"]["pending"]["runner"]["pane"],
+                    runner.fleet()["controller"]["pending"]["runner"]["pane"],
                     "%1"
                 );
             },
@@ -1876,7 +1879,7 @@ fn the_reconcile_matrix_is_total() {
                 }
             },
             check: |runner, _, report| {
-                assert_eq!(runner.fleet()["overseer"]["generation"], 4);
+                assert_eq!(runner.fleet()["controller"]["generation"], 4);
                 assert_eq!(report["intent"]["phase"]["phase"], "identity-read");
             },
         },
@@ -1909,7 +1912,7 @@ fn the_reconcile_matrix_is_total() {
                     owned: vec![],
                 }
             },
-            check: |runner, _, _| assert_eq!(runner.fleet()["overseer"]["generation"], 4),
+            check: |runner, _, _| assert_eq!(runner.fleet()["controller"]["generation"], 4),
         },
         Cell {
             op: "transfer",
@@ -1937,13 +1940,13 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["note"], "pane-unobservable");
-                let kept = runner.fleet()["overseer"]["pending"]["runner"].clone();
+                let kept = runner.fleet()["controller"]["pending"]["runner"].clone();
                 assert_eq!(kept["pane"], "%1");
                 assert!(
                     kept["pid"].as_u64().is_some(),
                     "the recorded identity is kept"
                 );
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -1976,7 +1979,7 @@ fn the_reconcile_matrix_is_total() {
             },
             check: |runner, _, report| {
                 assert_eq!(report["intent"]["observation"]["retired"], true);
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -2311,8 +2314,8 @@ fn the_reconcile_matrix_is_total() {
                     1,
                     "the runner was stopped and its window closed"
                 );
-                assert_eq!(runner.fleet()["overseer"]["pending"], original_pending());
-                assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+                assert_eq!(runner.fleet()["controller"]["pending"], original_pending());
+                assert_eq!(runner.fleet()["controller"]["generation"], 3);
             },
         },
         Cell {
@@ -2350,9 +2353,9 @@ fn the_reconcile_matrix_is_total() {
                 assert_eq!(report["intent"]["observation"]["cause"], "json-invalid");
                 assert_eq!(report["intent"]["observation"]["retired"], false);
                 let fleet = runner.fleet();
-                assert_eq!(fleet["overseer"]["generation"], 3);
+                assert_eq!(fleet["controller"]["generation"], 3);
                 assert_eq!(
-                    fleet["overseer"]["pending"],
+                    fleet["controller"]["pending"],
                     pending(runner.state_dir()),
                     "the successor pending stands as requested"
                 );
@@ -2389,7 +2392,7 @@ fn the_reconcile_matrix_is_total() {
                 );
                 assert_eq!(report["intent"]["observation"]["retired"], false);
                 assert_eq!(server.panes().len(), 1, "the recorded pane is closed");
-                assert_eq!(runner.fleet()["overseer"]["pending"], original_pending());
+                assert_eq!(runner.fleet()["controller"]["pending"], original_pending());
             },
         },
     ]);
@@ -2504,8 +2507,8 @@ fn a_receipt_naming_a_dead_harness_fails_without_adopting_the_pane() {
                 assert_eq!(report["intent"]["observation"]["cause"], "pane-closed");
                 assert_eq!(report["intent"]["observation"]["retired"], false);
                 let fleet = runner.fleet();
-                assert_eq!(fleet["overseer"]["pending"], original_pending());
-                assert_eq!(fleet["overseer"]["generation"], 3);
+                assert_eq!(fleet["controller"]["pending"], original_pending());
+                assert_eq!(fleet["controller"]["generation"], 3);
                 closed_exactly(server, "%1", "%2");
             },
         },

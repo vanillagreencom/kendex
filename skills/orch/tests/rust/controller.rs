@@ -100,8 +100,8 @@ fn request_for(record: &Value, cwd: &Path, cause: &str) -> Value {
 
 fn plant(runner: &Runner, record: Value) {
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record;
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    fleet["controller"] = record;
+    fleet["controller"]["pending"] = pending(runner.state_dir());
     runner.write_fleet(&fleet);
 }
 
@@ -273,7 +273,7 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     assert_eq!(intent["phase"]["phase"], "identity-read");
     assert_eq!(intent["observation"]["retired_by"], "identity");
     assert_eq!(intent["owner"], owner, "recorded by the job");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 4);
     let successor = overseer["pane"].as_str().unwrap().to_owned();
     assert_ne!(successor, pane);
@@ -342,7 +342,7 @@ fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_run
     assert_eq!(intent["observation"]["runner"], "stopped");
     assert_eq!(intent["phase"]["phase"], "delivered");
     assert!(live(predecessor.pid()), "never retired without the turn");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 3, "nothing published");
     assert!(
         overseer["pending"].get("runner").is_none(),
@@ -362,7 +362,7 @@ fn a_succession_retires_the_predecessor_then_publishes_the_successor() {
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert!(!live(predecessor.pid()), "the predecessor was retired");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 4);
     // The published record names the successor's own pane on the server,
     // with the tmux server start and socket, so its watch start keeps it.
@@ -434,7 +434,7 @@ fn a_succession_types_the_brief_before_retirement_and_retires_on_the_runner_s_tu
         vec!["HANDOFF".to_owned()],
         "the runner recorded the brief as its turn"
     );
-    assert_eq!(runner.fleet()["overseer"]["generation"], 4);
+    assert_eq!(runner.fleet()["controller"]["generation"], 4);
     assert_eq!(intent["phase"]["phase"], "identity-read");
 }
 
@@ -455,7 +455,7 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let before = runner.fleet()["overseer"].clone();
+    let before = runner.fleet()["controller"].clone();
     runner.transfer_started(&transfer_request(&server, runner.state_dir()));
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
@@ -480,7 +480,7 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
         "cause": "auth-wall",
     }]);
     assert_eq!(
-        runner.fleet()["overseer"],
+        runner.fleet()["controller"],
         unproved,
         "the record as it stood, the attempt's account unproved"
     );
@@ -529,7 +529,7 @@ fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file(
         unsigned["account"] = json!(account.display().to_string());
         unsigned["home"] = json!(account.display().to_string());
         let mut fleet = runner.fleet();
-        fleet["overseer"]["pending"] = unsigned.clone();
+        fleet["controller"]["pending"] = unsigned.clone();
         runner.write_fleet(&fleet);
         let panes = server.panes();
         let mut request = transfer_request(&server, runner.state_dir());
@@ -625,7 +625,7 @@ fn a_reconcile_at_delivered_with_the_predecessor_live_abandons_the_runner() {
         .unwrap()
         .to_owned();
     assert!(!server.panes().contains(&runner_pane), "the runner stopped");
-    assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+    assert_eq!(runner.fleet()["controller"]["generation"], 3);
 }
 
 /// A precondition read before retirement refuses `failed` with the
@@ -694,7 +694,7 @@ fn a_succession_whose_preconditions_fail_never_retires() {
                     .to_string()
             );
             let mut fleet = runner.fleet();
-            fleet["overseer"]["pending"] = p.clone();
+            fleet["controller"]["pending"] = p.clone();
             runner.write_fleet(&fleet);
             request["expected"]["pending"] = p.clone();
             request["successor"] = p;
@@ -725,7 +725,12 @@ fn a_succession_whose_preconditions_fail_never_retires() {
             "{}: no runner window is left",
             row.name
         );
-        assert_eq!(runner.fleet()["overseer"]["generation"], 3, "{}", row.name);
+        assert_eq!(
+            runner.fleet()["controller"]["generation"],
+            3,
+            "{}",
+            row.name
+        );
     }
 }
 
@@ -757,7 +762,7 @@ fn a_succession_that_cannot_retire_the_predecessor_holds_it_and_signals_nothing(
         predecessor.pid(),
         "the predecessor's recorded identity stands, acquired at the start of retirement: {intent}"
     );
-    assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+    assert_eq!(runner.fleet()["controller"]["generation"], 3);
     assert!(
         live(predecessor.pid()),
         "the live process was never signalled"
@@ -772,7 +777,7 @@ fn a_succession_that_cannot_retire_the_predecessor_holds_it_and_signals_nothing(
     assert_eq!(report["intent"]["outcome"], "failed", "{report}");
     assert_eq!(report["intent"]["observation"]["note"], "successor-exited");
     assert_eq!(report["intent"]["observation"]["retired"], true);
-    assert_eq!(runner.fleet()["overseer"]["generation"], 3);
+    assert_eq!(runner.fleet()["controller"]["generation"], 3);
     assert!(live(predecessor.pid()), "still never signalled");
 }
 
@@ -817,7 +822,7 @@ fn a_neighbour_session_s_turns_never_confirm_the_runner_s_delivery() {
     assert_eq!(phase["turns_before"], 0);
     assert!(live(predecessor.pid()), "never retired without the turn");
     assert_eq!(
-        runner.fleet()["overseer"]["generation"],
+        runner.fleet()["controller"]["generation"],
         3,
         "nothing published"
     );
@@ -855,7 +860,7 @@ fn a_neighbour_holding_more_turns_never_hides_the_runner_s_recorded_turn() {
         "the neighbour's turns are its own"
     );
     assert!(neighbour.rows() > 3, "the neighbour was written throughout");
-    assert_eq!(runner.fleet()["overseer"]["generation"], 4);
+    assert_eq!(runner.fleet()["controller"]["generation"], 4);
 }
 
 /// In a dead-cause recovery the generation-bound exit record proves it
@@ -952,7 +957,7 @@ fn a_dead_predecessor_with_no_identity_is_proven_terminal_by_the_exit_record_or_
         assert_eq!(intent["outcome"], row.outcome, "{}: {intent}", row.name);
         assert_eq!(intent["observation"]["note"], row.note, "{}", row.name);
         assert_eq!(intent["cause"], "dead", "{}", row.name);
-        let overseer = runner.fleet()["overseer"].clone();
+        let overseer = runner.fleet()["controller"].clone();
         match row.retired_by {
             Some(by) => {
                 assert_eq!(intent["observation"]["retired_by"], by, "{}", row.name);
@@ -1142,7 +1147,7 @@ fn a_recorded_controller_whose_pane_holds_only_its_shell_or_is_kept_dead_is_repl
         let record = record_on(&server, runner.state_dir(), &pane, None);
         let intent = if row.mode == "start" {
             let mut fleet = runner.fleet();
-            fleet["overseer"] = record.clone();
+            fleet["controller"] = record.clone();
             runner.write_fleet(&fleet);
             let brief = runner.state_dir().join("brief.md");
             std::fs::write(&brief, "START HERE\n").unwrap();
@@ -1159,7 +1164,7 @@ fn a_recorded_controller_whose_pane_holds_only_its_shell_or_is_kept_dead_is_repl
         };
         assert_eq!(intent["outcome"], row.outcome, "{}: {intent}", row.name);
         assert_eq!(intent["observation"]["note"], row.note, "{}", row.name);
-        let overseer = runner.fleet()["overseer"].clone();
+        let overseer = runner.fleet()["controller"].clone();
         match row.retired_by {
             Some(by) => {
                 assert_eq!(intent["observation"]["retired_by"], by, "{}", row.name);
@@ -1192,35 +1197,35 @@ fn an_ended_controller_with_no_identity_is_adopted_over_and_stopped_by_its_bare_
     let adopted = harness_held(&server, &runner);
     let held = harness_held(&server, &runner);
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record_on(&server, runner.state_dir(), &held, None);
+    fleet["controller"] = record_on(&server, runner.state_dir(), &held, None);
     runner.write_fleet(&fleet);
     assert_eq!(
         adoption_refusal(&adopt(&runner, &adopted, runner.state_dir(), &[])),
         "overseer-live"
     );
     assert_eq!(
-        runner.fleet()["overseer"]["pane"],
+        runner.fleet()["controller"]["pane"],
         json!(held),
         "nothing written"
     );
     let ended = shell_left(&server, &runner);
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record_on(&server, runner.state_dir(), &ended, None);
+    fleet["controller"] = record_on(&server, runner.state_dir(), &ended, None);
     runner.write_fleet(&fleet);
     let answer = reply(&adopt(&runner, &adopted, runner.state_dir(), &[]));
     assert_eq!(answer["ok"], true, "{answer}");
     assert_eq!(answer["result"]["generation"], 4);
-    assert_eq!(runner.fleet()["overseer"]["pane"], json!(adopted));
+    assert_eq!(runner.fleet()["controller"]["pane"], json!(adopted));
 
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record_on(&server, runner.state_dir(), &ended, None);
+    fleet["controller"] = record_on(&server, runner.state_dir(), &ended, None);
     fleet["intents"] = json!([]);
     runner.write_fleet(&fleet);
     runner.op_fleet(&json!({"op": "stop-controller"}));
     let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert_eq!(intent["observation"]["retired_by"], "harness-gone");
-    assert_eq!(runner.fleet()["overseer"]["off"]["generation"], 3);
+    assert_eq!(runner.fleet()["controller"]["off"]["generation"], 3);
 }
 
 /// The takeover brief an overseer's transfer holds is written once its
@@ -1473,7 +1478,7 @@ fn stop_controller_retires_exactly_and_records_off_which_death_recovery_honours(
     assert_eq!(intent["observation"]["retired_by"], "identity");
     assert!(!live(predecessor.pid()), "the recorded identity ended");
     assert!(live(bystander.pid()), "nothing else was signalled");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["off"]["generation"], 3);
     assert!(overseer["off"]["at"].is_string());
     assert_eq!(overseer["generation"], 3);
@@ -1482,7 +1487,7 @@ fn stop_controller_retires_exactly_and_records_off_which_death_recovery_honours(
     dead["cause"] = json!("dead");
     let out = runner.op_fleet(&dead);
     assert_eq!(refusal_key(&out), "controller-off");
-    assert_eq!(runner.fleet()["overseer"], overseer, "nothing written");
+    assert_eq!(runner.fleet()["controller"], overseer, "nothing written");
     // An explicit start opens a controller again and clears the mark.
     let report = effect_report(&runner.op_fleet(&json!({
         "op": "start-controller",
@@ -1490,7 +1495,7 @@ fn stop_controller_retires_exactly_and_records_off_which_death_recovery_honours(
     })));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["generation"], 4);
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 4);
     assert!(overseer.get("off").is_none(), "{overseer}");
     let pane = overseer["pane"].as_str().unwrap().to_owned();
@@ -1512,7 +1517,7 @@ fn stop_controller_without_an_identity_takes_the_proof_or_fails() {
     let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert_eq!(intent["observation"]["retired_by"], "pane-gone");
-    assert_eq!(runner.fleet()["overseer"]["off"]["generation"], 3);
+    assert_eq!(runner.fleet()["controller"]["off"]["generation"], 3);
 
     let standing = server.open_idle("overseer", runner.state_dir());
     let mut fleet = runner.fleet();
@@ -1526,7 +1531,7 @@ fn stop_controller_without_an_identity_takes_the_proof_or_fails() {
     let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "identity-missing");
-    assert!(runner.fleet()["overseer"].get("off").is_none());
+    assert!(runner.fleet()["controller"].get("off").is_none());
     assert!(
         server.panes().contains(&standing),
         "the pane was not touched"
@@ -1541,7 +1546,7 @@ fn started_controller(runner: &Runner) -> String {
         "controller": pending(runner.state_dir()),
     })));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    runner.fleet()["overseer"]["pane"]
+    runner.fleet()["controller"]["pane"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -1550,7 +1555,7 @@ fn started_controller(runner: &Runner) -> String {
 /// End the published controller's harness as a crash does, by the identity
 /// its record names, and wait for its pane to stand dead or to go.
 fn crash_controller(server: &Server, runner: &Runner, pane: &str) {
-    let pid = runner.fleet()["overseer"]["harness_pid"]
+    let pid = runner.fleet()["controller"]["harness_pid"]
         .as_u64()
         .expect("the published identity");
     let out = std::process::Command::new("kill")
@@ -1583,7 +1588,7 @@ fn a_controller_alone_in_its_session_outlives_its_harness_and_is_recovered_there
     let intent = watched_transfer(&runner);
     assert_eq!(intent["cause"], "dead", "{intent}");
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    let successor = runner.fleet()["overseer"]["pane"]
+    let successor = runner.fleet()["controller"]["pane"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -1606,13 +1611,13 @@ fn a_completed_hand_over_closes_the_kept_predecessor_and_leaves_one_controller_w
     runner.init_fleet();
     let predecessor = started_controller(&runner);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    fleet["controller"]["pending"] = pending(runner.state_dir());
     runner.write_fleet(&fleet);
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     runner.transfer_started(&request_for(&record, runner.state_dir(), "live"));
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    let successor = runner.fleet()["overseer"]["pane"]
+    let successor = runner.fleet()["controller"]["pane"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -1646,16 +1651,16 @@ fn window_of(server: &Server, pane: &str) -> (String, bool) {
 /// its window `window`, and answer the successor's pane.
 fn transferred_to_window(runner: &Runner, window: &str) -> String {
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    fleet["controller"]["pending"] = pending(runner.state_dir());
     runner.write_fleet(&fleet);
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     let mut request = request_for(&record, runner.state_dir(), "live");
     request["successor"]["window"] = json!(window);
     runner.transfer_started(&request);
     let this = format!("request-transfer:overseer:{}:", record["generation"]);
     let intent = runner.wait_intent_settled(&this, SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    runner.fleet()["overseer"]["pane"]
+    runner.fleet()["controller"]["pane"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -1712,9 +1717,9 @@ fn a_seat_the_start_names_stays_through_an_own_pane_adoption_a_transfer_and_a_st
         "controller": seated,
     })));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let seat = || runner.fleet()["overseer"]["seat"].clone();
+    let seat = || runner.fleet()["controller"]["seat"].clone();
     assert_eq!(seat(), "jarvis", "the start writes its seat");
-    let pane = runner.fleet()["overseer"]["pane"]
+    let pane = runner.fleet()["controller"]["pane"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -1723,7 +1728,7 @@ fn a_seat_the_start_names_stays_through_an_own_pane_adoption_a_transfer_and_a_st
     assert_eq!(seat(), "jarvis", "kept by the own-pane adoption");
     transferred_to_window(&runner, "overseer");
     assert_eq!(seat(), "jarvis", "kept by a transfer naming none");
-    let generation = runner.fleet()["overseer"]["generation"].clone();
+    let generation = runner.fleet()["controller"]["generation"].clone();
     runner.op_fleet(&json!({"op": "stop-controller"}));
     let intent =
         runner.wait_intent_settled(&format!("stop-controller:overseer:{generation}:"), SETTLE);
@@ -1763,7 +1768,7 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
-    assert!(runner.fleet().get("overseer").is_none());
+    assert!(runner.fleet().get("controller").is_none());
     let brief = runner.state_dir().join("brief.md");
     std::fs::write(&brief, "START HERE\n").unwrap();
     let report = effect_report(&runner.op_fleet(&json!({
@@ -1777,7 +1782,7 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
         report["intent"]["observation"]["retired_by"], "record-empty",
         "a bare fleet's record names no session"
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 1);
     assert_eq!(overseer["harness"], "claude");
     assert_eq!(overseer["server"], server.pid.to_string());
@@ -1796,14 +1801,14 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     runner.init_fleet();
     let live_controller = Owned::sleep();
     let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(
+    fleet["controller"] = overseer_record(
         live_controller.pid(),
         &live_controller.start(),
         &server,
         runner.state_dir(),
     );
     runner.write_fleet(&fleet);
-    let before = runner.fleet()["overseer"].clone();
+    let before = runner.fleet()["controller"].clone();
     let report = effect_report(&runner.op_fleet(&json!({
         "op": "start-controller",
         "controller": pending(runner.state_dir()),
@@ -1812,7 +1817,7 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     assert_eq!(report["intent"]["observation"]["note"], "overseer-live");
     assert_eq!(report["intent"]["observation"]["retired"], false);
     assert_eq!(
-        runner.fleet()["overseer"],
+        runner.fleet()["controller"],
         before,
         "the pending is gone again"
     );
@@ -2066,7 +2071,7 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
         refusal_key(&register(&runner, "%999", &[], &[])),
         "pane-gone"
     );
-    assert_eq!(runner.fleet()["overseer"], Value::Null, "nothing written");
+    assert_eq!(runner.fleet()["controller"], Value::Null, "nothing written");
 
     let out = register(&runner, &pane, &[("CLAUDE_CONFIG_DIR", &caller_home)], &[]);
     let answer = reply(&out);
@@ -2078,7 +2083,7 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
         )])
     );
     assert_eq!(answer["result"]["adopted"]["report"]["generation"], 1);
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     let rows = rows_file(&runner, &server, &pane);
     let project = std::fs::canonicalize(runner.state_dir()).unwrap();
     assert_eq!(record["harness"], "claude");
@@ -2124,16 +2129,16 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
     )
     .unwrap();
     let mut fleet = runner.fleet();
-    fleet["overseer"]["session_id"] = json!("before-resume");
-    fleet["overseer"]["pending"] = json!({"harness": "claude"});
-    fleet["overseer"]["exit"] = json!({"status": 0});
+    fleet["controller"]["session_id"] = json!("before-resume");
+    fleet["controller"]["pending"] = json!({"harness": "claude"});
+    fleet["controller"]["exit"] = json!({"status": 0});
     runner.write_fleet(&fleet);
     let out = register(&runner, &pane, &[("CLAUDE_CONFIG_DIR", &caller_home)], &[]);
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
     assert_eq!(answer["result"]["notices"], json!([]));
     assert_eq!(answer["result"]["adopted"]["report"]["healed"], true);
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["generation"], 1);
     assert_eq!(
         record["account"],
@@ -2161,7 +2166,7 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
         .to_string();
     let out = register(&runner, &pane, &[], &["--account", &named]);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["generation"], 1);
     assert_eq!(record["account"], named.as_str());
 
@@ -2232,7 +2237,7 @@ fn a_hand_started_session_records_its_command_line_and_its_next_hand_over_launch
     let pid = server.pane_pid(&pane);
     let out = register(&runner, &pane, &[], &[]);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["account"], account.display().to_string(), "{record}");
     assert_eq!(record["model"], "opus");
     assert_eq!(record["effort"], "high");
@@ -2321,7 +2326,7 @@ fn a_hand_started_session_records_its_command_line_and_its_next_hand_over_launch
     await_named(&server, &pane, "pi");
     let out = register(&runner, &pane, &[], &[]);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["account"], seat.display().to_string(), "{record}");
     assert_eq!(record["home"], root.display().to_string(), "{record}");
     let out = runner.run(&[
@@ -2420,15 +2425,15 @@ fn a_register_never_takes_a_record_another_live_or_unjudged_server_may_hold() {
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
     assert_eq!(answer["result"]["adopted"]["report"]["generation"], 2);
-    assert_eq!(runner.fleet()["overseer"]["server"], b.pid.to_string());
+    assert_eq!(runner.fleet()["controller"]["server"], b.pid.to_string());
 
     let gone = Owned::sleep();
     let (pid, start) = (gone.pid(), gone.start());
     drop(gone);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["server_start"] = json!(b.start - 5);
-    fleet["overseer"]["harness_pid"] = json!(pid);
-    fleet["overseer"]["harness_start"] = json!(start);
+    fleet["controller"]["server_start"] = json!(b.start - 5);
+    fleet["controller"]["harness_pid"] = json!(pid);
+    fleet["controller"]["harness_start"] = json!(start);
     runner.write_fleet(&fleet);
     let out = register(&runner, &pane_b, &[("TMUX", &on_b)], &[]);
     let answer = reply(&out);
@@ -2438,7 +2443,7 @@ fn a_register_never_takes_a_record_another_live_or_unjudged_server_may_hold() {
 
     let unjudged = Owned::sleep();
     let mut fleet = runner.fleet();
-    let record = fleet["overseer"].as_object_mut().unwrap();
+    let record = fleet["controller"].as_object_mut().unwrap();
     record.remove("harness_pid");
     record.remove("harness_start");
     record.insert("server".into(), json!(unjudged.pid().to_string()));
@@ -2499,7 +2504,7 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
     let out = register(&runner, &pane, &[], &[]);
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["harness"], "codex");
     assert_eq!(record["account"], account.display().to_string());
     assert_eq!(record["home"], private.display().to_string());
@@ -2540,7 +2545,7 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
         );
         std::thread::sleep(Duration::from_millis(50));
     }
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["harness"], "copilot");
     assert_eq!(record["account"], copilot_home.display().to_string());
     assert!(
@@ -2559,7 +2564,7 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
     let out = register(&runner, &pane, &[("HOME", &caller)], &["--account", &named]);
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["account"], named.as_str());
     let notices = answer["result"]["notices"].as_array().unwrap().clone();
     assert!(
@@ -2601,7 +2606,7 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
     await_named(&server, &pane, "pi");
     let out = register(&runner, &pane, &[], &[]);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    let record = runner.fleet()["overseer"].clone();
+    let record = runner.fleet()["controller"].clone();
     assert_eq!(record["harness"], "pi");
     assert_eq!(record["account"], root.as_str());
 
@@ -2611,7 +2616,7 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
         refusal_key(&register(&runner, &idle, &[], &[])),
         "pane-not-harness"
     );
-    assert_eq!(runner.fleet()["overseer"], Value::Null, "nothing written");
+    assert_eq!(runner.fleet()["controller"], Value::Null, "nothing written");
 }
 
 /// Abandoning a waiting runner before retirement completes `failed` only
@@ -2683,13 +2688,13 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
         server.await_composer(&pane);
         let runner_pid = server.pane_pid(&pane);
         let mut fleet = runner.fleet();
-        fleet["overseer"] = overseer_record(
+        fleet["controller"] = overseer_record(
             predecessor.pid(),
             &predecessor.start(),
             &server,
             runner.state_dir(),
         );
-        fleet["overseer"]["pending"] = pending(runner.state_dir());
+        fleet["controller"]["pending"] = pending(runner.state_dir());
         // The runner's identity was read before this process ended: the
         // phase carries it, so the abandonment stops exactly that process
         // and carries it on an unsettled outcome.
@@ -2764,7 +2769,7 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
         );
         assert_eq!(intent["phase"]["phase"], "window-opened", "{}", row.name);
         assert_eq!(
-            runner.fleet()["overseer"]["pending"],
+            runner.fleet()["controller"]["pending"],
             pending(runner.state_dir()),
             "{}: the pending stands as requested",
             row.name
@@ -2932,7 +2937,7 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
     // it: the recorded pane read gone on the proven server.
     assert_eq!(intent["observation"]["window"], "pane-gone");
     assert_eq!(intent["owner"], owner, "recorded by the job");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["off"]["generation"], 3, "{overseer}");
     assert!(overseer["off"]["at"].is_string());
     assert_eq!(overseer["generation"], 3);
@@ -2986,7 +2991,7 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
         "nothing opened, nothing closed"
     );
     assert!(live(pid), "the live stub was never signalled");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 3);
     assert_eq!(overseer["pane"], pane);
     // An adoption from another pane: the record is not replaced either.
@@ -2999,7 +3004,11 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
     server.await_composer(&other);
     let out = adopt(&runner, &other, runner.state_dir(), &[]);
     assert_eq!(adoption_refusal(&out), "predecessor-unproven");
-    assert_eq!(runner.fleet()["overseer"]["pane"], pane, "nothing written");
+    assert_eq!(
+        runner.fleet()["controller"]["pane"],
+        pane,
+        "nothing written"
+    );
     // A stop names nothing to retire and closes nothing.
     let report = effect_report(&runner.op_fleet(&json!({"op": "stop-controller"})));
     let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
@@ -3008,13 +3017,13 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
     assert_eq!(intent["observation"]["cause"], "server-start-unrecorded");
     assert!(server.panes().contains(&pane), "the pane stands");
     assert!(live(pid), "the stub runs on");
-    assert!(runner.fleet()["overseer"].get("off").is_none());
+    assert!(runner.fleet()["controller"].get("off").is_none());
     // Adoption from the record's own pane heals it: the server start bound,
     // the identity read in the pane.
     let answer = reply(&adopt(&runner, &pane, runner.state_dir(), &[]));
     assert_eq!(answer["ok"], true, "{answer}");
     assert_eq!(answer["result"]["healed"], true);
-    let healed = runner.fleet()["overseer"].clone();
+    let healed = runner.fleet()["controller"].clone();
     assert_eq!(healed["server_start"], server.start);
     assert_eq!(healed["harness_pid"], pid);
 }
@@ -3089,7 +3098,7 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
         vec!["HANDOFF".to_owned()],
         "the brief was delivered"
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 3, "nothing published");
     assert!(
         overseer["pending"]["runner"]["pid"].is_u64(),
@@ -3105,7 +3114,7 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
         "closed"
     );
     assert!(!server.panes().contains(&idle), "the window is closed");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 4);
     let successor = overseer["pane"].as_str().unwrap().to_owned();
     assert_eq!(overseer["harness_pid"], server.pane_pid(&successor));
@@ -3350,7 +3359,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     pi["extra_args"] = json!(["--thinking", "high"]);
     pi["launch_line"] = json!("cd /r && pi --model never-run");
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = pi.clone();
+    fleet["controller"]["pending"] = pi.clone();
     runner.write_fleet(&fleet);
     let mut request = transfer_request(&server, runner.state_dir());
     request["expected"]["pending"] = pi.clone();
@@ -3404,7 +3413,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     native["permission"] = json!("native");
     native["extra_args"] = json!(["--permission-mode", "dontAsk", "--verbose"]);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = native.clone();
+    fleet["controller"]["pending"] = native.clone();
     runner.write_fleet(&fleet);
     let mut request = transfer_request(&server, runner.state_dir());
     request["expected"]["pending"] = native.clone();
@@ -3436,7 +3445,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
         launched["env"]["CLAUDE_CONFIG_DIR"],
         runner.state_dir().display().to_string()
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 4);
     assert_eq!(
         overseer["launch_line"],
@@ -3466,7 +3475,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     copilot["extra_args"] = json!([]);
     copilot["launch_line"] = json!("cd /r && copilot --model never-run");
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = copilot.clone();
+    fleet["controller"]["pending"] = copilot.clone();
     runner.write_fleet(&fleet);
     let mut request = transfer_request(&server, runner.state_dir());
     request["expected"]["pending"] = copilot.clone();
@@ -3572,10 +3581,10 @@ fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
     let mut ph = phase("window-opened", &server, &pane, since, None);
     ph["identity"] = json!({"pid": pid, "start": start_of(pid)});
     let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
-    fleet["overseer"]["pane"] = json!(idle);
-    fleet["overseer"]["server_start"] = json!(server.start);
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    fleet["controller"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
+    fleet["controller"]["pane"] = json!(idle);
+    fleet["controller"]["server_start"] = json!(server.start);
+    fleet["controller"]["pending"] = pending(runner.state_dir());
     let mut intent = transfer_intent(Some(ph), None);
     intent["obligations"] = json!({
         "standing": [
@@ -3615,7 +3624,7 @@ fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
         "the predecessor window stands"
     );
     assert_eq!(
-        runner.fleet()["overseer"]["generation"],
+        runner.fleet()["controller"]["generation"],
         3,
         "nothing published"
     );
@@ -3625,7 +3634,7 @@ fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
     let again = runner.reconcile_one();
     assert_eq!(again["intent"]["outcome"], "confirmed", "{again}");
     assert!(!server.panes().contains(&idle));
-    assert_eq!(runner.fleet()["overseer"]["generation"], 4);
+    assert_eq!(runner.fleet()["controller"]["generation"], 4);
 }
 
 /// The close lands on the predecessor's own pane key. With the runner's own
@@ -3656,10 +3665,10 @@ fn the_predecessors_close_never_discharges_the_runners_pane() {
     ph["pid"] = json!(GONE_PID - 7);
     ph["start"] = json!("ticks:7");
     let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
-    fleet["overseer"]["pane"] = json!(idle);
-    fleet["overseer"]["server_start"] = json!(server.start);
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    fleet["controller"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
+    fleet["controller"]["pane"] = json!(idle);
+    fleet["controller"]["server_start"] = json!(server.start);
+    fleet["controller"]["pending"] = pending(runner.state_dir());
     let mut intent = transfer_intent(Some(ph), None);
     // The set as `succeed` records it at `retired` and on: the runner's pane
     // and identity, then the predecessor's pane and identity.
@@ -3739,7 +3748,7 @@ fn a_signalled_controller_stop_never_refuses() {
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let mut fleet = runner.fleet();
-    fleet["overseer"]["server"] = json!(std::process::id().to_string());
+    fleet["controller"]["server"] = json!(std::process::id().to_string());
     runner.write_fleet(&fleet);
     runner.tools = Some(fixtures().join("kill-noop"));
     runner
@@ -3758,8 +3767,8 @@ fn a_signalled_controller_stop_never_refuses() {
     // Another writer of the record moves the generation under the open
     // intent.
     let mut fleet = runner.fleet();
-    fleet["overseer"]["generation"] = json!(4);
-    fleet["overseer"].as_object_mut().unwrap().remove("off");
+    fleet["controller"]["generation"] = json!(4);
+    fleet["controller"].as_object_mut().unwrap().remove("off");
     runner.write_fleet(&fleet);
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
@@ -3816,10 +3825,13 @@ fn pending_missing_after_retirement_consumes_the_predecessor() {
     ph["turns_before"] = json!(0);
     ph["session"] = json!({"session_id": "s", "file": runner.state_dir().join("s.jsonl")});
     let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
-    fleet["overseer"]["pane"] = json!(idle);
-    fleet["overseer"]["server_start"] = json!(server.start);
-    fleet["overseer"].as_object_mut().unwrap().remove("pending");
+    fleet["controller"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
+    fleet["controller"]["pane"] = json!(idle);
+    fleet["controller"]["server_start"] = json!(server.start);
+    fleet["controller"]
+        .as_object_mut()
+        .unwrap()
+        .remove("pending");
     let mut intent = transfer_intent(Some(ph), None);
     intent["obligations"] = json!({
         "standing": [
@@ -4657,7 +4669,7 @@ fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reporte
     record["server_start"] = json!(server.start);
     record.as_object_mut().unwrap().remove("launch_line");
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record;
+    fleet["controller"] = record;
     runner.write_fleet(&fleet);
     let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
     let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
@@ -4916,7 +4928,7 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
     // the watch cannot tell its controller from gone, so the overseer duty
     // says nothing and sends no death alert of its own.
     let mut fleet = runner.fleet();
-    fleet["overseer"]["server"] = json!(predecessor.pid().to_string());
+    fleet["controller"]["server"] = json!(predecessor.pid().to_string());
     runner.write_fleet(&fleet);
     // The watch's heartbeat sends it once more, and marks it.
     let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
@@ -4987,7 +4999,7 @@ fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_it
     record["server_start"] = json!(server.start);
     record.as_object_mut().unwrap().remove("launch_line");
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record;
+    fleet["controller"] = record;
     runner.write_fleet(&fleet);
     let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
     let mut watch = isolated();
@@ -5076,7 +5088,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     native["permission"] = json!("native");
     native["extra_args"] = json!(["--append-system-prompt", "two words"]);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = native.clone();
+    fleet["controller"]["pending"] = native.clone();
     runner.write_fleet(&fleet);
     let mut request = transfer_request(&server, runner.state_dir());
     request["expected"]["pending"] = native.clone();
@@ -5101,7 +5113,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     mismatched["permission"] = json!("native");
     mismatched["extra_args"] = json!(["--dangerously-skip-permissions"]);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = mismatched.clone();
+    fleet["controller"]["pending"] = mismatched.clone();
     runner.write_fleet(&fleet);
     let mut request = transfer_request(&server, runner.state_dir());
     request["expected"]["pending"] = mismatched.clone();
@@ -5126,7 +5138,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     bypass["permission"] = json!("bypass");
     bypass["extra_args"] = json!(["--dangerously-skip-permissions", "--verbose"]);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = bypass.clone();
+    fleet["controller"]["pending"] = bypass.clone();
     runner.write_fleet(&fleet);
     let mut request = transfer_request(&server, runner.state_dir());
     request["expected"]["pending"] = bypass.clone();
@@ -5183,7 +5195,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     copilot["permission"] = json!("bypass");
     copilot["extra_args"] = json!(["--allow-all"]);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["pending"] = copilot.clone();
+    fleet["controller"]["pending"] = copilot.clone();
     runner.write_fleet(&fleet);
     let mut request = transfer_request(&server, runner.state_dir());
     request["expected"]["pending"] = copilot.clone();
@@ -5265,7 +5277,7 @@ fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pend
         live(predecessor.pid()),
         "the predecessor was never signalled"
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 3, "nothing published");
     assert_eq!(
         overseer["pending"],
@@ -5348,7 +5360,7 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
         native["permission"] = json!("native");
         native["extra_args"] = json!(words);
         let mut fleet = runner.fleet();
-        fleet["overseer"]["pending"] = native.clone();
+        fleet["controller"]["pending"] = native.clone();
         runner.write_fleet(&fleet);
         let mut request = transfer_request(&server, runner.state_dir());
         request["expected"]["pending"] = native.clone();
@@ -5667,7 +5679,7 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
         &env,
     ));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 1, "{overseer}");
     assert_eq!(overseer["watch"]["runner"], "systemd", "{overseer}");
     let unit = overseer["watch"]["unit"].as_str().unwrap().to_owned();
@@ -5756,7 +5768,7 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
         report["intent"]["observation"]["note"], "watch-launch-failed",
         "{report}"
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert!(
         overseer.get("generation").is_none(),
         "no controller is published without its watch: {overseer}"
@@ -5944,7 +5956,7 @@ fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch
         intent["notice"]["key"], "watch-unclaimed",
         "one notice per intent: {intent}"
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["watch"]["runner"], "setsid", "{overseer}");
     stop_live_watch(&runner, &state);
 }
@@ -6431,7 +6443,7 @@ fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_
             }),
             &env,
         ));
-        let overseer = runner.fleet()["overseer"].clone();
+        let overseer = runner.fleet()["controller"].clone();
         let units = units_started(&bin);
         let record = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner"))
             .unwrap_or_default();
@@ -6551,7 +6563,7 @@ fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no
             }),
             &env,
         ));
-        let overseer = runner_world.fleet()["overseer"].clone();
+        let overseer = runner_world.fleet()["controller"].clone();
         let units = units_started(&bin);
         let calls = std::fs::read_to_string(bin.join("systemd.log")).unwrap_or_default();
         let record = std::fs::read_to_string(runner_world.state_dir().join("oversee-watch.runner"))
@@ -6611,7 +6623,7 @@ fn a_unit_launch_hands_the_jobs_variables_to_the_unit_and_no_value_to_the_client
         }),
         &env,
     ));
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     let calls = std::fs::read_to_string(bin.join("systemd.log")).unwrap_or_default();
     let unit_env: Vec<String> = std::fs::read_dir(bin.join("units"))
         .map(|units| units.map(|unit| unit.unwrap().path()).collect::<Vec<_>>())
@@ -6720,7 +6732,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     let intent = intents[0].clone();
     assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
     assert_eq!(intent["observation"]["note"], "session-unbound", "{intent}");
-    assert!(fleet["overseer"].get("generation").is_none(), "{fleet}");
+    assert!(fleet["controller"].get("generation").is_none(), "{fleet}");
     let brief = Path::new(intent["phase"]["brief"].as_str().unwrap());
     assert!(
         brief.starts_with(runner.state_dir().join("intents")),
@@ -6772,7 +6784,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     let fleet = runner.fleet();
     assert_eq!(fleet["intents"].as_array().unwrap().len(), 1, "{fleet}");
-    let overseer = &fleet["overseer"];
+    let overseer = &fleet["controller"];
     assert_eq!(overseer["generation"], 1, "{overseer}");
     assert_eq!(overseer["harness"], "codex", "{overseer}");
     assert_eq!(overseer["pane"], pane, "{overseer}");
@@ -6832,7 +6844,7 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
         stderr(launched.op())
     );
     let fleet = runner.fleet();
-    let overseer = &fleet["overseer"];
+    let overseer = &fleet["controller"];
     assert_eq!(overseer["generation"], 1, "{overseer}");
     assert_eq!(overseer["cwd"], work.display().to_string(), "{overseer}");
     assert_eq!(
@@ -6922,7 +6934,7 @@ fn model_switch(
         "transcript_path": project_dir(home, work).join(format!("{session}.jsonl")),
     });
     let out = run_hook(runner, &hook, env, home, work, record, &payload);
-    (out, runner.fleet()["overseer"]["model_check"].clone())
+    (out, runner.fleet()["controller"]["model_check"].clone())
 }
 
 /// The installed `hook` run as the harness runs it for the overseer
@@ -6986,7 +6998,7 @@ fn recovered(runner: &Runner, work: &Path, generation: u64, launched: &str, acco
     let intent =
         runner.wait_intent_settled(&format!("request-transfer:overseer:{generation}:"), SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], generation + 1, "{overseer}");
     assert_eq!(
         overseer["model"], launched,
@@ -7049,7 +7061,7 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
         "{started}\n{}",
         stderr(launched.op())
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     let (out, check) = model_switch(&runner, &launch.env, &account, &work, &overseer);
     assert_eq!(
         check["outcome"],
@@ -7068,7 +7080,7 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
         stderr(&out)
     );
     recovered(&runner, &work, 1, "fable", &overseer["account"]);
-    let controller = runner.fleet()["overseer"].clone();
+    let controller = runner.fleet()["controller"].clone();
     let mut failing: Vec<(String, String)> = launch
         .env
         .iter()
@@ -7097,7 +7109,7 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
     let intent = runner.wait_intent_settled("request-transfer:overseer:2:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(
-        runner.fleet()["overseer"]["session_id"],
+        runner.fleet()["controller"]["session_id"],
         controller["session_id"],
         "the controller stands"
     );
@@ -7143,7 +7155,7 @@ fn a_model_switch_whose_transfer_job_never_claims_is_handed_over_unconfirmed() {
         "{started}\n{}",
         stderr(launched.op())
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     let (sleepers, log) = sleeper_world(runner.state_dir());
     let mut unclaimed: Vec<(String, String)> = launch
         .env
@@ -7192,7 +7204,7 @@ fn a_model_switch_whose_transfer_job_never_claims_is_handed_over_unconfirmed() {
     );
     assert_eq!(launches(&log), 1, "{intent}");
     assert_eq!(
-        runner.fleet()["overseer"]["session_id"],
+        runner.fleet()["controller"]["session_id"],
         overseer["session_id"],
         "the controller stands"
     );
@@ -7295,7 +7307,7 @@ fn a_controllers_native_switch_past_its_successor_writes_its_body_and_tells_the_
         stderr(launched.op())
     );
     install_hook(&work);
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     let out = native_switch(&runner, &launch.env, &account, &work, &overseer);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
@@ -7307,7 +7319,7 @@ fn a_controllers_native_switch_past_its_successor_writes_its_body_and_tells_the_
     );
     assert_eq!(handoff_bodies(&runner), Vec::<String>::new());
     recovered(&runner, &work, 1, "fable", &overseer["account"]);
-    let controller = runner.fleet()["overseer"].clone();
+    let controller = runner.fleet()["controller"].clone();
     let home = controller["home"]
         .as_str()
         .map_or_else(|| account.clone(), std::path::PathBuf::from);
@@ -7338,7 +7350,7 @@ fn a_controllers_native_switch_past_its_successor_writes_its_body_and_tells_the_
         });
     assert!(!asked, "a transfer was asked past an unwritten snapshot");
     assert_eq!(
-        runner.fleet()["overseer"]["session_id"],
+        runner.fleet()["controller"]["session_id"],
         controller["session_id"],
         "the controller stands"
     );
@@ -7386,7 +7398,7 @@ fn the_installed_hook_acts_on_the_real_marks_verbs_reply_at_a_controllers_turn_e
         "{started}\n{}",
         stderr(launched.op())
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     let session = overseer["session_id"].as_str().unwrap().to_owned();
     let transcript = project_dir(&account, &work).join(format!("{session}.jsonl"));
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
@@ -7536,7 +7548,7 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
     request["brief_file"] = json!(brief.display().to_string());
     let report = effect_report(&runner.op_fleet(&request));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["session_id"], id, "{overseer}");
     assert_eq!(overseer["generation"], 1, "{overseer}");
     assert_eq!(
@@ -7832,7 +7844,7 @@ fn a_controller_with_no_account_runs_under_the_one_home_its_session_is_proved_an
         };
         if stub_name == "stub-resume" {
             assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
-            assert_eq!(runner.fleet()["overseer"]["session_id"], id, "{case}");
+            assert_eq!(runner.fleet()["controller"]["session_id"], id, "{case}");
         } else {
             // The harness wrote its record: the session was proved and the
             // window opened.
@@ -8016,9 +8028,9 @@ fn a_resume_after_a_restart_opens_in_the_standing_session_or_none() {
         // The session recorded its end before the server went: a replaced
         // server alone proves nothing (`predecessor-unproven`).
         gone["exit"] = json!({"run": {"generation": 4}});
-        fleet["overseer"] = gone;
+        fleet["controller"] = gone;
         runner.write_fleet(&fleet);
-        let before = runner.fleet()["overseer"].clone();
+        let before = runner.fleet()["controller"].clone();
         let mut request = resume_request(&home, "claude", &home, id);
         let brief = home.join("brief.md");
         std::fs::write(&brief, "RESUME HERE\n").unwrap();
@@ -8033,11 +8045,15 @@ fn a_resume_after_a_restart_opens_in_the_standing_session_or_none() {
                 "{report}"
             );
             assert_eq!(server.panes().len(), 1, "nothing opened");
-            assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+            assert_eq!(
+                runner.fleet()["controller"],
+                before,
+                "the record as it stood"
+            );
             continue;
         }
         assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-        let overseer = runner.fleet()["overseer"].clone();
+        let overseer = runner.fleet()["controller"].clone();
         assert_eq!(overseer["session_id"], id, "{overseer}");
         assert_ne!(overseer["pane"], "%99", "{overseer}");
         assert_eq!(
@@ -8083,7 +8099,7 @@ fn the_reconcile_heals_an_unbound_controllers_identity_and_never_binds_a_previou
     server.await_composer(&pane);
     let pid = server.pane_pid(&pane);
     let mut fleet = runner.fleet();
-    fleet["overseer"] = json!({
+    fleet["controller"] = json!({
         "runtime": "tmux",
         "generation": 2,
         "server": server.pid.to_string(),
@@ -8102,7 +8118,7 @@ fn the_reconcile_heals_an_unbound_controllers_identity_and_never_binds_a_previou
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{}", stderr(&out));
     assert_eq!(answer["result"]["controller"]["healed"], true, "{answer}");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["session_id"], "", "{overseer}");
     assert_eq!(overseer["harness_pid"], pid, "{overseer}");
     assert_eq!(overseer["harness_start"], start_of(pid), "{overseer}");
@@ -8136,7 +8152,7 @@ fn the_reconcile_heals_an_unbound_controllers_identity_and_never_binds_a_previou
     ));
     assert_eq!(answer["result"]["healed"], true, "{answer}");
     assert_eq!(
-        runner.fleet()["overseer"]["session_id"],
+        runner.fleet()["controller"]["session_id"],
         format!("stub-{pid}")
     );
 }
@@ -8237,7 +8253,7 @@ impl MarksWorld {
     fn write_fleet_on(&self, harness: Value, account: &str) {
         let fleet = json!({
             "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": [],
-            "overseer": {
+            "controller": {
                 "generation": 3, "harness": harness, "account": account, "home": account,
                 "model": "opus", "effort": "high", "cwd": self.path().display().to_string(),
                 "server": "1", "pane": "%1", "permission": "bypass",
@@ -8476,7 +8492,7 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
             {"item": "KEN-6", "status": "running", "mail_root": root},
             {"item": "KEN-8", "status": "parked", "mail_root": root},
         ],
-        "overseer": {"generation": 7, "harness": "claude", "server": "1", "pane": "%1"},
+        "controller": {"generation": 7, "harness": "claude", "server": "1", "pane": "%1"},
     });
     std::fs::write(
         world.path().join(agent_runtime::record::FLEET_FILE_NAME),
@@ -8624,7 +8640,7 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
         "{after}"
     );
     let mut stale = fleet.clone();
-    stale["overseer"]
+    stale["controller"]
         .as_object_mut()
         .unwrap()
         .remove("generation");
@@ -9280,7 +9296,7 @@ fn recorded_on(
     record["permission"] = json!(permission);
     record["extra_args"] = json!(words);
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record.clone();
+    fleet["controller"] = record.clone();
     runner.write_fleet(&fleet);
     record
 }
@@ -9333,7 +9349,7 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
     assert!(none.op.is_none(), "no request where the walk chose none");
     assert_eq!(server.panes().len(), 1, "nothing opened");
     assert_eq!(intents(&runner), 0, "no intent: {}", runner.fleet());
-    assert!(runner.fleet().get("overseer").is_none(), "no record");
+    assert!(runner.fleet().get("controller").is_none(), "no record");
 
     let opened = launch("codex:gpt-6.1-sol:high,claude:fable:high");
     let chosen = opened.chosen();
@@ -9348,7 +9364,7 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
         "{started}\n{}",
         stderr(opened.op())
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 1, "{overseer}");
     assert_eq!(overseer["harness"], "claude", "{overseer}");
     assert_eq!(
@@ -9468,13 +9484,13 @@ fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_th
         "the runner stands in the intent's set at the stop: {at_stop}"
     );
     assert_eq!(
-        at_stop["overseer"]["pending"]["account"],
+        at_stop["controller"]["pending"]["account"],
         planted(&runner, "bclaude"),
         "{at_stop}"
     );
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert!(!live(predecessor.pid()), "the predecessor was retired");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 4, "{overseer}");
     assert_eq!(
         overseer["account"],
@@ -9537,7 +9553,7 @@ fn a_succession_publishes_the_successor_it_launched_and_a_model_switch_recovers_
     record["effort"] = json!("low");
     record["launch_line"] = json!(released);
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record;
+    fleet["controller"] = record;
     runner.write_fleet(&fleet);
     let launch = workflow_launch(
         &runner,
@@ -9556,7 +9572,7 @@ fn a_succession_publishes_the_successor_it_launched_and_a_model_switch_recovers_
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert!(!live(pid), "the predecessor was retired");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     let chosen = planted(&runner, "bclaude");
     assert_eq!(overseer["account"], chosen, "{overseer}");
     assert_eq!(
@@ -9660,7 +9676,7 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
         stderr(other.op())
     );
     assert_eq!(intents(&runner), 0, "nothing written: {}", runner.fleet());
-    assert_eq!(runner.fleet()["overseer"], before);
+    assert_eq!(runner.fleet()["controller"], before);
     assert!(live(running.pid()));
 
     let ended = Stopped::start(&state, &runner.state_dir().join("unused.json"));
@@ -9684,7 +9700,7 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     );
     assert_eq!(server.panes().len(), 1, "nothing opened");
     assert_eq!(
-        runner.fleet()["overseer"],
+        runner.fleet()["controller"],
         before,
         "the pending is put back"
     );
@@ -9743,7 +9759,7 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     assert_eq!(intent["observation"]["retired"], false, "{intent}");
     assert!(live(running.pid()), "the predecessor keeps running");
     assert_eq!(server.panes().len(), 1, "the runner's window is closed");
-    let mut record = runner.fleet()["overseer"].clone();
+    let mut record = runner.fleet()["controller"].clone();
     let unproved = record.as_object_mut().unwrap().remove("unproved");
     assert_eq!(record, before, "the record as it stood");
     assert_eq!(
@@ -9781,7 +9797,7 @@ fn a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened() {
     );
     assert_eq!(server.panes().len(), 1, "nothing opened");
     assert!(
-        runner.fleet()["overseer"].get("generation").is_none(),
+        runner.fleet()["controller"].get("generation").is_none(),
         "nothing published: {}",
         runner.fleet()
     );
@@ -9806,7 +9822,7 @@ fn a_start_naming_no_session_opens_in_the_session_the_fleets_lanes_open_in() {
         &[("AGENT_RUNTIME_TMUX_SESSION", "")],
     ));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let pane = runner.fleet()["overseer"]["pane"].clone();
+    let pane = runner.fleet()["controller"]["pane"].clone();
     let opened = tmux(
         &server.socket,
         &[
@@ -9881,7 +9897,7 @@ fn walled_on(runner: &Runner, server: &Server, caller: &str, spent: &Path, home:
     record["account"] = json!(spent.display().to_string());
     record["home"] = json!(home.display().to_string());
     record["permission"] = json!("bypass");
-    fleet["overseer"] = record;
+    fleet["controller"] = record;
     runner.write_fleet(&fleet);
     predecessor
 }
@@ -9891,7 +9907,7 @@ fn walled_on(runner: &Runner, server: &Server, caller: &str, spent: &Path, home:
 /// harness; the settled intent, and the launch record the successor's stub
 /// wrote in the working directory.
 fn walled_transfer(runner: &Runner, spent: &Path, successor: &Value) -> (Value, Value) {
-    let before = runner.fleet()["overseer"].clone();
+    let before = runner.fleet()["controller"].clone();
     let binaries = ["claude", "codex", "pi"]
         .map(|h| format!("{h}={}", fixtures().join("stub-record").join(h).display()))
         .join(",");
@@ -9965,7 +9981,7 @@ fn a_walled_successor_on_another_harness_runs_on_the_home_its_launch_prepared() 
         "the checkout is trusted before the window opened: {state}"
     );
     assert_eq!(
-        runner.fleet()["overseer"]["home"],
+        runner.fleet()["controller"]["home"],
         claude.display().to_string(),
         "the record names the home the launch ran under"
     );
@@ -9988,7 +10004,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
     let seat = work.join("claude-b");
     std::fs::create_dir_all(&seat).unwrap();
     let _predecessor = walled_on(&runner, &server, "claude", &spent, &spent);
-    let before = runner.fleet()["overseer"].clone();
+    let before = runner.fleet()["controller"].clone();
     let panes = server.panes().len();
     let successor = walled_successor(&runner, "pi:pi-claude/claude-fable-5-1:high", &seat);
     runner.transfer_started_env(
@@ -10019,7 +10035,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
         "{intent}"
     );
     assert_eq!(server.panes().len(), panes, "no window opened");
-    let mut record = runner.fleet()["overseer"].clone();
+    let mut record = runner.fleet()["controller"].clone();
     let unproved = record.as_object_mut().unwrap().remove("unproved");
     assert_eq!(record, before, "the record as it stood");
     assert_eq!(
@@ -10073,7 +10089,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
     let _predecessor = walled_on(&runner, &server, "pi", &spent, &root);
     pi_root_marked(&root);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["model"] = json!("pi-claude/claude-fable-5-1");
+    fleet["controller"]["model"] = json!("pi-claude/claude-fable-5-1");
     runner.write_fleet(&fleet);
     let successor = walled_successor(&runner, "pi:pi-claude/claude-fable-5-1:high", &seat);
     let (intent, launched) = walled_transfer(&runner, &spent, &successor);
@@ -10114,7 +10130,7 @@ fn a_dead_controller_recovered_by_the_watch_opens_its_successor_on_the_takeover_
     record["server_start"] = json!(server.start);
     record.as_object_mut().unwrap().remove("launch_line");
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record;
+    fleet["controller"] = record;
     runner.write_fleet(&fleet);
     let intent = watched_transfer(&runner);
     assert_eq!(intent["cause"], "dead", "{intent}");
@@ -10129,7 +10145,7 @@ fn a_dead_controller_recovered_by_the_watch_opens_its_successor_on_the_takeover_
         ],
         "the successor's first turn is the takeover brief"
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 4, "{overseer}");
     assert_eq!(overseer["home"], work.display().to_string(), "{overseer}");
     assert_eq!(
@@ -10296,7 +10312,7 @@ fn a_walled_bypass_controllers_watch_walk_crosses_harness_and_its_successor_runs
     record["permission"] = json!("bypass");
     record["session_rows"] = json!(rows);
     let mut fleet = runner.fleet();
-    fleet["overseer"] = record;
+    fleet["controller"] = record;
     runner.write_fleet(&fleet);
     let intent = watched_transfer(&runner);
     assert_eq!(intent["cause"], "walled", "{intent}");
@@ -10330,7 +10346,7 @@ fn a_controller_started_on_its_own_handoff_is_recovered_dead_onto_a_brief_naming
         &runner.op_fleet(&json!({"op": "start-controller", "controller": controller})),
     );
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["handoff"], handoff, "{overseer}");
     assert_eq!(runner.stub_turns(&work, &work), vec![brief.clone()]);
     let pid: u32 = match &overseer["harness_pid"] {
@@ -10358,7 +10374,7 @@ fn a_controller_started_on_its_own_handoff_is_recovered_dead_onto_a_brief_naming
         vec![brief.clone(), brief],
         "the recovered successor opens on the launch's own handoff"
     );
-    assert_eq!(runner.fleet()["overseer"]["handoff"], handoff);
+    assert_eq!(runner.fleet()["controller"]["handoff"], handoff);
 }
 
 #[test]
@@ -10384,7 +10400,7 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
         &runner.op_fleet(&json!({"op": "start-controller", "controller": controller})),
     );
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let pane = runner.fleet()["overseer"]["pane"]
+    let pane = runner.fleet()["controller"]["pane"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -10439,7 +10455,7 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
     }));
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["handoff"], handoff, "{overseer}");
     assert_eq!(
         overseer["account"],
@@ -10484,7 +10500,7 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
         &runner.op_fleet(&json!({"op": "start-controller", "controller": pending(&work)})),
     );
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let pane = runner.fleet()["overseer"]["pane"]
+    let pane = runner.fleet()["controller"]["pane"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -10529,7 +10545,7 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
     }));
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["account"], account, "{overseer}");
     assert_eq!(overseer["scope"], "unread", "{overseer}");
 }
@@ -10854,10 +10870,13 @@ fn an_overseers_unbilled_entry_is_chosen_past_an_unread_provider() {
     ));
     let _predecessor = walled_on(&runner, &server, "pi", &work.join("unused"), &root);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
-    fleet["overseer"].as_object_mut().unwrap().remove("account");
+    fleet["controller"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
+    fleet["controller"]
+        .as_object_mut()
+        .unwrap()
+        .remove("account");
     runner.write_fleet(&fleet);
-    let pane = fleet["overseer"]["pane"].as_str().unwrap().to_owned();
+    let pane = fleet["controller"]["pane"].as_str().unwrap().to_owned();
     let out = runner.run(&[
         "successor",
         "--fleet",
@@ -10917,10 +10936,13 @@ fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
         .push(("HOME".to_owned(), home.display().to_string()));
     let predecessor = walled_on(&runner, &server, "pi", &work.join("unused"), &root);
     let mut fleet = runner.fleet();
-    fleet["overseer"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
-    fleet["overseer"].as_object_mut().unwrap().remove("account");
+    fleet["controller"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
+    fleet["controller"]
+        .as_object_mut()
+        .unwrap()
+        .remove("account");
     runner.write_fleet(&fleet);
-    let pane = fleet["overseer"]["pane"].as_str().unwrap().to_owned();
+    let pane = fleet["controller"]["pane"].as_str().unwrap().to_owned();
     let answer = reply(&runner.run(&[
         "successor",
         "--fleet",
@@ -10992,15 +11014,15 @@ fn a_reconcile_of_an_opened_successor_writes_no_trust_record_and_asks_no_gate() 
         // The home the runner's launch recorded, where its sessions are.
         ph["home"] = json!(runner.state_dir().display().to_string());
         let mut fleet = runner.fleet();
-        fleet["overseer"] =
+        fleet["controller"] =
             overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
-        fleet["overseer"]["pane"] = json!(idle);
-        fleet["overseer"]["server_start"] = json!(server.start);
+        fleet["controller"]["pane"] = json!(idle);
+        fleet["controller"]["server_start"] = json!(server.start);
         let mut successor = pending(runner.state_dir());
         successor["harness"] = json!(harness);
         successor["account"] = json!(account.display().to_string());
         successor.as_object_mut().unwrap().remove("home");
-        fleet["overseer"]["pending"] = successor;
+        fleet["controller"]["pending"] = successor;
         let mut intent = transfer_intent(Some(ph), None);
         intent["obligations"] = json!({
             "standing": [
@@ -11023,7 +11045,7 @@ fn a_reconcile_of_an_opened_successor_writes_no_trust_record_and_asks_no_gate() 
         if harness == "claude" {
             assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
             assert_eq!(
-                runner.fleet()["overseer"]["home"],
+                runner.fleet()["controller"]["home"],
                 runner.state_dir().display().to_string(),
                 "the published home is the one the launch recorded"
             );
@@ -11167,7 +11189,7 @@ fn an_account_a_failed_attempt_left_unproved_is_passed_by_the_next_choice() {
     let state = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
     let unprove = |aliases: &[&str]| {
         let mut fleet: Value = serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
-        fleet["overseer"]["unproved"] = aliases
+        fleet["controller"]["unproved"] = aliases
             .iter()
             .map(|alias| {
                 json!({
@@ -11243,7 +11265,7 @@ fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv
         "{started}\n{}",
         stderr(opened.op())
     );
-    let overseer = runner.fleet()["overseer"].clone();
+    let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["permission"], "native", "{overseer}");
     let argv = argv_of(&launch_record(&work));
     assert!(
@@ -11459,7 +11481,7 @@ fn a_start_ended_before_its_line_ran_in_the_idle_shell_fails_and_leaves_the_shel
     let mut opening = opening_phase(&server, now_ms() - 5_000, Some(&shell));
     opening["adopted"] = json!(true);
     let mut fleet = runner.fleet();
-    fleet["overseer"] = json!({"pending": pending(runner.state_dir())});
+    fleet["controller"] = json!({"pending": pending(runner.state_dir())});
     fleet["intents"] = json!([{
         "id": "start-controller:overseer:0:1-1",
         "op": "start-controller",

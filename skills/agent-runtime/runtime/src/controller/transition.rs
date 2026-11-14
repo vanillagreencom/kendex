@@ -1155,7 +1155,7 @@ mod tests {
         assert_eq!(overseer["pending"], json!({"harness": "codex"}));
         assert_eq!(overseer["generation"], json!(3));
 
-        let no_overseer = FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
+        let no_overseer = FLEET.replacen("\"controller\"", "\"overseer_was\"", 1);
         fs::write(&path, no_overseer).unwrap();
         let err = run(&path, &transfer(expected())).unwrap_err();
         assert_eq!(err.key(), "overseer-missing");
@@ -1431,7 +1431,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         // No controller recorded.
-        let bare = FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
+        let bare = FLEET.replacen("\"controller\"", "\"overseer_was\"", 1);
         fs::write(&path, &bare).unwrap();
         let applied = run(&path, &start()).unwrap();
         let Report::StartController(s) = &applied.report else {

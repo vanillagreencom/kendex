@@ -48,7 +48,7 @@ class Compaction(unittest.TestCase):
         box = repo / "tmp/lane-mail/overseer"
         box.mkdir(parents=True)
         (repo / "tmp/workflow-state-oversee.json").write_text(
-            json.dumps({"overseer": {"server": "7000", "pane": "%0"}}) + "\n")
+            json.dumps({"controller": {"server": "7000", "pane": "%0"}}) + "\n")
         return repo, box
 
     def run_cli(self, repo, *args, scripts=SCRIPTS, check=True):
@@ -453,7 +453,7 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
         for path in files:
             path.write_text('{}\n')
         state = repo / "tmp/workflow-state-oversee.json"
-        state.write_text(json.dumps({"issue_id": "oversee", "overseer": {
+        state.write_text(json.dumps({"issue_id": "oversee", "controller": {
             "session_rows": str(files[1]), "pending": {"session_rows": str(files[2])}}}))
         self.rows(box, "to-overseer", [{"id": "expired", "kind": "notice", "at": OLD}])
         args = [word for path in keeps for word in ("--keep", str(repo / path) if absolute else path)]
