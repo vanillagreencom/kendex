@@ -562,7 +562,7 @@ fn a_pi_launch_on_a_provider_nothing_bills_is_refused_as_provider_unmeasured() {
 }
 
 /// A lane record as a confirmed launch leaves it, its harness `process`,
-/// with a pending return, a recovery route and a counter retained.
+/// with a pending return and a counter retained.
 fn record(item: &str, status: &str, process: Option<&Owned>, mail_root: &Path) -> Value {
     let launch = match process {
         Some(p) => json!({"pane": "%7", "server": 41020, "pid": p.pid(), "start": p.start()}),
@@ -578,7 +578,6 @@ fn record(item: &str, status: &str, process: Option<&Owned>, mail_root: &Path) -
         "status": status,
         "launch": launch,
         "pending_pr": {"pr": 5814, "repo": "o/r", "head": "abc"},
-        "recovery": {"cwd": mail_root.display().to_string(), "flags": "", "refresh": true},
         "cycles": 2,
     })
 }
@@ -1165,6 +1164,28 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
         let control = fleet.run(&["state", "path", "--fleet"]);
         assert!(control.status.success(), "{key}: {}", stderr(&control));
     }
+}
+
+/// Through the executable: a validation step is the validation start's own
+/// in-process request, so one sent to `op` is refused `request-invalid`
+/// before any record is read or written.
+#[test]
+fn a_validate_step_sent_over_the_wire_is_refused_as_an_invalid_request() {
+    let fleet = Fleet::new(4);
+    let step = json!({"op": "validate", "step": "stop", "round_id": "r1", "run_dir": "/w/run"});
+    let out = fleet.run(&["op", "--item", "KEN-1", "--request-json", &step.to_string()]);
+    assert_ne!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        reply(&out)["refusal"]["key"],
+        "request-invalid",
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(
+        std::fs::read_dir(fleet.state_dir()).unwrap().count(),
+        0,
+        "nothing written"
+    );
 }
 
 /// Through the executable: a launch whose repository is no `owner/name`
@@ -5420,9 +5441,8 @@ impl Drop for Holder {
 
 // --- the cycle verbs ---
 
-/// The verbs the retained `oversee-report` and the overseer's reads run
-/// through the `oversee-cycle` shim, over the fleet record: with none,
-/// `report` and `rollup` print nothing and write nothing; `report` prints
+/// The cycle verbs over the fleet record: with none, `report` and
+/// `rollup` print nothing and write nothing; `report` prints
 /// each class's rollup row and each recorded stage's row and leaves the
 /// record byte for byte; `rollup` appends each row to the fleet log under
 /// its class; `stages ITEM` prints a running lane's stages by start, with
@@ -5433,21 +5453,7 @@ impl Drop for Holder {
 #[test]
 fn the_cycle_verbs_print_the_rollup_and_a_running_lanes_stages() {
     let fleet = Fleet::new(4);
-    // The shipped shim beside the binary under its launcher's name.
-    let scripts = fleet.state_dir().join("scripts");
-    std::fs::create_dir_all(&scripts).unwrap();
-    let shim = scripts.join("oversee-cycle");
-    copy_executable(&orch_package().join("scripts/oversee-cycle"), &shim);
-    std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
-    let state_dir = fleet.state_dir().display().to_string();
-    let cycle = |args: &[&str]| -> Output {
-        program(&shim)
-            .args(["--state-dir", &state_dir])
-            .args(args)
-            .current_dir(fleet.state_dir())
-            .output()
-            .unwrap()
-    };
+    let cycle = |args: &[&str]| -> Output { fleet.run(&[&["cycle"], args].concat()) };
     for (verb, out) in [
         ("report", cycle(&["report"])),
         ("rollup", fleet.run(&["cycle", "rollup"])),

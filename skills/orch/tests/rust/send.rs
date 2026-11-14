@@ -46,9 +46,8 @@ fn orch_scripts() -> PathBuf {
 /// lanes on it (a cloud session, a mailbox lane and a cloud session whose
 /// root is another repository's), and a scripts tree the mailbox program
 /// runs beside: every orch script linked to the real one but
-/// `orch-runtime`, linked to this build's binary, and `workflow-state`,
-/// the real one behind a wrapper that logs each verb it is asked; and
-/// agent-runtime's entry, its built binary, which reads the credit. The
+/// `orch-runtime`, linked to this build's binary; and agent-runtime's
+/// entry, its built binary, which reads the credit. The
 /// lanes' Claude account and another stand under a home of their own,
 /// each with its credential and a fresh usage record carrying a credit.
 struct World {
@@ -60,7 +59,6 @@ struct World {
     accounts: PathBuf,
     directive: PathBuf,
     claude_log: PathBuf,
-    state_log: PathBuf,
 }
 
 fn git(root: &Path, args: &[&str]) {
@@ -130,8 +128,7 @@ fn world() -> World {
     std::fs::write(&directive, TEXT).unwrap();
     // The scripts tree: the mailbox program finds the orch scripts two
     // directories up from its own place, so it is linked into a tree of
-    // its own beside the logging `workflow-state`, and agent-runtime's
-    // entry two directories up as well. Each package's entry is its built
+    // its own, and agent-runtime's entry two directories up as well. Each package's entry is its built
     // binary, which the shipped wrapper would find only in a set-up cache.
     let tree = aux.path().join("tree");
     let mailbox = tree.join("mailbox").join("scripts");
@@ -150,16 +147,6 @@ fn world() -> World {
     }
     std::fs::remove_file(orch.join("orch-runtime")).unwrap();
     std::os::unix::fs::symlink(binary(), orch.join("orch-runtime")).unwrap();
-    let state_log = aux.path().join("workflow-state.log");
-    std::fs::remove_file(orch.join("workflow-state")).unwrap();
-    write_executable(
-        &orch.join("workflow-state"),
-        format!(
-            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> {}\nexec {} \"$@\"\n",
-            state_log.display(),
-            orch_scripts().join("workflow-state").display()
-        ),
-    );
     std::fs::create_dir_all(accounts.join("usage-answers")).unwrap();
     let claude_log = aux.path().join("claude.log");
     let world = World {
@@ -171,7 +158,6 @@ fn world() -> World {
         accounts,
         directive,
         claude_log,
-        state_log,
     };
     world.plant_credit(OPEN_CREDIT);
     world
@@ -655,20 +641,14 @@ fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refuse
 }
 
 /// The mailbox-only contract: the runtime is the one writer of orch state,
-/// so through the verb the program runs no `workflow-state` at all; a bare
-/// `lane-mail send` by the lane's session route prints the `sent` receipt on
-/// stdout and the record line on stderr and leaves the fleet file byte for
-/// byte as it was.
+/// so a bare `lane-mail send` by the lane's session route prints the `sent`
+/// receipt on stdout and the record line on stderr and leaves the fleet
+/// file byte for byte as it was.
 #[test]
 fn the_mailbox_program_writes_none_of_the_fleet() {
     let w = world();
     let out = w.send(CLOUD, &[]);
     result(&out);
-    assert!(
-        w.log(&w.state_log).is_empty(),
-        "the program runs no state verb: {:?}",
-        w.log(&w.state_log)
-    );
     let before = std::fs::read(w.fleet_path()).unwrap();
     let mut command = program(&w.lane_mail);
     command
@@ -1832,7 +1812,6 @@ fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
         "session_since": "2026-11-01T10:00:00Z", "launched_at": "2026-11-01T10:00:00Z",
         "running_at": "2026-11-01T10:00:05Z", "status": "done", "over_cap": null,
         "allow_all": null, "touched": null, "in_scope": [], "obligation": null,
-        "recovery": {"cwd": world.root.display().to_string(), "flags": "", "session": "", "refresh": false},
         "launch": null,
     }));
     std::fs::write(

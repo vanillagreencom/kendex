@@ -941,18 +941,13 @@ fn a_passed_wall_asks_the_wake_for_one_resume_and_a_resume_answered_by_the_same_
 }
 
 /// A lane record carrying what the relaunch needs: the model the pick is
-/// asked for, the class and reason the relaunch keeps, and the checkout,
-/// session and refresh word an earlier launcher recorded under `recovery`.
-fn relaunchable(mut record: Value, cwd: &Path) -> Value {
+/// asked for, the class and reason the relaunch keeps, and the refresh
+/// word the launch recorded.
+fn relaunchable(mut record: Value) -> Value {
     record["model"] = json!("opus");
     record["class"] = json!(CLASS);
     record["class_reason"] = json!(CLASS_REASON);
-    record["recovery"] = json!({
-        "cwd": cwd.display().to_string(),
-        "flags": "--model opus",
-        "refresh": true,
-        "session": "fleet",
-    });
+    record["refresh"] = json!(true);
     record
 }
 
@@ -968,18 +963,15 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
-    fleet.set_lanes(vec![relaunchable(
-        lane_record(
-            "KEN-4",
-            "gh-4",
-            "claude",
-            &server,
-            &pane,
-            Some(&identity),
-            dir.path(),
-        ),
+    fleet.set_lanes(vec![relaunchable(lane_record(
+        "KEN-4",
+        "gh-4",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
         dir.path(),
-    )]);
+    ))]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
@@ -1103,43 +1095,6 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     );
 }
 
-/// A walled lane whose record names an empty session is relaunched under
-/// the watch's session, as one whose record names none.
-#[test]
-fn a_walled_lanes_relaunch_under_an_empty_recorded_session_runs_under_the_watchs() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
-    let mut record = relaunchable(
-        lane_record(
-            "KEN-4",
-            "gh-4",
-            "claude",
-            &server,
-            &pane,
-            Some(&identity),
-            dir.path(),
-        ),
-        dir.path(),
-    );
-    record["recovery"]["session"] = json!("");
-    fleet.set_lanes(vec![record]);
-    let state = fleet.read();
-    lane_driver!(server, fleet, readers, driver);
-    driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
-    let first = driver.pass(&state);
-    assert_eq!(
-        lines(&first).first().map(String::as_str),
-        Some("EVENT lane-relaunched KEN-4 lane=/home/me/.bclaude from=/home/me/.eclaude"),
-        "{:?}",
-        lines(&first)
-    );
-    let started = driver.relaunches.borrow();
-    assert_eq!(started.len(), 1);
-    assert_eq!(started[0].session, server.session);
-}
-
 /// A walled lane whose record names no class, or no reason for it, is
 /// refused before anything stops: the relaunch keeps the record's pair, so
 /// its launch would refuse once the close had retired the walled harness.
@@ -1161,18 +1116,15 @@ fn a_walled_lane_naming_no_class_or_reason_is_refused_before_anything_stops() {
         let server = Server::start(dir.path(), "fleet");
         let fleet = Fleet::new(&server);
         let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
-        let mut record = relaunchable(
-            lane_record(
-                "KEN-4",
-                "gh-4",
-                "claude",
-                &server,
-                &pane,
-                Some(&identity),
-                dir.path(),
-            ),
+        let mut record = relaunchable(lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
             dir.path(),
-        );
+        ));
         plant(&mut record);
         fleet.set_lanes(vec![record]);
         let state = fleet.read();
@@ -1305,14 +1257,7 @@ fn fleet_origin(fleet: &Fleet, checkout: &Path) {
 /// Through the real `launch-lane` and the real duty: the record of a lane
 /// launched with `--permission-mode dontAsk` carries the choice, the wall
 /// relaunch's request carries it, and the replacement the request starts
-/// through the real entry runs with the word and no bypass word; a released
-/// record, planted as `main` wrote it, carries the choice in
-/// `recovery.flags`, and its request carries the same word. A prompting
-/// choice no launch line carries, `--permission-mode plan`, never
-/// relaunches under the bypass default: two released records carrying it
-/// in the two-word and the `FLAG=VALUE` spelling are refused
-/// `permission-choice-unrepresentable` before any request or stop, where
-/// the `dontAsk` records relaunch.
+/// through the real entry runs with the word and no bypass word.
 #[test]
 fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     let dir = tempfile::tempdir().unwrap();
@@ -1348,49 +1293,7 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     let walled = runtime["launch"]["pane"].as_str().unwrap();
     server.send_line(walled, "work through the queue");
     await_drawn(&server, walled, "weekly limit");
-    let (pane, identity) = walled_claude(&server, dir.path(), "gh-6", BANNER);
-    let mut released = relaunchable(
-        lane_record(
-            "KEN-6",
-            "gh-6",
-            "claude",
-            &server,
-            &pane,
-            Some(&identity),
-            dir.path(),
-        ),
-        dir.path(),
-    );
-    // A released record names its model and effort, in its fields and in
-    // the flags `main` recorded as given: its launch refused a lane on an
-    // account without either.
-    released["effort"] = json!("high");
-    released["recovery"]["flags"] = json!("--model opus --effort high --permission-mode dontAsk");
-    let mut lanes = vec![runtime, released];
-    for (item, name, flags) in [
-        (
-            "KEN-7",
-            "gh-7",
-            "--model opus --effort high --permission-mode plan",
-        ),
-        (
-            "KEN-8",
-            "gh-8",
-            "--model opus --effort high --permission-mode=plan",
-        ),
-    ] {
-        let own = root.join(name);
-        std::fs::create_dir_all(&own).unwrap();
-        let (pane, identity) = walled_claude(&server, &own, name, BANNER);
-        let mut prompting = relaunchable(
-            lane_record(item, name, "claude", &server, &pane, Some(&identity), &own),
-            &own,
-        );
-        prompting["effort"] = json!("high");
-        prompting["recovery"]["flags"] = json!(flags);
-        lanes.push(prompting);
-    }
-    fleet.set_lanes(lanes);
+    fleet.set_lanes(vec![runtime]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     driver.now = std::time::SystemTime::now()
@@ -1409,57 +1312,28 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
         .collect();
     assert_eq!(
         relaunched,
-        vec![
-            format!(
-                "EVENT lane-relaunched KEN-5 lane={} from={}",
-                picked.display(),
-                spent.display()
-            ),
-            format!(
-                "EVENT lane-relaunched KEN-6 lane={} from=/home/me/.eclaude",
-                picked.display()
-            ),
-        ],
+        vec![format!(
+            "EVENT lane-relaunched KEN-5 lane={} from={}",
+            picked.display(),
+            spent.display()
+        )],
         "{:?}",
         lines(&produced)
     );
-    for (item, name) in [("KEN-7", "gh-7"), ("KEN-8", "gh-8")] {
-        let refusal = format!(
-            "wall-relaunch-refused lane={name} reason=context-unavailable cause=permission-choice-unrepresentable"
-        );
-        assert!(
-            lines(&produced).contains(&refusal),
-            "{refusal}: {:?}",
-            lines(&produced)
-        );
-        for suffix in ["md", "close.json", "json"] {
-            let file = driver
-                .state_dir
-                .join(format!("wall-relaunch-{item}.{suffix}"));
-            assert!(
-                !file.exists(),
-                "a request for a refused lane: {}",
-                file.display()
-            );
-        }
-    }
     let started = driver.relaunches.borrow();
-    assert_eq!(started.len(), 2);
-    for relaunch in started.iter() {
-        let request: Value =
-            serde_json::from_str(&std::fs::read_to_string(&relaunch.args[7]).unwrap()).unwrap();
-        assert_eq!(
-            request["permission"],
-            json!("--permission-mode dontAsk"),
-            "{}: {request}",
-            relaunch.item
-        );
-    }
-    // The runtime record's two requests through the real entry, as the
-    // route starts them: the walled predecessor retired, the replacement
-    // started on the picked account with the kept choice.
+    assert_eq!(started.len(), 1);
     let chain = &started[0];
     assert_eq!(chain.item, "KEN-5");
+    let request: Value =
+        serde_json::from_str(&std::fs::read_to_string(&chain.args[7]).unwrap()).unwrap();
+    assert_eq!(
+        request["permission"],
+        json!("--permission-mode dontAsk"),
+        "{request}"
+    );
+    // The record's two requests through the real entry, as the route
+    // starts them: the walled predecessor retired, the replacement started
+    // on the picked account with the kept choice.
     let mut command = program("sh");
     fleet.runner.apply_env(&mut command);
     let out = command
@@ -5564,24 +5438,20 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
         let server = Server::start(dir.path(), "fleet");
         let fleet = Fleet::new(&server);
         let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
-        let mut record = relaunchable(
-            lane_record(
-                "KEN-4",
-                "gh-4",
-                "claude",
-                &server,
-                &pane,
-                Some(&identity),
-                dir.path(),
-            ),
+        let mut record = relaunchable(lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
             dir.path(),
-        );
+        ));
         record["host"] = json!(provider(dir.path()));
         record["kind"] = json!("ssh");
-        // A record the runtime's launch wrote: the lane's root is on its
-        // host, and the checkout the launch ran from, where the relaunch
-        // runs again, is the only local directory it names.
-        record.as_object_mut().unwrap().remove("recovery");
+        // A hosted record: the lane's root is on its host, and the
+        // checkout the launch ran from, where the relaunch runs again, is
+        // the only local directory it names.
         let remote_root = dir.path().join("only-on-the-remote-host");
         record["mail_root"] = json!(remote_root.display().to_string());
         record["checkout"] = json!(dir.path().display().to_string());
@@ -5672,13 +5542,16 @@ fn a_walled_pane_verb_lane_is_stopped_through_its_provider_before_its_relaunch()
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let fleet = Fleet::new(&server);
-        let mut record = relaunchable(
-            lane_record("KEN-4", "gh-4", "pi", &server, "%0", None, dir.path()),
+        let mut record = relaunchable(lane_record(
+            "KEN-4",
+            "gh-4",
+            "pi",
+            &server,
+            "%0",
+            None,
             dir.path(),
-        );
-        let object = record.as_object_mut().unwrap();
-        object.remove("recovery");
-        object.remove("launch");
+        ));
+        record.as_object_mut().unwrap().remove("launch");
         record["host"] = json!(provider(dir.path()));
         record["kind"] = json!("ssh");
         let remote_root = dir.path().join("only-on-the-remote-host");
@@ -5834,23 +5707,18 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     let new_account = dir.path().join("new-account");
     std::fs::create_dir_all(&old_account).unwrap();
     std::fs::create_dir_all(&new_account).unwrap();
-    let mut record = relaunchable(
-        lane_record(
-            "KEN-4",
-            "gh-4",
-            "claude",
-            &server,
-            &pane,
-            Some(&identity),
-            &checkout,
-        ),
+    let mut record = relaunchable(lane_record(
+        "KEN-4",
+        "gh-4",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
         &checkout,
-    );
-    // A released record names its model and effort, in its fields and in
-    // the flags `main` recorded as given: its launch refused a lane on an
-    // account without either.
+    ));
+    // The record names its effort: the launch refuses a lane on an account
+    // without one.
     record["effort"] = json!("high");
-    record["recovery"]["flags"] = json!("--model opus --effort high");
     record["account"] = json!(old_account.display().to_string());
     fleet.set_lanes(vec![record]);
     let state = fleet.read();
@@ -5905,7 +5773,7 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
 }
 
 /// The detached line as its starter runs it: the entry's word first, in the
-/// lane's checkout with the recorded session and the runner's environment.
+/// lane's checkout with the watch's session and the runner's environment.
 fn run_relaunch(fleet: &Fleet, relaunch: &Relaunch) -> std::process::Output {
     let mut command = program(&relaunch.args[0]);
     command
@@ -5943,23 +5811,18 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         std::fs::create_dir_all(&old_account).unwrap();
         std::fs::create_dir_all(&new_account).unwrap();
         let account = new_account.display().to_string();
-        let mut record = relaunchable(
-            lane_record(
-                "KEN-4",
-                "gh-4",
-                "claude",
-                &server,
-                &pane,
-                Some(&identity),
-                &checkout,
-            ),
+        let mut record = relaunchable(lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
             &checkout,
-        );
-        // A released record names its model and effort, in its fields and in
-        // the flags `main` recorded as given: its launch refused a lane on an
-        // account without either.
+        ));
+        // The record names its effort: the launch refuses a lane on an
+        // account without one.
         record["effort"] = json!("high");
-        record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         let world = HostedWorld::new(dir.path());
         // The relaunch runs the real runtime through its entry, in the
@@ -5972,7 +5835,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
             std::fs::create_dir_all(&package).unwrap();
             std::os::unix::fs::symlink(&world.scripts, package.join("scripts")).unwrap();
             let remote = dir.path().join("remote-worktree").display().to_string();
-            record.as_object_mut().unwrap().remove("recovery");
+            record.as_object_mut().unwrap().remove("refresh");
             record["host"] = json!(provider(dir.path()));
             record["kind"] = json!("ssh");
             record["repo"] = json!("o/r");
@@ -6099,23 +5962,18 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         let new_account = dir.path().join("new-account");
         std::fs::create_dir_all(&old_account).unwrap();
         std::fs::create_dir_all(&new_account).unwrap();
-        let mut record = relaunchable(
-            lane_record(
-                "KEN-4",
-                "gh-4",
-                "claude",
-                &server,
-                &pane,
-                Some(&identity),
-                &checkout,
-            ),
+        let mut record = relaunchable(lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
             &checkout,
-        );
-        // A released record names its model and effort, in its fields and in
-        // the flags `main` recorded as given: its launch refused a lane on an
-        // account without either.
+        ));
+        // The record names its effort: the launch refuses a lane on an
+        // account without one.
         record["effort"] = json!("high");
-        record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         fleet.set_lanes(vec![record]);
         let scripts = dir.path().join("scripts");
@@ -6490,18 +6348,15 @@ fn a_walled_github_lane_s_replacement_starts_on_the_brief_naming_its_repository_
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-12", BANNER);
-    let mut record = relaunchable(
-        lane_record(
-            "issue-12",
-            "gh-12",
-            "claude",
-            &server,
-            &pane,
-            Some(&identity),
-            dir.path(),
-        ),
+    let mut record = relaunchable(lane_record(
+        "issue-12",
+        "gh-12",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
         dir.path(),
-    );
+    ));
     record["tracker"] = json!("github");
     record["repo"] = json!("owner/name");
     fleet.set_lanes(vec![record]);

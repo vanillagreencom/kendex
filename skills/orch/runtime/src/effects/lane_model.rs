@@ -39,13 +39,13 @@ const STEM: &str = "model-recovery";
 
 /// The recovery's job, run by `bash -c`: the close, then the `starting`
 /// mark, then the launch, then its `replaced` or `failed` mark, each through
-/// the runtime's entry from the lane's checkout under the recorded tmux
-/// session, its output appended to the log. The close and the launch exit
+/// the runtime's entry from the lane's checkout, its output appended to the
+/// log. The close and the launch exit
 /// by their effects' outcomes: only a confirmed close goes on to the
 /// launch, and a launch whose outcome is still open (75) leaves the row
 /// `starting` for its intent's reconcile, an attempt the limit counts once
 /// its replacement switches again.
-const JOB_LINE: &str = r#"log=$1 cwd=$2 session=$3 runtime=$4 state=$5; shift 5; exec >>"$log" 2>&1; cd -- "$cwd" || exit 1; [ -z "$session" ] || export AGENT_RUNTIME_TMUX_SESSION="$session"; "$runtime" --state-dir "$state" op --fleet --effect-exit --request "$1"; rc=$?; if [ "$rc" -ne 0 ]; then printf 'model-recovery=stop-failed exit=%s\n' "$rc"; exit "$rc"; fi; "$runtime" --state-dir "$state" op --fleet --request-json "$2" || exit; "$runtime" --state-dir "$state" op --fleet --effect-exit --request "$3"; rc=$?; [ "$rc" -ne 75 ] || exit 75; mark=$5; [ "$rc" -ne 0 ] || mark=$4; "$runtime" --state-dir "$state" op --fleet --request-json "$mark" || exit; exit "$rc""#;
+const JOB_LINE: &str = r#"log=$1 cwd=$2 runtime=$3 state=$4; shift 4; exec >>"$log" 2>&1; cd -- "$cwd" || exit 1; "$runtime" --state-dir "$state" op --fleet --effect-exit --request "$1"; rc=$?; if [ "$rc" -ne 0 ]; then printf 'model-recovery=stop-failed exit=%s\n' "$rc"; exit "$rc"; fi; "$runtime" --state-dir "$state" op --fleet --request-json "$2" || exit; "$runtime" --state-dir "$state" op --fleet --effect-exit --request "$3"; rc=$?; [ "$rc" -ne 75 ] || exit 75; mark=$5; [ "$rc" -ne 0 ] || mark=$4; "$runtime" --state-dir "$state" op --fleet --request-json "$mark" || exit; exit "$rc""#;
 
 /// A recovery or a predecessor stop whose job started: the launcher's
 /// answer and the job's log.
@@ -162,12 +162,7 @@ fn recover(
     if lane.model.as_deref().is_none_or(str::is_empty) {
         return Err(unprepared("model-unrecorded"));
     }
-    let Composed {
-        cwd,
-        session,
-        close,
-        launch,
-    } = compose_relaunch(
+    let Composed { cwd, close, launch } = compose_relaunch(
         &lane,
         harness,
         &Composition {
@@ -196,7 +191,6 @@ fn recover(
     let words = [
         log.display().to_string(),
         cwd.display().to_string(),
-        session.unwrap_or_default(),
         runtime.display().to_string(),
         settings.state_dir.display().to_string(),
         close.display().to_string(),

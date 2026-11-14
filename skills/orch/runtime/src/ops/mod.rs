@@ -75,10 +75,10 @@ pub use item::{PruneRound, RoundField, RoundPruned, prune_round};
 // reader.
 pub(crate) use item::{job_ended, run_id_of};
 pub use lane::{
-    AdoptSession, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, CloseRequested,
-    Delivery, Ended, LaneAdopted, LaneLaunched, LaneParked, LaneReleased, LaneReserved, LaunchLane,
-    NoLanding, OwedPark, ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane,
-    Terminal, identity_fills, lane_moved,
+    CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, CloseRequested, Delivery, Ended,
+    LaneLaunched, LaneParked, LaneReleased, LaneReserved, LaunchLane, NoLanding, OwedPark,
+    ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane, Terminal,
+    identity_fills, lane_moved,
 };
 pub use lane::{
     LaneDischarged, LaneObligation, LaneObligationRecord, LaneOutcome, RecordLaneProgress,
@@ -118,7 +118,6 @@ use agent_runtime::journal::{
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum Request {
     LaunchLane(Box<LaunchLane>),
-    AdoptSession(Box<AdoptSession>),
     BeginRound(BeginRound),
     RecordValidationAdmission(RecordValidationAdmission),
     RequestTransfer(Box<RequestTransfer>),
@@ -166,7 +165,10 @@ pub enum Request {
     AdmitPaths(Box<AdmitPaths>),
     /// The retention duty's judged records leaving the fleet state.
     PruneRecords(prune::PruneRecords),
-    /// The validation run's steps, tagged by `step`.
+    /// The validation run's steps, tagged by `step`: built and applied in
+    /// process by the validation start alone, so the command refuses one
+    /// sent as a request.
+    #[serde(skip_deserializing)]
     Validate(validate::Validate),
     /// The queue wait's memory, replaced whole on the item before its next
     /// poll.
@@ -192,7 +194,6 @@ impl Request {
     pub fn name(&self) -> &'static str {
         match self {
             Request::LaunchLane(_) => "launch-lane",
-            Request::AdoptSession(_) => "adopt-session",
             Request::ParkLane(_) => "park-lane",
             Request::ReserveLane(_) => "reserve-lane",
             Request::ReleaseLane(_) => "release-lane",
@@ -253,7 +254,6 @@ impl Request {
             | Request::StopModelPredecessor(_) => Kind::Item,
             Request::LaunchLane(_)
             | Request::CloseLane(_)
-            | Request::AdoptSession(_)
             | Request::RequestTransfer(_)
             | Request::StartController(_)
             | Request::StopController(_)
@@ -336,7 +336,6 @@ pub fn adoption_applied(adopted: ControllerAdopted) -> Applied {
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum Report {
     LaunchLane(Box<LaneLaunched>),
-    AdoptSession(Box<LaneAdopted>),
     BeginRound(RoundBegun),
     RecordValidationAdmission(ValidationAdmitted),
     RequestTransfer(Box<TransferRequested>),
@@ -424,7 +423,6 @@ fn reread_on_record_changed(request: &Request) -> bool {
         // snapshot another writer moved is judged again.
         Request::RecoverLaneModel(_) | Request::StopModelPredecessor(_) => true,
         Request::LaunchLane(_)
-        | Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
         | Request::RequestTransfer(_)
@@ -580,8 +578,7 @@ pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<(
             settings.close_grace.get()?;
             Ok(())
         }
-        Request::AdoptSession(_)
-        | Request::BeginRound(_)
+        Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
         | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
@@ -696,7 +693,6 @@ pub fn item_transition(
         | Request::PruneRound(_)
         | Request::RecordQaDecision(_) => Err(Error::OpNotTransition { op: request.name() }),
         Request::LaunchLane(_)
-        | Request::AdoptSession(_)
         | Request::RequestTransfer(_)
         | Request::StartController(_)
         | Request::StopController(_)
@@ -736,13 +732,6 @@ pub fn fleet_transition(
     match request {
         Request::CloseLane(_) => Err(Error::OpNotTransition { op: request.name() }),
         Request::LaunchLane(r) => Ok(Report::LaunchLane(Box::new(lane::launch_lane(
-            path,
-            doc,
-            r,
-            env,
-            host()?,
-        )?))),
-        Request::AdoptSession(r) => Ok(Report::AdoptSession(Box::new(lane::adopt_session(
             path,
             doc,
             r,
@@ -1323,16 +1312,6 @@ mod tests {
                 },
             },
             Row {
-                name: "an adoption while a launch intent is open",
-                steps: |p| {
-                    run(p, &launch("KEN-4468"))?;
-                    run(p, &adopt("KEN-4468", "s1", None))?;
-                    Ok(())
-                },
-                refusal: Some("intent-open"),
-                check: |p| assert_eq!(lane(p, "KEN-4468").status, LaneStatus::Preparing),
-            },
-            Row {
                 name: "the same launch repeated reconciles",
                 steps: |p| {
                     run(p, &launch("KEN-4468"))?;
@@ -1509,7 +1488,6 @@ mod tests {
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
         let id = intend(&path, &close("KEN-4468"));
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
-        run(&path, &adopt("KEN-4437", "s1", None)).unwrap_err();
         run(&path, &transfer(expected())).unwrap();
         assert_eq!(object(&path)["triaged"], triaged, "rows untouched");
     }

@@ -15,9 +15,7 @@ use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
 use super::admission::{AdmissionReads, Clis, ItemRead, ScopeRange};
-use super::{
-    AdoptSession, Applied, CloseOwnedResources, Host, LaunchLane, Report, Request, apply_on,
-};
+use super::{Applied, CloseOwnedResources, Host, LaunchLane, Report, Request, apply_on};
 use crate::error::Result;
 use crate::state::{FleetState, ItemState, Lane, Record, fixtures};
 use agent_runtime::controller::transition::{OverseerExpected, RequestTransfer};
@@ -254,15 +252,6 @@ pub(super) fn close(item: &str) -> Request {
         cycle: None,
         disposed: None,
     })
-}
-
-pub(super) fn adopt(item: &str, session: &str, launch: Option<LaunchIdentity>) -> Request {
-    Request::AdoptSession(Box::new(AdoptSession {
-        item: item.into(),
-        session_id: session.into(),
-        harness: None,
-        launch,
-    }))
 }
 
 pub(super) fn identity(pane: &str, pid: u64) -> LaunchIdentity {

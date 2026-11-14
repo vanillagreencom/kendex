@@ -218,10 +218,6 @@ pub enum Error {
         pid: u64,
         cause: String,
     },
-    /// The identity an adoption names holds no live process, so there is
-    /// no execution to bind the lane to.
-    #[error("the lane for {item}: pid {pid} holds no live process under its start")]
-    IdentityGone { item: String, pid: u64 },
     /// A close request names both a terminal verdict and a no-landing
     /// disposition; one ground authorizes a close.
     #[error("the close of {item} names two grounds")]
@@ -504,7 +500,6 @@ impl Error {
             Error::AccountUnjudged { .. } => "account-unjudged",
             Error::HarnessLive { .. } => "harness-live",
             Error::HarnessUnreadable { .. } => "harness-unreadable",
-            Error::IdentityGone { .. } => "identity-gone",
             Error::CloseGroundAmbiguous { .. } => "close-ground-ambiguous",
             Error::ReservationInvalid { .. } => "reservation-invalid",
             Error::AttemptStale { .. } => "attempt-stale",
@@ -711,7 +706,7 @@ impl Error {
                 pair("account", account.clone()),
                 pair("cause", cause.clone()),
             ],
-            Error::HarnessLive { item, pid } | Error::IdentityGone { item, pid } => {
+            Error::HarnessLive { item, pid } => {
                 vec![pair("item", item.clone()), pair("pid", pid.to_string())]
             }
             Error::HarnessUnreadable { item, pid, cause } => vec![

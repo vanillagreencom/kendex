@@ -1881,55 +1881,15 @@ pub(crate) struct Recovery {
 }
 
 /// The permission choice a relaunch keeps: the record's `permission`, the
-/// words of the launch line the runtime launched it with; on a record no
-/// runtime launch wrote, the first spelling of the harness's permission
-/// table among the `recovery.flags` an earlier launcher recorded (a Claude
-/// line's words end at `--`), a `FLAG=VALUE` spelling given as its two
-/// words. `Ok(None)` is a record stating no choice, which runs the settings'
-/// posture; `Err` is a permission flag whose value the table lacks, a
-/// choice no launch line carries faithfully, refused before anything is
-/// stopped.
-fn recorded_permission(lane: &Lane, harness: Harness) -> Result<Option<String>, String> {
-    if let Some(word) = lane
-        .extra
+/// words of the launch line the runtime launched it with. `None` is a
+/// record stating no choice, which runs the settings' posture.
+fn recorded_permission(lane: &Lane) -> Option<String> {
+    lane.extra
         .get("permission")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|w| !w.is_empty())
-    {
-        return Ok(Some(word.to_owned()));
-    }
-    let words: Vec<&str> = lane
-        .extra
-        .get("recovery")
-        .and_then(|r| r.get("flags"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .split_whitespace()
-        .take_while(|w| harness != Harness::Claude || *w != "--")
-        .collect();
-    let spellings = harness.permission_spellings();
-    for (i, word) in words.iter().enumerate() {
-        for (spelling, _) in &spellings {
-            if word == spelling {
-                return Ok(Some((*spelling).to_owned()));
-            }
-            if let Some((flag, value)) = spelling.split_once('=')
-                && *word == flag
-                && words.get(i + 1) == Some(&value)
-            {
-                return Ok(Some(format!("{flag} {value}")));
-            }
-        }
-        let valued = spellings
-            .iter()
-            .filter_map(|(spelling, _)| spelling.split_once('='))
-            .any(|(flag, _)| *word == flag || word.starts_with(&format!("{flag}=")));
-        if valued {
-            return Err("permission-choice-unrepresentable".to_owned());
-        }
-    }
-    Ok(None)
+        .map(str::to_owned)
 }
 
 /// What a relaunch from a lane record is composed with: the files' `stem`
@@ -1944,12 +1904,10 @@ pub(crate) struct Composition<'a> {
     pub(crate) ground: Value,
 }
 
-/// A composed relaunch: the checkout it runs from, the tmux session an
-/// earlier launcher recorded, and its two request files in the order the
-/// runtime's entry applies them.
+/// A composed relaunch: the checkout it runs from and its two request files
+/// in the order the runtime's entry applies them.
 pub(crate) struct Composed {
     pub(crate) cwd: PathBuf,
-    pub(crate) session: Option<String>,
     pub(crate) close: PathBuf,
     pub(crate) launch: PathBuf,
 }
@@ -1962,7 +1920,7 @@ pub(crate) struct Composed {
 /// its refresh word and permission choice ([`recorded_permission`]), the
 /// composition's accounts and brief. The checkout is the one the launch ran
 /// from (`checkout` on a hosted record, whose `mail_root` is its host's;
-/// the `recovery.cwd` an earlier launcher recorded; else `mail_root`). A
+/// else `mail_root`). A
 /// record naming no class or no reason (`class-unrecorded`: the launch
 /// keeps the record's pair and would refuse once the close had retired the
 /// predecessor), whose checkout is gone, or whose provider is spelled
@@ -1986,13 +1944,10 @@ pub(crate) fn compose_relaunch(
     {
         return Err("class-unrecorded".to_owned());
     }
-    let recovery = lane.extra.get("recovery").and_then(Value::as_object);
-    let field = |key: &str| recovery.and_then(|r| r.get(key));
     let cwd = lane
         .extra
         .get("checkout")
         .and_then(Value::as_str)
-        .or_else(|| field("cwd").and_then(Value::as_str))
         .or(lane.mail_root.as_deref())
         .unwrap_or("")
         .trim();
@@ -2004,11 +1959,12 @@ pub(crate) fn compose_relaunch(
         return Err("provider-relative".to_owned());
     }
     let cwd = std::fs::canonicalize(cwd).map_err(|_| "checkout-unavailable".to_owned())?;
-    let refresh = field("refresh")
+    let refresh = lane
+        .extra
+        .get("refresh")
         .and_then(Value::as_bool)
-        .or_else(|| lane.extra.get("refresh").and_then(Value::as_bool))
         .unwrap_or(false);
-    let permission = recorded_permission(lane, harness)?;
+    let permission = recorded_permission(lane);
     let stem = state_dir
         .join(format!("{}-{}", how.stem, lane.item))
         .display()
@@ -2057,10 +2013,6 @@ pub(crate) fn compose_relaunch(
         .map_err(|e| format!("request-unwritten path={} cause={e}", file.display()))?;
     Ok(Composed {
         cwd,
-        session: field("session")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned),
         close,
         launch: file,
     })
@@ -2068,8 +2020,8 @@ pub(crate) fn compose_relaunch(
 
 /// The wall's relaunch: the record's own relaunch ([`compose_relaunch`])
 /// on the picked account with the spent account excluded, the start brief
-/// and the `usage-limit` ground, run as one shell line; the session is the
-/// one an earlier launcher recorded, else the watch's.
+/// and the `usage-limit` ground, run as one shell line under the watch's
+/// session.
 pub(crate) fn relaunch_request(
     lane: &Lane,
     harness: Harness,
@@ -2081,7 +2033,6 @@ pub(crate) fn relaunch_request(
 ) -> Result<Recovery, String> {
     let Composed {
         cwd,
-        session: recorded,
         close,
         launch: file,
     } = compose_relaunch(
@@ -2115,9 +2066,7 @@ pub(crate) fn relaunch_request(
     ];
     Ok(Recovery {
         cwd,
-        session: recorded
-            .or_else(|| session.map(str::to_owned))
-            .unwrap_or_default(),
+        session: session.map(str::to_owned).unwrap_or_default(),
         args,
     })
 }

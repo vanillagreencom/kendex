@@ -90,12 +90,6 @@
         "delta": 12,
         "paths": 3
       },
-      "recovery": {
-        "cwd": "/home/u/dev/.worktrees/kendex/ken-4437",
-        "flags": "--model gpt-5.5-codex -c model_reasoning_effort=high",
-        "session": "kendex-fleet",
-        "refresh": true
-      },
       "launch": {
         "pane": "%9",
         "server": 41020,

@@ -1288,19 +1288,6 @@ mod tests {
         assert!(fs::symlink_metadata(&lane).is_err(), "nothing written");
     }
 
-    /// The launch installs the catalog's reader and nothing else, so the
-    /// embedded copy and the catalog file are held equal while the Bash
-    /// installer ships beside this one.
-    #[test]
-    fn the_catalog_s_copilot_reader_is_the_embedded_one() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../orch/scripts/copilot-lane-context/extension.mjs"
-        );
-        let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        assert_eq!(text, EXTENSION, "{path}");
-    }
-
     fn field<'a>(e: &'a Error, name: &str) -> &'a str {
         match e {
             Error::Refused { fields, .. } => fields

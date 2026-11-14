@@ -3,8 +3,8 @@
 //! answer written after it, the one close with the lane's end notice
 //! recorded `owed` in the same write, the mark that says how the send went,
 //! and the stop recorded on an open stage before its job is ended. Every
-//! step is one request under `{"op": "validate", "step": ...}`, so the
-//! envelope's exhaustive matches take one arm. The reads that precede the
+//! step is one in-process request, `Request::Validate`, so the envelope's
+//! exhaustive matches take one arm. The reads that precede the
 //! start (the settings, the tree, the launcher) are `crate::validate`'s;
 //! nothing here runs a process.
 //!

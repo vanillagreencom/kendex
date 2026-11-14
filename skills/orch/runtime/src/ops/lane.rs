@@ -1,11 +1,9 @@
 //! The lane transitions: a lane admitted against the fleet cap and opened
-//! `preparing` with its launch intent, a session this runtime did not
-//! launch bound to a lane under a confirmed identity, a close asked for on
-//! a ground that authorizes it, a park, a reservation and its release, an
-//! effect's phase written onto its open intent, and the arms of
-//! `record-outcome` that move a lane when its launch or close ends.
+//! `preparing` with its launch intent, a close asked for on a ground that
+//! authorizes it, a park, a reservation and its release, an effect's phase
+//! written onto its open intent, and the arms of `record-outcome` that move
+//! a lane when its launch or close ends.
 
-use agent_runtime::intent::LaunchIdentity;
 use agent_runtime::record::{self, Document};
 use std::collections::BTreeSet;
 use std::fs;
@@ -349,21 +347,6 @@ impl LaunchLane {
     }
 }
 
-/// Bind a session this runtime did not launch to the item's lane record.
-/// A `launch` left out keeps the recorded identity.
-/// The identity bound, given or recorded, is confirmed live through the one
-/// identity reader before the lane reads `running`; no name
-/// is read in its place.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AdoptSession {
-    pub item: String,
-    pub session_id: String,
-    #[serde(default)]
-    pub harness: Option<String>,
-    #[serde(default)]
-    pub launch: Option<LaunchIdentity>,
-}
-
 /// The tracker's terminal verdict on the lane's item, carried as evidence
 /// by the package that read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -596,14 +579,6 @@ pub struct LaneLaunched {
     pub lane: Lane,
     pub effect: Effect,
     pub admission: Occupancy,
-}
-
-/// A lane bound to a session.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LaneAdopted {
-    pub lane: Lane,
-    /// False when the lane already ran this session.
-    pub adopted_now: bool,
 }
 
 /// A close asked for, with the lane as it stands until the stop confirms.
@@ -1469,89 +1444,6 @@ pub(super) fn launch_lane(
         effect: Effect::Persisted { intent },
         admission,
     })
-}
-
-pub(super) fn adopt_session(
-    path: &Path,
-    doc: &mut Document,
-    r: &AdoptSession,
-    env: &Env,
-    host: &Host,
-) -> Result<LaneAdopted> {
-    let lanes = lanes(path, doc)?;
-    let index = lanes
-        .iter()
-        .position(|l| l.item == r.item)
-        .ok_or_else(|| Error::LaneMissing {
-            item: r.item.clone(),
-        })?;
-    journal::no_open_intent(&intents(path, doc)?, &r.item)?;
-    let previous = &lanes[index];
-    match previous.status {
-        LaneStatus::Running => {
-            if previous.session_id.as_deref() == Some(&r.session_id) {
-                return Ok(LaneAdopted {
-                    lane: previous.clone(),
-                    adopted_now: false,
-                });
-            }
-            Err(Error::LaneLive {
-                item: r.item.clone(),
-                status: previous.status,
-            })
-        }
-        LaneStatus::Done => Err(Error::LaneDone {
-            item: r.item.clone(),
-        }),
-        LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Parked => {
-            // The identity the lane will run under, given or kept, is read
-            // through the one identity reader before anything binds: a pid
-            // that holds no process under its start is no execution to
-            // adopt, and one that cannot be read authorizes nothing.
-            let bound = r
-                .launch
-                .as_ref()
-                .or(previous.launch.as_ref())
-                .and_then(occupancy::identity_of);
-            if let Some(id) = bound {
-                match (host.still_runs)(&id) {
-                    Reading::Live(_) => {}
-                    Reading::Gone => {
-                        return Err(Error::IdentityGone {
-                            item: r.item.clone(),
-                            pid: id.pid as u64,
-                        });
-                    }
-                    Reading::Unreadable { cause } => {
-                        return Err(Error::HarnessUnreadable {
-                            item: r.item.clone(),
-                            pid: id.pid as u64,
-                            cause: cause.to_owned(),
-                        });
-                    }
-                }
-            }
-            let at = env.iso();
-            let lane = lane_doc_mut(path, doc, index)?;
-            record::set(lane, "session_id", r.session_id.as_str());
-            if let Some(harness) = &r.harness {
-                record::set(lane, "harness", harness.as_str());
-            }
-            if let Some(launch) = &r.launch {
-                record::set(lane, "launch", serde_json::to_value(launch)?);
-            }
-            record::set(lane, "status", LaneStatus::Running.word());
-            record::set(lane, "running_at", at.as_str());
-            // The harness charges the slot from here; a hold over the gap
-            // before it is spent.
-            record::delete(lane, "reservation");
-            unpark(path, lane, index, &at)?;
-            Ok(LaneAdopted {
-                lane: lane_at(path, doc, index)?,
-                adopted_now: true,
-            })
-        }
-    }
 }
 
 /// The ground a close request stands on, judged on the
@@ -2940,7 +2832,6 @@ mod tests {
             "status": status,
             "launch": launch,
             "pending_pr": {"pr": 5814, "repo": "o/r", "head": "abc"},
-            "recovery": {"cwd": format!("/w/{item}"), "flags": "", "refresh": true},
             "cycles": 2,
         })
     }
@@ -3321,7 +3212,6 @@ mod tests {
         assert_eq!(view.running_at, None);
         assert_eq!(view.launch, None);
         assert_eq!(view.extra["tier"], Value::from("small"));
-        assert_eq!(view.extra["recovery"]["refresh"], Value::Bool(true));
         assert!(!after.contains_key("prepare"));
         assert!(!after.contains_key("live_display"));
         let expected: Vec<String> = keys(&before)
@@ -3410,42 +3300,24 @@ mod tests {
         }
     }
 
-    /// Adopting a parked lane runs
-    /// the unpark, and adopting without `launch` keeps the recorded
-    /// identity, which must read live.
+    /// A relaunch of a parked lane runs the unpark: the park that names a
+    /// pull request moves into `pending_pr` and its span into `pauses`, and
+    /// a park on the lane's own ask keeps its pause with nothing pending.
     #[test]
-    fn adopting_a_parked_lane_unparks_it_and_keeps_the_launch_when_none_is_passed() {
+    fn a_relaunch_of_a_parked_lane_unparks_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let held = Held::sleep();
-        let live = held.identity();
         let text = fixtures::FLEET
             .replacen("\"status\": \"done\"", "\"status\": \"parked\"", 1)
             .replacen(
                 "      \"launch\": {",
-                "      \"parked\": {\"pr\": 5814, \"repo\": \"bmethod/kendex\", \"head\": \"abc123\", \"until_pr\": 5820, \"at\": \"2026-10-24T20:00:00Z\"},\n      \"reservation\": {\"reason\": \"resume\", \"until\": \"2027-01-01T00:00:00Z\"},\n      \"launch\": {",
+                "      \"parked\": {\"pr\": 5814, \"repo\": \"bmethod/kendex\", \"head\": \"abc123\", \"until_pr\": 5820, \"at\": \"2026-10-24T20:00:00Z\"},\n      \"launch\": {",
                 1,
-            )
-            .replacen("\"pid\": 42210", &format!("\"pid\": {}", live.pid), 1)
-            .replacen("\"start\": \"ticks:9930001\"", &format!("\"start\": \"{}\"", live.start), 1);
+            );
         fs::write(&path, &text).unwrap();
-        let before = lane_doc(&path, "KEN-4437");
-        apply_on(
-            &path,
-            &adopt("KEN-4437", "s9", None),
-            &env(),
-            LOCK,
-            &kernel(4),
-        )
-        .unwrap();
+        run(&path, &launch("KEN-4437")).unwrap();
         let after = lane_doc(&path, "KEN-4437");
-        assert_eq!(after["status"], Value::from("running"));
-        assert_eq!(after["session_id"], Value::from("s9"));
         assert!(!after.contains_key("parked"));
-        assert!(
-            !after.contains_key("reservation"),
-            "the harness charges from here"
-        );
         assert_eq!(
             after["pending_pr"],
             json!({"pr": 5814, "repo": "bmethod/kendex", "head": "abc123", "until_pr": 5820})
@@ -3454,34 +3326,14 @@ mod tests {
             after["pauses"],
             json!([{"from": "2026-10-24T20:00:00Z", "to": "2026-01-29T15:20:00Z", "cause": "parked"}])
         );
-        assert_eq!(after["launch"], before["launch"], "the wake keeps `launch`");
-        assert_eq!(after["launch"]["pid"], Value::from(live.pid));
-        // Only `parked` and `reservation` left the sequence; `pending_pr`
-        // and `pauses` appended.
-        let mut expected: Vec<String> = keys(&before)
-            .into_iter()
-            .filter(|k| k != "parked" && k != "reservation")
-            .collect();
-        expected.extend(["pauses".to_owned(), "pending_pr".to_owned()]);
-        assert_eq!(keys(&after), expected);
-        // A park on the lane's own ask names no pull request: its pause is
-        // kept and nothing is pending.
         let asked = text.replacen(
             "\"pr\": 5814, \"repo\": \"bmethod/kendex\", \"head\": \"abc123\", \"until_pr\": 5820,",
             "\"repo\": \"bmethod/kendex\", \"head\": \"abc123\", \"ask\": \"a1\",",
             1,
         );
         fs::write(&path, &asked).unwrap();
-        apply_on(
-            &path,
-            &adopt("KEN-4437", "s9", None),
-            &env(),
-            LOCK,
-            &kernel(4),
-        )
-        .unwrap();
+        run(&path, &launch("KEN-4437")).unwrap();
         let after = lane_doc(&path, "KEN-4437");
-        assert_eq!(after["status"], Value::from("running"));
         assert!(!after.contains_key("parked"));
         assert!(!after.contains_key("pending_pr"), "{after:?}");
         assert_eq!(after["pauses"][0]["cause"], Value::from("parked"));

@@ -350,13 +350,8 @@ impl Harness {
     /// the first row that matches, the default for a model matching none:
     /// an exact id first, so a model with a measured window is read at it,
     /// then the family word anywhere in the model, so an alias or an
-    /// undeclared id of that family reads the family's budget. Orch's
-    /// `lib/adapters/claude.sh` carries the same rows in glob form
-    /// (`LANE_ADAPTER_CLAUDE_WINDOWS`, `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`)
-    /// for the turn-end hook and the launcher, which judge before this
-    /// runtime is built; the test row
-    /// `the_adapters_capacity_line_spells_this_table_row_for_row` holds the
-    /// two together. Codex, Copilot and Pi declare no capacity here: each
+    /// undeclared id of that family reads the family's budget. Codex,
+    /// Copilot and Pi declare no capacity here: each
     /// names its window in its own session record, which the adapter reads.
     /// A harness update re-reads this table beside the launch words.
     pub fn context_capacity(self, model: &str) -> Option<u64> {
@@ -574,60 +569,6 @@ mod tests {
                 "{harness}"
             );
         }
-    }
-
-    /// The turn-end hook and the launcher judge on orch's copy of the table,
-    /// `lib/adapters/claude.sh`'s `LANE_ADAPTER_CLAUDE_WINDOWS` and
-    /// `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`, before this runtime is built, so
-    /// a figure moved in either file alone has the overseer judge on two
-    /// capacities. The shipped adapter beside this crate is read and its two
-    /// assignment lines parsed; every row, in order and in the adapter's glob
-    /// spelling, and the default must be this table's.
-    #[test]
-    fn the_adapters_capacity_line_spells_this_table_row_for_row() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../orch/scripts/lib/adapters/claude.sh"
-        );
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        let assigned = |name: &str| -> String {
-            let prefix = format!("{name}=");
-            let line = text
-                .lines()
-                .find(|line| line.starts_with(&prefix))
-                .unwrap_or_else(|| panic!("{path}: no `{name}=` line"));
-            line[prefix.len()..].trim_matches('\'').to_owned()
-        };
-        let rows: Vec<(String, u64)> = assigned("LANE_ADAPTER_CLAUDE_WINDOWS")
-            .split_whitespace()
-            .map(|pair| {
-                let (pattern, figure) = pair
-                    .split_once('=')
-                    .unwrap_or_else(|| panic!("{path}: row `{pair}` has no `=`"));
-                let figure = figure
-                    .parse()
-                    .unwrap_or_else(|e| panic!("{path}: row `{pair}`: {e}"));
-                (pattern.to_owned(), figure)
-            })
-            .collect();
-        let spelled: Vec<(String, u64)> = CLAUDE_CONTEXT_CAPACITY
-            .iter()
-            .map(|(row, capacity)| {
-                let pattern = match row {
-                    ModelMatch::Id(id) => (*id).to_owned(),
-                    ModelMatch::Family(word) => format!("*{word}*"),
-                };
-                (pattern, *capacity)
-            })
-            .collect();
-        assert_eq!(rows, spelled, "{path}: LANE_ADAPTER_CLAUDE_WINDOWS");
-        assert_eq!(
-            assigned("LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW")
-                .parse::<u64>()
-                .ok(),
-            Some(CLAUDE_CONTEXT_DEFAULT),
-            "{path}: LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW"
-        );
     }
 
     /// A probe of a stand-in harness is one counted start under `probe`

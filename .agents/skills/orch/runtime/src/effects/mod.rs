@@ -235,8 +235,7 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::RequestTransfer(_)
         | Request::StartController(_)
         | Request::StopController(_) => true,
-        Request::AdoptSession(_)
-        | Request::BeginRound(_)
+        Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
         | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
@@ -370,8 +369,7 @@ fn live_effect(report: &Report) -> Option<&Effect> {
         Report::RequestTransfer(t) => &t.effect,
         Report::StartController(s) => &s.effect,
         Report::StopController(s) => &s.effect,
-        Report::AdoptSession(_)
-        | Report::BeginRound(_)
+        Report::BeginRound(_)
         | Report::RecordValidationAdmission(_)
         | Report::AdoptController(_)
         | Report::ClaimIntent(_)
@@ -436,8 +434,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::StopController(_) => {
                         unreachable!("a controller request's effect is the hand-over's")
                     }
-                    Request::AdoptSession(_)
-                    | Request::BeginRound(_)
+                    Request::BeginRound(_)
                     | Request::RecordValidationAdmission(_)
                     | Request::ClaimIntent(_)
                     | Request::AcceptResult(_)
@@ -492,8 +489,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         Request::RequestTransfer(_) | Request::StartController(_) | Request::StopController(_) => {
             unreachable!("a controller request's effect is the hand-over's")
         }
-        Request::AdoptSession(_)
-        | Request::BeginRound(_)
+        Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
         | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
@@ -882,7 +878,6 @@ fn hand_over_request(request: &Request) -> Option<agent_runtime::controller::tra
         Request::StopController(r) => Some(HandOver::StopController(r.clone())),
         Request::LaunchLane(_)
         | Request::CloseOwnedResources(_)
-        | Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
         | Request::ClaimIntent(_)

@@ -1037,38 +1037,6 @@ mod tests {
         ));
     }
 
-    /// Two copies of one list drift (a switch added to one and not the
-    /// other), so the shipped `printf` of `lane_launch_rm_prompt_env` is
-    /// read row for row against `CLAUDE_BYPASS_ENV` while that function
-    /// stands: a name changes in one commit or this row refuses. A
-    /// consistency check, not a second implementation.
-    #[test]
-    fn the_launchers_prompt_switch_line_spells_this_list_row_for_row() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../orch/scripts/lib/lane-launch.sh"
-        );
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        let body = text
-            .split_once("\nlane_launch_rm_prompt_env() {")
-            .map(|(_, rest)| rest.split_once("\n}\n").map_or(rest, |(body, _)| body))
-            .unwrap_or_else(|| panic!("{path}: no `lane_launch_rm_prompt_env` function"));
-        let words = body
-            .lines()
-            .find_map(|line| line.trim_start().strip_prefix("0) printf '"))
-            .and_then(|rest| rest.split_once('\''))
-            .map(|(words, _)| words)
-            .unwrap_or_else(|| panic!("{path}: no `0) printf '...'` line in the function"));
-        let spelled: Vec<&str> = words
-            .split_whitespace()
-            .map(|word| {
-                word.strip_suffix("=1")
-                    .unwrap_or_else(|| panic!("{path}: `{word}` is not `NAME=1`"))
-            })
-            .collect();
-        assert_eq!(spelled, CLAUDE_BYPASS_ENV, "{path}");
-    }
-
     /// Under the bypass posture the canonical bypass word is added only
     /// where no full-bypass spelling already stands, so an alias the caller
     /// gave (`--yolo`, `--permission-mode=bypassPermissions`) is never
