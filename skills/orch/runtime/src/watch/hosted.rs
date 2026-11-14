@@ -2,7 +2,8 @@
 //! long-lane and handoff readings of a hosted lane, a Pi lane's session rows,
 //! its status verb, over the fleet record's hosted lanes and inside the lane
 //! duty's pass (`watch::lanes`); the finished close of a merged lane, local
-//! or hosted; and the provider calls a hosted launch makes.
+//! or hosted; and the provider calls a hosted launch makes, the run of a
+//! `pane=verb` provider's prefix among them.
 //!
 //! Every provider read is one `provider::call` on the record's host,
 //! three-valued: a `cat` that exits 2 is a missing file only once a `touch`
@@ -458,7 +459,8 @@ pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String>
 }
 
 /// `stop --item ITEM --harness H` before a hosted `pane=local`
-/// relaunch, confirmed by exit 0 and the one line `stopped item=ITEM
+/// relaunch and after a `pane=verb` launch that failed past its exec,
+/// confirmed by exit 0 and the one line `stopped item=ITEM
 /// processes=N`, read by `call`'s three values: `Failed` a refusal or an
 /// unconfirmed answer (`stop-failed exit=N`), `Unknown` a stop that may
 /// have signalled the harness or not (`stop-unanswered`).
@@ -850,6 +852,41 @@ pub fn put(
         Ok(())
     } else {
         Err(cause_of("put", &out))
+    }
+}
+
+/// The ssh client's run of a `pane=verb` provider's prefix, `program` and
+/// `args` as the launch's builder spelled them (`-T`, so no terminal is
+/// asked for): the prefix starts the harness in a session the provider
+/// owns on its host and returns. Stdin is closed, so nothing waits on this
+/// machine's input. Exit 0 is the session started; a status of 1 to 127 a
+/// prefix or client that refused (`host-exec-failed`); ssh's 255, a signal
+/// or no answer within [`READ_BOUND`] may have started it
+/// (`host-exec-unanswered`). Either failure may leave a harness, which the
+/// caller asks the provider to stop.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the hosted launch's one exec of a provider's prefix, through the one runner under this module's tag, its phase recorded by the launch first"
+)]
+pub fn run_prefix(program: &Path, args: &[String]) -> Result<(), Asked> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = match host::run_tagged(TAG, "ssh", program, "host-exec", &args, READ_BOUND) {
+        Ok(out) => out,
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => {
+            return Err(Asked::Failed(format!("host-exec-failed cause={e}")));
+        }
+        Err(e) => return Err(Asked::Unknown(format!("host-exec-unanswered cause={e}"))),
+    };
+    match out.status.code() {
+        Some(0) => Ok(()),
+        Some(1..=127) => Err(Asked::Failed(format!(
+            "host-exec-failed {}",
+            cause_of("ssh", &out)
+        ))),
+        Some(_) | None => Err(Asked::Unknown(format!(
+            "host-exec-unanswered {}",
+            cause_of("ssh", &out)
+        ))),
     }
 }
 

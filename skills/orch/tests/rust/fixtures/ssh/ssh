@@ -1,14 +1,21 @@
 #!/bin/bash
-# The ssh client as the hosted launch rows run it: `ssh -t -o OPTION ... --
-# TARGET LINE` runs LINE on this machine through bash, the host's shell,
+# The ssh client as the hosted launch rows run it: `ssh -t|-T -o OPTION ...
+# -- TARGET LINE` runs LINE on this machine through bash, the host's shell,
 # with this directory first on the search path so the harness the line
-# names by its bare name is the stub beside this file. The argv is logged
-# beside the fixture (`ssh.log`) and the target never dialled. Any other
-# form exits 255, as the client does on a usage error.
+# names by its bare name is the stub beside this file. `-t` is the fleet
+# window's client; `-T` the detached run of a provider's prefix, whose
+# stdin must be closed: one that carries any byte exits 1 before LINE
+# runs. The argv is logged beside the fixture (`ssh.log`) and the target
+# never dialled. Any other form exits 255, as the client does on a usage
+# error.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 printf '%s\n' "$*" >> "$here/ssh.log"
-[ "${1:-}" = -t ] || exit 255
+case "${1:-}" in
+  -t) ;;
+  -T) [ -z "$(cat)" ] || exit 1 ;;
+  *) exit 255 ;;
+esac
 shift
 while [ "${1:-}" = -o ]; do
   [ $# -ge 2 ] || exit 255

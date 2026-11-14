@@ -4,7 +4,9 @@
 //! harness, or the ssh client carrying a hosted one), confirm the harness
 //! in it, and the launch cells of the reconcile matrix. What a fleet lane's
 //! harness needs beyond its trust record is [`gate`]'s. A cloud session is
-//! created through the Claude CLI's own answer and opens no window. Every
+//! created through the Claude CLI's own answer and opens no window; nor
+//! does a lane whose provider owns the harness's session, whose prefix runs
+//! here detached and whose harness is confirmed through the provider. Every
 //! host read and write here goes through [`Operation`] or the one runner.
 
 use agent_runtime::intent::LaunchIdentity;
@@ -881,7 +883,9 @@ fn local_launch(
 
 /// A hosted lane: the provider's `create` (and `wait`), the launch record
 /// verified on the host, then the fleet window running the ssh client
-/// whose one typed line starts the harness under the provider's prefix.
+/// whose one typed line starts the harness under the provider's prefix, or,
+/// where the provider owns the harness's session (`pane=verb`), that
+/// prefix run here with no window.
 /// Whether the lane's last pause is a park: its sandbox was stopped with its
 /// disk kept, and no launch has brought it back for certain since.
 fn parked_last(lane: &Lane) -> bool {
@@ -923,11 +927,6 @@ fn hosted_launch(
         Some(Launch::Window) | None => {
             return failed(operation, "host-capabilities-failed launch=window");
         }
-    }
-    // A provider that owns the harness's session itself opens no window
-    // this effect could register: no route here starts it.
-    if caps.pane == PaneKind::Verb {
-        return failed(operation, "host-pane-verb");
     }
     let Some(harness) = Harness::parse(&r.harness) else {
         return failed(operation, "harness-unknown");
@@ -1045,30 +1044,41 @@ fn hosted_launch(
     } else {
         brief
     };
-    let command = match hosted_command(run.settings, r, harness, &created, &brief) {
+    let client = match caps.pane {
+        PaneKind::Local => Client::Window,
+        PaneKind::Verb => Client::Detached,
+    };
+    let command = match hosted_command(run.settings, r, harness, &created, &brief, client) {
         Ok(command) => command,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
     if let Err(e) = check_program(&command) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
     }
-    let target = Target::new(&run.settings.engine.harness_binaries, harness)?;
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
-    let mut outcome = open_and_confirm(
-        operation,
-        r,
-        &server,
-        &session,
-        &SessionFloor::Baseline(Vec::new()),
-        &command,
-        harness,
-        &|name| name == "ssh" || target.owns(name),
-        Sessions::Hosted {
-            mail_root: created.path.clone(),
-        },
-    )?;
+    let mut outcome = match client {
+        Client::Window => {
+            let target = Target::new(&run.settings.engine.harness_binaries, harness)?;
+            open_and_confirm(
+                operation,
+                r,
+                &server,
+                &session,
+                &SessionFloor::Baseline(Vec::new()),
+                &command,
+                harness,
+                &|name| name == "ssh" || target.owns(name),
+                Sessions::Hosted {
+                    mail_root: created.path.clone(),
+                },
+            )?
+        }
+        Client::Detached => detached_launch(
+            run, operation, &scripts, provider, &r.item, harness, &session, &created, &command,
+        )?,
+    };
     if created.unrebased {
         outcome.annotate("tree", json!("unrebased"));
     }
@@ -1158,14 +1168,25 @@ fn hosted_marker(
     Ok(())
 }
 
-/// The ssh client's command for the fleet window: one typed line, `ssh -t
-/// -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET LINE`, where LINE is
-/// the provider's prefix followed by the harness line the builder spells
-/// for the worktree on the host, quoted as one word. Nobody answers a
-/// host-key, password or passphrase prompt in a fleet window, so the client
-/// refuses one instead of asking, and a dial that does not connect within
-/// the launch's own bound ends: either way the pane closes with the client
-/// and the launch fails `pane-gone` rather than waiting out the bound on a
+/// Where a hosted launch's ssh client runs.
+#[derive(Debug, Clone, Copy)]
+enum Client {
+    /// In the lane's fleet window, which holds the client's terminal.
+    Window,
+    /// Here, with no terminal, for a provider whose prefix starts the
+    /// harness in a session it owns on its host and returns.
+    Detached,
+}
+
+/// The ssh client's command: `ssh -t|-T -o BatchMode=yes -o
+/// ConnectTimeout=SECS -- TARGET LINE`, `-t` for the one typed line of
+/// the fleet window, `-T` for the detached run, where LINE is the
+/// provider's prefix followed by the harness line the builder spells for
+/// the worktree on the host, quoted as one word. Nobody answers a host-key,
+/// password or passphrase prompt in a fleet window, so the client refuses
+/// one instead of asking, and a dial that does not connect within the
+/// launch's own bound ends: either way the pane closes with the client and
+/// the launch fails `pane-gone` rather than waiting out the bound on a
 /// prompt. The brief travels inline, since the file is on this machine;
 /// the harness is the host's own program by name; no account variable
 /// reaches the host, whose prefix carries the credential it placed. A Pi
@@ -1177,6 +1198,7 @@ fn hosted_command(
     harness: Harness,
     created: &hosted::Created,
     brief: &str,
+    client: Client,
 ) -> Result<LaunchCommand> {
     let remote_cwd = PathBuf::from(&created.path);
     let permission = r.permission_words();
@@ -1219,10 +1241,14 @@ fn hosted_command(
     let program = crate::ready::on_path("ssh")
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "ssh".to_owned());
+    let terminal = match client {
+        Client::Window => "-t",
+        Client::Detached => "-T",
+    };
     Ok(LaunchCommand {
         program,
         args: vec![
-            "-t".to_owned(),
+            terminal.to_owned(),
             "-o".to_owned(),
             "BatchMode=yes".to_owned(),
             "-o".to_owned(),
@@ -1237,6 +1263,117 @@ fn hosted_command(
         brief_arg: None,
         brief_path: None,
     })
+}
+
+/// The pace of a detached launch's confirming reads, each a provider call
+/// over ssh.
+const DETACHED_POLL: Duration = Duration::from_secs(1);
+
+/// A lane whose provider owns the harness's session (`pane=verb`): the
+/// prefix run here, detached, its `host-exec` phase recorded first, so a
+/// launch cut after it is held by the reconcile, its slot kept, until a
+/// close supersedes it; then the harness confirmed through the provider.
+/// The record names no window, pane or process of this machine: the
+/// watch, the close and the park reach the lane by its host and item, and
+/// `window` is its name alone.
+#[allow(clippy::too_many_arguments)]
+fn detached_launch(
+    run: &Run,
+    mut operation: Operation,
+    scripts: &Path,
+    provider: &str,
+    item: &str,
+    harness: Harness,
+    session: &str,
+    created: &hosted::Created,
+    command: &LaunchCommand,
+) -> Result<EffectOutcome> {
+    operation.record_phase(Phase::Preparing {
+        step: HOST_EXEC.to_owned(),
+        at: provider.to_owned(),
+    })?;
+    let confirmed = match hosted::run_prefix(Path::new(&command.program), &command.args) {
+        Ok(()) => detached_confirm(run, &operation, scripts, provider, item, harness)?,
+        Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) => Err(cause),
+    };
+    if let Err(cause) = confirmed {
+        return Ok(detached_failed(
+            operation, scripts, provider, item, harness, &cause,
+        ));
+    }
+    let outcome = operation.settle(Word::Confirmed, json!({"note": "session-hosted"}));
+    Ok(outcome.with_wire(Wire {
+        window: Some(format!("{session}:{item}")),
+        members: crate::ops::LaneOutcome {
+            tmux_session: Some(session.to_owned()),
+            mail_root: Some(created.path.clone()),
+            home_implicit: false,
+        }
+        .members(),
+        ..Wire::default()
+    }))
+}
+
+/// The harness the prefix started, read through its provider within the
+/// launch bound: its `status` running, then its `capture` judged by the one
+/// screen judge, the provider's pane being the harness's own, and read up.
+/// `Err` is the cause: an exit or a failed capture at once; a harness not
+/// read up, or a status read that failed, at the bound.
+fn detached_confirm(
+    run: &Run,
+    operation: &Operation,
+    scripts: &Path,
+    provider: &str,
+    item: &str,
+    harness: Harness,
+) -> Result<std::result::Result<(), String>> {
+    let deadline = operation.now() + run.settings.engine.verify.get()?;
+    loop {
+        let reading = match hosted::status(scripts, provider, item, harness.name()) {
+            Ok(hosted::HostStatus::Exited) => return Ok(Err("host-harness-exited".to_owned())),
+            Ok(hosted::HostStatus::Running) => match hosted::capture(scripts, provider, item) {
+                Err(cause) => return Ok(Err(format!("host-{cause}"))),
+                Ok(screen) => {
+                    let state = agent_runtime::observe::judge(
+                        &screen,
+                        harness,
+                        &agent_runtime::observe::ProcessReading::HarnessUp,
+                        None,
+                    );
+                    if up(&state) {
+                        return Ok(Ok(()));
+                    }
+                    "host-harness-unconfirmed".to_owned()
+                }
+            },
+            Err(cause) => cause,
+        };
+        if operation.now() >= deadline {
+            return Ok(Err(reading));
+        }
+        operation.sleep(DETACHED_POLL);
+    }
+}
+
+/// A detached launch that failed from its exec on: the prefix may have
+/// started the harness first, so the provider is asked to stop it. A stop
+/// confirmed fails the launch with `cause`; one refused or unanswered may
+/// leave the harness running, so the launch is held at `host-exec`, its
+/// slot kept, until a close supersedes it.
+fn detached_failed(
+    operation: Operation,
+    scripts: &Path,
+    provider: &str,
+    item: &str,
+    harness: Harness,
+    cause: &str,
+) -> EffectOutcome {
+    match hosted::stop(scripts, provider, item, harness.name()) {
+        Ok(()) => operation.settle(Word::Failed, json!({"cause": cause})),
+        Err(hosted::Asked::Failed(stop) | hosted::Asked::Unknown(stop)) => {
+            preparing_held(operation, HOST_EXEC, provider, &format!("{cause} {stop}"))
+        }
+    }
 }
 
 /// A cloud session: the item's branch pushed from its worktree, the session
@@ -1552,6 +1689,7 @@ const CLOUD_CREATE_UNKNOWN: &str = "cloud-create-unknown";
 /// `<step>-unknown` where its answer is lost.
 const HOST_START: &str = "host-start";
 const HOST_CREATE: &str = "host-create";
+const HOST_EXEC: &str = "host-exec";
 const WORKTREE_CREATE: &str = "worktree-create";
 const WORKTREE_PUSH: &str = "worktree-push";
 

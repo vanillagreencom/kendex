@@ -6423,6 +6423,336 @@ fn a_hosted_lane_whose_runtime_is_unbuilt_is_refused_before_any_window() {
     );
 }
 
+/// The capability line of a provider that owns the harness's session on
+/// its host (`pane=verb`).
+const DETACHED_CAPABILITIES: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tpane=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n";
+/// A Claude screen at its composer, which the one screen judge reads idle.
+const CLAUDE_AT_COMPOSER: &str = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n";
+
+impl HostedLaunch {
+    /// The answers of a provider that owns the harness's session: its
+    /// capability line, a create whose prefix is `prefix`, the harness read
+    /// running at its composer through `status` and `capture`, its stop
+    /// confirmed; `more` over them.
+    fn plant_detached(&self, prefix: &str, more: Value) {
+        let path = self.scripts.join("lane-host.json");
+        let mut answers: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let account = self.runner.state_dir().display().to_string();
+        answers["capabilities"] = json!({"stdout": DETACHED_CAPABILITIES});
+        answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] = json!({
+            "stdout": format!("ssh-target=lane.example\tpath={}\tremote-prefix={prefix}\n", self.host())
+        });
+        answers["status --item KEN-H --harness claude"] = json!({"stdout": "running\n"});
+        answers["capture --item KEN-H"] = json!({"stdout": CLAUDE_AT_COMPOSER});
+        answers["stop --item KEN-H --harness claude"] =
+            json!({"stdout": "stopped item=KEN-H processes=1\n"});
+        for (key, answer) in more.as_object().unwrap() {
+            answers[key] = answer.clone();
+        }
+        std::fs::write(&path, answers.to_string()).unwrap();
+    }
+
+    /// The provider's calls with the host's prefix taken off.
+    fn verbs(&self) -> Vec<String> {
+        self.calls()
+            .iter()
+            .map(|c| {
+                c.trim_start_matches(&format!("ORCH_LANE_HOST={PROVIDER} "))
+                    .to_owned()
+            })
+            .collect()
+    }
+}
+
+/// A provider that owns the harness's session: the launch runs its prefix
+/// over a client with no terminal and its stdin closed, opens no window,
+/// confirms the harness through the provider's `status` and `capture`, and
+/// records the lane by its host and item with no pane or process of this
+/// machine.
+#[test]
+fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_no_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    world.plant_detached("exec true", json!({}));
+    let panes_before = server.panes();
+    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["intent"]["observation"]["note"], "session-hosted");
+    let lane = &report["lane"];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane["host"], world.provider());
+    assert_eq!(lane["kind"], "ssh");
+    assert_eq!(lane["harness"], "claude");
+    assert_eq!(
+        lane["mail_root"],
+        world.host(),
+        "the worktree the host named"
+    );
+    assert_eq!(lane["window"], "fleet:KEN-H", "the lane's name");
+    assert_eq!(
+        lane["launch"],
+        Value::Null,
+        "no pane, server or pid: {lane}"
+    );
+    assert_eq!(server.panes(), panes_before, "no window opened");
+    let account = world.runner.state_dir().display().to_string();
+    let host = world.host();
+    let verbs = world.verbs();
+    assert_eq!(
+        verbs[verbs.len() - 3..],
+        [
+            "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json".to_owned(),
+            "status --item KEN-H --harness claude".to_owned(),
+            "capture --item KEN-H".to_owned(),
+        ],
+        "the launch record verified, then the harness read through the provider: {verbs:?}"
+    );
+    assert_eq!(
+        verbs[1],
+        format!("create --item KEN-H --repo o/r --harness claude --account {account}")
+    );
+    assert!(!verbs.iter().any(|v| v.starts_with("stop ")), "{verbs:?}");
+    let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
+    assert_eq!(
+        ssh.matches(" -- lane.example ").count(),
+        1,
+        "one run: {ssh}"
+    );
+    assert!(
+        ssh.starts_with("-T -o BatchMode=yes -o ConnectTimeout=5 -- lane.example exec true "),
+        "the prefix runs over a client with no terminal that asks no prompt: {ssh}"
+    );
+    assert!(
+        ssh.contains(&format!(
+            "cd {} && exec",
+            agent_runtime::launch::shell_quote(&host)
+        )),
+        "the harness line enters the worktree the host named: {ssh}"
+    );
+}
+
+/// From the exec on, a launch that fails asks the provider to stop the
+/// harness its prefix may have started, then fails with its cause: a prefix
+/// that refused, a harness read exited, a capture that failed, and a
+/// harness never read up within the launch bound.
+#[test]
+fn a_pane_verb_launch_that_fails_after_its_exec_stops_through_its_provider() {
+    let cases = [
+        (
+            "prefix refused",
+            "sh -c 'exit 3'",
+            json!({}),
+            "host-exec-failed ssh exit=3",
+        ),
+        (
+            "harness exited",
+            "exec true",
+            json!({"status --item KEN-H --harness claude": {"stdout": "exited\n"}}),
+            "host-harness-exited",
+        ),
+        (
+            "capture failed",
+            "exec true",
+            json!({"capture --item KEN-H": {"exit": 1}}),
+            "host-capture-failed item=KEN-H",
+        ),
+        (
+            "never up",
+            "exec true",
+            json!({"capture --item KEN-H": {"stdout": "starting\n"}}),
+            "host-harness-unconfirmed",
+        ),
+    ];
+    for (case, prefix, more, cause) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let mut world = HostedLaunch::new(&server, dir.path(), record);
+        world.runner.verify = Some(1);
+        world.plant_detached(prefix, more);
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        assert!(
+            report["intent"]["observation"]["cause"]
+                .as_str()
+                .is_some_and(|c| c.starts_with(cause)),
+            "{case}: {report}"
+        );
+        let verbs = world.verbs();
+        assert_eq!(
+            verbs.last().map(String::as_str),
+            Some("stop --item KEN-H --harness claude"),
+            "{case}: {verbs:?}"
+        );
+        assert_eq!(report["lane"]["status"], "stopped", "{case}");
+        assert_eq!(report["lane"]["sandbox"], "standing", "{case}");
+    }
+}
+
+/// A stop that gives no answer after a failed exec may leave the harness
+/// running: the launch is held at its exec, the lane `preparing` with its
+/// slot kept, and the next launch request meets the held launch and creates
+/// nothing.
+#[test]
+fn a_pane_verb_launch_whose_stop_is_unanswered_holds_its_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    world.plant_detached(
+        "exec true",
+        json!({
+            "capture --item KEN-H": {"exit": 1},
+            "stop --item KEN-H --harness claude": {"exit": 255},
+        }),
+    );
+    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(
+        report["intent"]["observation"]["note"], "host-exec-unknown",
+        "{report}"
+    );
+    assert_eq!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    let held = reply(&world.runner.op_fleet(&world.request()));
+    assert_eq!(held["ok"], true, "{held}");
+    assert_eq!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    let creates = world
+        .verbs()
+        .iter()
+        .filter(|v| v.starts_with("create "))
+        .count();
+    assert_eq!(
+        creates,
+        1,
+        "the held launch asks no create: {:?}",
+        world.verbs()
+    );
+}
+
+/// A launch whose process ends inside the exec leaves the `host-exec` phase
+/// it recorded before it: the reconcile holds the launch, the lane
+/// `preparing`, since the prefix may have started the harness.
+#[test]
+fn a_pane_verb_launch_cut_after_its_exec_is_held_by_the_reconcile() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    // The client's parent is the launch's own process.
+    world.plant_detached("kill -KILL $PPID; exec true", json!({}));
+    let ended = world.runner.op_fleet(&world.request());
+    assert!(!ended.status.success(), "the asking op ended");
+    let reconciled = world.runner.reconcile_one();
+    assert_ne!(reconciled["intent"]["outcome"], "failed", "{reconciled}");
+    assert_eq!(
+        reconciled["intent"]["observation"]["note"], "host-exec-unknown",
+        "{reconciled}"
+    );
+    assert_eq!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+}
+
+/// The record the launch writes for a provider that owns the harness's
+/// session is the one its readers take: `lane status` reads the lane
+/// through the provider's `status` and `capture`, and the close of its
+/// completed item stops the harness through the provider's `stop`, reads
+/// it exited there, closes the sandbox and ends the record, no tmux pane
+/// read or closed on the way.
+#[test]
+fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let mut world = HostedLaunch::new(&server, dir.path(), record);
+    let state = world.runner.state_dir().to_path_buf();
+    std::os::unix::fs::symlink(
+        fixtures().join("linear-fixture/linear.sh"),
+        state.join("linear.sh"),
+    )
+    .unwrap();
+    std::fs::write(
+        state.join("linear.json"),
+        json!({
+            "issues bulk-get": {"body": {"issues": {"nodes": [
+                {"identifier": "KEN-H", "state": {"type": "completed"}, "description": "", "children": {"nodes": []}}
+            ]}}},
+            "graphql BoxItem": {"body": {"issue": {"description": "", "state": {"name": "Done", "type": "completed"}}}},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    world.runner.env.push((
+        "OVERSEE_WATCH_TRACKER".to_owned(),
+        state.join("linear.sh").display().to_string(),
+    ));
+    world.runner.env.push((
+        "LANE_MAIL_CLI".to_owned(),
+        fixtures()
+            .join("lane-mail-quiet/lane-mail")
+            .display()
+            .to_string(),
+    ));
+    world
+        .runner
+        .env
+        .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
+    // The fourth status read is the close's first after its stop.
+    world.plant_detached(
+        "exec true",
+        json!({
+            "status --item KEN-H --harness claude#4": {"stdout": "exited\n"},
+            "close --item KEN-H": {"stdout": "kept=none\n"},
+            "list": {"stdout": ""},
+        }),
+    );
+    let panes = server.panes();
+    let launched = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+
+    let read_from = world.verbs().len();
+    let status = reply(&world.runner.run(&["lane", "status", "--item", "KEN-H"]));
+    assert_eq!(status["result"]["state"], "idle", "{status}");
+    let read = world.verbs()[read_from..].to_vec();
+    assert_eq!(
+        read[..3],
+        [
+            "capabilities".to_owned(),
+            "status --item KEN-H --harness claude".to_owned(),
+            "capture --item KEN-H".to_owned(),
+        ],
+        "the watch's read through the provider: {read:?}"
+    );
+    assert!(
+        read.contains(&format!(
+            "cat --item KEN-H {}/tmp/lane-status-KEN-H.md",
+            world.host()
+        )),
+        "the lane's files read under the worktree the host named: {read:?}"
+    );
+
+    let closed = reply(
+        &world
+            .runner
+            .op_fleet(&json!({"op": "close-lane", "item": "KEN-H"})),
+    );
+    assert_eq!(closed["result"]["word"], "closed", "{closed}");
+    assert_eq!(world.runner.fleet()["lanes"][0]["status"], "done");
+    let verbs = world.verbs();
+    let stop = verbs
+        .iter()
+        .position(|v| v == "stop --item KEN-H --harness claude")
+        .unwrap_or_else(|| panic!("the provider's stop: {verbs:?}"));
+    assert!(
+        verbs[stop + 1..]
+            .iter()
+            .any(|v| v == "status --item KEN-H --harness claude")
+            && verbs[stop + 1..].iter().any(|v| v == "close --item KEN-H"),
+        "read exited, then the sandbox closed: {verbs:?}"
+    );
+    assert_eq!(server.panes(), panes, "no pane opened or closed");
+}
+
 /// A hold stand-in whose row never releases it would stay on the machine
 /// after the suite: each one ends within its bound.
 #[test]
