@@ -4,8 +4,9 @@
 //! disk before the paste and a repeat for the same unread state types
 //! nothing, whatever the fleet record's writers do to the lane meanwhile; a
 //! session no record binds, a pane that is gone, unreadable or mid-turn, a
-//! lane on another host or not running, and a lane whose record names a
-//! print-mode turn still running are never typed into. Each row's
+//! lane not running or on a host whose line or harness is not read, and a
+//! lane whose record names a print-mode turn still running are never typed
+//! into; an idle hosted lane is typed through its window, unconfirmed. Each row's
 //! name carries the defect it catches. The stub harnesses are
 //! `fixtures/stub-turns/{claude,codex}`. The runner runs on the fake clock;
 //! the paste's confirming-turn wait runs in the `deliver` child on the
@@ -192,6 +193,24 @@ impl Fleet {
     /// variables the stub reads. Returns the pane id and the harness
     /// identity the pane's process carries.
     fn open(&self, name: &str, stub: &str, session: &str, env: &[(&str, &str)]) -> StubPane {
+        self.open_program(
+            name,
+            &fixtures().join("stub-turns").join(stub),
+            session,
+            env,
+        )
+    }
+
+    /// [`Fleet::open`] of the stub at `program`, whose file name the pane's
+    /// process is named by.
+    fn open_program(
+        &self,
+        name: &str,
+        program: &Path,
+        session: &str,
+        env: &[(&str, &str)],
+    ) -> StubPane {
+        let stub = program.file_name().unwrap().to_str().unwrap();
         let mut words = vec![
             format!("CLAUDE_CONFIG_DIR={}", self.home.display()),
             format!("CODEX_HOME={}", self.home.display()),
@@ -199,7 +218,6 @@ impl Fleet {
         for (key, value) in env {
             words.push(format!("{key}={value}"));
         }
-        let program = fixtures().join("stub-turns").join(stub);
         let command = format!(
             "exec env {} {} --session-id {session}",
             words.join(" "),
@@ -1111,7 +1129,7 @@ fn a_passed_wall_is_resumed_once_when_its_account_reads_room_and_a_later_mail_wa
 /// A lane the wake may not type into is typed nothing and marked nothing:
 /// its recorded pane gone; its recorded server one the socket does not
 /// answer for; its harness mid-turn (the stub holding a line whose echo
-/// reads working); its record naming another host; its record not
+/// reads working); its record naming a host whose line is unread; its record not
 /// running; and an unread row naming an item no record holds, beside an
 /// idle running lane no row names. A fleet state that does not parse then
 /// fails the pass loud, never read as a fleet with no lanes.
@@ -1146,6 +1164,8 @@ fn a_lane_the_wake_may_not_type_into_is_never_typed_into_and_leaves_no_mark() {
     gone["launch"]["pane"] = json!("%999");
     let mut unreadable = fleet.lane("KEN-2", "claude", &pane);
     unreadable["launch"]["server"] = json!(fleet.server.pid + 1);
+    // A host no provider answers at: its line is unread, so its lane is
+    // never a hosted target.
     let mut elsewhere = fleet.lane("KEN-5", "claude", &hosted);
     elsewhere["host"] = json!("/srv/box");
     let mut ended = fleet.lane("KEN-6", "claude", &stopped);
@@ -1202,6 +1222,135 @@ fn a_lane_the_wake_may_not_type_into_is_never_typed_into_and_leaves_no_mark() {
     let unparsed = run_once(&mut body, &unread(&[("KEN-8", "m-1")]), &clock);
     assert!(unparsed.is_err(), "{:?}", unparsed.map(|p| rendered(&p)));
     assert_eq!(fleet.turns("lead-8"), Vec::<String>::new());
+}
+
+/// The SSH kind's line with a local pane, as `lane-host-ssh` declares it.
+const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local\n";
+
+/// A hosted lane on the planted provider `box` under the fleet's root,
+/// which answers from `answers` (`lane-host.json` beside it): its window
+/// the Claude stub under a link named `ssh`, so the pane's foreground is
+/// the client and never the harness, recording each line it is typed as a
+/// user turn of `lead-1`. Returns the record and the provider's log.
+fn hosted_lane(fleet: &Fleet, answers: Value) -> (Value, PathBuf) {
+    std::fs::write(
+        fleet.root.join("lane-host.json"),
+        serde_json::to_vec(&answers).unwrap(),
+    )
+    .unwrap();
+    let client = fleet.root.join("client");
+    std::fs::create_dir(&client).unwrap();
+    std::os::unix::fs::symlink(fixtures().join("stub-turns/claude"), client.join("ssh")).unwrap();
+    let pane = fleet.open_program("KEN-1", &client.join("ssh"), "lead-1", &[]);
+    fleet.server.await_composer(&pane.id);
+    let mut lane = fleet.lane("KEN-1", "claude", &pane);
+    lane["host"] = json!(named_host(&fleet.root, "box"));
+    lane["kind"] = json!("ssh");
+    lane["session_id"] = Value::Null;
+    (lane, fleet.root.join("lane-host.log"))
+}
+
+fn calls(log: &Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// An idle hosted lane with unread mail: its provider reads the harness
+/// running, and its window, whose foreground is the ssh client, is typed
+/// the one inbox line through `deliver --transport`; nothing here reads the
+/// hosted turn, so the pass says `idle-unread` and `wake-unconfirmed
+/// cause=session-hosted` and marks the state final. The next pass on the
+/// same state asks the provider nothing, types nothing and says nothing.
+#[test]
+fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_said_unconfirmed_once() {
+    let fleet = Fleet::new();
+    let (lane, log) = hosted_lane(
+        &fleet,
+        json!({
+            "capabilities": {"stdout": SSH_LINE},
+            "status --item KEN-1 --harness claude": {"stdout": "running\n"},
+        }),
+    );
+    fleet.set_lanes(vec![lane]);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let produced = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&produced),
+        vec![
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-unconfirmed KEN-1 cause=session-hosted"
+        ]
+    );
+    let deadline = Instant::now() + secs(10);
+    while fleet.turns("lead-1").is_empty() {
+        assert!(Instant::now() < deadline, "the window was typed nothing");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let typed = fleet.turns("lead-1");
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(
+        typed[0].starts_with("Run .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-1 "),
+        "{typed:?}"
+    );
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|m| m.outcome),
+        Some(WakeOutcome::Unconfirmed {
+            cause: "session-hosted".into()
+        })
+    );
+    let asked = vec![
+        "ORCH_LANE_HOST=box capabilities".to_owned(),
+        "ORCH_LANE_HOST=box status --item KEN-1 --harness claude".to_owned(),
+    ];
+    assert_eq!(calls(&log), asked);
+    let again = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
+    assert_eq!(calls(&log), asked, "no provider verb for a final mark");
+    assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
+}
+
+/// A hosted lane whose provider reads its harness exited, then fails the
+/// read: its idle window is typed nothing, no mark is written and nothing is
+/// said, on either pass; the lanes duty names both readings.
+#[test]
+fn a_hosted_lane_whose_harness_is_not_read_running_is_typed_nothing_and_marked_nothing() {
+    let fleet = Fleet::new();
+    let (lane, log) = hosted_lane(
+        &fleet,
+        json!({
+            "capabilities": {"stdout": SSH_LINE},
+            "status --item KEN-1 --harness claude#1": {"stdout": "exited\n"},
+            "status --item KEN-1 --harness claude#2": {"exit": 1, "stderr": "ssh: connect to host box: Connection refused\n"},
+        }),
+    );
+    fleet.set_lanes(vec![lane]);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    for pass in ["exited", "unread"] {
+        let produced = run_once(&mut body, &baseline, &clock).unwrap();
+        assert_eq!(rendered(&produced), Vec::<String>::new(), "{pass}");
+        assert_eq!(fleet.mark("KEN-1"), None, "{pass}");
+    }
+    assert_eq!(
+        calls(&log)
+            .iter()
+            .filter(|l| l.contains(" status "))
+            .count(),
+        2,
+        "{:?}",
+        calls(&log)
+    );
+    assert!(
+        std::fs::symlink_metadata(fleet.record_file()).is_err(),
+        "a pass that marked nothing wrote no record"
+    );
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
 }
 
 /// The bare `ps -o lstart` start of `pid`, its blanks squeezed, in the C

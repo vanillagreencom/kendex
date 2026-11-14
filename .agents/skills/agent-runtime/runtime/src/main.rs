@@ -106,6 +106,16 @@ enum Verb {
         /// the judge kept.
         #[arg(long, requires = "harness")]
         account_room: bool,
+        /// The pane holds a transport to a session on another machine whose
+        /// harness the caller read running: its foreground is the transport,
+        /// so the screen alone is judged, and no file here can confirm a
+        /// turn, so a paste answers `pasted`.
+        #[arg(
+            long,
+            requires = "harness",
+            conflicts_with_all = ["record", "pid", "home", "session_id", "turns_before", "no_paste", "force"]
+        )]
+        transport: bool,
         /// The session's harness, with the facts below in place of a record.
         #[arg(long, requires_all = ["socket", "server_pid", "pane", "cwd"])]
         harness: Option<String>,
@@ -1274,13 +1284,16 @@ struct Judged {
 /// identity alone is the harness, and an ended one is read as other, never
 /// replaced. With none, the harness-named process now in the
 /// foreground is read, for the caller to record. `account_room` is the
-/// caller's reading of the session's account, as the judge takes it.
+/// caller's reading of the session's account, as the judge takes it. A
+/// `transport` pane's foreground is its client, never the harness: the
+/// caller's reading of the harness on the far machine stands for it.
 fn judge_pane(
     harness: Harness,
     owns: &dyn Fn(&str) -> bool,
     pane: &tmux::Pane,
     recorded: Option<&Identity>,
     account_room: Option<bool>,
+    transport: bool,
 ) -> Result<Judged> {
     let fields = match tmux::pane_fields(&pane.server, &pane.id) {
         Reading::Live(fields) => fields,
@@ -1305,7 +1318,11 @@ fn judge_pane(
             });
         }
     };
-    let reading = observe::foreground(fields.pid, owns, recorded);
+    let reading = if transport {
+        ProcessReading::HarnessUp
+    } else {
+        observe::foreground(fields.pid, owns, recorded)
+    };
     let screen = tmux::capture(pane)?;
     let state = observe::judge(&screen, harness, &reading, account_room);
     let screen_tail: Vec<String> = screen
@@ -1333,6 +1350,7 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
         &rec.pane,
         rec.harness_process.as_ref(),
         None,
+        false,
     )?;
     let fields = match judged.pane {
         Reading::Live(fields) => fields,
@@ -1379,7 +1397,8 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
 
 /// What a delivery is confirmed by: the session file bound once (a launch
 /// record's), or the id the file is found by, or nothing,
-/// which no paste can be confirmed against.
+/// which no paste can be confirmed against. A transport's session file is
+/// on another machine: the paste is typed and confirmed by nothing here.
 enum SessionFile {
     Bound(PathBuf),
     ById {
@@ -1388,6 +1407,7 @@ enum SessionFile {
         id: String,
     },
     Unbound,
+    Transport,
 }
 
 /// The session `deliver` types into: its pane, the harness and the identity
@@ -1437,7 +1457,8 @@ fn recorded_session(path: &Path) -> Result<(Session, Judged)> {
 /// How a delivery ended. A paste alone settles nothing: `confirmed` is a
 /// user turn the harness wrote to the session's own file after the paste,
 /// `unconfirmed` the bound passed with no such turn, `limit` a session with
-/// no confirmable route, into which nothing is typed.
+/// no confirmable route, into which nothing is typed, `pasted` a line typed
+/// into a transport's pane, which nothing here can confirm.
 #[derive(Debug, Serialize)]
 #[serde(tag = "delivery", rename_all = "kebab-case")]
 enum Delivery {
@@ -1467,13 +1488,22 @@ enum Delivery {
         harness: Harness,
         cause: &'static str,
     },
+    /// `cause` is `transport` for a paste tmux answered, `paste-unanswered`
+    /// for one it did not, which may still stand in the pane.
+    Pasted {
+        outcome: Outcome,
+        cause: &'static str,
+        pane: String,
+        bytes: usize,
+    },
 }
 
 /// How often the session file is read for the confirming turn.
 const TURN_POLL: Duration = Duration::from_millis(250);
 
 /// Type `text` into the session's pane when `judged` read it idle, and
-/// confirm the delivery by a user turn in its own file within `bound`.
+/// confirm the delivery by a user turn in its own file within `bound`; a
+/// transport's paste is confirmed by nothing here and answers `pasted`.
 /// `None` text reads the state and the turn count alone. `turns_before` is
 /// the count an earlier read gave, else the file is counted now, before
 /// the paste.
@@ -1507,7 +1537,30 @@ fn deliver(
         ));
     }
     let harness = session.harness;
+    // A line that never reached the pane is refused as unsent, so the
+    // caller may type it again; a paste asked and not answered may stand in
+    // the pane, and only its turn says whether it went in.
+    let load = |text: &str| {
+        tmux::load_line(&session.pane, text)
+            .map_err(|e| Error::refused("paste-unsent", &[("cause", e.key())]))
+    };
     let file = match &session.file {
+        SessionFile::Transport => {
+            let Some(text) = text else {
+                unreachable!("clap refuses --no-paste with --transport")
+            };
+            let text = text.trim_end_matches('\n');
+            let cause = match load(text)?.paste() {
+                Ok(()) => "transport",
+                Err(_) => "paste-unanswered",
+            };
+            return Ok(Delivery::Pasted {
+                outcome: Outcome::Unconfirmed,
+                cause,
+                pane: pane_id.to_owned(),
+                bytes: text.len(),
+            });
+        }
         SessionFile::Bound(path) => path.clone(),
         SessionFile::Unbound => {
             return Ok(Delivery::Limit {
@@ -1557,12 +1610,7 @@ fn deliver(
         });
     };
     let text = text.trim_end_matches('\n');
-    // A line that never reached the pane is refused as unsent, so the
-    // caller may type it again; a paste asked and not answered may stand in
-    // the pane, and only its turn says whether it went in.
-    let loaded = tmux::load_line(&session.pane, text)
-        .map_err(|e| Error::refused("paste-unsent", &[("cause", e.key())]))?;
-    let pasted = loaded.paste();
+    let pasted = load(text)?.paste();
     let deadline = Instant::now() + bound;
     let unconfirmed = |cause: &'static str| Delivery::Unconfirmed {
         outcome: Outcome::Unconfirmed,
@@ -1825,6 +1873,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             line,
             force,
             account_room,
+            transport,
             harness,
             program,
             socket,
@@ -1892,13 +1941,14 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                         window: String::new(),
                         session: String::new(),
                     };
-                    let file = match session_id {
-                        Some(id) => SessionFile::ById {
+                    let file = match (transport, session_id) {
+                        (true, _) => SessionFile::Transport,
+                        (false, Some(id)) => SessionFile::ById {
                             home: home.or_else(|| session::default_home(harness)),
                             cwd,
                             id,
                         },
-                        None => SessionFile::Unbound,
+                        (false, None) => SessionFile::Unbound,
                     };
                     let session = Session {
                         harness,
@@ -1918,6 +1968,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                         &session.pane,
                         session.recorded.as_ref(),
                         account_room.then_some(true),
+                        transport,
                     )?;
                     (session, judged)
                 }

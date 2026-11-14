@@ -27,6 +27,15 @@
 //! to read room, and is typed past its usage banner (`deliver
 //! --account-room`).
 //!
+//! Hosted: a running lane whose host's line reads `launch=ssh`,
+//! `pane=local`, `status=verb` runs its harness on that host under the ssh
+//! client its window here holds. Its unread mail is typed into that window
+//! through `deliver --transport` once the provider's `status` reads the
+//! harness running. Nothing here reads its turn: the paste is said
+//! `wake-unconfirmed cause=session-hosted`, the mark is final for the unread
+//! state, and the lane's own mailbox read is the confirmation. No hosted lane
+//! is resumed.
+//!
 //! The duty starts no detached process: nothing new charges the lane cap.
 //!
 //! The owner: an overseer the duty leaves idle
@@ -38,6 +47,7 @@
 //! beside the outcome. A lane's limit is the overseer's to handle.
 
 use agent_runtime::controller::Overseer;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -46,6 +56,7 @@ use agent_runtime::harness::Harness;
 use agent_runtime::host;
 use serde_json::Value;
 
+use super::hosted::{self, Capabilities, HostStatus, Launch, PaneKind, Status};
 use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
 use crate::error::{Error, Result, WatchError};
@@ -197,7 +208,8 @@ fn alert_text(pane: &str, unread: &str, said: &Event) -> String {
 
 /// A target's recorded facts, as `deliver` takes them: the pane by its
 /// exact key on its server, the harness and the identity holding the pane,
-/// and the home, directory and id its session file is found by.
+/// and the home, directory and id its session file is found by; for a
+/// hosted lane, the host whose ssh client the pane holds.
 struct Target {
     name: String,
     harness: Harness,
@@ -209,6 +221,7 @@ struct Target {
     home: Option<PathBuf>,
     cwd: PathBuf,
     session_id: Option<String>,
+    host: Option<String>,
 }
 
 fn u64_of(value: &Value) -> Option<u64> {
@@ -225,11 +238,51 @@ fn u64_of(value: &Value) -> Option<u64> {
 /// a provider seat, not its home). A lane with no harness, pane, server or
 /// directory is nobody to type into. Nor is a lane whose record names
 /// another host: its session runs there, the pane here holds the client,
-/// and no file here confirms its turn. Nor is a lane that is not running:
-/// it is relaunched, never woken, and the mail duty's unread row for it
-/// stands until that duty's next turn.
+/// and no file here confirms its turn; [`hosted_target`] names such a lane
+/// for the unread wake alone. Nor is a lane that is not running: it is
+/// relaunched, never woken, and the mail duty's unread row for it stands
+/// until that duty's next turn.
 fn lane_target(lane: &Lane, socket: &Path) -> Option<Target> {
-    if lane.status != LaneStatus::Running || lane.host.as_deref().is_some_and(|h| h != "local") {
+    if lane.host.as_deref().is_some_and(|h| h != "local") {
+        return None;
+    }
+    window_target(lane, socket)
+}
+
+/// A hosted lane as a target: a running lane whose host's line reads
+/// `launch=ssh`, `pane=local`, `status=verb`, whose window here holds the
+/// ssh client its harness runs under on the host. It names no identity,
+/// home or session: the pane's foreground is the client, and the session's
+/// file is on the host.
+fn hosted_target(lane: &Lane, caps: Capabilities, socket: &Path) -> Option<Target> {
+    let ssh = caps.launch == Some(Launch::Ssh)
+        && caps.pane == PaneKind::Local
+        && caps.status == Status::Verb;
+    let target = window_target(lane, socket).filter(|_| ssh)?;
+    Some(Target {
+        identity: None,
+        home: None,
+        session_id: None,
+        host: Some(hosted::host_of(lane).to_owned()),
+        ..target
+    })
+}
+
+/// Whether `lane`'s standing mark is the one for `unread` on its recorded
+/// window.
+fn marked(record: &WakeRecord, lane: &Lane, unread: &str) -> bool {
+    let Some(launch) = lane.launch.as_ref() else {
+        return false;
+    };
+    matches!(
+        (record.get(&lane.item), launch.pane.as_deref(), launch.server),
+        (Some(mark), Some(pane), Some(server)) if mark.stands_for(unread, pane, server)
+    )
+}
+
+/// A running lane's recorded window as a target, wherever its harness runs.
+fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
+    if lane.status != LaneStatus::Running {
         return None;
     }
     let harness = Harness::parse(lane.harness.as_deref()?)?;
@@ -255,6 +308,7 @@ fn lane_target(lane: &Lane, socket: &Path) -> Option<Target> {
         home,
         cwd: PathBuf::from(lane.mail_root.as_deref()?),
         session_id: lane.session_id.clone(),
+        host: None,
     })
 }
 
@@ -282,6 +336,7 @@ fn overseer_target(overseer: &Overseer, socket: &Path) -> Option<Target> {
         home: text("home").map(PathBuf::from),
         cwd: PathBuf::from(text("cwd")?),
         session_id: overseer.session_id.clone(),
+        host: None,
     })
 }
 
@@ -423,6 +478,11 @@ impl Wake {
                 &mut produced,
             )?;
         }
+        let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+        // Each host's line, read once per pass and only for a hosted lane
+        // whose unread state no mark stands for yet.
+        let mut lines: BTreeMap<String, std::result::Result<Capabilities, String>> =
+            BTreeMap::new();
         for (name, state) in unread {
             let target = if name == OVERSEER_TARGET {
                 fleet
@@ -431,7 +491,25 @@ impl Wake {
                     .and_then(|o| overseer_target(o, &socket))
             } else {
                 fleet.lanes.iter().find(|l| l.item == name).and_then(|l| {
-                    lane_target(l, &socket).filter(|_| !crate::ops::wake::turn_runs(l, &host))
+                    let host_name = hosted::host_of(l);
+                    let target = match lane_target(l, &socket) {
+                        Some(target) => Some(target),
+                        // A hosted mark is final: nothing here reads the
+                        // turn it typed for, so its state asks no provider
+                        // again.
+                        None if host_name == crate::provider::LOCAL
+                            || marked(&record, l, &state) =>
+                        {
+                            None
+                        }
+                        None => lines
+                            .entry(host_name.to_owned())
+                            .or_insert_with(|| hosted::capabilities(&scripts, host_name))
+                            .as_ref()
+                            .ok()
+                            .and_then(|caps| hosted_target(l, *caps, &socket)),
+                    };
+                    target.filter(|_| !crate::ops::wake::turn_runs(l, &host))
                 })
             };
             let Some(target) = target else {
@@ -598,7 +676,21 @@ impl Wake {
             })
         };
         let room = resume.is_some_and(|r| r.wall);
-        let events = match self.read(target, room)? {
+        let read = match &target.host {
+            // A hosted lane's harness is read through its provider; its
+            // window's screen is judged by the paste itself, and no turn
+            // count exists here. An exited or unread harness is the lanes
+            // duty's to name.
+            Some(host) => {
+                let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+                match hosted::status(&scripts, host, &name, target.harness.name()) {
+                    Ok(HostStatus::Running) => Read::Idle { turns: 0 },
+                    Ok(HostStatus::Exited) | Err(_) => return Ok(()),
+                }
+            }
+            None => self.read(target, room)?,
+        };
+        let events = match read {
             Read::Refused => {
                 self.untyped(&name, standing.as_ref(), resume, &mark, record, produced)?;
                 return Ok(());
@@ -710,15 +802,14 @@ impl Wake {
     }
 
     /// Type `line` into the target through `deliver`, confirmed by a user
-    /// turn beyond `turns_before`; `room` as [`Wake::read`] takes it.
+    /// turn beyond `turns_before`; `room` as [`Wake::read`] takes it. A
+    /// hosted target's paste is confirmed by nothing here.
     fn paste(&self, target: &Target, line: &str, turns_before: u64, room: bool) -> Result<Paste> {
         let mut args = self.target_args(target, room)?;
-        args.extend([
-            "--turns-before".to_owned(),
-            turns_before.to_string(),
-            "--line".to_owned(),
-            line.to_owned(),
-        ]);
+        if target.host.is_none() {
+            args.extend(["--turns-before".to_owned(), turns_before.to_string()]);
+        }
+        args.extend(["--line".to_owned(), line.to_owned()]);
         match self.call(&args)? {
             Answer::Refused => Ok(Paste::Refused),
             Answer::Result(result) => match result.get("delivery").and_then(Value::as_str) {
@@ -732,6 +823,9 @@ impl Wake {
                 }),
                 Some("unconfirmed") => Ok(Paste::Unconfirmed {
                     cause: word(&result, "cause")?,
+                }),
+                Some("pasted") => Ok(Paste::Unconfirmed {
+                    cause: "session-hosted".to_owned(),
                 }),
                 Some(_) | None => Err(protocol_error("not a paste", &result)),
             },
@@ -756,6 +850,9 @@ impl Wake {
         ];
         if let Some(start) = target.server_start {
             args.extend(["--server-start".to_owned(), start.to_string()]);
+        }
+        if target.host.is_some() {
+            args.push("--transport".to_owned());
         }
         if let Some(program) = self
             .settings

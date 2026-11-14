@@ -887,6 +887,119 @@ fn deliver_confirms_by_the_fixed_file_s_user_turn_and_never_by_the_paste_alone()
     assert_eq!(past["result"]["state"]["state"], "idle", "{past}");
 }
 
+/// A pane holding a transport: its foreground a client named `ssh`, never
+/// the harness, whose screen the far session draws. With `--transport` an
+/// idle composer is typed the line and the reply is `pasted`, unconfirmed;
+/// without it the foreground settles nothing and nothing is typed. A screen
+/// with no harness on it (the client dropped to a shell while the far
+/// harness still reads running) is refused and its shell is typed nothing;
+/// so is a working screen. `--transport` beside a session file's flag is a
+/// usage error.
+#[test]
+#[cfg(unix)]
+fn a_transport_pane_is_typed_after_a_harness_up_idle_read_and_answers_pasted() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    let typed = dir.path().join("typed");
+    let deliver = |args: &[&str]| -> (Option<i32>, String) {
+        let out = Command::new(binary())
+            .args([
+                "deliver",
+                "--harness",
+                "claude",
+                "--socket",
+                &pane.socket.display().to_string(),
+                "--server-pid",
+                &pane.server_pid.to_string(),
+                "--server-start",
+                &pane.server_start.to_string(),
+                "--pane",
+                &pane.pane,
+                "--cwd",
+                &dir.path().display().to_string(),
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+    let reply = |text: &str| -> serde_json::Value {
+        serde_json::from_str(text).unwrap_or_else(|e| panic!("no reply: {e}: {text}"))
+    };
+    let lines = || std::fs::read_to_string(&typed).unwrap_or_default();
+    // The client draws the far harness's composer and records each line the
+    // pane is typed.
+    let client = format!(
+        "printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> '{}'; printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; done\n",
+        typed.display()
+    );
+    pane.run_stub(&dir.path().join("idle"), "ssh", &client);
+    pane.await_row(&|l| l == "\u{276f}\u{a0}");
+    let (code, out) = deliver(&["--line", "you have mail"]);
+    assert_eq!(code, Some(1), "{out}");
+    assert_eq!(reply(&out)["refusal"]["key"], "deliver-refused", "{out}");
+    assert_eq!(lines(), "", "nothing typed past an unread foreground");
+    let (code, out) = deliver(&["--transport", "--line", "you have mail"]);
+    assert_eq!(code, Some(0), "{out}");
+    let pasted = reply(&out);
+    assert_eq!(pasted["result"]["delivery"], "pasted", "{out}");
+    assert_eq!(pasted["result"]["outcome"], "unconfirmed", "{out}");
+    assert_eq!(pasted["result"]["cause"], "transport", "{out}");
+    assert_eq!(pasted["result"]["pane"], pane.pane.as_str(), "{out}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while lines() != "you have mail\n" {
+        assert!(std::time::Instant::now() < deadline, "typed: {:?}", lines());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // The client dropped to a shell: no harness on the screen, refused, and
+    // the shell is typed nothing.
+    pane.run_stub(
+        &dir.path().join("dropped"),
+        "ssh",
+        &format!(
+            "printf 'Connection to box closed.\\nuser@here:~$ \\n'\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> '{}'; done\n",
+            typed.display()
+        ),
+    );
+    pane.await_row(&|l| l.starts_with("user@here"));
+    let (code, out) = deliver(&["--transport", "--line", "lost"]);
+    assert_eq!(code, Some(1), "{out}");
+    assert_eq!(reply(&out)["refusal"]["key"], "deliver-refused", "{out}");
+    // A turn in flight on the far session: refused, nothing typed.
+    pane.run_stub(
+        &dir.path().join("working"),
+        "ssh",
+        &format!(
+            "printf '%s\\n' '\u{273b} Thinking\u{2026} (esc to interrupt)'\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> '{}'; done\n",
+            typed.display()
+        ),
+    );
+    pane.await_row(&|l| l.contains("esc to interrupt"));
+    let (code, out) = deliver(&["--transport", "--line", "lost"]);
+    assert_eq!(code, Some(1), "{out}");
+    assert_eq!(reply(&out)["refusal"]["key"], "deliver-refused", "{out}");
+    assert_eq!(
+        lines(),
+        "you have mail\n",
+        "a refused pane is typed nothing"
+    );
+    for flag in [
+        &["--session-id", "s"][..],
+        &["--home", "/h"],
+        &["--pid", "1", "--start", "1"],
+        &["--turns-before", "0"],
+        &["--no-paste"],
+        &["--force"],
+    ] {
+        let (code, out) = deliver(&[&["--transport", "--line", "x"][..], flag].concat());
+        assert_eq!(code, Some(2), "{flag:?}: {out}");
+        assert_eq!(out, "", "{flag:?}");
+    }
+}
+
 #[test]
 #[cfg(unix)]
 fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_went_unanswered_keeps_its_record()

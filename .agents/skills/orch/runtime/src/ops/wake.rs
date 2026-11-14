@@ -1,8 +1,9 @@
 //! The wake duty's record. A wake is a duty action with no intent, phases or
 //! obligations: it delivers one line to a lead or lane read positively idle
 //! with unread mail, confirms by a new user turn in that session's own
-//! bound file, else reports the harness's capability limit. Before it types,
-//! it records one mark, pane key and unread state, in the watch's own
+//! bound file, else reports the harness's capability limit; a hosted lane's
+//! line is typed into its window and confirmed by nothing here. Before it
+//! types, it records one mark, pane key and unread state, in the watch's own
 //! record, and reads that record at the start of each pass, so a crash
 //! between the mark and the paste never repeats a nudge for the same unread
 //! state; a later unread state is a new wake.
@@ -62,7 +63,8 @@ pub enum WakeOutcome {
     /// A user turn beyond `turns_before` in the bound session file.
     Delivered { turns_after: u64 },
     /// The paste went in and the bound passed with no such turn; a repeat
-    /// re-reads the file and never types again.
+    /// re-reads the file and never types again. A hosted lane's paste is
+    /// unconfirmed at once (`session-hosted`), and its repeat reads nothing.
     Unconfirmed { cause: String },
     /// No confirmable route for this harness in this state: nothing typed.
     Limit { harness: String, cause: String },
