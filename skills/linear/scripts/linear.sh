@@ -34,9 +34,12 @@ Resources:
   auth-mint       Mint app token JSON from the client pair without writing files
   journal         Opt-in bounded attempt metadata (start, stop, read)
 
-Every read goes to Linear's API as it runs; no local copy is kept. The
+Every read goes to Linear's API as it runs, except that a read given
+--inventory FILE writes one audit pass's team inventory to FILE, and later
+reads given that file answer from it (issues --help, --inventory). The
 removed cache verb refuses naming the live command to run instead, and the
-removed sync verb refuses naming none, since every read is live.
+removed sync verb refuses naming none, since an inventory binds one pass
+and every other read is live.
 
 Examples:
   # Issues with parent/sub-issues and relations
@@ -130,7 +133,7 @@ case "$resource" in
     # what to run instead and exits nonzero, so a caller still running it fails
     # rather than reading a store that no longer exists.
     sync)
-        echo "linear: removed=sync replacement=none: every read goes to the live API, so drop the sync step" >&2
+        echo "linear: removed=sync replacement=none: no local store exists to sync, so drop the sync step (linear.sh --help)" >&2
         exit 1
         ;;
     cache)

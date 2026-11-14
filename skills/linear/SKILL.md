@@ -1,7 +1,7 @@
 ---
 name: linear
 description: "Load for any Linear read or write: issues, projects, cycles, milestones, initiatives, labels."
-summary: "Bash CLI over Linear's GraphQL API, read live: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
+summary: "Bash CLI over Linear's GraphQL API: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
 license: MIT
 user-invocable: true
 metadata:
@@ -18,7 +18,7 @@ tags: [integration]
 .agents/skills/linear/scripts/linear.sh <resource> <action> [options]
 ```
 
-Every read and write goes to Linear's API as it runs; no tracker data is stored locally. `linear.sh <resource> --help` prints per-resource options. `--format` values: `safe` (the default, flat and null-safe), `compact` (a smaller shape for workflow routing), `ids` (identifiers only), `table`, `raw` (the GraphQL nesting, so never assume top-level jq paths). `safe` renames fields: `identifier`→`id`, `id`→`uuid`, `state.name`→`state`, `state.type`→`state_type`, `sortOrder`→`sort_order`.
+Every read and write goes to Linear's API as it runs, with one exception: an `issues list`, `labels audit` or `projects audit` read given `--inventory FILE` writes one audit pass's team inventory to FILE, and later reads given that file answer from it (`issues --help`, `--inventory`). `linear.sh <resource> --help` prints per-resource options. `--format` values: `safe` (the default, flat and null-safe), `compact` (a smaller shape for workflow routing), `ids` (identifiers only), `table`, `raw` (the GraphQL nesting, so never assume top-level jq paths). `safe` renames fields: `identifier`→`id`, `id`→`uuid`, `state.name`→`state`, `state.type`→`state_type`, `sortOrder`→`sort_order`.
 
 ## Commands
 

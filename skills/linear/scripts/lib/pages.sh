@@ -323,3 +323,77 @@ graphql_query() {
     result=$(graphql_request "$@") || return
     linear_complete_result "$result"
 }
+
+# The full issue list, and the audit inventory it shares a selection with,
+# read pages of this many rows.
+ISSUE_FULL_PAGE=75
+
+# Usage: linear_inventory_option --inventory VALUE, from the verb's own parse.
+linear_inventory_option() {
+    linear_require_option_value "$@" || return 1
+    case "$2" in
+    "" | -*)
+        jq -cn --arg flag "$1" '{error: ($flag + " requires a file path")}' >&2
+        return 1
+        ;;
+    esac
+}
+
+linear_inventory_refuse() { # FILE CAUSE
+    jq -cn --arg file "$1" --arg cause "$2" \
+        '{error: ("inventory-unread file=" + $file + " cause=" + $cause)}' >&2
+}
+
+# The audit inventory: one pass's complete reading of a team's issues, which
+# `issues list`, `labels audit` and `projects audit` read in place of their own
+# team listing when given --inventory FILE. It holds every non-archived issue
+# in every state, with the full list fields and each project's state
+# (ISSUE_INVENTORY_FIELDS): the union of what those readers and the pass's
+# reconciliation select, each reader keeping its own filter. FILE binds one
+# pass and is never refreshed, so a path reused across passes serves the older
+# reading.
+#
+# The file is {team, fields, nodes}. `fields` is the selection it was read
+# with, so a file read with other fields refuses as insufficient rather than
+# answering without the facts a reader needs. The fields are formatters.sh's,
+# read at call time: the pager tests load this file without it.
+#
+# Print the team's inventory nodes as one JSON array. An existing FILE is read
+# and never replaced: unreadable, malformed, another team's or read with other
+# fields, it refuses `inventory-unread` and reads nothing from Linear, since a
+# reader answering from its own listing instead would hide that the pass's
+# reading is broken. An absent FILE is collected to its last page, then
+# published by rename, so a failed read leaves no file behind.
+# Usage: nodes=$(linear_inventory FILE TEAM_ID)
+linear_inventory() (
+    local file="$1" team_id="$2" fields="$ISSUE_INVENTORY_FIELDS" cause query variables staged
+    if [[ -e "$file" || -L "$file" ]]; then
+        if [[ ! -f "$file" || ! -r "$file" ]]; then
+            linear_inventory_refuse "$file" unreadable
+            return 1
+        fi
+        cause=$(jq -rs --arg team "$team_id" --arg fields "$fields" '
+            if length != 1 or (.[0] | type) != "object" then "malformed"
+            else .[0] |
+                if .team != $team then "other-team"
+                elif .fields != $fields or (.nodes | type) != "array"
+                    or any(.nodes[]; type != "object") then "insufficient"
+                else "ok" end
+            end' "$file" 2>/dev/null) || cause=malformed
+        if [[ "$cause" != ok ]]; then
+            linear_inventory_refuse "$file" "$cause"
+            return 1
+        fi
+        jq -c '.nodes' "$file"
+        return
+    fi
+    query="query InventoryIssues(\$teamId: ID!, \$first: Int, \$after: String) { issues(filter: {team: {id: {eq: \$teamId}}}, first: \$first, after: \$after) { pageInfo { hasNextPage endCursor } nodes { $fields } } }"
+    variables=$(jq -cn --arg teamId "$team_id" --argjson first "$ISSUE_FULL_PAGE" '{teamId: $teamId, first: $first}') || return 1
+    staged=$(mktemp -- "$file.XXXXXX") || return 1
+    trap 'rm -f -- "${staged:?}"' EXIT
+    graphql_pages "$query" "$variables" issues |
+        jq -c --arg team "$team_id" --arg fields "$fields" '{team: $team, fields: $fields, nodes: .issues.nodes}' >"$staged" ||
+        return 1
+    mv -f -- "$staged" "$file" || return 1
+    jq -c '.nodes' "$file"
+)

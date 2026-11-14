@@ -53,6 +53,9 @@ Get:
 
 Audit Options:
   --team <ref>          Team key or name (default: LINEAR_TEAM)
+  --inventory <file>    Read the open issues from one audit pass's team
+                        inventory (issues --help, --inventory) in place of a
+                        team listing; the project and label reads stay live
 
 Create Options:
   --name <text>         Project name (required)
@@ -1213,18 +1216,24 @@ set_sort_order() {
     normalize_mutation_response "$result" "projectUpdate" "project"
 }
 
-# Placement against the declared project map, read live: every open team
-# issue outside a map project, and every boundary and project-kind finding
-# the Audit section of project-management references/project-map.md lists.
-# Read-only; it reports and never moves an issue. Findings are data, so it
+# Placement against the declared project map: every open team issue outside
+# a map project, and every boundary and project-kind finding the Audit section
+# of project-management references/project-map.md lists. The open issues come
+# from the team listing or, given --inventory FILE, the pass's inventory
+# (linear_inventory). Read-only; it reports and never moves an issue. Findings are data, so it
 # exits 0 with them; a read it cannot finish fails with no output.
 audit_projects() {
-    local team=""
+    local team="" inventory=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --team)
             linear_require_team_value "$@" || return 1
             team="$2"
+            shift 2
+            ;;
+        --inventory)
+            linear_inventory_option "$@" || return 1
+            inventory="$2"
             shift 2
             ;;
         --) shift; break ;;
@@ -1265,9 +1274,14 @@ audit_projects() {
         return 1
     fi
     variables=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId}') || return 1
-    issues=$(graphql_pages 'query AuditMapIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled", "duplicate"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier project { id name state } } } }' \
-        "$variables" issues) || return 1
-    issues=$(jq -c '.issues.nodes' <<<"$issues") || return 1
+    if [ -n "$inventory" ]; then
+        issues=$(linear_inventory "$inventory" "$team_id" |
+            jq -c "$STATE_TYPE_CLOSED_JQ"'[.[] | select(.state.type | state_type_closed | not) | {identifier, project}]') || return 1
+    else
+        issues=$(graphql_pages 'query AuditMapIssues($teamId: ID!, $after: String) { issues(filter: {team: {id: {eq: $teamId}}, state: {type: {nin: ["completed", "canceled", "duplicate"]}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { identifier project { id name state } } } }' \
+            "$variables" issues) || return 1
+        issues=$(jq -c '.issues.nodes' <<<"$issues") || return 1
+    fi
     labels=$(graphql_pages 'query AuditMapLabels($teamId: ID!, $after: String) { issueLabels(filter: {or: [{team: {id: {eq: $teamId}}}, {team: {null: true}}]}, first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { name } } }' \
         "$variables" issueLabels) || return 1
     labels=$(jq -c '[.issueLabels.nodes[].name]' <<<"$labels") || return 1

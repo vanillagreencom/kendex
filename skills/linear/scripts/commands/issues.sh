@@ -89,6 +89,14 @@ List Options:
                         --all-projects
   --include-archived    Include archived issues
   --with-relations      Include blocking info (use --format=raw for analyzed output)
+  --inventory <file>    Answer from one audit pass's team inventory: read FILE
+                        when it exists, else read the team's every issue in
+                        every state to its last page into FILE. Needs --team
+                        and --max; takes only --state, --all-projects, --select
+                        full and --format beside them, and refuses any other
+                        option before a read. A FILE that is unreadable,
+                        malformed, another team's or read with other fields
+                        refuses inventory-unread and lists nothing.
 
 Get:
   issues.sh get <id>    Get by UUID or identifier (PROJ-42)
@@ -466,7 +474,7 @@ _help_takes_value() {
     case "$1" in
         --agent | --assignee | --attach | --blocked-by | --blocks | --by | \
             --cycle | --description | --description-file | --duplicate | \
-            --estimate | --format | --include-children-of | --label | \
+            --estimate | --format | --include-children-of | --inventory | --label | \
             --labels | --limit | --milestone | --parent | --priority | \
             --project | --reason | --related | --search | --sort-order | \
             --state | --status | --summary | --summary-file | --team | \
@@ -496,30 +504,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 source "$SCRIPT_DIR/../lib/issue-validation.sh"
 
-# Shared issue fields for mutation responses, the list query's fields
-ISSUE_RETURN_FIELDS='
-    id
-    identifier
-    title
-    description
-    state { name type }
-    assignee { name }
-    project { id name }
-    projectMilestone { id name }
-    cycle { id name number }
-    parent { id identifier title }
-    team { name }
-    labels { pageInfo { hasNextPage endCursor } nodes { name } }
-    priority
-    estimate
-    sortOrder
-    url
-    createdAt
-    updatedAt
-    archivedAt
-    trashed
-'"$ISSUE_RELATION_FIELDS"
-
 read_description_file() {
     local description_file="$1"
     if [[ -z "$description_file" ]]; then
@@ -533,9 +517,39 @@ read_description_file() {
     description=$(<"$description_file")
 }
 
+# An inventory answers only the reads the audit pass makes of it: one team,
+# every page, state names and the full selection. Any other option would need a
+# filter Linear applies and this list does not, so it refuses before any read.
+# Usage: list_inventory_scope WITH_RELATIONS SEARCH_GIVEN SELECTION FILTER_ARGS...
+list_inventory_scope() {
+    local option="" team=false
+    [[ "$1" == false ]] || option=--with-relations
+    [[ "$2" == false ]] || option=--search
+    [[ "$3" == full ]] || option=--select
+    shift 3
+    while [[ -z "$option" && $# -gt 0 ]]; do
+        case "$1" in
+        --team | --state | --status)
+            [[ "$1" != --team ]] || team=true
+            # parse_filter refuses a missing value; skip whatever follows.
+            shift
+            [[ $# -eq 0 ]] || shift
+            ;;
+        --all-projects) shift ;;
+        --*) option="$1" ;;
+        *) shift ;;
+        esac
+    done
+    if [[ -z "$option" && "$LINEAR_LIST_BOUND" != all ]]; then option=--max; fi
+    if [[ -z "$option" && "$team" == false ]]; then option=--team; fi
+    [[ -n "$option" ]] || return 0
+    jq -cn --arg option "$option" '{error: ("inventory-unsupported option=" + $option + ": issues list --inventory takes --team and --max, and only --state, --all-projects, --select full and --format beside them")}' >&2
+    return 1
+}
+
 list_issues() {
     local with_relations="false"
-    local selection=full page=75 fields
+    local selection=full page=$ISSUE_FULL_PAGE fields inventory=""
     linear_list_reset
     local search_pattern=""
     local search_given="false"
@@ -554,6 +568,11 @@ list_issues() {
             ;;
         --max)
             linear_list_option --max
+            ;;
+        --inventory)
+            linear_inventory_option "$@" || return 1
+            inventory="$2"
+            shift
             ;;
         --format)
             # A following option token is a missing value, not a format:
@@ -609,6 +628,9 @@ list_issues() {
         fi
     fi
 
+    if [[ -n "$inventory" ]]; then
+        list_inventory_scope "$with_relations" "$search_given" "$selection" ${args[@]+"${args[@]}"} || return 1
+    fi
     parse_filter ${args[@]+"${args[@]}"} || return 1
     linear_require_format "$selection" full triage owed || return 1
     [[ "$selection" == full ]] || linear_require_format "$FORMAT" safe || return 1
@@ -619,7 +641,7 @@ list_issues() {
 '"$ISSUE_BLOCKED_BY_FIELDS"
         page=250
         ;;
-    full) fields="${ISSUE_RETURN_FIELDS/    team \{ name \}/}" ;;
+    full) fields=$ISSUE_LIST_FIELDS ;;
     esac
 
     # Server-side search: pipe-separated terms, each matched as a
@@ -649,9 +671,21 @@ list_issues() {
         }
     }'
 
-    local result variables
+    local result variables team_id
     variables="{\"filter\": $FILTER_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON}"
-    result=$(linear_list_read "$query" "$variables" issues "$page") || return 1
+    if [[ -n "$inventory" ]]; then
+        team_id=$(jq -r '.team.id.eq' <<<"$FILTER_JSON") || return 1
+        # The state filter Linear would apply, on the rows the read returns
+        # with no project state, so each format prints what the live read does.
+        result=$(linear_inventory "$inventory" "$team_id" |
+            jq -c --argjson filter "$FILTER_JSON" '
+                ($filter.state.name // null) as $state
+                | {issues: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.[]
+                    | select($state == null or .state.name == $state.eq or (.state.name | IN(($state.in // [])[])))
+                    | if .project != null then .project |= del(.state) else . end]}}') || return 1
+    else
+        result=$(linear_list_read "$query" "$variables" issues "$page") || return 1
+    fi
 
     if [[ "$selection" == triage ]]; then
         jq '[.issues.nodes[] | {id: .identifier, created_at: .createdAt}]' <<<"$result"

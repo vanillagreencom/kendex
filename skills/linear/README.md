@@ -1,6 +1,6 @@
 # Linear CLI
 
-A shell CLI for Linear issues, projects and planning data. Every read and write goes to the Linear API as it runs.
+A shell CLI for Linear issues, projects and planning data.
 
 ## Features
 
@@ -19,7 +19,7 @@ kendex add vanillagreencom/kendex --skill linear
 
 ## How it works
 
-You configure credentials and the target team. Each command sends its reads and writes to Linear's GraphQL API and keeps no tracker data on disk. Client-pair authentication keeps its OAuth token in a per-user cache file, described under § Setup. A read follows every page of each collection it asks for. A rate-limited request reports the time the request quota refills.
+You configure credentials and the target team. Each command sends its reads and writes to Linear's GraphQL API and keeps no tracker data on disk, with one exception: a read given `--inventory FILE` writes one audit pass's team inventory to FILE, and later reads given that file answer from it (`issues --help`, `--inventory`). Client-pair authentication keeps its OAuth token in a per-user cache file, described under § Setup. A read follows every page of each collection it asks for. A rate-limited request reports the time the request quota refills.
 
 ## Setup
 

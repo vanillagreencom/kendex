@@ -22,6 +22,8 @@ Overseer heartbeat audits use [Heartbeat audit](../../orch/references/heartbeat-
 
 The input file's `tracker` block fixes the tracker for the whole audit. A caller that already resolved one (orch `TRACKER`) must set it.
 
+**Pass inventory.** A `team` or `issue` run on Linear binds one fresh `[INVENTORY_FILE]` in § 1.2.1 and hands it to its § 4.1 TPM analysis, so that analysis lists the team once. Every other mode binds none.
+
 **Hierarchy contract.** A `hierarchy_contract` in the input file is binding per [audit-issues-input.md](../schemas/audit-issues-input.md) § Hierarchy Contract; § 4.2 enforces it before anything is presented or executed.
 
 ---
@@ -68,6 +70,8 @@ Every mode runs:
 Run `reconcile-work-items` only where the orch skill is installed (skip the line otherwise). Exit 0 is a clean tracker; exit 1 is findings — carry them into the audit as facts; exit 2 is a broken sweep to fix before auditing.
 
 Keep the issue-label inventory for every create/update preflight.
+
+MODE `team` and `issue` bind `[INVENTORY_FILE]` to `[WORKTREE_PATH]/tmp/inventory-[MODE]-YYYYMMDD-HHMMSS.json`, `[WORKTREE_PATH]` being the § 4.1 `Worktree:`, and create that `tmp/` if it is missing. Bind a path no earlier run wrote: a path another run wrote serves that run's older reading. Nothing in this workflow reads the file; § 4.1 hands it to the TPM, whose first read given it collects the team ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
 
 #### 1.2.2 Preflight — GitHub (TRACKER=github)
 
@@ -169,7 +173,7 @@ Worktree: [WORKTREE_PATH]
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 
-Omit `[OWNER/REPO]` when `TRACKER=linear`.
+Omit `[OWNER/REPO]` when `TRACKER=linear`. When § 1.2.1 bound `[INVENTORY_FILE]`, append `--inventory [INVENTORY_FILE]` to `Arguments:`.
 
 ### 4.2 Collect and Validate
 

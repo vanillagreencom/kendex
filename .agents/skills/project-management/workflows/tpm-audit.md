@@ -16,6 +16,8 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 | `--single <file>` | `single` | The one item in an [audit-issues-input.md](../schemas/audit-issues-input.md) file |
 | `--project-order` | `project-order` | All projects and initiatives |
 
+`--inventory <file>` accompanies `--team` or `--issues` on Linear: the pass inventory the brief hands over, read per § 1.1.2.
+
 ---
 
 ## 1. Mode and Context
@@ -49,6 +51,12 @@ For an existing-issue entry in `INPUT_ITEMS`, use its `identifier` as the reques
 
 `TEAM` is `auth-check`'s `team`, a name; `TEAM_PREFIX` is that team's `key`. `teams get` looks up by name and needs no issue, so a team with none yet resolves and the audit proceeds. Halt when `auth-check` reports no team and when `teams get` resolves none — an audit that cannot resolve its own scope must not run unscoped. With the scope resolved, a row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode. Which path resolves and filters: [SKILL.md](../SKILL.md) § Scope by Path.
 
+### 1.1.2 Read the Pass Inventory
+
+**Skip if** TRACKER=github or MODE is not `team` or `issues`, and leave `[INVENTORY_FILE]` unbound. A full audit pass runs those two modes, and each lists the whole team. Project, project-order and single runs keep their live reads.
+
+`[INVENTORY_FILE]` is the brief's `--inventory` value, a fresh path its caller bound (audit-issues § 1.2.1). A brief with no `--inventory` leaves it unbound. Each command line below marked `§ 1.1.2` passes `--inventory [INVENTORY_FILE]` when it is bound, and runs without that flag when it is not. The first read given the file collects the team's every issue in every state into it. Each later read takes its rows from that file under its own filter (`linear.sh issues --help`, `--inventory`). A read that refuses `inventory-unread` halts the analysis with its error output, as any failed read does (§ 1.2). Never rerun it without `--inventory`: the live listing would be a second reading.
+
 ### 1.2 Load Label Policy
 
 ```bash
@@ -58,7 +66,13 @@ gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRAC
 
 `--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis notes in `analysis[]` and scopes itself to.
 
-Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
+Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). On TRACKER=linear under a declared taxonomy, run that preflight's label audit in this form:
+
+```bash
+.agents/skills/linear/scripts/linear.sh labels audit --inventory [INVENTORY_FILE]   # TRACKER=linear, § 1.1.2
+```
+
+A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
 
 ### 1.3 Fetch Projects
 
@@ -74,7 +88,7 @@ Fetch every project in ONE command. `projects list --state` matches one state ty
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --project "[PROJECT]" --state "Backlog,Todo,In Progress,In Review,Verifying" --max   # project mode
-.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review" --max               # team mode
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review" --max --inventory [INVENTORY_FILE]   # team mode, § 1.1.2
 .agents/skills/linear/scripts/linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe                                     # issues mode, one call
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                           # issues mode, github
 ```
@@ -100,7 +114,7 @@ gh issue view [N] --repo [REPOSITORY] --json body,comments                      
 Fetch active comparison rows in one command:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max --inventory [INVENTORY_FILE]   # § 1.1.2
 ```
 
 Each row carries its own `project` name, empty for an issue with none. Discard every row outside the § 1.1.1 team scope before comparison. Never loop `--project` over the projects from § 1.3. Use the active set for duplicates, relations, supersessions, and the § 6 cancellation sweep. Verifying rows remain comparison evidence (§ 1.1).
@@ -125,7 +139,13 @@ The same stated cap applies: past 200 issues the comparison set is partial, and 
 
 **Skip if** TRACKER=github — treat the repository as one scope.
 
-Read the project map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`, kept for § 3 and § 6.3. A map repository's project definitions are the entries of the `### Project map` block rendered in this skill's project instructions, each with its `kind`, `admits`, and `ends_when` or `role` ([project-map.md § Declaration](../references/project-map.md#declaration)); each entry's Linear id is the audit's `projects[].id`. A run whose audit returns `map-absent` has no map: for each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
+Read the project map, kept for § 3 and § 6.3:
+
+```bash
+.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]" --inventory [INVENTORY_FILE]   # § 1.1.2
+```
+
+A map repository's project definitions are the entries of the `### Project map` block rendered in this skill's project instructions, each with its `kind`, `admits`, and `ends_when` or `role` ([project-map.md § Declaration](../references/project-map.md#declaration)); each entry's Linear id is the audit's `projects[].id`. A run whose audit returns `map-absent` has no map: for each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
 
 ### 1.7 Collect Verification Evidence
 
