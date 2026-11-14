@@ -87,27 +87,39 @@ pub fn package_fork(
     })
 }
 
-/// Why installing beside did not finish, by phase: a refusal wrote
-/// nothing, so another name may well go through; a fork the scope already
-/// recorded but could not render needs an apply, not a different name.
+/// Why a write that lands in two steps did not finish, by phase. A refusal
+/// wrote nothing, so the person may change the request and ask again. A
+/// write the scope already recorded, whose step after it failed, needs an
+/// apply rather than another request, and what the landed step reported
+/// about itself comes with the cause, because nothing else reads it.
+///
+/// One type for every command that answers it, rather than one per command:
+/// the window reads the phase in one place, and a second spelling of it is
+/// a dialog that answers differently about the same partial landing.
+///
+/// Its serde phase strings (`refused`, `recorded`) are the wire contract
+/// the window branches on, so renaming one is a bindings change.
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
-pub enum ForkBesideError {
+pub enum LandingStopped {
     Refused {
         message: String,
     },
     Recorded {
         message: String,
-        /// What the fork that landed reported about itself: the links its
-        /// capture kept as written, as `AuditView::written` carries them on
-        /// a fork that also settled. Left off the wire when it kept none.
+        /// What the step that landed reported about itself, as the
+        /// command's own answer carries it on a write that finished: the
+        /// links a fork's capture or a keep held as written, say. Left off
+        /// the wire when it reported nothing.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         written: Vec<engine::ItemWarning>,
     },
 }
 
 /// Keep an edited install as a local fork under another name, leave the
-/// original on its source, then render both.
+/// original on its source, then render both. A refusal wrote nothing, so
+/// another name may well go through; a fork the scope recorded but could
+/// not render needs an apply, not a different name.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_fork_beside(
@@ -117,8 +129,8 @@ pub fn package_fork_beside(
     harness: HarnessId,
     new_name: String,
     rev: Option<String>,
-) -> Result<AuditView, ForkBesideError> {
-    let env = env().map_err(|message| ForkBesideError::Refused { message })?;
+) -> Result<AuditView, LandingStopped> {
+    let env = env().map_err(|message| LandingStopped::Refused { message })?;
     fork_beside(
         &env,
         &scope,
@@ -139,8 +151,8 @@ pub fn fork_beside(
     harness: HarnessId,
     new_name: &str,
     rev: Option<&str>,
-) -> Result<AuditView, ForkBesideError> {
-    let refused = |message: String| ForkBesideError::Refused { message };
+) -> Result<AuditView, LandingStopped> {
+    let refused = |message: String| LandingStopped::Refused { message };
     let plan = engine::fork::fork_beside(env, scope, kind, name, harness, new_name, rev)
         .map_err(|e| refused(e.to_string()))?;
     // A plan that fails to apply rolls back: nothing recorded, a refusal.
@@ -154,7 +166,7 @@ pub fn fork_beside(
             written: plan.warnings,
             ..settled
         }),
-        Err(message) => Err(ForkBesideError::Recorded {
+        Err(message) => Err(LandingStopped::Recorded {
             message,
             written: plan.warnings,
         }),

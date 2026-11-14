@@ -7,7 +7,7 @@ use test_util::{rooted, source_path};
 
 use std::fs;
 
-use kendex_app::packages::{ForkBesideError, fork_beside};
+use kendex_app::packages::{LandingStopped, fork_beside};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 
@@ -77,8 +77,8 @@ fn a_recorded_fork_carries_the_links_it_kept() {
     );
     drop(unwritable);
     let written = match answer {
-        Err(ForkBesideError::Recorded { written, .. }) => written,
-        Err(ForkBesideError::Refused { message }) => panic!("the fork was refused: {message}"),
+        Err(LandingStopped::Recorded { written, .. }) => written,
+        Err(LandingStopped::Refused { message }) => panic!("the fork was refused: {message}"),
         Ok(_) => panic!("the settle went through, so this fixture proves nothing"),
     };
     let written: Vec<&str> = written

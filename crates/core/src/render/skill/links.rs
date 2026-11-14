@@ -9,11 +9,15 @@
 //! ([`delivered`]) reads them, and a fetched catalog's bytes are the
 //! publisher's; neither is converted where it is stored.
 //!
-//! The renderer and every writer that moves skill bytes ask [`declared`],
-//! [`observed`] or a destination function for the reading, convert once,
-//! at the move, with [`convert`] or [`agreed`], and compare trees in the one
-//! form [`comparable_tree`] gives; none repeats a source name, fork record,
-//! containment match or tree comparison of its own.
+//! What a stored tree's links mean is decided here: the renderer and every
+//! writer that converts stored skill bytes ask [`declared`] or
+//! [`as_delivered`] rather than reading the source name and tag
+//! themselves. Each converts once, at the move, with [`convert`] or
+//! [`agreed`], and compares trees in the one form [`comparable_tree`]
+//! gives. The callers build the [`Origin`] they convert from and pick the
+//! [`Siblings`] beside it themselves: an installed or edited folder, a
+//! place [`delivered`] names, a folder shared by hand, or a stored tree a
+//! fork renders back.
 
 use std::path::{Path, PathBuf};
 

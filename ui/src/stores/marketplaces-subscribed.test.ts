@@ -6,6 +6,8 @@ import {
   type ItemWarning,
   type MarketplaceRow,
 } from "@/bindings";
+import { UNKNOWN_COMPLETION_STEP } from "@/lib/copy";
+import { keptRecordedStep } from "@/lib/copy-marketplaces";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useMarketplacesStore } from "./marketplaces";
 import { rowSubscribed, subscribedKeys } from "./marketplaces-shared";
@@ -234,7 +236,7 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "error",
-      error: "an edited package is in the way",
+      error: { phase: "refused", message: "an edited package is in the way" },
     });
 
     const ok = await useMarketplacesStore
@@ -335,44 +337,70 @@ describe("a Community row's Subscribed marker", () => {
     }
   });
 
-  // The keep landed before the install behind it failed: the subscription is
-  // gone and the packages are the person's own, so the dialog closes, the
-  // failure is said once, what the keep reported still reaches the window,
-  // and the rows are read again.
-  it("treats a recorded keep as landed and says what failed after it", async () => {
-    useProblemsStore.getState().closeError();
-    useMarketplacesStore.setState({
-      rows: [row("Acme/Kit", "acme/kit")],
-      read: READ_LANDED,
-    });
-    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
-      status: "error",
-      error: {
-        phase: "recorded",
+  // Either the write landed with a step behind it failing, or nothing says
+  // whether it ran: the keep's install failed after the keep, or the call
+  // failed on its way and the transport folded it into a bare string. Neither
+  // is a refusal, so the dialog closes, the error dialog says the stop once,
+  // what a recorded keep reported still reaches the window, and the rows are
+  // read again.
+  it("closes on an unsubscribe that may have landed and says what stopped", async () => {
+    const rows = [
+      {
+        name: "a recorded keep",
+        error: {
+          phase: "recorded" as const,
+          message: "the render of skill gh failed",
+          written: [kept],
+        },
+        steps: [keptRecordedStep("kit")],
         message: "the render of skill gh failed",
-        written: [kept],
+        calls: [[keptToast, { description: kept.remediation }]],
       },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
+      {
+        name: "a call that never answered",
+        error: "connection reset",
+        steps: [UNKNOWN_COMPLETION_STEP],
+        message: "connection reset",
+        calls: [],
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const entry of rows) {
+      useProblemsStore.getState().closeError();
+      vi.mocked(toast.message).mockClear();
+      vi.mocked(toast.success).mockClear();
+      vi.mocked(commands.marketplacesOverview).mockClear();
+      useMarketplacesStore.setState({
+        rows: [row("Acme/Kit", "acme/kit")],
+        read: READ_LANDED,
+        error: null,
+      });
+      vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+        status: "error",
+        error: entry.error,
+      });
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: [],
+      });
 
-    const outcome = await useMarketplacesStore
-      .getState()
-      .unsubscribe({ scope: "global" }, "kit", true, false);
+      const outcome = await useMarketplacesStore
+        .getState()
+        .unsubscribe({ scope: "global" }, "kit", true, false);
 
-    expect(outcome).toEqual({ done: true });
-    expect(useMarketplacesStore.getState().error).toBeNull();
-    const dialog = useProblemsStore.getState().dialog;
-    expect(dialog.open).toBe(true);
-    expect(dialog.message).toBe("the render of skill gh failed");
-    expect(vi.mocked(toast.message).mock.calls).toEqual([
-      [keptToast, { description: kept.remediation }],
-    ]);
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(commands.marketplacesOverview).toHaveBeenCalled();
-    expect(useMarketplacesStore.getState().rows).toEqual([]);
+      expect(outcome, entry.name).toEqual({ done: true });
+      expect(useMarketplacesStore.getState().error, entry.name).toBeNull();
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open, entry.name).toBe(true);
+      expect(dialog.message, entry.name).toBe(entry.message);
+      expect(dialog.steps, entry.name).toEqual(entry.steps);
+      expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
+        entry.calls,
+      );
+      expect(toast.success, entry.name).not.toHaveBeenCalled();
+      expect(commands.marketplacesOverview, entry.name).toHaveBeenCalled();
+      expect(useMarketplacesStore.getState().rows, entry.name).toEqual([]);
+    }
   });
 
   it("falls back to the snapshot only before the live list has loaded", () => {

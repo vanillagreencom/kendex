@@ -53,8 +53,8 @@ enum Finding {
         entries: BTreeSet<String>,
     },
     Incomplete,
-    /// The plan renders no skill, so there is nothing its link warnings
-    /// could have been read from.
+    /// The plan records no render of a declared skill: the floor this
+    /// check holds before it reads the renders' link warnings.
     Uncovered,
     /// Links a render keeps as written because no spelling from where it
     /// lands reaches their targets inside the project.
@@ -135,13 +135,13 @@ fn refusal(finding: &Finding) -> String {
         Finding::Uncovered => {
             text.push_str(&line("uncovered", "skills"));
             text.push_str(
-                "the plan renders no skill, so what its renders keep of their links is unknown\n",
+                "the plan renders no declared skill, so what skill renders keep of their links is unknown\n",
             );
         }
         Finding::Unrepresentable { links } => {
             text.push_str(&line("unrepresentable", &links.len().to_string()));
             text.push_str(
-                "these skill links reach a target no render can spell from where it lands \
+                "these links reach a target no render can spell from where it lands \
                  inside the project, so every render keeps them as written:\n",
             );
             for link in links {

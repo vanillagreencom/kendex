@@ -1,5 +1,5 @@
 import type { Scope } from "@/bindings";
-import { CHECK_FOR_UPDATES_LABEL } from "@/lib/copy";
+import { CHECK_FOR_UPDATES_LABEL, unknownCompletionTitle } from "@/lib/copy";
 import { listed } from "@/lib/listed";
 import { placeWord } from "@/lib/place-word";
 // Marketplaces copy: the Subscribed tab's read states and Home's tile
@@ -284,6 +284,10 @@ export const keptNotInstalledTitle = (source: string): string =>
   `Your copies of the packages from '${source}' didn't install`;
 export const keptRecordedStep = (source: string): string =>
   `You are unsubscribed from '${source}', and My Library lists its packages under Your own. The page shows what is on disk now.`;
+// An unsubscribe whose answer never came back, said as any write is whose
+// completion is unknown.
+export const unsubscribeUnknownTitle = (source: string): string =>
+  unknownCompletionTitle(`unsubscribing from '${source}'`);
 
 // The Community tab's two directories.
 export const DIRECTORY_CHECK_AGAIN_LABEL = "Check kendex.ai again";

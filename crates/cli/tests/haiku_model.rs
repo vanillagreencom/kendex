@@ -1,4 +1,5 @@
-//! Consumer writes and verify deliver one renderer model notice.
+//! Consumer writes, template installs and verify deliver one renderer
+//! model notice.
 
 use std::fs;
 use std::process::Command;
@@ -13,6 +14,12 @@ fn exact_pin_renders_haiku_and_reports_one_warning_per_process() {
     let project = home.join("consumer");
     let catalog = home.join("catalog");
     fs::create_dir_all(&project).unwrap();
+    // A tool on this machine, so a template has somewhere to install to.
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    let installed = home.join("installed");
+    let added = home.join("added");
+    fs::create_dir_all(&installed).unwrap();
+    fs::create_dir_all(&added).unwrap();
     fs::create_dir_all(catalog.join("agents")).unwrap();
     for (name, model) in [
         ("fast", "claude-haiku-5-5"),
@@ -35,6 +42,31 @@ fn exact_pin_renders_haiku_and_reports_one_warning_per_process() {
         ),
     )
     .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_kendex"))
+            .args(args)
+            .current_dir(&project)
+            .env_clear()
+            .envs(fixture_env(&home))
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("KENDEX_UI", "plain")
+            .env("KENDEX_BACKGROUND_REFRESH", "off")
+            .output()
+            .unwrap()
+    };
+    let catalog_path = catalog.to_str().unwrap();
+    // A template installs its agent through renders it runs itself, which
+    // no report presenter sees.
+    let saved = run(&[
+        "template",
+        "create",
+        "Fast",
+        "--source",
+        catalog_path,
+        "--agent",
+        "fast",
+    ]);
+    assert!(saved.status.success(), "{saved:?}");
     for args in [
         vec!["source", "enable", "cat", "--scope", "project", "--leave"],
         vec!["refresh", "--scope", "project", "--yes", "--leave"],
@@ -56,17 +88,24 @@ fn exact_pin_renders_haiku_and_reports_one_warning_per_process() {
             "project",
             "--leave",
         ],
+        vec![
+            "template",
+            "install",
+            "Fast",
+            "--project",
+            installed.to_str().unwrap(),
+            "--yes",
+        ],
+        vec![
+            "project",
+            "add",
+            added.to_str().unwrap(),
+            "--template",
+            "Fast",
+            "--yes",
+        ],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_kendex"))
-            .args(&args)
-            .current_dir(&project)
-            .env_clear()
-            .envs(fixture_env(&home))
-            .env("PATH", std::env::var_os("PATH").unwrap())
-            .env("KENDEX_UI", "plain")
-            .env("KENDEX_BACKGROUND_REFRESH", "off")
-            .output()
-            .unwrap();
+        let output = run(&args);
         assert!(output.status.success(), "{args:?}: {output:?}");
         let stderr = String::from_utf8(output.stderr).unwrap();
         let warnings: Vec<_> = stderr

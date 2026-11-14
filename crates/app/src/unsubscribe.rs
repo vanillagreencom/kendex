@@ -9,6 +9,7 @@ use kendex_core::model::{ItemKind, Scope};
 use serde::Serialize;
 use specta::Type;
 
+use crate::packages::LandingStopped;
 use crate::scopes::env;
 
 /// What unsubscribing from a marketplace would do: the packages that can be
@@ -60,28 +61,12 @@ pub struct Unsubscribed {
     pub undone: Vec<String>,
 }
 
-/// Why unsubscribing did not finish, by phase: a refusal left the scope as
-/// it was; a keep that landed before the render after it failed has kept
-/// the packages, and what keeping them reported comes with the cause.
-#[derive(Debug, Serialize, Type)]
-#[serde(tag = "phase", rename_all = "kebab-case")]
-pub enum UnsubscribeError {
-    Refused {
-        message: String,
-    },
-    Recorded {
-        message: String,
-        /// What the keep that landed reported about the packages it kept,
-        /// as `Unsubscribed::warnings` carries them on one that finished.
-        /// Left off the wire when it reported nothing.
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        written: Vec<ItemWarning>,
-    },
-}
-
 /// Unsubscribe, removing or keeping the packages that would leave. `keep`
 /// converts them to local forks; otherwise they are uninstalled, and
-/// `discard_edits` takes their hand edits along instead of refusing.
+/// `discard_edits` takes their hand edits along instead of refusing. A
+/// refusal leaves the scope as it was; a keep that landed before the render
+/// after it failed has kept the packages, and what keeping them reported
+/// comes with the cause.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn marketplace_unsubscribe(
@@ -89,8 +74,8 @@ pub fn marketplace_unsubscribe(
     source: String,
     keep: bool,
     discard_edits: bool,
-) -> Result<Unsubscribed, UnsubscribeError> {
-    let env = env().map_err(|message| UnsubscribeError::Refused { message })?;
+) -> Result<Unsubscribed, LandingStopped> {
+    let env = env().map_err(|message| LandingStopped::Refused { message })?;
     unsubscribe(&env, &scope, &source, keep, discard_edits)
 }
 
@@ -101,9 +86,9 @@ pub fn unsubscribe(
     source: &str,
     keep: bool,
     discard_edits: bool,
-) -> Result<Unsubscribed, UnsubscribeError> {
+) -> Result<Unsubscribed, LandingStopped> {
     use kendex_core::engine::detach;
-    let refused = |message: String| UnsubscribeError::Refused { message };
+    let refused = |message: String| LandingStopped::Refused { message };
     if !keep {
         // A plan that fails to apply rolls back: nothing left, a refusal.
         let report = detach::remove(env, scope, source, discard_edits)
@@ -124,7 +109,7 @@ pub fn unsubscribe(
     let resync = match detach::resync_kept(env, scope) {
         Ok(resync) => resync,
         Err(error) => {
-            return Err(UnsubscribeError::Recorded {
+            return Err(LandingStopped::Recorded {
                 message: error.to_string(),
                 written: warnings,
             });
@@ -133,7 +118,7 @@ pub fn unsubscribe(
     warnings.extend(resync.warnings.iter().cloned());
     match crate::repo_effects::write(env, &resync) {
         Ok(undone) => Ok(Unsubscribed { warnings, undone }),
-        Err(message) => Err(UnsubscribeError::Recorded {
+        Err(message) => Err(LandingStopped::Recorded {
             message,
             written: warnings,
         }),
@@ -196,38 +181,75 @@ mod tests {
     }
 
     /// Keeping a skill whose link leaves the project answers with that link
-    /// as the keep reported it, its fix beside it, for the window to show.
+    /// as the keep reported it, its fix beside it, for the window to show:
+    /// on a keep that finished, and on one whose render after it failed,
+    /// where nothing else reads what the landed keep reported.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn unsubscribe_keep_answers_each_kept_link_with_its_fix() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = crate::test_util::rooted(&tmp);
-        let env = Env::host_rooted(&home);
-        let root = home.join("dev/app");
-        let catalog = home.join("catalog");
-        skill(&catalog, "gh", "[m](../../memory/x.md)");
-        std::fs::create_dir_all(catalog.join("memory")).unwrap();
-        std::fs::write(catalog.join("memory/x.md"), "Memory.\n").unwrap();
-        std::fs::create_dir_all(root.join(".claude")).unwrap();
-        std::fs::write(
-            root.join("kendex.toml"),
-            format!(
+        // Whether a declared agent the render after the keep must write
+        // lands in a folder that refuses the write.
+        for render_fails in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = crate::test_util::rooted(&tmp);
+            let env = Env::host_rooted(&home);
+            let root = home.join("dev/app");
+            let catalog = home.join("catalog");
+            skill(&catalog, "gh", "[m](../../memory/x.md)");
+            std::fs::create_dir_all(catalog.join("memory")).unwrap();
+            std::fs::write(catalog.join("memory/x.md"), "Memory.\n").unwrap();
+            std::fs::create_dir_all(root.join(".claude")).unwrap();
+            let manifest = format!(
                 "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[skills.gh]\nsource = \"cat\"\n",
                 crate::test_util::source_path(&catalog)
-            ),
-        )
-        .unwrap();
-        let scope = Scope::Project { root };
-        let report = kendex_core::engine::audit(&env, &scope).unwrap();
-        apply::execute(&env, &report.plan).unwrap();
-        let unsubscribed = unsubscribe(&env, &scope, "cat", true, false).unwrap();
-        let kept: Vec<&ItemWarning> = unsubscribed
-            .warnings
-            .iter()
-            .filter(|warning| warning.message.starts_with("skill-link-kept:"))
-            .collect();
-        assert_eq!(kept.len(), 1, "{:?}", unsubscribed.warnings);
-        assert_eq!(kept[0].name, "gh");
-        assert!(kept[0].remediation.is_some(), "{:?}", kept[0]);
+            );
+            std::fs::write(root.join("kendex.toml"), &manifest).unwrap();
+            let scope = Scope::Project { root: root.clone() };
+            let report = kendex_core::engine::audit(&env, &scope).unwrap();
+            apply::execute(&env, &report.plan).unwrap();
+            let unwritable = match render_fails {
+                false => None,
+                true => {
+                    let local = root.join(kendex_core::source::LOCAL_SOURCE_DIR);
+                    std::fs::create_dir_all(local.join("agents")).unwrap();
+                    std::fs::write(
+                        local.join("agents/extra.md"),
+                        "---\nname: extra\ndescription: does extra\n---\nMine.\n",
+                    )
+                    .unwrap();
+                    std::fs::write(
+                        root.join("kendex.toml"),
+                        format!("{manifest}[agents.extra]\nsource = \"local\"\n"),
+                    )
+                    .unwrap();
+                    let agents = root.join(".claude/agents");
+                    std::fs::create_dir_all(&agents).unwrap();
+                    let Some(held) = crate::test_util::unwritable_dir(&agents) else {
+                        return;
+                    };
+                    Some(held)
+                }
+            };
+            let answer = unsubscribe(&env, &scope, "cat", true, false);
+            drop(unwritable);
+            let warnings = match (answer, render_fails) {
+                (Ok(unsubscribed), false) => unsubscribed.warnings,
+                (Err(LandingStopped::Recorded { written, .. }), true) => written,
+                (Err(LandingStopped::Refused { message }), _) => {
+                    panic!("render_fails={render_fails}: the keep was refused: {message}")
+                }
+                (Ok(_), true) => panic!("the render went through, so this row proves nothing"),
+                (Err(LandingStopped::Recorded { message, .. }), false) => {
+                    panic!("the render after the keep failed: {message}")
+                }
+            };
+            let kept: Vec<&ItemWarning> = warnings
+                .iter()
+                .filter(|warning| warning.message.starts_with("skill-link-kept:"))
+                .collect();
+            assert_eq!(kept.len(), 1, "render_fails={render_fails}: {warnings:?}");
+            assert_eq!(kept[0].name, "gh");
+            assert!(kept[0].remediation.is_some(), "{:?}", kept[0]);
+        }
     }
 }

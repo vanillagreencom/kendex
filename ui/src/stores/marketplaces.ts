@@ -6,10 +6,13 @@ import {
   type MarketplaceRow,
   type Scope,
 } from "@/bindings";
+import { UNKNOWN_COMPLETION_STEP } from "@/lib/copy";
 import {
   keptNotInstalledTitle,
   keptRecordedStep,
+  unsubscribeUnknownTitle,
 } from "@/lib/copy-marketplaces";
+import { landingStop } from "@/lib/landing-stopped";
 import {
   READ_PENDING,
   type ReadState,
@@ -226,16 +229,11 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
           set({ busy: false });
         }
         if (response.status === "error") {
-          // A bare string is the call failing on its way, said where a
-          // refusal is: the dialog stays open on it.
-          const failure =
-            typeof response.error === "string"
-              ? { phase: "refused" as const, message: response.error }
-              : response.error;
-          switch (failure.phase) {
+          const stop = landingStop(response.error);
+          switch (stop.phase) {
             case "refused":
-              set({ error: failure.message });
-              return { error: failure.message };
+              set({ error: stop.message });
+              return { error: stop.message };
             case "recorded":
               // The keep landed and the install behind it did not, so the
               // subscription is gone and the packages are the person's own:
@@ -244,16 +242,28 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
               set({ error: null });
               useProblemsStore.getState().showError({
                 title: keptNotInstalledTitle(source),
-                message:
-                  failure.message === "" ? NO_REASON_GIVEN : failure.message,
+                message: stop.message === "" ? NO_REASON_GIVEN : stop.message,
                 steps: [keptRecordedStep(source)],
               });
-              sayWritten(failure.written);
+              sayWritten(stop.written);
+              break;
+            case "unknown":
+              // The call failed on its way, so the unsubscribe may have
+              // landed. Held open as a refusal, the dialog would invite
+              // asking again over a subscription already gone: it closes,
+              // the error dialog says nothing is known, and the rows are
+              // read again below.
+              set({ error: null });
+              useProblemsStore.getState().showError({
+                title: unsubscribeUnknownTitle(source),
+                message: stop.message,
+                steps: [UNKNOWN_COMPLETION_STEP],
+              });
               break;
             default: {
-              const unknown: never = failure;
+              const unread: never = stop;
               throw new Error(
-                `unsubscribe: unknown failure ${JSON.stringify(unknown)}`,
+                `unsubscribe: unread stop ${JSON.stringify(unread)}`,
               );
             }
           }

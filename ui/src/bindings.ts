@@ -499,9 +499,12 @@ export const commands = {
 	/**
 	 *  Unsubscribe, removing or keeping the packages that would leave. `keep`
 	 *  converts them to local forks; otherwise they are uninstalled, and
-	 *  `discard_edits` takes their hand edits along instead of refusing.
+	 *  `discard_edits` takes their hand edits along instead of refusing. A
+	 *  refusal leaves the scope as it was; a keep that landed before the render
+	 *  after it failed has kept the packages, and what keeping them reported
+	 *  comes with the cause.
 	 */
-	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, UnsubscribeError_Serialize>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
+	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, LandingStopped_Serialize>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
 	/**
 	 *  The directory as the tab shows it. `refresh` forces a revalidation;
 	 *  otherwise the cached list is served within its TTL.
@@ -592,9 +595,11 @@ export const commands = {
 	packageFork: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_fork", { scope, kind, name, harness })),
 	/**
 	 *  Keep an edited install as a local fork under another name, leave the
-	 *  original on its source, then render both.
+	 *  original on its source, then render both. A refusal wrote nothing, so
+	 *  another name may well go through; a fork the scope recorded but could
+	 *  not render needs an apply, not a different name.
 	 */
-	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, ForkBesideError_Serialize>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
+	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, LandingStopped_Serialize>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
 	/**
 	 *  Discard one package's edits and re-render it — the door back to "the
 	 *  catalog's version wins". Scoped to the package the user named twice
@@ -2430,39 +2435,6 @@ export type FlagReason = { kind: "noBranch" } |
 { kind: "unreadable"; said: string[] };
 
 /**
- *  Why installing beside did not finish, by phase: a refusal wrote
- *  nothing, so another name may well go through; a fork the scope already
- *  recorded but could not render needs an apply, not a different name.
- */
-export type ForkBesideError = ForkBesideError_Serialize | ForkBesideError_Deserialize;
-
-/**
- *  Why installing beside did not finish, by phase: a refusal wrote
- *  nothing, so another name may well go through; a fork the scope already
- *  recorded but could not render needs an apply, not a different name.
- */
-export type ForkBesideError_Deserialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
-/**
- *  What the fork that landed reported about itself: the links its
- *  capture kept as written, as `AuditView::written` carries them on
- *  a fork that also settled. Left off the wire when it kept none.
- */
-written: ItemWarning_Deserialize[] };
-
-/**
- *  Why installing beside did not finish, by phase: a refusal wrote
- *  nothing, so another name may well go through; a fork the scope already
- *  recorded but could not render needs an apply, not a different name.
- */
-export type ForkBesideError_Serialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
-/**
- *  What the fork that landed reported about itself: the links its
- *  capture kept as written, as `AuditView::written` carries them on
- *  a fork that also settled. Left off the wire when it kept none.
- */
-written?: ItemWarning_Serialize[] };
-
-/**
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
@@ -3088,6 +3060,68 @@ export type KindCaps = {
 	 */
 	enforcement: Enforcement,
 };
+
+/**
+ *  Why a write that lands in two steps did not finish, by phase. A refusal
+ *  wrote nothing, so the person may change the request and ask again. A
+ *  write the scope already recorded, whose step after it failed, needs an
+ *  apply rather than another request, and what the landed step reported
+ *  about itself comes with the cause, because nothing else reads it.
+ * 
+ *  One type for every command that answers it, rather than one per command:
+ *  the window reads the phase in one place, and a second spelling of it is
+ *  a dialog that answers differently about the same partial landing.
+ * 
+ *  Its serde phase strings (`refused`, `recorded`) are the wire contract
+ *  the window branches on, so renaming one is a bindings change.
+ */
+export type LandingStopped = LandingStopped_Serialize | LandingStopped_Deserialize;
+
+/**
+ *  Why a write that lands in two steps did not finish, by phase. A refusal
+ *  wrote nothing, so the person may change the request and ask again. A
+ *  write the scope already recorded, whose step after it failed, needs an
+ *  apply rather than another request, and what the landed step reported
+ *  about itself comes with the cause, because nothing else reads it.
+ * 
+ *  One type for every command that answers it, rather than one per command:
+ *  the window reads the phase in one place, and a second spelling of it is
+ *  a dialog that answers differently about the same partial landing.
+ * 
+ *  Its serde phase strings (`refused`, `recorded`) are the wire contract
+ *  the window branches on, so renaming one is a bindings change.
+ */
+export type LandingStopped_Deserialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the step that landed reported about itself, as the
+ *  command's own answer carries it on a write that finished: the
+ *  links a fork's capture or a keep held as written, say. Left off
+ *  the wire when it reported nothing.
+ */
+written: ItemWarning_Deserialize[] };
+
+/**
+ *  Why a write that lands in two steps did not finish, by phase. A refusal
+ *  wrote nothing, so the person may change the request and ask again. A
+ *  write the scope already recorded, whose step after it failed, needs an
+ *  apply rather than another request, and what the landed step reported
+ *  about itself comes with the cause, because nothing else reads it.
+ * 
+ *  One type for every command that answers it, rather than one per command:
+ *  the window reads the phase in one place, and a second spelling of it is
+ *  a dialog that answers differently about the same partial landing.
+ * 
+ *  Its serde phase strings (`refused`, `recorded`) are the wire contract
+ *  the window branches on, so renaming one is a bindings change.
+ */
+export type LandingStopped_Serialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the step that landed reported about itself, as the
+ *  command's own answer carries it on a write that finished: the
+ *  links a fork's capture or a keep held as written, say. Left off
+ *  the wire when it reported nothing.
+ */
+written?: ItemWarning_Serialize[] };
 
 export type License = "mit" | "apache2" | 
 /**  Valid locally forever; blocks submission until chosen. */
@@ -6045,39 +6079,6 @@ export type UnreadableScope = {
 	scope: Scope,
 	message: string,
 };
-
-/**
- *  Why unsubscribing did not finish, by phase: a refusal left the scope as
- *  it was; a keep that landed before the render after it failed has kept
- *  the packages, and what keeping them reported comes with the cause.
- */
-export type UnsubscribeError = UnsubscribeError_Serialize | UnsubscribeError_Deserialize;
-
-/**
- *  Why unsubscribing did not finish, by phase: a refusal left the scope as
- *  it was; a keep that landed before the render after it failed has kept
- *  the packages, and what keeping them reported comes with the cause.
- */
-export type UnsubscribeError_Deserialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
-/**
- *  What the keep that landed reported about the packages it kept,
- *  as `Unsubscribed::warnings` carries them on one that finished.
- *  Left off the wire when it reported nothing.
- */
-written: ItemWarning_Deserialize[] };
-
-/**
- *  Why unsubscribing did not finish, by phase: a refusal left the scope as
- *  it was; a keep that landed before the render after it failed has kept
- *  the packages, and what keeping them reported comes with the cause.
- */
-export type UnsubscribeError_Serialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
-/**
- *  What the keep that landed reported about the packages it kept,
- *  as `Unsubscribed::warnings` carries them on one that finished.
- *  Left off the wire when it reported nothing.
- */
-written?: ItemWarning_Serialize[] };
 
 /**
  *  What unsubscribing from a marketplace would do: the packages that can be

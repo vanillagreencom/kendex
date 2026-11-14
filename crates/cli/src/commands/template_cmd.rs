@@ -820,6 +820,11 @@ pub fn run_install(env: &Env, planned: &Planned) -> CliResult {
     for note_line in &landed.notes {
         note(note_line);
     }
+    // The install executes its plans itself, so no report presenter sees
+    // the model substitution its renders warned about.
+    for warning in &landed.warnings {
+        crate::ui::report::run_model_warning(&warning.message);
+    }
     crate::ui::stderr(&super::engine_common::warning_lines(
         &crate::ui::style(),
         &landed.warnings,
