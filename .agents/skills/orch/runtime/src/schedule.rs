@@ -39,10 +39,9 @@ pub enum Duty {
     // word is one, `github`, which the case rule would split.
     #[serde(rename = "github")]
     GitHub,
-    // The retention duty: the event log's rotated segments and each ended
-    // lane's paths judged
-    // by their own recorded end, on the long cadence, on the shared thread,
-    // last in the tie order.
+    // The retention duty: each ended lane's paths judged by their own
+    // recorded end, on the long cadence, on the shared thread, last in the
+    // tie order.
     Retention,
 }
 

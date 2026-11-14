@@ -2220,6 +2220,89 @@ fn an_owed_send_no_receipt_settles_reaches_the_log_once_per_cause_through_watch_
     );
 }
 
+/// The single-pass follow `references/watch-delivery.md` ships, the fenced
+/// block under its `## Single passes`, which a session saves and runs.
+fn shipped_single_pass() -> String {
+    let doc = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("references/watch-delivery.md"),
+    )
+    .unwrap();
+    let (_, section) = doc
+        .split_once("\n## Single passes\n")
+        .expect("the single passes section");
+    let (_, fenced) = section.split_once("```sh\n").expect("its fenced follow");
+    let (text, _) = fenced.split_once("```").expect("the fence's end");
+    text.to_owned()
+}
+
+/// A session's follow numbers the lines of the file its link names, so a
+/// log that set its lines aside at a bound would hand a session past that
+/// bound nothing. Over a planted 9,999-line log, `watch run` on a
+/// one-second heartbeat appends two lines and is stopped; the shipped
+/// single-pass follow on a symbolic link, from the session's next line
+/// 10,001, prints every line from 10,001 under the log's own number.
+#[test]
+fn a_single_pass_follow_past_ten_thousand_lines_prints_each_line_under_the_logs_number() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
+    let planted: String = (1..=9_999)
+        .map(|n| format!("EVENT triage KEN-{n}\n"))
+        .collect();
+    std::fs::write(&paths.log, planted).unwrap();
+    let mut child = spawn_watch_run(&state_dir, &["--interval", "1", "--max-loops", "1"]);
+    await_claim(&mut child, &paths);
+    let deadline = Instant::now() + secs(60);
+    while watch::events::line_count(&paths.log).unwrap() < 10_001 {
+        assert!(Instant::now() < deadline, "the watch never appended twice");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
+    assert!(
+        reply(&stop)["ok"].as_bool().unwrap_or(false),
+        "{}",
+        stderr(&stop)
+    );
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let reader = state_dir.join("reader");
+    std::fs::create_dir_all(&reader).unwrap();
+    std::os::unix::fs::symlink(&paths.log, reader.join("watch.log")).unwrap();
+    std::fs::write(reader.join("follow.sh"), shipped_single_pass()).unwrap();
+    let follow = Command::new("sh")
+        .arg(reader.join("follow.sh"))
+        .arg(reader.join("watch.log"))
+        .arg("10001")
+        .env_clear()
+        .env("PATH", tool_path(&[]))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = bounded_output(follow, secs(60), "the follow ran past its quiet expiry");
+    assert!(out.status.success(), "{}", stderr(&out));
+    let printed: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        printed.first().is_some_and(|l| l.starts_with("10001: ")),
+        "the follow printed {printed:?}"
+    );
+    let numbered: Vec<String> = log_lines(&paths)
+        .iter()
+        .enumerate()
+        .skip(10_000)
+        .map(|(i, line)| format!("{}: {line}", i + 1))
+        .collect();
+    assert_eq!(printed, numbered);
+}
+
 /// A succession neither stops, replaces nor restarts the fleet watch, so
 /// the successor reads the log no restart truncated and the claim the same
 /// runner holds. A real transfer through the runtime, beside the entry's

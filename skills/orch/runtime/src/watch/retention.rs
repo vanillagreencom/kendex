@@ -6,11 +6,8 @@
 //! operator scratch leave only through an item's close-out
 //! (`archive::close_out`) or by hand.
 //!
-//! Beside the units, the event log's rotated segments past
-//! `ORCH_RECORD_RETENTION_DAYS` go, the newest excepted, which fixes the
-//! live log's line numbering; only the live log is written. The lane
-//! records and fleet-log rows past the retention leave the fleet state
-//! through [`crate::ops::prune::prune_records`], applied under its
+//! The lane records and fleet-log rows past the retention leave the fleet
+//! state through [`crate::ops::prune::prune_records`], applied under its
 //! `Request` variant; the store writes nothing when nothing leaves.
 //!
 //! Every unit is archived before it goes. Under the lock of each record
@@ -44,7 +41,7 @@ use crate::ops::prune::{Dropped, PlannedRows, PruneRecords};
 use crate::ops::{Report, Request};
 use crate::settings::Settings;
 use crate::state;
-use crate::watch::{Body, Paths, Produced, Runner, Tick, events};
+use crate::watch::{Body, Paths, Produced, Runner, Tick};
 use agent_runtime::journal::Env;
 
 /// Every status word a lane record reads as ended under: `done`, which a
@@ -59,7 +56,7 @@ const SECS_PER_DAY: u64 = 86_400;
 /// What the duty runs with, fixed at registration.
 pub struct Context {
     pub fleet: PathBuf,
-    /// The runner's records beside it: the log whose segments are judged.
+    /// The runner's records beside it: the state directory the pass prunes.
     pub paths: Paths,
     pub settings: Settings,
     pub locking: Locking,
@@ -230,20 +227,6 @@ pub fn judge(
 
 // --- the kinds -------------------------------------------------------------------------------
 
-/// Remove one of the log's rotated segments: a path gone already is
-/// removed, an unreadable one is the failure named.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the retention duty's removal of the log's rotated segments, each judged by its own last write; every other path leaves through the archive module after its archive stands"
-)]
-fn remove_segment(path: &Path) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(agent_runtime::Error::io("remove", path, e).into()),
-    }
-}
-
 #[allow(
     clippy::disallowed_methods,
     reason = "a file's modification time read as an epoch second, its own recorded end, beside the injected clock's cutoff"
@@ -280,23 +263,6 @@ fn stamp(path: &Path) -> Result<Option<Seen>> {
 /// A file's last write as an epoch second, `None` where it does not stand.
 fn written(path: &Path) -> Result<Option<u64>> {
     Ok(stamp(path)?.map(|seen| epoch_of(seen.written)))
-}
-
-/// Remove the rotated segments of `log` whose last write is before
-/// `cutoff`, the newest excepted; the paths removed.
-fn prune_segments(log: &Path, cutoff: u64) -> Result<Vec<PathBuf>> {
-    let segments = events::segments(log)?;
-    let mut removed = Vec::new();
-    let Some((_, older)) = segments.split_last() else {
-        return Ok(removed);
-    };
-    for segment in older {
-        if written(&segment.path)?.is_some_and(|at| at < cutoff) {
-            remove_segment(&segment.path)?;
-            removed.push(segment.path.clone());
-        }
-    }
-    Ok(removed)
 }
 
 /// A record as the file holds it: one of an old vintage is judged by its
@@ -553,11 +519,9 @@ impl Unit {
     }
 }
 
-/// What one pass judged, before anything but the log's rotated segments
-/// has gone.
+/// What one pass judged, before anything has gone.
 #[derive(Debug)]
 struct Plan {
-    segments: Vec<PathBuf>,
     units: Vec<Unit>,
     /// Every item whose record is a unit or whose lane ended, with its lane
     /// rows as the judgement read them, and whether its rows past the first
@@ -590,7 +554,6 @@ fn plan(
     now: u64,
 ) -> Result<Plan> {
     let cutoff = cutoff(now, days);
-    let segments = prune_segments(&paths.log, cutoff)?;
     let doc = load(fleet)?;
     let empty = Document::new();
     let record = doc.as_ref().unwrap_or(&empty);
@@ -663,7 +626,6 @@ fn plan(
         }
     }
     Ok(Plan {
-        segments,
         units,
         rows,
         records,
@@ -710,7 +672,6 @@ fn archive(
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Pruned {
-    pub segments: Vec<PathBuf>,
     pub paths: Vec<PathBuf>,
     /// The items whose lane rows left (the duty), or would leave (a pass
     /// with no transition).
@@ -813,7 +774,6 @@ fn judged_pass(
         let removal = going(&plan, &abandoned);
         crate::archive::remove(&removal)?;
         Ok(Pruned {
-            segments: plan.segments.clone(),
             paths: removal,
             records: confirmed.dropped,
             rows: live_rows(&abandoned),

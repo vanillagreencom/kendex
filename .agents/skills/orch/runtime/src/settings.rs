@@ -155,9 +155,8 @@ pub const OWNER_ASK_LABEL_KEY: &str = "ORCH_OWNER_ASK_LABEL";
 /// (`lane walk`); unset, a launch takes the model it names.
 pub const LANE_PREFERENCE_KEY: &str = "ORCH_LANE_PREFERENCE";
 /// Days past a record's own recorded end before the retention duty removes
-/// it (the key `lane-mail compact` reads too): the event log's rotated
-/// segments, an ended lane's paths and every other unit of the state
-/// directory. A count of none is a misconfiguration: nothing would stand a
+/// it (the key `lane-mail compact` reads too): an ended lane's paths and
+/// every other unit of the state directory. A count of none is a misconfiguration: nothing would stand a
 /// day.
 pub const RECORD_RETENTION_DAYS_KEY: &str = "ORCH_RECORD_RETENTION_DAYS";
 /// Seconds `queue-watch` keeps polling a pull request no poll has seen queued

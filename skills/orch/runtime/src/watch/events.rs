@@ -863,9 +863,6 @@ pub struct EventLog {
     path: PathBuf,
     file: File,
     last: u64,
-    // The lines rotated out before the live file, which its numbering
-    // continues from.
-    base: u64,
 }
 
 fn record_error(path: &Path, op: &'static str, e: std::io::Error) -> WatchError {
@@ -876,52 +873,32 @@ fn record_error(path: &Path, op: &'static str, e: std::io::Error) -> WatchError 
     }
 }
 
-/// The number of lines the log holds, its rotated segments counted: the
-/// number of its last line; none where no log stands yet.
+/// The number of lines the log holds, the number of its last line; none
+/// where no log stands yet.
 pub fn line_count(path: &Path) -> Result<u64> {
-    Ok(live_base(path)? + file_lines(path)?)
-}
-
-/// The lines from number `since` (1-based) on, the rotated segments read
-/// through; none where no log stands.
-pub fn read_since(path: &Path, since: u64) -> Result<Vec<Numbered>> {
-    let mut out = Vec::new();
-    let mut base = 0;
-    for segment in segments(path)? {
-        if segment.base + segment.lines >= since {
-            read_numbered(&segment.path, segment.base, since, &mut out)?;
-        }
-        base = segment.base + segment.lines;
-    }
-    read_numbered(path, base, since, &mut out)?;
-    Ok(out)
-}
-
-/// The lines of one file numbered from `base + 1`, those at or past
-/// `since` appended to `out`; an absent file holds none.
-fn read_numbered(path: &Path, base: u64, since: u64, out: &mut Vec<Numbered>) -> Result<()> {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(record_error(path, "read", e).into()),
-    };
-    for (index, line) in BufReader::new(file).lines().enumerate() {
-        let n = base + index as u64 + 1;
-        let line = line.map_err(|e| record_error(path, "read", e))?;
-        if n >= since {
-            out.push(Numbered { n, line });
-        }
-    }
-    Ok(())
-}
-
-/// The number of lines one file holds; none where it does not stand.
-fn file_lines(path: &Path) -> Result<u64> {
     match File::open(path) {
         Ok(file) => Ok(BufReader::new(file).lines().count() as u64),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
         Err(e) => Err(record_error(path, "read", e).into()),
     }
+}
+
+/// The lines from number `since` (1-based) on; none where no log stands.
+pub fn read_since(path: &Path, since: u64) -> Result<Vec<Numbered>> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(record_error(path, "read", e).into()),
+    };
+    let mut out = Vec::new();
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let n = index as u64 + 1;
+        let line = line.map_err(|e| record_error(path, "read", e))?;
+        if n >= since {
+            out.push(Numbered { n, line });
+        }
+    }
+    Ok(out)
 }
 
 /// Whether the open log ends in a partial line: a last byte that is no
@@ -956,13 +933,11 @@ impl EventLog {
             Ok(())
         };
         terminate(&mut file).map_err(|e| record_error(path, "terminate", e))?;
-        let base = live_base(path)?;
-        let last = base + file_lines(path)?;
+        let last = line_count(path)?;
         Ok(EventLog {
             path: path.to_path_buf(),
             file,
             last,
-            base,
         })
     }
 
@@ -987,93 +962,11 @@ impl EventLog {
             .and_then(|()| self.file.sync_data())
             .map_err(|e| record_error(&self.path, "append", e))?;
         self.last += events.len() as u64;
-        if self.last - self.base >= SEGMENT_LINES {
-            self.rotate()?;
-        }
         Ok(self.last)
     }
-
-    /// Rotate the live file out as the segment `<log>.<base>` and open a
-    /// fresh one whose first line is `last + 1`: the live log stays within
-    /// [`SEGMENT_LINES`], and the numbering a handoff names continues
-    /// across the segments, which `read_since` reads through. Under the
-    /// runner's record lock, as every append is.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the event log's own rotation: the one rename of the live file onto its segment name, the runner's own record beside the fleet state"
-    )]
-    fn rotate(&mut self) -> Result<()> {
-        let segment = segment_path(&self.path, self.base);
-        std::fs::rename(&self.path, &segment).map_err(|e| record_error(&self.path, "rotate", e))?;
-        self.file = open_live(&self.path)?;
-        self.base = self.last;
-        Ok(())
-    }
 }
 
-/// Lines a live log holds before it is rotated out: small enough that the
-/// follow and `watch log` read it whole, large enough that a quiet fleet
-/// rotates seldom or never.
-pub const SEGMENT_LINES: u64 = 10_000;
-
-/// One rotated segment of the log, `<log>.<base>`: it holds the lines
-/// `base + 1` to `base + lines`. The newest segment fixes the live log's
-/// base, so the retention duty never removes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Segment {
-    pub path: PathBuf,
-    pub base: u64,
-    pub lines: u64,
-}
-
-fn segment_path(log: &Path, base: u64) -> PathBuf {
-    let name = log
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    log.with_file_name(format!("{name}.{base}"))
-}
-
-/// The rotated segments beside `log`, oldest first: every sibling named
-/// `<log>.<number>`; none where the directory does not stand.
-pub fn segments(log: &Path) -> Result<Vec<Segment>> {
-    let dir = log.parent().unwrap_or(Path::new("."));
-    let prefix = format!(
-        "{}.",
-        log.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    );
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(record_error(dir, "read-dir", e).into()),
-    };
-    let mut out = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| record_error(dir, "read-dir", e))?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(suffix) = name.strip_prefix(&prefix) else {
-            continue;
-        };
-        let Ok(base) = suffix.parse::<u64>() else {
-            continue;
-        };
-        let path = entry.path();
-        let lines = file_lines(&path)?;
-        out.push(Segment { path, base, lines });
-    }
-    out.sort_by_key(|s| s.base);
-    Ok(out)
-}
-
-/// The number of lines before the live log's first: the newest segment's
-/// end, or none with no segment.
-fn live_base(log: &Path) -> Result<u64> {
-    Ok(segments(log)?.last().map_or(0, |s| s.base + s.lines))
-}
-
-/// The live log open for appending, created where none stands.
+/// The log open for appending, created where none stands.
 #[allow(
     clippy::disallowed_methods,
     reason = "the event log's one open for appending: the runner's own record beside the fleet state"
@@ -1126,86 +1019,5 @@ mod tests {
         let log = EventLog::open(&empty).unwrap();
         assert_eq!(log.last(), 0);
         assert_eq!(std::fs::read(&empty).unwrap(), b"");
-    }
-
-    /// A rotation that renumbered would point the line a handoff names
-    /// elsewhere in the successor's follow, as would a reopened log that
-    /// counted the live file alone. The live file rotates
-    /// out at `SEGMENT_LINES` as `<log>.<base>`; the next line's number,
-    /// the count and a `read_since` across the boundary continue the
-    /// numbering, a reopen resumes from it, and the segment is listed with
-    /// its base and its lines.
-    #[test]
-    fn a_rotation_keeps_the_numbering_and_a_read_crosses_the_segment_boundary() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oversee-watch.log");
-        let mut log = EventLog::open(&path).unwrap();
-        let first: Vec<Event> = (1..=SEGMENT_LINES)
-            .map(|n| Event::Triage {
-                id: format!("KEN-{n}"),
-            })
-            .collect();
-        assert_eq!(log.append(&first).unwrap(), SEGMENT_LINES);
-        let segment = dir.path().join("oversee-watch.log.0");
-        assert_eq!(
-            segments(&path).unwrap(),
-            vec![Segment {
-                path: segment.clone(),
-                base: 0,
-                lines: SEGMENT_LINES
-            }]
-        );
-        assert_eq!(std::fs::read(&path).unwrap(), b"", "a fresh live file");
-        let n = log
-            .append(&[Event::Handoff {
-                item: "KEN-A".into(),
-            }])
-            .unwrap();
-        assert_eq!(n, SEGMENT_LINES + 1);
-        assert_eq!(line_count(&path).unwrap(), SEGMENT_LINES + 1);
-        assert_eq!(
-            read_since(&path, SEGMENT_LINES - 1).unwrap(),
-            vec![
-                Numbered {
-                    n: SEGMENT_LINES - 1,
-                    line: format!("EVENT triage KEN-{}", SEGMENT_LINES - 1)
-                },
-                Numbered {
-                    n: SEGMENT_LINES,
-                    line: format!("EVENT triage KEN-{SEGMENT_LINES}")
-                },
-                Numbered {
-                    n: SEGMENT_LINES + 1,
-                    line: "EVENT handoff KEN-A".into()
-                },
-            ]
-        );
-        drop(log);
-        let mut again = EventLog::open(&path).unwrap();
-        assert_eq!(
-            again.last(),
-            SEGMENT_LINES + 1,
-            "a reopen resumes the numbering"
-        );
-        assert_eq!(
-            again
-                .append(&[Event::Handoff {
-                    item: "KEN-B".into()
-                }])
-                .unwrap(),
-            SEGMENT_LINES + 2
-        );
-        assert_eq!(
-            read_since(&path, SEGMENT_LINES + 2).unwrap(),
-            vec![Numbered {
-                n: SEGMENT_LINES + 2,
-                line: "EVENT handoff KEN-B".into()
-            }]
-        );
-        // The segment's bytes are the lines it took, untouched.
-        assert_eq!(
-            std::fs::read_to_string(&segment).unwrap().lines().count() as u64,
-            SEGMENT_LINES
-        );
     }
 }

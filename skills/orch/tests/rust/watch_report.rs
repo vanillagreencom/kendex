@@ -1912,10 +1912,9 @@ fn touch(path: &Path) {
 /// Each record is judged by its own recorded end, never by `done` alone (a
 /// released `closed` record) or by a directory's newest write (an
 /// append-only `handoffs/`); a lane whose worktree stands with no reason
-/// recorded, a kept worktree, mail within the retention, the newest log
-/// segment and the fleet start's record stand; a lane relaunched after a
-/// confirmed close is read by its own session. One pass at the fake wall
-/// over ten records and three segments.
+/// recorded, a kept worktree, mail within the retention and the fleet
+/// start's record stand; a lane relaunched after a confirmed close is read
+/// by its own session. One pass at the fake wall over ten records.
 #[test]
 fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or_a_kept_worktree() {
     let world = World::new();
@@ -1989,23 +1988,9 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     touch(&dir.join("handoffs").join("KEN-F-handoff.md"));
     touch(&dir.join("handoffs").join("OVERSEER-HANDOFF.md"));
     touch(&dir.join("workflow-state-KEN-10.json"));
-    // Three rotated segments, every one past the retention, and the live log.
-    for base in [0u64, 10_000, 20_000] {
-        let segment = dir.join(format!("oversee-watch.log.{base}"));
-        touch(&segment);
-        set_modified(&segment, wall - 8 * day);
-    }
     touch(&paths.log);
     touch(&wake::record_path(&world.fleet_path()));
     let pruned = world.pass(wall).unwrap();
-    assert_eq!(
-        pruned.segments,
-        vec![
-            dir.join("oversee-watch.log.0"),
-            dir.join("oversee-watch.log.10000")
-        ],
-        "the newest segment carries the live log's numbering"
-    );
     assert_eq!(
         pruned.records,
         vec!["KEN-A", "KEN-B", "KEN-G", "KEN-H"],
@@ -2050,7 +2035,6 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
         dir.join("handoffs").join("KEN-F-handoff.md"),
         dir.join("handoffs").join("OVERSEER-HANDOFF.md"),
         dir.join("workflow-state-KEN-10.json"),
-        dir.join("oversee-watch.log.20000"),
         paths.log.clone(),
         wake::record_path(&world.fleet_path()),
         world.fleet_path(),
@@ -2141,7 +2125,6 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     assert_eq!(doc["fleet_log"].as_array().unwrap().len(), 2);
     // A second pass finds nothing more to remove.
     let again = world.pass(wall).unwrap();
-    assert_eq!(again.segments, Vec::<PathBuf>::new());
     assert_eq!(again.paths, Vec::<PathBuf>::new());
 }
 
