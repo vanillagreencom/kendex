@@ -157,11 +157,11 @@ fn reads(
             else {
                 return Vec::new();
             };
-            let (bytes, problem, reading) = match observed_reading(env, &row.scope, row.kind, path)
-            {
-                Ok(reading) => (Some(bytes), None, reading),
-                Err(cause) => (None, Some(cause), Reading::Opaque),
-            };
+            let (bytes, problem, reading) =
+                match observed_reading(env, &row.scope, row.kind, &row.name, path) {
+                    Ok(reading) => (Some(bytes), None, reading),
+                    Err(cause) => (None, Some(cause), Reading::Opaque),
+                };
             vec![OriginRead {
                 group: CandidateGroup::Unmanaged,
                 bytes,
@@ -325,7 +325,7 @@ fn edited_offer(
     let restored = with_published_keys(env, row, lock, manifest, package, installed, edited);
     match (
         restored,
-        observed_reading(env, &row.scope, row.kind, installed),
+        observed_reading(env, &row.scope, row.kind, &row.name, installed),
     ) {
         (Ok(edited), Ok(reading)) => (Some(edited), None, reading),
         (Err(cause), _) | (_, Err(cause)) => (None, Some(cause), Reading::Opaque),
@@ -420,12 +420,13 @@ fn own_reading(
     ))
 }
 
-/// An observed skill copy reads its links from where it physically stands:
+/// An observed skill copy reads its links from its scope position:
 /// the skill's directory, which a scan may name by its `SKILL.md`.
 fn observed_reading(
     env: &Env,
     scope: &Scope,
     kind: ItemKind,
+    name: &str,
     path: &Path,
 ) -> std::result::Result<Reading, String> {
     if kind != ItemKind::Skill {
@@ -438,8 +439,8 @@ fn observed_reading(
         )
     })?;
     let directory = match at.is_dir() {
-        true => at,
-        false => match at.parent() {
+        true => path.to_path_buf(),
+        false => match path.parent() {
             Some(directory) => directory.to_path_buf(),
             None => {
                 return Err(format!(
@@ -449,7 +450,10 @@ fn observed_reading(
             }
         },
     };
-    Ok(links::observed(env, scope, directory))
+    Ok(Reading::Fixed {
+        position: links::observed(env, scope, name, directory),
+        siblings: links::Siblings::SkillsDirectory,
+    })
 }
 
 fn catalog_bytes(

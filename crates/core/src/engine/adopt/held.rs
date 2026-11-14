@@ -217,6 +217,8 @@ pub(super) fn read_positions(
     let seen = look(env, scope, kind, name, &positions, &local_item)?;
     let conversion = match kind {
         ItemKind::Skill => interpret(
+            env,
+            scope,
             name,
             &seen,
             &crate::render::skill::links::shared_tree(env, scope, name),

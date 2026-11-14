@@ -129,12 +129,7 @@ fn stored_links(
     ) {
         links::Reading::Fixed { position, siblings } => {
             let (files, kept) = links::convert(
-                links::Origin {
-                    directory: position.directory,
-                    files,
-                    siblings,
-                    link_files: Vec::new(),
-                },
+                links::Origin::new(position, files, siblings, Vec::new()),
                 &destination,
             );
             let warnings = kept
@@ -144,13 +139,15 @@ fn stored_links(
             return (files, Some(SkillLinks::SharedTree), warnings);
         }
         links::Reading::Opaque => {
-            let mut origins = links::delivered(lock, item.kind, &item.name)
+            let mut origins = links::delivered(env, scope, lock, item.kind, &item.name)
                 .into_iter()
-                .map(|directory| links::Origin {
-                    directory,
-                    files: files.clone(),
-                    siblings: links::Siblings::SkillsDirectory,
-                    link_files: Vec::new(),
+                .map(|position| {
+                    links::Origin::new(
+                        position,
+                        files.clone(),
+                        links::Siblings::SkillsDirectory,
+                        Vec::new(),
+                    )
                 });
             match origins.next() {
                 Some(first) => links::agreed(first, origins, &destination),

@@ -571,12 +571,7 @@ fn rebase_for_surface(
                 bound: position.bound.clone(),
             };
             let (files, kept) = links::convert(
-                links::Origin {
-                    directory: position.directory,
-                    files,
-                    siblings,
-                    link_files: Vec::new(),
-                },
+                links::Origin::new(position, files, siblings, Vec::new()),
                 &rendered,
             );
             // The source itself is never rendered, so it raises nothing.

@@ -14,10 +14,9 @@
 //! [`as_delivered`] rather than reading the source name and tag
 //! themselves. Each converts once, at the move, with [`convert`] or
 //! [`agreed`], and compares trees in the one form [`comparable_tree`]
-//! gives. The callers build the [`Origin`] they convert from and pick the
-//! [`Siblings`] beside it themselves: an installed or edited folder, a
-//! place [`delivered`] names, a folder shared by hand, or a stored tree a
-//! fork renders back.
+//! gives. Every [`Origin`] takes its position from this owner: observed
+//! scope positions use [`observed`], recorded positions use [`delivered`],
+//! and stored positions retain their declared catalog or template reading.
 
 use std::path::{Path, PathBuf};
 
@@ -67,12 +66,32 @@ pub(crate) enum Siblings {
 
 /// One position a writer holds the tree at, with the bytes it holds there.
 pub(crate) struct Origin {
-    pub(crate) directory: PathBuf,
+    directory: PathBuf,
     /// Its regular files.
     pub(crate) files: Files,
     pub(crate) siblings: Siblings,
     /// Its files that are links, which a move carries as they are.
     pub(crate) link_files: Vec<LinkFile>,
+}
+
+impl Origin {
+    pub(crate) fn new(
+        position: Position,
+        files: Files,
+        siblings: Siblings,
+        link_files: Vec<LinkFile>,
+    ) -> Self {
+        Self {
+            directory: position.directory,
+            files,
+            siblings,
+            link_files,
+        }
+    }
+
+    pub(crate) fn directory(&self) -> &Path {
+        &self.directory
+    }
 }
 
 /// A file inside a tree that is a symbolic link: `target` is what it
@@ -215,34 +234,54 @@ pub(crate) fn declared(
     }
 }
 
-/// The reading of an installed, edited or unmanaged copy: the physical
-/// directory it stands in, beside other skill trees.
-pub(crate) fn observed(env: &Env, scope: &Scope, directory: PathBuf) -> Reading {
-    Reading::Fixed {
-        position: Position {
-            directory,
-            bound: scope_bound(env, scope),
-        },
-        siblings: Siblings::SkillsDirectory,
+/// An observed directory uses its scope position when physical identity
+/// proves it is the shared tree. Identity follows links; interpretation
+/// retains the scope spelling so a linked ancestor cannot change `..`.
+/// Other folders retain their own position, including hand-made sharing.
+pub(crate) fn observed(env: &Env, scope: &Scope, name: &str, directory: PathBuf) -> Position {
+    let shared = shared_tree(env, scope, name);
+    let directory = match (
+        crate::paths::canonical(&directory),
+        crate::paths::canonical(&shared.directory),
+    ) {
+        (Ok(at), Ok(shared_at)) if at == shared_at => shared.directory,
+        // A foreign leaf link names a hand-made folder at its target;
+        // only a known shared-tree alias has a scope-owned reading.
+        (Ok(at), _) if directory.is_symlink() => at,
+        _ => directory,
+    };
+    Position {
+        directory,
+        bound: scope_bound(env, scope),
     }
 }
 
-/// The physical directories the install records of `(kind, name)` name,
-/// links followed: the places its bytes were delivered to, each of which
-/// reads untagged bytes as it was delivered them.
-pub(crate) fn delivered(lock: &crate::lock::Lock, kind: ItemKind, name: &str) -> Vec<PathBuf> {
-    let mut directories: Vec<PathBuf> = lock
+/// Recorded delivery positions, deduplicated by physical identity while
+/// retaining their scope spelling for relative-link interpretation.
+pub(crate) fn delivered(
+    env: &Env,
+    scope: &Scope,
+    lock: &crate::lock::Lock,
+    kind: ItemKind,
+    name: &str,
+) -> Vec<Position> {
+    let mut directories = std::collections::BTreeMap::new();
+    for path in lock
         .entries
         .values()
         .filter(|entry| entry.kind == kind && entry.name == name)
         .filter_map(|entry| entry.emitted.as_ref())
         .flat_map(|emitted| emitted.paths.iter())
-        .filter_map(|path| crate::paths::canonical(path).ok())
-        .filter(|path| path.is_dir())
-        .collect();
-    directories.sort();
-    directories.dedup();
-    directories
+    {
+        if let Ok(identity) = crate::paths::canonical(path)
+            && identity.is_dir()
+        {
+            directories
+                .entry(identity)
+                .or_insert_with(|| observed(env, scope, name, path.clone()));
+        }
+    }
+    directories.into_values().collect()
 }
 
 /// The tree read from `origin` as it reads from `destination`: one

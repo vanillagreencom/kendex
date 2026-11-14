@@ -256,12 +256,12 @@ impl ResolvedSelection {
                     Untagged::Delivered => {
                         let at = crate::lock::lock_path(env, &seen.scope);
                         let lock = crate::lock::load(&at)?;
-                        let places = links::delivered(&lock, kind, name);
+                        let places = links::delivered(env, &seen.scope, &lock, kind, name);
                         unrecorded |= places.is_empty();
                         positions.extend(places.into_iter().map(|place| {
                             (
                                 seen.location.clone(),
-                                place,
+                                place.directory,
                                 links::Siblings::SkillsDirectory,
                             )
                         }));
@@ -278,12 +278,12 @@ impl ResolvedSelection {
             // carried as they are, and every link that leaves the tree is
             // reported as making no claim about its target.
             let (_, escaping) = links::convert(
-                links::Origin {
-                    directory: destination.directory.clone(),
-                    files: files.clone(),
-                    siblings: links::Siblings::Unknown,
-                    link_files: Vec::new(),
-                },
+                links::Origin::new(
+                    destination.clone(),
+                    files.clone(),
+                    links::Siblings::Unknown,
+                    Vec::new(),
+                ),
                 &links::Position {
                     directory: destination.directory.clone(),
                     bound: destination.directory.clone(),
@@ -291,14 +291,17 @@ impl ResolvedSelection {
             );
             return Ok(Stored::Carried { escaping });
         }
-        let mut origins = positions
-            .iter()
-            .map(|(_, directory, siblings)| links::Origin {
-                directory: directory.clone(),
-                files: files.clone(),
-                siblings: siblings.clone(),
-                link_files: Vec::new(),
-            });
+        let mut origins = positions.iter().map(|(_, directory, siblings)| {
+            links::Origin::new(
+                links::Position {
+                    directory: directory.clone(),
+                    bound: destination.bound.clone(),
+                },
+                files.clone(),
+                siblings.clone(),
+                Vec::new(),
+            )
+        });
         let Some(first) = origins.next() else {
             return Ok(Stored::Untouched);
         };

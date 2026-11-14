@@ -101,7 +101,7 @@ pub(super) fn look(
 /// A skill's tree as the store keeps it: read at every position the named
 /// tools hold it and interpreted into the scope's shared-tree reading.
 pub(super) struct Conversion {
-    /// The physical directory of the first position, the one a move takes.
+    /// The reading position of the first tree, the one a move takes.
     pub(super) origin: PathBuf,
     /// Its regular files, converted.
     pub(super) files: Files,
@@ -137,6 +137,8 @@ impl Conversion {
 /// reads a tree a rename carries whole, links inside it included; a capture
 /// refuses those.
 pub(super) fn interpret(
+    env: &Env,
+    scope: &Scope,
     name: &str,
     seen: &Seen,
     destination: &links::Position,
@@ -160,26 +162,26 @@ pub(super) fn interpret(
     }
     let mut origins = Vec::with_capacity(positions.len());
     for (_, path, siblings) in &positions {
-        let directory = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
+        let position = links::observed(env, scope, name, path.clone());
         let (files, link_files) = match moved {
             true => crate::capture::read_tree_beside_links(path)?,
             false => (crate::capture::read_tree(path)?, Vec::new()),
         };
-        origins.push(links::Origin {
-            directory,
+        origins.push(links::Origin::new(
+            position,
             files,
-            siblings: siblings.clone(),
-            link_files: link_files
+            siblings.clone(),
+            link_files
                 .into_iter()
                 .map(|(file, target)| links::LinkFile { file, target })
                 .collect(),
-        });
+        ));
     }
     let mut origins = origins.into_iter();
     let Some(first) = origins.next() else {
         return Ok(None);
     };
-    let origin = first.directory.clone();
+    let origin = first.directory().to_path_buf();
     let linked = first
         .link_files
         .iter()
@@ -195,9 +197,14 @@ pub(super) fn interpret(
         links::Converted::Disagree {
             positions: [_, other],
         } => {
+            let other_identity = crate::paths::canonical(&other).ok();
             let other = positions
                 .iter()
-                .find(|(_, path, _)| crate::paths::canonical(path).is_ok_and(|at| at == other))
+                .find(|(_, path, _)| {
+                    crate::paths::canonical(path)
+                        .ok()
+                        .is_some_and(|at| Some(at) == other_identity)
+                })
                 .map_or(positions[0].0, |(harness, _, _)| *harness);
             Err(copies_differ(name, positions[0].0, other))
         }

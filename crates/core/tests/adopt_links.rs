@@ -54,17 +54,19 @@ fn reached(tree: &Path) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 fn global_adoption_keeps_what_every_position_meant() {
     // (row, tool positions and the link each holds, keeps)
-    type Row<'a> = (&'a str, Vec<(HarnessId, &'a str)>, bool);
+    type Row<'a> = (&'a str, Vec<(HarnessId, &'a str)>, bool, bool);
     let rows: Vec<Row<'_>> = vec![
         (
             "Claude alone, depth three",
             vec![(HarnessId::Claude, "../../../memory/x.md")],
             true,
+            false,
         ),
         (
             "Pi alone, depth four",
             vec![(HarnessId::Pi, "../../../../memory/x.md")],
             true,
+            false,
         ),
         (
             "equal bytes at depth three and four",
@@ -72,6 +74,7 @@ fn global_adoption_keeps_what_every_position_meant() {
                 (HarnessId::Claude, "../../../memory/x.md"),
                 (HarnessId::Pi, "../../../memory/x.md"),
             ],
+            false,
             false,
         ),
         (
@@ -81,13 +84,26 @@ fn global_adoption_keeps_what_every_position_meant() {
                 (HarnessId::Pi, "../../../../memory/x.md"),
             ],
             true,
+            false,
+        ),
+        (
+            "Codex below a linked .agents",
+            vec![(HarnessId::Codex, "../../../memory/x.md")],
+            true,
+            true,
         ),
     ];
-    for (row, held, keeps) in rows {
+    for (row, held, keeps, linked_agents) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = Env::fake(&home, FakeOs::Linux);
         let scope = Scope::Global;
+        if linked_agents {
+            fs::create_dir_all(home.join("dotfiles/.agents")).unwrap();
+            std::os::unix::fs::symlink(home.join("dotfiles/.agents"), home.join(".agents"))
+                .unwrap();
+            put(&home.join("dotfiles/memory/x.md"), "Physical memory.\n");
+        }
         put(&home.join("memory/x.md"), "Memory.\n");
         put(&home.join(".pi/memory/x.md"), "Pi memory.\n");
         let harnesses: Vec<HarnessId> = held.iter().map(|(harness, _)| *harness).collect();
@@ -102,10 +118,13 @@ fn global_adoption_keeps_what_every_position_meant() {
         );
         let mut first = None;
         for (harness, link) in &held {
-            let dir =
+            let dir = if linked_agents {
+                env.global_skills_dir().join("ship")
+            } else {
                 kendex_core::engine::desired::own_dir(&env, &scope, *harness, ItemKind::Skill)
                     .unwrap()
-                    .join("ship");
+                    .join("ship")
+            };
             put(
                 &dir.join("SKILL.md"),
                 &skill(&format!("[m]({link})\n[r](reference.md)")),
@@ -137,6 +156,17 @@ fn global_adoption_keeps_what_every_position_meant() {
         kendex_core::apply::execute(&env, &report.plan).unwrap();
         let shared = env.global_skills_dir().join("ship");
         assert_eq!(reached(&shared), target, "{row}");
+        if linked_agents {
+            let expected = skill("[m](../../../memory/x.md)\n[r](reference.md)");
+            let local =
+                kendex_core::source::local_source_root(&env, &scope).join("skills/ship/SKILL.md");
+            assert_eq!(fs::read_to_string(local).unwrap(), expected, "{row} stored");
+            assert_eq!(
+                fs::read_to_string(shared.join("SKILL.md")).unwrap(),
+                expected,
+                "{row} rendered"
+            );
+        }
         assert_eq!(
             fs::read_to_string(shared.join("reference.md")).unwrap(),
             "Reference.\n",
