@@ -1,8 +1,7 @@
 //! The session rows a harness's hooks write, one JSON object per line, read
 //! for what the harness itself said of its session: up, walled, gone; and
-//! the one writer of those rows.
-//! orch's `lib/session-rows.sh` writes the same files beside this writer,
-//! under the same locks, and this reader holds the verdict tables, one for
+//! the one writer of those rows, which takes a `flock` on the file itself.
+//! This reader holds the verdict tables, one for
 //! an overseer's rows and one for a Pi lane's, which `agent-runtime rows
 //! verdict --kind session|lane` prints; the row shapes follow Claude Code's
 //! hook inputs, Pi's carrier and Copilot's camelCase payloads as that
@@ -31,7 +30,7 @@ use crate::clock::SystemClock;
 use crate::observe::{self, WallKind};
 use crate::process;
 use crate::reading::Reading;
-use crate::record::{self, Locking, Wait};
+use crate::record::Wait;
 
 /// The rows a reader looks back over for the last one: a session appends a
 /// start, an end, a failure per wall and a Stop per turn
@@ -274,11 +273,14 @@ pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
 // The writer
 // ---------------------------------------------------------------------------
 
-/// How long an append or a stamp waits for its lock (`SESSION_ROWS_WAIT`):
-/// below the least `timeout:` a hook that writes a row declares,
-/// session-end-row's 3 s, so a writer that loses the lock says so before
-/// its harness kills it.
-pub const WAIT: Duration = Duration::from_secs(2);
+/// How long an append waits for its lock: below the least `timeout:` a
+/// hook that writes a row declares, session-end-row's 3 s, so a writer that
+/// loses the lock says so before its harness kills it.
+pub const WAIT: Wait = Wait {
+    limit: Duration::from_secs(2),
+    poll: Duration::from_millis(100),
+    timer: &SystemClock,
+};
 
 /// The rows file of the session on `pane` of the tmux server `server`, in
 /// the overseer mailbox directory `dir`. The pane id's `%` is dropped, so
@@ -286,19 +288,6 @@ pub const WAIT: Duration = Duration::from_secs(2);
 pub fn session_file(dir: &Path, server: u32, pane: &str) -> PathBuf {
     let pane = pane.strip_prefix('%').unwrap_or(pane);
     dir.join(format!("session-{server}-{pane}.jsonl"))
-}
-
-/// The lock this host's writers take: [`WAIT`], with the `mkdir` mutex
-/// where the shell writers beside this one find no `flock(1)` on `PATH`.
-pub fn host_locking() -> Locking {
-    Locking {
-        wait: Wait {
-            limit: WAIT,
-            poll: Duration::from_millis(100),
-            timer: &SystemClock,
-        },
-        mkdir_mutex: !record::flock_on_path(std::env::var_os("PATH").as_deref()),
-    }
 }
 
 /// Why a row or a stamp was not written. The text is the cause a hook's
@@ -353,26 +342,14 @@ fn pause(wait: &Wait, deadline: Instant, lock: &Path) -> Result<(), Unwritten> {
     Ok(())
 }
 
-/// The shell writers' `mkdir` mutex beside a rows file, `<file>.d`
-/// (mailbox's `file-lock.sh` on the file itself), removed on drop.
-struct Mutex(PathBuf);
-
-impl Drop for Mutex {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir(&self.0);
-    }
-}
-
-/// Add `line` to `file` under the lock every writer of that file takes: a
-/// `flock` on the file itself, and its `<file>.d` mutex where the policy
-/// says the host's shell writers take one, both within `locking.wait`. A
-/// fragment a killed writer left is closed first, so the line lands whole.
-/// `guard`, where given, judges the file under the lock and refuses the
-/// line with `false`: `Ok(false)`, nothing written.
+/// Add `line` to `file` under a `flock` on the file itself, taken within
+/// `wait`. A fragment a killed writer left is closed first, so the line
+/// lands whole. `guard`, where given, judges the file under the lock and
+/// refuses the line with `false`: `Ok(false)`, nothing written.
 fn append(
     file: &Path,
     line: &str,
-    locking: Locking,
+    wait: Wait,
     guard: Option<&dyn Fn(&Path) -> bool>,
 ) -> Result<bool, Unwritten> {
     let io = |op, e: std::io::Error| Unwritten::Io {
@@ -386,27 +363,11 @@ fn append(
         .read(true)
         .open(file)
         .map_err(|e| io("open", e))?;
-    let deadline = locking.wait.timer.now() + locking.wait.limit;
+    let deadline = wait.timer.now() + wait.limit;
     let mut rw = fd_lock::RwLock::new(handle);
     loop {
         match rw.try_write() {
             Ok(mut held) => {
-                let _mutex = if locking.mkdir_mutex {
-                    let mut name = file.as_os_str().to_owned();
-                    name.push(".d");
-                    let dir = PathBuf::from(name);
-                    loop {
-                        match fs::create_dir(&dir) {
-                            Ok(()) => break Some(Mutex(dir)),
-                            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                                pause(&locking.wait, deadline, &dir)?;
-                            }
-                            Err(e) => return Err(io("mkdir-lock", e)),
-                        }
-                    }
-                } else {
-                    None
-                };
                 let len = held.metadata().map_err(|e| io("read", e))?.len();
                 if len > 0 {
                     let mut last = [0u8; 1];
@@ -426,7 +387,7 @@ fn append(
                 return Ok(true);
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                pause(&locking.wait, deadline, file)?;
+                pause(&wait, deadline, file)?;
             }
             Err(e) => return Err(io("flock", e)),
         }
@@ -504,7 +465,7 @@ fn put(row: &mut Map<String, Value>, key: &str, value: Option<&str>) {
 /// event, harness and session alone, so the file takes one per turn,
 /// except over a standing StopFailure, which it lifts carrying the turn's
 /// last message.
-pub fn write_session(file: &Path, row: &SessionRow, locking: Locking) -> Result<(), Unwritten> {
+pub fn write_session(file: &Path, row: &SessionRow, wait: Wait) -> Result<(), Unwritten> {
     let mut line = Map::new();
     line.insert("at".to_owned(), Value::from(row.at));
     line.insert("event".to_owned(), Value::from(row.event));
@@ -526,7 +487,7 @@ pub fn write_session(file: &Path, row: &SessionRow, locking: Locking) -> Result<
         }
         put(&mut line, "account", Some(row.account));
     }
-    append(file, &Value::Object(line).to_string(), locking, None).map(|_| ())
+    append(file, &Value::Object(line).to_string(), wait, None).map(|_| ())
 }
 
 /// A Pi lane's rows file inside the lane's mailbox directory.
@@ -566,7 +527,7 @@ pub struct LaneRow<'a> {
 /// a PreToolUse at a tool call only over a Stop row or an empty file, so a
 /// turn of many tool calls opens one. `Ok(false)` where nothing is written:
 /// no mailbox directory, or a turn already open.
-pub fn write_lane(dir: &Path, row: &LaneRow, locking: Locking) -> Result<bool, Unwritten> {
+pub fn write_lane(dir: &Path, row: &LaneRow, wait: Wait) -> Result<bool, Unwritten> {
     if !dir.is_dir() {
         return Ok(false);
     }
@@ -587,12 +548,12 @@ pub fn write_lane(dir: &Path, row: &LaneRow, locking: Locking) -> Result<bool, U
             if let Some(count) = row.working_agents {
                 line.insert("working_agents".to_owned(), count.clone());
             }
-            append(&file, &Value::Object(line).to_string(), locking, None)
+            append(&file, &Value::Object(line).to_string(), wait, None)
         }
         TurnEvent::PreToolUse => append(
             &file,
             &Value::Object(line).to_string(),
-            locking,
+            wait,
             Some(&turn_open),
         ),
     }
@@ -857,18 +818,12 @@ mod tests {
         }
     }
 
-    /// A lock that waits a test's own bound: the flock alone, or with the
-    /// shell writers' mutex.
-    fn locking(mutex: bool) -> Locking {
-        Locking {
-            wait: Wait {
-                limit: Duration::from_millis(300),
-                poll: Duration::from_millis(20),
-                timer: &SystemClock,
-            },
-            mkdir_mutex: mutex,
-        }
-    }
+    /// A lock wait of a test's own bound, short of [`WAIT`].
+    const BOUND: Wait = Wait {
+        limit: Duration::from_millis(300),
+        poll: Duration::from_millis(20),
+        timer: &SystemClock,
+    };
 
     fn lines(file: &Path) -> Vec<String> {
         fs::read_to_string(file)
@@ -916,14 +871,14 @@ mod tests {
             message: Some(""),
             ..Fields::default()
         };
-        write_session(&file, &row("SessionStart", start), locking(false)).unwrap();
-        write_session(&file, &row("Stop", stop), locking(false)).unwrap();
-        write_session(&file, &row("StopFailure", failure), locking(false)).unwrap();
-        write_session(&file, &row("Stop", stop), locking(false)).unwrap();
+        write_session(&file, &row("SessionStart", start), BOUND).unwrap();
+        write_session(&file, &row("Stop", stop), BOUND).unwrap();
+        write_session(&file, &row("StopFailure", failure), BOUND).unwrap();
+        write_session(&file, &row("Stop", stop), BOUND).unwrap();
         let mut text = fs::read_to_string(&file).unwrap();
         text.push_str(r#"{"at":101,"event":"Sto"#);
         fs::write(&file, &text).unwrap();
-        write_session(&file, &row("Stop", stop), locking(false)).unwrap();
+        write_session(&file, &row("Stop", stop), BOUND).unwrap();
         assert_eq!(
             lines(&file),
             [
@@ -936,7 +891,7 @@ mod tests {
             ]
         );
         let fresh = session_file(dir.path(), 4242, "%8");
-        write_session(&fresh, &row("Stop", stop), locking(false)).unwrap();
+        write_session(&fresh, &row("Stop", stop), BOUND).unwrap();
         assert_eq!(
             lines(&fresh),
             [r#"{"at":100,"event":"Stop","harness":"claude","session_id":"s1"}"#]
@@ -1065,7 +1020,7 @@ mod tests {
             working_agents,
         };
         let tool = row(TurnEvent::PreToolUse, None, None);
-        assert_eq!(write_lane(&dir, &tool, locking(false)), Ok(false));
+        assert_eq!(write_lane(&dir, &tool, BOUND), Ok(false));
         assert!(!dir.exists());
         fs::create_dir_all(&dir).unwrap();
         let written: Vec<bool> = [
@@ -1076,7 +1031,7 @@ mod tests {
             row(TurnEvent::Stop, None, Some(&Value::Null)),
         ]
         .iter()
-        .map(|row| write_lane(&dir, row, locking(false)).unwrap())
+        .map(|row| write_lane(&dir, row, BOUND).unwrap())
         .collect();
         assert_eq!(written, [true, false, true, true, true]);
         assert_eq!(
@@ -1136,9 +1091,8 @@ mod tests {
 
     /// A row whose lock another writer holds past the wait is refused
     /// naming the lock, with the file as it stood: the flock on the rows
-    /// file itself, and the `<file>.d` mutex where the host's shell writers
-    /// take one, never a `<file>.lock` beside it. The append returns within
-    /// a bound of its own.
+    /// file itself, never a `<file>.lock` beside it. The append returns
+    /// within a bound of its own.
     #[test]
     fn a_row_the_lock_holds_past_its_wait_is_reported_rows_unwritten() {
         let dir = tempfile::tempdir().unwrap();
@@ -1151,11 +1105,11 @@ mod tests {
             at: 5,
             fields: Fields::default(),
         };
-        let bounded = |mutex: bool| {
+        let bounded = || {
             let (tx, rx) = std::sync::mpsc::channel();
             let file = file.clone();
             std::thread::spawn(move || {
-                let _ = tx.send(write_session(&file, &row, locking(mutex)));
+                let _ = tx.send(write_session(&file, &row, BOUND));
             });
             rx.recv_timeout(Duration::from_secs(10))
                 .expect("the append returned within its bound")
@@ -1163,28 +1117,17 @@ mod tests {
         let mut holder = fd_lock::RwLock::new(OpenOptions::new().append(true).open(&file).unwrap());
         let held = holder.write().unwrap();
         assert_eq!(
-            bounded(false),
+            bounded(),
             Err(Unwritten::Locked {
                 lock: file.clone(),
                 wait_s: 0
             })
         );
-        drop(held);
-        let mutex = dir.path().join("session-1-2.jsonl.d");
-        fs::create_dir(&mutex).unwrap();
-        assert_eq!(
-            bounded(true),
-            Err(Unwritten::Locked {
-                lock: mutex.clone(),
-                wait_s: 0
-            })
-        );
         assert_eq!(lines(&file), [r#"{"event":"SessionStart"}"#]);
-        fs::remove_dir(&mutex).unwrap();
-        bounded(true).unwrap();
+        drop(held);
+        bounded().unwrap();
         assert_eq!(lines(&file).len(), 2);
         assert!(!dir.path().join("session-1-2.jsonl.lock").exists());
-        assert!(!mutex.exists());
     }
 
     /// The file read is three-valued and reads the last row alone: an

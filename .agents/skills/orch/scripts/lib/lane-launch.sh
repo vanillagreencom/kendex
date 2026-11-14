@@ -1421,10 +1421,7 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 #                second-opinion, which a child
 #                on another model would otherwise take as its own. A Pi
 #                launch passes its own as lane_launch_line's CHILD_ENV.
-#   Jarvis       JARVIS_RECORD and JARVIS_GENERATION, the runtime record a
-#                SessionStart writes its native identity into
-#                (lib/session-rows.sh session_rows_jarvis_write).
-#   Orch         ORCH_MODEL_LINES_HELD, the model-line hold a launcher
+#   Orch        ORCH_MODEL_LINES_HELD, the model-line hold a launcher
 #                exports to its own children (lib/overseer-launch.sh §
 #                OL_LINES_HELD); a lane prints its own launches' lines.
 # Copilot is not listed: kendex reads a Copilot session's id from its hook
@@ -1451,7 +1448,6 @@ LANE_LAUNCH_SCRUB=(
   CODEX_THREAD_ID CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
   PI_SUBAGENT_CHILD_AGENT PI_SUBAGENT_PARENT_SESSION_ID PI_BRIDGE_PARENT_SESSION_ID
   SECOND_OPINION_CURRENT_MODEL
-  JARVIS_RECORD JARVIS_GENERATION
   "${LANE_LAUNCH_LIVE_SESSION[@]}"
   ORCH_MODEL_LINES_HELD
 )

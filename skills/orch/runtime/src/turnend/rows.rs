@@ -121,7 +121,7 @@ impl Written<'_> {
             },
         };
         let file = rows::session_file(&dir, self.key.server, &self.key.pane);
-        if let Err(e) = rows::write_session(&file, &row, rows::host_locking()) {
+        if let Err(e) = rows::write_session(&file, &row, rows::WAIT) {
             turn.note(&unwritten, &e.to_string());
         }
     }
@@ -155,7 +155,7 @@ pub(super) fn lane_row(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Pay
         working_agents: payload.field("working_agents").filter(|_| stop),
     };
     let dir = lane.mail_root.join(item);
-    if let Err(e) = rows::write_lane(&dir, &row, rows::host_locking()) {
+    if let Err(e) = rows::write_lane(&dir, &row, rows::WAIT) {
         turn.note(&Said::LaneRowsUnwritten(dir), &e.to_string());
     }
     Ok(())
