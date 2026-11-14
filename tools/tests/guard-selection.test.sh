@@ -486,7 +486,7 @@ timing_base="$(git -C "$timing" rev-parse HEAD)"
 git -C "$timing" update-ref refs/remotes/origin/main "$timing_base"
 printf '# selected\n' >> "$timing/$timing_tests/$timing_suite.sh"
 
-# Native expected-secs is consumed by dev-validate-run. These values are
+# Native expected-secs is consumed by orch-runtime validate entry. These values are
 # independent of the parser: platform maximum 330 -> ceil(330 * 1.25) = 413.
 # Partition timings cover --shell-only; guard runs combined, so neither its
 # single invocation nor a selection containing it has complete coverage.
@@ -536,9 +536,9 @@ timing_preview "$GUARD"
   && ok 'the measured single-suite preview is a real kendex subset' \
   || bad 'the measured single-suite preview is a real kendex subset' "$OUT"
 
-runner="$REPO/skills/orch/scripts/dev-validate-run"
+runner=("$REPO/skills/orch/scripts/orch-runtime" validate entry)
 mkdir -p "$timing/tmp"
-timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
+timing_run "${runner[@]}" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
 failed_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
 [ "$RC" -eq 1 ] && [ "$(cat "$timing/tmp/attempts")" = attempt ] && [ -n "$failed_run" ] \
   && ok 'the native admission owner runs the within-bound original once and records failure' \
@@ -557,7 +557,7 @@ timing_preview "$GUARD"
   || { bad 'native repaired preview fits the unchanged 413-second fixture bound' "$OUT"; exit 1; }
 # The round's later run is a new run of the same command: the failed run
 # answers nothing for the repaired tree, and the measured bound admits it.
-timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
+timing_run "${runner[@]}" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
 later_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
 [ "$RC" -eq 0 ] && [ -n "$later_run" ] \
   && [ "$(wc -l < "$timing/tmp/attempts")" -eq "$(( $(wc -l < "$TMP/proved-attempts") + 1 ))" ] \
@@ -567,7 +567,7 @@ later_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
 # admission check. The later run above kept its 413-second bound throughout.
 printf '# over bound\n' >> "$timing/$timing_tests/$timing_suite.sh"
 attempts_before="$(cat "$timing/tmp/attempts")"
-timing_run env DEV_VALIDATE_TIMEOUT_SECS=412 "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
+timing_run env DEV_VALIDATE_TIMEOUT_SECS=412 "${runner[@]}" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
 [ "$RC" -eq 2 ] && grep -Fxq 'dev-validate-run: over-bound expected-secs=413 bound=412' <<<"$OUT" \
   && [ "$(cat "$timing/tmp/attempts")" = "$attempts_before" ] \
   && ok 'the native admission owner refuses a measured over-bound selection before execution' \

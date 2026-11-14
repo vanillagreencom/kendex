@@ -67,7 +67,7 @@ for phase, marker in (
             assert time.monotonic() < deadline, "suite acknowledgement deadline"
             time.sleep(0.01)
         os.killpg(process.pid, signal.SIGTERM)
-        # dev-validate-run's teardown sends KILL after the job-unit grace.
+        # A validation run's teardown sends KILL after the job-unit grace.
         grace_text = (source.parent / "scripts/lib/job-unit.sh").read_text()
         grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
                          if line.startswith("JOB_UNIT_KILL_GRACE=")))

@@ -82,9 +82,9 @@ Start and Resume each return an `exit_code` once the command ended inside their 
 
 | Step | Call | Return |
 |------|------|--------|
-| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, `yield_time_ms` 30000 | The output so far. The start prints its `state=started` line only once it has classified the change and launched the run, which nothing bounds to this call, so the line can come on a Wait return. Keep its `run-dir=` value. The start then blocks until the verdict and never exits 3. |
+| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, `yield_time_ms` 30000 | The output so far. The start prints its `state=started` line only once it has classified the change and launched the run, which nothing bounds to this call, so the line can come on a Wait return. Keep its `run-dir=` value. The start then blocks until the verdict and never exits 3. |
 | Wait | `write_stdin` on the `session_id` a Start or Resume returned, empty `chars`, `yield_time_ms` 300000, repeated in the same turn | The output since the previous return. |
-| Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000 | Taken only for a run whose `state=started` line was read: when its session ended with no verdict line and no refusal line, or when a `--wait` session exits 3 with `state=running`, which `--wait` prints once its per-call budget runs out. |
+| Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000 | Taken only for a run whose `state=started` line was read: when its session ended with no verdict line and no refusal line, or when a `--wait` session exits 3 with `state=running`, which `--wait` prints once its per-call budget runs out. |
 
 A session that exits 2 with a `dev-validate-run: [REASON]` line was refused and is never resumed: `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). Once a `state=started` line is read, never end the turn while that run has printed no `state=done`, `state=timeout` or `state=lost` line. What each line means is the dev skill's SKILL.md § Long-Running Validation.
 
@@ -95,7 +95,7 @@ Codex starts no turn when a collaboration agent returns after its caller ended t
 Launch the single `dev-artifact-check` watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait -- .agents/skills/orch/scripts/dev-artifact-check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] < /dev/null
+.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait -- .agents/skills/orch/scripts/orch-runtime dev-return --text check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] < /dev/null
 ```
 
 A fix round appends `--expect-items-from-round`. This replaces the background watchdog, rather than adding a second one. Hold its completion through [waiter-launch.md § Completion](waiter-launch.md#completion), using `exec_command` and empty `write_stdin` polls in this turn. A tool return with a `session_id` requires another poll; one with an `exit_code` ended that command. A poll timeout requires the completion route's retry while `wait.exit` is empty. An agent's return message does not release this wait.

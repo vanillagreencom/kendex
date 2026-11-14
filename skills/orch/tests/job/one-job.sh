@@ -204,7 +204,8 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
     tracker=local
     after="exit"
     number=""
-    key="$(cd "$main" && "$orch/workflow-state" new-local-key)"
+    key="$(cd "$main" && "$orch/orch-runtime" state new-local-key)"
+    key="$(jq -r '.result.key' <<<"$key")"
     assert_eq "$([[ "$key" =~ ^local-[0-9]+-[0-9]+-[0-9a-f]+$ ]] && echo shaped || echo "$key")" shaped "$name: a local key is minted"
     one_job_stage_gh 1 /dev/null
     tier_line="$(cd "$main" && "$orch/orch-runtime" tier --production "$delta" --repo "$main")" || tier_line="exit=$?"

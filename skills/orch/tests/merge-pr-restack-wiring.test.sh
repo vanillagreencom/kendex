@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The restack cycle's wiring in merge-pr-restack.md, executed as the document
 # writes it against a real worktree: step 2 asks record-push for a fix round in
-# flight, reads the base, resolves the mode, asks restack-skip and starts the
+# flight, reads the base, resolves the mode, asks the restack check and starts the
 # range run before step 3's record-push; the push records that run as the
 # item's restack stage, a second run recorded after a push-time rewrite takes
 # no second publication, and step 3's proof block prints the reader's reply,
@@ -35,10 +35,10 @@ INSTALL=(CHANGE_SCOPE_PATHS_CLI="$REPO_ROOT/skills/change-scope/scripts/harness-
 LIVE_ROUND='orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-live-round-[ISSUE].json'
 RESTACK='worktree create [ISSUE] --restack'
 BASE_READ='resolve-base-branch [WT_PATH]'
-RESOLVE='dev-validate-run --resolve-mode --worktree [WT_PATH]'
-SKIP='restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]'
-RANGE='dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]'
-RECORD='dev-validate-run --record --run-dir [RUN_DIR]'
+RESOLVE='orch-runtime validate entry --resolve-mode --worktree [WT_PATH]'
+SKIP='orch-runtime validate entry --restack-check --worktree [WT_PATH] --base origin/[BASE_BRANCH]'
+RANGE='orch-runtime validate entry --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]'
+RECORD='orch-runtime validate entry --record --run-dir [RUN_DIR]'
 PUSH='orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-push-[ISSUE].json'
 HEAD_READ='git -C [WT_PATH] rev-parse HEAD'
 LIVE='^[[:space:]]*(\\[MAIN_REPO_ROOT\\]/|git -C \\[WT_PATH\\] )'
@@ -163,7 +163,7 @@ live() {
   [[ -n "$line" ]] || { printf 'live: no live command holds %s\n' "$2" >&2; return 1; }
   line="${line#*$'\t'}"
   if [[ "$2" == "$RESOLVE" ]]; then
-    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /dev-validate-run --resolve-mode/ {exit}' "$1")"
+    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /validate entry --resolve-mode/ {exit}' "$1")"
   fi
   line="${line//\[MAIN_REPO_ROOT\]\/.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
   line="${line//\[WT_PATH\]/$3}"
@@ -377,7 +377,7 @@ case "$2" in
 esac
 SH
 chmod +x "$TMP_ROOT/ci-bin/gh"
-CI_COMMAND='dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack'
+CI_COMMAND='orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack'
 # A selector that admits the change and marks any scoped run: a restack is no
 # round, so its ci call runs none.
 printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=all; test $DEV_VALIDATE_SCOPED = false || touch %s"\n' \
@@ -491,7 +491,7 @@ merge_proof() {
   (cd "$wt" && env -u ORCH_STATE_DIR -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_SELECTION_CMD \
     -u ORCH_PR_ORDER "${INSTALL[@]}" WORKTREE_CLI="$NETWORK_PUSH" "$BASH" -euo pipefail -c "$block"$'\n''echo merge-admitted')
 }
-# record_skip WT LINE — the skip a restack-skip line names, recorded on the
+# record_skip WT LINE — the skip a restack check's line names, recorded on the
 # item through the runtime's restack-skip step.
 record_skip() {
   local head condition validated paths entry request

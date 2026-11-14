@@ -87,6 +87,13 @@ op() { # TARGET REQUEST_JSON
   reply="$(op_reply "$1" "$2")" || return 1
   jq -c '.result.report' <<<"$reply"
 }
+# The value the item's record holds at POINTER as `jq -r` prints it, nothing
+# where it holds none.
+value() { # POINTER
+  local reply
+  reply="$("$ORCH/orch-runtime" state get --item "$ITEM" "$1")" || return 1
+  jq -r '.result.value // empty' <<<"$reply"
+}
 op_reply() { # TARGET REQUEST_JSON — the whole reply, ok or not
   local request reply
   request="$WT/tmp/op-request.json"
@@ -99,10 +106,10 @@ op_reply() { # TARGET REQUEST_JSON — the whole reply, ok or not
 # closes its stage and sends the end notice; await that close so the round
 # the accept reconciles is settled.
 await_validate_close() { # RUN_DIR
-  local tries=0 end
+  local tries=0 stages end
   while :; do
-    end="$("$ORCH/workflow-state" get "$ITEM" \
-      "([.stages[] | select(.kind == \"validate\" and .run_dir == \"$1\")] | .[0].end) // empty")" || return 1
+    stages="$("$ORCH/orch-runtime" state get --item "$ITEM" /stages)" || return 1
+    end="$(jq -r --arg d "$1" '([.result.value[] | select(.kind == "validate" and .run_dir == $d)] | .[0].end) // empty' <<<"$stages")" || return 1
     [ -z "$end" ] || return 0
     tries=$((tries + 1))
     [ "$tries" -lt 1200 ] || return 1
@@ -126,18 +133,18 @@ fi
 # skills/orch/workflows/start.md § 0: a standing handoff is the one way a
 # session is a continuation of an earlier one; the suite's handoff row is
 # the only row that leaves one.
-standing="$("$ORCH/workflow-state" handoff-standing "$ITEM")" || fail handoff-standing
-case "$standing" in
-  "workflow-state: handoff-standing=none "*) RESUMING=false ;;
-  "workflow-state: handoff-standing=stands "*) RESUMING=true ;;
+standing="$("$ORCH/orch-runtime" state handoff-standing --item "$ITEM")" || fail handoff-standing
+case "$(jq -r '.result.standing' <<<"$standing")" in
+  none) RESUMING=false ;;
+  stands) RESUMING=true ;;
   *) fail handoff-standing-value ;;
 esac
 [ "$RESUMING" = false ] || [ "$SCENARIO" = handoff ] || fail handoff-unexpected
 step claim
 "$WORKTREE/worktree-session-guard" claim "$WT" --owner "$ITEM" --adopt || fail claim
 step init
-exists="$("$ORCH/workflow-state" exists --json "$ITEM")" || fail exists
-if [ "$(jq -r '.exists' <<<"$exists")" = true ]; then
+exists="$("$ORCH/orch-runtime" state exists --item "$ITEM")" || fail exists
+if [ "$(jq -r '.result.exists' <<<"$exists")" = true ]; then
   # The existing-state branch of skills/orch/workflows/start-worktree.md § 1
   # step 6: a relaunched session keeps the record the earlier one wrote.
   [ "$RESUMING" = true ] || [ "$SCENARIO" = retry ] || fail state-exists
@@ -145,10 +152,10 @@ else
   "$ORCH/orch-runtime" state init --item "$ITEM" --worktree "$WT" --branch "$BRANCH" || fail init
 fi
 if [ "$TIER" = micro ]; then
-  "$ORCH/workflow-state" set "$ITEM" tier micro || fail tier
+  "$ORCH/orch-runtime" state set --item "$ITEM" /tier micro || fail tier
 else
-  "$ORCH/workflow-state" set "$ITEM" tier standard || fail tier-standard
-  "$ORCH/workflow-state" set "$ITEM" tier "$TIER" || fail tier
+  "$ORCH/orch-runtime" state set --item "$ITEM" /tier standard || fail tier-standard
+  "$ORCH/orch-runtime" state set --item "$ITEM" /tier "$TIER" || fail tier
 fi
 step base-freshness
 "$ORCH/base-freshness" "$WT" || fail base-freshness
@@ -171,7 +178,7 @@ else
   step pr-order
   order="$("$ORCH/orch-runtime" pr order "$WT")" || fail pr-order
   [ "$order" = "pr-order=review-first" ] || fail pr-order-value
-  "$ORCH/workflow-state" set "$ITEM" pr_order review-first || fail pr-order-set
+  "$ORCH/orch-runtime" state set --item "$ITEM" /pr_order review-first || fail pr-order-set
 
   if [ "$RESUMING" = true ]; then
     # --- skills/orch/workflows/start.md § 0: the continuation stamps the handoff resumed ---
@@ -193,7 +200,7 @@ else
     # closes that stage with the word the run supports before the retry is
     # admitted as the round's next attempt (skills/dev/workflows/dev-implement.md § 5).
     step retry
-    RID="$("$ORCH/workflow-state" get "$ITEM" '.dev_round_id // empty')" || fail round-read
+    RID="$(value /dev_round_id)" || fail round-read
     [ -n "$RID" ] || fail round-missing
     reconciled="$(op --item "$(jq -cn --arg r "$RID" '{op: "reconcile-round", round_id: $r}')")" || fail reconcile-retry
     printf '%s\n' "$reconciled" > tmp/reconcile-retry.json
@@ -210,14 +217,14 @@ else
       labels="$(gh issue view "$NUMBER" --repo "$GH_REPO_SLUG" --json labels --jq '.labels[].name')" || fail labels
       [ -z "$labels" ] || fail labels-value
     fi
-    "$ORCH/workflow-state" set-git-head "$ITEM" pre_delegate_sha "$WT" || fail pre-delegate-sha
+    "$ORCH/orch-runtime" state set-git-head --item "$ITEM" /pre_delegate_sha --worktree "$WT" || fail pre-delegate-sha
     begun="$(op --item '{"op": "begin-round", "kind": "dev"}')" || fail begin-round
     RID="$(jq -er '.round_id' <<<"$begun")" || fail begin-round-id
     op_reply --item '{"op": "prune-round", "field": "dev"}' >/dev/null || fail round-prune
-    "$ORCH/workflow-state" set-now "$ITEM" dev_delegated_at || fail dev-delegated-at
-    "$ORCH/workflow-state" get "$ITEM" '.near_ceiling // []' || fail near-ceiling-read
-    "$ORCH/workflow-state" update "$ITEM" \
-      '.child_sessions["dev"] = {"status": "active", "agent_id": "stub-dev", "runtime_agent_type": "stub", "agent_type_fallback": null}' \
+    "$ORCH/orch-runtime" state set-now --item "$ITEM" /dev_delegated_at || fail dev-delegated-at
+    "$ORCH/orch-runtime" state get --item "$ITEM" /near_ceiling || fail near-ceiling-read
+    "$ORCH/orch-runtime" state set --item "$ITEM" /child_sessions/dev \
+      '{"status": "active", "agent_id": "stub-dev", "runtime_agent_type": "stub", "agent_type_fallback": null}' \
       || fail child-session
 
     # --- skills/dev/workflows/dev-implement.md § 5 and its sections 7 and 10: the dev result ---
@@ -280,14 +287,14 @@ SH
     printf '%s\n' "$admitted" > tmp/admission-report.json
     RUN_ID="$(jq -er '.run_id' <<<"$admitted")" || fail admission-id
     RUN_DIR="$(jq -er '.run_dir' <<<"$admitted")" || fail admission-dir
-    "$ORCH/workflow-state" get "$ITEM" \
-      "[.stages[] | select(.kind == \"validate\" and .round_id == \"$RID\")] | map({run_dir, end})" \
-      > tmp/admission-stage.json || fail admission-stage
+    stages="$("$ORCH/orch-runtime" state get --item "$ITEM" /stages)" || fail admission-stage
+    jq --arg r "$RID" '[.result.value[] | select(.kind == "validate" and .round_id == $r)] | map({run_dir, end})' \
+      <<<"$stages" > tmp/admission-stage.json || fail admission-stage
   fi
 
   if [ "$RESUMING" = false ]; then
     # skills/dev/workflows/dev-implement.md § 5: the configured validation
-    # through dev-validate-run under the admitted id; its detached run prints
+    # through orch-runtime validate entry under the admitted id; its detached run prints
     # its run directory first and blocks until the verdict.
     step validate
     if [ "$SCENARIO" = killed ]; then
@@ -326,7 +333,7 @@ SH
     else
       validate_out=tmp/validate.out
     fi
-    "$ORCH/dev-validate-run" --worktree "$WT" --poll 1 --run-id "$RUN_ID" > "$validate_out" 2> tmp/validate.err &
+    "$ORCH/orch-runtime" validate entry --worktree "$WT" --poll 1 --run-id "$RUN_ID" > "$validate_out" 2> tmp/validate.err &
     validate_pid=$!
     case "$SCENARIO" in killed|handoff) unset DEV_VALIDATE_CMD ;; esac
     tries=0
@@ -384,11 +391,11 @@ SH
 
   # --- skills/orch/workflows/dev-start.md § 3: accept the round ---
   step accept
-  round="$("$ORCH/workflow-state" get "$ITEM" '.dev_round_id // empty')" || fail round-read
+  round="$(value /dev_round_id)" || fail round-read
   [ "$round" = "$RID" ] || fail round-value
-  check="$("$ORCH/dev-artifact-check" --worktree "$WT" --issue "$ITEM" --round-id "$RID")" || fail artifact-check
+  check="$("$ORCH/orch-runtime" dev-return --text check --worktree "$WT" --issue "$ITEM" --round-id "$RID")" || fail artifact-check
   [ "$(jq -r '.verdict' <<<"$check")" = accept ] || fail artifact-verdict
-  pre="$("$ORCH/workflow-state" get "$ITEM" '.pre_delegate_sha // empty')" || fail pre-read
+  pre="$(value /pre_delegate_sha)" || fail pre-read
   [ "$pre" != "$SHA" ] || fail head-unchanged
   [ -z "$(git status --porcelain)" ] || fail dirty
   [ "$(jq -r '.commit' "$receipt")" = "$SHA" ] || fail receipt-commit
@@ -399,7 +406,7 @@ SH
   printf '%s\n' "$reconciled" > tmp/reconcile-report.json
   dev_closed="$(op --item "$(jq -cn --arg r "$RID" '{op: "accept-result", round_id: $r, outcome: "pass"}')")" || fail accept-dev
   printf '%s\n' "$dev_closed" > tmp/accept-dev.json
-  "$ORCH/workflow-state" update "$ITEM" '.qa_labels = [] | .sub_issues = []' || fail qa-state
+  "$ORCH/orch-runtime" state set --item "$ITEM" /qa_labels '[]' /sub_issues '[]' || fail qa-state
 
   # --- skills/orch/workflows/small.md § 2: the branch against its class ---
   step tier-check
@@ -410,7 +417,8 @@ SH
   # --- skills/orch/workflows/small.md § 3, then skills/orch/workflows/review-pr.md § 1 through its section 3.3 ---
   step review-depth
   [ -z "$(git status --porcelain)" ] || fail review-dirty
-  floor="$("$ORCH/workflow-state" get "$ITEM" '.review_floor // "micro"')" || fail review-floor
+  floor="$(value /review_floor)" || fail review-floor
+  floor="${floor:-micro}"
   depth_line="$("$MAIN/.agents/skills/reviewer/scripts/review-depth" --base "origin/$base" --head HEAD --repo "$WT" --floor "$floor")" \
     || fail review-depth
   depth="${depth_line#*review_depth=}"
@@ -421,13 +429,13 @@ SH
   if [ "$TRACKER" = github ]; then
     gh issue view "$NUMBER" --repo "$GH_REPO_SLUG" --json body --jq .body > tmp/done-when.md || fail done-when
   fi
-  "$ORCH/workflow-state" set "$ITEM" first_panel \
+  "$ORCH/orch-runtime" state set --item "$ITEM" /first_panel \
     '{"agents": ["reviewer-correctness"], "reason": "domains touched: lib.sh", "external": false}' || fail first-panel
   review_begun="$(op --item '{"op": "begin-round", "kind": "review"}')" || fail begin-review
   RRID="$(jq -er '.round_id' <<<"$review_begun")" || fail begin-review-id
-  "$ORCH/workflow-state" set-now "$ITEM" review_delegated_at || fail review-delegated-at
-  "$ORCH/workflow-state" update "$ITEM" \
-    '.review_agents = ["reviewer-correctness"] | .review_agent_ids = {} | .review_agent_runtime_types = {}' || fail review-agents
+  "$ORCH/orch-runtime" state set-now --item "$ITEM" /review_delegated_at || fail review-delegated-at
+  "$ORCH/orch-runtime" state set --item "$ITEM" /review_agents '["reviewer-correctness"]' /review_agent_ids '{}' \
+    /review_agent_runtime_types '{}' || fail review-agents
   artifact="$("$ORCH/orch-runtime" review-artifact --text path --worktree "$WT" --agent reviewer-correctness)" || fail review-path
   # The reviewer's artifact, written in place of the reviewer: a pass over
   # the reviewed head with a clean tree, in the shape the content gates read.
@@ -435,10 +443,10 @@ SH
     '{agent: "reviewer-correctness", verdict: "pass", blockers: [], suggestions: [], head: $head, dirty_paths: []}' \
     > "$artifact.tmp" && mv -- "$artifact.tmp" "$artifact" || fail review-write
   step review-accept
-  delegated_at="$("$ORCH/workflow-state" get "$ITEM" .review_delegated_at)" || fail review-delegated-read
+  delegated_at="$(value /review_delegated_at)" || fail review-delegated-read
   verdict_json="$("$ORCH/orch-runtime" review-artifact --text check --worktree "$WT" --agent reviewer-correctness --delegated-at "$delegated_at" --issue "$ITEM")" || fail review-check
   jq -e '.ok == true and .reason == "valid"' <<<"$verdict_json" >/dev/null || fail review-check-value
-  "$ORCH/workflow-state" append "$ITEM" json_paths "$artifact" || fail json-paths
+  "$ORCH/orch-runtime" state append --item "$ITEM" /json_paths "$artifact" || fail json-paths
   # skills/orch/workflows/review-pr.md § 3.3: the panel's one required
   # reviewer accepted with no blocker is `pass`; the batch's last accepted
   # artifact times the end.
@@ -459,7 +467,9 @@ if [ "$TRACKER" = github ]; then
   case "$body" in *"Post-merge:"*) fail post-merge-box ;; esac
 fi
 step review-gate
-BASE_REVIEW_STATE="$("$ORCH/workflow-state" get "$ITEM" '{tier: (.tier // "standard"), json_paths: (.json_paths // [])}')" || fail gate-read
+BASE_REVIEW_STATE="$("$ORCH/orch-runtime" state get --item "$ITEM")" || fail gate-read
+BASE_REVIEW_STATE="$(jq -c '.result.value | {tier: (.tier // "standard"), json_paths: (.json_paths // [])}' <<<"$BASE_REVIEW_STATE")" \
+  || fail gate-read
 jq -e --arg lifecycle managed --arg verdict pass \
   '.tier == "micro" or (if $lifecycle == "managed" then $verdict == "pass" else (.json_paths | length) > 0 end)' \
   <<<"$BASE_REVIEW_STATE" >/dev/null || fail gate-unaccepted
@@ -504,8 +514,9 @@ printf 'Pushed %s to %s.\n' "$PUSHED" "$PUSHED_BASE" > "tmp/delivery-$ITEM.md"
 "$MAILBOX/lane-mail" notice --item "$ITEM" --file "$WT/tmp/delivery-$ITEM.md" || fail notice
 if [ "$TIER" != micro ]; then
   # skills/orch/workflows/start-worktree.md § 5.4
-  "$ORCH/workflow-state" update "$ITEM" \
-    '.child_sessions = ((.child_sessions // {}) | with_entries(.value.status = "closed"))' || fail retire
+  sessions="$("$ORCH/orch-runtime" state get --item "$ITEM" /child_sessions)" || fail retire
+  sessions="$(jq -c '(.result.value // {}) | with_entries(.value.status = "closed")' <<<"$sessions")" || fail retire
+  "$ORCH/orch-runtime" state set --item "$ITEM" /child_sessions "$sessions" || fail retire
 fi
 printf 'lane-done\n' >> "$STATUS"
 [ "$AFTER" != exit ] || exit 0

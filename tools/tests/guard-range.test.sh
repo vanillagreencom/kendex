@@ -266,7 +266,7 @@ cp "$TMP/cargo.saved" "$R/fake-bin/cargo"
 back_to_base
 
 echo "=== a range keeps its own selection whatever class it is handed ==="
-# dev-validate-run hands every run the branch's change class; the lane
+# orch-runtime validate entry hands every run the branch's change class; the lane
 # selection that reads it is the full run's, and a range selects from its own
 # touched set.
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
@@ -729,7 +729,7 @@ for row in "${MAP_ROWS[@]}"; do
     || bad "$label" "$VERDICT out=$OUT"
 done
 [ "$((PASS + FAIL))" -eq "$((before + ${#MAP_ROWS[@]}))" ] || { echo "a suite-map row asserted nothing" >&2; exit 2; }
-# dev-validate-run consumes this machine-readable final line.
+# orch-runtime validate entry consumes this machine-readable final line.
 for row in \
   'skills/mapped/tests/tool.sh|subset' \
   'skills/mapped/settings.example|all' \

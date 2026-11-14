@@ -377,7 +377,8 @@ case "${1:-}" in
       '        their changed inputs map to (mapped_suites), and the suites of' \
       '        the Pi-package trees it touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
-      '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.' \
+      '        orch-runtime validate entry, stand down the lanes tools/ci-job-set does' \
+      '        not select.' \
       '--selection: report selection=all|subset without running checks or suites.' \
       '  With DEV_VALIDATE_SCOPED=true it runs the checks and executes the selected' \
       '  suites, then reports selection=subset and scoped=true.' \

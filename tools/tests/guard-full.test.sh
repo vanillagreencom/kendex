@@ -1255,7 +1255,7 @@ rm -- "$R/fake-bin/npm"
 rm -r -- "$R/pi-extensions/peers"
 
 echo "=== full validation runs the lanes the change class selects ==="
-# dev-validate-run hands over the class, the docs verdict and the changed
+# orch-runtime validate entry hands over the class, the docs verdict and the changed
 # paths as DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and a DEV_VALIDATE_PATHS
 # file. Each lane is read off the call it makes: cargo and npm log their calls, and the parse
 # lane is a stub here because its real pass needs a Bash 3.2 this row does not

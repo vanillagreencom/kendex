@@ -197,13 +197,13 @@ growth_round_write() {
   env ORCH_STATE_DIR="$worktree/tmp" "$writer" "$@"
 }
 
-# validate_run_dir DIR MODE [EXIT] [HEAD] [START] — a finished dev-validate-run
+# validate_run_dir DIR MODE [EXIT] [HEAD] [START] — a finished validation
 # run directory for a receipt to name: a start record under MODE, started at
 # HEAD and at the epoch second START where each is given, a wall time of 3300
 # seconds, and a sentinel recording EXIT, 0 by default; EXIT "none" leaves the
 # run unfinished, with neither, and "no-verdict" records the bound ending it,
 # as the runner's child does. The receipt reads it back through
-# dev-validate-run --record. The Rust validation rows read the same record
+# orch-runtime validate entry --record. The Rust validation rows read the same record
 # from a command the executor ran. Prints DIR.
 validate_run_dir() {
   mkdir -p "$1"
@@ -237,7 +237,7 @@ round_run_dir() {
 # (`orch-runtime validate start`, then its close): a proof row in MODE,
 # closed with OUTCOME (pass by default; `open` leaves it running), started
 # at START (1 by default). The proof carries every field the runtime
-# writes, so the state stays readable to it. dev-artifact-check reads the
+# writes, so the state stays readable to it. dev-return check reads the
 # newest stage's run for the round's receipt and the stage's mode for a fix
 # receipt's mode gate.
 plant_validate_stage() {

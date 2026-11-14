@@ -40,7 +40,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
      PR_ORDER=pr-order=review-first
    fi
    [[ "$PR_ORDER" != pr-order=push-first ]] || RESTACK_MODE_ARGS=(--base origin/[BASE_BRANCH])
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
    ```
 
    A non-zero exit from `resolve-base-branch`, `--resolve-mode`, or the `--record` read below hands back with that command's stderr and pushes nothing.
@@ -48,13 +48,13 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    For the `ci` mode, record the pending run through the runtime's validation entry:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack
    ```
 
    `validate-mode=ci` runs that command with `--validate-mode ci`. Its `--restack` flag skips selector preview and scoped suites. The restack's starts, this one and the range run below, carry no `--run-id`: a restack runs outside a round's admission, so the entry records the run itself, the route [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) names for a delegation with no admission. Successful CI admission records CI pending without a local command and returns at once. A refusal runs the range command and records its cause on the start record's `ci-fallback=` line, which `--record` reports. Read the result through `--record` before step 3. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`. Both `full` and `range` first ask whether the restacked head can skip its range re-test. The check takes the worktree's newest passing run as its candidate, and retests where a later run there did not pass:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --restack-check --worktree [WT_PATH] --base origin/[BASE_BRANCH]
    ```
 
    Exit 0 prints `restack=skip condition=[CONDITION] ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, a merge that conflicted nowhere (`no-conflict`) or only over the version field commit-guards reads and changelog entries in the files it left conflicted (`version-only`). It starts no run. Record the skip in workflow state, with `[CONDITION]` the line's `condition=` value, `[VALIDATED_HEAD]` its `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
@@ -67,13 +67,13 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    A lane also rewrites its status file's validation line, which names the skip, its condition and its paths, as [dev-start.md § Validation status](dev-start.md#validation-status) sets out. A skip proves tree equivalence, and no more: a later run at that tree which did not pass voids the skip's proof with every other proof of the tree, so step 3's read answers `missing` and the restack hands back. Step 3 asks the runtime for that proof before either caller can admit the queue or merge. Any other skip exit under `full` goes to step 3 with no run. Any other exit under `range`, whatever it prints, runs the range command over the branch as it sits on the base after the restack, started without `--run-id` and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
    ```
 
    Bind `[RUN_DIR]` to the run's `run-dir=` line and read its head and times after it ends:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --record --run-dir [RUN_DIR]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --record --run-dir [RUN_DIR]
    ```
 
    After a confirmed push, step 3's push records the newest finished, timed run for the pre-push restacked head as the item's restack `validate` stage, with the run's proof and outcome, and adds its seconds to `validate_rounds`, once per run directory. A skipped re-test adds no stage for an earlier head's run. A failed range run reaches no push and records no restack stage.

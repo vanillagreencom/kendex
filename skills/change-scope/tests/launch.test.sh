@@ -67,7 +67,6 @@ done <<ROWS
 --production 1 --path .pi/settings.json|standard cause=configuration-source rc=0|a registry Location proves no render
 --production 1 --path CLAUDE.md|standard cause=instruction-pointer rc=0|an instruction pointer Location proves no render
 --production 1 --path $PR_MERGE|standard cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate
---production 1 --path skills/orch/scripts/dev-validate-run|standard cause=excluded-path rc=0|a validation script Location is never micro
 --production 1 --path skills/orch/runtime/src/ops/tier.rs|standard cause=excluded-path rc=0|the cycle's decider is never micro
 --production 1 --path skills/orch/workflows/review-pr.md|micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class
 --production 1 --path hooks/block-bare-cd.sh|standard cause=excluded-path rc=0|a hook body Location is never micro

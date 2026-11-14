@@ -168,8 +168,6 @@ a preflight script is excluded|class=standard measured=true cause=excluded-path|
 a doc-limits script is excluded|class=standard measured=true cause=excluded-path|skills/doc-limits/scripts/check.sh=2
 a guard chain script is excluded|class=standard measured=true cause=excluded-path|skills/commit-guards/scripts/chain.sh=2
 the lane host dispatcher is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/lane-host=2
-the restack validation gate is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/restack-skip=2
-the validation runner is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/dev-validate-run=2
 a root AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|AGENTS.md=10
 a nested AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|skills/AGENTS.md=3
 a SKILL.md edit is held to small|class=small measured=true cause=instruction-file|skills/orch/SKILL.md=3
@@ -191,20 +189,20 @@ assert_eq "a hash change prints no names-only line" "" \
   "$(grep '^inventory-change: ' <<<"$names_err" || true)"
 
 # The suite's must-fail control: a planted copy reading a list without the
-# validation gate's exclusion lets that gate's small edit measure as micro.
+# gate scripts' exclusion lets a gate script's small edit measure as micro.
 awk '
-  $0 == "path *skills/orch/scripts/dev-validate-run" { hits++; next }
+  $0 == "path *skills/review-gate/scripts/*" { hits++; next }
   { print }
   END { exit hits == 1 ? 0 : 3 }
-' "$CHANGE_SCOPE_PACKAGE/references/narrow-change.conf" >"$SANDBOX/validation-gate.conf"
-if planted="$(mutant validation-gate change-scope \
+' "$CHANGE_SCOPE_PACKAGE/references/narrow-change.conf" >"$SANDBOX/gate-scripts.conf"
+if planted="$(mutant gate-scripts change-scope \
   'NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"' \
-  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\"")"; then
-  assert_eq "a list without the validation runner measures its edit as micro" \
+  "NARROW_CONF=\"$SANDBOX/gate-scripts.conf\"")"; then
+  assert_eq "a list without the gate scripts measures a gate script's edit as micro" \
     "class=micro measured=true cause=production-within-micro" \
-    "$(verdict_of "$(run_row "$planted" skills/orch/scripts/dev-validate-run=2)")"
+    "$(verdict_of "$(run_row "$planted" skills/review-gate/scripts/gate.sh=2)")"
 else
-  assert_eq "the validation-gate control is an edit" edited "not edited"
+  assert_eq "the gate-scripts control is an edit" edited "not edited"
 fi
 
 # A list from before the floor carries no `instruction` line; the classifier

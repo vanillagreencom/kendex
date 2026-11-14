@@ -212,15 +212,13 @@ if [[ "${CODEX_ROUND_WAIT_ONLY:-}" != process ]]; then
 while IFS='|' read -r name kind caller dependency poll_source lands verdict continuation expected_rc; do
   case_dir="$TMP_ROOT/$name"
   mkdir -p "$case_dir/tmp" "$case_dir/.agents/skills"
-  stub=dev-artifact-check
-  [[ "$kind" == dev ]] || stub=orch-runtime
   mkdir -p "$case_dir/.agents/skills/orch/scripts"
   ln -s "$SKILL_DIR/scripts/lib" "$case_dir/.agents/skills/orch/scripts/lib"
   # The round's launch line starts its job through the installed runtime's
-  # `launch-job`, which the real runtime answers; the reviewer's stub stands
-  # at the same path and passes that verb through.
-  printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$SKILL_DIR/scripts/orch-runtime" > "$case_dir/.agents/skills/orch/scripts/orch-runtime"
-  cat > "$case_dir/.agents/skills/orch/scripts/$stub" <<'SH'
+  # `launch-job`, which the real runtime answers, and the job runs its check
+  # through the same path: the stub there passes that verb through and holds
+  # the check on the barrier.
+  cat > "$case_dir/.agents/skills/orch/scripts/orch-runtime" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" != launch-job ]] || exec "$ROUND_RUNTIME" "$@"
@@ -229,11 +227,11 @@ while [[ ! -f "$ROUND_CASE/release" ]]; do "$REAL_SLEEP" 0.01; done
 if [[ "$ROUND_LANDS" == yes ]]; then cp "$ROUND_CASE/receipt" "$ROUND_CASE/tmp/$ROUND_ARTIFACT"; fi
 exec "$ROUND_CHECK" "$@"
 SH
-  chmod +x "$case_dir/.agents/skills/orch/scripts/$stub" "$case_dir/.agents/skills/orch/scripts/orch-runtime"
+  chmod +x "$case_dir/.agents/skills/orch/scripts/orch-runtime"
+  check="$SKILL_DIR/scripts/orch-runtime"
   case "$kind" in
     dev)
       command_source=command artifact=dev-return-issue-3409-round-1.json result_filter=.verdict
-      check="$SKILL_DIR/scripts/dev-artifact-check"
       git -C "$case_dir" init -q
       git -C "$case_dir" config gc.auto 0
       git -C "$case_dir" config maintenance.auto false
@@ -242,14 +240,13 @@ SH
       jq -n --arg head "$head" '{schema_version:1,round_id:"round-1",kind:"implement",issue:"issue-3409",branch:"fixture",commit:$head,baseline_lines:1,validate:"pass",validate_mode:"full",validate_time:{started_at:"2026-01-01T00:00:00Z",ended_at:"2026-01-01T00:05:00Z",seconds:300},qa_labels:[],summary_posted:true,summary:null,bundled:false,items:[]}' > "$case_dir/receipt" ;;
     reviewer)
       command_source=reviewer-command artifact=review-reviewer-correctness-delayed.json result_filter=.reason
-      check="$SKILL_DIR/scripts/orch-runtime"
       git -C "$case_dir" init -q
       git -C "$case_dir" config gc.auto 0
       git -C "$case_dir" config maintenance.auto false
       git -C "$case_dir" -c user.name=Test -c user.email=test@example.com -c core.hooksPath=/dev/null commit -q --allow-empty -m fixture
       head="$(git -C "$case_dir" rev-parse HEAD)"
       jq -n --arg head "$head" '{verdict:"pass",head:$head,dirty_paths:[],blockers:[],suggestions:[],questions:[]}' > "$case_dir/receipt"
-      "$SKILL_DIR/scripts/workflow-state" --state-dir "$case_dir/tmp" init issue-3409 --worktree "$case_dir" --branch fixture >/dev/null ;;
+      "$SKILL_DIR/scripts/orch-runtime" --state-dir "$case_dir/tmp" state init --item issue-3409 --worktree "$case_dir" --branch fixture >/dev/null ;;
     *) echo "codex_round_wait: kind=$kind" >&2; exit 1 ;;
   esac
   env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" ROUND_CASE="$case_dir" ROUND_LANDS="$lands" \
@@ -329,7 +326,7 @@ SH
   git -C "$process_work" config maintenance.auto false
   git -C "$process_work" -c user.name=Test -c user.email=test@example.com -c core.hooksPath=/dev/null commit -q --allow-empty -m fixture
   process_head="$(git -C "$process_work" rev-parse HEAD)"
-  "$SKILL_DIR/scripts/workflow-state" --state-dir "$process_work/tmp" init process-4642 --worktree "$process_work" --branch fixture >/dev/null
+  "$SKILL_DIR/scripts/orch-runtime" --state-dir "$process_work/tmp" state init --item process-4642 --worktree "$process_work" --branch fixture >/dev/null
   source_repo="$(cd "$SKILL_DIR/../.." && pwd -P)"
   while IFS='|' read -r domain result expected_exit expected_ok expected_reason; do
     [[ -z "${CODEX_PROCESS_RESULT_ONLY:-}" || "$CODEX_PROCESS_RESULT_ONLY" == "$result" ]] || continue
