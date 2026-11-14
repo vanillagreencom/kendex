@@ -578,7 +578,11 @@ environment_rows() {
 [0,"env -- git status","launcher-options-end"]
 [0,"env -u env git status","launcher-option-value"]
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args","wrapper-launcher"]
-[0,"sh /workspace/tmp/waiter.ABC123/launch.sh /workspace/tmp/waiter.ABC123/wait .agents/skills/worktree/scripts/worktree push KEN-4156 --set-upstream","waiter-launch-worktree-set-upstream"]
+[0,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait --owner KEN-4156 -- .agents/skills/worktree/scripts/worktree push KEN-4156 --set-upstream < /dev/null","waiter-launch-job-worktree-set-upstream"]
+[2,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait --owner KEN-4156 -- printenv < /dev/null","waiter-launch-job-printenv"]
+[2,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait -- cat ~/.fleet/env < /dev/null","private-launch-job-cat"]
+[2,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait -- .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'timeout 5 env' --build 'true' --mutate 'true' < /dev/null","waiter-launch-job-quoted-test-env"]
+[0,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait --owner KEN-4156 -- env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE scripts/validate logic < /dev/null","waiter-launch-job-unset-validation"]
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args > out","wrapper-launcher-redirect"]
 [0,"env -u NAME -u OTHER command-name args","unset-launcher"]
 [0,"time env -u A -u B CMD ARGS > LOG","timed-unset-command-redirect"]
@@ -1943,7 +1947,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
 no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
-forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc
+forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc waiter-launch-job-unset-validation
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
