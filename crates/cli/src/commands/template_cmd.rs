@@ -159,7 +159,7 @@ impl Picked {
 
     /// The members these names stand for, or the refusal naming the flag
     /// that is missing.
-    fn members(&self) -> Result<Vec<Member>, String> {
+    fn members(&self, env: &Env) -> Result<Vec<Member>, String> {
         let named = self.named();
         if named.is_empty() {
             return Err(NOTHING_PICKED.to_owned());
@@ -167,16 +167,15 @@ impl Picked {
         let Some(source) = &self.source else {
             return Err(NO_SOURCE.to_owned());
         };
+        let chosen_source =
+            template::source_choice(env, source).map_err(|error| error.to_string())?;
         Ok(named
             .into_iter()
             .map(|(kind, name)| Member {
                 kind,
                 name,
                 enabled: true,
-                source: MemberSource::Marketplace {
-                    repo: source.clone(),
-                    rev: None,
-                },
+                source: chosen_source.clone(),
             })
             .collect())
     }
@@ -185,7 +184,7 @@ impl Picked {
     /// members wearing its kind and name is meant. `--source` names a
     /// marketplace's, `copy` names the template's own, and neither means
     /// every one of them — the three states a template can really hold.
-    fn refs(&self, copy: bool) -> Result<Vec<MemberRef>, String> {
+    fn refs(&self, env: &Env, copy: bool) -> Result<Vec<MemberRef>, String> {
         let named = self.named();
         if named.is_empty() {
             return Err(NOTHING_PICKED.to_owned());
@@ -195,17 +194,38 @@ impl Picked {
         }
         let which = match (copy, &self.source) {
             (true, _) => MemberWhich::Copy,
-            (false, Some(repo)) => MemberWhich::Marketplace { repo: repo.clone() },
+            (false, Some(reference)) => {
+                match template::source_choice(env, reference).map_err(|error| error.to_string())? {
+                    MemberSource::Catalog { catalog, .. } => MemberWhich::Catalog { catalog },
+                    MemberSource::Marketplace { .. }
+                    | MemberSource::Copy { .. }
+                    | MemberSource::SharedCopy { .. } => {
+                        unreachable!("explicit source choice is typed")
+                    }
+                }
+            }
             (false, None) => MemberWhich::Any,
         };
-        Ok(named
+        let mut references: Vec<_> = named
             .into_iter()
             .map(|(kind, name)| MemberRef {
                 kind,
                 name,
                 which: which.clone(),
             })
-            .collect())
+            .collect();
+        if let Some(repo) = &self.source {
+            let legacy: Vec<_> = references
+                .iter()
+                .map(|reference| MemberRef {
+                    kind: reference.kind,
+                    name: reference.name.clone(),
+                    which: MemberWhich::Marketplace { repo: repo.clone() },
+                })
+                .collect();
+            references.extend(legacy);
+        }
+        Ok(references)
     }
 }
 
@@ -265,7 +285,7 @@ pub fn run(env: &Env, command: TemplateCommand) -> CliResult {
             yes,
         ),
         TemplateCommand::Remove { name, copy, picked } => {
-            let after = template::remove_members(env, &name, &picked.refs(copy)?)?;
+            let after = template::remove_members(env, &name, &picked.refs(env, copy)?)?;
             out(&format!(
                 "{} now installs {} package(s)",
                 after.name,
@@ -433,7 +453,7 @@ fn create(
     yes: bool,
 ) -> CliResult {
     let Some(project) = from_project else {
-        let template = template::create_from_selection(env, name, picked.members()?)?;
+        let template = template::create_from_selection(env, name, picked.members(env)?)?;
         out(&format!(
             "saved {} with {} package(s)",
             template.name,
@@ -661,7 +681,7 @@ fn add(
     yes: bool,
 ) -> CliResult {
     let Some(project) = from_project else {
-        let after = template::add_members(env, name, picked.members()?)?;
+        let after = template::add_members(env, name, picked.members(env)?)?;
         out(&format!(
             "{} now installs {} package(s)",
             after.name,
@@ -674,7 +694,7 @@ fn add(
     // Taking a project's files replaces what the template held under
     // that name, which is what the lines below promise, so the reference
     // means every member wearing it.
-    let wanted = picked.refs(false)?;
+    let wanted = picked.refs(env, false)?;
     for want in &wanted {
         let key = template::member_key(want.kind, &want.name);
         let known = draft.members.iter().any(|member| member.key == key)
@@ -701,6 +721,10 @@ fn add(
                 MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => {
                     ", copied into it — this replaces those files".to_owned()
                 }
+                MemberSource::Catalog { catalog, .. } => format!(
+                    " from {} — this replaces it with the files in this project",
+                    catalog.reference()
+                ),
                 MemberSource::Marketplace { repo, .. } => {
                     format!(" from {repo} — this replaces it with the files in this project")
                 }

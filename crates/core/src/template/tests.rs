@@ -9,6 +9,7 @@ use crate::env::FakeOs;
 use crate::model::{HarnessId, ItemKind};
 use crate::test_util::rooted;
 
+mod catalog;
 mod create;
 mod install;
 mod store;
@@ -299,6 +300,7 @@ fn members_deduplicate_by_identity_and_not_by_name() {
             .members
             .iter()
             .map(|member| match &member.source {
+                MemberSource::Catalog { catalog, .. } => catalog.reference().to_owned(),
                 MemberSource::Marketplace { repo, .. } => repo.clone(),
                 MemberSource::Copy { copy, .. } | MemberSource::SharedCopy { copy, .. } => {
                     copy.clone()

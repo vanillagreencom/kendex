@@ -58,7 +58,7 @@ fn a_resolution_names_the_repository_the_copies_and_what_is_missing() {
     assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
     let group = &resolution.groups[0];
     // Nothing subscribes to it personally yet, so the install would.
-    assert_eq!(group.source, None);
+    assert_eq!(group.source.as_deref(), Some("cat"));
     let items: Vec<&str> = group.items.iter().map(|item| item.name.as_str()).collect();
     assert!(items.contains(&"gh"), "{items:?}");
     assert!(items.contains(&"note"), "{items:?}");
@@ -1367,7 +1367,12 @@ fn a_render_that_refuses_after_the_subscription_committed_reports_the_subscripti
     .unwrap();
     let resolution = resolve(&project.env, &template).unwrap();
     assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
-    assert_eq!(resolution.groups[0].source, None, "{:?}", resolution.groups);
+    assert_eq!(
+        resolution.groups[0].source.as_deref(),
+        Some("cat"),
+        "{:?}",
+        resolution.groups
+    );
     let target = destination(&project, "unrenderable");
     let Scope::Project { root } = &target else {
         unreachable!("built as a project scope")
@@ -1648,6 +1653,17 @@ fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
             decl.enabled = off;
         }
         crate::manifest::save(&personal, &manifest).unwrap();
+        let origin = crate::manifest::manifest_path(
+            &project.env,
+            &Scope::Project {
+                root: project.root.clone(),
+            },
+        );
+        let mut declared = crate::manifest::load_current(&origin).unwrap().unwrap();
+        for decl in declared.sources.values_mut() {
+            decl.enabled = off;
+        }
+        crate::manifest::save(&origin, &declared).unwrap();
     };
     switched_off(false);
 

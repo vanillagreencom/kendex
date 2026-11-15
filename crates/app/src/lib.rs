@@ -225,6 +225,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         templates::template_draft,
         templates::template_create_from_project,
         templates::template_create_from_selection,
+        templates::template_catalog_source,
         templates::template_add_members,
         templates::template_remove_members,
         templates::template_rename,

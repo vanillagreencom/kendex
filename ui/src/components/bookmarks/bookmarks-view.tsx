@@ -1,6 +1,11 @@
+import { toast } from "sonner";
 import { Bookmark as BookmarkIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ItemKind, SavedItem } from "@/bindings";
+import type {
+  ItemKind,
+  Member_Deserialize as Member,
+  SavedItem,
+} from "@/bindings";
 import { AddToTemplateDialog } from "@/components/templates/add-to-template-dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,6 +41,7 @@ import { ADD_TO_TEMPLATE_LABEL } from "@/lib/copy-templates";
 import { groupsOf, type WantedPackage } from "@/lib/install-ask";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
+import type { Saveable } from "@/lib/template-members";
 import { cn } from "@/lib/utils";
 import { useBookmarksAnswer, useBookmarksStore } from "@/stores/bookmarks";
 import { type InstallSubject, useInstallFlow } from "@/stores/install-flow";
@@ -168,6 +174,11 @@ export function BookmarksView() {
   const [search, setSearch] = useState("");
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const [addingToTemplate, setAddingToTemplate] = useState(false);
+  const [preparingTemplate, setPreparingTemplate] = useState(false);
+  const [saveable, setSaveable] = useState<Saveable>({
+    members: [],
+    dropped: [],
+  });
   const [unread, setUnread] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchFocus = useNavStore((s) => s.searchFocus);
@@ -309,7 +320,24 @@ export function BookmarksView() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => setAddingToTemplate(true)}
+              disabled={preparingTemplate}
+              onClick={() => {
+                setPreparingTemplate(true);
+                void Promise.all(chosen.map(memberOf))
+                  .then((members) => {
+                    setSaveable({
+                      members: members.filter(
+                        (member): member is Member => member !== null,
+                      ),
+                      dropped: chosen
+                        .filter((_, index) => members[index] === null)
+                        .map((item) => item.bookmark.name),
+                    });
+                    setAddingToTemplate(true);
+                  })
+                  .catch((error: unknown) => toast.error(String(error)))
+                  .finally(() => setPreparingTemplate(false));
+              }}
             >
               {ADD_TO_TEMPLATE_LABEL}
             </Button>
@@ -319,7 +347,7 @@ export function BookmarksView() {
           </div>
         ) : null}
         <AddToTemplateDialog
-          saveable={{ members: chosen.map(memberOf), dropped: [] }}
+          saveable={saveable}
           open={addingToTemplate}
           onOpenChange={setAddingToTemplate}
         />

@@ -53,6 +53,7 @@ vi.mock("@/bindings", () => ({
     templateFiles: vi.fn(),
     templateFile: vi.fn(),
     templateAddMembers: vi.fn(),
+    templateCatalogSource: vi.fn(),
     templateCreateFromSelection: vi.fn(),
     scanMachine: vi.fn().mockResolvedValue({ status: "ok", data: null }),
     auditAll: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -98,6 +99,12 @@ const RUST_SERVICE: Template_Serialize = {
   customizations: {},
 };
 
+const SAVED_CATALOG = {
+  kind: "repository" as const,
+  repo: "vanillagreencom/kendex",
+  origin: { origin: "declared" as const, scope: { scope: "global" as const } },
+};
+
 const DRAFT: Draft_Serialize = {
   project: "/work/acme",
   suggestedName: "acme",
@@ -111,6 +118,7 @@ const DRAFT: Draft_Serialize = {
       requiredBy: [],
       origin: {
         origin: "marketplace",
+        catalog: SAVED_CATALOG,
         repo: "vanillagreencom/kendex",
         source: "kendex",
         rev: null,
@@ -140,6 +148,12 @@ const DRAFT: Draft_Serialize = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(commands.templateCatalogSource).mockImplementation(
+    async (_catalog, rev) => ({
+      status: "ok",
+      data: { held: "catalog", catalog: SAVED_CATALOG, rev },
+    }),
+  );
   useTemplatesStore.setState({
     templates: [],
     everRead: false,
@@ -536,7 +550,7 @@ describe("saving a marketplace selection into a template", () => {
       status: "ok",
       data: RUST_SERVICE,
     });
-    const saveable = membersFor(
+    const saveable = await membersFor(
       [
         {
           catalog: {
@@ -565,8 +579,8 @@ describe("saving a marketplace selection into a template", () => {
         name: "gh",
         enabled: true,
         source: {
-          held: "marketplace",
-          repo: "vanillagreencom/kendex",
+          held: "catalog",
+          catalog: SAVED_CATALOG,
           rev: null,
         },
       },
@@ -627,12 +641,15 @@ describe("a marketplace selection nothing can name", () => {
       status: "ok",
       data: [RUST_SERVICE],
     });
-    // A row from a bare repository: no subscription, so no repository a
-    // template could record it under.
-    const saveable = membersFor(
+    // No subscription read has landed for the selected catalog.
+    const saveable = await membersFor(
       [
         {
-          catalog: { by: "repo", repo: "someone/unsubscribed" },
+          catalog: {
+            by: "subscription",
+            scope: { scope: "global" },
+            source: "missing",
+          },
           row: { kind: "skill", name: "stranger" } as never,
           recordsUnreadable: false,
         },
@@ -673,6 +690,7 @@ describe("an edited marketplace package in the modal", () => {
             requiredBy: [],
             origin: {
               origin: "choice",
+              catalog: SAVED_CATALOG,
               repo: "vanillagreencom/kendex",
               source: "kendex",
               rev: null,
@@ -838,20 +856,26 @@ describe("the revision a marketplace selection is saved at", () => {
       } as never,
     ] as never;
 
-  it("keeps the pin the ticked row carries, and none where there is none", () => {
-    const pinned = membersFor(ticked("kendex"), subscribed("kendex", "v2.1.0"));
+  it("keeps the pin the ticked row carries, and none where there is none", async () => {
+    const pinned = await membersFor(
+      ticked("kendex"),
+      subscribed("kendex", "v2.1.0"),
+    );
     expect(pinned.members[0]?.source).toEqual({
-      held: "marketplace",
-      repo: "vanillagreencom/kendex",
+      held: "catalog",
+      catalog: SAVED_CATALOG,
       rev: "v2.1.0",
     });
 
     // The inverse: an unpinned subscription saves no pin, so the row above
     // cannot pass over a conversion that writes some revision regardless.
-    const following = membersFor(ticked("kendex"), subscribed("kendex", null));
+    const following = await membersFor(
+      ticked("kendex"),
+      subscribed("kendex", null),
+    );
     expect(following.members[0]?.source).toEqual({
-      held: "marketplace",
-      repo: "vanillagreencom/kendex",
+      held: "catalog",
+      catalog: SAVED_CATALOG,
       rev: null,
     });
   });
@@ -939,7 +963,7 @@ describe("a choice made while the refresh behind an open is still out", () => {
       status: "ok",
       data: OTHER,
     });
-    const saveable = membersFor(
+    const saveable = await membersFor(
       [
         {
           catalog: {

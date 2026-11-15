@@ -552,10 +552,10 @@ fn source_of(
         })
     };
     match (&member.origin, side) {
-        (DraftOrigin::Marketplace { repo, rev, .. }, _)
-        | (DraftOrigin::Choice { repo, rev, .. }, Some(Side::Marketplace)) => {
-            Ok(MemberSource::Marketplace {
-                repo: repo.clone(),
+        (DraftOrigin::Marketplace { catalog, rev, .. }, _)
+        | (DraftOrigin::Choice { catalog, rev, .. }, Some(Side::Marketplace)) => {
+            Ok(MemberSource::Catalog {
+                catalog: catalog.clone(),
                 rev: rev.clone(),
             })
         }
