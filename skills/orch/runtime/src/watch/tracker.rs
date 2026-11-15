@@ -994,11 +994,9 @@ fn read_tracker(
         tick,
         owner
     )?);
-    if owner_read == OwnerRead::Read {
-        owner
-            .failed
-            .extend(resolve_due_tracker_asks(&mailbox, &reach.mail_root));
-    }
+    // The marks run before this pass's own closes: the first pass's floor is
+    // then what stood closed before it, and a close made here is marked by
+    // the next pass.
     if let Some(configured) = &ctx.settings.reads.owner_tracker {
         quota!(mark_closed_owner_asks(
             linear,
@@ -1008,6 +1006,11 @@ fn read_tracker(
             tick,
             owner
         )?);
+    }
+    if owner_read == OwnerRead::Read {
+        owner
+            .failed
+            .extend(resolve_due_tracker_asks(&mailbox, &reach.mail_root));
     }
     // The triage candidates: open items created at or after the floor
     // whose verdict is not kept or canceled, keyed on state and newest

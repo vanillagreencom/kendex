@@ -3929,6 +3929,13 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     world.linear("issues update", json!({"body": {}}));
     world.linear("comments create", json!({"body": {"success": true}}));
     world.linear(
+        "graphql OwnerAskItem",
+        json!({"body": {"issue": {"description": format!("**Maya, what you do:** {action}\n\n{body}"),
+            "assignee": {"name": "Maya Owner"},
+            "labels": {"pageInfo": {"hasNextPage": false},
+                "nodes": [{"name": "skills"}, {"name": "owner-gated"}]}}}}),
+    );
+    world.linear(
         "comments bulk-list",
         json!({"body": {"KEN-7": [
             {"id": "question-1", "body": "Approve the action?", "user": "agent", "user_email": "agent@example.test", "created_at": "2026-10-01T00:00:00.000Z", "updated_at": "2026-10-01T00:00:00.000Z"},
@@ -4023,6 +4030,31 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         Vec::<Value>::new(),
         "an unread tracker closes no due ask"
     );
+    // The asks the watch's first pass closed are no floor: the next pass
+    // posts each one's ruling under its question and drops its label,
+    // assignee and action line.
+    let linear_log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
+    for (id, issue, ruling, question) in [
+        (&answered, "KEN-7", "OK", "question-1"),
+        (&due, "KEN-8", "approve", "question-2"),
+    ] {
+        assert_eq!(
+            (
+                linear_log
+                    .matches(&format!(
+                        "comments create {issue} --body ask={id} closed (default): {ruling} --parent {question}\n"
+                    ))
+                    .count(),
+                linear_log
+                    .matches(&format!(
+                        "issues update {issue} --labels skills --clear-assignee --description {body}\n"
+                    ))
+                    .count()
+            ),
+            (1, 1),
+            "{issue}'s ruling comment and cleared label, once: {linear_log}"
+        );
+    }
     // A refused mailbox read of the asks is unread the same way, never no
     // asks: no tracker item is read.
     world.linear("issues list --assignee", json!({"body": []}));
