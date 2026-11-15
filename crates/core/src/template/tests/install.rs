@@ -135,7 +135,7 @@ fn a_git_suffixed_folder_member_finds_its_subscription() {
             name: "gh".to_owned(),
             enabled: true,
             source: MemberSource::Marketplace {
-                repo: crate::paths::slashed(&catalog),
+                repo: catalog.display().to_string(),
                 rev: None,
             },
         }],
