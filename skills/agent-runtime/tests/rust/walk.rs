@@ -490,6 +490,31 @@ fn an_explicit_model_is_taken_as_named_and_a_class_resolves_through_kendex() {
     );
 }
 
+/// A class entry's account is judged on the model its launch runs: the
+/// window scoped to that model walls it while the shared weekly window
+/// still has room.
+#[test]
+fn a_class_entry_is_walled_by_the_window_scoped_to_the_model_its_class_resolves_to() {
+    let mut world = World::new(&[(PREFERENCE, "claude:standard:high,codex:gpt-6.1-sol:high")]);
+    let mut scoped = measured("aclaude", 20, 5);
+    scoped["model_buckets"] =
+        json!([{"label": "Opus", "pct": 96, "resets_at": stamp(now() + 60 * 3600)}]);
+    world.plant_listing(&[scoped, codex("codex", 20)]);
+    let result = world.answered(&["--source-harness", "claude", "--source-flags", BYPASS]);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("codex:gpt-6.1-sol:high"),
+        "{result}"
+    );
+    assert_eq!(
+        skipped(&result),
+        [format!(
+            "claude:standard:high walled {}",
+            world.dir("aclaude")
+        )]
+    );
+}
+
 #[test]
 fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() {
     let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "claude:1:high")]);
@@ -595,6 +620,31 @@ fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() 
     assert_eq!(chosen["model"], json!("fable"));
     assert_eq!(chosen["effort"], json!("high"));
     assert_eq!(chosen["kept"], json!(false));
+}
+
+/// A caller on a model's one-million window: the numeric entry's class is
+/// read on the model without the window, and its successor keeps the
+/// window.
+#[test]
+fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class() {
+    let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "claude:1:high")]);
+    world.plant_listing(&[measured("aclaude", 20, 5)]);
+    let result = world.answered(&[
+        "--controller",
+        "--source-harness",
+        "claude",
+        "--caller-harness",
+        "claude",
+        "--caller-model",
+        "opus[1m]",
+    ]);
+    let chosen = &result["chosen"];
+    assert_eq!(chosen["model"], json!("opus[1m]"), "{result}");
+    assert_eq!(chosen["class"], json!("standard"));
+    assert_eq!(
+        result["deprecated"],
+        json!([{"entry": "claude:1:high", "form": "harness:model:effort", "replacement": "claude:standard:high", "model": "opus[1m]"}])
+    );
 }
 
 #[test]
