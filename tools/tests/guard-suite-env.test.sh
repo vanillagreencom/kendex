@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Inputs: tools/guard, tools/ci-job-set, skills/orch/tests/run-all.sh, skills/harness-ci/tests/lib/kendex-engine.sh
 # The configured local route must not borrow an installed kendex. Fixture
-# suites add BIN and OT_BIN as lanes-pick-spread does, then lose their kendex.
+# suites add BIN and OT_BIN, then lose their kendex.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,7 +131,7 @@ try:
     os.mkfifo(env["FIFO"])
     hold = os.open(env["FIFO"], os.O_RDWR)
     try:
-        result = subprocess.run([bash, str(runner), "--local", "=lane-env-block","=open-terminal-env-fail"], env=env, capture_output=True, text=True, timeout=25)
+        result = subprocess.run([bash, str(runner), "--local", "=lane-env-block", "=open-terminal-env-fail"], env=env, capture_output=True, text=True, timeout=25)
         assert result.returncode == 1, result.stdout + result.stderr
         stopped = Path(env["STOPPED"]).exists()
         if not stopped:

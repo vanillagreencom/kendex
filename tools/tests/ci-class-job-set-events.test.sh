@@ -36,12 +36,12 @@ while IFS='|' read -r event paths expected; do
   check "the $event legs over '$paths'" "$expected" \
     "$(SELECT_EVENT="$event" selection micro false "$(printf '%s\n' $paths)" | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
 done <<ROWS
-pull_request|skills/orch/scripts/lanes|$BOTH
-merge_group|skills/orch/scripts/lanes|$BOTH
+pull_request|skills/orch/scripts/resolve-base-branch|$BOTH
+merge_group|skills/orch/scripts/resolve-base-branch|$BOTH
 pull_request|skills/orch/SKILL.md|$LINUX
 merge_group|skills/orch/SKILL.md|$LINUX
-pull_request|.github/AGENTS.md skills/orch/scripts/lanes|$BOTH
-merge_group|.github/AGENTS.md skills/orch/scripts/lanes|$BOTH
+pull_request|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$BOTH
+merge_group|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$BOTH
 pull_request|crates/core/src/lib.rs|$BOTH
 merge_group|crates/core/src/lib.rs|$BOTH
 ROWS
@@ -63,7 +63,7 @@ parity_rows=0
 while IFS='|' read -r arg event expected; do
   parity_rows=$((parity_rows + 1))
   check "a macOS leg the merge group alone selects, called with ${arg:-no argument} on $event" "$expected" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/scripts/lanes | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/scripts/resolve-base-branch | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
 done <<ROWS
 --event-parity|pull_request|exit=2 event-parity event=merge_group
 --event-parity|merge_group|exit=2 event-parity event=pull_request
@@ -73,8 +73,8 @@ done <<ROWS
 ROWS
 [ "$parity_rows" -eq 5 ] || { echo "the parity table read $parity_rows rows" >&2; exit 1; }
 check "this tree's selection passes the --event-parity call unchanged" \
-  "$(selection micro false skills/orch/scripts/lanes)" \
-  "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/lanes)"
+  "$(selection micro false skills/orch/scripts/resolve-base-branch)" \
+  "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/resolve-base-branch)"
 
 # An Ubuntu lane that differs by event is refused too.
 sed 's/^  row="\$class"$/  row="$class"; linux_integration=true; [ "$event" != merge_group ] || linux_integration=false/; s/cargo_linux=true/cargo_linux=$linux_integration/g' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
@@ -83,13 +83,13 @@ for event in pull_request merge_group; do
   other=merge_group
   [ "$event" != merge_group ] || other=pull_request
   check "Ubuntu event parity on $event" "exit=2 event-parity event=$other" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false skills/orch/scripts/lanes)"
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false skills/orch/scripts/resolve-base-branch)"
 done
 
 # THE PUBLISHED SELECTION: where CI_SELECTION names a file, a class
 # selection writes there the skips and targets it emits, the one record the
 # push at the group's head reads.
-written="$(CI_SELECTION="$TMP/written.json" selection micro false skills/orch/scripts/lanes)"
+written="$(CI_SELECTION="$TMP/written.json" selection micro false skills/orch/scripts/resolve-base-branch)"
 check "a class selection writes its skips and targets to CI_SELECTION" \
   "$(jq -cn --argjson s "$(sed -n 's/.* skipped_suites=\([^ ]*\).*/\1/p' <<<"$written")" \
     --argjson r "$(sed -n 's/.* rust_targets=\([^ ]*\).*/\1/p' <<<"$written")" '{skipped_suites: $s, rust_targets: $r}')" \

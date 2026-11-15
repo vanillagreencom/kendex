@@ -25,7 +25,7 @@ standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
-micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
+micro|false|skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
 micro|false|skills/orch/tests/dev-future.sh|$SHARD_CODE|$ORCH_ALL
 micro|false|skills/orch/tests/review-future.sh|$SHARD_CODE|$ORCH_ALL
 micro|false|skills/orch/tests/lane-future.sh|$SHARD_CODE|$ORCH_ALL
@@ -56,7 +56,7 @@ micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
 micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans +guards-tools-tail
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
-micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$SHARD_CODE|$ROSTER
+micro|false|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
@@ -242,7 +242,7 @@ while IFS='|' read -r path shard expected macos; do
   check "suite kendex: macOS $path $shard" none \
     "$("$JOB_SET" --suite-kendex macOS "$path" "$shard")"
 done <<'ROWS'
-skills/orch/tests/lanes-pick-spread.sh|orch-state|none
+skills/orch/tests/lane-marker.sh|orch-state|none
 skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout|macos
 skills/github/tests/pr-view.test.sh||checkout|macos
 skills/jarvis/tests/task.test.sh||checkout
