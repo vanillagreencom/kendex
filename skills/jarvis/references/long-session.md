@@ -62,7 +62,7 @@ The current handoff defaults to `state/handoff.md` in the [home layout](home-lay
   - A missing or unreadable archive refuses with `archive-missing` or `archive-unreadable` and leaves the index unchanged.
   - Keep a file's row after pruning; its retained facts remain available, while source evidence is unavailable.
   - `owner-unanswered` skips a file whose END precedes its window and reads a file with no row or an unreadable END.
-  - A listed file that is gone and inside the window prints `owner-unanswered: archive-pruned=PATH`: the run goes on, and messages only that file covered are listed again.
+  - Listed files that are gone and inside the window print one `owner-unanswered: archive-pruned=COUNT first=PATH last=PATH` line, with the first and last paths in sorted order: the run goes on, and messages only those files covered are listed again.
 - On each `EVENT owner-unanswered` the watch loop adds, answer the message it names, or record what was done about it in the progress log. [Control-host events: Delivery](control-host-events.md#delivery) states when the loop adds it.
 - Keep a line only if its absence would cause the successor to act wrongly or repeat work.
 - Remove a tracker id from State when its item closes. Keep the completion evidence on the item.
