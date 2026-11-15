@@ -147,11 +147,16 @@ fn write_then_rename(
             std::process::id(),
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
-        match fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&candidate)
-        {
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        if permissions.is_some() {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            // Shared config edits retain private values. Restrict access at
+            // creation: chmod after writing cannot revoke an open reader.
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
             Ok(file) => break (candidate, file),
             Err(error) if error.kind() == AlreadyExists => continue,
             Err(error) => return Err(CoreError::io(&candidate, error)),
@@ -169,6 +174,8 @@ fn write_then_rename(
         drop(temp_file);
         return Err(discard(error, &tmp));
     }
+    #[cfg(all(test, unix))]
+    tests::observe_temporary(&tmp);
     if let Some(permissions) = permissions
         && let Err(error) = temp_file.set_permissions(permissions)
     {
