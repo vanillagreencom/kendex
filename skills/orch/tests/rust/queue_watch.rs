@@ -1,8 +1,9 @@
 //! The merge-queue wait: `queue_watch::run` in-process on the fake clock,
-//! the fixture `gh` and `github.sh` answering from reply maps a row rewrites
-//! between polls, the failed-check probe reaching `verify-pr`'s own reads of
-//! a recorded witness through the same `gh`, and the built binary where a
-//! row proves the command's own refusal.
+//! the fixture `gh` answering from a reply map a row rewrites between polls,
+//! the github package's real `github.sh` reading the review threads and
+//! sending the guard's mutations through it, the failed-check probe reaching
+//! `verify-pr`'s own reads of a recorded witness through the same `gh`, and
+//! the built binary where a row proves the command's own refusal.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows run the library on the fake clock, read the record they wrote and run the built binary"
@@ -82,13 +83,13 @@ fn secs(n: u64) -> Duration {
     Duration::from_secs(n)
 }
 
-/// One row's world: the item record, the two fakes symlinked beside their
-/// reply maps, and the maps a row edits between polls.
+/// One row's world: the item record, the fake `gh` symlinked beside its
+/// reply map, the real `github.sh` behind its wrapper there, and the map a
+/// row edits between polls.
 struct World {
     dir: tempfile::TempDir,
     item: PathBuf,
     replies: Map<String, Value>,
-    threads: Map<String, Value>,
 }
 
 /// The replies of a recorded verify witness (`fixtures/gh/witnesses/`).
@@ -163,15 +164,12 @@ impl World {
         let root = dir.path().canonicalize().unwrap();
         let item = root.join(format!("workflow-state-{ITEM_ID}.json"));
         fs::write(&item, ITEM).unwrap();
-        let fakes = fixtures().join("queue-watch");
-        for name in ["gh", "github.sh"] {
-            std::os::unix::fs::symlink(fakes.join(name), root.join(name)).unwrap();
-        }
+        std::os::unix::fs::symlink(fixtures().join("queue-watch/gh"), root.join("gh")).unwrap();
+        support::real_github_script(&root.join("github.sh"), "github.sh");
         let mut world = World {
             dir,
             item,
             replies: Map::new(),
-            threads: Map::new(),
         };
         world.pull("OPEN", "MERGEABLE").threads(0);
         world
@@ -251,35 +249,41 @@ impl World {
         self
     }
 
+    /// The pull request's review threads as GitHub pages them to
+    /// `pr-threads`: `unresolved` open threads, one comment each.
     fn threads(&mut self, unresolved: u64) -> &mut Self {
-        self.threads.insert(
-            format!("pr-threads {PR}"),
-            json!({"body": {"count": unresolved, "unresolved_count": unresolved, "threads": []}}),
+        let nodes: Vec<Value> = (1..=unresolved)
+            .map(|i| {
+                json!({"id": format!("PRRT_{i}"), "isResolved": false, "isOutdated": false,
+                    "resolvedBy": null, "path": "src/lib.rs", "line": i,
+                    "comments": {"totalCount": 1, "nodes": [
+                        {"author": {"login": "reviewer", "__typename": "User"}, "body": "fix this"}]}})
+            })
+            .collect();
+        self.replies.insert(
+            format!("graphql number={PR} cursor="),
+            json!({"body": {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": nodes}}}}}}),
         );
         self
     }
 
-    /// A thread read that answers no count: `text` printed as is, or with
-    /// `None` no answer at all (the command refuses).
-    fn threads_unreadable(&mut self, text: Option<&str>) -> &mut Self {
-        let key = format!("pr-threads {PR}");
-        match text {
-            Some(text) => {
-                self.threads.insert(key, json!({"text": text}));
-            }
-            None => {
-                self.threads.remove(&key);
-            }
-        }
+    /// A thread read GitHub refuses, a GraphQL `errors` answer, which
+    /// `pr-threads` refuses on its first attempt.
+    fn threads_refused(&mut self) -> &mut Self {
+        self.replies.insert(
+            format!("graphql number={PR} cursor="),
+            json!({"body": {"data": {"repository": null},
+                "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a Repository"}]}}),
+        );
         self
     }
 
-    /// The thread reads the fake `github.sh` answered.
+    /// The thread walks `pr-threads` sent the fake `gh`.
     fn thread_reads(&self) -> usize {
-        fs::read_to_string(self.root().join("github.log"))
-            .unwrap_or_default()
-            .lines()
-            .filter(|l| l.contains("pr-threads"))
+        self.gh_log()
+            .iter()
+            .filter(|l| l.contains("query($owner: String!, $repo: String!, $pr: Int!"))
             .count()
     }
 
@@ -309,17 +313,11 @@ impl World {
         self
     }
 
-    /// Publish the maps the fakes read.
+    /// Publish the map the fake `gh` reads.
     fn write(&self) -> &Self {
-        let root = self.root();
         fs::write(
-            root.join("gh.json"),
+            self.root().join("gh.json"),
             Value::Object(self.replies.clone()).to_string(),
-        )
-        .unwrap();
-        fs::write(
-            root.join("github.json"),
-            Value::Object(self.threads.clone()).to_string(),
         )
         .unwrap();
         self
@@ -1683,35 +1681,29 @@ fn a_transition_first_seen_near_the_deadline_is_confirmed_inside_the_budget() {
     }
 }
 
-/// The guard's thread read is three-valued: a read that failed, or an
-/// answer that is no count, is no evidence (nothing pulled, no count on
-/// the reply, the wait goes on), never no threads; and with the guard off
-/// no thread is read at all.
+/// The guard's thread read is three-valued: a read that failed is no
+/// evidence (nothing pulled, no count on the reply, the wait goes on),
+/// never no threads; and with the guard off no thread is read at all.
 #[test]
-fn a_thread_read_that_failed_or_answered_no_count_is_no_evidence() {
-    for (name, text) in [
-        ("a refused read", None),
-        ("an answer that is no count", Some("not json")),
-    ] {
-        let mut world = World::new();
-        world.queue(in_queue(None)).threads_unreadable(text);
-        let request = world.request(10, 10);
-        let reply = world.wait(&request, |_, clock| {
-            clock.await_sleepers(1);
-            clock.release(secs(10));
-        });
-        assert_eq!(
-            (
-                reply.status,
-                reply.verdict,
-                reply.unresolved_count,
-                world.thread_reads()
-            ),
-            ("timeout", "queued", None, 2),
-            "{name}: {reply:?}"
-        );
-        assert!(world.mutations().is_empty(), "{name}: {:?}", world.gh_log());
-    }
+fn a_thread_read_that_failed_is_no_evidence() {
+    let mut world = World::new();
+    world.queue(in_queue(None)).threads_refused();
+    let request = world.request(10, 10);
+    let reply = world.wait(&request, |_, clock| {
+        clock.await_sleepers(1);
+        clock.release(secs(10));
+    });
+    assert_eq!(
+        (
+            reply.status,
+            reply.verdict,
+            reply.unresolved_count,
+            world.thread_reads()
+        ),
+        ("timeout", "queued", None, 2),
+        "{reply:?}"
+    );
+    assert!(world.mutations().is_empty(), "{:?}", world.gh_log());
 
     let mut world = World::new();
     world.queue(in_queue(None)).threads(1);

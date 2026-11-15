@@ -119,8 +119,14 @@ def SCHEMA: {
   "Workflow": {"name": ["S", false]},
   "Repository": {
     "nameWithOwner": ["S", false], "pullRequest": ["PullRequest", false, {"number": "Int!"}],
+    "pullRequests": [
+      "PullRequestConnection", false,
+      (PAGE + {"states": "[PullRequestState!]", "orderBy": "IssueOrder"})
+    ],
+    "mergeQueue": ["MergeQueue", false],
     "vulnerabilityAlerts": ["RepositoryVulnerabilityAlertConnection", false, PAGE]
   },
+  "PullRequestConnection": {"pageInfo": ["PageInfo", false], "nodes": ["PullRequest", true]},
   "RepositoryVulnerabilityAlertConnection": {
     "pageInfo": ["PageInfo", false], "nodes": ["RepositoryVulnerabilityAlert", true]
   },
@@ -133,7 +139,7 @@ def SCHEMA: {
     "id": ["S", false], "number": ["S", false], "state": ["S", false], "body": ["S", false],
     "createdAt": ["S", false], "mergedAt": ["S", false], "headRefName": ["S", false],
     "headRefOid": ["S", false], "mergeStateStatus": ["S", false], "isInMergeQueue": ["S", false],
-    "author": ["Actor", false], "headRepository": ["Repository", false],
+    "isDraft": ["S", false], "reviewDecision": ["S", false], "author": ["Actor", false], "headRepository": ["Repository", false],
     "mergeCommit": ["Commit", false], "mergeQueueEntry": ["MergeQueueEntry", false],
     "autoMergeRequest": ["AutoMergeRequest", false],
     "reviewThreads": ["PullRequestReviewThreadConnection", false, PAGE],
@@ -150,13 +156,15 @@ def SCHEMA: {
     "pullRequest": ["PullRequest", false]
   },
   "MergeQueue": {"entries": ["MergeQueueEntryConnection", false, PAGE]},
-  "MergeQueueEntryConnection": {"nodes": ["MergeQueueEntry", true]},
-  "AutoMergeRequest": {"enabledAt": ["S", false]},
+  "MergeQueueEntryConnection": {"pageInfo": ["PageInfo", false], "nodes": ["MergeQueueEntry", true]},
+  "AutoMergeRequest": {"enabledAt": ["S", false], "mergeMethod": ["S", false]},
   "PullRequestReviewThreadConnection": {
     "pageInfo": ["PageInfo", false], "nodes": ["PullRequestReviewThread", true]
   },
   "PullRequestReviewThread": {
-    "isResolved": ["S", false], "comments": ["PullRequestReviewCommentConnection", false, PAGE]
+    "id": ["S", false], "isResolved": ["S", false], "isOutdated": ["S", false],
+    "resolvedBy": ["User", false], "path": ["S", false], "line": ["S", false],
+    "comments": ["PullRequestReviewCommentConnection", false, PAGE]
   },
   "Commit": {
     "oid": ["S", false], "authoredDate": ["S", false], "committedDate": ["S", false],
@@ -199,12 +207,15 @@ def SCHEMA: {
   "AutoRebaseEnabledEvent": {"createdAt": ["S", false]},
   "AddedToMergeQueueEvent": {"createdAt": ["S", false]},
   "ReadyForReviewEvent": {"createdAt": ["S", false]},
+  "ReopenedEvent": {"createdAt": ["S", false]},
+  "ReviewRequestedEvent": {"createdAt": ["S", false]},
   "ReviewDismissedEvent": {
     "previousReviewState": ["S", false], "review": ["PullRequestReview", false]
   }
 };
 def INPUTS: {
-  "CheckRunFilter": {"checkType": "CheckRunType"},
+  "CheckRunFilter": {"checkName": "String", "checkType": "CheckRunType"},
+  "IssueOrder": {"field": "IssueOrderField!", "direction": "OrderDirection!"},
   "DequeuePullRequestInput": {"id": "ID!", "clientMutationId": "String"},
   "DisablePullRequestAutoMergeInput": {"pullRequestId": "ID!", "clientMutationId": "String"}
 };
@@ -213,14 +224,18 @@ def ENUMS: {
   "PullRequestTimelineItemsItemType": [
     "HEAD_REF_FORCE_PUSHED_EVENT", "AUTO_MERGE_ENABLED_EVENT", "AUTO_SQUASH_ENABLED_EVENT",
     "AUTO_REBASE_ENABLED_EVENT", "ADDED_TO_MERGE_QUEUE_EVENT", "REVIEW_DISMISSED_EVENT",
-    "READY_FOR_REVIEW_EVENT", "AUTO_MERGE_DISABLED_EVENT"
-  ]
+    "READY_FOR_REVIEW_EVENT", "AUTO_MERGE_DISABLED_EVENT", "REOPENED_EVENT",
+    "REVIEW_REQUESTED_EVENT"
+  ],
+  "PullRequestState": ["OPEN", "CLOSED", "MERGED"],
+  "IssueOrderField": ["CREATED_AT", "UPDATED_AT", "COMMENTS"],
+  "OrderDirection": ["ASC", "DESC"]
 };
 def SCALARS: ["Int", "String", "Boolean", "ID"];
 def EVENTS: [
   "HeadRefForcePushedEvent", "AutoMergeEnabledEvent", "AutoSquashEnabledEvent",
   "AutoRebaseEnabledEvent", "AddedToMergeQueueEvent", "ReviewDismissedEvent",
-  "ReadyForReviewEvent", "AutoMergeDisabledEvent"
+  "ReadyForReviewEvent", "AutoMergeDisabledEvent", "ReopenedEvent", "ReviewRequestedEvent"
 ];
 def ACTORS: ["Bot", "EnterpriseUserAccount", "Mannequin", "Organization", "User"];
 def POSSIBLE: {

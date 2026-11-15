@@ -1,5 +1,6 @@
 //! The tracker and GitHub read duties: each inventory read once per pass
-//! through the linear, gh, reducer and mailbox fixtures, a dependency
+//! through the linear, gh and mailbox fixtures and the github package's
+//! reducer reading through that gh, a dependency
 //! failure refusing the inventory and never reading as an empty set, the
 //! quota receipt holding the tracker reads alone, the recorded watch's
 //! answers on its own fixtures, the triage key, the terminal close, the
@@ -64,24 +65,23 @@ impl World {
         };
         world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []}));
         // Each fixture is symlinked into the world under the name the duty
-        // runs, and reads its map and log beside that name: no wrapper is
-        // written at test time, which another row's child between fork
-        // and exec would hold open (ETXTBSY).
+        // runs, and reads its map and log beside that name; the github
+        // package's reducer runs behind its wrapper there, which a child
+        // writes, so no other row's child holds it open (ETXTBSY). Its
+        // listing has no answer until a row plants one: the reducer's
+        // global failure, which `quiet_audits` answers for the one
+        // repository most rows name.
         let fix = fixtures();
         for (name, fixture) in [
             ("linear", "linear-fixture/linear.sh"),
             ("linear-held", "linear-hold/linear.sh"),
             ("gh", "gh/gh"),
-            ("pr-watch", "pr-watch-fixture/pr-watch.sh"),
             ("lane-mail", "lane-mail-owner/lane-mail"),
         ] {
             std::os::unix::fs::symlink(fix.join(fixture), world.dir.path().join(name)).unwrap();
         }
+        real_github_script(&world.dir.path().join("pr-watch"), "pr-watch.sh");
         world.store();
-        // The reducer's map starts empty: a repository with no entry is the
-        // reducer's global failure, which `quiet_audits` answers for the
-        // one repository most rows name.
-        std::fs::write(world.dir.path().join("pr-watch.json"), "{}").unwrap();
         world
     }
 
@@ -145,20 +145,13 @@ impl World {
             .collect()
     }
 
-    /// The reducer fixture's log: `GH_REPO=<value> argv=[…]` per call.
-    fn reducer_calls(&self) -> Vec<String> {
-        lines(&self.dir.path().join("pr-watch.log"))
-    }
-
-    /// The reducer fixture's reply for `repo`.
-    fn reducer(&self, repo: &str, reply: Value) {
-        let path = self.dir.path().join("pr-watch.json");
-        let mut map: BTreeMap<String, Value> = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
-        map.insert(repo.to_owned(), reply);
-        std::fs::write(path, serde_json::to_string(&map).unwrap()).unwrap();
+    /// `repo`'s open pull requests as GitHub answers the reducer's listing.
+    fn pulls(&mut self, repo: &str, pulls: Vec<Value>) -> &mut World {
+        let (owner, name) = repo.split_once('/').unwrap();
+        self.gh(
+            &format!("graphql pulls owner={owner} name={name}"),
+            reducer_listing(pulls),
+        )
     }
 
     /// The owner mailbox fixture's log, one argv line per call plus its
@@ -335,8 +328,8 @@ fn comments(ids: &[&str], newest: &[(&str, &str)]) -> Value {
 /// A GitHub world where every audit of `repo` answers quiet: the workflow
 /// list proves every workflow absent, so the refresh and main-push reads
 /// clear and nothing is red; the open pull request and issue lists are
-/// empty, so no contribution is outside; the reducer exits zero, so no
-/// attention stands. A row plants its own reading over these.
+/// empty, so no contribution is outside; no pull request is open to the
+/// reducer, so no attention stands. A row plants its own reading over these.
 fn quiet_audits(world: &mut World, repo: &str) {
     world.gh(
         &format!("repos/{repo}/actions/workflows?per_page=100&page=1"),
@@ -348,7 +341,7 @@ fn quiet_audits(world: &mut World, repo: &str) {
             json!({"body": []}),
         );
     }
-    world.reducer(repo, json!({"exit": 0}));
+    world.pulls(repo, Vec::new());
 }
 
 /// `quiet_audits` for the one repository most rows name.
@@ -2134,14 +2127,20 @@ fn plant_token(world: &World, token: &str) -> PathBuf {
     path
 }
 
-/// The reducer pass, the recorded bytes. The fixture logs its environment.
+/// The head of the reducer row's pull request 12, and the one a push moves
+/// it to.
+const HEAD_12: &str = "abcdef0123456789abcdef0123456789abcdef01";
+const HEAD_12_PUSHED: &str = "bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000";
+
+/// The reducer pass: the github package's reducer reads the repository
+/// `GH_REPO` names, every open pull request, through the `gh` fixture.
 #[test]
 fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once() {
     let mut world = World::new();
     quiet_github(&mut world);
-    world.reducer(
+    world.pulls(
         "owner/repo",
-        json!({"exit": 1, "stdout": "12\tabcdef01\tthreads-open\t2 unresolved\n"}),
+        vec![reducer_pull(12, HEAD_12, "REVIEW_REQUIRED", false, 2)],
     );
     let clock = FakeClock::new();
     let settings = world.settings(&[]);
@@ -2159,32 +2158,35 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
         baseline.get("pr-watch", "owner/repo"),
         Some("12\tthreads-open")
     );
-    assert_eq!(
-        world.reducer_calls(),
-        vec!["GH_REPO=owner/repo argv=[]"],
-        "GH_REPO is in the reducer's environment and it takes no flag"
+    let listings: Vec<String> = world
+        .gh_calls()
+        .into_iter()
+        .filter(|c| c.starts_with("api graphql --paginate -f owner="))
+        .collect();
+    assert!(
+        listings.len() == 1
+            && listings[0]
+                .starts_with("api graphql --paginate -f owner=owner -f name=repo -f query="),
+        "GH_REPO names the repository and the reducer lists every open pull request: {listings:?}"
     );
+    let threads_open = "owner/repo\t12\tabcdef01\tthreads-open\t2 unresolved review thread(s)";
     assert_eq!(
         shared.lock().unwrap().github.as_ref().unwrap().pr_watch,
-        Some(github::pr_watch_context(
-            1,
-            "owner/repo\t12\tabcdef01\tthreads-open\t2 unresolved",
-            ""
-        )),
+        Some(github::pr_watch_context(1, threads_open, "")),
         "the standing attention reaches the heartbeat's slot"
     );
     // A new kind on the baselined pull request is the event, its line
     // after the event line, prefixed with its repository.
-    world.reducer(
+    world.pulls(
         "owner/repo",
-        json!({"exit": 1, "stdout": "12\tabcdef01\tthreads-open\t2 unresolved\n12\tabcdef01\tdisarmed\tauto-merge off\n"}),
+        vec![reducer_pull(12, HEAD_12, "CHANGES_REQUESTED", false, 2)],
     );
     let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
     assert_eq!(
         rendered(&second),
         vec![
             "EVENT pr-watch rc=1",
-            "owner/repo\t12\tabcdef01\tdisarmed\tauto-merge off"
+            "owner/repo\t12\tabcdef01\tchanges-requested\ta reviewer requested changes (reviewDecision CHANGES_REQUESTED)"
         ]
     );
     let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
@@ -2195,16 +2197,31 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
     );
     // The same key under a new head is not news; a key that clears and
     // recurs is.
-    world.reducer(
+    world.pulls(
         "owner/repo",
-        json!({"exit": 1, "stdout": "12\tbbbb0000\tdisarmed\tauto-merge off\n"}),
+        vec![reducer_pull(
+            12,
+            HEAD_12_PUSHED,
+            "CHANGES_REQUESTED",
+            false,
+            0,
+        )],
     );
     let fourth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1720).unwrap();
     assert_eq!(rendered(&fourth), Vec::<String>::new());
-    assert_eq!(baseline.get("pr-watch", "owner/repo"), Some("12\tdisarmed"));
-    world.reducer(
+    assert_eq!(
+        baseline.get("pr-watch", "owner/repo"),
+        Some("12\tchanges-requested")
+    );
+    world.pulls(
         "owner/repo",
-        json!({"exit": 1, "stdout": "12\tbbbb0000\tthreads-open\t1 unresolved\n"}),
+        vec![reducer_pull(
+            12,
+            HEAD_12_PUSHED,
+            "REVIEW_REQUIRED",
+            false,
+            1,
+        )],
     );
     let fifth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1960).unwrap();
     assert_eq!(
@@ -2212,13 +2229,18 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
         "EVENT pr-watch rc=1",
         "a cleared key that recurs is news again"
     );
-    // An error key on a repository's opening pass preempts the baseline.
+    // An error key on a repository's opening pass preempts the baseline:
+    // a review decision outside GitHub's enum is pull request 14's error
+    // line, and what `gh` wrote on stderr follows.
     let mut fresh = World::new();
     quiet_github(&mut fresh);
-    fresh.reducer(
-        "owner/repo",
-        json!({"exit": 1, "stdout": "12\taaaa0000\tthreads-open\t2 unresolved\n12\taaaa0000\terror\tE_REVIEW_STATE read failed\n", "stderr": "review-gate-error=E_REVIEW_STATE value=x\n"}),
-    );
+    let head = "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000";
+    let mut listing = reducer_listing(vec![
+        reducer_pull(12, head, "REVIEW_REQUIRED", false, 2),
+        reducer_pull(14, head, "DISMISSED", false, 0),
+    ]);
+    listing["stderr"] = json!("warning: GraphQL rate limit at 90%");
+    fresh.gh("graphql pulls owner=owner name=repo", listing);
     let mut body = github::body(fresh.github_context(
         fresh.settings(&[]),
         None,
@@ -2230,20 +2252,21 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
     assert_eq!(
         rendered(&opening),
         vec![
-            "EVENT pr-watch rc=1",
-            "owner/repo\t12\taaaa0000\tthreads-open\t2 unresolved",
-            "owner/repo\t12\taaaa0000\terror\tE_REVIEW_STATE read failed",
-            "owner/repo\treview-gate-error=E_REVIEW_STATE value=x"
+            "EVENT pr-watch rc=2",
+            "owner/repo\t12\taaaa0000\tthreads-open\t2 unresolved review thread(s)",
+            "owner/repo\t14\taaaa0000\terror\treview-state read is malformed (GraphQL errors, a missing field, or a value outside the queue or reviewDecision enums)",
+            "owner/repo\twarning: GraphQL rate limit at 90%"
         ],
         "an error at start is the event, and the pass's stderr follows"
     );
     // The reducer's global failure: nonzero with no line is a refusal of
-    // the pass, never no attention; no row moves.
+    // the pass, never no attention; no row moves. GitHub refuses the
+    // listing.
     let mut failing = World::new();
     quiet_github(&mut failing);
-    failing.reducer(
-        "owner/repo",
-        json!({"exit": 2, "stderr": "E_REDUCER_AUTH\n"}),
+    failing.gh(
+        "graphql pulls owner=owner name=repo",
+        json!({"exit": 1, "stderr": "gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)"}),
     );
     let mut body = github::body(failing.github_context(
         failing.settings(&[]),
@@ -2273,10 +2296,14 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     let repo = "vanillagreencom/hyprtrade";
     let mut world = World::new();
     quiet_audits(&mut world, repo);
-    world.reducer(
-        repo,
-        json!({"exit": 1, "stdout": "1144\taaaa0000\trefresh-ready\tCI passed\n"}),
-    );
+    // The lanes app's refresh head, its CI passed, awaiting review.
+    let head = "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000";
+    let mut refresh = reducer_pull(1144, head, "REVIEW_REQUIRED", false, 0);
+    refresh["headRefName"] = json!("kendex/refresh");
+    refresh["author"] = json!({"login": "vanillagreen-fleet-lanes", "__typename": "Bot"});
+    refresh["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"] = json!([{"checkRuns": {"pageInfo": {"hasNextPage": false},
+            "nodes": [{"name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS"}]}}]);
+    world.pulls(repo, vec![refresh.clone()]);
     let clock = FakeClock::new();
     let mut body =
         github::body(world.github_context(world.settings(&[]), None, &[repo], Shared::default()));
@@ -2287,8 +2314,11 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
         "EVENT pr-watch rc=1",
         "the ready head wakes on the opening pass"
     );
-    // Approved: the reducer's line clears, the pull request is still open.
-    world.reducer(repo, json!({"exit": 0}));
+    // Approved and armed: the reducer's line clears, the pull request is
+    // still open.
+    refresh["reviewDecision"] = json!("APPROVED");
+    refresh["autoMergeRequest"] = json!({"mergeMethod": "SQUASH"});
+    world.pulls(repo, vec![refresh]);
     let pull = |state: &str, merged_at: Value| {
         json!({"body": {"number": 1144, "state": state, "title": "refresh", "body": "", "merged_at": merged_at, "merge_commit_sha": null,
             "author_association": "NONE", "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
@@ -2576,7 +2606,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     assert!(
         !world.gh_calls()[calls_before..]
             .iter()
-            .any(|c| c.contains("/alerts?") || c.contains("graphql")),
+            .any(|c| c.contains("/alerts?") || c.contains("vulnerabilityAlerts")),
         "no alert read without a usable token"
     );
     assert_eq!(

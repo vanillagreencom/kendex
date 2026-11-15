@@ -4029,17 +4029,16 @@ impl Fleet {
     /// A hosted world a park of KEN-1 is judged in: the lane's linked
     /// worktree on the provider's disk at head `h2` on `ken-1`, pushed to
     /// `origin`, with its clean status file, the `gh` fixture first on `PATH` answering the
-    /// pull requests planted, and the reducer fixture, silent on `o/r`.
+    /// pull requests planted, and the github package's reducer, which reads
+    /// pull request 7 of `o/r` approved and armed with no open thread.
     fn park_world() -> Fleet {
         let mut fleet = Fleet::hosted(4);
         let bin = fleet.state_dir().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::os::unix::fs::symlink(fixtures().join("gh/gh"), bin.join("gh")).unwrap();
         std::fs::write(bin.join("gh.json"), "{}").unwrap();
-        let reducer = fleet.state_dir().join("pr-watch");
-        std::os::unix::fs::symlink(fixtures().join("pr-watch-fixture/pr-watch.sh"), &reducer)
-            .unwrap();
-        fleet.plant_reducer("o/r", json!({"exit": 0}));
+        let reducer = real_github_script(&bin.join("pr-watch"), "pr-watch.sh");
+        fleet.plant_reducer_pull(reducer_pull(7, REDUCER_HEAD, "APPROVED", true, 0));
         fleet.env.extend([
             ("PATH".to_owned(), tool_path(&[bin.as_path()])),
             (
@@ -4091,16 +4090,20 @@ impl Fleet {
         std::fs::write(path, map.to_string()).unwrap();
     }
 
-    fn plant_reducer(&self, repo: &str, reply: Value) {
-        let path = self.state_dir().join("pr-watch.json");
-        let mut map: Value = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_else(|| json!({}));
-        map[repo] = reply;
+    /// `pull` of `o/r` as GitHub answers the reducer's read of it by number.
+    fn plant_reducer_pull(&self, pull: Value) {
+        let path = self.state_dir().join("bin/gh.json");
+        let mut map: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        map["graphql pulls owner=o name=r"] =
+            json!({"body": {"data": {"repository": {"pullRequest": pull, "mergeQueue": null}}}});
         std::fs::write(path, map.to_string()).unwrap();
     }
 }
+
+/// The head the reducer reads on pull request 7: GitHub's forty hex digits,
+/// which the reducer binds its lines to.
+const REDUCER_HEAD: &str = "abcdef0123456789abcdef0123456789abcdef01";
 
 /// A park is admitted by its pull request or by the lane's own oldest open
 /// ask, judged before anything is signalled: the provider's sandbox check,
@@ -4247,12 +4250,7 @@ fn a_park_is_judged_before_anything_is_signalled() {
         (
             "the reducer's attention",
             park(json!({"pr": 7})),
-            |f| {
-                f.plant_reducer(
-                    "o/r",
-                    json!({"exit": 1, "stdout": "7\topen-thread\tthread\n"}),
-                )
-            },
+            |f| f.plant_reducer_pull(reducer_pull(7, REDUCER_HEAD, "APPROVED", true, 1)),
             Some("attention"),
         ),
         (
@@ -4408,6 +4406,13 @@ fn a_park_is_judged_before_anything_is_signalled() {
                     reason,
                     "{case}: {answer}"
                 );
+                if reason == "attention" {
+                    assert_eq!(
+                        refusal_fields(&answer)["kinds"],
+                        "threads-open",
+                        "{case}: {answer}"
+                    );
+                }
                 if reason == "unpushed" {
                     let fields = refusal_fields(&answer);
                     let remote = if case.ends_with("no remote branch") {

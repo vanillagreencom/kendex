@@ -313,6 +313,73 @@ pub fn isolated_program(program: &Path) -> PathBuf {
     publish(&dir, &format!("{:016x}-{name}", hasher.finish()), &text)
 }
 
+/// The github package's shipped `script` (`github.sh`, `pr-watch.sh`) behind
+/// a wrapper at `at`, which starts it in `at`'s folder under a cleared
+/// environment: that folder first on `PATH`, where the row links its `gh`
+/// fixture, git's ceiling at the temporary root and no git configuration, so
+/// no checkout above the row is the project whose settings it loads, and a
+/// scratch home. The caller's `GH_REPO` and `GITHUB_TOKEN` pass through as
+/// the runtime sets them, and its `GH_TOKEN` too; where it sets none, a
+/// fixture token stands for the operator's sign-in the script would inherit.
+pub fn real_github_script(at: &Path, script: &str) -> PathBuf {
+    let dir = at.parent().expect("the wrapper's folder");
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../github/scripts")
+        .join(script)
+        .canonicalize()
+        .expect("the github package's script");
+    let root = std::env::temp_dir();
+    let home = root.join("isolated-home");
+    std::fs::create_dir_all(&home).expect("the scratch home");
+    write_executable(
+        at,
+        format!(
+            "#!/bin/sh\ncd '{dir}' || exit 1\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{ceiling}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=\"${{GH_TOKEN-fixture-token}}\" ${{GH_REPO+\"GH_REPO=$GH_REPO\"}} ${{GITHUB_TOKEN+\"GITHUB_TOKEN=$GITHUB_TOKEN\"}} '{shipped}' \"$@\"\n",
+            dir = dir.display(),
+            path = tool_path(&[dir]),
+            root = root.display(),
+            home = home.display(),
+            ceiling = ceilings(&root).to_string_lossy(),
+            shipped = shipped.display(),
+        ),
+    );
+    at.to_path_buf()
+}
+
+/// Pull request `number` as GitHub answers the github package's reducer:
+/// open, no draft, `head` (forty hex digits) its head and last commit with
+/// no check run, `review` its `reviewDecision`, its auto-merge armed or not,
+/// out of the queue, `unresolved` open review threads; a row sets any other
+/// field after.
+pub fn reducer_pull(
+    number: u64,
+    head: &str,
+    review: &str,
+    armed: bool,
+    unresolved: usize,
+) -> Value {
+    json!({"number": number, "state": "OPEN", "isDraft": false, "headRefOid": head,
+        "headRefName": format!("pr-{number}"), "createdAt": "2026-08-15T09:00:00Z",
+        "author": {"login": "dev", "__typename": "User"},
+        "autoMergeRequest": if armed { json!({"mergeMethod": "SQUASH"}) } else { Value::Null },
+        "isInMergeQueue": false, "mergeQueueEntry": null, "reviewDecision": review,
+        "commits": {"totalCount": 1, "nodes": [{"commit": {"oid": head,
+            "committedDate": "2026-08-15T09:00:00Z",
+            "checkSuites": {"pageInfo": {"hasNextPage": false}, "nodes": []}}}]},
+        "timelineItems": {"nodes": []},
+        "reviewThreads": {"pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": vec![json!({"isResolved": false}); unresolved]}})
+}
+
+/// The repository's open pull requests `pulls` as the `gh` fixture answers
+/// the reducer's paged read (`graphql pulls owner=O name=N`), one page, the
+/// merge queue off.
+pub fn reducer_listing(pulls: Vec<Value>) -> Value {
+    json!({"body": {"data": {"repository": {
+        "pullRequests": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": pulls},
+        "mergeQueue": null}}}})
+}
+
 /// Whether the calling row runs here: a row that runs the runtime's code
 /// in its own process calls this first with its whole name and returns
 /// when it answers false. The runtime's git reads keep their caller's

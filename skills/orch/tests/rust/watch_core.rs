@@ -2406,15 +2406,16 @@ fn plant_whole(path: &Path, value: &str) {
     std::fs::rename(&partial, path).unwrap();
 }
 
-/// The `gh` fixture's map: the repository's audits answer quiet (no
-/// workflow, no open pull request or issue) and `sign_in` judges every
-/// call's credential.
+/// The `gh` fixture's map: the repository's audits and the reducer's
+/// listing answer quiet (no workflow, no open pull request or issue) and
+/// `sign_in` judges every call's credential.
 fn plant_github(bin: &Path, sign_in: Value) {
     let quiet = json!({
         format!("repos/{SIGN_IN_REPO}/actions/workflows?per_page=100&page=1"):
             {"body": {"total_count": 0, "workflows": []}},
         format!("repos/{SIGN_IN_REPO}/pulls?state=open&per_page=100&page=1"): {"body": []},
         format!("repos/{SIGN_IN_REPO}/issues?state=open&per_page=100&page=1"): {"body": []},
+        "graphql pulls owner=owner name=repo": reducer_listing(Vec::new()),
         "sign-in": sign_in,
     });
     plant_whole(&bin.join("gh.json"), &quiet.to_string());
@@ -2422,20 +2423,16 @@ fn plant_github(bin: &Path, sign_in: Value) {
 
 /// `watch run` on a one-second long cadence over [`SIGN_IN_REPO`], started
 /// with [`START_TOKEN`], which the fixture takes until a row expires it:
-/// the `gh` fixture first on `PATH`, the reducer quiet, the owner's mailbox
-/// the logging fixture, the runner's stderr in `watch.err`.
+/// the `gh` fixture first on `PATH`, the github package's reducer reading
+/// through it, the owner's mailbox the logging fixture, the runner's stderr
+/// in `watch.err`.
 fn spawn_sign_in_watch(dir: &Path) -> std::process::Child {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     link_fixture("gh/gh", &bin.join("gh"));
-    link_fixture("pr-watch-fixture/pr-watch.sh", &bin.join("pr-watch"));
+    real_github_script(&bin.join("pr-watch"), "pr-watch.sh");
     link_fixture("lane-mail-owner/lane-mail", &bin.join("lane-mail"));
     plant_github(&bin, json!({"expired": [], "stored": null}));
-    std::fs::write(
-        bin.join("pr-watch.json"),
-        json!({SIGN_IN_REPO: {"exit": 0}}).to_string(),
-    )
-    .unwrap();
     let mut command = watch_run_with(
         dir,
         &["--interval", "1", "--repo", SIGN_IN_REPO],
@@ -2552,12 +2549,16 @@ fn a_token_that_expires_mid_life_is_renewed_and_the_pass_completes() {
             .any(|l| l.starts_with(&format!("GH_TOKEN= {read}"))),
         "a read went out under the renewed stored login: {calls:?}"
     );
-    assert_eq!(
-        lines_of(&bin.join("pr-watch.env"))
+    let listings: Vec<String> = calls
+        .iter()
+        .filter(|l| l.contains(" api graphql --paginate -f owner=owner -f name=repo "))
+        .cloned()
+        .collect();
+    assert!(
+        listings
             .last()
-            .map(String::as_str),
-        Some("GH_TOKEN="),
-        "the reducer's last run took the renewed pair"
+            .is_some_and(|l| l.starts_with("GH_TOKEN= api graphql")),
+        "the reducer's last listing took the renewed pair: {listings:?}"
     );
 }
 

@@ -114,11 +114,7 @@ impl World {
     fn new_in(parent: &Path) -> World {
         let dir = tempfile::tempdir_in(parent).unwrap();
         let fix = fixtures();
-        for (name, fixture) in [
-            ("linear", "linear-fixture/linear.sh"),
-            ("gh", "gh/gh"),
-            ("github.sh", "github-fixture/github.sh"),
-        ] {
+        for (name, fixture) in [("linear", "linear-fixture/linear.sh"), ("gh", "gh/gh")] {
             std::os::unix::fs::symlink(fix.join(fixture), dir.path().join(name)).unwrap();
         }
         let mail = real_mail(dir.path());
@@ -747,10 +743,6 @@ fn verification_and_report_run_with_the_controller_dead_walled_and_off() {
     for (case, overseer) in controllers {
         let world = World::new();
         world.write_fleet(&report_fleet(overseer));
-        world.plant(
-            "github.json",
-            &json!({"pr-timeline 14 owner/repo": {"body": {"stamps": {"first_commit": "2026-09-20T00:10:00Z"}}}}),
-        );
         let shared = shared_with(vec![verifying_item("KEN-1", "1", DEADLINE_BOXES, false)]);
         let mut verifying = verifying::body(world.verifying_context(shared, Lines::default()));
         let mut ctx = world.report_context();
