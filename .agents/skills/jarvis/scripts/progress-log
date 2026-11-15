@@ -349,12 +349,11 @@ def home_check(home):
                                          "memory note requires " + field))
                 notes.append((name, start + 1, heads[index][2], fields["Supersedes"]))
     for name, number, _, prior in notes:
-        # Notes permits free-form references and historical markings. Only a
-        # supplied local link establishes a mechanically checkable target.
-        for destination in re.findall(r"\[[^]]+\]\(([^)]+)\)", prior):
-            if re.match(r"(?:[A-Za-z][\w+.-]*:|/)", destination):
+        # Notes defines no reference grammar. Only a plain local path and
+        # optional fragment establish evidence; other forms stay unjudged.
+        for path, fragment in re.findall(r"\[[^]\n]+\]\(([\w./-]*)(?:#([\w-]+))?\)", prior):
+            if path.startswith("/") or not (path or fragment):
                 continue
-            path, _, fragment = destination.partition("#")
             target = posixpath.normpath((Path(name).parent / path).as_posix()) if path else name
             anchors = {re.sub(r"[^\w -]", "", title.lower()).replace(" ", "-")
                        for other_name, _, title, _ in notes if other_name == target}

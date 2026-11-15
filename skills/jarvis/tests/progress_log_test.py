@@ -153,6 +153,8 @@ class ProgressLog(MailWorld):
             ("historical marking not parsed", old + new, state_handoff("- KEN-1: next\n"), []),
             ("file link", good.replace("[Prior](facts.md#prior)", "[old subject](facts.md)"),
              state_handoff("- KEN-1: next\n"), []),
+            ("optional link title", good.replace("[Prior](facts.md#prior)", '[Prior](facts.md#prior "Historical note")'),
+             state_handoff("- KEN-1: next\n"), []),
             ("external source", good.replace("[Prior](facts.md#prior)", "[prior](https://example.com/facts#prior)"),
              state_handoff("- KEN-1: next\n"), []),
             ("duplicate", good, state_handoff("- KEN-1: next\n- KEN-1: other\n"),
