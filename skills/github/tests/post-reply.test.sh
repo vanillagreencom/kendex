@@ -133,6 +133,40 @@ a thread id needs no --pr and dry-runs the graphql method|PRRT_kwDOexample123 Th
 URL='https://github.com/owner/repo/pull/23#discussion_r999'
 REPLY_PATH='pulls/23/comments/2633519824/replies'
 
+# gh api --help: -F reads @values from files and converts numbers; -f
+# preserves literal strings. Review replies can contain either kind of text.
+# Assert the argv at the CLI boundary rather than model gh's conversions.
+literal_body_table() {
+  local expected="$1" label body got literal
+  while IFS='|' read -r label body; do
+    build
+    gh_stub_answer api-graphql "{\"data\":{\"addPullRequestReviewThreadReply\":{\"comment\":{\"url\":\"$URL\"}}}}"
+    got="$(run "PRRT_kwDOexample123 $body")"
+    assert_eq "${got%% calls=*}" "rc=0 out=success=true url=$URL err=-" "$label: reply succeeds"
+    literal=false
+    [[ "$(gh_stub_calls)" == *" -F threadId=PRRT_kwDOexample123 -f body=$body" ]] && literal=true
+    assert_eq "$literal" "$expected" "$label: body uses a raw string field"
+  done <<ROWS
+at-prefixed body|@$TMP_ROOT/reply-target
+numeric body|42
+ROWS
+}
+
+printf 'local fixture contents, never the reply text\n' >"$TMP_ROOT/reply-target"
+echo "=== literal GraphQL reply bodies ==="
+literal_body_table true
+
+# Restore the typed field in a disposable source copy: both rows must detect
+# the unsafe argv, even though the staged API response still reports success.
+. "$TEST_DIR/lib/mutant-copy.sh"
+SUBJECT="$(mutant_copy_edit "$TMP_ROOT/typed-body" \
+  '    result=$(gh_graphql "$query" -F threadId="$thread_id" -f body="$body") || return 1' \
+  '    result=$(gh_graphql "$query" -F threadId="$thread_id" -F body="$body") || return 1' \
+  commands/post-reply.sh)"
+echo "=== typed-body must-fail control ==="
+literal_body_table false
+SUBJECT=""
+
 echo "=== which repository the REST reply reaches ==="
 # get_repo_info supplies the owner and repo of every REST path post-reply
 # builds, and it resolves through the shared ladder, so GH_REPO names the
