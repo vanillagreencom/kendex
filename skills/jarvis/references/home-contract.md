@@ -4,14 +4,21 @@ Read when starting a session, adding or changing a personal customization, findi
 
 ## Personal additions
 
-Read this section for an ordinary request to add an agent, add a skill, remember a fact, establish a workstream, or add a hook or schedule. Use the existing owner in the table before acting.
+Read this section for a request to add something to a Jarvis home. Use the existing owner in the table before acting. [Long sessions: Homes](long-session.md#homes) owns record destinations, [Session workflow: Action routes](../workflows/session.md#action-routes) owns loading instructions before an action, and [Memory: Notes](memory.md#notes) owns sourced notes and their index updates.
+
+Put text in a section read at every Start only when every Start acts on it. Otherwise give it a reading route for the action or event that needs it.
 
 | Request | Source owner and reading route |
 |---|---|
 | Add an agent | The home's `agents/NAME.md`, its local source and `[agents.NAME]` declaration in `kendex.toml`, under [Customize](../README.md#customize). Check existing installed agents first; a new agent needs a distinct task scope and a launch route. Installing one grants no task or private-record authority. |
 | Add a skill | The home's `skills/NAME/SKILL.md`, its local source and `[skills.NAME]` declaration, under [Customize](../README.md#customize). Reuse an installed skill when it already owns the task. |
 | Change an installed agent | The consumer manifest's existing agent overrides: `[agent-additional-instructions]` for added instructions and `[agent-frontmatter]` for harness-specific fields. Read the selected harness's supported fields before changing them. Fork through `kendex fork` when the published body must change; read its help first. Never edit a rendered agent to personalize it. |
-| Remember a fact | [Memory: Notes](memory.md#notes) owns its source, date, supersession and index update. |
+| Add a standing rule | Its owning skill or reference under [Homes](long-session.md#homes), with a reading route under [Action routes](../workflows/session.md#action-routes). |
+| Add an event duty | Its owning rule section, loaded for that event under [Action routes](../workflows/session.md#action-routes) and the [Event loop](../workflows/session.md#event-loop). Put its work and checks in their homes under [Homes](long-session.md#homes). |
+| Add a temporary instruction | Instructions in force under [Handoff](long-session.md#handoff). |
+| Add a tool | [Verification: Tools and records](verification.md#tools-and-records) owns reuse and when a recurring operation warrants a tool. |
+| Keep a result | [Homes](long-session.md#homes) selects its record destination; use [Notes](memory.md#notes) for a durable fact, ruling, preference or lesson. |
+| Remember a fact | [Memory: Notes](memory.md#notes). |
 | Establish a workstream | A subject in `memory/workstreams.md`, indexed under [Memory: Notes](memory.md#notes), holds intent, scope, owner and tracker references. Read [Long sessions: Homes](long-session.md#homes) and [Task reconciliation](../workflows/tasks.md) for active tasks, acceptance and waiting conditions. The note is no live queue; the handoff holds only session state. |
 | Add a hook or schedule | Read [Verification](verification.md) and inspect the existing supported event, hook or native scheduling mechanism first. Use its owning package and declared capability. Universal lifecycle and delivery retain their existing runtime and mailbox owners. Add no parallel watcher. |
 
