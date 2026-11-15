@@ -727,6 +727,20 @@ enabled = true
 source = "."
 enabled = true
 
+[hooks.lane-mail-start]
+source = "."
+harnesses = ["copilot"]
+enabled = true
+
+[hooks.lane-mail-prompt]
+source = "."
+harnesses = ["copilot"]
+enabled = true
+
+[hooks.lane-mail-compact]
+source = "."
+enabled = true
+
 [hooks.lane-mail-model-switch]
 source = "."
 enabled = true
