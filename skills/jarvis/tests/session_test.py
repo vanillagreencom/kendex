@@ -2310,21 +2310,24 @@ class SessionContract(unittest.TestCase):
         # a session end (window=False) also ends the task windows left behind.
         tmux = ["tmux", "-L", self.label]
         served = None
+
+        def wait_for_server_exit():
+            # kill-server returns before its server exits; until then the
+            # server drops new clients rather than reporting it is gone.
+            deadline = time.monotonic() + 10
+            while served and time.monotonic() < deadline:
+                with socket.socket(socket.AF_UNIX) as probe:
+                    try:
+                        probe.connect(served)
+                    except (ConnectionRefusedError, FileNotFoundError):
+                        return
+                time.sleep(0.05)
+
         for gone, window in (("pane", False), ("server", False), ("pane", True), ("server", True)):
             with self.subTest(gone=gone, window=window):
-                # A failed row leaves its server; each row starts on none. The
-                # kill-server client returns before its server exits, and until
-                # the exit that server drops each new client, so a row starts
-                # only once the last row's socket refuses a connection.
+                # A failed row leaves its server; each row starts on none.
                 subprocess.run([*tmux, "kill-server"], capture_output=True, env=self.env)
-                deadline = time.monotonic() + 10
-                while served and time.monotonic() < deadline:
-                    with socket.socket(socket.AF_UNIX) as probe:
-                        try:
-                            probe.connect(served)
-                        except (ConnectionRefusedError, FileNotFoundError):
-                            break
-                    time.sleep(0.05)
+                wait_for_server_exit()
                 opened = subprocess.run([*tmux, "new-session", "-d", "-s", "jarvis", "-P", "-F", "#{pane_id} #{window_id}",
                                          self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
                                         capture_output=True, text=True, env=self.env)
@@ -2351,6 +2354,8 @@ class SessionContract(unittest.TestCase):
                         if answer and not reads:
                             subprocess.run([*tmux, "kill-pane", "-t", pane] if gone == "pane" else [*tmux, "kill-server"],
                                            check=True, env=self.env)
+                            if gone == "server":
+                                wait_for_server_exit()
                         reads.append(answer)
                         return answer
 
