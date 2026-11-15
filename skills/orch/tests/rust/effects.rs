@@ -6035,11 +6035,12 @@ struct HostedLaunch {
     scripts: PathBuf,
     tools: PathBuf,
     host_path: PathBuf,
+    ssh: Option<SshHost>,
 }
 
 /// The name the provider runs under in a world's scripts directory, which
 /// its log names as the host.
-const PROVIDER: &str = "provider";
+const PROVIDER: &str = SSH_PROVIDER;
 
 /// `files` written in the checkout `at` and committed there with every
 /// other change it holds.
@@ -6082,23 +6083,16 @@ impl HostedLaunch {
             scripts,
             tools,
             host_path,
+            ssh: None,
         };
         world.plant(record);
         world
     }
 
-    /// The world over the shipped ssh provider, `lane-host-ssh`, run under
-    /// the record's host behind a line that logs each call as the planted
-    /// provider logs it. Only the outside programs are planted: an `ssh` that
-    /// runs each remote command on this disk, in the host's home
-    /// `host-home`, and a `gh` that clones the row's source. The source is a
-    /// repository holding the clone's own scripts (the worktree skill's,
-    /// orch's, the mailbox's and the github package's, copied) and the two
-    /// setups, which answer this build's runtimes; the inventory names
-    /// `KEN-H` on `lane.example`, its clone `clone` beside the source. The
-    /// host's Claude settings consent to the bypass.
+    /// The world over the shipped ssh provider ([`SshHost`]) for `KEN-H`,
+    /// its log the provider's, the runner's account holding the credentials
+    /// a create copies and its path holding the host's `ssh`.
     fn ssh(server: &Server, dir: &Path) -> HostedLaunch {
-        let dir = dir.canonicalize().unwrap();
         let mut runner = Runner::new(server, "stub-confirm");
         runner.verify = Some(5);
         runner.init_fleet();
@@ -6108,151 +6102,39 @@ impl HostedLaunch {
             .join("skills")
             .join("orch")
             .join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        let skills = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .unwrap();
-        write_executable(
-            &scripts.join(PROVIDER),
-            format!(
-                "#!/bin/sh\nprintf 'ORCH_LANE_HOST=%s %s\\n' \"${{ORCH_LANE_HOST##*/}}\" \"$*\" >> '{log}'\nexec '{provider}' \"$@\"\n",
-                log = scripts.join("lane-host.log").display(),
-                provider = skills.join("orch/scripts/lane-host-ssh").display(),
-            ),
-        );
-        let tools = dir.join("tools");
-        let home = dir.join("host-home");
-        let source = dir.join("source");
-        let clone = dir.join("clone");
-        std::fs::create_dir_all(&tools).unwrap();
-        std::fs::create_dir_all(home.join(".claude")).unwrap();
-        std::fs::write(
-            home.join(".claude/settings.json"),
-            "{\"skipDangerousModePermissionPrompt\": true}\n",
-        )
-        .unwrap();
-        write_executable(
-            &tools.join("ssh"),
-            format!(
-                "#!/bin/bash\n# `ssh -t|-T -o OPTION ... -- TARGET LINE` runs LINE on this disk through bash in the host's home, this directory first on the search path; the window's `-t` is logged to ssh.log, the provider's `-T` to ssh-provider.log. A file `cut` here ends the provider's caller at the next `-T`, which fails as a dropped connection.\nset -u\nhere='{tools}'\ncase \"${{1:-}}\" in\n  -t) printf '%s\\n' \"$*\" >> \"$here/ssh.log\" ;;\n  -T) printf '%s\\n' \"$*\" >> \"$here/ssh-provider.log\"\n    if [ -e \"$here/cut\" ]; then rm -f \"$here/cut\"; kill -KILL $(ps -o ppid= -p \"$PPID\"); exit 255; fi ;;\n  *) exit 255 ;;\nesac\nshift\nwhile [ \"${{1:-}}\" = -o ]; do shift 2; done\n[ \"${{1:-}}\" = -- ] || exit 255\nshift 2\ncd '{home}' || exit 255\nexport HOME='{home}' PATH=\"$here:$PATH\"\nexec bash -c \"$*\"\n",
-                tools = tools.display(),
-                home = home.display(),
-            ),
-        );
-        write_executable(
-            &tools.join("gh"),
-            format!(
-                "#!/bin/bash\ncase \"$1 $2\" in\n  'repo clone') exec git clone -q -- '{source}' \"$4\" ;;\n  'repo view') printf 'o/r\\n' ;;\n  'pr list') ;;\n  *) exit 64 ;;\nesac\n",
-                source = source.display(),
-            ),
-        );
-        std::os::unix::fs::symlink(stub("stub-confirm"), tools.join("claude")).unwrap();
-        let install = source.join(".agents/skills");
-        std::fs::create_dir_all(install.join("orch/scripts")).unwrap();
-        let copy = |from: &Path, to: &Path| {
-            let out = program("cp").arg("-R").arg(from).arg(to).output().unwrap();
-            assert!(out.status.success(), "cp: {}", stderr(&out));
-        };
-        for name in ["worktree", "mailbox", "github"] {
-            std::fs::create_dir_all(install.join(name)).unwrap();
-            copy(&skills.join(name).join("scripts"), &install.join(name));
-        }
-        for name in ["resolve-base-branch", "sync-base", "lane-marker", "lib"] {
-            copy(
-                &skills.join("orch/scripts").join(name),
-                &install.join("orch/scripts"),
-            );
-        }
-        for (package, built) in [
-            ("orch", binary()),
-            ("agent-runtime", agent_runtime().to_path_buf()),
-        ] {
-            let entry = if package == "orch" {
-                "orch-runtime"
-            } else {
-                "agent-runtime"
-            };
-            std::fs::create_dir_all(install.join(package).join("scripts")).unwrap();
-            write_executable(
-                &install.join(package).join("scripts/setup"),
-                format!(
-                    "#!/bin/sh\nprintf '{entry}-setup: key=row binary=%s\\n' '{}'\n",
-                    built.display()
-                ),
-            );
-            write_executable(
-                &install.join(package).join("scripts").join(entry),
-                format!("#!/bin/sh\nexec '{}' \"$@\"\n", built.display()),
-            );
-        }
-        std::fs::write(
-            source.join("kendex.settings.toml"),
-            "[env]\nWORKTREE_DEFAULT_BRANCH = \"main\"\n",
-        )
-        .unwrap();
-        std::fs::write(source.join(".gitignore"), ".env.local\ntmp/\n").unwrap();
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &["config", "gc.auto", "0"],
-            &["config", "maintenance.auto", "false"],
-        ] {
-            git(&source, args);
-        }
-        commit_files(&source, &[]);
-        let inventory = dir.join("inventory.json");
-        std::fs::write(
-            &inventory,
-            json!([{
-                "repo": "o/r",
-                "item": "KEN-H",
-                "target": "lane.example",
-                "clone": clone.display().to_string(),
-                "account": dir.join("remote-account").display().to_string(),
-            }])
-            .to_string(),
-        )
-        .unwrap();
+        let host = SshHost::new(dir, &scripts, "KEN-H");
         std::fs::write(runner.state_dir().join("setup-token"), "claude-token-row\n").unwrap();
         std::fs::write(runner.state_dir().join("auth.json"), "{\"seed\":\"row\"}\n").unwrap();
-        runner.env.extend([
-            (
-                "LANE_HOST_SSH_INVENTORY".to_owned(),
-                inventory.display().to_string(),
-            ),
-            (
-                "LANE_HOST_SSH_SOURCE".to_owned(),
-                source.display().to_string(),
-            ),
-        ]);
-        runner.tools = Some(tools.clone());
+        runner.tools = Some(host.tools.clone());
         HostedLaunch {
             runner,
             scripts,
-            tools,
-            host_path: dir.join(".worktrees/clone/lane"),
+            tools: host.tools.clone(),
+            host_path: host.worktree(),
+            ssh: Some(host),
         }
     }
 
-    /// The clone the inventory names, beside the worktree the host's
-    /// worktree command places at its one hosted lane path.
+    /// The shipped provider's host; a world of another kind has none.
+    fn ssh_host(&self) -> &SshHost {
+        self.ssh
+            .as_ref()
+            .expect("a world over the shipped ssh provider")
+    }
+
+    /// The clone the inventory names.
     fn clone(&self) -> PathBuf {
-        self.host_path
-            .parent()
-            .and_then(Path::parent)
-            .and_then(Path::parent)
-            .unwrap()
-            .join("clone")
+        self.ssh_host().clone()
     }
 
     /// The repository the clone is cloned from.
     fn source(&self) -> PathBuf {
-        self.clone().parent().unwrap().join("source")
+        self.ssh_host().source()
     }
 
     /// The host's home, where the provider's remote shell starts.
     fn home(&self) -> PathBuf {
-        self.tools.parent().unwrap().join("host-home")
+        self.ssh_host().home()
     }
 
     /// `path` on the host's disk, relative to the host's home as the

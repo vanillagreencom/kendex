@@ -6528,11 +6528,12 @@ fn on_disk(disk: &Path, path: &str, text: &str) {
     std::fs::write(file, text).unwrap();
 }
 
-/// Through the runtime's provider call to a provider serving the host's disk: the
-/// host's last row, a turn ended on the account's limit, is `usage-limit`;
-/// a file at the same path on this disk is never read. The fleet record is
-/// a hosted record planted as `main` wrote it (`host` the provider, `kind`
-/// `ssh`, `mail_root` the root on the host).
+/// Through the runtime's call to the shipped ssh provider, over a Pi lane
+/// its `create` made and its prefix led: the host's last row, a turn ended
+/// on the account's limit, is `usage-limit`, read by the provider's `cat` of
+/// its path under the lane's root on the host. The fleet record is a hosted
+/// record planted as `main` wrote it (`host` the provider, `kind` `ssh`,
+/// `mail_root` the root on the host).
 #[test]
 fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
     let dir = tempfile::tempdir().unwrap();
@@ -6543,21 +6544,17 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
     let pane = server.open_window("gh-5", dir.path(), &format!("bash -c \"{line}\""));
     let identity = await_named(&server, &pane, "pi");
     await_drawn(&server, &pane, "pi drew this");
-    let root = dir.path().join("remote").join("KEN-5");
+    let scripts = dir.path().join("scripts");
+    let host = SshHost::new(dir.path(), &scripts, "KEN-5");
+    let _lane = host.lead("KEN-5", "pi");
+    let root = host.worktree();
     let rows = root.join("tmp/lane-mail/KEN-5/session-rows.jsonl");
     std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
     std::fs::write(
         &rows,
-        "{\"harness\":\"pi\",\"event\":\"PreToolUse\",\"at\":2}\n",
+        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"429 Usage limit reached for this model\",\"at\":3}\n",
     )
     .unwrap();
-    let scripts = provider_world(dir.path());
-    let disk = scripts.join("disk");
-    on_disk(
-        &disk,
-        &rows.display().to_string(),
-        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"429 Usage limit reached for this model\",\"at\":3}\n",
-    );
     let mut record = lane_record(
         "KEN-5",
         "gh-5",
@@ -6567,7 +6564,7 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
         Some(&identity),
         dir.path(),
     );
-    record["host"] = json!(provider(dir.path()));
+    record["host"] = json!(host.provider());
     record["kind"] = json!("ssh");
     record["mail_root"] = json!(root.display().to_string());
     fleet.set_lanes(vec![record]);
@@ -6575,44 +6572,39 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = scripts.clone();
     let produced = driver.pass(&state);
+    let limits: Vec<String> = event_lines(&produced)
+        .into_iter()
+        .filter(|l| l.starts_with("EVENT usage-limit "))
+        .collect();
     assert_eq!(
-        event_lines(&produced),
+        limits,
         vec!["EVENT usage-limit gh-5 /home/me/.eclaude".to_owned()],
         "{:?} {:?}",
         lines(&produced),
         produced.failed
     );
-    let asked = std::fs::read_to_string(scripts.join("provider.log")).unwrap_or_default();
-    assert!(
-        asked.lines().any(|l| l
-            == format!(
-                "ORCH_LANE_HOST={} cat --item KEN-5 {}",
-                provider(dir.path()),
-                rows.display()
-            )),
-        "{asked}"
+    let asked = format!(
+        "ORCH_LANE_HOST={SSH_PROVIDER} cat --item KEN-5 {}",
+        rows.display()
     );
+    assert!(host.calls().contains(&asked), "{:?}", host.calls());
 }
 
-/// Through the runtime's provider call to a provider serving the host's disk, the
-/// record is read in both places the local read names: the clone its `.git`
-/// names under the state directory its settings name (none: `tmp`), and the
-/// lane root's `tmp`, where a lane whose launch forbids writing the main
-/// checkout keeps it. Either is `handoff` with the record under it once; a
-/// state the host serves that is no JSON object is the pass's
-/// `handoff-read-failed`, never no handoff. The fleet record is a hosted
-/// record planted as `main` wrote it (`host` the provider, `kind` `ssh`,
-/// `mail_root` the root on the host).
+/// Through the runtime's call to the shipped ssh provider, the record is
+/// read in both places the local read names: the clone its `.git` names
+/// under the state directory its settings name (none: `tmp`), and the lane
+/// root's `tmp`, where a lane whose launch forbids writing the main checkout
+/// keeps it. Either is `handoff` with the record under it once; a state the
+/// host serves that is no JSON object is the pass's `handoff-read-failed`,
+/// never no handoff. The fleet record is a hosted record planted as `main`
+/// wrote it (`host` the provider, `kind` `ssh`, `mail_root` the root on the
+/// host).
 #[test]
 fn a_hosted_lanes_handoff_is_read_through_its_provider() {
-    let handoff = r#"{"merged":[],"remaining":["review"],"branch":"b","worktree":"/remote/KEN-4","open_pr":null,"traps":[]}"#;
-    let record_doc = format!("{{\"handoff\":{handoff}}}\n");
-    let clone = "/remote/clone/tmp/workflow-state-KEN-4.json";
-    let root = "/remote/KEN-4/tmp/workflow-state-KEN-4.json";
-    for (case, place, text) in [
-        ("the clone's state", clone, record_doc.as_str()),
-        ("the root's tmp", root, record_doc.as_str()),
-        ("a state that is no JSON", clone, "not json\n"),
+    for (case, in_clone, valid) in [
+        ("the clone's state", true, true),
+        ("the root's tmp", false, true),
+        ("a state that is no JSON", true, false),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -6621,14 +6613,37 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
         let line = format!("printf 'working\\n'; exec {} 600", claude.display());
         let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
         let identity = await_named(&server, &pane, "claude");
-        let scripts = provider_world(dir.path());
-        let disk = scripts.join("disk");
-        on_disk(
-            &disk,
-            "/remote/KEN-4/.git",
-            "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
+        let scripts = dir.path().join("scripts");
+        let host = SshHost::new(dir.path(), &scripts, "KEN-4");
+        let remote = dir.path().join("remote");
+        let lane_root = remote.join("KEN-4");
+        let handoff = format!(
+            r#"{{"merged":[],"remaining":["review"],"branch":"b","worktree":"{}","open_pr":null,"traps":[]}}"#,
+            lane_root.display()
         );
-        on_disk(&disk, place, text);
+        let record_doc = format!("{{\"handoff\":{handoff}}}\n");
+        let text = if valid {
+            record_doc.as_str()
+        } else {
+            "not json\n"
+        };
+        let place = if in_clone {
+            remote.join("clone/tmp/workflow-state-KEN-4.json")
+        } else {
+            lane_root.join("tmp/workflow-state-KEN-4.json")
+        };
+        let clone_root = remote.join("clone").display().to_string();
+        for (path, text) in [
+            (
+                lane_root.join(".git"),
+                format!("gitdir: {clone_root}/.git/worktrees/KEN-4\n"),
+            ),
+            (place.clone(), text.to_owned()),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let place = place.display().to_string();
         let mut record = lane_record(
             "KEN-4",
             "gh-4",
@@ -6638,15 +6653,15 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
             Some(&identity),
             dir.path(),
         );
-        record["host"] = json!(provider(dir.path()));
+        record["host"] = json!(host.provider());
         record["kind"] = json!("ssh");
-        record["mail_root"] = json!("/remote/KEN-4");
+        record["mail_root"] = json!(lane_root.display().to_string());
         fleet.set_lanes(vec![record]);
         let state = fleet.read();
         lane_driver!(server, fleet, readers, driver);
         driver.scripts = scripts.clone();
         let first = driver.pass(&state);
-        if text == record_doc {
+        if valid {
             let said: Vec<String> = lines(&first)
                 .into_iter()
                 .skip_while(|l| l != "EVENT handoff KEN-4")
@@ -6671,14 +6686,14 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
             // which removes the worktree after saving its state there.
             assert_eq!(
                 driver.baseline.get("clone-root", "KEN-4"),
-                Some("/remote/clone"),
+                Some(clone_root.as_str()),
                 "{case}"
             );
-            std::fs::remove_file(disk.join("remote/KEN-4/.git")).unwrap();
+            std::fs::remove_file(lane_root.join(".git")).unwrap();
             driver.pass(&state);
             assert_eq!(
                 driver.baseline.get("clone-root", "KEN-4"),
-                Some("/remote/clone"),
+                Some(clone_root.as_str()),
                 "{case}: the worktree gone"
             );
         } else {
