@@ -12,7 +12,7 @@ Read a named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'He
 
 ## Notes
 
-Read this section when asked to remember a fact or establish a workstream. [Personal additions](home-contract.md#personal-additions) selects the record's existing owner.
+For a request to remember a fact or establish a workstream, start at [Personal additions](home-contract.md#personal-additions), the addition route that selects the record's existing owner. Read this section for the note's fields and index update.
 
 - Put each note under its own `###` heading naming one subject.
 - When you create or update a note, add or update its index row under the [home contract](home-contract.md).

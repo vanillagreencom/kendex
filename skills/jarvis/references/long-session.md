@@ -4,7 +4,7 @@ Read each named rule, handoff or memory section with `.agents/skills/jarvis/scri
 
 ## Homes
 
-Each record kind has one home. Write a record to its home, never to the handoff.
+For additions to a Jarvis home, start at [Personal additions](home-contract.md#personal-additions). Each record kind has one home. Write a record to its home, never to the handoff.
 
 | Record kind | Home |
 |---|---|
@@ -40,9 +40,28 @@ The current handoff defaults to `state/handoff.md` in the [home layout](home-lay
 - Before succession transfers control, reconcile the checkpoint and later log records against live tracker items, the mailbox and relevant memory notes under [Homes](#homes). Record each correction as a state change and advance the checkpoint's covered log range.
 - Rebuild state from the checkpoint and replay later state-change records in their recorded order. Compare the checkpoint time with the clock and the user's staleness bound. If the state is stale, its covered range is incomplete, or a source disagrees, widen the reads to the relevant source history and earlier log records. Do not refuse recovery solely because the state is stale. Keep an unread source as an unresolved next action.
 
-- An archive may hold `INDEX.md`, one Markdown bullet for each file the handoff replacement step archives: `- FILE dates=START..END entries=JSON`. It does not list the copy `jarvis-session succeed` saves. FILE is the file's path inside the archive. START and END are the UTC minutes, `YYYY-MM-DDTHH:MMZ`, of the file's first and last record. `progress-log --archived FILE` adds the line, and writes `unread` for both dates when the file's records cannot date it: no record, or an undated pre-cutover entry. The [progress parser](../scripts/lib/progress.py) owns the compact JSON `entries` array. Each entry carries its source line, recorded id and time, tracker ids and mailbox or Slack message ids. The entry time locates a recorded ruling or lesson; it does not date a cited external source. An unavailable id, full time or identifier list is `unread`; no records gives an empty array. Search these facts in the index, then read FILE at the entry's line. Further `key=value` fields are space-separated. Date readers ignore fields other than `dates`.
+- An archive may hold `INDEX.md`, one Markdown bullet for each file the handoff replacement step archives: `- FILE dates=START..END entries=JSON`.
+  - It does not list the copy `jarvis-session succeed` saves.
+  - FILE is the file's path inside the archive.
+  - START and END are the UTC minutes, `YYYY-MM-DDTHH:MMZ`, of the file's first and last record.
+  - `progress-log --archived FILE` adds the line, and writes `unread` for both dates when the file's records cannot date it: no record, or an undated pre-cutover entry.
+  - The [progress parser](../scripts/lib/progress.py) owns the compact JSON `entries` array.
+  - Each entry carries its source line, recorded id and time, tracker ids and mailbox or Slack message ids.
+  - The entry time locates a recorded ruling or lesson; it does not date a cited external source.
+  - An unavailable id, full time or identifier list is `unread`; no records gives an empty array.
+  - Search these facts in the index, then read FILE at the entry's line.
+  - Further `key=value` fields are space-separated.
+  - Date readers ignore fields other than `dates`.
 - A pre-cutover entry keeps its recorded `HH:MMZ` as `time`, with its full `at` still `unread`.
-- To import a retained index row, run `progress-log --archived FILE` with its available source archive, adding `--handoff PATH` when needed. It enriches each matching FILE row in place and preserves its dates, file identity and other fields. Repetition adds no row. Preexisting duplicate rows keep their date-filter meaning. Import leaves archive bytes intact and infers no facts from file names or modification times. A missing or unreadable archive refuses with `archive-missing` or `archive-unreadable` and leaves the index unchanged. Keep a file's row after pruning; its retained facts remain available, while source evidence is unavailable. `owner-unanswered` skips a file whose END precedes its window and reads a file with no row or an unreadable END. A listed file that is gone and inside the window prints `owner-unanswered: archive-pruned=PATH`: the run goes on, and messages only that file covered are listed again.
+- To import a retained index row, run `progress-log --archived FILE` with its available source archive, adding `--handoff PATH` when needed.
+  - It enriches each matching FILE row in place and preserves its dates, file identity and other fields.
+  - Repetition adds no row.
+  - Preexisting duplicate rows keep their date-filter meaning.
+  - Import leaves archive bytes intact and infers no facts from file names or modification times.
+  - A missing or unreadable archive refuses with `archive-missing` or `archive-unreadable` and leaves the index unchanged.
+  - Keep a file's row after pruning; its retained facts remain available, while source evidence is unavailable.
+  - `owner-unanswered` skips a file whose END precedes its window and reads a file with no row or an unreadable END.
+  - A listed file that is gone and inside the window prints `owner-unanswered: archive-pruned=PATH`: the run goes on, and messages only that file covered are listed again.
 - On each `EVENT owner-unanswered` the watch loop adds, answer the message it names, or record what was done about it in the progress log. [Control-host events: Delivery](control-host-events.md#delivery) states when the loop adds it.
 - Keep a line only if its absence would cause the successor to act wrongly or repeat work.
 - Remove a tracker id from State when its item closes. Keep the completion evidence on the item.
