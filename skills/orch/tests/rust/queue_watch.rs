@@ -1812,9 +1812,12 @@ fn a_settled_probe_is_armed_blocked_at_the_deadline_and_an_unreadable_probe_keep
     world
         .witness("required-build-optional-docs-active")
         .queue(armed_only());
+    // A 30 s poll: the first probe's read, which must settle, has 30 s of
+    // real time on any host.
     let request = QueueWatch {
+        poll: secs(30),
         probe_interval: secs(0),
-        ..probe_request(&world, 3)
+        ..probe_request(&world, 90)
     };
     let reply = world.wait(&request, |world, clock| {
         clock.await_sleepers(1);
@@ -1822,7 +1825,7 @@ fn a_settled_probe_is_armed_blocked_at_the_deadline_and_an_unreadable_probe_keep
             "repos/{REPO}/commits/{HEAD}/check-runs?filter=all&per_page=100&page=1"
         ));
         world.write();
-        clock.release(secs(1));
+        clock.release(secs(30));
     });
     assert_eq!(
         (reply.status, reply.verdict, reply.cause, reply.polls),
@@ -1918,9 +1921,12 @@ fn an_enqueued_entry_is_not_probed_for_a_failed_check() {
 fn the_last_poll_before_the_deadline_runs_no_probe() {
     let mut world = World::new();
     world.witness("required-build-missing").queue(armed_only());
+    // A probe's reads have the poll's length in real time: a 30 s poll, so
+    // a slow host's read is never cut to a reading the rule did not make.
     let request = QueueWatch {
+        poll: secs(30),
         probe_interval: secs(0),
-        ..probe_request(&world, 2)
+        ..probe_request(&world, 60)
     };
     let reply = world.wait(&request, |world, clock| {
         clock.await_sleepers(1);
@@ -1928,7 +1934,7 @@ fn the_last_poll_before_the_deadline_runs_no_probe() {
             world.replies.insert(key, value);
         }
         world.write();
-        clock.release(secs(1));
+        clock.release(secs(30));
     });
     assert_eq!(
         (reply.status, reply.verdict, reply.cause, reply.polls),

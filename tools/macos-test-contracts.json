@@ -182,7 +182,6 @@
     "skills/mailbox/tests/owner-tracker.sh": "linux-duplicate",
     "skills/orch/tests/assertions.test.sh": "linux-duplicate",
     "skills/orch/tests/base-freshness.sh": "linux-duplicate",
-    "skills/orch/tests/codex_round_wait.sh": "linux-duplicate",
     "skills/orch/tests/copilot-lane-context.sh": "linux-duplicate",
     "skills/orch/tests/copilot-session.sh": "linux-duplicate",
     "skills/orch/tests/git-env-isolation.test.sh": "linux-duplicate",

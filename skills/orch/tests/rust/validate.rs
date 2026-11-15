@@ -22,42 +22,6 @@ struct World {
     worktree: PathBuf,
 }
 
-/// A job a row started, and what it runs, outlives the row unless ended
-/// here: it goes on writing its run directory and the item's record after
-/// the scratch is removed, which leaves a part of the scratch behind. Every
-/// process whose argv names the world's root or whose working directory
-/// lies under it is that world's, so each is killed by its own pid, read
-/// again until none stands or the bound passes; a drop never panics.
-impl Drop for World {
-    fn drop(&mut self) {
-        let named = format!("{}/", self.root.display());
-        let deadline = Instant::now() + JOB_BOUND;
-        loop {
-            let standing: Vec<String> = fs::read_dir("/proc")
-                .into_iter()
-                .flatten()
-                .flatten()
-                .filter_map(|entry| {
-                    let pid = entry.file_name().into_string().ok()?;
-                    pid.bytes().all(|b| b.is_ascii_digit()).then_some(pid)
-                })
-                .filter(|pid| {
-                    let proc = Path::new("/proc").join(pid);
-                    fs::read(proc.join("cmdline"))
-                        .is_ok_and(|argv| String::from_utf8_lossy(&argv).contains(&named))
-                        || fs::read_link(proc.join("cwd"))
-                            .is_ok_and(|cwd| cwd.starts_with(&self.root))
-                })
-                .collect();
-            if standing.is_empty() || Instant::now() >= deadline {
-                return;
-            }
-            let _ = program("kill").arg("-KILL").args(&standing).status();
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-}
-
 fn git(worktree: &Path, args: &[&str]) -> String {
     let out = program("git")
         .arg("-C")
@@ -214,6 +178,9 @@ impl World {
         }
     }
 
+    /// The stage once its notice is marked: the detached job's last write
+    /// (the close, the send, then the mark), so a row that started a job
+    /// ends here and no job writes into a world already removed.
     fn wait_marked(&self, run_dir: &str) -> Value {
         let deadline = Instant::now() + JOB_BOUND;
         loop {
@@ -799,6 +766,140 @@ fn a_restacked_trees_own_red_row_outranks_its_recorded_skip() {
     let read = w.read_proof(&ask, &[]);
     assert_eq!(read["proof"], "complete", "{read}");
     assert_eq!(read["rows"][0]["tree"], "t-original");
+}
+
+const CHANGELOG: &str = "# Changelog\n\n## Unreleased\n\n- first\n";
+const SOURCE: (&str, &str) = ("src.rs", "fn main() {}\n");
+
+impl World {
+    /// `files`, each a path and its text, written and committed: the new head.
+    fn commit_files(&self, files: &[(&str, &str)]) -> String {
+        for (name, text) in files {
+            fs::write(self.worktree.join(name), text).unwrap();
+            git(&self.worktree, &["add", name]);
+        }
+        git(&self.worktree, &["commit", "-q", "-m", "change"]);
+        self.head()
+    }
+
+    /// A base that gained `upstream` after the fork point `fork`, and the
+    /// branch restacked onto it as `resolved` resolves it: the new base.
+    fn restack_onto(
+        &self,
+        fork: &str,
+        upstream: &[(&str, &str)],
+        resolved: &[(&str, &str)],
+    ) -> String {
+        git(&self.worktree, &["checkout", "-q", "-b", "upstream", fork]);
+        let base = self.commit_files(upstream);
+        git(&self.worktree, &["checkout", "-q", "-B", "main", &base]);
+        self.commit_files(resolved);
+        base
+    }
+
+    /// The real changelog classifier at its install path.
+    fn install_classifier(&self) {
+        let guards = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../commit-guards")
+            .canonicalize()
+            .unwrap();
+        std::os::unix::fs::symlink(guards, self.worktree.join(".agents/skills/commit-guards"))
+            .unwrap();
+    }
+
+    /// `validate entry --restack-check` against `base`: its exit and its
+    /// answer's words, less the run's directory and heads.
+    fn restack_check(&self, base: &str) -> (Option<i32>, String) {
+        let wt = self.worktree.display().to_string();
+        let out = self.entry(&["--restack-check", "--worktree", &wt, "--base", base], &[]);
+        let words: Vec<String> = text(&out)
+            .split(' ')
+            .filter(|w| {
+                !["run-dir=", "validated-head=", "head="]
+                    .iter()
+                    .any(|k| w.starts_with(k))
+            })
+            .map(str::to_owned)
+            .collect();
+        (out.status.code(), words.join(" "))
+    }
+}
+
+/// A restack skips its retest only where the validated tree merged onto the
+/// new base is the restacked head, or differs from it only in changelog
+/// conflicts whose resolution keeps every line outside the entries; every
+/// other reading, the classifier's own absence among them, owes the retest.
+/// The real check and the real classifier, over branches with one passing
+/// full run.
+#[test]
+fn a_restack_check_skips_only_a_clean_or_changelog_only_merge_of_the_passed_tree() {
+    let retest = |cause: &str| (Some(1), format!("restack=retest cause={cause}"));
+    let skip = |condition: &str, paths: &str| {
+        (
+            Some(0),
+            format!("restack=skip condition={condition} paths={paths}"),
+        )
+    };
+    let passed = |w: &World| {
+        let out = w.local(&[], &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+    };
+
+    // A clean merge.
+    let w = World::new();
+    let fork = w.commit_files(&[("CHANGELOG.md", CHANGELOG)]);
+    w.commit_files(&[SOURCE]);
+    assert_eq!(w.restack_check("main"), retest("no-passing-run"));
+    passed(&w);
+    let base = w.restack_onto(&fork, &[("upstream.txt", "upstream\n")], &[SOURCE]);
+    assert_eq!(w.restack_check(&base), skip("no-conflict", "none"));
+    assert_eq!(w.restack_check("absent-ref"), retest("base-unreadable"));
+    git(&w.worktree, &["symbolic-ref", "HEAD", "refs/heads/unborn"]);
+    assert_eq!(w.restack_check(&base), retest("head-unreadable"));
+    git(&w.worktree, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    w.commit_files(&[("upstream.txt", "edited after the restack\n")]);
+    assert_eq!(
+        w.restack_check(&base),
+        retest("path-unconflicted path=upstream.txt")
+    );
+    let red = w.local(&["--fresh"], &[("DEV_VALIDATE_CMD", "false")]);
+    assert_eq!(red.status.code(), Some(1), "{}", stderr(&red));
+    assert_eq!(w.restack_check(&base), retest("newer-red"));
+
+    // A changelog conflict, each side's entry kept.
+    let w = World::new();
+    let fork = w.commit_files(&[("CHANGELOG.md", CHANGELOG)]);
+    w.commit_files(&[SOURCE, ("CHANGELOG.md", &format!("{CHANGELOG}- branch\n"))]);
+    passed(&w);
+    let base = w.restack_onto(
+        &fork,
+        &[("CHANGELOG.md", &format!("{CHANGELOG}- base\n"))],
+        &[
+            SOURCE,
+            ("CHANGELOG.md", &format!("{CHANGELOG}- base\n- branch\n")),
+        ],
+    );
+    assert_eq!(w.restack_check(&base), retest("classifier-missing"));
+    w.install_classifier();
+    assert_eq!(w.restack_check(&base), skip("version-only", "CHANGELOG.md"));
+    w.commit_files(&[(
+        "CHANGELOG.md",
+        &format!("{CHANGELOG}- base\n- branch\n\nA line outside the entries.\n"),
+    )]);
+    assert_eq!(w.restack_check(&base), retest("hunk path=CHANGELOG.md"));
+
+    // A code conflict.
+    let w = World::new();
+    let fork = w.commit_files(&[("code.txt", "one\ntwo\nthree\n")]);
+    w.commit_files(&[("code.txt", "one\nbranch\nthree\n")]);
+    passed(&w);
+    let base = w.restack_onto(
+        &fork,
+        &[("code.txt", "one\nbase\nthree\n")],
+        &[("code.txt", "one\nbase and branch\nthree\n")],
+    );
+    w.install_classifier();
+    assert_eq!(w.restack_check(&base), retest("unclassified path=code.txt"));
 }
 
 #[test]
@@ -1682,7 +1783,7 @@ fn a_unit_launch_hands_the_manager_the_callers_variables_and_open_file_limit() {
         ],
     ));
     let dir = started["run_dir"].as_str().unwrap();
-    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    assert_eq!(w.wait_marked(dir)["outcome"], "pass");
     let launches = fs::read_to_string(Path::new(&manager).join("launches")).unwrap();
     let unit = launches.lines().next().unwrap();
     // The unit is named for the worktree it validates and its run's own
@@ -1750,7 +1851,7 @@ fn a_set_memory_cap_is_the_validation_units_hard_limit_with_no_swap_and_no_oom_s
         }
         let started = ok(&w.start(&[], &extra));
         let dir = started["run_dir"].as_str().unwrap();
-        assert_eq!(w.wait_closed(dir)["outcome"], "pass", "{cap:?}");
+        assert_eq!(w.wait_marked(dir)["outcome"], "pass", "{cap:?}");
         let (words, line) = unit_launch(&manager, dir);
         for property in [
             "MemoryMax=1073741824",
@@ -1827,7 +1928,7 @@ fn a_memory_cap_no_cgroup_of_the_run_holds_is_said_unheld_once_and_the_run_runs(
             ],
         ));
         let dir = started["run_dir"].as_str().unwrap();
-        let stage = w.wait_closed(dir);
+        let stage = w.wait_marked(dir);
         assert_eq!(stage["outcome"], "pass", "{cause}");
         let word = format!(" memory-cap=unavailable cause={cause}");
         let line = stage["job"]["line"].as_str().unwrap();
@@ -1945,7 +2046,7 @@ fn a_host_without_systemd_run_runs_the_job_under_setsid_beyond_its_starters_grou
         .args(["-KILL", "--", &format!("-{starter}")])
         .status();
     let dir = started["run_dir"].as_str().unwrap();
-    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    assert_eq!(w.wait_marked(dir)["outcome"], "pass");
     let log = run_file(dir, "log");
     assert!(
         log.starts_with("runner=setsid reason=no-systemd-run pid="),
@@ -1990,7 +2091,7 @@ fn a_user_manager_that_does_not_answer_the_probe_leaves_the_job_to_setsid_naming
         ],
     ));
     let dir = started["run_dir"].as_str().unwrap();
-    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    assert_eq!(w.wait_marked(dir)["outcome"], "pass");
     let log = run_file(dir, "log");
     assert!(
         log.starts_with(
@@ -2019,7 +2120,7 @@ fn a_user_manager_that_does_not_answer_the_probe_leaves_the_job_to_setsid_naming
             ],
         ));
         let dir = started["run_dir"].as_str().unwrap();
-        assert_eq!(w.wait_closed(dir)["outcome"], "pass", "{linger}");
+        assert_eq!(w.wait_marked(dir)["outcome"], "pass", "{linger}");
         let log = run_file(dir, "log");
         assert!(log.starts_with(want), "{linger}: {log}");
         assert!(
@@ -2040,7 +2141,7 @@ fn a_host_with_a_user_manager_and_no_setsid_runs_the_job_in_a_unit() {
     );
     let started = ok(&w.start(&[], &[("PATH", &path), ("VALIDATE_MANAGER_DIR", &manager)]));
     let dir = started["run_dir"].as_str().unwrap();
-    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    assert_eq!(w.wait_marked(dir)["outcome"], "pass");
     assert!(
         run_file(dir, "log").starts_with("runner=systemd unit=orch-validate-"),
         "{}",
@@ -2054,7 +2155,7 @@ fn a_worktree_path_holding_a_dollar_reaches_its_unit_as_written_and_names_none()
     let (path, manager) = manager(&w);
     let started = ok(&w.start(&[], &[("PATH", &path), ("VALIDATE_MANAGER_DIR", &manager)]));
     let dir = started["run_dir"].as_str().unwrap();
-    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    assert_eq!(w.wait_marked(dir)["outcome"], "pass");
     let launches = fs::read_to_string(Path::new(&manager).join("launches")).unwrap();
     let unit = launches.lines().next().unwrap();
     // A unit name carries no `$`; the manager reads `$$` as one `$`.
@@ -2729,7 +2830,7 @@ fn a_detached_start_returns_at_its_budget_with_the_run_going_and_a_wait_reads_it
         assert_eq!(field(&text(&out), "state"), "done", "{}", text(&out));
         assert_eq!(field(&text(&out), "validate"), "pass", "{}", text(&out));
         if admitted {
-            assert_eq!(w.wait_closed(&dir)["outcome"], "pass");
+            assert_eq!(w.wait_marked(&dir)["outcome"], "pass");
         }
     }
 }
@@ -4509,7 +4610,7 @@ fn a_unit_run_is_stopped_by_its_recorded_unit_name_and_a_refused_stop_fails() {
     assert_eq!(stops.lines().collect::<Vec<_>>(), [unit(&dirs[0])]);
     until(|| !unit_live(&dirs[0]));
     assert!(unit_live(&dirs[1]));
-    assert_eq!(one.wait_closed(&dirs[0])["outcome"], "stopped");
+    assert_eq!(one.wait_marked(&dirs[0])["outcome"], "stopped");
     // A manager that refuses the stop fails it.
     let wt = two.worktree.display().to_string();
     let mut refusing = extra.to_vec();
@@ -4517,7 +4618,7 @@ fn a_unit_run_is_stopped_by_its_recorded_unit_name_and_a_refused_stop_fails() {
     let out = two.entry(&["--stop", "--worktree", &wt], &refusing);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     assert!(stderr(&out).contains("stop-failed"), "{}", stderr(&out));
-    assert_eq!(two.wait_closed(&dirs[1])["outcome"], "stopped");
+    assert_eq!(two.wait_marked(&dirs[1])["outcome"], "stopped");
     // An ad hoc run's unit the manager no longer has ended on its own: the
     // stop that finds it gone stops nothing and fails nothing.
     let three = World::new();

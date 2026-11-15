@@ -2639,6 +2639,10 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
         /// Whether the runner's identity is still an obligation afterwards:
         /// discharged by its own stop, never by the window's close.
         identity_stands: bool,
+        /// The stop's grace where the stop's timeout is the answer, so it
+        /// times out within the row; a stop that completes keeps the
+        /// product's grace, which its answer never waits out.
+        grace: Option<&'static str>,
     }
     let rows = [
         Row {
@@ -2649,6 +2653,7 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
             cause_prefix: "server-unreachable",
             pane_stands: true,
             identity_stands: true,
+            grace: None,
         },
         Row {
             name: "the window close is refused",
@@ -2658,6 +2663,7 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
             cause_prefix: "pane-close:",
             pane_stands: false,
             identity_stands: false,
+            grace: None,
         },
         // The runner's stop times out: a `kill` that signals nothing stands
         // in for a process that ignores its signals, and the runner's
@@ -2670,6 +2676,7 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
             cause_prefix: "stop-timeout:",
             pane_stands: true,
             identity_stands: true,
+            grace: Some("1"),
         },
     ];
     for row in rows {
@@ -2704,10 +2711,11 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
         runner.write_fleet(&fleet);
         runner.tools = Some(fixtures().join(row.tools));
         runner.env.push(("TMUX_REAL".to_owned(), which_tmux()));
-        // A short grace, so a stop that times out does so within the row.
-        runner
-            .env
-            .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
+        if let Some(grace) = row.grace {
+            runner
+                .env
+                .push(("ORCH_LANE_CLOSE_SECS".to_owned(), grace.to_owned()));
+        }
         if let Some(verb) = row.fail_verb {
             runner
                 .env
