@@ -60,6 +60,8 @@ struct Fleet {
     dir: TempDir,
     cap: u32,
     env: Vec<(String, String)>,
+    /// The ssh host of a [`Fleet::ssh`] world, in a folder of its own.
+    host: Option<(TempDir, SshHost)>,
 }
 
 impl Fleet {
@@ -68,6 +70,7 @@ impl Fleet {
             dir: tempfile::tempdir().unwrap(),
             cap,
             env: Vec::new(),
+            host: None,
         }
     }
 
@@ -2587,6 +2590,33 @@ impl Fleet {
         fleet
     }
 
+    /// [`Fleet::hosted`] whose lanes the shipped ssh provider hosts
+    /// ([`SshHost`] for the rows' one item) in place of the fixture provider: no
+    /// `LANE_HOST_STUB_*` answer, the host's clone not yet made.
+    fn ssh(cap: u32) -> Fleet {
+        let mut fleet = Fleet::hosted(cap);
+        fleet
+            .env
+            .retain(|(name, _)| !name.starts_with("LANE_HOST_STUB_"));
+        let dir = tempfile::tempdir().unwrap();
+        let host = SshHost::new(dir.path(), &dir.path().join("scripts"), "KEN-1");
+        fleet.host = Some((dir, host));
+        fleet
+    }
+
+    fn host(&self) -> &SshHost {
+        &self.host.as_ref().expect("an ssh world").1
+    }
+
+    /// [`hosted_lane`] on this fleet's ssh host: the record names its
+    /// provider, and the root its lane has there.
+    fn ssh_lane(&self, item: &str) -> Value {
+        let mut lane = hosted_lane(item);
+        lane["host"] = json!(self.host().provider());
+        lane["mail_root"] = json!(self.host().worktree().display().to_string());
+        lane
+    }
+
     /// One more `LANE_HOST_STUB_*` answer for the provider.
     fn answer(&mut self, name: &str, value: &str) {
         self.env
@@ -2634,10 +2664,22 @@ impl Fleet {
     /// real `lane-mail` reads the lane's mailbox files on its host through
     /// the same provider, probes it with one `touch` after a read that
     /// found no file, and reads its state with `list` where the probe fails.
+    /// An ssh host's log is read as the fixture's: the runtime's calls
+    /// alone, under the record's host, their capability reads left out.
     fn provider_log(&self) -> (Vec<String>, Vec<String>) {
+        let lines = match &self.host {
+            Some((_, host)) => host
+                .calls()
+                .iter()
+                .filter_map(|l| l.strip_prefix(&format!("ORCH_LANE_HOST={SSH_PROVIDER} ")))
+                .filter(|l| *l != "capabilities")
+                .map(str::to_owned)
+                .collect(),
+            None => self.lines("provider.log"),
+        };
         let (mut mail, mut rest) = (Vec::new(), Vec::new());
         let (mut after_read, mut after_probe) = (false, false);
-        for line in self.lines("provider.log") {
+        for line in lines {
             let read = line.contains("/tmp/lane-mail/");
             let probe = after_read && line.starts_with("touch --item ");
             let state = after_probe && line == "list";
@@ -2804,21 +2846,22 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
 }
 
 /// A merged hosted lane whose clone left its host closes all the same: the
-/// provider answers `status` and `stop` as it does with no clone, each
-/// refused `<verb>-unowned` with status 75, its `close` `closed=absent`,
-/// and its `list` names no row for the item; the close skips the stop it
-/// cannot make, ends the lane `done` with that line, and the item's files
-/// leave once the archive under the configured root holds them.
+/// shipped provider over a host holding no clone refuses `status` and
+/// `stop` `<verb>-unowned` with status 75, answers its `close`
+/// `closed=absent` and lists the item's row `available`; the close skips
+/// the stop it cannot make, ends the lane `done` with that line, and the
+/// item's files leave once the archive under the configured root holds
+/// them.
 #[test]
 fn a_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_archived_and_removed() {
     let archive_root = tempfile::tempdir().unwrap();
-    let mut fleet = Fleet::hosted(4);
+    let mut fleet = Fleet::ssh(4);
     fleet.env.push((
         "ORCH_ARCHIVE_ROOT".to_owned(),
         archive_root.path().display().to_string(),
     ));
     git_checkout(fleet.state_dir());
-    gone_clone(&mut fleet, hosted_lane("KEN-1"));
+    fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
     fleet.plant_tracker("KEN-1", "completed");
     let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
     let held = relative(&item_state);
@@ -2856,26 +2899,29 @@ fn a_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_archived_and_
     assert_eq!(
         fleet.provider_calls(),
         [
-            "status --item KEN-1 --harness claude",
-            "cat --item KEN-1 /w/ken-1/.git",
-            "touch --item KEN-1",
-            "stop --item KEN-1 --harness claude",
-            "close --item KEN-1 --merged",
-            "list",
+            "status --item KEN-1 --harness claude".to_owned(),
+            format!(
+                "cat --item KEN-1 {}/.git",
+                fleet.host().worktree().display()
+            ),
+            "touch --item KEN-1".to_owned(),
+            "stop --item KEN-1 --harness claude".to_owned(),
+            "close --item KEN-1 --merged".to_owned(),
+            "list".to_owned(),
         ]
     );
 }
 
 /// An unmerged hosted lane whose clone left its host closes as an exited
-/// one does: the provider's `status-unowned` refusal is no lane to judge,
-/// the stop it cannot make is skipped, and the canceled item's files leave
-/// before the provider's close answers `closed=absent`.
+/// one does: the shipped provider's `status-unowned` refusal is no lane to
+/// judge, the stop it cannot make is skipped, and the canceled item's files
+/// leave before the provider's close answers `closed=absent`.
 #[test]
 fn an_unmerged_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_removed() {
-    let mut fleet = Fleet::hosted(4);
-    let mut unmerged = hosted_lane("KEN-1");
+    let fleet = Fleet::ssh(4);
+    let mut unmerged = fleet.ssh_lane("KEN-1");
     unmerged.as_object_mut().unwrap().remove("cycle");
-    gone_clone(&mut fleet, unmerged);
+    fleet.write_lanes(vec![unmerged]);
     fleet.plant_tracker("KEN-1", "canceled");
     let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
@@ -2908,33 +2954,16 @@ fn an_unmerged_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_rem
     );
 }
 
-/// `lane`, the fleet's one record, on a provider that answers as the real
-/// one does once the lane's clone left its host: `status` and `stop`
-/// refused `<verb>-unowned` with status 75, `close` `closed=absent`, and a
-/// `list` naming no row for the item; every other verb the fixture's.
-fn gone_clone(fleet: &mut Fleet, mut lane: Value) {
-    fleet.answer("CLOSE_LINE", "closed=absent item=KEN-1");
-    fleet.answer("LIST", "");
-    let gone = fleet.state_dir().join("gone-clone-provider");
-    write_executable(
-        &gone,
-        format!(
-            "#!/bin/bash\ncase \"$1\" in\nstatus|stop)\n  printf '%q ' \"$@\" >> \"$LANE_HOST_STUB_LOG\"\n  printf '\\n' >> \"$LANE_HOST_STUB_LOG\"\n  printf 'lane-host-ssh: %s-unowned item=%s\\n' \"$1\" \"$3\" >&2\n  exit 75 ;;\nesac\nexec '{}' \"$@\"\n",
-            provider()
-        ),
-    );
-    lane["host"] = json!(gone.display().to_string());
-    fleet.write_lanes(vec![lane]);
-}
-
 /// The item's files leave before the provider's close: a removal that
 /// fails holds the close unconfirmed with `item_files` failed, and the
-/// provider is never asked to close; the repeat, the files free to go,
-/// runs the close again, removes them and closes the sandbox.
+/// shipped provider, which stopped the running lane, is never asked to
+/// close; the repeat, the files free to go, runs the close again, removes
+/// them and closes the sandbox, no archive root configured.
 #[test]
 fn a_hosted_close_whose_items_files_cannot_leave_never_asks_the_provider_to_close() {
-    let fleet = Fleet::hosted(4);
-    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    let fleet = Fleet::ssh(4);
+    let _lane = fleet.host().lead("KEN-1", "claude");
+    fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
     fleet.plant_tracker("KEN-1", "completed");
     let held = plant(fleet.state_dir(), "KEN-1.run/stdout.log");
     let run_dir = held.parent().unwrap().to_path_buf();
@@ -2957,7 +2986,7 @@ fn a_hosted_close_whose_items_files_cannot_leave_never_asks_the_provider_to_clos
     assert_eq!(result["word"], "closed", "{answer}");
     assert_eq!(
         result["observation"]["host_close"],
-        "kept=/srv/archive/KEN-1",
+        "kept=none",
         "{answer} {:?}",
         fleet.provider_calls()
     );
@@ -3167,15 +3196,15 @@ fn a_close_reads_its_lane_on_the_controllers_recorded_server() {
     );
 }
 
-/// `keep-sandbox` on a hosted lane its provider reads exited ends the
-/// attempt and keeps the sandbox: nothing is stopped or closed through the
-/// provider, the record reads stopped with its work kept, its sandbox
-/// standing and no park owed.
+/// `keep-sandbox` on a hosted lane the shipped provider reads exited, its
+/// led harness ended, ends the attempt and keeps the sandbox: nothing is
+/// stopped or closed through the provider, the record reads stopped with
+/// its work kept, its sandbox standing and no park owed.
 #[test]
 fn a_kept_sandbox_retires_the_attempt_and_asks_the_provider_for_no_stop_or_close() {
-    let mut fleet = Fleet::hosted(4);
-    fleet.answer("HARNESS_STATE", "exited");
-    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    let fleet = Fleet::ssh(4);
+    drop(fleet.host().lead("KEN-1", "claude"));
+    fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
     fleet.plant_tracker("KEN-1", "started");
     let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1", "mode": "keep-sandbox"}));
@@ -5584,7 +5613,8 @@ fn rounds_state(fix: u64) -> Value {
 
 /// A merged hosted lane's close records its cycle through the real
 /// pr-timeline over the `gh` fixture, its rounds read where its host kept
-/// its state, through the real dispatcher: the clone its worktree's `.git`
+/// its state, through the real dispatcher and the shipped ssh provider over
+/// a led lane: the clone its worktree's `.git`
 /// names, else the copy its merge saved there, which the clone the watch
 /// kept still names once the merge's close-out removed the worktree, else
 /// the archive the fleet log's last `kept=` row names, read only where it
@@ -5616,7 +5646,8 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         ("the close-out archive's declared state", Some(16)),
         ("no state anywhere", None),
     ] {
-        let mut fleet = Fleet::hosted(4);
+        let mut fleet = Fleet::ssh(4);
+        let _lane = fleet.host().lead("KEN-1", "claude");
         let archive_root = tempfile::tempdir().unwrap();
         let skills = fleet.state_dir().join(".agents/skills");
         let catalog = orch_package().parent().unwrap().to_path_buf();
@@ -5635,21 +5666,24 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         fleet
             .env
             .push(("GH_TOKEN".to_owned(), "fixture-token".to_owned()));
-        let disk = fleet.state_dir().join("provider-disk");
-        let put = |path: &str, text: &str| {
-            let at = disk.join(path.trim_start_matches('/'));
+        let (clone, worktree) = (fleet.host().clone(), fleet.host().worktree());
+        let put = |at: &Path, text: &str| {
             std::fs::create_dir_all(at.parent().unwrap()).unwrap();
             std::fs::write(at, text).unwrap();
         };
-        let gitfile = "gitdir: /w/clone/.git/worktrees/ken-1\n";
+        // The worktree's removal by the merge's close-out, its `.git` gone.
+        let removed = || std::fs::remove_dir_all(&worktree).unwrap();
+        let on_host = |pr: u64| clone.join(format!("tmp/cycle-state/workflow-state-pr-{pr}.json"));
         let saved = |pr: u64| format!("/w/clone/tmp/cycle-state/workflow-state-pr-{pr}.json");
         // The clone a watch pass read from the worktree's `.git`, kept in
         // the baseline beside the fleet state.
         let retained = || {
+            removed();
             std::fs::write(
                 fleet.state_dir().join("oversee-watch.baseline.json"),
-                json!({"rows": [{"kind": "clone-root", "identity": "KEN-1", "value": "/w/clone"}]})
-                    .to_string(),
+                json!({"rows": [{"kind": "clone-root", "identity": "KEN-1",
+                    "value": clone.display().to_string()}]})
+                .to_string(),
             )
             .unwrap();
         };
@@ -5661,15 +5695,17 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             "{} cause=undeclared",
             fleet.state_dir().join("kept.tgz").display()
         );
-        let mut tried = vec![format!("{REMOTE_ROOT}/.git")];
+        let mut tried = vec![format!("{}/.git", worktree.display())];
         // The archive a close kept, `marker` its `lane-host-state` member
         // where it has one and `listed` its `lane-host-saved` member, each
         // `linked` member a hard link to the member it names, archived after
-        // it, and the fleet log's row naming it.
+        // it, and the fleet log's row naming it; the worktree it was kept
+        // from removed.
         let archive = |marker: Option<&str>,
                        listed: Option<&str>,
                        members: &[(&str, Value)],
                        linked: &[(&str, &str)]| {
+            removed();
             let kept = fleet.state_dir().join("kept");
             for (member, state) in members {
                 let at = kept.join(member);
@@ -5705,21 +5741,17 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         };
         let mut log = Vec::new();
         match (case, fix) {
-            ("the clone's state", Some(fix)) => {
-                put(&format!("{REMOTE_ROOT}/.git"), gitfile);
-                put(
-                    "/w/clone/tmp/workflow-state-KEN-1.json",
-                    &rounds_state(fix).to_string(),
-                );
-            }
+            ("the clone's state", Some(fix)) => put(
+                &clone.join("tmp/workflow-state-KEN-1.json"),
+                &rounds_state(fix).to_string(),
+            ),
             ("the merge's saved copy", Some(fix)) => {
-                put(&format!("{REMOTE_ROOT}/.git"), gitfile);
-                put(&saved(7), &rounds_state(fix).to_string());
+                put(&on_host(7), &rounds_state(fix).to_string());
             }
             ("the saved copy after the worktree's removal", Some(fix)) => {
                 retained();
-                put(&saved(6), &rounds_state(9).to_string());
-                put(&saved(7), &rounds_state(fix).to_string());
+                put(&on_host(6), &rounds_state(9).to_string());
+                put(&on_host(7), &rounds_state(fix).to_string());
             }
             ("the archive its close kept", Some(fix)) => log.push(archive(
                 Some("clone/tmp/workflow-state-KEN-1.json\n"),
@@ -5789,6 +5821,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             // archive root is judged against: the lane's directory stays no
             // repository for the cycle read.
             ("the close-out archive's declared state", Some(fix)) => {
+                removed();
                 let dir = fleet.state_dir();
                 std::fs::write(
                     dir.join("workflow-state-KEN-1.json"),
@@ -5815,13 +5848,13 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             }
             _ => {
                 retained();
-                tried.push(saved(7));
+                tried.push(on_host(7).display().to_string());
             }
         }
         if case.contains("non-ASCII") {
             fleet.env.push(("LC_ALL".to_owned(), "C".to_owned()));
         }
-        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+        fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
         let mut doc = fleet.fleet();
         doc["fleet_log"] = json!(log);
         std::fs::write(fleet.fleet_path(), doc.to_string()).unwrap();
@@ -5880,7 +5913,8 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
 /// github.com leaves the class unread as `checkout-other-repo`.
 #[test]
 fn a_closed_lanes_class_is_unread_in_a_checkout_of_another_repository() {
-    let mut fleet = Fleet::hosted(4);
+    let mut fleet = Fleet::ssh(4);
+    let _lane = fleet.host().lead("KEN-1", "claude");
     let project = fleet.state_dir().to_path_buf();
     let catalog = orch_package().parent().unwrap().to_path_buf();
     std::os::unix::fs::symlink(
@@ -5913,7 +5947,7 @@ fn a_closed_lanes_class_is_unread_in_a_checkout_of_another_repository() {
     };
     git(&["init", "-q", "-b", "main", "."]);
     git(&["remote", "add", "origin", "git@github.com:o/other.git"]);
-    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
     fleet.plant_tracker("KEN-1", "completed");
     let answer = fleet.close(
         json!({"op": "close-lane", "item": "KEN-1", "delivery": {"pr": {"pr": 7, "repo": "o/r"}}}),
@@ -5927,13 +5961,15 @@ fn a_closed_lanes_class_is_unread_in_a_checkout_of_another_repository() {
     );
 }
 
-/// A hosted lane's validation runs are its host's: its close stops none
-/// here, even where its root names a directory this machine also holds.
+/// A hosted lane's validation runs are its host's: its close, which the
+/// shipped provider stops on its host, stops none here, even where its
+/// root names a directory this machine also holds.
 #[test]
 fn a_hosted_close_stops_no_validation_run_of_this_machine() {
-    let fleet = Fleet::hosted(4);
+    let fleet = Fleet::ssh(4);
+    let _lane = fleet.host().lead("KEN-1", "claude");
     let (command, run_dir) = validation_run(fleet.state_dir());
-    let mut lane = hosted_lane("KEN-1");
+    let mut lane = fleet.ssh_lane("KEN-1");
     lane["mail_root"] = json!(fleet.state_dir().display().to_string());
     fleet.write_lanes(vec![lane]);
     fleet.plant_tracker("KEN-1", "completed");
@@ -6559,7 +6595,8 @@ fn a_merged_hosted_lane_whose_work_left_its_host_closes_whatever_its_screen_read
 #[test]
 fn a_recorded_landing_brings_the_base_checkout_to_the_landed_base() {
     for dirty in [false, true] {
-        let mut fleet = Fleet::hosted(4);
+        let mut fleet = Fleet::ssh(4);
+        let _lane = fleet.host().lead("KEN-1", "claude");
         let skills = fleet.state_dir().join(".agents/skills");
         let catalog = orch_package().parent().unwrap().to_path_buf();
         std::os::unix::fs::symlink(catalog.join("github"), skills.join("github")).unwrap();
@@ -6607,7 +6644,7 @@ fn a_recorded_landing_brings_the_base_checkout_to_the_landed_base() {
         if dirty {
             std::fs::write(project.join("tracked.txt"), "local\n").unwrap();
         }
-        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+        fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
         fleet.plant_tracker("KEN-1", "completed");
         let answer = fleet.close(
             json!({"op": "close-lane", "item": "KEN-1", "delivery": {"pr": {"pr": 7, "repo": "o/r"}}}),
