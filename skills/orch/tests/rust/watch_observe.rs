@@ -1509,19 +1509,14 @@ fn a_codex_api_error_turn_end_is_no_finished_return() {
     );
     let pane = server.open_window("gh-7", dir.path(), &line);
     await_drawn(&server, &pane, "Bad Request");
-    let mut hosted = hosted_lane(dir.path(), "KEN-7", "gh-7", "/remote/KEN-7");
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-7"]);
+    let _lane = host.lead("KEN-7", "codex");
+    let root = host.lane_root("KEN-7").display().to_string();
+    let mut hosted = hosted_lane(dir.path(), "KEN-7", "gh-7", &root);
     hosted["harness"] = json!("codex");
     hosted["launch"] = json!({"pane": pane, "server": server.pid});
     fleet.set_lanes(vec![hosted]);
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    world.plant_host(&[
-        (
-            &format!("{} capabilities", provider(dir.path())),
-            ok(SSH_LINE),
-        ),
-        ("status --item KEN-7 --harness codex", ok("running\n")),
-    ]);
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();
@@ -3804,6 +3799,23 @@ impl HostedWorld {
         world
     }
 
+    /// [`Self::new`]'s world with the shipped ssh provider ([`SshHost`]) at
+    /// the provider's path in place of the planted one, `items` on its one
+    /// host, each on a clone of its own.
+    fn ssh(dir: &Path, server: &Server, fleet: &Fleet, items: &[&str]) -> (HostedWorld, SshHost) {
+        let scripts = real_close_scripts(dir, server, fleet);
+        let host = SshHost::new(dir, &scripts, items[0]);
+        for item in &items[1..] {
+            host.add(item);
+        }
+        let world = HostedWorld {
+            scripts,
+            bin: dir.join("bin"),
+        };
+        world.plant_gh(json!({}));
+        (world, host)
+    }
+
     fn gh(&self) -> PathBuf {
         self.bin.join("gh")
     }
@@ -3843,15 +3855,6 @@ impl HostedWorld {
             Value::Object(map).to_string(),
         )
         .unwrap();
-    }
-
-    /// [`Self::plant_host`] over argvs a row composed.
-    fn plant_host_owned(&self, answers: &[(String, Value)]) {
-        let answers: Vec<(&str, Value)> = answers
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.clone()))
-            .collect();
-        self.plant_host(&answers);
     }
 
     /// The `gh api` answers, by path.
@@ -4752,33 +4755,6 @@ fn hosted_pane_lane(server: &Server, item: &str, window: &str, dir: &Path) -> (V
     (lane, pane)
 }
 
-/// The provider's answers to the handoff read of a hosted lane at
-/// `/remote/<item>` whose checkout holds no handoff: its `.git` naming the
-/// clone `/x`, empty settings files, and an item state with no record in
-/// the clone's `tmp` and the root's. A row's own answer to one of these
-/// argvs, listed after, stands.
-fn no_handoff(item: &str) -> Vec<(String, Value)> {
-    let root = format!("/remote/{item}");
-    let mut answers = vec![(
-        format!("cat --item {item} {root}/.git"),
-        ok(&format!("gitdir: /x/.git/worktrees/{item}\n")),
-    )];
-    for file in [
-        "kendex.settings.toml",
-        ".kendex/settings.toml",
-        ".env.local",
-    ] {
-        answers.push((format!("cat --item {item} {root}/{file}"), ok("")));
-    }
-    for dir in ["/x", root.as_str()] {
-        answers.push((
-            format!("cat --item {item} {dir}/tmp/workflow-state-{item}.json"),
-            ok("{}"),
-        ));
-    }
-    answers
-}
-
 /// A merged lane's close-out removes its item's live record, so a record
 /// that stands in the clone is a close-out still running or a lane resumed.
 /// A hosted lane the provider's status verb reads exited is `lane-exited`
@@ -4787,7 +4763,8 @@ fn no_handoff(item: &str) -> Vec<(String, Value)> {
 /// gone from the clone it names, is closed through the real close verb
 /// then, its request naming the merge as the delivery the close records as
 /// the lane's cycle, `lane-closed` with the provider's archive line under
-/// it; one whose record stands is not; one with no merged row is closed
+/// it (`kept=none` where no archive root is set); one whose record stands
+/// is not; one with no merged row is closed
 /// with its sandbox kept (`keep-sandbox`, `kept=sandbox`, the record
 /// stopped); one whose provider refuses its close is `lane-close-refused`
 /// with the checkout it kept, its record open. The next pass, on the records
@@ -4799,49 +4776,36 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let items = ["KEN-1", "KEN-2", "KEN-3", "KEN-4", "KEN-5"];
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &items);
+    for item in items {
+        // Each lane's group ended: the provider reads it exited.
+        drop(host.lead(item, "claude"));
+    }
+    // Their worktrees gone; the one with no merged row is kept open by the
+    // gate alone.
+    for item in ["KEN-1", "KEN-3", "KEN-5"] {
+        host.leave(item);
+    }
+    // A worktree that stands with its record in the clone its `.git` names;
+    // the other standing one's close-out removed its record.
+    let state_dir = host.clone_of("KEN-2").join("tmp");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(state_dir.join("workflow-state-KEN-2.json"), "{}").unwrap();
+    // A clone holding a file no render owns: the host's `kendex` owns none,
+    // so the provider refuses the close and keeps the clone.
+    std::fs::write(host.clone_of("KEN-5").join("notes.txt"), "kept\n").unwrap();
+    write_executable(&host.tools.join("kendex"), "#!/bin/sh\necho '[]'\n");
     let lanes: Vec<Value> = items
         .iter()
         .zip(["gh-1", "gh-2", "gh-3", "gh-4", "gh-5"])
-        .map(|(item, window)| hosted_pane_lane(&server, item, window, dir.path()).0)
+        .map(|(item, window)| {
+            let mut lane = hosted_pane_lane(&server, item, window, dir.path()).0;
+            lane["mail_root"] = json!(host.lane_root(item).display().to_string());
+            lane
+        })
         .collect();
     fleet.set_lanes(lanes);
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    let mut answers: Vec<(String, Value)> = items.into_iter().flat_map(no_handoff).collect();
-    for item in items {
-        answers.push((
-            format!("status --item {item} --harness claude"),
-            ok("exited\n"),
-        ));
-    }
-    answers.extend(
-        [
-            ("capabilities", ok(SSH_LINE)),
-            ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
-            ("touch --item KEN-1", ok("")),
-            // No merged row: the gate alone keeps it open, its worktree gone.
-            ("cat --item KEN-3 /remote/KEN-3/.git", answer(2, "")),
-            ("touch --item KEN-3", ok("")),
-            // Its worktree stands and its close-out removed its record.
-            (
-                "cat --item KEN-4 /x/tmp/workflow-state-KEN-4.json",
-                answer(2, ""),
-            ),
-            ("touch --item KEN-4", ok("")),
-            ("cat --item KEN-5 /remote/KEN-5/.git", answer(2, "")),
-            ("touch --item KEN-5", ok("")),
-            // The provider's closes, and its list after each that closed.
-            ("close --item KEN-1", ok("kept=/archive/KEN-1\n")),
-            ("close --item KEN-4", ok("kept=/archive/KEN-4\n")),
-            (
-                "close --item KEN-5",
-                json!({"exit": 3, "stderr": "lane-host-ssh: close-refused path=/w/kept\n"}),
-            ),
-            ("list", ok("")),
-        ]
-        .map(|(argv, answer)| (argv.to_owned(), answer)),
-    );
-    world.plant_host_owned(&answers);
     // The merged pull requests the close records as the lanes' cycles.
     let timeline = |number: u64| {
         let mut pull = pull_seven_timeline();
@@ -4868,22 +4832,23 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
     let first = driver.pass(&state);
     assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
     let second = driver.pass(&state);
+    let kept = format!("path={}", host.clone_of("KEN-5").display());
     assert_eq!(
         lines(&second),
         vec![
             "EVENT lane-exited gh-1",
             "EVENT lane-closed KEN-1",
-            "kept=/archive/KEN-1",
+            "kept=none",
             "EVENT lane-exited gh-2",
             "EVENT lane-exited gh-3",
             "EVENT lane-closed KEN-3",
             "kept=sandbox",
             "EVENT lane-exited gh-4",
             "EVENT lane-closed KEN-4",
-            "kept=/archive/KEN-4",
+            "kept=none",
             "EVENT lane-exited gh-5",
             "EVENT lane-close-refused KEN-5",
-            "path=/w/kept",
+            &kept,
         ],
         "{:?}",
         second.failed
@@ -4939,7 +4904,8 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
 /// its `.git` absent, the first pass asks the real close verb with the
 /// merge as the delivery, which stops the harness through the provider and
 /// records the merge as the lane's cycle: `lane-closed` with its archive
-/// line; the next pass, the same screen, asks nothing again.
+/// line, `kept=none` where no archive root is set; the next pass, the same
+/// screen, asks nothing again.
 #[test]
 fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
     let dir = tempfile::tempdir().unwrap();
@@ -4950,35 +4916,17 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
         dir.path(),
         "printf '✻ Working… (esc to interrupt)\\n'; exec sleep 600",
     );
-    let mut lane = hosted_lane(dir.path(), "issue-1", "gh-1", "/remote/issue-1");
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["issue-1"]);
+    // The pass's read and the close's judge read it running until the
+    // close's stop ends its group; its worktree left the host.
+    let _lane = host.lead("issue-1", "claude");
+    host.leave("issue-1");
+    let root = host.lane_root("issue-1").display().to_string();
+    let mut lane = hosted_lane(dir.path(), "issue-1", "gh-1", &root);
     lane["repo"] = json!("o/r");
     lane["launch"] = json!({"pane": pane, "server": server.pid});
     fleet.set_lanes(vec![lane]);
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    let mut answers = no_handoff("issue-1");
-    answers.extend(
-        [
-            ("capabilities", ok(SSH_LINE)),
-            // The pass's read and the close's judge read it running; once
-            // the close's stop ends it, the provider reads it exited.
-            ("status --item issue-1 --harness claude#1", ok("running\n")),
-            ("status --item issue-1 --harness claude#2", ok("running\n")),
-            ("status --item issue-1 --harness claude", ok("exited\n")),
-            ("cat --item issue-1 /remote/issue-1/.git", answer(2, "")),
-            ("touch --item issue-1", ok("")),
-            // The close's stop of the harness, the provider's close and
-            // its list after it.
-            (
-                "stop --item issue-1 --harness claude",
-                ok("stopped item=issue-1 processes=1\n"),
-            ),
-            ("close --item issue-1", ok("kept=/archive/issue-1\n")),
-            ("list", ok("")),
-        ]
-        .map(|(argv, answer)| (argv.to_owned(), answer)),
-    );
-    world.plant_host_owned(&answers);
     world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
@@ -4990,7 +4938,7 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
     let first = driver.pass(&state);
     assert_eq!(
         lines(&first),
-        vec!["EVENT lane-closed issue-1", "kept=/archive/issue-1"],
+        vec!["EVENT lane-closed issue-1", "kept=none"],
         "{:?}",
         first.failed
     );
@@ -5303,23 +5251,14 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let (one, pane) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
-    fleet.set_lanes(vec![one.clone()]);
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-1"]);
+    // The lane's group ended and its worktree left the host.
+    drop(host.lead("KEN-1", "claude"));
+    host.leave("KEN-1");
+    let (mut one, pane) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
+    one["mail_root"] = json!(host.lane_root("KEN-1").display().to_string());
+    fleet.set_lanes(vec![one]);
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    let mut answers = no_handoff("KEN-1");
-    answers.extend(
-        [
-            ("capabilities", ok(SSH_LINE)),
-            ("status --item KEN-1 --harness claude", ok("exited\n")),
-            ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
-            ("touch --item KEN-1", ok("")),
-            ("close --item KEN-1", ok("kept=/archive/KEN-1\n")),
-            ("list", ok("")),
-        ]
-        .map(|(argv, answer)| (argv.to_owned(), answer)),
-    );
-    world.plant_host_owned(&answers);
     world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
@@ -5352,7 +5291,7 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     let third = driver.pass(&state);
     assert_eq!(
         lines(&third),
-        vec!["EVENT lane-closed KEN-1", "kept=/archive/KEN-1"],
+        vec!["EVENT lane-closed KEN-1", "kept=none"],
         "{:?}",
         third.failed
     );
@@ -5595,13 +5534,9 @@ fn the_prepare_records_are_said_once_per_key() {
     ];
     fleet.set_lanes(lanes.clone());
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    world.plant_host(&[
-        ("capabilities", ok(SSH_LINE)),
-        ("status --item KEN-1 --harness claude", ok("running\n")),
-        ("status --item KEN-2 --harness claude", ok("running\n")),
-        ("status --item KEN-4 --harness claude", ok("running\n")),
-    ]);
+    let running = ["KEN-1", "KEN-2", "KEN-4"];
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &running);
+    let _lanes = running.map(|item| host.lead(item, "claude"));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     let prepare_lines = |produced: &Produced| -> Vec<String> {
@@ -6478,20 +6413,15 @@ fn a_hosted_copilot_lanes_prompt_carries_no_note_from_this_machines_store() {
         "printf '%s\\n' 'Do you want to proceed?' '❯ 1. Yes'; exec bash --norc --noprofile",
     );
     await_drawn(&server, &pane, "Do you want to proceed?");
-    let mut lane = hosted_lane(dir.path(), "KEN-1", "gh-1", "/remote/KEN-1");
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-1"]);
+    let _lane = host.lead("KEN-1", "copilot");
+    let root = host.lane_root("KEN-1").display().to_string();
+    let mut lane = hosted_lane(dir.path(), "KEN-1", "gh-1", &root);
     lane["harness"] = json!("copilot");
     lane["allow_all"] = json!(true);
     lane["launch"] = json!({"pane": pane, "server": server.pid});
     fleet.set_lanes(vec![lane]);
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    world.plant_host(&[
-        (
-            &format!("{} capabilities", provider(dir.path())),
-            ok(SSH_LINE),
-        ),
-        ("status --item KEN-1 --harness copilot", ok("running\n")),
-    ]);
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();
@@ -6723,18 +6653,14 @@ fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pa
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let mut four = hosted_lane(dir.path(), "KEN-4", "gh-4", "/remote/KEN-4");
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-4"]);
+    // The lane's group led and ended: the provider reads it exited.
+    drop(host.lead("KEN-4", "codex"));
+    let root = host.lane_root("KEN-4").display().to_string();
+    let mut four = hosted_lane(dir.path(), "KEN-4", "gh-4", &root);
     four["harness"] = json!("codex");
     fleet.set_lanes(vec![four.clone()]);
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    world.plant_host(&[
-        (
-            &format!("{} capabilities", provider(dir.path())),
-            ok(SSH_LINE),
-        ),
-        ("status --item KEN-4 --harness codex", ok("exited\n")),
-    ]);
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();
@@ -6762,20 +6688,12 @@ fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pa
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    four["host"] = json!(provider(dir.path()));
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-4"]);
+    host.refuse();
+    four["host"] = json!(host.provider());
+    four["mail_root"] = json!(host.lane_root("KEN-4").display().to_string());
     fleet.set_lanes(vec![four]);
     let state = fleet.read();
-    let world = HostedWorld::new(dir.path(), &server, &fleet);
-    world.plant_host(&[
-        (
-            &format!("{} capabilities", provider(dir.path())),
-            ok(SSH_LINE),
-        ),
-        (
-            "status --item KEN-4 --harness codex",
-            json!({"exit": 1, "stderr": "provider down\n"}),
-        ),
-    ]);
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();

@@ -1226,30 +1226,30 @@ fn a_lane_the_wake_may_not_type_into_is_never_typed_into_and_leaves_no_mark() {
     assert_eq!(fleet.turns("lead-8"), Vec::<String>::new());
 }
 
-/// The SSH kind's line with a local pane, as `lane-host-ssh` declares it.
-const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local\n";
-
-/// A hosted lane on the planted provider `box` under the fleet's root,
-/// which answers from `answers` (`lane-host.json` beside it): its window
-/// the Claude stub under a link named `ssh`, so the pane's foreground is
-/// the client and never the harness, recording each line it is typed as a
-/// user turn of `lead-1`. Returns the record and the provider's log.
-fn hosted_lane(fleet: &Fleet, answers: Value) -> (Value, PathBuf) {
-    std::fs::write(
-        fleet.root.join("lane-host.json"),
-        serde_json::to_vec(&answers).unwrap(),
-    )
-    .unwrap();
+/// The one item's hosted lane record on `host`: its window the Claude stub
+/// under a link named `ssh`, so the pane's foreground is the client and never the
+/// harness, recording each line it is typed as a user turn of `lead-1`.
+fn hosted_lane(fleet: &Fleet, host: &str) -> Value {
     let client = fleet.root.join("client");
     std::fs::create_dir(&client).unwrap();
     std::os::unix::fs::symlink(fixtures().join("stub-turns/claude"), client.join("ssh")).unwrap();
     let pane = fleet.open_program("KEN-1", &client.join("ssh"), "lead-1", &[]);
     fleet.server.await_composer(&pane.id);
     let mut lane = fleet.lane("KEN-1", "claude", &pane);
-    lane["host"] = json!(named_host(&fleet.root, "box"));
+    lane["host"] = json!(host);
     lane["kind"] = json!("ssh");
     lane["session_id"] = Value::Null;
-    (lane, fleet.root.join("lane-host.log"))
+    lane
+}
+
+/// The one item's record ([`hosted_lane`]) on the shipped ssh provider
+/// ([`SshHost`]) under the fleet's root, and that host, whose inventory
+/// names the item.
+fn ssh_lane(fleet: &Fleet) -> (Value, SshHost) {
+    let dir = fleet.root.join("host");
+    std::fs::create_dir(&dir).unwrap();
+    let host = SshHost::new(&dir, &dir.join("scripts"), "KEN-1");
+    (hosted_lane(fleet, &host.provider()), host)
 }
 
 fn calls(log: &Path) -> Vec<String> {
@@ -1269,13 +1269,10 @@ fn calls(log: &Path) -> Vec<String> {
 #[test]
 fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_said_unconfirmed_once() {
     let fleet = Fleet::new();
-    let (lane, log) = hosted_lane(
-        &fleet,
-        json!({
-            "capabilities": {"stdout": SSH_LINE},
-            "status --item KEN-1 --harness claude": {"stdout": "running\n"},
-        }),
-    );
+    let (lane, host) = ssh_lane(&fleet);
+    let _lane = host.lead("KEN-1", "claude");
+    // The calls before the pass: the lane's `create`.
+    let before = host.calls().len();
     fleet.set_lanes(vec![lane]);
     let clock = FakeClock::new();
     let mut body = fleet.body();
@@ -1305,14 +1302,19 @@ fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_said_unconfirmed_on
             cause: "session-hosted".into()
         })
     );
-    let asked = vec![
-        "ORCH_LANE_HOST=box capabilities".to_owned(),
-        "ORCH_LANE_HOST=box status --item KEN-1 --harness claude".to_owned(),
-    ];
-    assert_eq!(calls(&log), asked);
+    let asked = [
+        "capabilities".to_owned(),
+        "status --item KEN-1 --harness claude".to_owned(),
+    ]
+    .map(|call| format!("ORCH_LANE_HOST={SSH_PROVIDER} {call}"));
+    assert_eq!(host.calls()[before..], asked);
     let again = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
-    assert_eq!(calls(&log), asked, "no provider verb for a final mark");
+    assert_eq!(
+        host.calls()[before..],
+        asked,
+        "no provider verb for a final mark"
+    );
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
 }
 
@@ -1322,31 +1324,29 @@ fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_said_unconfirmed_on
 #[test]
 fn a_hosted_lane_whose_harness_is_not_read_running_is_typed_nothing_and_marked_nothing() {
     let fleet = Fleet::new();
-    let (lane, log) = hosted_lane(
-        &fleet,
-        json!({
-            "capabilities": {"stdout": SSH_LINE},
-            "status --item KEN-1 --harness claude#1": {"stdout": "exited\n"},
-            "status --item KEN-1 --harness claude#2": {"exit": 1, "stderr": "ssh: connect to host box: Connection refused\n"},
-        }),
-    );
+    let (lane, host) = ssh_lane(&fleet);
+    // The lane's group led and ended: the provider reads it exited.
+    drop(host.lead("KEN-1", "claude"));
     fleet.set_lanes(vec![lane]);
     let clock = FakeClock::new();
     let mut body = fleet.body();
     let baseline = unread(&[("KEN-1", "m-1")]);
     for pass in ["exited", "unread"] {
+        if pass == "unread" {
+            host.refuse();
+        }
         let produced = run_once(&mut body, &baseline, &clock).unwrap();
         assert_eq!(rendered(&produced), Vec::<String>::new(), "{pass}");
         assert_eq!(fleet.mark("KEN-1"), None, "{pass}");
     }
     assert_eq!(
-        calls(&log)
+        host.calls()
             .iter()
             .filter(|l| l.contains(" status "))
             .count(),
         2,
         "{:?}",
-        calls(&log)
+        host.calls()
     );
     assert!(
         std::fs::symlink_metadata(fleet.record_file()).is_err(),
@@ -1361,13 +1361,20 @@ const VERB_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstat
 /// A Claude screen at its composer, which the one screen judge reads idle.
 const AT_COMPOSER: &str = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n";
 
-/// A `pane=verb` lane on the planted provider `box`: [`hosted_lane`]'s
-/// record, its window a viewer's (`viewer: true`), a live Claude stub at its
-/// composer that records every line typed into it.
+/// A `pane=verb` lane on the planted provider `box` under the fleet's
+/// root, which answers from `answers` (`lane-host.json` beside it):
+/// [`hosted_lane`]'s record, its window a viewer's (`viewer: true`), a live
+/// Claude stub at its composer that records every line typed into it.
+/// Returns the record and the provider's log.
 fn viewed_lane(fleet: &Fleet, answers: Value) -> (Value, PathBuf) {
-    let (mut lane, log) = hosted_lane(fleet, answers);
+    std::fs::write(
+        fleet.root.join("lane-host.json"),
+        serde_json::to_vec(&answers).unwrap(),
+    )
+    .unwrap();
+    let mut lane = hosted_lane(fleet, &named_host(&fleet.root, "box"));
     lane["viewer"] = json!(true);
-    (lane, log)
+    (lane, fleet.root.join("lane-host.log"))
 }
 
 /// The bytes of each `send --file` the provider took, in order.

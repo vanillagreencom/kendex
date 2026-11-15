@@ -2598,4 +2598,69 @@ impl SshHost {
         assert_eq!(first, "led\n", "the lane's group led");
         lane
     }
+
+    /// `item` on this host beside the items it holds, on a clone of its own
+    /// (`clone-<item>`), so the inventory names each item and each clone
+    /// once.
+    pub fn add(&self, item: &str) {
+        let inventory = self.root.join("inventory.json");
+        let mut rows: Value = serde_json::from_slice(&std::fs::read(&inventory).unwrap()).unwrap();
+        let mut row = rows[0].clone();
+        row["item"] = json!(item);
+        row["clone"] = json!(
+            self.root
+                .join(format!("clone-{item}"))
+                .display()
+                .to_string()
+        );
+        rows.as_array_mut().unwrap().push(row);
+        std::fs::write(&inventory, rows.to_string()).unwrap();
+    }
+
+    /// The clone the inventory names for `item`.
+    pub fn clone_of(&self, item: &str) -> PathBuf {
+        let rows: Value =
+            serde_json::from_slice(&std::fs::read(self.root.join("inventory.json")).unwrap())
+                .unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["item"] == item)
+            .and_then(|row| row["clone"].as_str())
+            .map(PathBuf::from)
+            .expect("the item's inventory row")
+    }
+
+    /// The worktree the host's worktree command places at `item`'s hosted
+    /// lane path beside its clone.
+    pub fn lane_root(&self, item: &str) -> PathBuf {
+        self.root
+            .join(".worktrees")
+            .join(self.clone_of(item).file_name().unwrap())
+            .join("lane")
+    }
+
+    /// `item`'s worktree gone from the host with its clone kept, as the
+    /// lane's own close-out leaves a merged lane: git removes it.
+    pub fn leave(&self, item: &str) {
+        let out = program("git")
+            .arg("-C")
+            .arg(self.clone_of(item))
+            .args(["worktree", "remove", "--force"])
+            .arg(self.lane_root(item))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "worktree remove: {}", stderr(&out));
+    }
+
+    /// The planted `ssh` refusing every connection from here on, as a host
+    /// that is down answers: OpenSSH's exit 255 and its message.
+    pub fn refuse(&self) {
+        let ssh = self.tools.join("ssh");
+        std::fs::remove_file(&ssh).unwrap();
+        write_executable(
+            &ssh,
+            "#!/bin/sh\necho 'ssh: connect to host lane.example port 22: Connection refused' >&2\nexit 255\n",
+        );
+    }
 }
