@@ -130,6 +130,16 @@ fn a_saved_template_reads_back_exactly_as_it_was_written() {
                 notices: Vec::new(),
             },
         },
+        Member {
+            kind: MemberKind::Skill,
+            name: "ship".to_owned(),
+            enabled: true,
+            source: MemberSource::SharedCopy {
+                copy: "skills/ship".to_owned(),
+                from: None,
+                notices: vec!["NOTICES/cat/LICENSE".to_owned()],
+            },
+        },
     ];
     let written = insert(
         &env,
@@ -151,6 +161,24 @@ fn a_saved_template_reads_back_exactly_as_it_was_written() {
         toml::from_str::<index::Index>(&text).unwrap().templates,
         vec![written]
     );
+    // A copy written before converted copies existed reads as the copy it
+    // was: carried as delivered, its install untagged.
+    let links: Vec<Option<crate::manifest::SkillLinks>> = get(&env, "Rust service")
+        .unwrap()
+        .members
+        .iter()
+        .map(|member| member.source.links())
+        .collect();
+    assert_eq!(
+        links,
+        [
+            None,
+            None,
+            None,
+            Some(crate::manifest::SkillLinks::SharedTree)
+        ]
+    );
+    assert!(text.contains("held = \"shared-copy\""), "{text}");
 }
 
 /// The name rules, one row each. A duplicate never overwrites: creation
@@ -272,7 +300,9 @@ fn members_deduplicate_by_identity_and_not_by_name() {
             .iter()
             .map(|member| match &member.source {
                 MemberSource::Marketplace { repo, .. } => repo.clone(),
-                MemberSource::Copy { copy, .. } => copy.clone(),
+                MemberSource::Copy { copy, .. } | MemberSource::SharedCopy { copy, .. } => {
+                    copy.clone()
+                }
             })
             .collect()
     };

@@ -57,7 +57,7 @@ fn two_tools_sharing_one_root_still_applies() {
     put(
         &env.global_manifest_file(),
         &format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\", \"pi\"]\nmethod = \"symlink\"\n\n[skills.big]\nsource = \"cat\"\n",
             source_path(&w.source)
         ),
     );

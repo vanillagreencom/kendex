@@ -91,7 +91,7 @@ fn loadable(
             harness: Some(harness),
             message: warning.message.clone(),
             remediation: warning.remediation.clone(),
-            detail: None,
+            detail: warning.detail.clone(),
         });
     }
     for finding in findings.iter().filter(|finding| !finding.is_breakage()) {

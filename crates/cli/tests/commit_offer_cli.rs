@@ -78,7 +78,7 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        format!("schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.offer]\n{}\n[agents.offer-file]\nsource = \"offer\"\n", test_util::source_path(&catalog)),
+        format!("schema = 8\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.offer]\n{}\n[agents.offer-file]\nsource = \"offer\"\n", test_util::source_path(&catalog)),
     )
     .unwrap();
     fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
@@ -280,7 +280,7 @@ fn the_install_record_is_committed_with_the_renders() {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
     )
     .unwrap();
     git(&project, &["add", "-A"]);
@@ -371,8 +371,8 @@ fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
             add: ["--agent", "scout"],
             edited: Some((
                 MANIFEST,
-                "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
-                "# mine\nschema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
+                "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n",
+                "# mine\nschema = 8\n\n[install]\nharnesses = [\"claude\"]\n",
             )),
             carried: &[".kendex-lock.json", ".gitignore", ".claude/agents/scout.md"],
             left: Some(MANIFEST),
@@ -1005,7 +1005,7 @@ fn unarmed_consumer(tmp: &tempfile::TempDir) -> PathBuf {
     fs::create_dir_all(&package).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
     )
     .unwrap();
     fs::write(package.join("SKILL.md"), declaration("first rules")).unwrap();

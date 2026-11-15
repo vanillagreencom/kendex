@@ -45,6 +45,13 @@ pub struct AuditView {
     pub plan: Vec<String>,
     pub notes: Vec<String>,
     pub warnings: Vec<ItemWarning>,
+    /// What the write this response settles reported about itself: the
+    /// links an adopt or a fork kept as written. A result of that one
+    /// write, not standing state, so the next read of the scope carries
+    /// none; `warnings` is what the scope says every time it is read.
+    /// Left off the wire when the write reported nothing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub written: Vec<ItemWarning>,
     /// Every installation here, scored — the clean ones included, so a
     /// package with nothing found still has a score to show. Each row
     /// carries two scores that are never combined: safety and quality.
@@ -107,6 +114,7 @@ impl AuditView {
             plan: Vec::new(),
             notes: Vec::new(),
             warnings: Vec::new(),
+            written: Vec::new(),
             safety: Vec::new(),
             adoptable: adoptable(),
             exits: Vec::new(),
@@ -141,6 +149,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         plan: report.plan.ops.iter().map(apply::PlannedOp::line).collect(),
         notes: report.notes,
         warnings: report.warnings,
+        written: Vec::new(),
         safety,
         adoptable: adoptable(),
         undone: Vec::new(),
@@ -280,7 +289,13 @@ pub fn adopt(
     let move_plan =
         engine::adopt::adopt(env, scope, kind, name, harnesses).map_err(|e| e.to_string())?;
     apply::execute(env, &move_plan).map_err(|e| e.to_string())?;
-    Ok(settle_after(env, scope))
+    // The links the move kept are its own report: the settle that follows
+    // reads the stored tree and cannot tell a kept link from a converted
+    // one.
+    Ok(AuditView {
+        written: move_plan.warnings,
+        ..settle_after(env, scope)
+    })
 }
 
 /// Install what the manifest declares over the files already sitting where

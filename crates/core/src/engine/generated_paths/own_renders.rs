@@ -53,6 +53,14 @@ enum Finding {
         entries: BTreeSet<String>,
     },
     Incomplete,
+    /// The plan records no render of a declared skill: the floor this
+    /// check holds before it reads the renders' link warnings.
+    Uncovered,
+    /// Links a render keeps as written because no spelling from where it
+    /// lands reaches their targets inside the project.
+    Unrepresentable {
+        links: Vec<String>,
+    },
 }
 
 /// Whether every committed render is the bytes this checkout renders.
@@ -123,6 +131,23 @@ fn refusal(finding: &Finding) -> String {
         Finding::Incomplete => {
             text.push_str(&line("incomplete", "declarations"));
             text.push_str("the declared installation set is incomplete, so record agreement cannot be proved\n");
+        }
+        Finding::Uncovered => {
+            text.push_str(&line("uncovered", "skills"));
+            text.push_str(
+                "the plan renders no declared skill, so what skill renders keep of their links is unknown\n",
+            );
+        }
+        Finding::Unrepresentable { links } => {
+            text.push_str(&line("unrepresentable", &links.len().to_string()));
+            text.push_str(
+                "these links reach a target no render can spell from where it lands \
+                 inside the project, so every render keeps them as written:\n",
+            );
+            for link in links {
+                text.push_str(&format!("  {link}\n"));
+            }
+            text.push_str("link a file inside the project, or use an absolute path or URL\n");
         }
     }
     text
@@ -197,6 +222,12 @@ fn unplanned(root: &Path, cause: String) -> Standing {
 /// Plan `root` from `declared` and `lock` with edits discarded, and hold
 /// its committed renders to what that pass would write. The plan is taken
 /// and never executed, so the run writes nothing into the scope it judges.
+///
+/// The same plan answers whether a render keeps a link it cannot spell
+/// from where it lands, read only off a plan that read every declaration
+/// and recorded a render of at least one declared skill: a plan that
+/// reached no skill warns about no link either, and a record it keeps from
+/// before is no render.
 fn check_against(env: &Env, root: &Path, declared: &Manifest, lock: &Lock) -> Standing {
     let scope = Scope::Project {
         root: root.to_path_buf(),
@@ -205,10 +236,34 @@ fn check_against(env: &Env, root: &Path, declared: &Manifest, lock: &Lock) -> St
         overwrite_edited: true,
         ..PlanOptions::current()
     };
-    match plan_scope(env, &scope, declared, lock, &options) {
-        Ok(report) => judge(&report, root),
-        Err(error) => unplanned(root, error.to_string()),
+    let report = match plan_scope(env, &scope, declared, lock, &options) {
+        Ok(report) => report,
+        Err(error) => return unplanned(root, error.to_string()),
+    };
+    if !complete_declarations(&report) {
+        return Standing::Refused(Finding::Incomplete);
     }
+    let renders_a_skill = report.record.entries.values().any(|entry| {
+        entry.kind == crate::model::ItemKind::Skill && declared.skills.contains_key(&entry.name)
+    });
+    if !renders_a_skill {
+        return Standing::Refused(Finding::Uncovered);
+    }
+    let links: Vec<String> = report
+        .warnings
+        .iter()
+        .filter_map(|warning| {
+            let detail = warning.detail.as_deref()?;
+            detail
+                .strip_prefix(crate::render::agent::UNREPRESENTABLE_LINK)
+                .is_some_and(|rest| rest.starts_with(": "))
+                .then(|| format!("{}: {detail}", warning.name))
+        })
+        .collect();
+    if !links.is_empty() {
+        return Standing::Refused(Finding::Unrepresentable { links });
+    }
+    judge(&report, root)
 }
 
 /// This checkout's own declaration, as `plan_apply` reads it.
@@ -455,7 +510,7 @@ impl RefreshFixture {
 
     fn declare(&self, source: &str) {
         std::fs::write(self.project.join("kendex.toml"), format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\n[hooks.probe]\nsource = \"cat\"\n",
+        "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\n[hooks.probe]\nsource = \"cat\"\n",
         source,
     )).expect("the declaration writes");
     }
@@ -693,11 +748,42 @@ impl Planted {
     /// The paths the check names over the planted copy, written and held;
     /// any standing but a differs refusal fails the test.
     fn named(&self) -> (Vec<String>, Vec<String>) {
-        match check_against(&self.env, &self.copy, &self.declared, &self.lock) {
+        match self.standing() {
             Standing::Refused(Finding::Differs { written, held }) => (written, held),
             other => panic!("expected a differs refusal, got {other:?}"),
         }
     }
+
+    fn standing(&self) -> Standing {
+        check_against(&self.env, &self.copy, &self.declared, &self.lock)
+    }
+}
+
+/// A skill whose link leaves the project is refused by name, and a plan
+/// that renders no skill cannot pass for one whose renders keep no link.
+#[test]
+#[allow(clippy::expect_used)]
+fn a_link_no_render_can_spell_and_a_plan_with_no_skill_are_refused() {
+    let mut planted = Planted::new();
+    let skill = instructed_skill(&planted.declared);
+    let source = planted.copy.join("skills").join(&skill).join("SKILL.md");
+    let mut text = std::fs::read_to_string(&source).expect("the skill's source reads");
+    text.push_str("\n[outside](../../../outside.md)\n");
+    std::fs::write(&source, text).expect("the planted link writes");
+    match planted.standing() {
+        Standing::Refused(Finding::Unrepresentable { links }) => {
+            assert!(
+                links
+                    .iter()
+                    .all(|link| link.starts_with(&format!("{skill}: "))),
+                "{links:?}"
+            );
+            assert!(!links.is_empty());
+        }
+        other => panic!("expected an unrepresentable refusal, got {other:?}"),
+    }
+    planted.declared.skills.clear();
+    assert_eq!(planted.standing(), Standing::Refused(Finding::Uncovered));
 }
 
 /// The refusing direction, through the same path: this checkout's own

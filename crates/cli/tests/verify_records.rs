@@ -114,7 +114,7 @@ pub(crate) fn adoption_world(template: &str) -> World {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     );
@@ -220,7 +220,7 @@ pub(crate) fn catalog_world() -> World {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 7\n\n[sources.cat]\nrepo = \"file://{catalog}\"\n\n[sources.picat]\nrepo = \"file://{catalog}\"\n\n[sources.spare]\nrepo = \"file://{catalog}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\", \"gemini\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"picat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+            "schema = 8\n\n[sources.cat]\nrepo = \"file://{catalog}\"\n\n[sources.picat]\nrepo = \"file://{catalog}\"\n\n[sources.spare]\nrepo = \"file://{catalog}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\", \"gemini\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"picat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
             source_path(&market),
             catalog = catalog.display(),
         ),
@@ -550,7 +550,7 @@ fn installation_provenance_requires_a_readable_record() {
             &catalog.join("skills/deploy/SKILL.md"),
             "---\nname: deploy\ndescription: ship it\n---\nDeploy.\n",
         );
-        let manifest = "schema = 7\n[sources.cat]\npath = \"catalog\"\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n";
+        let manifest = "schema = 8\n[sources.cat]\npath = \"catalog\"\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n";
         write(&project.join("kendex.toml"), manifest);
         repository(&project);
         let installed = kendex(&home, &project, &["apply", "-y", "--leave"]);
@@ -641,7 +641,7 @@ fn in_place_provenance_keeps_the_authored_tree_identity_and_positions() {
     );
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n[skills.deploy]\nsource = \"in-place\"\n",
+        "schema = 8\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n[skills.deploy]\nsource = \"in-place\"\n",
     );
     repository(&project);
     let installed = kendex(&home, &project, &["apply", "-y", "--leave"]);
@@ -1662,7 +1662,7 @@ fn a_global_keys_position_is_unknown_under_a_base_the_home_resolves() {
     write(
         &env.global_manifest_file(),
         &format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
             source_path(&world.catalog),
         ),
     );
@@ -1818,7 +1818,7 @@ fn second_project(world: &World, name: &str, declarations: &str) -> PathBuf {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 7\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{declarations}",
+            "schema = 8\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{declarations}",
             source_path(&world.home.join("market")),
         ),
     );

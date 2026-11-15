@@ -46,7 +46,7 @@ fn origins_are_read_off_the_lock_manifest_and_scan() {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\
+        "schema = 8\n\
          [sources.cat]\n\
          repo = \"owner/repo\"\n\
          [skills.gh]\n\
@@ -126,7 +126,7 @@ fn a_truncated_current_lock_fails_the_library_read() {
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
     fs::create_dir_all(&project).unwrap();
-    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 8\n").unwrap();
     fs::write(
         project.join(".kendex-lock.json"),
         format!(r#"{{"version":{}"#, crate::lock::LOCK_VERSION),
@@ -157,7 +157,7 @@ fn report_and_library_recover_the_same_origin_without_a_readable_record() {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n[install]\nharnesses = [\"codex\"]\n[sources.cat]\nrepo = \"owner/repo\"\n[skills.guard]\nsource = \"cat\"\n",
+        "schema = 8\n[install]\nharnesses = [\"codex\"]\n[sources.cat]\nrepo = \"owner/repo\"\n[skills.guard]\nsource = \"cat\"\n",
     )
     .unwrap();
     let scope = Scope::Project {
@@ -199,7 +199,7 @@ fn an_origin_does_not_cross_into_an_unmanaged_harness() {
         "---\nname: shared\ndescription: fixture\n---\nInstructions.\n",
     )
     .unwrap();
-    let manifest = "schema = 7\n[sources.cat]\npath = \"catalog\"\n[install]\nharnesses = [\"claude\", \"codex\"]\n[agents.shared]\nsource = \"cat\"\n";
+    let manifest = "schema = 8\n[sources.cat]\npath = \"catalog\"\n[install]\nharnesses = [\"claude\", \"codex\"]\n[agents.shared]\nsource = \"cat\"\n";
     fs::write(project.join("kendex.toml"), manifest).unwrap();
     let scope = Scope::Project {
         root: project.clone(),

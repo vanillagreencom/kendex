@@ -170,6 +170,7 @@ fn import_outcome_snapshots() {
     let outcome = author::ImportOutcome {
         written: vec!["skills/review".to_owned()],
         already_present: vec!["agents/helper".to_owned()],
+        warnings: Vec::new(),
     };
     assert_eq!(
         imported(&plain(), &outcome),

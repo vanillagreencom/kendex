@@ -66,7 +66,7 @@ fn world() -> World {
     fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"kendex\"\n"
+            "schema = 8\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"kendex\"\n"
         ),
     )
     .unwrap();

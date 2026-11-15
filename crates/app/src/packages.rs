@@ -79,21 +79,47 @@ pub fn package_fork(
     let env = env()?;
     let plan = engine::fork::fork(&env, &scope, kind, &name, harness).map_err(|e| e.to_string())?;
     apply::execute(&env, &plan).map_err(|e| e.to_string())?;
-    Ok(settle_after(&env, &scope))
+    // The links the capture kept are its own report, which the settle
+    // cannot read back off the stored tree.
+    Ok(AuditView {
+        written: plan.warnings,
+        ..settle_after(&env, &scope)
+    })
 }
 
-/// Why installing beside did not finish, by phase: a refusal wrote
-/// nothing, so another name may well go through; a fork the scope already
-/// recorded but could not render needs an apply, not a different name.
+/// Why a write that lands in two steps did not finish, by phase. A refusal
+/// wrote nothing, so the person may change the request and ask again. A
+/// write the scope already recorded, whose step after it failed, needs an
+/// apply rather than another request, and what the landed step reported
+/// about itself comes with the cause, because nothing else reads it.
+///
+/// One type for every command that answers it, rather than one per command:
+/// the window reads the phase in one place, and a second spelling of it is
+/// a dialog that answers differently about the same partial landing.
+///
+/// Its serde phase strings (`refused`, `recorded`) are the wire contract
+/// the window branches on, so renaming one is a bindings change.
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
-pub enum ForkBesideError {
-    Refused { message: String },
-    Recorded { message: String },
+pub enum LandingStopped {
+    Refused {
+        message: String,
+    },
+    Recorded {
+        message: String,
+        /// What the step that landed reported about itself, as the
+        /// command's own answer carries it on a write that finished: the
+        /// links a fork's capture or a keep held as written, say. Left off
+        /// the wire when it reported nothing.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        written: Vec<engine::ItemWarning>,
+    },
 }
 
 /// Keep an edited install as a local fork under another name, leave the
-/// original on its source, then render both.
+/// original on its source, then render both. A refusal wrote nothing, so
+/// another name may well go through; a fork the scope recorded but could
+/// not render needs an apply, not a different name.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_fork_beside(
@@ -103,10 +129,9 @@ pub fn package_fork_beside(
     harness: HarnessId,
     new_name: String,
     rev: Option<String>,
-) -> Result<AuditView, ForkBesideError> {
-    let refused = |message: String| ForkBesideError::Refused { message };
-    let env = env().map_err(refused)?;
-    let plan = engine::fork::fork_beside(
+) -> Result<AuditView, LandingStopped> {
+    let env = env().map_err(|message| LandingStopped::Refused { message })?;
+    fork_beside(
         &env,
         &scope,
         kind,
@@ -115,13 +140,37 @@ pub fn package_fork_beside(
         &new_name,
         rev.as_deref(),
     )
-    .map_err(|e| refused(e.to_string()))?;
+}
+
+/// [`package_fork_beside`] against the environment it is given.
+pub fn fork_beside(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+    new_name: &str,
+    rev: Option<&str>,
+) -> Result<AuditView, LandingStopped> {
+    let refused = |message: String| LandingStopped::Refused { message };
+    let plan = engine::fork::fork_beside(env, scope, kind, name, harness, new_name, rev)
+        .map_err(|e| refused(e.to_string()))?;
     // A plan that fails to apply rolls back: nothing recorded, a refusal.
-    apply::execute(&env, &plan).map_err(|e| refused(e.to_string()))?;
-    // The fork has landed. `Recorded` already says so to the window, which
-    // closes the name dialog and shows what landed beside the failure; it
-    // reads no view off this answer.
-    settle_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })
+    apply::execute(env, &plan).map_err(|e| refused(e.to_string()))?;
+    // The fork has landed, and so have the links its capture kept: both
+    // answers carry them. `Recorded` already says the fork landed to the
+    // window, which closes the name dialog and shows what landed beside the
+    // failure; it reads no view off that answer.
+    match settle_scope(env, scope) {
+        Ok(settled) => Ok(AuditView {
+            written: plan.warnings,
+            ..settled
+        }),
+        Err(message) => Err(LandingStopped::Recorded {
+            message,
+            written: plan.warnings,
+        }),
+    }
 }
 
 /// Discard one package's edits and re-render it — the door back to "the

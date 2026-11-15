@@ -41,7 +41,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -152,7 +152,7 @@ fn an_unsupported_schema_refuses_the_take_over_and_writes_nothing() {
     let path = f.project.join("kendex.toml");
     let older = fs::read_to_string(&path)
         .unwrap()
-        .replace("schema = 7", "schema = 5");
+        .replace("schema = 8", "schema = 5");
     fs::write(&path, &older).unwrap();
     let deploy = body(&f, "deploy");
     let lint = body(&f, "lint");
@@ -384,7 +384,7 @@ fn apply_and_replace_hold_a_moved_sibling_catalog() {
         git(&["-c", "commit.gpgsign=false", "commit", "-qm", "installed"]);
         fs::create_dir_all(&project).unwrap();
         let declared = format!(
-            "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.sibling]\nrepo = \"file://{}\"\n[sources.subject]\n{}\n[skills.sibling]\nsource = \"sibling\"\n",
+            "schema = 8\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.sibling]\nrepo = \"file://{}\"\n[sources.subject]\n{}\n[skills.sibling]\nsource = \"sibling\"\n",
             catalog.display(),
             source_path(&subject),
         );
@@ -504,4 +504,45 @@ fn a_failed_settle_after_keeping_answers_with_the_kept_files() {
         kept.unfinished.is_some(),
         "the settle's failure was dropped from the answer"
     );
+}
+
+/// A keep's own report rides on the answer to that keep alone: the link
+/// its move kept as written is in `written`, apart from what the scope
+/// says every time it is read, and the next read carries none of it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_kept_link_is_reported_by_the_keep_that_kept_it() {
+    let f = fixture();
+    // Five levels up from Claude's copy is outside the project.
+    fs::write(
+        f.project.join(".claude/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: does deploy\n---\n[o](../../../../../outside.md)\n",
+    )
+    .unwrap();
+    let kept = adopt(
+        &f.env,
+        &f.scope,
+        ItemKind::Skill,
+        "deploy",
+        &[kendex_core::model::HarnessId::Claude],
+    )
+    .unwrap();
+    let written: Vec<Option<&str>> = kept
+        .written
+        .iter()
+        .map(|warning| warning.detail.as_deref())
+        .collect();
+    assert_eq!(
+        written,
+        [Some("skill-link-kept: SKILL.md: ../../../../../outside.md")]
+    );
+    assert!(
+        !kept.warnings.iter().any(|warning| warning
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with("skill-link-kept:"))),
+        "{:?}",
+        kept.warnings
+    );
+    assert!(view(&f.env, &f.scope).written.is_empty());
 }

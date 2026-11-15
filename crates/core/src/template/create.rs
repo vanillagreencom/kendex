@@ -99,7 +99,11 @@ struct Copying {
 /// what is on disk is not what was offered. Every byte is resolved before
 /// the index is written, so a refusal leaves neither an index entry nor a
 /// store.
-pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -> Result<Template> {
+pub fn create_from_project(
+    env: &Env,
+    root: &std::path::Path,
+    chosen: &Chosen,
+) -> Result<SavedTemplate> {
     let draft = draft_from_project(env, root)?;
     if draft.fingerprint != chosen.fingerprint {
         return Err(CoreError::TemplateDraftStale);
@@ -110,12 +114,9 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
     let (mut members, copying, kept) = wanted(&draft, chosen)?;
     // Every byte read and revalidated before the index moves: a stale hash
     // refuses here, with nothing saved and nothing copied.
-    let mut resolved = Vec::new();
-    for copy in &copying {
-        let bytes = import::resolve(env, std::slice::from_ref(&scope), &copy.selection)?;
-        resolved.push((copy, bytes));
-    }
+    let resolved = resolve_copies(env, &scope, &copying)?;
     bind_notices(&mut members, &resolved);
+    let warnings = kept_warnings(&resolved);
     super::admit(&members)?;
     let customizations = match chosen.customizations {
         true => super::draft::customizations_for(
@@ -168,7 +169,72 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
             return Err(error);
         }
     }
-    super::get(env, &saved.name)
+    Ok(SavedTemplate {
+        template: super::get(env, &saved.name)?,
+        warnings,
+    })
+}
+
+/// A template a save wrote, with the links its copies kept as written
+/// because no spelling from the saving project's shared tree reaches their
+/// targets inside the project. The template is what every caller reads,
+/// so the type reads as one; the warnings are the save's own report.
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedTemplate {
+    #[serde(flatten)]
+    pub template: Template,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<crate::engine::ItemWarning>,
+}
+
+impl std::ops::Deref for SavedTemplate {
+    type Target = Template;
+
+    fn deref(&self) -> &Template {
+        &self.template
+    }
+}
+
+/// Every copy's bytes re-read and revalidated, a skill's links converted
+/// into the saving project's shared-tree reading.
+fn resolve_copies<'a>(
+    env: &Env,
+    scope: &Scope,
+    copying: &'a [Copying],
+) -> Result<Vec<(&'a Copying, import::ResolvedBytes)>> {
+    let Scope::Project { root } = scope else {
+        unreachable!("a template is saved from a project");
+    };
+    copying
+        .iter()
+        .map(|copy| {
+            let destination = crate::render::skill::links::template(root, &copy.name);
+            import::resolve(
+                env,
+                std::slice::from_ref(scope),
+                &copy.selection,
+                &destination,
+            )
+            .map(|bytes| (copy, bytes))
+        })
+        .collect()
+}
+
+/// What the copies' link conversion kept.
+fn kept_warnings(
+    resolved: &[(&Copying, import::ResolvedBytes)],
+) -> Vec<crate::engine::ItemWarning> {
+    resolved
+        .iter()
+        .flat_map(|(copy, bytes)| {
+            bytes
+                .stored
+                .reported()
+                .iter()
+                .map(|link| crate::render::skill::links::kept_warning(&copy.name, link))
+        })
+        .collect()
 }
 
 /// Take fresh copies of a project's packages into a template that already
@@ -184,7 +250,7 @@ pub fn add_from_project(
     root: &std::path::Path,
     wanted: &[super::MemberRef],
     license: &LicenseAnswer,
-) -> Result<Template> {
+) -> Result<SavedTemplate> {
     let template = super::get(env, name)?;
     let draft = draft_from_project(env, root)?;
     let scope = Scope::Project {
@@ -222,14 +288,9 @@ pub fn add_from_project(
         );
     }
     let (mut members, copying, _) = self::wanted(&draft, &chosen)?;
-    let mut bytes = Vec::new();
-    for copy in &copying {
-        bytes.push((
-            copy,
-            import::resolve(env, std::slice::from_ref(&scope), &copy.selection)?,
-        ));
-    }
+    let bytes = resolve_copies(env, &scope, &copying)?;
     bind_notices(&mut members, &bytes);
+    let warnings = kept_warnings(&bytes);
     super::admit(&members)?;
     // What each slot held before this write, so a refusal half-way puts
     // the template back the way the doc above says it does. Read before
@@ -297,7 +358,10 @@ pub fn add_from_project(
     // terms differ from that orphan refuses against a file no copy here
     // came under: yesterday's leftover becomes tomorrow's false refusal.
     store::prune(env, &template, &after)?;
-    Ok(after)
+    Ok(SavedTemplate {
+        template: after,
+        warnings,
+    })
 }
 
 /// Save a template from packages picked somewhere else — a marketplace's
@@ -306,7 +370,9 @@ pub fn add_from_project(
 pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
     super::admit(&members)?;
     for member in &members {
-        if let MemberSource::Copy { copy, .. } = &member.source {
+        if let MemberSource::Copy { copy, .. } | MemberSource::SharedCopy { copy, .. } =
+            &member.source
+        {
             return Err(CoreError::TemplateCopyUnreadable {
                 copy: copy.clone(),
                 why: "a template created from a marketplace selection holds no copies".to_owned(),
@@ -338,21 +404,40 @@ pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Res
 /// whose terms belong to nothing. What a read lists and what an install
 /// carries is then the union over the copies the template holds.
 fn bind_notices(members: &mut [Member], taken: &[(&Copying, import::ResolvedBytes)]) {
-    let recorded: BTreeMap<String, Vec<String>> = taken
+    let recorded: BTreeMap<String, (Vec<String>, bool)> = taken
         .iter()
         .map(|(copy, bytes)| {
             (
                 store::slot_id(copy.kind, &copy.name),
-                store::notice_ids(&bytes.notices),
+                (
+                    store::notice_ids(&bytes.notices),
+                    matches!(bytes.stored, import::Stored::Converted { .. }),
+                ),
             )
         })
         .collect();
     for member in members {
-        if let MemberSource::Copy { copy, notices, .. } = &mut member.source
-            && let Some(ids) = recorded.get(copy)
-        {
-            notices.clone_from(ids);
-        }
+        let MemberSource::Copy { copy, from, .. } = &member.source else {
+            continue;
+        };
+        let (copy, from) = (copy.clone(), from.clone());
+        let Some((ids, converted)) = recorded.get(&copy) else {
+            continue;
+        };
+        // A copy whose links were converted is recorded as one, so its
+        // install tags the declaration and an older kendex refuses it.
+        member.source = match converted {
+            true => MemberSource::SharedCopy {
+                copy,
+                from,
+                notices: ids.clone(),
+            },
+            false => MemberSource::Copy {
+                copy,
+                from,
+                notices: ids.clone(),
+            },
+        };
     }
 }
 

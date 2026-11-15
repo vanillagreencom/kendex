@@ -178,7 +178,7 @@ fn an_ambiguous_tree_ref_is_refused_naming_both_and_writes_nothing() {
 #[allow(clippy::unwrap_used)]
 fn an_offline_tree_url_is_refused_before_any_write() {
     let (_tmp, env, scope, project) = fixture();
-    let existing = "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
+    let existing = "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
     fs::write(project.join("kendex.toml"), existing).unwrap();
 
     let error = source_ops::subscribe(
@@ -225,6 +225,49 @@ fn a_repo_already_subscribed_under_another_alias_is_refused_naming_it() {
         fs::read_to_string(project.join("kendex.toml")).unwrap(),
         before
     );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_folder_alias_distinguishes_repository_suffixes_but_accepts_the_same_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let catalog = home.join("catalog");
+    let suffixed = home.join("catalog.git");
+    for folder in [&catalog, &suffixed] {
+        fs::create_dir_all(folder.join("skills/ship")).unwrap();
+        fs::write(
+            folder.join("skills/ship/SKILL.md"),
+            "---\nname: ship\ndescription: ship\n---\nBody.\n",
+        )
+        .unwrap();
+    }
+    let original = kendex_core::paths::slashed(&catalog);
+    let subscribed = source_ops::subscribe(&env, &scope, &original, Some("cat")).unwrap();
+    apply::execute(&env, &subscribed.report.plan).unwrap();
+    let before = fs::read(project.join("kendex.toml")).unwrap();
+
+    for (folder, refuses) in [(catalog.join("."), false), (suffixed, true)] {
+        let reference = kendex_core::paths::slashed(&folder);
+        match (
+            source_ops::subscribe(&env, &scope, &reference, Some("cat")),
+            refuses,
+        ) {
+            (Ok(_), false) => {}
+            (Err(CoreError::SourceRefInvalid { reference: at, .. }), true) => {
+                assert_eq!(at, reference);
+            }
+            (Ok(_), true) => panic!("a folder alias accepted a different directory"),
+            (Err(error), _) => panic!("same-directory subscription failed: {error}"),
+        }
+        assert_eq!(fs::read(project.join("kendex.toml")).unwrap(), before);
+    }
 }
 
 /// §4.1: installing into a project from a personal subscription adds the
@@ -317,7 +360,7 @@ fn a_default_add_lands_on_the_subscription_with_the_default_repo() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.market]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 8\n\n[sources.market]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();
@@ -341,7 +384,7 @@ fn two_default_repo_subscriptions_prefer_the_seeded_name() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.other]\nrepo = \"https://github.com/{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 8\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.other]\nrepo = \"https://github.com/{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();
@@ -361,7 +404,7 @@ fn two_default_repo_subscriptions_neither_seeded_refuse_naming_both() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.alpha]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.beta]\nrepo = \"https://github.com/{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
+            "schema = 8\n\n[sources.alpha]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\n\n[sources.beta]\nrepo = \"https://github.com/{DEFAULT_SOURCE_REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n"
         ),
     )
     .unwrap();
@@ -414,7 +457,7 @@ fn a_fresh_project_writes_nothing_where_the_personal_default_cannot_serve() {
     let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
     fs::create_dir_all(personal.parent().unwrap()).unwrap();
     let switched_off = format!(
-        "schema = 7\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\nenabled = false\n"
+        "schema = 8\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\nenabled = false\n"
     );
 
     fs::write(&personal, &switched_off).unwrap();
@@ -449,14 +492,14 @@ fn no_default_subscription_anywhere_is_a_typed_error_never_a_guess() {
     let (_tmp, env, scope, project) = fixture();
     let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
     fs::create_dir_all(personal.parent().unwrap()).unwrap();
-    fs::write(&personal, "schema = 7\n").unwrap();
+    fs::write(&personal, "schema = 8\n").unwrap();
     let other = env.home.join("other");
     fs::create_dir_all(other.join("skills/gh")).unwrap();
     fs::write(other.join("skills/gh/SKILL.md"), "---\nname: gh\n---\nx\n").unwrap();
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
+            "schema = 8\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n",
             source_path(&other)
         ),
     )

@@ -2551,22 +2551,34 @@ TOML
   assert_eq "a customized consumer's pure refresh is a render" \
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
-  # The previous engine left schema 6; the next real refresh must persist 7.
+  # Catalog suites also run with the released engine. Its own manifest sets
+  # the supported one-step transition this real refresh must persist.
   git -C "$consumer" checkout -q -B schema-base refreshed
-  python3 - "$consumer/kendex.toml" <<'OLD_SCHEMA'
+  cp "$consumer/kendex.toml" "$SANDBOX/schema-current-manifest"
+  schema_current="$(python3 - "$consumer/kendex.toml" <<'OLD_SCHEMA'
 from pathlib import Path
+import re
 import sys
 
 path = Path(sys.argv[1])
 before = path.read_bytes()
-assert before.startswith(b"schema = 7\n")
-path.write_bytes(before.replace(b"schema = 7\n", b"schema = 6\n", 1))
+root, rest = before.split(b"\n", 1)
+match = re.fullmatch(rb"schema = ([0-9]+)", root)
+assert match is not None, root
+current = int(match[1])
+assert current > 6, current
+path.write_bytes(f"schema = {current - 1}\n".encode() + rest)
+print(current)
 OLD_SCHEMA
+  )"
+  schema_previous=$((schema_current - 1))
   git -C "$consumer" add -A
-  git -C "$consumer" commit -q -m 'the consumer on schema 6'
+  git -C "$consumer" commit -q -m "the consumer on schema $schema_previous"
   schema_base="$(git -C "$consumer" rev-parse HEAD)"
   git -C "$consumer" checkout -q -B schema-refreshed
   kendex_here "$consumer" refresh --scope project -y --leave
+  assert_eq "the real schema-only refresh preserves every other manifest byte" same \
+    "$(cmp -s "$SANDBOX/schema-current-manifest" "$consumer/kendex.toml" && echo same || echo differs)"
   git -C "$consumer" add -A
   git -C "$consumer" commit -q -m 'kendex refresh migrates the schema'
   schema_head="$(git -C "$consumer" rev-parse HEAD)"
@@ -2576,14 +2588,14 @@ OLD_SCHEMA
     --repo "$consumer" --event pull_request --base "$schema_base" --head "$schema_head"
   schema_refresh_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$schema_base" --head "$schema_head")"
-  assert_eq "a real refresh from schema 6 keeps its render class" \
+  assert_eq "a real refresh from schema $schema_previous keeps its render class" \
     'class=render measured=true cause=renders-match-their-sources' \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n 's/^class: //p')"
   schema_candidate="$(classify --mode render-candidate --repo "$consumer" \
     --event pull_request --base "$schema_base" --head HEAD)"
   assert_eq "the schema refresh installs proof prerequisites" render_candidate=true "$schema_candidate"
   assert_eq "the real refresh reports its schema step" \
-    'schema-bump: path=kendex.toml from=6 to=7' \
+    "schema-bump: path=kendex.toml from=$schema_previous to=$schema_current" \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^schema-bump: /p')"
   assert_eq "the schema-only refresh keeps its conservative queue answer" \
     'queue-only: queue_only=true inputs=declared cause=no-changed-paths' \

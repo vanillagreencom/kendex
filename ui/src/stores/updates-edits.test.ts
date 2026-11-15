@@ -31,7 +31,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
+  toast: { error: vi.fn(), success: vi.fn(), info: vi.fn(), message: vi.fn() },
 }));
 
 const row = (overrides: Partial<UpdateRow>): UpdateRow =>
@@ -183,6 +183,80 @@ describe("updates store: edited places", () => {
         "settle the scope: permission denied",
       );
       expect(dialog.title, write.name).not.toBe(FORK_ERROR_TITLE);
+    }
+  });
+
+  // Only the fork can say which links its capture kept: the stored tree
+  // reads the same either way, and the next read of the scope carries none.
+  it("says each link a landed fork kept as written, with its fix", async () => {
+    const kept = {
+      kind: "skill" as const,
+      name: "gh",
+      message:
+        "SKILL.md links to ../../memory/x.md, which may no longer reach its file",
+      remediation: "Use an absolute path.",
+      detail: "skill-link-kept: SKILL.md: ../../memory/x.md",
+    };
+    const landed = {
+      scope: { scope: "global" as const },
+      drift: [],
+      plan: [],
+      notes: [],
+      warnings: [],
+      written: [kept],
+      safety: [],
+      adoptable: ADOPTABLE,
+      exits: [],
+    };
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    });
+    const edited = row({
+      blockedByLocalEdit: true,
+      editedHarnesses: ["claude"],
+      forkableHarness: "claude",
+    });
+    const forks = [
+      {
+        name: "keep as my own",
+        answer: () =>
+          vi
+            .mocked(commands.packageFork)
+            .mockResolvedValue({ status: "ok", data: landed }),
+        act: () => keepAsOwn(edited),
+      },
+      {
+        name: "install as new",
+        answer: () =>
+          vi
+            .mocked(commands.packageForkBeside)
+            .mockResolvedValue({ status: "ok", data: landed }),
+        act: () => installAsNew(edited, "claude", "gh-mine"),
+      },
+      {
+        name: "install as new, recorded but not installed",
+        answer: () =>
+          vi.mocked(commands.packageForkBeside).mockResolvedValue({
+            status: "error",
+            error: {
+              phase: "recorded",
+              message: "render refused: disk full",
+              written: [kept],
+            },
+          }),
+        act: () => installAsNew(edited, "claude", "gh-mine"),
+      },
+    ];
+    for (const fork of forks) {
+      vi.mocked(toast.message).mockClear();
+      fork.answer();
+
+      await fork.act();
+
+      expect(vi.mocked(toast.message).mock.calls, fork.name).toEqual([
+        [`${kept.name}: ${kept.message}`, { description: kept.remediation }],
+      ]);
     }
   });
 

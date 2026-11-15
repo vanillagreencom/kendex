@@ -389,7 +389,7 @@ fn world_with(source: Source, checkout: Checkout) -> World {
     write(
         &seed.join("kendex.toml"),
         &format!(
-            "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\n{declared}\n\n[skills.deploy]\nsource = \"cat\"\n"
+            "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\n{declared}\n\n[skills.deploy]\nsource = \"cat\"\n"
         ),
     );
     let package = seed.join(source.root()).join("skills/deploy");

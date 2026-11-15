@@ -194,6 +194,10 @@ pub fn import(env: &Env, args: ImportArgs) -> CliResult {
     }
     let outcome = author::apply(env, &scopes, &args.target, &selections)?;
     ui::stderr(&imported(&style, &outcome));
+    ui::stderr(&super::engine_common::warning_lines(
+        &style,
+        &outcome.warnings,
+    ));
     // The same check the app shows: findings with files, then the tally.
     super::check_catalog::run(&args.target, false, false)
 }

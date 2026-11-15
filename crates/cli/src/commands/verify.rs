@@ -1241,13 +1241,11 @@ fn print_gaps(style: &Style, scopes: &[(Scope, Vec<Gap>)], reached: Reached) {
             };
             let text = format!("{} {name} — {why}", kind.name());
             ui::stderr(&style.report_row(Status::Decision, &[Span::Prose(&text)], "  - "));
-            for warning in withheld.iter().flat_map(|(_, warnings)| warnings) {
-                ui::stderr(&style.report_detail(&[Span::Prose(&warning.message)], "    ! "));
-                if let Some(fix) = &warning.remediation {
-                    ui::stderr(
-                        &style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "      "),
-                    );
+            if let Some((_, warnings)) = withheld {
+                for warning in warnings {
+                    ui::report::run_model_warning(warning);
                 }
+                ui::stderr(&super::engine_common::warning_lines(style, warnings));
             }
         }
     }
@@ -1336,18 +1334,22 @@ fn say_row(
     // advisory on this tool. That is not drift, so it does not fail the
     // run, but a pipeline must not read a clean tick where the thing
     // installed cannot act.
-    for warning in report.warnings.iter().filter(|warning| {
-        warning.kind == entry.kind
-            && warning.name == entry.name
-            && warning
-                .harness
-                .is_none_or(|harness| harness == entry.harness)
-    }) {
-        match ui::report::is_run_model_warning(&warning.message) {
-            true => ui::report::run_model_warning(&warning.message),
-            false => ui::stderr(&style.report_detail(&[Span::Prose(&warning.message)], "  ! ")),
-        }
+    let warnings: Vec<kendex_core::engine::ItemWarning> = report
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.kind == entry.kind
+                && warning.name == entry.name
+                && warning
+                    .harness
+                    .is_none_or(|harness| harness == entry.harness)
+        })
+        .cloned()
+        .collect();
+    for warning in &warnings {
+        ui::report::run_model_warning(warning);
     }
+    ui::stderr(&super::engine_common::warning_lines(style, &warnings));
     bad
 }
 

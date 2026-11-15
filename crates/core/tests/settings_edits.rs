@@ -95,7 +95,7 @@ fn project_at(home: &Path, name: &str, skill: &str, template: &str) -> PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.{skill}]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.{skill}]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )

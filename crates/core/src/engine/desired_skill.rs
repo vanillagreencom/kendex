@@ -5,7 +5,7 @@ use crate::hash::{hash_files, in_place_installation_hash};
 use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::render::skill::{SKILL_FILE, SkillText, bounded_description, render_skill};
+use crate::render::skill::{SKILL_FILE, SkillText, bounded_description};
 
 use super::desired::{
     Artifact, Desired, DesiredState, IN_PLACE_DISABLED, ItemCtx, effective_method, in_place_source,
@@ -179,20 +179,13 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
             state,
         );
     }
-    let variants = groups
-        .iter()
-        .map(|group| render_variant(ctx, state, group, enabled))
-        .collect::<Result<Vec<Variant>>>()?;
-
-    // The base tree is the scope's shared location; the group that natively
-    // reads it owns it, the first group otherwise. A variant with the base's
-    // bytes links to it; a divergent variant lives at its own surface, which
-    // every group has at either scope.
     let base = skill_canonical(ctx.env, ctx.scope, ctx.name);
     let owner = groups
         .iter()
         .position(|group| group.native == base)
         .unwrap_or(0);
+    let (variants, destinations) =
+        placement_variants(ctx, state, &groups, enabled, &base, owner, method)?;
     // Where each group's tree lands, and whether it may land there at
     // all: a group deduplicates onto the owner's rendering, so its place
     // follows from what rendered and never from where the owner's tree
@@ -202,25 +195,16 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         let Variant::Rendered {
             files,
             source_files,
-            hash,
+            hash: _,
             read_as,
         } = &variants[index]
         else {
             trees.push(None);
             continue;
         };
-        let deduped = index == owner
-            || matches!(&variants[owner], Variant::Rendered { hash: owned, .. } if owned == hash);
-        let (canonical, link) = if method == Method::Copy {
-            (group.native.clone(), None)
-        } else if deduped {
-            match group.native == base {
-                true => (base.clone(), None),
-                false => (base.clone(), Some(group.native.clone())),
-            }
-        } else {
-            (group.native.clone(), None)
-        };
+        let canonical = destinations[index].clone();
+        let link =
+            (method != Method::Copy && canonical != group.native).then(|| group.native.clone());
         // The one place the question is answered: this tree is the source
         // exactly where the source is where it stands.
         let in_place = source.as_ref() == Some(&canonical);
@@ -255,6 +239,48 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Each group's rendering and the physical directory it lands at. A tree's
+/// links are converted for the directory it lands in, so the place is
+/// decided first: a copy delivery lands at the group's own directory, and
+/// a group whose rendering at the shared tree is the owner's deduplicates
+/// onto it; any other lands at its own surface. Each variant is then
+/// rendered for its place, the probes' warnings left out of the plan.
+fn placement_variants(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    groups: &[SurfaceGroup],
+    enabled: bool,
+    base: &std::path::Path,
+    owner: usize,
+    method: Method,
+) -> Result<(Vec<Variant>, Vec<PathBuf>)> {
+    let mut variants = Vec::with_capacity(groups.len());
+    let mut destinations = Vec::with_capacity(groups.len());
+    let mut probe = DesiredState {
+        agent_names: crate::source::agent_names::Uses::new(ctx.manifest),
+        ..DesiredState::default()
+    };
+    let owner_probe = render_variant(ctx, &mut probe, &groups[owner], enabled, base)?;
+    for (index, group) in groups.iter().enumerate() {
+        let destination = if method == Method::Copy {
+            group.native.clone()
+        } else if index == owner {
+            base.to_path_buf()
+        } else {
+            let candidate = render_variant(ctx, &mut probe, group, enabled, base)?;
+            if matches!((&candidate, &owner_probe), (Variant::Rendered { hash: candidate, .. }, Variant::Rendered { hash: owned, .. }) if candidate == owned)
+            {
+                base.to_path_buf()
+            } else {
+                group.native.clone()
+            }
+        };
+        variants.push(render_variant(ctx, state, group, enabled, &destination)?);
+        destinations.push(destination);
+    }
+    Ok((variants, destinations))
 }
 
 /// The commands the source declares, for a skill some tree of which lands.
@@ -432,32 +458,18 @@ fn render_variant(
     state: &mut DesiredState,
     group: &SurfaceGroup,
     enabled: bool,
+    destination: &std::path::Path,
 ) -> Result<Variant> {
-    let (mut rendered, read_as) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let (mut rendered, read_as) =
+        crate::render::skill::with_instructions(ctx.sealed, ctx.item_path, None)?;
     // The planning manifest already normalizes managed instructions. Keep
     // the authored tree with only that block for a destination at the source;
     // Description limits and whole-tree label normalization belong to copies.
-    let source_files = rendered.files().to_vec();
-    let files = rendered
-        .into_files()
-        .into_iter()
-        .map(|(path, bytes)| {
-            let bytes = match std::str::from_utf8(&bytes) {
-                Ok(text) => {
-                    let text = state
-                        .agent_names
-                        .labels(text, &format!("{}: {}", ctx.name, path.display()));
-                    if path == std::path::Path::new(SKILL_FILE) {
-                        bounded_description(&text).into_bytes()
-                    } else {
-                        text.into_bytes()
-                    }
-                }
-                Err(_) => bytes,
-            };
-            (path, bytes)
-        })
-        .collect();
+    let instructions = crate::render::skill::skill_instructions(ctx.manifest, ctx.name);
+    let source_files = crate::render::skill::with_skill_text(rendered.files().to_vec(), |text| {
+        crate::render::skill::inject_instructions(text, instructions.as_deref())
+    });
+    let files = rebase_for_surface(ctx, state, destination, rendered.into_files());
     rendered = crate::render::skill::Rendered::new(files);
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
     // installation's content under, so a catalog shipping one of its own
@@ -529,6 +541,84 @@ fn render_variant(
         hash,
         read_as,
     })
+}
+
+/// The tree's files as they read from `destination`, the physical
+/// directory this variant lands at: converted from the item's link reading
+/// where it has one, carried as delivered where it does not, then given the
+/// project's instructions, the agent-name labels and the bounded
+/// description every copy carries.
+fn rebase_for_surface(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    destination: &std::path::Path,
+    files: Files,
+) -> Files {
+    use crate::render::skill::links;
+    let files = match links::declared(
+        ctx.env,
+        ctx.scope,
+        ctx.manifest,
+        ctx.decl.into(),
+        ctx.name,
+        ctx.item_path,
+        ctx.sealed,
+    ) {
+        links::Reading::AsDelivered | links::Reading::Opaque => files,
+        links::Reading::Fixed { position, siblings } => {
+            let rendered = links::Position {
+                directory: destination.to_path_buf(),
+                bound: position.bound.clone(),
+            };
+            let (files, kept) = links::convert(
+                links::Origin::new(position, files, siblings, Vec::new()),
+                &rendered,
+            );
+            // The source itself is never rendered, so it raises nothing.
+            let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
+            let in_place =
+                in_place_source(ctx.env, ctx.scope, identity).as_deref() == Some(destination);
+            for link in kept.into_iter().filter(|_| !in_place) {
+                let warning = crate::render::agent::unrepresentable_link(&link.target);
+                let warning = super::ItemWarning {
+                    kind: ItemKind::Skill,
+                    name: ctx.name.to_owned(),
+                    harness: None,
+                    message: warning.message,
+                    remediation: warning.remediation,
+                    detail: warning.detail,
+                };
+                // Every variant converts the same links; one warning names
+                // each, however many places the tree lands.
+                if !state.warnings.contains(&warning) {
+                    state.warnings.push(warning);
+                }
+            }
+            files
+        }
+    };
+    let instructions = crate::render::skill::skill_instructions(ctx.manifest, ctx.name);
+    crate::render::skill::with_skill_text(files, |text| {
+        crate::render::skill::inject_instructions(text, instructions.as_deref())
+    })
+    .into_iter()
+    .map(|(path, bytes)| {
+        let bytes = match std::str::from_utf8(&bytes) {
+            Ok(text) => {
+                let text = state
+                    .agent_names
+                    .labels(text, &format!("{}: {}", ctx.name, path.display()));
+                if path == std::path::Path::new(SKILL_FILE) {
+                    bounded_description(&text).into_bytes()
+                } else {
+                    text.into_bytes()
+                }
+            }
+            Err(_) => bytes,
+        };
+        (path, bytes)
+    })
+    .collect()
 }
 
 /// Nothing installs for this group, and every member is told why.

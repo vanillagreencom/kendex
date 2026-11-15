@@ -316,6 +316,7 @@ pub(crate) fn declare(env: &Env, manifest: &mut Manifest, scope: &Scope) -> Opti
                 rev: None,
                 enabled: true,
                 env: None,
+                links: None,
             },
         );
         return Some(format!("declare the drift hook in {manifest_file}"));

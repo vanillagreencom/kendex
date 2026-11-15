@@ -33,7 +33,12 @@ pub fn template_draft(project: PathBuf) -> Result<Draft, String> {
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn template_create_from_project(project: PathBuf, chosen: Chosen) -> Result<Template, String> {
+/// The saved template, with the links its copies kept as written beside
+/// it: the save's own report, which nothing read later can give.
+pub fn template_create_from_project(
+    project: PathBuf,
+    chosen: Chosen,
+) -> Result<template::SavedTemplate, String> {
     let env = env()?;
     template::create_from_project(&env, &project, &chosen).map_err(|e| e.to_string())
 }

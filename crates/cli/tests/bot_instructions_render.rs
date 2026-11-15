@@ -59,7 +59,7 @@ fn installed(home: &Path, launcher: &str) -> PathBuf {
     let project = home.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
     );
     let package = project.join("catalog/skills/bot-instructions");
     write(&package.join("SKILL.md"), DECLARATION);
@@ -137,7 +137,7 @@ fn a_project_without_the_package_says_it_is_absent() {
     let project = home.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n",
     );
     fs::create_dir_all(project.join(".claude")).unwrap();
     git(&project, &["init", "-q", "-b", "main"]);

@@ -203,7 +203,7 @@ fn every_door_a_package_leaves_by_disarms_the_repository_first() {
         }),
         ("unsubscribing from its source", |f| {
             kendex_app::unsubscribe::unsubscribe(&f.env, &f.scope, "cat", false, false)
-                .unwrap_or_else(|error| panic!("unsubscribe: {error}"))
+                .unwrap_or_else(|error| panic!("unsubscribe: {error:?}"))
                 .undone
         }),
         ("applying a manifest that stopped declaring it", |f| {

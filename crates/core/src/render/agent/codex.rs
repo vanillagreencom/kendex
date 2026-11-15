@@ -34,7 +34,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         &agent.model_classes,
         &agent.model_bindings,
     );
-    warnings.extend(resolved.warning.map(crate::render::RenderWarning::new));
+    warnings.extend(resolved.warning);
     // No model key means Codex's own default — its dialect for inherit.
     if let Some(id) = &resolved.id {
         out.push_str(&format!("model = \"{}\"\n", escape(id)));

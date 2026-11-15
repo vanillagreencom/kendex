@@ -250,7 +250,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
         // Declared for a tool that reads the shared tree, so a copy there
         // no record wrote still reads as this package's.
         format!(
-            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"codex\"]\n[skills.gh]\nsource = \"cat\"\n"
+            "schema = 8\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"codex\"]\n[skills.gh]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();

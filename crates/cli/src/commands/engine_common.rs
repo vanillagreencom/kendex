@@ -114,7 +114,7 @@ pub(super) fn warning_lines(
 ) -> Vec<String> {
     let mut lines = Vec::new();
     for warning in warnings {
-        if ui::report::is_run_model_warning(&warning.message) {
+        if ui::report::is_run_model_warning(warning) {
             continue;
         }
         let target = match warning.harness {
@@ -127,6 +127,11 @@ pub(super) fn warning_lines(
         }
         if let Some(fix) = &warning.remediation {
             lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "  "));
+        }
+        // The keyed diagnostic line, where a terminal reader finds the
+        // code the message leaves out.
+        if let Some(detail) = &warning.detail {
+            lines.extend(style.report_detail(&[Span::Verbatim(detail)], "  "));
         }
     }
     lines
@@ -332,7 +337,7 @@ pub(super) fn apply_report_accounted(
     before: Option<&kendex_core::commit_offer::Before>,
 ) -> Result<Wrote, Box<dyn std::error::Error>> {
     for warning in &report.warnings {
-        ui::report::run_model_warning(&warning.message);
+        ui::report::run_model_warning(warning);
     }
     let before = match before {
         Some(before) => before.clone(),

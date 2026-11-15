@@ -276,12 +276,12 @@ describe("a write that reaches repo_effects and is refused", () => {
   it("reads the machine again behind an unsubscribe", async () => {
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "error",
-      error: "the scope is busy",
+      error: { phase: "refused", message: "the scope is busy" },
     });
 
     const outcome = await useMarketplacesStore
       .getState()
-      .unsubscribe(scope, "kit", false, false);
+      .unsubscribe(scope, "kit", "Acme Kit", false, false);
     await rescansSettled();
 
     expect(outcome).toEqual({ error: "the scope is busy" });

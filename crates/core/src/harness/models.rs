@@ -569,8 +569,36 @@ fn render(
 pub struct RenderModel {
     /// Omission means native inheritance.
     pub id: Option<String>,
-    /// One warning with all causes.
-    pub warning: Option<String>,
+    /// One warning with all causes: what it means to the person, its fix,
+    /// and the one protocol line in `detail`, which the warning owner
+    /// prints once.
+    pub warning: Option<crate::render::RenderWarning>,
+}
+
+/// The render's model warning: in words, what the agent was rendered
+/// with, and the protocol line `line` beside them as the warning's detail.
+fn model_warning(
+    requested: &str,
+    rendered: Option<&str>,
+    refused: bool,
+    line: String,
+) -> crate::render::RenderWarning {
+    let message = match (refused, rendered) {
+        (true, _) => format!(
+            "The model '{requested}' can't be resolved, so this agent's model is left unusable"
+        ),
+        (false, Some(rendered)) => format!(
+            "The model '{requested}' is rendered as '{rendered}', which kendex could not confirm"
+        ),
+        (false, None) => format!(
+            "The model '{requested}' is rendered as the session's own model, which kendex could not confirm"
+        ),
+    };
+    crate::render::RenderWarning::with_fix(
+        message,
+        "Use a provider/model id or a model class such as 'standard'.",
+    )
+    .with_detail(line)
 }
 /// Encode a render result for existing native renderer callers.
 pub fn render_model(
@@ -584,8 +612,11 @@ pub fn render_model(
         Err(cause) => {
             return RenderModel {
                 id: Some(model.into()),
-                warning: Some(format!(
-                    "model-resolution: refused=invalid-request cause={cause}"
+                warning: Some(model_warning(
+                    model,
+                    Some(model),
+                    true,
+                    format!("{MODEL_WARNING_PREFIX} refused=invalid-request cause={cause}"),
                 )),
             };
         }
@@ -595,7 +626,8 @@ pub fn render_model(
         ResolutionContext::Render(harness, bindings),
         overrides,
     );
-    let warning = result.warning(&request);
+    let line = result.warning(&request);
+    let refused = matches!(result, ModelResolution::Refused { .. });
     let id = match result {
         ModelResolution::NativeAlias {
             native_selector, ..
@@ -609,6 +641,7 @@ pub fn render_model(
         | ModelResolution::HarnessDefault { .. }
         | ModelResolution::Unmanaged => unreachable!("runtime result in render context"),
     };
+    let warning = line.map(|line| model_warning(&request.selector(), id.as_deref(), refused, line));
     RenderModel { id, warning }
 }
 

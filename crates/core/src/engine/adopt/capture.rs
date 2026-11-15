@@ -11,9 +11,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::apply::{Description, Op, PlannedOp, Pre};
+use crate::engine::ItemWarning;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::render::skill::Files;
+use crate::render::skill::links;
 
 use super::{SharedTarget, copies_differ, shared_target};
 
@@ -80,7 +83,11 @@ pub(super) fn look(
     if let (Some((linked, _)), Some((held, _))) = (seen.shared.as_ref(), seen.content.first()) {
         return Err(copies_differ(name, *linked, *held));
     }
-    if let Some((first, first_path)) = seen.content.first() {
+    // A skill's copies agree by what their links mean where the tree is
+    // stored (`interpret`); an agent's by its bytes.
+    if kind != ItemKind::Skill
+        && let Some((first, first_path)) = seen.content.first()
+    {
         let hash = crate::hash::hash_tree(first_path)?;
         for (harness, path) in &seen.content[1..] {
             if crate::hash::hash_tree(path)? != hash {
@@ -91,6 +98,119 @@ pub(super) fn look(
     Ok(seen)
 }
 
+/// A skill's tree as the store keeps it: read at every position the named
+/// tools hold it and interpreted into the scope's shared-tree reading.
+pub(super) struct Conversion {
+    /// The reading position of the first tree, the one a move takes.
+    pub(super) origin: PathBuf,
+    /// Its regular files, converted.
+    pub(super) files: Files,
+    pub(super) kept: Vec<links::KeptLink>,
+    /// Files that are links inside the tree, carried as they are.
+    pub(super) linked: Vec<PathBuf>,
+}
+
+impl Conversion {
+    /// What the conversion reports: every link it kept and, where the move
+    /// changes where the tree is read from, every link file it carried
+    /// unconverted.
+    pub(super) fn warnings(&self, name: &str, destination: &Path) -> Vec<ItemWarning> {
+        let mut warnings: Vec<ItemWarning> = self
+            .kept
+            .iter()
+            .map(|link| links::kept_warning(name, link))
+            .collect();
+        if self.origin != destination {
+            warnings.extend(
+                self.linked
+                    .iter()
+                    .map(|file| links::not_converted_warning(name, file)),
+            );
+        }
+        warnings
+    }
+}
+
+/// Every position a skill is held at, interpreted into `destination`. The
+/// positions must mean the same targets there, their link files included,
+/// or the tools disagree and only the reader can say which to keep. `moved`
+/// reads a tree a rename carries whole, links inside it included; a capture
+/// refuses those.
+pub(super) fn interpret(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    seen: &Seen,
+    destination: &links::Position,
+    moved: bool,
+) -> Result<Option<Conversion>> {
+    let positions: Vec<(HarnessId, PathBuf, links::Siblings)> = match &seen.shared {
+        // A folder shared by hand stands beside nothing known to move.
+        Some((harness, shared)) => {
+            vec![(*harness, shared.target.clone(), links::Siblings::Unknown)]
+        }
+        None => seen
+            .content
+            .iter()
+            .map(|(harness, path)| (*harness, path.clone(), links::Siblings::SkillsDirectory))
+            .collect(),
+    };
+    // A file where the tree goes is no tree to read; the move refuses it
+    // in its own words.
+    if positions.iter().any(|(_, path, _)| !path.is_dir()) {
+        return Ok(None);
+    }
+    let mut origins = Vec::with_capacity(positions.len());
+    for (_, path, siblings) in &positions {
+        let position = links::observed(env, scope, name, path.clone());
+        let (files, link_files) = match moved {
+            true => crate::capture::read_tree_beside_links(path)?,
+            false => (crate::capture::read_tree(path)?, Vec::new()),
+        };
+        origins.push(links::Origin::new(
+            position,
+            files,
+            siblings.clone(),
+            link_files
+                .into_iter()
+                .map(|(file, target)| links::LinkFile { file, target })
+                .collect(),
+        ));
+    }
+    let mut origins = origins.into_iter();
+    let Some(first) = origins.next() else {
+        return Ok(None);
+    };
+    let origin = first.directory().to_path_buf();
+    let linked = first
+        .link_files
+        .iter()
+        .map(|link| link.file.clone())
+        .collect();
+    match links::agreed(first, origins, destination) {
+        links::Converted::Agreed { files, kept } => Ok(Some(Conversion {
+            origin,
+            files,
+            kept,
+            linked,
+        })),
+        links::Converted::Disagree {
+            positions: [_, other],
+        } => {
+            let other_identity = crate::paths::canonical(&other).ok();
+            let other = positions
+                .iter()
+                .find(|(_, path, _)| {
+                    crate::paths::canonical(path)
+                        .ok()
+                        .is_some_and(|at| Some(at) == other_identity)
+                })
+                .map_or(positions[0].0, |(harness, _, _)| *harness);
+            Err(copies_differ(name, positions[0].0, other))
+        }
+    }
+}
+
 /// The one copy every tool had goes into the local source, and every
 /// position it sat at is cleared. Nothing here runs at plan time: every
 /// byte read becomes an op.
@@ -99,6 +219,7 @@ pub(super) fn capture_ops(
     name: &str,
     content: &[(HarnessId, PathBuf)],
     local_item: &Path,
+    conversion: Option<&Conversion>,
 ) -> Result<Vec<PlannedOp>> {
     let mut ops = Vec::new();
     let Some((_, source)) = content.first() else {
@@ -121,7 +242,10 @@ pub(super) fn capture_ops(
     let capture = match kind {
         ItemKind::Skill => Op::WriteTree {
             root: local_item.to_path_buf(),
-            files: crate::capture::read_tree(source)?,
+            files: match conversion {
+                Some(conversion) => conversion.files.clone(),
+                None => crate::capture::read_tree(source)?,
+            },
             pre: Pre::Absent,
         },
         _ => Op::WriteFile {

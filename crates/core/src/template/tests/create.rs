@@ -72,7 +72,7 @@ pub(super) fn seeded() -> Project {
     fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 7\n\
+            "schema = 8\n\
              [sources.cat]\n{}\n\
              [skills.gh]\nsource = \"cat\"\n\
              [skills.house-style]\nsource = \"local\"\n\
@@ -246,8 +246,8 @@ fn the_local_opt_in_decides_whether_unmanaged_packages_are_copied() {
         .iter()
         .find(|member| member.name == "stray")
         .unwrap();
-    let MemberSource::Copy { copy, .. } = &stray.source else {
-        panic!("stray should be a copy: {:?}", stray.source);
+    let MemberSource::SharedCopy { copy, .. } = &stray.source else {
+        panic!("stray should be a converted copy: {:?}", stray.source);
     };
     let stored = copy_path(&project.env, &on, copy).unwrap();
     assert_eq!(
@@ -518,8 +518,11 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
     // licence, and the bytes stored are the edited ones.
     let mine =
         create_from_project(&project.env, &project.root, &chosen("Mine", confirmed())).unwrap();
-    let MemberSource::Copy { copy, from, .. } = &mine.members[0].source else {
-        panic!("gh should be a copy: {:?}", mine.members[0].source);
+    let MemberSource::SharedCopy { copy, from, .. } = &mine.members[0].source else {
+        panic!(
+            "gh should be a converted copy: {:?}",
+            mine.members[0].source
+        );
     };
     let stored = copy_path(&project.env, &mine, copy).unwrap();
     let text = fs::read_to_string(stored.join("SKILL.md")).unwrap();

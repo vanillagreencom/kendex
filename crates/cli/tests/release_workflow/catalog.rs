@@ -290,7 +290,7 @@ fn selected_ci_packages_deliver_an_executable_release_installer() {
         fs::write(
             project.join("kendex.toml"),
             format!(
-                "schema = 7\n[sources.catalog]\n{}\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n",
+                "schema = 8\n[sources.catalog]\n{}\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n",
                 source_path(&repository)
             ),
         )
