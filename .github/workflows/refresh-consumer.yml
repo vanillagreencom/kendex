@@ -4,13 +4,13 @@
 # called workflow the github context is the caller's, so every github.*
 # value below names the consumer.
 #
-# An inline input check runs first with the caller's GitHub token. When saved
-# inputs and source coverage remain current and no rolling pull request is
-# open, it skips the render step, and every later step unless one merged in
-# the last 24 hours, whose review threads the review step still answers. A
-# review-only or full run checks out the workflow commit, the one
-# job.workflow_sha names, and installs the one stable vN.Y.Z release tagged on
-# that commit, where vN is the tag the caller named, and stops before any
+# The job checks out its defining workflow commit, the one job.workflow_sha
+# names, then runs the shared input checker with the caller's GitHub token.
+# When saved inputs and source coverage remain current and no rolling pull
+# request is open, it skips the render step and the remaining steps unless one
+# merged in the last 24 hours, whose review threads the review step still
+# answers. A review-only or full run installs the one stable vN.Y.Z release
+# tagged on that commit, where vN is the tag the caller named, and stops before any
 # install when the commit carries no such tag or more than one. The default
 # catalog follows main, with the engine's compatibility refusal selecting the
 # release catalog. A declared rev takes precedence. Later steps run their
