@@ -21,11 +21,21 @@ fn check_help_states_the_three_exit_statuses() {
     assert!(output.status.success());
     let help = String::from_utf8_lossy(&output.stdout);
     for line in [
-        "0 armed.",
-        "1 not armed (drifted, absent, or core.hooksPath switching hooks off).",
-        "2 the check could not run (no commit-guards package in the repository, an unreadable hooks directory, a core.hooksPath outside the check's reach, or a repository git refuses to read).",
+        "0 armed",
+        "1 not armed (drifted, absent, or core.hooksPath switching hooks off)",
+        "2 the check could not run (no commit-guards package in the repository, an unreadable hooks directory, a core.hooksPath outside the check's reach, or a repository git refuses to read)",
     ] {
-        assert!(help.lines().any(|actual| actual == line), "missing: {line}");
+        assert!(
+            help.split("\n\n").any(|paragraph| {
+                paragraph
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim_end_matches('.')
+                    == line
+            }),
+            "missing: {line}"
+        );
     }
 }
 
