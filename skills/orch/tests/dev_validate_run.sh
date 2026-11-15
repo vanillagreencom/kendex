@@ -1218,6 +1218,7 @@ filter=""
 while (( $# > 0 )); do
   case "$1" in
     --jq) filter="$2"; shift 2 ;;
+    --include) shift ;;
     --paginate) shift ;;
     --json) [[ "$path" == pr-view && "$2" == baseRefName,state ]] || exit 9; shift 2 ;;
     *) exit 9 ;;

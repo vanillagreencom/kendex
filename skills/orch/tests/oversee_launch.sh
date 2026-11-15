@@ -857,7 +857,7 @@ printf '%s\n' "'$CP/wrap' '$CP/binary.sh'; :" > "$CP/tool.sh"
 printf '%s\n' "'$CP/wrap' '$CP/tool.sh'; :" > "$CP/deep.sh"
 # copilot_pane NAME PROGRAM SCRIPT — a pane whose own process is PROGRAM
 # running SCRIPT.
-copilot_pane() { tm new-window -d -t "fleet:$1" -n "cp$1" -P -F '#{pane_id}' "export COPILOT_HOME='$H/.1copilot'; exec '$CP/$2' '$CP/$3'"; }
+copilot_pane() { tm new-window -d -t "fleet:$1" -n "cp$1" -c "$TMP_ROOT/work" -P -F '#{pane_id}' "export COPILOT_HOME='$H/.1copilot'; exec '$CP/$2' '$CP/$3'"; }
 COPILOT_PANE="$(copilot_pane 7 node binary.sh)"
 # A Claude overseer behind a wrapper with a Copilot run under it: the pane
 # reads wrap, which names no harness and is no Copilot pane.
