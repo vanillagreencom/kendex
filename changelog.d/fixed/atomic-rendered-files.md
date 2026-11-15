@@ -1,0 +1,1 @@
+- Changed rendered files and hook registrations now replace each file atomically, keeping its permission bits so readers see complete contents during apply.

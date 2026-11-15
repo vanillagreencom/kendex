@@ -67,6 +67,44 @@ fn apply_now(f: &Fixture) {
     apply::execute(&f.env, &report.plan).unwrap();
 }
 
+/// Scheduled refresh reaches the same planner as apply: matching script
+/// bytes and an in-sync Copilot registry must leave both files untouched.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unchanged_copilot_apply_keeps_script_and_registry_mtimes() {
+    let f = fixture("[hooks.guard]\nsource = \"cat\"\nagents = \"all\"\n");
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("[\"claude\"]", "[\"copilot\"]");
+    fs::write(manifest, text).unwrap();
+    apply_now(&f);
+    let paths = [".github/hooks/guard.sh", ".github/hooks/guard.json"];
+    let fixed = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(123456789);
+    for rel in paths {
+        fs::File::open(f.project.join(rel))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(fixed))
+            .unwrap();
+    }
+    let before = paths.map(|rel| {
+        fs::metadata(f.project.join(rel))
+            .unwrap()
+            .modified()
+            .unwrap()
+    });
+    apply_now(&f);
+    for (rel, mtime) in paths.into_iter().zip(before) {
+        assert_eq!(
+            fs::metadata(f.project.join(rel))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            mtime
+        );
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn settings(f: &Fixture) -> serde_json::Value {
     serde_json::from_str(&fs::read_to_string(f.project.join(".claude/settings.json")).unwrap())
