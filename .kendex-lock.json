@@ -15,6 +15,7 @@
     "0adf1190263347ff": {"source":".","kind":"agent","name":"operator","harness":"pi"},
     "0c9d01eceba4169d": {"source":".","kind":"hook","name":"pre-commit-check","harness":"codex"},
     "0cf747922ecd7681": {"source":".","kind":"agent","name":"reviewer-correctness","harness":"copilot"},
+    "0cfdf3cd981a323e": {"source":".","kind":"hook","name":"lane-mail-compact","harness":"copilot"},
     "0d2ac88d7561c8fe": {"source":"in-place","kind":"skill","name":"pi-update","harness":"copilot"},
     "0d2fd933bb7a933d": {"source":".","kind":"skill","name":"social-media-content-calendar","harness":"claude"},
     "0e34daa816075af4": {"source":".","kind":"skill","name":"youtube-publish","harness":"codex"},
@@ -66,6 +67,7 @@
     "3ed56c76b75746f5": {"source":".","kind":"agent","name":"iced","harness":"claude"},
     "40564b9676148d8f": {"source":".","kind":"hook","name":"block-unsafe-rm","harness":"codex"},
     "41952f64c3e3572e": {"source":".","kind":"skill","name":"second-opinion","harness":"pi"},
+    "42989896abbc0c8f": {"source":".","kind":"hook","name":"lane-mail-start","harness":"copilot"},
     "430bff699be2ec9d": {"source":".","kind":"skill","name":"docs-writing","harness":"pi"},
     "43c272b3f9407622": {"source":".","kind":"hook","name":"session-end-row","harness":"codex"},
     "4534b47f3c8396c8": {"source":".","kind":"skill","name":"iced-rs","harness":"codex"},
@@ -289,6 +291,7 @@
     "fbe2e69c6b150b57": {"source":".","kind":"hook","name":"lane-mail-deliver","harness":"pi"},
     "fc054e569ae799a7": {"source":".","kind":"skill","name":"iced-rs","harness":"copilot"},
     "fd9ebc55368fc1a6": {"source":".","kind":"agent","name":"cpa","harness":"claude"},
+    "fe04ed25d850cafd": {"source":".","kind":"hook","name":"lane-mail-prompt","harness":"copilot"},
     "fec36c71b11e01da": {"source":".","kind":"hook","name":"block-argv-kill","harness":"codex"},
     "ffefd0dc0817d92d": {"source":".","kind":"skill","name":"orch","harness":"pi"}
   },
@@ -300,6 +303,7 @@
     "07fbec7ccc450aa5": {"reason":"required-by","by":"595585ed1a6326ad"},
     "08dd7a251b2beb23": {"reason":"required-by","by":"e9fc24db7035d6ff"},
     "093f5483cc894db9": {"reason":"required-by","by":"272df6fd84ef58d5"},
+    "0ac0d0d71e6fc94f": {"reason":"required-by","by":"fe04ed25d850cafd"},
     "0b6d43220a6d3156": {"reason":"required-by","by":"cd9c6a573947b45c"},
     "0cbc375ebe09eaa6": {"reason":"required-by","by":"066f2e30ec0b75b4"},
     "11433f90f72fedb5": {"reason":"required-by","by":"b96a6f9a28f36369"},
@@ -335,6 +339,7 @@
     "5db6ae11d854a502": {"reason":"required-by","by":"109c53b8b8f7a2cc"},
     "5ef4d8a5def19048": {"reason":"required-by","by":"43c272b3f9407622"},
     "641ab48e065f0230": {"reason":"required-by","by":"a50c206f5b45d4b8"},
+    "64e69df3e76e4f58": {"reason":"required-by","by":"0cfdf3cd981a323e"},
     "65d5e2d3aa1179a1": {"reason":"required-by","by":"31fc7c0ba08c9139"},
     "6814fce5094b591c": {"reason":"required-by","by":"06cd8d02284ae668"},
     "6e7bcbe34312482e": {"reason":"required-by","by":"30ffe6855e94684e"},
@@ -407,6 +412,7 @@
     "fad2cb7e722a0b7c": {"reason":"required-by","by":"f33af079d7e2aaa2"},
     "fadd61e4405e1211": {"reason":"required-by","by":"fbc7ba106ab1b7e7"},
     "fc47fa1665b7b15b": {"reason":"required-by","by":"796aff50ad1a1e3f"},
+    "fdead212b44c39e3": {"reason":"required-by","by":"42989896abbc0c8f"},
     "fea9de1afec27baf": {"reason":"required-by","by":"622d8f22a9a548cb"},
     "fec402cf84519d7d": {"reason":"required-by","by":"3380d74653acffa3"}
   },
@@ -457,8 +463,10 @@
     "5b02020b3e171cb9": {"installation":"026a6118a7cf6c13","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "5c1a501bf700ebb3": {"installation":"430bff699be2ec9d","sourceRepo":".","reasons":["92a6ea4530746687","5d95b65d431d9ca8","ac81c43bf82fb160","a5e72ae76db94f8a","d49fcc78117c118e","72b85cac8935cfd3"]},
     "5e03300d61756e86": {"installation":"3dd99aa8e70d405f","sourceRepo":".","reasons":["92a6ea4530746687","641ab48e065f0230","72b85cac8935cfd3"]},
+    "5e0906d2ad1497d5": {"installation":"48deaa9c23c8f3c3","sourceRepo":".","reasons":["92a6ea4530746687","64e69df3e76e4f58","9cb781869b98d2e0","7e24077e70fee99c","0ac0d0d71e6fc94f","fdead212b44c39e3","d8285306ac33e25d","0b6d43220a6d3156"]},
     "5e492cf941f6b294": {"installation":"9f179a345a0094f8","sourceRepo":".","reasons":["92a6ea4530746687","fea9de1afec27baf"]},
     "5ee45bd64b59a15a": {"installation":"cd9c6a573947b45c","sourceRepo":".","reasons":["92a6ea4530746687","193843aa51bac613"]},
+    "63166293c607e44c": {"installation":"42989896abbc0c8f","sourceRepo":".","reasons":["92a6ea4530746687","64e69df3e76e4f58"]},
     "64ca2d52d0b595b4": {"installation":"e6e1fa23ff45be08","sourceRepo":".","reasons":["92a6ea4530746687","548bab6504023efb"]},
     "6509b682f14a1c7d": {"installation":"01a232f92994ea1b","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "65a75759df28a7a3": {"installation":"1c6f2cbe70dc7d8e","sourceRepo":".","reasons":["92a6ea4530746687","14b5ad9ed1cf8c84","0cbc375ebe09eaa6","2d4645d5f430eda7","95244fafe7f4ba5e"]},
@@ -470,12 +478,12 @@
     "761780f3e430d93f": {"installation":"e9fc24db7035d6ff","sourceRepo":".","reasons":["92a6ea4530746687","72b85cac8935cfd3"]},
     "79553673b458d46d": {"installation":"83437a235165b2db","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "798c694ff87f872c": {"installation":"82a034d8dae3ef41","sourceRepo":".","reasons":["92a6ea4530746687","1d99ad54bdd6c9c2","093f5483cc894db9","b865feb4044bc88d"]},
+    "7b92e5a52cee0c47": {"installation":"fe04ed25d850cafd","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "7b986c60668d1de4": {"installation":"1d331e895c00dda4","sourceRepo":".","reasons":["92a6ea4530746687","fad2cb7e722a0b7c","11433f90f72fedb5","1d0e834ed78448de"]},
     "7d206898d6ce4f70": {"installation":"5f6c12b2ae3c9852","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "84339b20c950972c": {"installation":"1a0a773acd67e12c","sourceRepo":".","reasons":["92a6ea4530746687","f23308d52180bc1f"]},
     "8494f31618c92e44": {"installation":"b78b84b06c72022f","sourceRepo":".","reasons":["92a6ea4530746687","80324e1b79a286e8","88b53efa29f985e0","0249809811f5c2a6","f57a075902c66420","cde51957e110284c","97af40daa4b08219","e637e6619ea8ff32","5db6ae11d854a502"]},
     "87a3cf795e0d4768": {"installation":"00d82e0bb7d938a8","sourceRepo":".","reasons":["92a6ea4530746687","f1b0ba201226ba37","fea9de1afec27baf","2d12859685f70689","72b85cac8935cfd3"]},
-    "88f7a11b383d60aa": {"installation":"48deaa9c23c8f3c3","sourceRepo":".","reasons":["92a6ea4530746687","9cb781869b98d2e0","7e24077e70fee99c","d8285306ac33e25d","0b6d43220a6d3156"]},
     "88ffa0b274e16fd5": {"installation":"547d59878bd6c5ab","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "8a2b090679ee52ce": {"installation":"a29d22af8ccd5dbc","sourceRepo":".","reasons":["92a6ea4530746687","410a8c3be895c301"]},
     "8af2c248fbfaac07": {"installation":"622d8f22a9a548cb","sourceRepo":".","reasons":["92a6ea4530746687"]},
@@ -498,6 +506,7 @@
     "aca4ed6813b5058f": {"installation":"47e9f48a70a7c9de","sourceRepo":".","reasons":["92a6ea4530746687","c079936fc9cdeedc"]},
     "b2433a036e7f88d0": {"installation":"14f79f1fd507ff90","sourceRepo":".","reasons":["92a6ea4530746687","548bab6504023efb"]},
     "b41a52dc1851702c": {"installation":"5937a8314f4e8dc9","sourceRepo":".","reasons":["92a6ea4530746687","c079936fc9cdeedc"]},
+    "b8ac243ed14c90b8": {"installation":"0cfdf3cd981a323e","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "bd517e83c215fc39": {"installation":"158cb4173f128fbd","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "bf882484ec8be53a": {"installation":"5b019b96a7aff7e4","sourceRepo":".","reasons":["92a6ea4530746687","548bab6504023efb"]},
     "c4d573c1a051517c": {"installation":"0e34daa816075af4","sourceRepo":".","reasons":["92a6ea4530746687"]},
@@ -3632,8 +3641,8 @@
         "command": "p='.github/hooks/lane-mail-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
         "matcher": "*"
       },
-      "reasons": ["92a6ea4530746687","9cb781869b98d2e0","7e24077e70fee99c","d8285306ac33e25d","0b6d43220a6d3156"],
-      "requirerProvenance": {"rows":["88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "reasons": ["92a6ea4530746687","64e69df3e76e4f58","9cb781869b98d2e0","7e24077e70fee99c","0ac0d0d71e6fc94f","fdead212b44c39e3","d8285306ac33e25d","0b6d43220a6d3156"],
+      "requirerProvenance": {"rows":["5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "hook:lane-mail-check:pi": {
       "installation": "ad22862266416e54",
@@ -3659,6 +3668,30 @@
       },
       "reasons": ["92a6ea4530746687","9eaddc9ebd012751","bcfa3a200102cb85","aa7b168233a72086","97a4d627d9c9887f","efb9a0772c2f09e9"],
       "requirerProvenance": {"rows":["ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+    },
+    "hook:lane-mail-compact:copilot": {
+      "installation": "0cfdf3cd981a323e",
+      "sourceRepo": ".",
+      "sourceHash": "1bfbcb2c43e6fab13888956bdc98691ec72d4eadf293187f4867af817d60bdbe",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "0d745dea4886373ef3fbfda41a1396101c34265d6b9be83501ce1df016941864",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-compact",
+        "paths": [
+          ".github/hooks/lane-mail-compact.sh"
+        ]
+      },
+      "registration": {
+        "event": "preCompact",
+        "command": "p='.github/hooks/lane-mail-compact.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": ["92a6ea4530746687"]
     },
     "hook:lane-mail-deliver:claude": {
       "installation": "560afcf2f946ad96",
@@ -3733,7 +3766,7 @@
         "matcher": "*"
       },
       "reasons": ["92a6ea4530746687","193843aa51bac613"],
-      "requirerProvenance": {"rows":["88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "hook:lane-mail-deliver:pi": {
       "installation": "fbe2e69c6b150b57",
@@ -3833,7 +3866,7 @@
         "matcher": "*"
       },
       "reasons": ["92a6ea4530746687","193843aa51bac613"],
-      "requirerProvenance": {"rows":["88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "hook:lane-mail-halt:pi": {
       "installation": "358d6a6ac8dd672d",
@@ -3884,6 +3917,55 @@
       },
       "reasons": ["92a6ea4530746687","548bab6504023efb"],
       "requirerProvenance": {"rows":["a9c5e53db5db995a","6cf17009eae2d144","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+    },
+    "hook:lane-mail-prompt:copilot": {
+      "installation": "fe04ed25d850cafd",
+      "sourceRepo": ".",
+      "sourceHash": "b128f266b3d67697e7ac128f8aabc97b472a03cc7fe6f05e4fc9b145cc315442",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "7d0ea9bb892b1164847b43673608c23463a607064369fa54c786c024179414dc",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-prompt",
+        "paths": [
+          ".github/hooks/lane-mail-prompt.sh"
+        ]
+      },
+      "registration": {
+        "event": "userPromptSubmitted",
+        "command": "p='.github/hooks/lane-mail-prompt.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": ["92a6ea4530746687"]
+    },
+    "hook:lane-mail-start:copilot": {
+      "installation": "42989896abbc0c8f",
+      "sourceRepo": ".",
+      "sourceHash": "c7905659a294ec88a2b38b9bfbf071d0160a45689ece954a0f9564e3c5791ba2",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "fe6af70177c16c42e8afddac619521299da907fbc00f5ff102a00ebb68d95956",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "lane-mail-start",
+        "paths": [
+          ".github/hooks/lane-mail-start.sh"
+        ]
+      },
+      "registration": {
+        "event": "sessionStart",
+        "command": "p='.github/hooks/lane-mail-start.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; o=$( { e=$(bash \"$r/$p\" 2>&1 >&3 3>&-); s=$?; [ -z \"$e\" ] || printf '%s\\n' \"$e\" >&2; printf '\\036'; [ \"$s\" != 2 ] || [ -z \"$e\" ] || printf '%s\\n' \"$e\" | awk 'BEGIN{for(i=1;i<32;i++)m[sprintf(\"%c\",i)]=sprintf(\"\\\\u%04x\",i);m[\"\\t\"]=\"\\\\t\";m[\"\\r\"]=\"\\\\r\";m[\"\\\\\"]=\"\\\\\\\\\";m[\"\\\"\"]=\"\\\\\\\"\";printf \"\\\"\"}{if(NR>1)printf \"\\\\n\";n=length($0);for(i=1;i<=n;i++){c=substr($0,i,1);printf \"%s\",((c in m)?m[c]:c)}}END{printf \"\\\"\"}'; exit \"$s\"; } 3>&1 ); s=$?; R=$(printf '\\036'); a=; case $o in *\"$R\"*) a=${o##*\"$R\"}; o=${o%\"$R\"*} ;; esac; case $o in *[![:space:]]*) printf '%s' \"$o\" ;; *) [ -z \"$a\" ] || printf '{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":%s}\\n' \"$a\" ;; esac; exit \"$s\"",
+        "matcher": "*"
+      },
+      "reasons": ["92a6ea4530746687","64e69df3e76e4f58"],
+      "requirerProvenance": {"rows":["b8ac243ed14c90b8"]}
     },
     "hook:pre-commit-check:claude": {
       "installation": "3e4fdce93bb6be16",
@@ -4246,7 +4328,7 @@
         "matcher": "*"
       },
       "reasons": ["92a6ea4530746687","193843aa51bac613"],
-      "requirerProvenance": {"rows":["88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "hook:session-end-row:pi": {
       "installation": "47e9f48a70a7c9de",
@@ -4346,7 +4428,7 @@
         "matcher": "*"
       },
       "reasons": ["92a6ea4530746687","193843aa51bac613"],
-      "requirerProvenance": {"rows":["88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "hook:session-start-row:pi": {
       "installation": "5937a8314f4e8dc9",
@@ -4694,7 +4776,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fad2cb7e722a0b7c","11433f90f72fedb5"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:bot-instructions:pi": {
       "installation": "b356e4d988657ec8",
@@ -4775,7 +4857,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","28df317a74611f28","fec402cf84519d7d","2d12859685f70689"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","2043e0db1f0a4e88","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","2043e0db1f0a4e88","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:code-quality:pi": {
       "installation": "3d494a7d150719a0",
@@ -4856,7 +4938,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","08dd7a251b2beb23","11433f90f72fedb5","fea9de1afec27baf","3668661703049930","7a626689a34bde31","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","761780f3e430d93f","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","59580c851ea48be2","7180ee734a82e021","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","761780f3e430d93f","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","59580c851ea48be2","7180ee734a82e021","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:commit-guards:pi": {
       "installation": "b06e435e0703cda3",
@@ -4937,7 +5019,7 @@
         ]
       },
       "reasons": ["fea9de1afec27baf","1d0e834ed78448de","c2d95f4c4ab058bc"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:communication:pi": {
       "installation": "3e9abfa87b32a311",
@@ -5018,7 +5100,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fec402cf84519d7d","2e4ee1c14c681152","1d0e834ed78448de"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","87a3cf795e0d4768","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","87a3cf795e0d4768","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:decider:pi": {
       "installation": "99e2559353e0bb13",
@@ -5253,7 +5335,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1d0e834ed78448de"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:dev:pi": {
       "installation": "066f2e30ec0b75b4",
@@ -5411,7 +5493,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","f1b0ba201226ba37","fea9de1afec27baf","2d12859685f70689","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:docs-writing:pi": {
       "installation": "430bff699be2ec9d",
@@ -5569,7 +5651,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","cf7aa00b261c2a58","fec402cf84519d7d","1d0e834ed78448de","1df00501c2aebff5","2d12859685f70689","eea16ccf41a42125"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","fbb99b634e4d8658","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","4cab937dd98acb11","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","fbb99b634e4d8658","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","4cab937dd98acb11","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:github:pi": {
       "installation": "31a4ca1a067c63e6",
@@ -5650,7 +5732,7 @@
         ]
       },
       "reasons": ["3f0491b45bbe786c","2d12859685f70689"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:harness-ci:pi": {
       "installation": "e63a9b3dc5d9867a",
@@ -5887,7 +5969,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1df00501c2aebff5","c889e026572f0fe9"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88ffa0b274e16fd5","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88ffa0b274e16fd5","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:linear:pi": {
       "installation": "a0f55a5f06363f90",
@@ -5968,7 +6050,7 @@
         ]
       },
       "reasons": ["fea9de1afec27baf","1d0e834ed78448de","c2d95f4c4ab058bc","193843aa51bac613"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:mailbox:pi": {
       "installation": "b054dfcd568bef99",
@@ -6049,7 +6131,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fec402cf84519d7d","11433f90f72fedb5","fea9de1afec27baf","1df00501c2aebff5","2d12859685f70689","c2d95f4c4ab058bc","193843aa51bac613"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:orch:pi": {
       "installation": "ffefd0dc0817d92d",
@@ -6350,7 +6432,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1d0e834ed78448de","2d12859685f70689"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:project-management:pi": {
       "installation": "8eb76f12de12aa4e",
@@ -6431,7 +6513,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fad2cb7e722a0b7c","11433f90f72fedb5","1d0e834ed78448de"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:review-gate:pi": {
       "installation": "f3c7c519a4b0e0f1",
@@ -6512,7 +6594,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fc47fa1665b7b15b","fec402cf84519d7d","1d0e834ed78448de","1df00501c2aebff5"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:reviewer:pi": {
       "installation": "1c6f2cbe70dc7d8e",
@@ -6828,7 +6910,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1d0e834ed78448de","da2243a2fe583745"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","88f7a11b383d60aa","02e27c5fb9d5d6e8","1d65029d60985e14","6d8af9c2e00e9141","5ee45bd64b59a15a","d5fd949791a056d1"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","49f56c68b5c36504","8af2c248fbfaac07","cfb51317023f5fa1","465291fcc804eb9e","7b986c60668d1de4","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","7b92e5a52cee0c47","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a","d5fd949791a056d1"]}
     },
     "skill:worktree:pi": {
       "installation": "68dcaa15812bfc58",
@@ -7008,7 +7090,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "31603d22616b75f6a1771a58abaedbcf093f9f0f"
+      "commit": "f51479fea70fd4152571b75d65a0f2964a52bd30"
     }
   },
   "claudeProjectDefault": "released"
