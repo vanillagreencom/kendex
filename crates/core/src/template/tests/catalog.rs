@@ -129,15 +129,15 @@ fn literal_legacy_records_keep_unique_readings_and_preserve_ambiguous_strings() 
     let manifest = env.global_manifest_file();
     let base = manifest.parent().unwrap();
     let absolute = base.join("absolute");
-    let relative = crate::source::path_root(&env, &Scope::Global, "relative");
+    let relative = crate::source::path_root(&env, &Scope::Global, "folder/repo");
     let ambiguous = base.join("ambiguous");
     let other = base.join("ambiguous.git");
     for path in [&absolute, &relative, &ambiguous, &other] {
         skill(&path.join("skills"), "gh", "bytes");
     }
-    fs::write(&manifest, format!("schema = 8\n[sources.remote]\nrepo = 'owner/repo'\n[sources.absolute]\n{}\n[sources.relative]\npath = 'relative'\n[sources.ambiguous]\n{}\n[sources.other]\n{}\n", crate::test_util::source_path(&absolute), crate::test_util::source_path(&ambiguous), crate::test_util::source_path(&other))).unwrap();
+    fs::write(&manifest, format!("schema = 8\n[sources.remote]\nrepo = 'owner/repo'\n[sources.absolute]\n{}\n[sources.relative]\npath = 'folder/repo'\n[sources.ambiguous]\n{}\n[sources.other]\n{}\n", crate::test_util::source_path(&absolute), crate::test_util::source_path(&ambiguous), crate::test_util::source_path(&other))).unwrap();
     // These are the exact old record fields, not new typed members serialized as old.
-    let text = format!("[[templates]]\nname = 'Legacy'\nid = 'legacy'\n{}", ["owner/repo".to_owned(), crate::paths::slashed(&absolute), crate::paths::slashed(&relative), crate::paths::slashed(&ambiguous)].into_iter().enumerate().map(|(i, repo)| format!("[[templates.members]]\nkind = 'skill'\nname = 'item{i}'\n[templates.members.source]\nheld = 'marketplace'\nrepo = {repo:?}\n")).collect::<String>());
+    let text = format!("[[templates]]\nname = 'Legacy'\nid = 'legacy'\n{}", ["owner/repo".to_owned(), crate::paths::slashed(&absolute), crate::paths::slashed(&relative), "folder/repo".to_owned(), crate::paths::slashed(&ambiguous)].into_iter().enumerate().map(|(i, repo)| format!("[[templates.members]]\nkind = 'skill'\nname = 'item{i}'\n[templates.members.source]\nheld = 'marketplace'\nrepo = {repo:?}\n")).collect::<String>());
     fs::write(env.templates_file(), text).unwrap();
     let before = get(&env, "Legacy").unwrap();
     // Evaluate each member separately: equal package names are immaterial to legacy policy.
@@ -145,7 +145,13 @@ fn literal_legacy_records_keep_unique_readings_and_preserve_ambiguous_strings() 
         let mut one = before.clone();
         one.members = vec![member.clone()];
         let resolution = resolve(&env, &one).unwrap();
-        let expected_alias = [Some("remote"), Some("absolute"), Some("relative"), None][i];
+        let expected_alias = [
+            Some("remote"),
+            Some("absolute"),
+            Some("relative"),
+            Some("relative"),
+            None,
+        ][i];
         assert_eq!(
             resolution.groups.len(),
             usize::from(expected_alias.is_some())
@@ -165,6 +171,30 @@ fn literal_legacy_records_keep_unique_readings_and_preserve_ambiguous_strings() 
     create_from_selection(
         &env,
         "Another",
+        vec![selected(&env, &Scope::Global, "absolute", "gh")],
+    )
+    .unwrap();
+    assert_eq!(get(&env, "Legacy").unwrap(), before);
+    // The raw relative spelling can also name a repository. Neither wins.
+    let mut declared = crate::manifest::load_current(&manifest).unwrap().unwrap();
+    declared.sources.insert(
+        "competing".to_owned(),
+        crate::manifest::SourceDecl {
+            repo: Some("folder/repo".to_owned()),
+            path: None,
+            rev: None,
+            enabled: true,
+        },
+    );
+    crate::manifest::save(&manifest, &declared).unwrap();
+    let mut relative_only = before.clone();
+    relative_only.members = vec![before.members[3].clone()];
+    let unresolved = resolve(&env, &relative_only).unwrap();
+    assert!(unresolved.groups.is_empty());
+    assert_eq!(unresolved.missing.len(), 1);
+    create_from_selection(
+        &env,
+        "Mutation",
         vec![selected(&env, &Scope::Global, "absolute", "gh")],
     )
     .unwrap();
@@ -298,4 +328,153 @@ fn mixed_format_rows_keep_their_original_removal_reference() {
     )
     .unwrap();
     assert_eq!(remaining.members, vec![typed]);
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn targeted_removal_reads_legacy_catalogs_before_mutating() {
+    for ambiguous in [false, true] {
+        let (_tmp, env) = home();
+        let manifest = env.global_manifest_file();
+        let first = manifest.parent().unwrap().join("catalog");
+        let second = manifest.parent().unwrap().join("catalog.git");
+        skill(&first.join("skills"), "gh", "first");
+        skill(&second.join("skills"), "gh", "second");
+        fs::write(
+            &manifest,
+            format!(
+                "schema = 8\n[sources.first]\n{}\n",
+                crate::test_util::source_path(&first)
+            ),
+        )
+        .unwrap();
+        let legacy = Member {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            enabled: true,
+            source: MemberSource::Marketplace {
+                repo: crate::paths::slashed(&first),
+                rev: None,
+            },
+        };
+        let source = source_choice(&env, &crate::paths::slashed(&second)).unwrap();
+        let MemberSource::Catalog { catalog, .. } = &source else {
+            unreachable!()
+        };
+        let typed = Member {
+            source: source.clone(),
+            ..legacy.clone()
+        };
+        create_from_selection(&env, "Mixed", vec![legacy.clone(), typed]).unwrap();
+        if ambiguous {
+            fs::write(
+                &manifest,
+                format!(
+                    "schema = 8\n[sources.first]\n{}\n[sources.second]\n{}\n",
+                    crate::test_util::source_path(&first),
+                    crate::test_util::source_path(&second)
+                ),
+            )
+            .unwrap();
+        }
+        let before = fs::read(env.templates_file()).unwrap();
+        let result = remove_members(
+            &env,
+            "Mixed",
+            &[MemberRef {
+                kind: legacy.kind,
+                name: legacy.name.clone(),
+                which: MemberWhich::Catalog {
+                    catalog: catalog.clone(),
+                },
+            }],
+        );
+        if ambiguous {
+            assert!(matches!(
+                result,
+                Err(CoreError::TemplateMemberUnavailable { .. })
+            ));
+            assert_eq!(fs::read(env.templates_file()).unwrap(), before);
+        } else {
+            assert_eq!(result.unwrap().members, vec![legacy]);
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn cross_format_admission_keeps_the_first_record_and_reference() {
+    for (folder, ambiguous) in [(false, false), (true, false), (true, true)] {
+        for add in [false, true] {
+            let (_tmp, env) = home();
+            let manifest = env.global_manifest_file();
+            let root = manifest.parent().unwrap().join("catalog");
+            skill(&root.join("skills"), "gh", "bytes");
+            let declaration = if folder {
+                crate::test_util::source_path(&root)
+            } else {
+                "repo = 'owner/repo'".to_owned()
+            };
+            let competitor = if ambiguous {
+                format!(
+                    "[sources.second]\n{}\n",
+                    crate::test_util::source_path(&root.with_extension("git"))
+                )
+            } else {
+                String::new()
+            };
+            fs::write(
+                &manifest,
+                format!("schema = 8\n[sources.first]\n{declaration}\n{competitor}"),
+            )
+            .unwrap();
+            let legacy = Member {
+                kind: MemberKind::Skill,
+                name: "gh".to_owned(),
+                enabled: false,
+                source: MemberSource::Marketplace {
+                    repo: if folder {
+                        crate::paths::slashed(&root)
+                    } else {
+                        "owner/repo".to_owned()
+                    },
+                    rev: Some("saved".to_owned()),
+                },
+            };
+            let typed = selected(&env, &Scope::Global, "first", "gh");
+            let template = if add {
+                create_from_selection(&env, "Dedup", vec![legacy.clone()]).unwrap();
+                add_members(&env, "Dedup", vec![typed]).unwrap()
+            } else {
+                create_from_selection(&env, "Dedup", vec![legacy.clone(), typed]).unwrap()
+            };
+            assert_eq!(template.members[0], legacy);
+            if ambiguous {
+                assert_eq!(template.members.len(), 2);
+                continue;
+            }
+            assert_eq!(template.members, vec![legacy.clone()]);
+            let resolution = resolve(&env, &template).unwrap();
+            assert_eq!(resolution.groups.len(), 1);
+            // An unfetched repository may be unavailable, but admission must not contest it.
+            assert_eq!(resolution.groups[0].source.as_deref(), Some("first"));
+            let MemberSource::Marketplace { repo, .. } = legacy.source else {
+                unreachable!()
+            };
+            assert!(
+                remove_members(
+                    &env,
+                    "Dedup",
+                    &[MemberRef {
+                        kind: legacy.kind,
+                        name: legacy.name,
+                        which: MemberWhich::Marketplace { repo }
+                    }]
+                )
+                .unwrap()
+                .members
+                .is_empty()
+            );
+        }
+    }
 }

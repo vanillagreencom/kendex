@@ -401,6 +401,27 @@ impl Member {
         };
         (self.kind, self.name.as_str(), repo)
     }
+
+    fn admission_identity(
+        &self,
+        env: &Env,
+        subscriptions: &[crate::source_ops::Subscription],
+    ) -> Result<(MemberKind, String, Option<String>)> {
+        let (kind, name, persisted) = self.identity();
+        let catalog = match &self.source {
+            MemberSource::Marketplace { .. } => {
+                match install::member_catalog(env, self, subscriptions) {
+                    Ok(reading) => reading.catalog.map(|catalog| catalog.identity()),
+                    Err(install::CatalogError::Ambiguous) => None,
+                    Err(install::CatalogError::Read(error)) => return Err(error),
+                }
+            }
+            MemberSource::Catalog { .. }
+            | MemberSource::Copy { .. }
+            | MemberSource::SharedCopy { .. } => None,
+        };
+        Ok((kind, name.to_owned(), catalog.or(persisted)))
+    }
 }
 
 /// One member, named the way a caller outside core addresses it.
@@ -741,27 +762,58 @@ pub fn delete(env: &Env, name: &str) -> Result<()> {
 pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
     admit(&members)?;
     change(env, name, |template| {
-        for member in members {
-            if !template
-                .members
-                .iter()
-                .any(|held| held.identity() == member.identity())
-            {
-                template.members.push(member);
-            }
-        }
+        append_unique(env, &mut template.members, members)?;
         Ok(())
     })
+}
+
+fn append_unique(env: &Env, kept: &mut Vec<Member>, members: Vec<Member>) -> Result<()> {
+    let subscriptions = crate::source_ops::subscriptions(env)?;
+    let mut identities = kept
+        .iter()
+        .map(|member| member.admission_identity(env, &subscriptions))
+        .collect::<Result<BTreeSet<_>>>()?;
+    for member in members {
+        if identities.insert(member.admission_identity(env, &subscriptions)?) {
+            kept.push(member);
+        }
+    }
+    Ok(())
 }
 
 /// Take members out. A member whose bytes only this template held goes
 /// from the store with it, and so do the customizations that were its.
 pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Template> {
     let before = get(env, name)?;
+    let subscriptions = crate::source_ops::subscriptions(env)?;
     let after = change(env, name, |template| {
-        template
-            .members
-            .retain(|held| !members.iter().any(|wanted| wanted.names(held)));
+        let mut kept_members = Vec::new();
+        for held in &template.members {
+            let mut remove = false;
+            for wanted in members {
+                if wanted.kind != held.kind || wanted.name != held.name {
+                    continue;
+                }
+                remove |=
+                    match (&wanted.which, &held.source) {
+                        (MemberWhich::Catalog { catalog }, MemberSource::Marketplace { .. }) => {
+                            let reading = install::member_catalog(env, held, &subscriptions)
+                                .map_err(|why| CoreError::TemplateMemberUnavailable {
+                                    name: held.name.clone(),
+                                    why: why.to_string(),
+                                })?;
+                            reading
+                                .catalog
+                                .is_some_and(|held| held.identity() == catalog.identity())
+                        }
+                        _ => wanted.names(held),
+                    };
+            }
+            if !remove {
+                kept_members.push(held.clone());
+            }
+        }
+        template.members = kept_members;
         // Inside the same change, so the index write carries the members
         // and their settings together: a template that kept a removed
         // package's declarations would inject them into the manifest of

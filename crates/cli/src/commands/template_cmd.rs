@@ -206,7 +206,7 @@ impl Picked {
             }
             (false, None) => MemberWhich::Any,
         };
-        let mut references: Vec<_> = named
+        let references: Vec<_> = named
             .into_iter()
             .map(|(kind, name)| MemberRef {
                 kind,
@@ -214,17 +214,6 @@ impl Picked {
                 which: which.clone(),
             })
             .collect();
-        if let Some(repo) = &self.source {
-            let legacy: Vec<_> = references
-                .iter()
-                .map(|reference| MemberRef {
-                    kind: reference.kind,
-                    name: reference.name.clone(),
-                    which: MemberWhich::Marketplace { repo: repo.clone() },
-                })
-                .collect();
-            references.extend(legacy);
-        }
         Ok(references)
     }
 }

@@ -268,7 +268,7 @@ fn gather_catalog_member(
                     _ => None,
                 },
                 which: which_of(member),
-                why,
+                why: why.to_string(),
             });
             return;
         }
@@ -700,18 +700,32 @@ fn subscription_in(
     ))
 }
 
-struct CatalogReading {
-    catalog: Option<super::TemplateCatalog>,
+pub(super) struct CatalogReading {
+    pub(super) catalog: Option<super::TemplateCatalog>,
     address: Option<(Scope, String)>,
+}
+
+pub(super) enum CatalogError {
+    Ambiguous,
+    Read(CoreError),
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ambiguous => f.write_str("this legacy catalog matches more than one declaration — save again from its catalog"),
+            Self::Read(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
 }
 
 /// Legacy records retain main's fold only when every eligible declaration
 /// agrees on a single reading. Typed records compare kinds before identity.
-fn member_catalog(
+pub(super) fn member_catalog(
     env: &Env,
     member: &super::Member,
     subscriptions: &[crate::source_ops::Subscription],
-) -> std::result::Result<CatalogReading, String> {
+) -> std::result::Result<CatalogReading, CatalogError> {
     match &member.source {
         MemberSource::Catalog { catalog, .. } => {
             let mut scopes = Vec::new();
@@ -725,7 +739,7 @@ fn member_catalog(
             }
             for scope in scopes {
                 if let Some(name) =
-                    subscription_in(env, &scope, catalog).map_err(|error| error.to_string())?
+                    subscription_in(env, &scope, catalog).map_err(CatalogError::Read)?
                 {
                     return Ok(CatalogReading {
                         catalog: Some(catalog.clone()),
@@ -747,17 +761,35 @@ fn member_catalog(
                         row.repo_identity == identity
                     } else {
                         crate::source_ref::repo_identity(&row.repo_identity) == identity
+                            || crate::source_ref::repo_identity(&crate::paths::slashed(
+                                std::path::Path::new(&row.reference),
+                            )) == identity
                     }
                 })
                 .collect();
             match matches.as_slice() {
                 [row] => {
-                    let manifest = engine_ops::manifest_for_reading(env, &row.scope).map_err(|error| error.to_string())?;
-                    let catalog = manifest.sources.get(&row.name).and_then(|decl| super::TemplateCatalog::declared(env, &row.scope, decl)).ok_or_else(|| "catalog declaration unavailable".to_owned())?;
-                    Ok(CatalogReading { catalog: Some(catalog), address: Some((row.scope.clone(), row.name.clone())) })
+                    let manifest = engine_ops::manifest_for_reading(env, &row.scope)
+                        .map_err(CatalogError::Read)?;
+                    let catalog = manifest
+                        .sources
+                        .get(&row.name)
+                        .and_then(|decl| super::TemplateCatalog::declared(env, &row.scope, decl))
+                        .ok_or_else(|| {
+                            CatalogError::Read(CoreError::UnknownSource {
+                                name: row.name.clone(),
+                            })
+                        })?;
+                    Ok(CatalogReading {
+                        catalog: Some(catalog),
+                        address: Some((row.scope.clone(), row.name.clone())),
+                    })
                 }
-                [] => Ok(CatalogReading { catalog: None, address: None }),
-                _ => Err("this legacy catalog matches more than one declaration — save again from its catalog".to_owned()),
+                [] => Ok(CatalogReading {
+                    catalog: None,
+                    address: None,
+                }),
+                _ => Err(CatalogError::Ambiguous),
             }
         }
         MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => {
@@ -883,7 +915,7 @@ pub fn install(
     // (invariant 17): a caller can name a project by whatever it typed,
     // and every path this install derives has to key off one directory.
     let destination = &destination.canonical();
-    let resolution = resolve(env, template)?;
+    let mut resolution = resolve(env, template)?;
     if let Some(first) = resolution.missing.first() {
         return Err(CoreError::TemplateMemberUnavailable {
             name: format!("{} '{}'", first.kind.name(), first.name),
@@ -893,6 +925,7 @@ pub fn install(
     if resolution.count() == 0 {
         return Err(CoreError::TemplateEmpty);
     }
+    read_effective_subscriptions(env, destination, &mut resolution)?;
     // A saved index is adversarial input, and a hook environment it carries
     // is the one customization that reaches a command's own text:
     // `engine::targets::assignments` writes each key there as a shell word,
@@ -954,6 +987,44 @@ pub fn install(
     Ok(landed.install)
 }
 
+fn read_effective_subscriptions(
+    env: &Env,
+    destination: &Scope,
+    resolution: &mut Resolution,
+) -> Result<()> {
+    // Origin selects the saved reading. Execution reuses the destination,
+    // then the personal declaration; judge that same address before any write.
+    for group in &mut resolution.groups {
+        let address = match &group.catalog {
+            Some(catalog) => match subscription_in(env, destination, catalog)? {
+                Some(name) => Some((destination.clone(), name)),
+                None => {
+                    subscription_in(env, &Scope::Global, catalog)?.map(|name| (Scope::Global, name))
+                }
+            },
+            None => None,
+        };
+        (group.scope, group.source) = match address {
+            Some((scope, name)) => (Some(scope), Some(name)),
+            None => (None, None),
+        };
+    }
+    let personal = engine_ops::manifest_for_reading(env, &Scope::Global)?;
+    read_against_machine(
+        env,
+        &personal,
+        &mut resolution.groups,
+        &mut resolution.missing,
+    );
+    if let Some(first) = resolution.missing.first() {
+        return Err(CoreError::TemplateMemberUnavailable {
+            name: format!("{} '{}'", first.kind.name(), first.name),
+            why: first.why.clone(),
+        });
+    }
+    Ok(())
+}
+
 fn plan_group_subscription(
     env: &Env,
     destination: &Scope,
@@ -989,16 +1060,8 @@ fn plan_group_subscription(
     // one plan; into a project, the personal declaration is carried in
     // as the personal manifest would hold it, and the personal plan is
     // written once the project's has been judged.
-    let address = match &group.catalog {
-        Some(catalog) => match subscription_in(env, destination, catalog)? {
-            Some(name) => Some((destination.clone(), name)),
-            None => {
-                subscription_in(env, &Scope::Global, catalog)?.map(|name| (Scope::Global, name))
-            }
-        },
-        None => None,
-    };
-    match (destination, address.as_ref()) {
+    let address = group.scope.as_ref().zip(group.source.as_ref());
+    match (destination, address) {
         (Scope::Project { .. }, Some((scope, name))) => {
             crate::source_ops::install_from(env, scope, name, destination, request)
                 .map(|report| (report, Subscription::Existing))

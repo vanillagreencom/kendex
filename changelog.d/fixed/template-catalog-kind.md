@@ -1,3 +1,3 @@
-- Templates keep folder catalogs distinct, including folders whose names differ only by `.git`, and preserve the selected catalog's kind and declaring scope. Older templates keep unique catalog matches; ambiguous matches remain visible and unresolved.
+- Templates keep folder catalogs distinct, including folders whose names differ only by `.git`, and preserve the selected catalog's kind and declaring scope. Older templates keep unique catalog matches; ambiguous matches remain visible and unresolved. Older relative folder references resolve correctly, adding the same package keeps one member, targeted removal keeps members from other catalogs, and disabled destination catalogs refuse installation before any template files change.
 
   You do: save an ambiguous older template member again from its catalog.

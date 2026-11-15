@@ -380,11 +380,7 @@ pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Res
         }
     }
     let mut kept: Vec<Member> = Vec::new();
-    for member in members {
-        if !kept.iter().any(|held| held.identity() == member.identity()) {
-            kept.push(member);
-        }
-    }
+    super::append_unique(env, &mut kept, members)?;
     super::insert(
         env,
         Template {

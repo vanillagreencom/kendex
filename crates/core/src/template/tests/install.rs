@@ -1644,6 +1644,8 @@ fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
     assert_eq!(landed.subscribed.len(), 1, "{landed:?}");
     assert!(landed.stopped.is_none(), "{landed:?}");
 
+    effective_subscription_standing_refuses_before_writes(&project);
+
     // Switched off in the personal setup: the marketplace is there and
     // will serve nothing. Written through the manifest's own writer, so
     // the fixture cannot put the flag in a table it did not mean.
@@ -1709,6 +1711,85 @@ fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
         "an unreadable marketplace must refuse before it writes"
     );
     assert_eq!(snapshot(root), before, "the refusal wrote into the project");
+}
+
+#[allow(clippy::unwrap_used)]
+fn effective_subscription_standing_refuses_before_writes(project: &super::create::Project) {
+    let env = &project.env;
+    let personal = crate::manifest::manifest_path(env, &Scope::Global);
+    let original = crate::manifest::load_current(&personal).unwrap().unwrap();
+    let earlier = project.home.join("aaa");
+    skill(&earlier.join("skills"), "earlier", "earlier bytes");
+    let origin = Scope::Project {
+        root: project.root.clone(),
+    };
+    let held = Member {
+        kind: MemberKind::Skill,
+        name: "gh".to_owned(),
+        enabled: true,
+        source: catalog_source(
+            env,
+            &crate::source::browse::Catalog::Subscription {
+                scope: origin,
+                source: "cat".to_owned(),
+            },
+            None,
+        )
+        .unwrap(),
+    };
+    let template = Template {
+        name: "Effective standing".to_owned(),
+        id: "standing".to_owned(),
+        members: vec![
+            Member {
+                name: "earlier".to_owned(),
+                source: MemberSource::Catalog {
+                    catalog: TemplateCatalog::Folder {
+                        root: crate::paths::slashed(&earlier),
+                        origin: Scope::Global,
+                    },
+                    rev: None,
+                },
+                ..held.clone()
+            },
+            held,
+        ],
+        customizations: Customizations::default(),
+    };
+    for global in [false, true] {
+        let target = if global {
+            Scope::Global
+        } else {
+            destination(project, "disabled-destination")
+        };
+        let mut manifest = original.clone();
+        if global {
+            for decl in manifest.sources.values_mut() {
+                decl.enabled = false;
+            }
+            crate::manifest::save(&personal, &manifest).unwrap();
+        } else {
+            let path = crate::manifest::manifest_path(env, &target);
+            fs::write(
+                path,
+                format!(
+                    "schema = 8\n[sources.cat]\n{}\nenabled = false\n",
+                    crate::test_util::source_path(&project.catalog)
+                ),
+            )
+            .unwrap();
+        }
+        let reading = resolve(env, &template).unwrap();
+        assert!(reading.missing.is_empty());
+        assert_eq!(reading.groups[0].repo, crate::paths::slashed(&earlier));
+        let before = snapshot(&project.home);
+        assert!(matches!(
+            install(env, &template, &target, None, None),
+            Err(CoreError::TemplateMemberUnavailable { .. })
+        ));
+        assert_eq!(snapshot(&project.home), before);
+        crate::manifest::save(&personal, &original).unwrap();
+    }
 }
 
 /// A marketplace member no tool on this machine can take is refused in the
