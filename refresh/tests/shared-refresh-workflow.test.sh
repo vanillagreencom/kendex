@@ -122,7 +122,7 @@ def check(job):
     assert job['runs-on'] == "${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"
     checkouts = [s for s in steps if s.get('uses', '').startswith('actions/checkout@')]
     assert len(checkouts) == 2
-    consumer, kendex = checkouts
+    kendex, consumer = checkouts
     assert all(s['with']['persist-credentials'] == 'false' for s in checkouts)
     assert consumer['with']['path'] == 'consumer' and 'repository' not in consumer['with']
     assert kendex['with'] == {'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
@@ -254,7 +254,23 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
 
 # Execute the first step unchanged. Only the git and REST transports are
 # recorded fixtures; all tuple, artifact and review decisions are production.
-check_step = job['steps'][0]
+check_step = next(s for s in job['steps'] if s.get('id') == 'inputs')
+assert job['steps'][0]['with']['ref'] == '${{ job.workflow_sha }}'
+assert check_step['run'] == 'set -euo pipefail\nexec python3 "$GITHUB_WORKSPACE/kendex/refresh/check-inputs.py"\n'
+release_text = (pathlib.Path(sys.argv[1]).parent / 'refresh-release.yml').read_text()
+assert 'value: ${{ jobs.release.outputs.route }}' in release_text
+assert "route: ${{ steps.inputs.outputs.route || 'full' }}" in release_text
+assert "if: job.workflow_sha != ''" in release_text
+assert "if: steps.checkout.outcome == 'success'" in release_text
+assert 'continue-on-error: true' in release_text
+assert 'WORKFLOW_SHA: ${{ job.workflow_sha }}' in release_text
+assert 'ref: ${{ job.workflow_sha }}' in release_text
+assert 'repository: ${{ job.workflow_repository }}' in release_text
+assert 'exec python3 "$GITHUB_WORKSPACE/kendex/refresh/check-inputs.py"' in release_text
+assert 'upload-artifact' not in release_text  # only a completed refresh attests current inputs
+checker = pathlib.Path(sys.argv[1]).parents[2] / 'refresh/check-inputs.py'
+# Run the extracted production code through the clock wrapper below.
+check_step['run'] = "python3 - <<'PY'\n" + checker.read_text() + 'PY\n'
 assert check_step['id'] == 'inputs'
 assert check_step['env']['WORKFLOW_SHA'] == '${{ job.workflow_sha }}'
 assert 'permissions:' not in text.split('jobs:\n', 1)[1].split('    steps:', 1)[0]
@@ -264,7 +280,7 @@ def check_gates(candidate):
     save = next(s for s in candidate['steps'] if s.get('uses', '').startswith('actions/upload-artifact@'))
     render = next(s for s in candidate['steps'] if s.get('id') == 'refresh')
     land = next(s for s in candidate['steps'] if s.get('id') == 'land-token')
-    assert all(s.get('if') == gate for s in candidate['steps'][1:] if s not in (save, render, land)), 'later-step-ungated'
+    assert all(s.get('if') == gate for s in candidate['steps'][candidate['steps'].index(next(s for s in candidate['steps'] if s.get('id') == 'inputs'))+1:] if s not in (save, render, land)), 'later-step-ungated'
     # Only the render step reads the landing token.
     assert land['if'] == full_gate + " && env.KENDEX_LAND_PAIR == 'true'"
     # The review route runs no render and so saves no record.
@@ -274,7 +290,7 @@ def check_gates(candidate):
     assert render['run'].endswith('refresh-consumer.sh"\n')
 check_gates(job)
 ungated = copy.deepcopy(job)
-ungated['steps'][1]['if'] += ' || true'
+ungated['steps'][2]['if'] += ' || true'
 try: check_gates(ungated)
 except AssertionError as error: assert error.args == ('later-step-ungated',)
 else: raise AssertionError('must-fail control missed later-step-ungated')
@@ -343,7 +359,9 @@ world['record'] = dict(inputs=tuple_record, run=8, attempt=1)
 now = datetime.datetime(2026, 10, 17, tzinfo=datetime.timezone.utc)
 recent = (now - datetime.timedelta(hours=1)).isoformat()
 old = (now - datetime.timedelta(hours=25)).isoformat()
-cases = [('unchanged', {}, 'skip')]
+cases = [('unchanged-consumer-sha-differs-from-release', {}, 'skip'),
+         ('changed-release-sha', {'workflow_sha': 'e'*40}, 'full'),
+         ('unavailable-release-identity', {'workflow_sha': ''}, 'full')]
 for field in tuple_record:
     changed = copy.deepcopy(tuple_record)
     changed[field] = [] if field == 'tags' else 'd'*40
@@ -372,6 +390,19 @@ def job_steps(check='success', checkout='skipped', render='skipped'):
     return [dict(steps=[dict(name='refresh-input-check', conclusion=check),
                         dict(name='Run actions/checkout', conclusion=checkout),
                         dict(name=render_name, conclusion=render)])]
+# REST skipped jobs have no executed steps; the release check is not a render record.
+new_skip = [dict(conclusion='success', steps=[dict(name='release-input-check', conclusion='success')]),
+            dict(conclusion='skipped', steps=[])]
+for name, jobs, route in (
+    ('new-caller-skipped-job', new_skip, 'skip'),
+    ('new-caller-omitted-skipped-job', new_skip[:1], 'skip'),
+    ('new-caller-unrecognized-check', [dict(conclusion='success', steps=[]), new_skip[1]], 'full'),
+    ('new-caller-failed-check', [dict(conclusion='success', steps=[dict(name='release-input-check', conclusion='failure')]), new_skip[1]], 'full'),
+    ('new-caller-unreadable-job', [new_skip[0], dict(steps=[])], 'full'),
+    ('new-caller-executed-refresh', [new_skip[0], dict(conclusion='success', steps=[])], 'full'),
+):
+    cases.append((name, dict(history=[dict(id=9, run_attempt=1, conclusion='success')] + world['history'],
+                             jobs={'9': jobs}), route))
 # A whole-job skip, a review-only run and a full render, in that order.
 for conclusion in ('success', 'failure', 'cancelled', 'timed_out'):
     for checkout, render in (('skipped', 'skipped'), ('success', 'skipped'), ('success', 'success')):
@@ -443,16 +474,16 @@ def execute_check(body, name, overrides, route):
     outputs = case / 'outputs'; outputs.write_text('')
     calls = case / 'calls'; calls.write_text('')
     env = dict(PATH=str(bin_dir) + os.pathsep + '/usr/bin:/bin', GH_TOKEN='read-token',
-               GH_REPO='acme/widgets', DEFAULT_BRANCH='main', WORKFLOW_SHA=workflow,
+               GH_REPO='acme/widgets', DEFAULT_BRANCH='main', WORKFLOW_SHA=data.get('workflow_sha', workflow), GITHUB_SHA=consumer,
                GITHUB_RUN_ID='100', GITHUB_RUN_ATTEMPT=data.get('current_attempt', '1'),
                GITHUB_OUTPUT=str(outputs), RUNNER_TEMP=str(case), CHECK_WORLD=str(fixture), CHECK_CALLS=str(calls))
     result = subprocess.run([sys.argv[3], '-c', body], env=env, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, (name, result.stderr)
     values = dict(line.split('=', 1) for line in outputs.read_text().splitlines())
     assert values['route'] == route, ('refresh-decision', name, values, result.stdout)
-    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/')), ('complete-initial-tuple', name, values)
+    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/') and overrides.get('workflow_sha', workflow) != ''), ('complete-initial-tuple', name, values)
     if 'record-path' in values:
-        assert json.loads(pathlib.Path(values['record-path']).read_text()) == dict(inputs=tuple_record, run=100, attempt=int(env['GITHUB_RUN_ATTEMPT']))
+        assert json.loads(pathlib.Path(values['record-path']).read_text()) == dict(inputs=dict(tuple_record, workflow=env['WORKFLOW_SHA']), run=100, attempt=int(env['GITHUB_RUN_ATTEMPT']))
     print('  executed check: ' + name + ' route=' + route)
 
 for name, overrides, route in cases:
@@ -461,7 +492,7 @@ original = "if previous['inputs'] != inputs:"
 assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, 'if False: # ' + original)
 assert broken != check_step['run']
-try: execute_check(broken, 'control-ignore-input-change', cases[1][1], 'full')
+try: execute_check(broken, 'control-ignore-input-change', next(row[1] for row in cases if row[0] == 'changed-consumer'), 'full')
 except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
 else: raise AssertionError('must-fail control missed tuple comparison')
 original = next(line.strip() for line in check_step['run'].splitlines() if "== 'Refresh and arm the rolling pull request'] == ['skipped']" in line)
