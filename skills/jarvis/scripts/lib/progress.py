@@ -199,7 +199,10 @@ def state_entries(lines):
     found, current = [], None
     for index in range(start + 1, end):
         line = lines[index]
-        if index in heads:
+        # Agent-written checkpoint and predecessor pointers are session
+        # metadata (long-session.md Handoff), not addressable State entries.
+        metadata = re.match(r"^\s*(?:- )?(?:\*\*)?(?:Checkpoint|Predecessor(?: archive)?)(?::\*\*|\*\*:|:)", line, re.I)
+        if index in heads or metadata:
             current = None
         elif not line.strip():
             continue
