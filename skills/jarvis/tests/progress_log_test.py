@@ -113,24 +113,34 @@ class ProgressLog(MailWorld):
         (memory / "MEMORY.md").write_text("# Memory index\nUnspecified row syntax is left alone.\n")
         self.assertEqual(self.command(["git", "add", "memory", "state/handoff.md"], self.home).returncode, 0)
         self.assert_home_check([])
+        for selected in ("state/handoff.md", self.handoff):
+            with self.subTest(selector=selected):
+                result = self.command([sys.executable, "-B", self.scripts / "progress-log",
+                                       "--handoff", str(selected)], self.home)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
 
     def test_home_structure_control(self):
-        with tempfile.TemporaryDirectory(dir=self.root) as folder:
-            copy = Path(folder) / "jarvis/scripts"
-            shutil.copytree(SCRIPTS, copy)
-            script = copy / "progress-log"
-            source = script.read_text()
-            old = 'for field in ("Source", "Date", "Supersedes"):'
-            self.assertEqual(source.count(old), 1)
-            script.write_text(source.replace(old, 'for field in ():'))
-            case = ProgressLog(methodName="test_home_structure")
-            case.scripts = copy
-            case.setUp()
-            try:
-                with self.assertRaises(AssertionError):
-                    case.test_home_structure()
-            finally:
-                case.doCleanups()
+        mutations = (
+            ('for field in ("Source", "Date", "Supersedes"):', 'for field in ():'),
+            ('        if sys.argv[1:]:', '        if False:'),
+        )
+        for old, new in mutations:
+            with self.subTest(mutation=new), tempfile.TemporaryDirectory(dir=self.root) as folder:
+                copy = Path(folder) / "jarvis/scripts"
+                shutil.copytree(SCRIPTS, copy)
+                script = copy / "progress-log"
+                source = script.read_text()
+                self.assertEqual(source.count(old), 1)
+                script.write_text(source.replace(old, new))
+                case = ProgressLog(methodName="test_home_structure")
+                case.scripts = copy
+                case.setUp()
+                try:
+                    with self.assertRaises(AssertionError):
+                        case.test_home_structure()
+                finally:
+                    case.doCleanups()
 
     def test_records(self):
         # Each row: handoff text, fields, then the whole expected handoff or

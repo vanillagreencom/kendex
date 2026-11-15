@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Append one progress record to the home handoff's Progress log section, index an archived handoff, or list State lines to correct.
 
-Usage: progress-log [--handoff PATH]  # check the candidate commit
+Usage: progress-log  # check the candidate commit
        progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
        progress-log [--handoff PATH] --archived FILE
        progress-log [--handoff PATH] --check-state
 
-With no record or check-state arguments, check staged memory notes and State.
+With no arguments, check staged memory notes and the standard State.
 Refusals name file, line and rule; exit 1 means violations and 2 an unread index.
 Missing handoffs are allowed before the first session writes one.
 
@@ -284,22 +284,22 @@ def staged(home, *args):
         raise Refusal("index-unreadable", "git " + args[0]) from error
 
 
-def home_check(home, selected):
+def home_check(home):
     """Check agent-authored memory notes and State in the candidate commit.
 
     Git cannot enforce Markdown record fields; commit-guards' local lane
     calls this check. memory.md Notes owns the fields, and progress-log's
     shared State reader owns entry boundaries. No live policy is consulted.
     """
-    paths = staged(home, "ls-files", "--cached", "-z", "--", "memory", str(selected)).split("\0")
+    paths = staged(home, "ls-files", "--cached", "-z", "--", "memory", str(DEFAULT_HANDOFF)).split("\0")
     failures = []
     for name in dict.fromkeys(path for path in paths if path):
-        if not (name == str(selected) or (name.startswith("memory/") and name.endswith(".md")
+        if not (name == str(DEFAULT_HANDOFF) or (name.startswith("memory/") and name.endswith(".md")
                                          and name != "memory/MEMORY.md")):
             continue
         text = staged(home, "show", ":" + name)
         lines = text.splitlines(keepends=True)
-        if name == str(selected):
+        if name == str(DEFAULT_HANDOFF):
             try:
                 entries = state_entries(lines)
             except LookupError:
@@ -343,8 +343,10 @@ def main():
     given = [option for option, value in zip(options, values.values()) if value is not None]
     home = watch.home_root(Path.cwd())
     if not given and not args.check_state and args.archived is None:
+        if sys.argv[1:]:
+            parser.error("structural checking takes no arguments")
         try:
-            return home_check(home, args.handoff)
+            return home_check(home)
         except Refusal as refusal:
             print("progress-log: %s=%s" % refusal.args, file=sys.stderr)
             return 2
