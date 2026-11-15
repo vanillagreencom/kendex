@@ -166,14 +166,34 @@ impl TemplateCatalog {
 
     pub fn identity(&self) -> String {
         match self {
-            Self::Repository { repo, .. } => {
-                format!("repository:{}", crate::source_ref::repo_identity(repo))
-            }
-            Self::Folder { root, .. } => format!(
-                "folder:{}",
-                crate::paths::slashed(std::path::Path::new(root))
-            ),
+            Self::Repository { repo, .. } => Self::repository_identity(repo),
+            Self::Folder { root, .. } => Self::folder_identity(std::path::Path::new(root)),
         }
+    }
+
+    fn repository_identity(repo: &str) -> String {
+        format!("repository:{}", crate::source_ref::repo_identity(repo))
+    }
+
+    fn folder_identity(root: &std::path::Path) -> String {
+        format!("folder:{}", crate::paths::slashed(root))
+    }
+
+    /// The catalog main's personal subscribe path would read, without
+    /// subscribing, fetching a tree revision or inventing a saved origin.
+    fn reference_identity(env: &Env, reference: &str) -> Result<Option<String>> {
+        use crate::source_ref::SourceRef;
+        Ok(match crate::source_ref::parse_typed(reference)? {
+            SourceRef::Remote { repo, .. }
+            | SourceRef::Tree { repo, .. }
+            | SourceRef::SkillsSh { repo, .. } => Some(Self::repository_identity(&repo)),
+            SourceRef::Path { path } => Some(Self::folder_identity(&crate::source::path_root(
+                env,
+                &crate::model::Scope::Global,
+                &path,
+            ))),
+            SourceRef::Collection { .. } => None,
+        })
     }
 
     pub fn scope(&self) -> Option<&crate::model::Scope> {
@@ -386,9 +406,8 @@ fn is_yes(value: &bool) -> bool {
 }
 
 impl Member {
-    /// What tells one member from another: two packages of the same kind
-    /// and name from two marketplaces are two members, and the same
-    /// identity saved twice is one.
+    /// The key represented by this persisted record. Admission resolves a
+    /// legacy record's catalog reading before comparing it with typed data.
     ///
     /// Typed catalogs use their kind-discriminated identity; old records
     /// retain their repository fold until resolution can read declarations.
@@ -405,22 +424,24 @@ impl Member {
     fn admission_identity(
         &self,
         env: &Env,
-        subscriptions: &[crate::source_ops::Subscription],
+        subscriptions: &mut Option<Vec<crate::source_ops::Subscription>>,
     ) -> Result<(MemberKind, String, Option<String>)> {
-        let (kind, name, persisted) = self.identity();
         let catalog = match &self.source {
-            MemberSource::Marketplace { .. } => {
-                match install::member_catalog(env, self, subscriptions) {
-                    Ok(reading) => reading.catalog.map(|catalog| catalog.identity()),
-                    Err(install::CatalogError::Ambiguous) => None,
+            MemberSource::Marketplace { repo, .. } => {
+                match install::member_catalog(env, self, declarations(env, subscriptions)?) {
+                    Ok(reading) => match reading.catalog {
+                        Some(catalog) => Some(catalog.identity()),
+                        None => TemplateCatalog::reference_identity(env, repo)?
+                            .or_else(|| Some(format!("legacy:{repo}"))),
+                    },
+                    Err(install::CatalogError::Ambiguous) => Some(format!("legacy:{repo}")),
                     Err(install::CatalogError::Read(error)) => return Err(error),
                 }
             }
-            MemberSource::Catalog { .. }
-            | MemberSource::Copy { .. }
-            | MemberSource::SharedCopy { .. } => None,
+            MemberSource::Catalog { catalog, .. } => Some(catalog.identity()),
+            MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => None,
         };
-        Ok((kind, name.to_owned(), catalog.or(persisted)))
+        Ok((self.kind, self.name.clone(), catalog))
     }
 }
 
@@ -775,24 +796,57 @@ pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Templa
 }
 
 fn append_unique(env: &Env, kept: &mut Vec<Member>, members: Vec<Member>) -> Result<()> {
-    let subscriptions = crate::source_ops::subscriptions(env)?;
-    let mut identities = kept
-        .iter()
-        .map(|member| member.admission_identity(env, &subscriptions))
-        .collect::<Result<BTreeSet<_>>>()?;
+    let mut subscriptions = None;
     for member in members {
-        if identities.insert(member.admission_identity(env, &subscriptions)?) {
+        let mut duplicate = false;
+        for held in kept
+            .iter()
+            .filter(|held| held.kind == member.kind && held.name == member.name)
+        {
+            if matches!(
+                (&held.source, &member.source),
+                (
+                    MemberSource::Marketplace { .. },
+                    MemberSource::Copy { .. } | MemberSource::SharedCopy { .. }
+                ) | (
+                    MemberSource::Copy { .. } | MemberSource::SharedCopy { .. },
+                    MemberSource::Marketplace { .. }
+                )
+            ) {
+                continue;
+            }
+            if held.admission_identity(env, &mut subscriptions)?
+                == member.admission_identity(env, &mut subscriptions)?
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if !duplicate {
             kept.push(member);
         }
     }
     Ok(())
 }
 
+fn declarations<'a>(
+    env: &Env,
+    cached: &'a mut Option<Vec<crate::source_ops::Subscription>>,
+) -> Result<&'a [crate::source_ops::Subscription]> {
+    if cached.is_none() {
+        *cached = Some(crate::source_ops::subscriptions(env)?);
+    }
+    match cached {
+        Some(rows) => Ok(rows),
+        None => unreachable!("successful declaration acquisition fills the operation cache"),
+    }
+}
+
 /// Take members out. A member whose bytes only this template held goes
 /// from the store with it, and so do the customizations that were its.
 pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Template> {
     let before = get(env, name)?;
-    let subscriptions = crate::source_ops::subscriptions(env)?;
+    let mut subscriptions = None;
     let after = change(env, name, |template| {
         let mut kept_members = Vec::new();
         for held in &template.members {
@@ -807,13 +861,17 @@ pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Te
                         | MemberWhich::CatalogSelection { catalog, .. },
                         MemberSource::Marketplace { repo, .. },
                     ) => {
-                        let reading =
-                            install::member_catalog(env, held, &subscriptions).map_err(|why| {
-                                CoreError::TemplateMemberUnavailable {
-                                    name: held.name.clone(),
-                                    why: why.to_string(),
-                                }
-                            })?;
+                        let reading = install::member_catalog(
+                            env,
+                            held,
+                            declarations(env, &mut subscriptions)?,
+                        )
+                        .map_err(|why| {
+                            CoreError::TemplateMemberUnavailable {
+                                name: held.name.clone(),
+                                why: why.to_string(),
+                            }
+                        })?;
                         match reading.catalog {
                             Some(held) => held.identity() == catalog.identity(),
                             None => matches!(

@@ -70,6 +70,31 @@ fn a_resolution_names_the_repository_the_copies_and_what_is_missing() {
     assert!(copies.contains(&"house-style"), "{copies:?}");
     assert!(copies.contains(&"stray"), "{copies:?}");
     assert_eq!(resolution.count(), template.members.len());
+
+    // Copy-only reading and installation consume no catalog declarations.
+    let mut copies_only = template.clone();
+    copies_only.members.retain(|member| {
+        matches!(
+            member.source,
+            MemberSource::Copy { .. } | MemberSource::SharedCopy { .. }
+        )
+    });
+    copies_only.customizations = Customizations::default();
+    super::unreadable_registered_project(&project.env);
+    let copies = resolve(&project.env, &copies_only).unwrap();
+    assert!(copies.missing.is_empty());
+    assert_eq!(copies.copies.len(), copies_only.members.len());
+    let target = destination(&project, "copies-only");
+    let landed = install(
+        &project.env,
+        &copies_only,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
+    assert_eq!(landed.stopped, None);
+    assert_eq!(landed.declared.len(), copies_only.members.len());
 }
 
 /// A home with no personal manifest yet is read as its first write would

@@ -421,7 +421,13 @@ fn targeted_removal_reads_legacy_catalogs_before_mutating() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn cross_format_admission_keeps_the_first_record_and_reference() {
-    for (folder, ambiguous) in [(false, false), (true, false), (true, true)] {
+    for (folder, declared, ambiguous) in [
+        (false, true, false),
+        (true, true, false),
+        (true, true, true),
+        (false, false, false),
+        (true, false, false),
+    ] {
         for add in [false, true] {
             let (_tmp, env) = home();
             let manifest = env.global_manifest_file();
@@ -440,25 +446,35 @@ fn cross_format_admission_keeps_the_first_record_and_reference() {
             } else {
                 String::new()
             };
-            fs::write(
-                &manifest,
-                format!("schema = 8\n[sources.first]\n{declaration}\n{competitor}"),
-            )
-            .unwrap();
+            let declarations = if declared {
+                format!("[sources.first]\n{declaration}\n{competitor}")
+            } else {
+                String::new()
+            };
+            fs::write(&manifest, format!("schema = 8\n{declarations}")).unwrap();
+            let reference = if folder {
+                crate::paths::slashed(&root)
+            } else {
+                "owner/repo".to_owned()
+            };
             let legacy = Member {
                 kind: MemberKind::Skill,
                 name: "gh".to_owned(),
                 enabled: false,
                 source: MemberSource::Marketplace {
-                    repo: if folder {
-                        crate::paths::slashed(&root)
-                    } else {
-                        "owner/repo".to_owned()
-                    },
+                    repo: reference.clone(),
                     rev: Some("saved".to_owned()),
                 },
             };
-            let typed = selected(&env, &Scope::Global, "first", "gh");
+            let typed = if declared {
+                selected(&env, &Scope::Global, "first", "gh")
+            } else {
+                Member {
+                    source: source_choice(&env, &reference).unwrap(),
+                    enabled: true,
+                    ..legacy.clone()
+                }
+            };
             let template = if add {
                 create_from_selection(&env, "Dedup", vec![legacy.clone()]).unwrap();
                 add_members(&env, "Dedup", vec![typed]).unwrap()
@@ -474,7 +490,10 @@ fn cross_format_admission_keeps_the_first_record_and_reference() {
             let resolution = resolve(&env, &template).unwrap();
             assert_eq!(resolution.groups.len(), 1);
             // An unfetched repository may be unavailable, but admission must not contest it.
-            assert_eq!(resolution.groups[0].source.as_deref(), Some("first"));
+            assert_eq!(
+                resolution.groups[0].source.as_deref(),
+                declared.then_some("first")
+            );
             let MemberSource::Marketplace { repo, .. } = legacy.source else {
                 unreachable!()
             };
@@ -493,5 +512,78 @@ fn cross_format_admission_keeps_the_first_record_and_reference() {
                 .is_empty()
             );
         }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn typed_admission_and_removal_do_not_read_unrelated_projects() {
+    for add in [false, true] {
+        let (_tmp, env) = home();
+        super::unreadable_registered_project(&env);
+        fs::write(env.global_manifest_file(), "schema = 8\n").unwrap();
+        let typed = Member {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            enabled: true,
+            source: source_choice(&env, "owner/repo").unwrap(),
+        };
+        let saved = if add {
+            create_from_selection(&env, "Typed", vec![typed.clone()]).unwrap();
+            add_members(&env, "Typed", vec![typed.clone()]).unwrap()
+        } else {
+            create_from_selection(&env, "Typed", vec![typed.clone(), typed.clone()]).unwrap()
+        };
+        assert_eq!(saved.members, vec![typed.clone()]);
+        let MemberSource::Catalog { catalog, .. } = &typed.source else {
+            unreachable!()
+        };
+        assert!(
+            remove_members(
+                &env,
+                "Typed",
+                &[MemberRef {
+                    kind: typed.kind,
+                    name: typed.name.clone(),
+                    which: MemberWhich::CatalogSelection {
+                        catalog: catalog.clone(),
+                        reference: "owner/repo".to_owned()
+                    }
+                }]
+            )
+            .unwrap()
+            .members
+            .is_empty()
+        );
+        // A legacy comparison really does need the complete declarations.
+        let legacy = Member {
+            source: MemberSource::Marketplace {
+                repo: "owner/repo".to_owned(),
+                rev: None,
+            },
+            ..typed.clone()
+        };
+        create_from_selection(&env, "Legacy", vec![legacy.clone()]).unwrap();
+        let before = fs::read(env.templates_file()).unwrap();
+        let refused = if add {
+            add_members(&env, "Legacy", vec![typed.clone()])
+        } else {
+            create_from_selection(&env, "Mixed", vec![legacy, typed.clone()])
+        };
+        assert!(matches!(refused, Err(CoreError::Io { .. })));
+        assert_eq!(fs::read(env.templates_file()).unwrap(), before);
+        let refused = remove_members(
+            &env,
+            "Legacy",
+            &[MemberRef {
+                kind: typed.kind,
+                name: typed.name.clone(),
+                which: MemberWhich::Catalog {
+                    catalog: catalog.clone(),
+                },
+            }],
+        );
+        assert!(matches!(refused, Err(CoreError::Io { .. })));
+        assert_eq!(fs::read(env.templates_file()).unwrap(), before);
     }
 }

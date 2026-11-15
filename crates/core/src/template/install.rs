@@ -189,11 +189,7 @@ impl TemplateInstall {
 /// marketplace members, what version each resolves to, which copies it
 /// owns, and which members nothing can reach.
 pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
-    // The personal scope as its first write would create it: a fresh home
-    // already carries the default marketplace, so a member from it reuses
-    // that subscription rather than planning a second one the write refuses.
-    let personal = crate::engine::ops::manifest_for_reading(env, &Scope::Global)?;
-    let subscriptions = crate::source_ops::subscriptions(env)?;
+    let mut subscriptions = None;
     let mut groups: BTreeMap<String, ResolvedGroup> = BTreeMap::new();
     let mut copies = Vec::new();
     // A name two members claim is not installable however either half
@@ -207,7 +203,14 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
         }
         match &member.source {
             MemberSource::Marketplace { rev, .. } | MemberSource::Catalog { rev, .. } => {
-                gather_catalog_member(env, member, rev, &subscriptions, &mut groups, &mut missing);
+                gather_catalog_member(
+                    env,
+                    member,
+                    rev,
+                    super::declarations(env, &mut subscriptions)?,
+                    &mut groups,
+                    &mut missing,
+                );
             }
             MemberSource::Copy { copy, from, .. } | MemberSource::SharedCopy { copy, from, .. } => {
                 let Some(kind) = member.kind.item() else {
@@ -241,7 +244,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
         }
     }
     let mut groups: Vec<ResolvedGroup> = groups.into_values().collect();
-    read_against_machine(env, &personal, &mut groups, &mut missing);
+    read_against_machine(env, &mut groups, &mut missing);
     Ok(Resolution {
         groups,
         copies,
@@ -352,12 +355,7 @@ fn gather_catalog_member(
 /// meets that only after an earlier group has been committed. Asked here,
 /// where an unreachable copy is already answered, so the page and the
 /// install read one judgement.
-fn read_against_machine(
-    env: &Env,
-    personal: &Manifest,
-    groups: &mut [ResolvedGroup],
-    missing: &mut Vec<MissingMember>,
-) {
+fn read_against_machine(env: &Env, groups: &mut [ResolvedGroup], missing: &mut Vec<MissingMember>) {
     for group in groups {
         // What this machine already has. A read that finds nothing is not
         // a failure: the repository is fetched when the install runs.
@@ -367,7 +365,7 @@ fn read_against_machine(
             group.version = Some(resolution.commit);
             group.last_known = true;
         }
-        match standing_of(env, personal, group) {
+        match standing_of(env, group) {
             Standing::Unsubscribed => {}
             Standing::Readable(opened) => {
                 let (sealed, config) = opened.as_ref();
@@ -419,7 +417,7 @@ enum Standing {
 /// - **A repository this machine has never fetched** is deliberately not
 ///   answered either. Judging one needs a network read, and the template
 ///   page calls `resolve` on every open.
-fn standing_of(env: &Env, _personal: &Manifest, group: &ResolvedGroup) -> Standing {
+fn standing_of(env: &Env, group: &ResolvedGroup) -> Standing {
     let Some(alias) = group.source.as_deref() else {
         return Standing::Unsubscribed;
     };
@@ -1009,13 +1007,7 @@ fn read_effective_subscriptions(
             None => (None, None),
         };
     }
-    let personal = engine_ops::manifest_for_reading(env, &Scope::Global)?;
-    read_against_machine(
-        env,
-        &personal,
-        &mut resolution.groups,
-        &mut resolution.missing,
-    );
+    read_against_machine(env, &mut resolution.groups, &mut resolution.missing);
     if let Some(first) = resolution.missing.first() {
         return Err(CoreError::TemplateMemberUnavailable {
             name: format!("{} '{}'", first.kind.name(), first.name),
