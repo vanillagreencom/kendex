@@ -37,6 +37,8 @@ use std::time::Duration;
 
 use agent_runtime::clock;
 use agent_runtime::host;
+use agent_runtime::reading::Reading;
+use agent_runtime::record::Document;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -46,8 +48,8 @@ use super::Produced;
 use super::baseline::Change;
 use super::events::Event;
 use super::lanes::{
-    Counters, HandoffReading, Pass, clear, counters_of, doc_of, fail, handoff_places, lane_name,
-    set, standing_record, step_of, validation_runs_of, watch_state_dir,
+    Counters, HandoffReading, Pass, STATE_UNREAD, clear, counters_of, doc_of, fail, handoff_places,
+    lane_name, set, standing_record, step_of, validation_runs_of, watch_state_dir,
 };
 use super::tracker::{QUOTA_ROW, Quota};
 use crate::marker;
@@ -2088,14 +2090,15 @@ pub fn step(scripts: &Path, lane: &Lane) -> String {
     }
 }
 
-/// A hosted lane's `lane-long` counters: the run index and the item's
-/// workflow state under the lane's root on its host, each through `cat`; a
-/// state absent there is read where the checkout's own files put it
-/// ([`configured_state`]); a state the lane has not written, or one that
-/// could not be read, counts nothing and the read's failure is said.
-pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
+/// A hosted lane's `lane-long` counters with the item state they were read
+/// from: the run index and the item's workflow state under the lane's root
+/// on its host, each through `cat`; a state absent there is read where the
+/// checkout's own files put it ([`configured_state`]); a state the lane has
+/// not written, or one that could not be read, counts nothing and the read's
+/// failure is said.
+pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> (Counters, Reading<Document>) {
     let Some(root) = root_of(lane) else {
-        return Counters::unread();
+        return (Counters::unread(), Reading::Gone);
     };
     let host = host_of(lane);
     let runs = match fetch(
@@ -2112,7 +2115,12 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
             out,
             format!("lane-long-rounds-unread item={} cause={cause}", lane.item),
         );
-        Counters::unread()
+        (
+            Counters::unread(),
+            Reading::Unreadable {
+                cause: STATE_UNREAD,
+            },
+        )
     };
     let state = match fetch(
         scripts,
@@ -2124,16 +2132,21 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
         Answer::Unreadable { cause } => return unread(out, cause),
         Answer::Gone => match configured_state(scripts, lane, root) {
             Ok(Answer::Live(text)) => text,
-            Ok(Answer::Gone) => return Counters::unread(),
+            Ok(Answer::Gone) => return (Counters::unread(), Reading::Gone),
             Ok(Answer::Unreadable { cause }) | Err(cause) => return unread(out, cause),
         },
     };
-    match serde_json::from_str::<Value>(&state) {
-        Ok(Value::Object(doc)) => counters_of(&doc, runs).unwrap_or_else(Counters::unread),
-        Ok(
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_),
-        )
-        | Err(_) => Counters::unread(),
+    match doc_of(&state) {
+        Some(doc) => (
+            counters_of(&doc, runs).unwrap_or_else(Counters::unread),
+            Reading::Live(doc),
+        ),
+        None => (
+            Counters::unread(),
+            Reading::Unreadable {
+                cause: STATE_UNREAD,
+            },
+        ),
     }
 }
 

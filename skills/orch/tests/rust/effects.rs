@@ -7033,7 +7033,7 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
     );
     assert!(
         read.contains(&format!(
-            "cat --item KEN-H {}/tmp/lane-status-KEN-H.md",
+            "cat --item KEN-H {}/tmp/workflow-state-KEN-H.json",
             world.host()
         )),
         "the lane's files read under the worktree the host named: {read:?}"

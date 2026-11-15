@@ -4107,25 +4107,37 @@ fn report_blocked_reads_none_only_when_every_active_lane_was_read() {
         "{body}"
     );
     // A lane whose status settles nothing and one whose read refuses: each
-    // named unread, with no blocker found and no none; then beside a post-PR
-    // stop.
+    // named unread, with no blocker found and no none; then beside the
+    // post-PR stop the judged lane's item state holds from its current
+    // session.
     let mut lanes = vec![
         judged,
         running("KEN-3", json!({})),
         running("KEN-4", json!({})),
         running("KEN-4", json!({})),
     ];
+    let since: u64 = 1_769_700_000;
+    let standing = json!({"name": "review-round-cap", "gate": "review",
+        "remaining": ["one unresolved review thread", "CI red"], "at": since + 60});
     for stop in [false, true] {
         if stop {
-            lanes.push(json!({"item":"KEN-5","status":"done","launched_at":"2026-09-29T06:00:00Z","post_pr_stop":{"reason":"owner-hold"}}));
+            lanes[0]["session_since"] = json!(agent_runtime::clock::iso_utc(since));
+            std::fs::create_dir_all(world.path().join("tmp")).unwrap();
+            std::fs::write(
+                world.path().join("tmp").join("workflow-state-KEN-2.json"),
+                json!({ "post_pr_stop": standing }).to_string(),
+            )
+            .unwrap();
         }
         world.write_fleet(&json!({"issue_id":"oversee","lanes":lanes}));
         let body = render_body(&world, &tracker, &tmux);
         let mut blocked: Vec<&str> = section(&body, "Blocked").lines().collect();
         if stop {
             assert_eq!(
-                blocked.first().copied(),
-                Some(r#"- KEN-5: {"reason":"owner-hold"}."#),
+                blocked.first(),
+                Some(
+                    &"- KEN-2 waits on a stopped review gate, review-round-cap: one unresolved review thread; CI red"
+                ),
                 "{body}"
             );
             blocked.remove(0);

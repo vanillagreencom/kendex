@@ -698,6 +698,15 @@ fn verifying_read(ctx: &Context, now: u64) -> std::result::Result<TrackerInvento
     }
 }
 
+/// The members of a lane's post-PR stop its Blocked line names; the store
+/// writes each, so none has a default.
+#[derive(serde::Deserialize)]
+struct StopLine {
+    name: String,
+    gate: String,
+    remaining: Vec<String>,
+}
+
 pub fn render(ctx: &Context, now: u64) -> Result<String> {
     let policy = Policy::of(&ctx.settings)?;
     let doc = load_fleet(&ctx.fleet)?;
@@ -851,6 +860,24 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
                     }
                     _ => {}
                 }
+                if let Some(stop) = facts.get("post_pr_stop").filter(|stop| !stop.is_null()) {
+                    match serde_json::from_value::<StopLine>(stop.clone()) {
+                        Ok(stop) => lane_blockers.push(format!(
+                            "- {} waits on a stopped {} gate, {}: {}\n",
+                            cell(&lane.item),
+                            cell(&stop.gate),
+                            cell(&stop.name),
+                            cell(&stop.remaining.join("; "))
+                        )),
+                        // A stop the store's writer would refuse settles
+                        // nothing, so the lane is not read as unblocked.
+                        Err(cause) => {
+                            unread
+                                .entry(&lane.item)
+                                .or_insert(format!("post_pr_stop unreadable ({cause})"));
+                        }
+                    }
+                }
             }
             Err(cause) => {
                 out.push_str(&format!(
@@ -984,19 +1011,9 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         ));
     }
     out.push_str("\n```\nBlocked\n```\n\n");
-    let mut blocked = !lane_blockers.is_empty();
+    let blocked = !lane_blockers.is_empty();
     for line in lane_blockers {
         out.push_str(&line);
-    }
-    for lane in &lanes {
-        if let Some(stop) = lane.extra.get("post_pr_stop") {
-            blocked = true;
-            out.push_str(&format!(
-                "- {}: {}.\n",
-                cell(&lane.item),
-                cell(&stop.to_string())
-            ));
-        }
     }
     for (item, cause) in &unread {
         out.push_str(&format!(

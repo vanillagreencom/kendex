@@ -4436,11 +4436,6 @@ fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
         r#"{"stages":[{"kind":"fix"}],"restacks":1,"rereview_cycles":2}"#,
     )
     .unwrap();
-    std::fs::write(
-        root.join("tmp").join("lane-status-KEN-2.md"),
-        "Step: review\n",
-    )
-    .unwrap();
     let record = |item: &str, window: &str| {
         json!({
             "item": item, "window": window, "harness": "claude", "status": "running",
@@ -4462,7 +4457,6 @@ fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
         answer["result"]["repeated_class_rounds"], "unread",
         "{answer}"
     );
-    assert_eq!(answer["result"]["stage"], "review", "{answer}");
     assert_eq!(answer["result"]["counts_cause"], Value::Null, "{answer}");
     // A lane that has written no state yet counts nothing, and says so.
     let answer = status("KEN-3");
@@ -4476,6 +4470,178 @@ fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
         assert_eq!(answer["result"][key], "unread", "{key}: {answer}");
     }
     assert_eq!(answer["result"]["stage"], "none", "{answer}");
+}
+
+/// The facts name the item's newest stage still open in the lane's current
+/// session, the record's `session_since`, with its start: a closed stage, a
+/// superseded one and one an earlier session left open name none.
+#[test]
+fn lane_status_names_a_stage_only_while_it_is_open_in_the_lanes_current_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    let root = dir.path().join("worktree");
+    std::fs::create_dir_all(root.join("tmp")).unwrap();
+    let since: u64 = 1_769_700_000;
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([{
+        "item": "KEN-2", "window": "gh-2", "harness": "claude", "status": "running",
+        "mail_root": root.display().to_string(), "launch": {},
+        "session_since": agent_runtime::clock::iso_utc(since),
+    }]);
+    runner.write_fleet(&fleet);
+    let closed = json!({"kind": "dev", "start": since - 600, "end": since - 300});
+    let open = |kind: &str, start: u64| json!({"kind": kind, "start": start});
+    for (stages, stage, start) in [
+        (
+            json!([closed, open("dev", since + 30), open("review", since + 60)]),
+            json!("review"),
+            json!(since + 60),
+        ),
+        (
+            json!([open("validate", since)]),
+            json!("validate"),
+            json!(since),
+        ),
+        (
+            json!([closed, {"kind": "review", "start": since + 60, "end": since + 120}]),
+            json!("none"),
+            Value::Null,
+        ),
+        (
+            json!([{"kind": "fix", "start": since + 60, "superseded": true}]),
+            json!("none"),
+            Value::Null,
+        ),
+        (
+            json!([open("review", since - 60)]),
+            json!("none"),
+            Value::Null,
+        ),
+    ] {
+        std::fs::write(
+            root.join("tmp").join("workflow-state-KEN-2.json"),
+            json!({ "stages": stages }).to_string(),
+        )
+        .unwrap();
+        let answer = reply(&runner.run(&["lane", "status", "--item", "KEN-2"]));
+        assert_eq!(answer["result"]["stage"], stage, "{stages}: {answer}");
+        assert_eq!(answer["result"]["stage_start"], start, "{stages}: {answer}");
+    }
+}
+
+/// The facts carry the item's post-PR stop only where it was recorded in the
+/// lane's current session: the stop the real verb records stands for a
+/// session that began before it, and a later launch's `session_since`
+/// leaves it unnamed.
+#[test]
+fn lane_status_names_the_post_pr_stop_only_when_recorded_in_the_lanes_current_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    let ok = |args: &[&str]| {
+        let out = runner.run(args);
+        assert!(out.status.success(), "{args:?}: {}", support::stderr(&out));
+    };
+    ok(&["state", "init", "--item", "KEN-2"]);
+    let comment = runner.state_dir().join("stop.md");
+    ok(&[
+        "state",
+        "post-pr-stop",
+        "record",
+        "--item",
+        "KEN-2",
+        "--name",
+        "review-round-cap",
+        "--gate",
+        "review",
+        "--remaining",
+        "one unresolved review thread",
+        "--comment-file",
+        comment.to_str().unwrap(),
+    ]);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let stop_since = |since: u64| {
+        let mut fleet = runner.fleet();
+        fleet["lanes"] = json!([{
+            "item": "KEN-2", "window": "gh-2", "harness": "claude", "status": "running",
+            "launch": {}, "session_since": agent_runtime::clock::iso_utc(since),
+        }]);
+        runner.write_fleet(&fleet);
+        reply(&runner.run(&["lane", "status", "--item", "KEN-2"]))["result"]["post_pr_stop"].clone()
+    };
+    let stop = stop_since(now - 3600);
+    assert_eq!(stop["name"], "review-round-cap", "{stop}");
+    assert_eq!(stop["gate"], "review", "{stop}");
+    assert_eq!(stop["remaining"], json!(["one unresolved review thread"]));
+    assert_eq!(stop_since(now + 3600), Value::Null);
+}
+
+/// A stop an earlier session recorded is not the current session's until
+/// the lane reaches it again: the real `record-if-empty` keeps the standing
+/// stop and records it now, and the facts name it.
+#[test]
+fn lane_status_names_a_kept_post_pr_stop_recorded_again_in_the_lanes_current_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    let ok = |args: &[&str]| {
+        let out = runner.run(args);
+        assert!(out.status.success(), "{args:?}: {}", support::stderr(&out));
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([{
+        "item": "KEN-2", "window": "gh-2", "harness": "claude", "status": "running",
+        "launch": {}, "session_since": agent_runtime::clock::iso_utc(now - 3600),
+    }]);
+    runner.write_fleet(&fleet);
+    ok(&["state", "init", "--item", "KEN-2"]);
+    let remaining = "one unresolved review thread";
+    let earlier = json!({
+        "name": "review-round-cap", "gate": "review", "remaining": [remaining], "at": now - 7200,
+    });
+    ok(&[
+        "state",
+        "set",
+        "--item",
+        "KEN-2",
+        "/post_pr_stop",
+        &earlier.to_string(),
+    ]);
+    let facts = || {
+        reply(&runner.run(&["lane", "status", "--item", "KEN-2"]))["result"]["post_pr_stop"].clone()
+    };
+    assert_eq!(facts(), Value::Null);
+    let comment = runner.state_dir().join("stop.md");
+    ok(&[
+        "state",
+        "post-pr-stop",
+        "record-if-empty",
+        "--item",
+        "KEN-2",
+        "--name",
+        "review-round-cap",
+        "--gate",
+        "review",
+        "--remaining",
+        remaining,
+        "--comment-file",
+        comment.to_str().unwrap(),
+    ]);
+    let stop = facts();
+    assert_eq!(stop["name"], "review-round-cap", "{stop}");
+    assert_eq!(stop["gate"], "review", "{stop}");
+    assert_eq!(stop["remaining"], json!([remaining]), "{stop}");
 }
 
 /// A `pane=local` kind's transport pane holds a shell in its foreground, so
@@ -4741,4 +4907,30 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
             "{path}: {calls}"
         );
     }
+    // The facts ask a host only for what they print: no lane status file is
+    // read, nor touched where it is absent, as on the second hosted lane's.
+    assert!(!calls.contains("lane-status-"), "{calls}");
+    let hosted: Vec<&str> = calls
+        .lines()
+        .filter(|line| line.contains("--item KEN-7"))
+        .map(str::trim_end)
+        .collect();
+    assert_eq!(
+        hosted,
+        [
+            "status --item KEN-7 --harness codex",
+            "cat --item KEN-7 /remote/KEN-7/tmp/validation-runs",
+            "touch --item KEN-7",
+            "cat --item KEN-7 /remote/KEN-7/tmp/workflow-state-KEN-7.json",
+            "touch --item KEN-7",
+            "cat --item KEN-7 /remote/KEN-7/.git",
+            "cat --item KEN-7 /remote/KEN-7/kendex.settings.toml",
+            "cat --item KEN-7 /remote/KEN-7/.kendex/settings.toml",
+            "touch --item KEN-7",
+            "cat --item KEN-7 /remote/KEN-7/.env.local",
+            "touch --item KEN-7",
+            "cat --item KEN-7 /remote/clone/records/workflow-state-KEN-7.json",
+        ],
+        "{calls}"
+    );
 }

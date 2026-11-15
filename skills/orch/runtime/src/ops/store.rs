@@ -561,7 +561,14 @@ fn transition(
             name,
             gate,
             remaining,
-        } => Ok(post_pr_stop_record(doc, *mode, name, gate, remaining)),
+        } => Ok(post_pr_stop_record(
+            doc,
+            *mode,
+            name,
+            gate,
+            remaining,
+            env.now_secs,
+        )),
         Write::PostPrStopClear => Ok(post_pr_stop_clear(doc)),
         Write::StandingAdd { file } => standing_add(path, doc, env, one_value(file)?, file),
         Write::StandingLift { file } => standing_lift(path, doc, env, one_value(file)?, file),
@@ -788,19 +795,26 @@ pub(crate) fn check_budgets(now: &Value) -> std::result::Result<(), String> {
 }
 
 /// Record the stop, or keep the one standing under `record-if-empty`: the
-/// first stop a pull request is told is the precise one.
+/// first stop a pull request is told is the precise one. `at` is when the
+/// stop was last recorded, a kept one included, so a reader tells a stop the
+/// lane's current session reached from one only an earlier session reached.
 fn post_pr_stop_record(
     doc: &mut Document,
     mode: StopMode,
     name: &str,
     gate: &str,
     remaining: &str,
+    at: u64,
 ) -> Value {
-    let current = doc.get("post_pr_stop").cloned().unwrap_or(Value::Null);
-    if mode == StopMode::RecordIfEmpty && !current.is_null() {
+    let mut current = doc.get("post_pr_stop").cloned().unwrap_or(Value::Null);
+    if mode == StopMode::RecordIfEmpty
+        && let Some(kept) = current.as_object_mut()
+    {
+        kept.insert("at".to_owned(), json!(at));
+        record::set(doc, "post_pr_stop", current.clone());
         return json!({"result": "kept", "stop": current});
     }
-    let stop = json!({"name": name, "gate": gate, "remaining": [remaining]});
+    let stop = json!({"name": name, "gate": gate, "remaining": [remaining], "at": at});
     record::set(doc, "post_pr_stop", stop.clone());
     json!({"result": "recorded", "stop": stop})
 }
@@ -821,6 +835,8 @@ struct Stop {
     _gate: String,
     #[serde(rename = "remaining")]
     _remaining: Vec<String>,
+    #[serde(rename = "at")]
+    _at: u64,
 }
 
 pub(crate) fn check_stop(now: &Value) -> std::result::Result<(), String> {

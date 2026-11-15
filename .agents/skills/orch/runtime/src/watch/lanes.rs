@@ -776,7 +776,10 @@ fn read_lane<'a>(
 /// host is read as the observation duty reads it, so a host whose
 /// capability line cannot be read, or whose kind judges no status, leaves
 /// the lane unjudged with the cause; the counts are the `lane-long` line's,
-/// read where it reads them; nothing is written.
+/// read where it reads them, and the stage is the one the same item state
+/// holds open in the lane's current session ([`session_stage`]), the
+/// record's `session_since`, as its post-PR stop is ([`stop_fact`]);
+/// nothing is written.
 #[allow(
     clippy::disallowed_methods,
     reason = "the verb's one read of the fleet state, a snapshot it judges and prints; it acts on nothing"
@@ -822,13 +825,15 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
     );
     let observed = read_lane(lane, &readers, &sockets, host, None);
     let mut said = Produced::default();
-    let (counters, stage) = lane_counts(
+    let (counters, doc, _) = lane_state(
         lane,
         files,
         path.parent().unwrap_or(&settings.state_dir),
         &scripts,
         &mut said,
     );
+    let since = lane.session_since.as_deref().and_then(clock::epoch_secs);
+    let (stage, stage_start) = stage_fact(&doc, since);
     let mut reply = json!({
         "item": lane.item,
         "window": observed.name,
@@ -840,6 +845,8 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
         "restacks": counters.restacks,
         "repeated_class_rounds": counters.repeated_class_rounds,
         "stage": stage,
+        "stage_start": stage_start,
+        "post_pr_stop": stop_fact(&doc, since),
         "counts_cause": said.failed,
     });
     let state = serde_json::to_value(&observed.state).unwrap_or_default();
@@ -2386,11 +2393,7 @@ impl Counters {
     }
 }
 
-/// The five counts and the stage of the `lane-long` line, read where the
-/// lane's files are: under its worktree on this disk, through its host's
-/// `cat`, or nowhere for a kind that keeps none (`files=none`). A parked
-/// lane's disk is not asked, and a host whose capability line could not be
-/// read counts nothing.
+/// The five counts and the stage of the `lane-long` line.
 fn lane_counts(
     lane: &Lane,
     files: Option<Files>,
@@ -2398,29 +2401,109 @@ fn lane_counts(
     scripts: &Path,
     out: &mut Produced,
 ) -> (Counters, String) {
+    let (counters, _, step) = lane_state(lane, files, state_dir, scripts, out);
+    (counters, step(scripts, lane))
+}
+
+/// A lane's `Step` line, read where its files are.
+type StepRead = fn(&Path, &Lane) -> String;
+
+/// The five counts with the item state they were read from, read where the
+/// lane's files are: under its worktree on this disk, through its host's
+/// `cat`, or nowhere for a kind that keeps none (`files=none`); with the
+/// reader of the lane's `Step` line, not yet run, so a caller that prints no
+/// stage asks no host for it. A parked lane's disk is not asked, and a host
+/// whose capability line could not be read counts nothing.
+fn lane_state(
+    lane: &Lane,
+    files: Option<Files>,
+    state_dir: &Path,
+    scripts: &Path,
+    out: &mut Produced,
+) -> (Counters, Reading<Document>, StepRead) {
     match (lane.status, files) {
-        (LaneStatus::Parked, _) => (Counters::unread(), "parked".to_owned()),
+        (LaneStatus::Parked, _) => (Counters::unread(), Reading::Gone, |_, _| {
+            "parked".to_owned()
+        }),
         (
             LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
             Some(Files::Local),
-        ) => (lane_counters(lane, state_dir, out), lane_step(lane)),
+        ) => {
+            let (counters, doc) = lane_counters(lane, state_dir, out);
+            (counters, doc, |_, lane| lane_step(lane))
+        }
         (
             LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
             Some(Files::Verb),
-        ) => (
-            hosted::counters(scripts, lane, out),
-            hosted::step(scripts, lane),
-        ),
+        ) => {
+            let (counters, doc) = hosted::counters(scripts, lane, out);
+            (counters, doc, hosted::step)
+        }
         (
             LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
             Some(Files::None),
-        ) => (Counters::unread(), "none".to_owned()),
+        ) => (Counters::unread(), Reading::Gone, |_, _| "none".to_owned()),
         // A host whose line could not be read, which the duty's pass says once.
         (
             LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
             None,
-        ) => (Counters::unread(), "unread".to_owned()),
+        ) => (
+            Counters::unread(),
+            Reading::Unreadable {
+                cause: STATE_UNREAD,
+            },
+            |_, _| "unread".to_owned(),
+        ),
     }
+}
+
+/// The item state's newest stage still open, neither ended nor superseded,
+/// that started at or after `since`, the current session's start, as its
+/// kind and start: a stage an earlier session left open is not this
+/// session's work.
+pub(crate) fn session_stage(doc: &Document, since: u64) -> Option<(&str, u64)> {
+    doc.get("stages")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find_map(|stage| {
+            let start = stage.get("start")?.as_u64()?;
+            let open = stage.get("end").is_none_or(Value::is_null)
+                && stage.get("superseded") != Some(&Value::Bool(true));
+            (open && start >= since).then_some((stage.get("kind")?.as_str()?, start))
+        })
+}
+
+/// The facts' stage and its start: `none` where the lane wrote no item state
+/// or no stage of the current session stands open, `unread` where the state
+/// or the session's start could not be read.
+fn stage_fact(doc: &Reading<Document>, since: Option<u64>) -> (String, Option<u64>) {
+    match (doc, since) {
+        (Reading::Live(doc), Some(since)) => match session_stage(doc, since) {
+            Some((kind, start)) => (kind.to_owned(), Some(start)),
+            None => ("none".to_owned(), None),
+        },
+        (Reading::Gone, _) => ("none".to_owned(), None),
+        (Reading::Live(_), None) | (Reading::Unreadable { .. }, _) => ("unread".to_owned(), None),
+    }
+}
+
+/// The facts' post-PR stop: the item state's standing stop where it was
+/// recorded at or after `since`, the current session's start; a stop an
+/// earlier session left, or one whose time cannot be read, is not this
+/// session's.
+fn stop_fact(doc: &Reading<Document>, since: Option<u64>) -> Value {
+    let (Reading::Live(doc), Some(since)) = (doc, since) else {
+        return Value::Null;
+    };
+    doc.get("post_pr_stop")
+        .filter(|stop| {
+            stop.get("at")
+                .and_then(Value::as_u64)
+                .is_some_and(|at| at >= since)
+        })
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 /// The counters of a running lane: the item's own workflow state in the
@@ -2429,7 +2512,19 @@ fn lane_counts(
 /// validation run index under the worktree; a state the lane has not
 /// written, or one that cannot be read, counts nothing, and a checkout
 /// whose files could not be read says so.
-fn lane_counters(lane: &Lane, state_dir: &Path, out: &mut Produced) -> Counters {
+fn lane_counters(
+    lane: &Lane,
+    state_dir: &Path,
+    out: &mut Produced,
+) -> (Counters, Reading<Document>) {
+    let unread = || {
+        (
+            Counters::unread(),
+            Reading::Unreadable {
+                cause: STATE_UNREAD,
+            },
+        )
+    };
     // The worktree the record names, read three-valued: a root this reader
     // cannot read counts nothing.
     let root = match lane.mail_root.as_deref().map(Path::new) {
@@ -2438,7 +2533,7 @@ fn lane_counters(lane: &Lane, state_dir: &Path, out: &mut Produced) -> Counters 
             Ok(meta) if meta.is_dir() => Some(root),
             Ok(_) => None,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Counters::unread(),
+            Err(_) => return unread(),
         },
     };
     let runs = root
@@ -2454,14 +2549,16 @@ fn lane_counters(lane: &Lane, state_dir: &Path, out: &mut Produced) -> Counters 
                     out,
                     format!("lane-long-rounds-unread item={} cause={cause}", lane.item),
                 );
-                return Counters::unread();
+                return unread();
             }
         },
     };
-    match item_doc(&state::item_path(&state_dir, &lane.item)) {
-        Reading::Live(doc) => counters_of(&doc, runs).unwrap_or_else(Counters::unread),
+    let doc = item_doc(&state::item_path(&state_dir, &lane.item));
+    let counters = match &doc {
+        Reading::Live(doc) => counters_of(doc, runs).unwrap_or_else(Counters::unread),
         Reading::Gone | Reading::Unreadable { .. } => Counters::unread(),
-    }
+    };
+    (counters, doc)
 }
 
 /// The state directory a local checkout's own files name, as the checkout's
@@ -2496,12 +2593,14 @@ fn lane_state_dir(root: &Path) -> Result<PathBuf, String> {
     })
 }
 
+pub(super) const STATE_UNREAD: &str = "state-unreadable";
+
 /// The item's workflow state as the counts read it: the file's JSON object,
 /// whatever its shape; `Gone` where the lane has written none, unreadable
 /// where the file is no object.
 pub(super) fn item_doc(path: &Path) -> Reading<Document> {
     let unreadable = Reading::Unreadable {
-        cause: "state-unreadable",
+        cause: STATE_UNREAD,
     };
     match std::fs::read_to_string(path) {
         Ok(text) => doc_of(&text).map_or(unreadable, Reading::Live),
