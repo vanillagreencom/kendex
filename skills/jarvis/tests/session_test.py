@@ -2867,6 +2867,40 @@ class FixtureLifetimeContract(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
 
+    def assert_holder_released(self, lock, holder, timeout=15):
+        deadline = time.monotonic() + timeout
+        while True:
+            state = subprocess.run(["ps", "-p", str(holder), "-o", "stat="],
+                                   capture_output=True, text=True, timeout=5)
+            self.assertIn(state.returncode, (0, 1), state.stderr)
+            # A zombie has exited and closed its descriptors, even before reaping.
+            if state.returncode == 1 or state.stdout.strip().startswith("Z"):
+                break
+            self.assertLess(time.monotonic(), deadline, f"lock holder pid={holder} lock={lock}")
+            time.sleep(0.05)
+        with lock.open() as held:
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                self.fail(f"lock still held after holder pid={holder} exited: {lock}")
+
+    def test_live_lock_holder_is_rejected(self):
+        lock = self.root / "leaked.lock"
+        with lock.open("w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1000)"],
+                                     pass_fds=(held.fileno(),))
+        try:
+            with self.assertRaises(AssertionError) as rejected:
+                self.assert_holder_released(lock, child.pid, timeout=0.1)
+            self.assertIn(f"pid={child.pid}", str(rejected.exception))
+            with lock.open() as held:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            child.terminate()
+            child.wait(timeout=15)
+
     def test_clients_release_before_scratch(self):
         fixture = SessionContract()
         fixture.setUp()
@@ -2992,19 +3026,19 @@ class FixtureLifetimeContract(unittest.TestCase):
                     "                fcntl.flock(held, fcntl.LOCK_UN)\n"
                     "                self.assertLess(time.monotonic(), deadline)\n"
                     "                time.sleep(0.05)\n"
-                    "        print(subprocess.run(['tmux', '-L', 'row', 'display-message', '-p', '#{socket_path}'], check=True,\n"
+                    "        print(subprocess.run(['tmux', '-L', 'row', 'display-message', '-p', '#{socket_path}\\n#{pane_pid}'], check=True,\n"
                     "                             capture_output=True, text=True).stdout, end='', file=sys.__stdout__, flush=True)\n"
                     "        " + code + "\n"
                     "unittest.main(argv=sys.argv[:1])\n")
                 result = subprocess.run([sys.executable, "-B", str(row), str(lock)], env=env, capture_output=True, text=True, timeout=60)
-                server = Path(result.stdout.strip())
+                server_path, holder = result.stdout.strip().splitlines()
+                server = Path(server_path)
                 self.addCleanup(subprocess.run, ["tmux", "-S", str(server), "kill-server"], capture_output=True)
                 self.assertEqual((result.returncode, server.is_absolute()), (status, True), result.stderr)
                 self.assertNotEqual(server.parent, Path("/tmp") / ("tmux-%d" % os.getuid()))
                 self.assertFalse(server.exists())
                 self.assertFalse(server.parents[2].exists())
-                with lock.open() as held:
-                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assert_holder_released(lock, int(holder))
 
     def test_lifetime_controls(self):
         rows = (
