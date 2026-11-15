@@ -2335,9 +2335,15 @@ impl World {
         assert!(out.status.success(), "{}", stderr(&out));
     }
 
+    /// The folder Copilot keeps `s1` in under the account's store, which its
+    /// status line names as the session's transcript.
+    fn copilot_folder(&self) -> PathBuf {
+        self.copilot_home().join("session-state/s1")
+    }
+
     /// The transcript Copilot writes for `s1` under the account's store.
     fn copilot_transcript(&self) -> PathBuf {
-        self.copilot_home().join("session-state/s1/events.jsonl")
+        self.copilot_folder().join("events.jsonl")
     }
 
     /// The CLI's own record of `s1` under the account's store: the first
@@ -2351,7 +2357,7 @@ impl World {
             .take(rows)
             .map(|line| format!("{line}\n"))
             .collect();
-        let folder = self.copilot_home().join("session-state/s1");
+        let folder = self.copilot_folder();
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("workspace.yaml"), "id: s1\n").unwrap();
         fs::write(folder.join("events.jsonl"), text).unwrap();
@@ -2441,18 +2447,18 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
     let out = world.copilot_stop(&[]);
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
     gap(&out, "missing", "none");
-    let transcript = world.copilot_transcript();
-    let other = world.root.join("session-state/s2/events.jsonl");
+    let folder = world.copilot_folder();
+    let other = world.root.join("session-state/s2");
     let grant: Env = &[("COPILOT_ALLOW_ALL", "true")];
     let policy = "lane-mail-check: stop-cause=allow-all-blocked-by-policy";
     // Below the mark the account mark is told, which nothing here measures.
     let told = "lane-mail-check: account=unmeasured";
     let rows: &[StatusRow] = &[
-        (100_000, 1_000_000, &transcript, None, &[], told, ""),
+        (100_000, 1_000_000, &folder, None, &[], told, ""),
         (
             650_000,
             1_000_000,
-            &transcript,
+            &folder,
             None,
             &[],
             "lane-mail-check: context=650000",
@@ -2461,13 +2467,13 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
         (
             150_000,
             200_000,
-            &transcript,
+            &folder,
             None,
             &[],
             "lane-mail-check: context=150000",
             "block",
         ),
-        (140_000, 200_000, &transcript, None, &[], told, ""),
+        (140_000, 200_000, &folder, None, &[], told, ""),
         (
             100_000,
             1_000_000,
@@ -2477,16 +2483,8 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
             "wrong-transcript",
             "",
         ),
-        (
-            100_000,
-            1_000_000,
-            &transcript,
-            Some(false),
-            grant,
-            policy,
-            "",
-        ),
-        (100_000, 1_000_000, &transcript, Some(false), &[], told, ""),
+        (100_000, 1_000_000, &folder, Some(false), grant, policy, ""),
+        (100_000, 1_000_000, &folder, Some(false), &[], told, ""),
     ];
     for (tokens, window, bound, allow_all, env, first, decision) in rows {
         let row = format!("{tokens} {window} {bound:?} {allow_all:?} {env:?}");
@@ -2529,7 +2527,7 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
         );
     }
     // A record the status line stopped refreshing is never read as room.
-    world.status_line(650_000, 1_000_000, Some(&transcript), None);
+    world.status_line(650_000, 1_000_000, Some(&folder), None);
     let mut record: Value =
         serde_json::from_str(&fs::read_to_string(world.status_record()).unwrap()).unwrap();
     record["written_at"] = json!(1);
@@ -2600,7 +2598,7 @@ fn a_copilot_lane_with_no_other_reading_is_judged_on_its_own_record() {
     let out = world.copilot_stop(&[]);
     assert_eq!((out.code, out.first()), (0, below), "{}", out.stderr);
     fs::remove_file(world.mail_root().join(ITEM).join("context.json")).unwrap();
-    world.status_line(100_000, 1_000_000, Some(&world.copilot_transcript()), None);
+    world.status_line(100_000, 1_000_000, Some(&world.copilot_folder()), None);
     let out = world.copilot_stop(&[]);
     assert_eq!((out.code, out.first()), (0, below), "{}", out.stderr);
     assert_eq!(world.record()["tokens"], json!(100_000));
@@ -2614,13 +2612,13 @@ fn a_copilot_lane_with_no_other_reading_is_judged_on_its_own_record() {
 #[test]
 fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds() {
     let world = World::launched();
-    let transcript = world.copilot_transcript();
+    let folder = world.copilot_folder();
     // The extension's reading stands alone where no status-line record
     // answers.
     world.extension_reading(Some(720_001), 800_000, "s1", EXTENSION);
     let out = world.copilot_stop(&[]);
     assert_eq!(out.first(), "lane-mail-check: context=720001");
-    world.status_line(650_000, 1_000_000, Some(&transcript), None);
+    world.status_line(650_000, 1_000_000, Some(&folder), None);
     let held = "lane-mail-check: context=650000";
     let rows: &[(Option<u64>, &str, &str, &str)] = &[
         (
@@ -2658,7 +2656,7 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
     // The compaction flag: this session's holds whatever the reading, and
     // the handoff it names records the compaction; one of another session,
     // or of none, flags nothing.
-    world.status_line(100_000, 1_000_000, Some(&transcript), None);
+    world.status_line(100_000, 1_000_000, Some(&folder), None);
     let flag = world.mail_root().join(ITEM).join("compaction.json");
     let flags = [
         (json!("s1"), "lane-mail-check: compacted=auto"),
@@ -2697,7 +2695,7 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
     fs::remove_dir(&flag).unwrap();
     // A reading still on its way: its pending marker outlasts the wait, and
     // the record past the mark is not judged in its place.
-    world.status_line(650_000, 1_000_000, Some(&transcript), None);
+    world.status_line(650_000, 1_000_000, Some(&folder), None);
     let marker = world.usage().join("s1");
     plant(&marker);
     let out = world.copilot_stop(&[]);

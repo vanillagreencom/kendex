@@ -847,9 +847,11 @@ pub struct CopilotRecord {
 
 /// The status-line record of `session` under the account directory `home`,
 /// answered only where every binding it holds agrees: its own session id,
-/// its account directory, the transcript where `transcript` names one, and
-/// a stamp no more than [`COPILOT_RECORD_MAX_AGE`] seconds before `now` and
-/// none after it. `Err` names the first binding that did not agree:
+/// its account directory, the folder that holds `transcript` where it names
+/// one (the CLI hands its status line the session's folder, and the turn
+/// end the `events.jsonl` inside it), and a stamp no more than
+/// [`COPILOT_RECORD_MAX_AGE`] seconds before `now` and none after it. `Err`
+/// names the first binding that did not agree:
 /// `unbound` (a session id outside the alphabet that keeps the path under
 /// its directory), `missing`, `unreadable` (no record of this form),
 /// `wrong-session`, `wrong-account`, `wrong-transcript`, `stale`.
@@ -883,7 +885,8 @@ pub fn copilot_record(
     if home.to_str() != Some(account) {
         return Err("wrong-account");
     }
-    if !transcript.is_empty() && word(&record, "transcript_path") != transcript {
+    let folder = Path::new(transcript).parent().map(Path::as_os_str);
+    if !transcript.is_empty() && folder != Some(OsStr::new(word(&record, "transcript_path"))) {
         return Err("wrong-transcript");
     }
     let age = now as f64 - written.floor();
@@ -1224,7 +1227,7 @@ mod tests {
     /// A status-line record in the form `copilot-statusline` writes it under
     /// the account `home` for `s1`, stamped `written`.
     fn status_record(home: &Path, written: Value, status: Value) -> Value {
-        serde_json::json!({"session_id": "s1", "transcript_path": "/t/s1/events.jsonl",
+        serde_json::json!({"session_id": "s1", "transcript_path": "/t/s1",
             "copilot_home": home.display().to_string(), "written_at": written, "status": status})
     }
 

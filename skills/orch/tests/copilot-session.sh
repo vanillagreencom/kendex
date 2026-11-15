@@ -22,7 +22,7 @@ source "$TEST_DIR/lib/assertions.sh"
 
 ACCOUNT="$TMP_ROOT/.1copilot"
 SESSION=5f0c1d2e-aaaa-4bbb-8ccc-0123456789ab
-TRANSCRIPT="$ACCOUNT/session-state/$SESSION/events.jsonl"
+TRANSCRIPT="$ACCOUNT/session-state/$SESSION"
 # status JSON — the object Copilot 1.0.88 hands its statusLine command.
 status() {
   jq -nc --arg s "$SESSION" --arg t "$TRANSCRIPT" '{session_id: $s, transcript_path: $t,
