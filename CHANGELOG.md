@@ -6,6 +6,38 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-15
+
+### Added
+
+- Jarvis satellites can retain matched answers and forward within one explicitly confirmed live session. Individual forwards remain unchanged on every version.
+
+  You do: send session-scoped records only to the kendex version carrying this change.
+
+### Changed
+
+- CI installs kendex through harness-ci's sole release installer. Managed CI, catalog checks and the retained writer use the new source and rendered paths. Release selection and credential isolation stay the same. The old review-gate entry point forwards with a migration warning until the next major release. Consumer-refresh compatibility files remain available.
+
+  You do: refresh the installed harness-ci and review-gate packages through your existing refresh workflow, then change custom installer calls from `.agents/skills/review-gate/scripts/install-latest.sh` to `.agents/skills/harness-ci/scripts/install-latest.sh` (source checkouts use `skills/harness-ci/scripts/install-latest.sh`).
+- `kendex marketplace check` refuses a settings template key that starts with `_kendex_`, the prefix the shell settings loader keeps for its own variables, and the app offers no field for one: every load of a file holding such a key fails. The Bash loader also refuses assignments to integer, array or name-reference destinations so settings values stay data, with a file, line and key diagnostic.
+
+  You do: rename any template key that starts with `_kendex_`, and use ordinary scalar variables for settings destinations.
+- `kendex.toml` moves to schema 8. Skills kendex forks, adopts or installs from a template's `shared-copy` member record `links = "shared-tree"`, and so does a package kept on unsubscribe when it came from a path catalog or from a fetched catalog whose recorded delivered places agree. A template's plain copy, and a kept package whose delivered places nothing records, stay untagged. A template saves a converted skill as a `shared-copy` member. A local or in-place skill declared without the key installs exactly as before; a path-catalog skill never carries the key, and its links are converted from its catalog folder at every place it installs. A kendex older than this release refuses a schema 8 manifest and a template index holding a `shared-copy` member, leaving both files unchanged.
+
+  You do: upgrade kendex on every machine that applies this project or uses your templates; the next apply rewrites `kendex.toml` to schema 8 itself.
+
+### Fixed
+
+- Changed rendered files and hook registrations now replace each file atomically, keeping its permission bits so readers see complete contents during apply. On Unix, replacement temporaries start owner-only to protect retained private configuration.
+- Keep folder marketplaces whose names differ by `.git` separate in marketplace cards and saved bookmarks.
+- Relative links in skills from a path catalog reach the same file once installed, at the shared tree and at every tool's copy, and keep reaching it after the skill is kept on unsubscribe, adopted, forked or imported into a catalog. A skill saved in a template reads its links from the shared tree of whichever scope installs it. Adopting or keeping a personal skill under a linked `~/.agents` preserves its shared-tree link spelling. Links within a skill, to sibling skills or already reaching their target keep every byte. A link whose target lies outside the project, the catalog it is imported into or, for a personal skill, the volume holding home keeps its spelling and warns in plain words, at install and from the command that moved it, in the terminal, with its fix and its `agent-link-unrepresentable` or `skill-link-kept` code beneath it, and in the desktop app, where an import lists them on its result and every other move shows one notification per link. In the desktop app, an unsubscribe whose call fails before it answers now closes and says the result is unknown, since it may already have landed, where it showed a refusal before.
+- Accept GitHub App installation tokens in `KENDEX_GITHUB_TOKEN` during installation.
+- Keep the rolling install-record pull request out of a busy merge queue, and exclude its own entry when deciding whether the record can land.
+- `update-pi` fetches each remote catalog its packages come from before it compares or installs them, so one run installs the release the catalog names now. When a catalog cannot be fetched, or no longer has the branch or tag its packages name, the run reports them as not evaluated with that cause, leaves them as installed and exits with an error, instead of reporting an older cached release as updated or up to date, or the package as unsupplied or not installed.
+- Hourly consumer refresh checks skip the second runner when their shared input proof finds no work, while still releasing stuck environment gates.
+
+  You do: from each consumer checkout, run the new kendex release checkout’s `refresh/adopt-refresh.sh` to enable the job skip.
+
 ## [1.21.0] - 2026-11-12
 
 ### Added
@@ -3057,7 +3089,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.21.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.22.0..HEAD
+[1.22.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.0
 [1.21.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.21.0
 [1.20.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.20.0
 [1.19.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.19.2
