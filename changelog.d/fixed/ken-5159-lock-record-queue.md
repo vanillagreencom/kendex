@@ -1,1 +1,0 @@
-- Keep the rolling install-record pull request out of a busy merge queue, and exclude its own entry when deciding whether the record can land.

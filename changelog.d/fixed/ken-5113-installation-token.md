@@ -1,1 +1,0 @@
-- Accept GitHub App installation tokens in `KENDEX_GITHUB_TOKEN` during installation.

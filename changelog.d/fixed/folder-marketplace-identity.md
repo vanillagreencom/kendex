@@ -1,1 +1,0 @@
-- Keep folder marketplaces whose names differ by `.git` separate in marketplace cards and saved bookmarks.
