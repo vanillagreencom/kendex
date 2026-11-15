@@ -423,8 +423,7 @@ impl Op {
         match self {
             Op::WriteFile { path, bytes, pre } => {
                 pre.check(path)?;
-                ensure_parent(path)?;
-                fs::write(path, bytes).map_err(|e| CoreError::io(path, e))
+                crate::fs::atomic_write_bytes(path, bytes)
             }
             Op::WriteTree { root, files, pre } => write_tree(root, files, pre),
             Op::Symlink { link, target, pre } => {
@@ -485,8 +484,7 @@ impl Op {
                 if updated == current {
                     return Ok(());
                 }
-                ensure_parent(path)?;
-                fs::write(path, updated).map_err(|e| CoreError::io(path, e))
+                crate::fs::atomic_write(path, &updated)
             }
             Op::WriteLock { path, lock, pre } => {
                 pre.check(path)?;

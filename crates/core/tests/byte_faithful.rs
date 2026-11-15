@@ -70,6 +70,95 @@ struct Fixture {
     project: std::path::PathBuf,
 }
 
+/// Copilot's script and registry use these two operations. A reader that
+/// opened the old version must retain its complete bytes across replacement.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn rendered_file_replacements_keep_open_readers_and_permission_bits() {
+    use std::io::Read as _;
+
+    let f = fixture();
+    for (name, old, bytes, edits) in [
+        ("script", b"old\xff".as_slice(), b"new\xfe".as_slice(), None),
+        (
+            "registry",
+            b"[features]\n".as_slice(),
+            b"[features]\nhooks = true\n".as_slice(),
+            Some(vec![ConfigEdit::CodexEnableHooksFeature]),
+        ),
+    ] {
+        let path = f.project.join(name);
+        fs::write(&path, old).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o751)).unwrap();
+        let mut reader = fs::File::open(&path).unwrap();
+        let pre = apply::Pre::HashIs {
+            hash: kendex_core::hash::hash_tree(&path).unwrap(),
+        };
+        let op = match edits {
+            Some(edits) => apply::Op::EditFile {
+                path: path.clone(),
+                edits,
+                pre,
+            },
+            None => apply::Op::WriteFile {
+                path: path.clone(),
+                bytes: bytes.to_vec(),
+                pre,
+            },
+        };
+        let plan = apply::Plan::landed(
+            f.scope.clone(),
+            vec![apply::PlannedOp {
+                description: "replace a rendered file".into(),
+                op,
+            }],
+        )
+        .unwrap();
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            let destination = &path;
+            let observer = scope.spawn(move || {
+                let check = || {
+                    let observed = fs::read(destination).unwrap();
+                    assert!(observed == old || observed == bytes);
+                };
+                check();
+                ready_tx.send(()).unwrap();
+                // Fixed probe work; a writer unwind disconnects the channel
+                // and must also let this observer finish.
+                for _ in 0..1024 {
+                    if !matches!(
+                        done_rx.try_recv(),
+                        Err(std::sync::mpsc::TryRecvError::Empty)
+                    ) {
+                        break;
+                    }
+                    check();
+                }
+                check();
+            });
+            ready_rx.recv().unwrap();
+            let result = apply::execute(&f.env, &plan);
+            // The observer may already have exhausted its fixed probe budget.
+            let _ = done_tx.send(());
+            observer.join().unwrap();
+            result.unwrap();
+        });
+        let mut observed = Vec::new();
+        reader.read_to_end(&mut observed).unwrap();
+        assert_eq!(
+            observed, old,
+            "an already open reader retains the old complete file"
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o751
+        );
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
