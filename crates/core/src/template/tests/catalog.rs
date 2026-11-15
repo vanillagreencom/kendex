@@ -145,8 +145,15 @@ fn literal_legacy_records_keep_unique_readings_and_preserve_ambiguous_strings() 
         let mut one = before.clone();
         one.members = vec![member.clone()];
         let resolution = resolve(&env, &one).unwrap();
-        assert_eq!(resolution.groups.len(), usize::from(i != 3));
-        if i == 3 {
+        let expected_alias = [Some("remote"), Some("absolute"), Some("relative"), None][i];
+        assert_eq!(
+            resolution.groups.len(),
+            usize::from(expected_alias.is_some())
+        );
+        if let Some(alias) = expected_alias {
+            assert_eq!(resolution.groups[0].source.as_deref(), Some(alias));
+            assert_eq!(resolution.groups[0].scope.as_ref(), Some(&Scope::Global));
+        } else {
             assert_eq!(
                 resolution.missing[0].which,
                 MemberWhich::Marketplace {
@@ -182,12 +189,39 @@ fn native_backslash_declarations_match_slashed_saved_roots() {
     .unwrap();
     let typed = selected(&env, &Scope::Global, "folder", "gh");
     let mut template = create_from_selection(&env, "Native", vec![typed]).unwrap();
-    assert!(resolve(&env, &template).unwrap().missing.is_empty());
+    let MemberSource::Catalog {
+        catalog: TemplateCatalog::Folder {
+            root: saved_root, ..
+        },
+        ..
+    } = &template.members[0].source
+    else {
+        panic!("saved folder catalog")
+    };
+    assert_eq!(saved_root, &crate::paths::slashed(&root));
+    let typed_resolution = resolve(&env, &template).unwrap();
+    assert!(typed_resolution.missing.is_empty());
+    assert_eq!(typed_resolution.groups.len(), 1);
+    assert_eq!(typed_resolution.groups[0].source.as_deref(), Some("folder"));
+    assert_eq!(
+        typed_resolution.groups[0].scope.as_ref(),
+        Some(&Scope::Global)
+    );
     template.members[0].source = MemberSource::Marketplace {
         repo: crate::paths::slashed(&root),
         rev: None,
     };
-    assert!(resolve(&env, &template).unwrap().missing.is_empty());
+    let legacy_resolution = resolve(&env, &template).unwrap();
+    assert!(legacy_resolution.missing.is_empty());
+    assert_eq!(legacy_resolution.groups.len(), 1);
+    assert_eq!(
+        legacy_resolution.groups[0].source.as_deref(),
+        Some("folder")
+    );
+    assert_eq!(
+        legacy_resolution.groups[0].scope.as_ref(),
+        Some(&Scope::Global)
+    );
 }
 
 #[test]
