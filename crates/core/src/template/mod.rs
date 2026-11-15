@@ -135,6 +135,175 @@ pub enum Namespace {
     Set,
 }
 
+/// A saved catalog, preserving declaration kind and resolution context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum TemplateCatalog {
+    Repository {
+        repo: String,
+        origin: RepositoryOrigin,
+    },
+    Folder {
+        root: String,
+        origin: crate::model::Scope,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "origin", rename_all = "kebab-case")]
+pub enum RepositoryOrigin {
+    Declared { scope: crate::model::Scope },
+    Direct,
+}
+
+impl TemplateCatalog {
+    pub fn reference(&self) -> &str {
+        match self {
+            Self::Repository { repo, .. } => repo,
+            Self::Folder { root, .. } => root,
+        }
+    }
+
+    pub fn identity(&self) -> String {
+        match self {
+            Self::Repository { repo, .. } => Self::repository_identity(repo),
+            Self::Folder { root, .. } => Self::folder_identity(std::path::Path::new(root)),
+        }
+    }
+
+    fn repository_identity(repo: &str) -> String {
+        format!("repository:{}", crate::source_ref::repo_identity(repo))
+    }
+
+    fn folder_identity(root: &std::path::Path) -> String {
+        format!("folder:{}", crate::paths::slashed(root))
+    }
+
+    /// The catalog main's personal subscribe path would read, without
+    /// subscribing, fetching a tree revision or inventing a saved origin.
+    fn reference_identity(env: &Env, reference: &str) -> Result<Option<String>> {
+        use crate::source_ref::SourceRef;
+        Ok(match crate::source_ref::parse_typed(reference)? {
+            SourceRef::Remote { repo, .. }
+            | SourceRef::Tree { repo, .. }
+            | SourceRef::SkillsSh { repo, .. } => Some(Self::repository_identity(&repo)),
+            SourceRef::Path { path } => Some(Self::folder_identity(&crate::source::path_root(
+                env,
+                &crate::model::Scope::Global,
+                &path,
+            ))),
+            SourceRef::Collection { .. } => None,
+        })
+    }
+
+    pub fn scope(&self) -> Option<&crate::model::Scope> {
+        match self {
+            Self::Repository {
+                origin: RepositoryOrigin::Declared { scope },
+                ..
+            } => Some(scope),
+            Self::Folder { origin, .. } => Some(origin),
+            Self::Repository {
+                origin: RepositoryOrigin::Direct,
+                ..
+            } => None,
+        }
+    }
+
+    pub(crate) fn declaration(&self, rev: Option<String>) -> crate::manifest::SourceDecl {
+        crate::manifest::SourceDecl {
+            repo: match self {
+                Self::Repository { repo, .. } => Some(repo.clone()),
+                Self::Folder { .. } => None,
+            },
+            path: match self {
+                Self::Folder { root, .. } => Some(root.clone()),
+                Self::Repository { .. } => None,
+            },
+            rev,
+            enabled: true,
+        }
+    }
+
+    pub(crate) fn declared(
+        env: &Env,
+        scope: &crate::model::Scope,
+        decl: &crate::manifest::SourceDecl,
+    ) -> Option<Self> {
+        match (&decl.repo, &decl.path) {
+            (Some(repo), _) => Some(Self::Repository {
+                repo: repo.clone(),
+                origin: RepositoryOrigin::Declared {
+                    scope: scope.clone(),
+                },
+            }),
+            (None, Some(path)) => Some(Self::Folder {
+                root: crate::paths::slashed(&crate::source::path_root(env, scope, path)),
+                origin: scope.clone(),
+            }),
+            (None, None) => None,
+        }
+    }
+}
+
+/// Convert the selected catalog at the boundary that still knows its declaration.
+pub fn catalog_source(
+    env: &Env,
+    catalog: &crate::source::browse::Catalog,
+    rev: Option<String>,
+) -> Result<MemberSource> {
+    let catalog = match catalog {
+        crate::source::browse::Catalog::Repo { repo } => TemplateCatalog::Repository {
+            repo: repo.clone(),
+            origin: RepositoryOrigin::Direct,
+        },
+        crate::source::browse::Catalog::Subscription { scope, source } => {
+            let manifest = crate::engine::ops::manifest_for_reading(env, scope)?;
+            manifest
+                .sources
+                .get(source)
+                .and_then(|decl| TemplateCatalog::declared(env, scope, decl))
+                .ok_or_else(|| CoreError::UnknownSource {
+                    name: source.clone(),
+                })?
+        }
+    };
+    Ok(MemberSource::Catalog { catalog, rev })
+}
+
+/// A command-line source choice is parsed once, before it becomes saved data.
+pub fn source_choice(env: &Env, reference: &str) -> Result<MemberSource> {
+    let (catalog, rev) = match crate::source_ref::parse_typed(reference)? {
+        crate::source_ref::SourceRef::Path { path } => (
+            TemplateCatalog::Folder {
+                root: crate::paths::slashed(&crate::source::path_root(
+                    env,
+                    &crate::model::Scope::Global,
+                    &path,
+                )),
+                origin: crate::model::Scope::Global,
+            },
+            None,
+        ),
+        crate::source_ref::SourceRef::Remote { repo, rev } => (
+            TemplateCatalog::Repository {
+                repo,
+                origin: RepositoryOrigin::Direct,
+            },
+            rev,
+        ),
+        crate::source_ref::SourceRef::Tree { .. }
+        | crate::source_ref::SourceRef::SkillsSh { .. }
+        | crate::source_ref::SourceRef::Collection { .. } => {
+            return Err(CoreError::SourceRefInvalid {
+                reference: reference.to_owned(),
+                reason: "choose a repository or folder".to_owned(),
+            });
+        }
+    };
+    Ok(MemberSource::Catalog { catalog, rev })
+}
+
 /// Where a member's content comes from when the template is installed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(
@@ -143,6 +312,11 @@ pub enum Namespace {
     rename_all_fields = "kebab-case"
 )]
 pub enum MemberSource {
+    Catalog {
+        catalog: TemplateCatalog,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rev: Option<String>,
+    },
     /// A marketplace, named the way a source declaration names it: the
     /// repository, or the folder a path source points at. Saved rather
     /// than the subscription's alias, because an alias is a per-place
@@ -202,7 +376,9 @@ impl MemberSource {
     pub(crate) fn links(&self) -> Option<crate::manifest::SkillLinks> {
         match self {
             MemberSource::SharedCopy { .. } => Some(crate::manifest::SkillLinks::SharedTree),
-            MemberSource::Copy { .. } | MemberSource::Marketplace { .. } => None,
+            MemberSource::Copy { .. }
+            | MemberSource::Marketplace { .. }
+            | MemberSource::Catalog { .. } => None,
         }
     }
 }
@@ -230,24 +406,42 @@ fn is_yes(value: &bool) -> bool {
 }
 
 impl Member {
-    /// What tells one member from another: two packages of the same kind
-    /// and name from two marketplaces are two members, and the same
-    /// identity saved twice is one.
+    /// The key represented by this persisted record. Admission resolves a
+    /// legacy record's catalog reading before comparing it with typed data.
     ///
-    /// The repository is folded through [`crate::source_ref::repo_identity`],
-    /// which is this repository's one judge of whether two references name
-    /// one marketplace — the same value [`install::resolve`] groups by and
-    /// `subscription_for` matches a subscription on. A stored `repo` is a
-    /// reference to subscribe with and a spelling to show, never a value to
-    /// compare: `owner/repo` and its HTTPS spelling are one marketplace and
-    /// two strings, and comparing them raw admitted the same package twice
-    /// while the row a person could act on named only the first.
+    /// Typed catalogs use their kind-discriminated identity; old records
+    /// retain their repository fold until resolution can read declarations.
+    /// Origin is context for reading a catalog, not part of its identity.
     pub fn identity(&self) -> (MemberKind, &str, Option<String>) {
         let repo = match &self.source {
+            MemberSource::Catalog { catalog, .. } => Some(catalog.identity()),
             MemberSource::Marketplace { repo, .. } => Some(crate::source_ref::repo_identity(repo)),
             MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => None,
         };
         (self.kind, self.name.as_str(), repo)
+    }
+
+    fn admission_identity(
+        &self,
+        env: &Env,
+        subscriptions: &mut Option<Vec<crate::source_ops::Subscription>>,
+    ) -> Result<(MemberKind, String, Option<String>)> {
+        let catalog = match &self.source {
+            MemberSource::Marketplace { repo, .. } => {
+                match install::member_catalog(env, self, declarations(env, subscriptions)?) {
+                    Ok(reading) => match reading.catalog {
+                        Some(catalog) => Some(catalog.identity()),
+                        None => TemplateCatalog::reference_identity(env, repo)?
+                            .or_else(|| Some(format!("legacy:{repo}"))),
+                    },
+                    Err(install::CatalogError::Ambiguous) => Some(format!("legacy:{repo}")),
+                    Err(install::CatalogError::Read(error)) => return Err(error),
+                }
+            }
+            MemberSource::Catalog { catalog, .. } => Some(catalog.identity()),
+            MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => None,
+        };
+        Ok((self.kind, self.name.clone(), catalog))
     }
 }
 
@@ -264,22 +458,28 @@ pub struct MemberRef {
 /// Which member a reference means, where a template holds more than one
 /// under a kind and a name.
 ///
-/// Three states, because the domain has three: a template may hold the
-/// same kind and name from two marketplaces and as a copy of its own, all
-/// at once — [`add_members`] permits it deliberately. A two-state
-/// reference could not tell "the copy" from "every one of them", so
-/// removing a copy took every marketplace member with it. The state is
-/// carried rather than inferred so a caller physically cannot ask for one
-/// and be given the other.
+/// A catalog reference preserves its saved format so removal reaches the
+/// intended member when typed and legacy records share one catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(tag = "of", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum MemberWhich {
+    Catalog {
+        catalog: TemplateCatalog,
+    },
+    /// A source the person typed, retaining the literal address of an old
+    /// member when no declaration remains to give it a catalog reading.
+    CatalogSelection {
+        catalog: TemplateCatalog,
+        reference: String,
+    },
     /// Every member of this kind and name, whatever it came from. What a
     /// caller means when it has no way to tell them apart and wants them
     /// all gone.
     Any,
     /// The one that came from this marketplace.
-    Marketplace { repo: String },
+    Marketplace {
+        repo: String,
+    },
     /// The copy this template owns, which came from no marketplace and so
     /// cannot be named by one.
     Copy,
@@ -293,22 +493,31 @@ impl MemberRef {
         }
         match (&self.which, &member.source) {
             (MemberWhich::Any, _) => true,
+            (
+                MemberWhich::Catalog { catalog } | MemberWhich::CatalogSelection { catalog, .. },
+                MemberSource::Catalog { catalog: held, .. },
+            ) => catalog.identity() == held.identity(),
             (MemberWhich::Copy, MemberSource::Copy { .. } | MemberSource::SharedCopy { .. }) => {
                 true
             }
-            // One marketplace, however either side spells it: the
-            // reference a surface builds its row from is the member's own
-            // stored spelling, and a person may have added the same
-            // package under another. Folded through the same judge
-            // [`Member::identity`] uses, so admission, dedup, grouping and
-            // removal all read one value.
             (MemberWhich::Marketplace { repo }, MemberSource::Marketplace { repo: held, .. }) => {
                 crate::source_ref::repo_identity(repo) == crate::source_ref::repo_identity(held)
             }
-            (MemberWhich::Copy, MemberSource::Marketplace { .. })
+            (
+                MemberWhich::Copy,
+                MemberSource::Catalog { .. } | MemberSource::Marketplace { .. },
+            )
             | (
                 MemberWhich::Marketplace { .. },
-                MemberSource::Copy { .. } | MemberSource::SharedCopy { .. },
+                MemberSource::Catalog { .. }
+                | MemberSource::Copy { .. }
+                | MemberSource::SharedCopy { .. },
+            )
+            | (
+                MemberWhich::Catalog { .. } | MemberWhich::CatalogSelection { .. },
+                MemberSource::Marketplace { .. }
+                | MemberSource::Copy { .. }
+                | MemberSource::SharedCopy { .. },
             ) => false,
         }
     }
@@ -581,27 +790,104 @@ pub fn delete(env: &Env, name: &str) -> Result<()> {
 pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
     admit(&members)?;
     change(env, name, |template| {
-        for member in members {
-            if !template
-                .members
-                .iter()
-                .any(|held| held.identity() == member.identity())
-            {
-                template.members.push(member);
-            }
-        }
+        append_unique(env, &mut template.members, members)?;
         Ok(())
     })
+}
+
+fn append_unique(env: &Env, kept: &mut Vec<Member>, members: Vec<Member>) -> Result<()> {
+    let mut subscriptions = None;
+    for member in members {
+        let mut duplicate = false;
+        for held in kept
+            .iter()
+            .filter(|held| held.kind == member.kind && held.name == member.name)
+        {
+            if matches!(
+                (&held.source, &member.source),
+                (
+                    MemberSource::Marketplace { .. },
+                    MemberSource::Copy { .. } | MemberSource::SharedCopy { .. }
+                ) | (
+                    MemberSource::Copy { .. } | MemberSource::SharedCopy { .. },
+                    MemberSource::Marketplace { .. }
+                )
+            ) {
+                continue;
+            }
+            if held.admission_identity(env, &mut subscriptions)?
+                == member.admission_identity(env, &mut subscriptions)?
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if !duplicate {
+            kept.push(member);
+        }
+    }
+    Ok(())
+}
+
+fn declarations<'a>(
+    env: &Env,
+    cached: &'a mut Option<Vec<crate::source_ops::Subscription>>,
+) -> Result<&'a [crate::source_ops::Subscription]> {
+    if cached.is_none() {
+        *cached = Some(crate::source_ops::subscriptions(env)?);
+    }
+    match cached {
+        Some(rows) => Ok(rows),
+        None => unreachable!("successful declaration acquisition fills the operation cache"),
+    }
 }
 
 /// Take members out. A member whose bytes only this template held goes
 /// from the store with it, and so do the customizations that were its.
 pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Template> {
     let before = get(env, name)?;
+    let mut subscriptions = None;
     let after = change(env, name, |template| {
-        template
-            .members
-            .retain(|held| !members.iter().any(|wanted| wanted.names(held)));
+        let mut kept_members = Vec::new();
+        for held in &template.members {
+            let mut remove = false;
+            for wanted in members {
+                if wanted.kind != held.kind || wanted.name != held.name {
+                    continue;
+                }
+                remove |= match (&wanted.which, &held.source) {
+                    (
+                        MemberWhich::Catalog { catalog }
+                        | MemberWhich::CatalogSelection { catalog, .. },
+                        MemberSource::Marketplace { repo, .. },
+                    ) => {
+                        let reading = install::member_catalog(
+                            env,
+                            held,
+                            declarations(env, &mut subscriptions)?,
+                        )
+                        .map_err(|why| {
+                            CoreError::TemplateMemberUnavailable {
+                                name: held.name.clone(),
+                                why: why.to_string(),
+                            }
+                        })?;
+                        match reading.catalog {
+                            Some(held) => held.identity() == catalog.identity(),
+                            None => matches!(
+                                &wanted.which,
+                                MemberWhich::CatalogSelection { reference, .. } if reference == repo
+                            ),
+                        }
+                    }
+                    _ => wanted.names(held),
+                };
+            }
+            if !remove {
+                kept_members.push(held.clone());
+            }
+        }
+        template.members = kept_members;
         // Inside the same change, so the index write carries the members
         // and their settings together: a template that kept a removed
         // package's declarations would inject them into the manifest of

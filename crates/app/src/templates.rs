@@ -123,3 +123,13 @@ pub fn template_file(name: String, path: String) -> Result<String, String> {
     let template = template::get(&env, &name).map_err(|e| e.to_string())?;
     template::stored_file(&env, &template, &path).map_err(|e| e.to_string())
 }
+
+/// Resolve a selected catalog while its declaration kind and scope are available.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn template_catalog_source(
+    catalog: kendex_core::source::browse::Catalog,
+    rev: Option<String>,
+) -> Result<template::MemberSource, String> {
+    template::catalog_source(&env()?, &catalog, rev).map_err(|e| e.to_string())
+}

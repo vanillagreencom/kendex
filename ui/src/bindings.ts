@@ -680,6 +680,8 @@ export const commands = {
 	 *  a marketplace identity; no bytes are copied.
 	 */
 	templateCreateFromSelection: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_selection", { name, members })),
+	/**  Resolve a selected catalog while its declaration kind and scope are available. */
+	templateCatalogSource: (catalog: Catalog, rev: string | null) => typedError<MemberSource_Serialize, string>(__TAURI_INVOKE("template_catalog_source", { catalog, rev })),
 	templateAddMembers: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_add_members", { name, members })),
 	templateRemoveMembers: (name: string, members: MemberRef[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_remove_members", { name, members })),
 	templateRename: (name: string, to: string) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_rename", { name, to })),
@@ -2008,7 +2010,7 @@ export type DraftOrigin =
  *  Saving records the identity; the bytes come from the marketplace at
  *  install time.
  */
-{ origin: "marketplace"; repo: string; 
+{ origin: "marketplace"; catalog: TemplateCatalog; repo: string; 
 /**
  *  The subscription alias the project declared, for the row to
  *  name a marketplace the person recognizes.
@@ -2028,7 +2030,7 @@ hash: string } |
  *  marketplace package this was installed from, and the edited copy on
  *  disk. Saving requires the choice.
  */
-{ origin: "choice"; repo: string; source: string; rev: string | null; 
+{ origin: "choice"; catalog: TemplateCatalog; repo: string; source: string; rev: string | null; 
 /**
  *  Where the edited copy is, or null where its current rendering
  *  is not something a template can store.
@@ -3505,7 +3507,7 @@ export type MemberRef = {
 export type MemberSource = MemberSource_Serialize | MemberSource_Deserialize;
 
 /**  Where a member's content comes from when the template is installed. */
-export type MemberSource_Deserialize = 
+export type MemberSource_Deserialize = ({ held: "catalog"; catalog: TemplateCatalog; rev?: string | null }) & { copy?: never; from?: never; notices?: never; repo?: never } | 
 /**
  *  A marketplace, named the way a source declaration names it: the
  *  repository, or the folder a path source points at. Saved rather
@@ -3517,7 +3519,7 @@ export type MemberSource_Deserialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
+rev?: string | null }) & { catalog?: never; copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3543,7 +3545,7 @@ from?: string | null;
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
  */
-notices?: string[] }) & { repo?: never; rev?: never } | 
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never } | 
 /**
  *  A skill copy whose relative links were converted into the saving
  *  project's shared-tree reading, so it installs tagged
@@ -3561,10 +3563,10 @@ from?: string | null;
  *  The licence and attribution files these bytes came under, as for
  *  a copy.
  */
-notices?: string[] }) & { repo?: never; rev?: never };
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never };
 
 /**  Where a member's content comes from when the template is installed. */
-export type MemberSource_Serialize = 
+export type MemberSource_Serialize = ({ held: "catalog"; catalog: TemplateCatalog; rev?: string | null }) & { copy?: never; from?: never; notices?: never; repo?: never } | 
 /**
  *  A marketplace, named the way a source declaration names it: the
  *  repository, or the folder a path source points at. Saved rather
@@ -3576,7 +3578,7 @@ export type MemberSource_Serialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
+rev?: string | null }) & { catalog?: never; copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3602,7 +3604,7 @@ from?: string | null;
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
  */
-notices?: string[] }) & { repo?: never; rev?: never } | 
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never } | 
 /**
  *  A skill copy whose relative links were converted into the saving
  *  project's shared-tree reading, so it installs tagged
@@ -3620,21 +3622,21 @@ from?: string | null;
  *  The licence and attribution files these bytes came under, as for
  *  a copy.
  */
-notices?: string[] }) & { repo?: never; rev?: never };
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never };
 
 /**
  *  Which member a reference means, where a template holds more than one
  *  under a kind and a name.
  * 
- *  Three states, because the domain has three: a template may hold the
- *  same kind and name from two marketplaces and as a copy of its own, all
- *  at once — [`add_members`] permits it deliberately. A two-state
- *  reference could not tell "the copy" from "every one of them", so
- *  removing a copy took every marketplace member with it. The state is
- *  carried rather than inferred so a caller physically cannot ask for one
- *  and be given the other.
+ *  A catalog reference preserves its saved format so removal reaches the
+ *  intended member when typed and legacy records share one catalog.
  */
-export type MemberWhich = 
+export type MemberWhich = { of: "catalog"; catalog: TemplateCatalog } | 
+/**
+ *  A source the person typed, retaining the literal address of an old
+ *  member when no declaration remains to give it a catalog reading.
+ */
+{ of: "catalog-selection"; catalog: TemplateCatalog; reference: string } | 
 /**
  *  Every member of this kind and name, whatever it came from. What a
  *  caller means when it has no way to tell them apart and wants them
@@ -4741,6 +4743,8 @@ export type ReportRouteView = {
 	warnings: string[],
 };
 
+export type RepositoryOrigin = { origin: "declared"; scope: Scope } | { origin: "direct" };
+
 /**  What a template installs, as it stands on this machine now. */
 export type Resolution = Resolution_Serialize | Resolution_Deserialize;
 
@@ -4792,6 +4796,9 @@ export type ResolvedCopy_Serialize = {
  *  it right now.
  */
 export type ResolvedGroup = {
+	catalog: TemplateCatalog | null,
+	which: MemberWhich,
+	scope: Scope | null,
 	/**  The repository or folder, as the template saved it. */
 	repo: string,
 	/**
@@ -4829,6 +4836,7 @@ export type ResolvedGroup = {
 
 /**  One package a resolved group installs. */
 export type ResolvedItem = {
+	which: MemberWhich,
 	kind: ItemKind,
 	name: string,
 	enabled: boolean,
@@ -4839,6 +4847,7 @@ export type ResolvedItem = {
  *  switched on.
  */
 export type ResolvedSet = {
+	which: MemberWhich,
 	name: string,
 	enabled: boolean,
 	/**
@@ -5931,6 +5940,9 @@ export type TangledFile = {
 
 /**  One saved selection. */
 export type Template = Template_Serialize | Template_Deserialize;
+
+/**  A saved catalog, preserving declaration kind and resolution context. */
+export type TemplateCatalog = { kind: "repository"; repo: string; origin: RepositoryOrigin } | { kind: "folder"; root: string; origin: Scope };
 
 /**  A defect at a place in the template, with what to do about it. */
 export type TemplateFinding = {

@@ -1,0 +1,3 @@
+- Templates keep folder catalogs distinct, including folders whose names differ only by `.git`, and preserve the selected catalog's kind and declaring scope. Older templates keep unique catalog matches, including native Windows folder paths; ambiguous matches remain visible and unresolved. Older relative folder references resolve correctly, adding the same package keeps one member even before subscribing, targeted removal keeps members from other catalogs even when removing an older unsubscribed entry, and disabled destination catalogs refuse installation before any template files change. Operations that need no catalog declarations work even when an unrelated project's manifest cannot be read.
+
+  You do: save an ambiguous older template member again from its catalog.

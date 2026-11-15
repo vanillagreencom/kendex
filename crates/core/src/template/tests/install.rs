@@ -58,7 +58,7 @@ fn a_resolution_names_the_repository_the_copies_and_what_is_missing() {
     assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
     let group = &resolution.groups[0];
     // Nothing subscribes to it personally yet, so the install would.
-    assert_eq!(group.source, None);
+    assert_eq!(group.source.as_deref(), Some("cat"));
     let items: Vec<&str> = group.items.iter().map(|item| item.name.as_str()).collect();
     assert!(items.contains(&"gh"), "{items:?}");
     assert!(items.contains(&"note"), "{items:?}");
@@ -70,6 +70,31 @@ fn a_resolution_names_the_repository_the_copies_and_what_is_missing() {
     assert!(copies.contains(&"house-style"), "{copies:?}");
     assert!(copies.contains(&"stray"), "{copies:?}");
     assert_eq!(resolution.count(), template.members.len());
+
+    // Copy-only reading and installation consume no catalog declarations.
+    let mut copies_only = template.clone();
+    copies_only.members.retain(|member| {
+        matches!(
+            member.source,
+            MemberSource::Copy { .. } | MemberSource::SharedCopy { .. }
+        )
+    });
+    copies_only.customizations = Customizations::default();
+    super::unreadable_registered_project(&project.env);
+    let copies = resolve(&project.env, &copies_only).unwrap();
+    assert!(copies.missing.is_empty());
+    assert_eq!(copies.copies.len(), copies_only.members.len());
+    let target = destination(&project, "copies-only");
+    let landed = install(
+        &project.env,
+        &copies_only,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
+    assert_eq!(landed.stopped, None);
+    assert_eq!(landed.declared.len(), copies_only.members.len());
 }
 
 /// A home with no personal manifest yet is read as its first write would
@@ -1367,7 +1392,12 @@ fn a_render_that_refuses_after_the_subscription_committed_reports_the_subscripti
     .unwrap();
     let resolution = resolve(&project.env, &template).unwrap();
     assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
-    assert_eq!(resolution.groups[0].source, None, "{:?}", resolution.groups);
+    assert_eq!(
+        resolution.groups[0].source.as_deref(),
+        Some("cat"),
+        "{:?}",
+        resolution.groups
+    );
     let target = destination(&project, "unrenderable");
     let Scope::Project { root } = &target else {
         unreachable!("built as a project scope")
@@ -1639,6 +1669,8 @@ fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
     assert_eq!(landed.subscribed.len(), 1, "{landed:?}");
     assert!(landed.stopped.is_none(), "{landed:?}");
 
+    effective_subscription_standing_refuses_before_writes(&project);
+
     // Switched off in the personal setup: the marketplace is there and
     // will serve nothing. Written through the manifest's own writer, so
     // the fixture cannot put the flag in a table it did not mean.
@@ -1648,6 +1680,17 @@ fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
             decl.enabled = off;
         }
         crate::manifest::save(&personal, &manifest).unwrap();
+        let origin = crate::manifest::manifest_path(
+            &project.env,
+            &Scope::Project {
+                root: project.root.clone(),
+            },
+        );
+        let mut declared = crate::manifest::load_current(&origin).unwrap().unwrap();
+        for decl in declared.sources.values_mut() {
+            decl.enabled = off;
+        }
+        crate::manifest::save(&origin, &declared).unwrap();
     };
     switched_off(false);
 
@@ -1693,6 +1736,85 @@ fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
         "an unreadable marketplace must refuse before it writes"
     );
     assert_eq!(snapshot(root), before, "the refusal wrote into the project");
+}
+
+#[allow(clippy::unwrap_used)]
+fn effective_subscription_standing_refuses_before_writes(project: &super::create::Project) {
+    let env = &project.env;
+    let personal = crate::manifest::manifest_path(env, &Scope::Global);
+    let original = crate::manifest::load_current(&personal).unwrap().unwrap();
+    let earlier = project.home.join("aaa");
+    skill(&earlier.join("skills"), "earlier", "earlier bytes");
+    let origin = Scope::Project {
+        root: project.root.clone(),
+    };
+    let held = Member {
+        kind: MemberKind::Skill,
+        name: "gh".to_owned(),
+        enabled: true,
+        source: catalog_source(
+            env,
+            &crate::source::browse::Catalog::Subscription {
+                scope: origin,
+                source: "cat".to_owned(),
+            },
+            None,
+        )
+        .unwrap(),
+    };
+    let template = Template {
+        name: "Effective standing".to_owned(),
+        id: "standing".to_owned(),
+        members: vec![
+            Member {
+                name: "earlier".to_owned(),
+                source: MemberSource::Catalog {
+                    catalog: TemplateCatalog::Folder {
+                        root: crate::paths::slashed(&earlier),
+                        origin: Scope::Global,
+                    },
+                    rev: None,
+                },
+                ..held.clone()
+            },
+            held,
+        ],
+        customizations: Customizations::default(),
+    };
+    for global in [false, true] {
+        let target = if global {
+            Scope::Global
+        } else {
+            destination(project, "disabled-destination")
+        };
+        let mut manifest = original.clone();
+        if global {
+            for decl in manifest.sources.values_mut() {
+                decl.enabled = false;
+            }
+            crate::manifest::save(&personal, &manifest).unwrap();
+        } else {
+            let path = crate::manifest::manifest_path(env, &target);
+            fs::write(
+                path,
+                format!(
+                    "schema = 8\n[sources.cat]\n{}\nenabled = false\n",
+                    crate::test_util::source_path(&project.catalog)
+                ),
+            )
+            .unwrap();
+        }
+        let reading = resolve(env, &template).unwrap();
+        assert!(reading.missing.is_empty());
+        assert_eq!(reading.groups[0].repo, crate::paths::slashed(&earlier));
+        let before = snapshot(&project.home);
+        assert!(matches!(
+            install(env, &template, &target, None, None),
+            Err(CoreError::TemplateMemberUnavailable { .. })
+        ));
+        assert_eq!(snapshot(&project.home), before);
+        crate::manifest::save(&personal, &original).unwrap();
+    }
 }
 
 /// A marketplace member no tool on this machine can take is refused in the

@@ -380,11 +380,7 @@ pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Res
         }
     }
     let mut kept: Vec<Member> = Vec::new();
-    for member in members {
-        if !kept.iter().any(|held| held.identity() == member.identity()) {
-            kept.push(member);
-        }
-    }
+    super::append_unique(env, &mut kept, members)?;
     super::insert(
         env,
         Template {
@@ -552,10 +548,10 @@ fn source_of(
         })
     };
     match (&member.origin, side) {
-        (DraftOrigin::Marketplace { repo, rev, .. }, _)
-        | (DraftOrigin::Choice { repo, rev, .. }, Some(Side::Marketplace)) => {
-            Ok(MemberSource::Marketplace {
-                repo: repo.clone(),
+        (DraftOrigin::Marketplace { catalog, rev, .. }, _)
+        | (DraftOrigin::Choice { catalog, rev, .. }, Some(Side::Marketplace)) => {
+            Ok(MemberSource::Catalog {
+                catalog: catalog.clone(),
                 rev: rev.clone(),
             })
         }

@@ -546,7 +546,7 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
     .unwrap();
     assert!(matches!(
         upstream.members[0].source,
-        MemberSource::Marketplace { .. }
+        MemberSource::Catalog { .. }
     ));
 }
 
@@ -778,34 +778,6 @@ fn a_package_several_tools_read_is_counted_once() {
     assert_eq!(strays, 1, "{:?}", draft.locals);
     let gh = draft.members.iter().filter(|m| m.name == "gh").count();
     assert_eq!(gh, 1, "{:?}", draft.members);
-}
-
-/// A marketplace that is a folder is saved under one spelling, whatever
-/// separator the machine that declared it builds paths with.
-///
-/// Driven over the Windows separator directly rather than over the host's:
-/// on a `/` host a row spelled the platform's own way could not fail, and
-/// what this closes is a Windows defect — two spellings of one folder are
-/// two identities, so members saved under them group apart, subscribe
-/// twice, and read as two rows for one package set.
-#[test]
-fn a_folder_marketplace_is_saved_under_one_spelling() {
-    let folder = |path: &str| crate::manifest::SourceDecl {
-        repo: None,
-        path: Some(path.to_owned()),
-        rev: None,
-        enabled: true,
-    };
-    assert_eq!(
-        super::super::draft::saved_repo(&folder(r"C:\Users\me\catalog"), '\\').as_deref(),
-        Some("C:/Users/me/catalog")
-    );
-    // Both spellings of one root reach the template as one value, which is
-    // what makes them one member set rather than two.
-    assert_eq!(
-        super::super::draft::saved_repo(&folder(r"C:\Users\me\catalog"), '\\'),
-        super::super::draft::saved_repo(&folder("C:/Users/me/catalog"), '\\')
-    );
 }
 
 /// A refused replacement puts back the slots AND takes out the licence

@@ -7,6 +7,7 @@ import type {
   Member_Deserialize as Member,
   SavedItem,
 } from "@/bindings";
+import { commands } from "@/bindings";
 import { rowForCatalog, summaryFor } from "@/lib/marketplace-display";
 
 /** What a surface needs to save, or to recognise, a marketplace item.
@@ -83,17 +84,16 @@ export const bookmarkOf = (
   name: string,
 ): Bookmark => ({ repo: target.repo, item, name });
 
-/** What a template records for a saved item: the marketplace the bookmark
- *  already holds, and the item's own kind and name.
- *
- *  A bookmark stores exactly what a template member needs — the repository
- *  rather than an alias — so nothing here looks a marketplace up. The
- *  revision is null because a bookmark pins none: it is a note about where
- *  something came from, not a version choice. */
-export const memberOf = (saved: SavedItem): Member => ({
-  kind:
-    saved.bookmark.item.is === "bundle" ? "bundle" : saved.bookmark.item.kind,
-  name: saved.bookmark.name,
-  enabled: true,
-  source: { held: "marketplace", repo: saved.bookmark.repo, rev: null },
-});
+/** Core converts the bookmark's resolved catalog. A bookmark pins no revision. */
+export async function memberOf(saved: SavedItem): Promise<Member | null> {
+  if (saved.catalog === null) return null;
+  const answer = await commands.templateCatalogSource(saved.catalog, null);
+  if (answer.status === "error") throw new Error(answer.error);
+  return {
+    kind:
+      saved.bookmark.item.is === "bundle" ? "bundle" : saved.bookmark.item.kind,
+    name: saved.bookmark.name,
+    enabled: true,
+    source: answer.data,
+  };
+}

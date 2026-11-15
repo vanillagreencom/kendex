@@ -268,7 +268,7 @@ export function TemplatePage() {
 
           {resolution?.groups.map((group) => (
             <Section
-              key={group.repo}
+              key={JSON.stringify(group.which)}
               title={group.repo}
               description={
                 group.source !== null
@@ -292,6 +292,7 @@ export function TemplatePage() {
                   kind: item.kind as MemberRef["kind"],
                   name: item.name,
                   off: !item.enabled,
+                  which: item.which,
                 })),
                 // A set's own kind, not "bundle" for both: a plugin
                 // installs whole the way a bundle does, and a reference
@@ -301,6 +302,7 @@ export function TemplatePage() {
                   kind: set.kind as MemberRef["kind"],
                   name: set.name,
                   off: !set.enabled,
+                  which: set.which,
                 })),
               ].map((row) => (
                 <MemberRow
@@ -309,15 +311,13 @@ export function TemplatePage() {
                   name={row.name}
                   detail={row.off ? SWITCHED_OFF : null}
                   busy={busy}
-                  // The repository this section is for, so removing one
-                  // of two members sharing a kind and name leaves the
-                  // other where it is — and never reaches the template's
-                  // own copy of that name.
+                  // One catalog group can contain legacy and typed members;
+                  // each row retains the reference it was saved with.
                   onRemove={() =>
                     remove({
                       kind: row.kind,
                       name: row.name,
-                      which: { of: "marketplace", repo: group.repo },
+                      which: row.which,
                     })
                   }
                 />

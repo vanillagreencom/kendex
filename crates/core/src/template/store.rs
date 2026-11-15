@@ -92,7 +92,7 @@ fn held_copies(template: &Template) -> impl Iterator<Item = (&str, &[String])> {
             | MemberSource::SharedCopy { copy, notices, .. } => {
                 Some((copy.as_str(), notices.as_slice()))
             }
-            MemberSource::Marketplace { .. } => None,
+            MemberSource::Marketplace { .. } | MemberSource::Catalog { .. } => None,
         })
 }
 

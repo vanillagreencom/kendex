@@ -9,6 +9,7 @@ use crate::env::FakeOs;
 use crate::model::{HarnessId, ItemKind};
 use crate::test_util::rooted;
 
+mod catalog;
 mod create;
 mod install;
 mod store;
@@ -73,6 +74,22 @@ pub(super) fn home() -> (tempfile::TempDir, Env) {
     let root = rooted(&tmp);
     let env = Env::fake(&root, FakeOs::Linux);
     (tmp, env)
+}
+
+#[allow(clippy::unwrap_used)]
+pub(super) fn unreadable_registered_project(env: &Env) {
+    let project = env
+        .global_manifest_file()
+        .parent()
+        .unwrap()
+        .join("unreadable-project");
+    fs::create_dir_all(&project).unwrap();
+    let manifest = project.join("kendex.toml");
+    fs::write(&manifest, "schema = 8\n").unwrap();
+    crate::settings::ensure_project_registered(env, &project).unwrap();
+    // A directory at the former file refuses reads on every host, including root.
+    fs::remove_file(&manifest).unwrap();
+    fs::create_dir(&manifest).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -299,6 +316,7 @@ fn members_deduplicate_by_identity_and_not_by_name() {
             .members
             .iter()
             .map(|member| match &member.source {
+                MemberSource::Catalog { catalog, .. } => catalog.reference().to_owned(),
                 MemberSource::Marketplace { repo, .. } => repo.clone(),
                 MemberSource::Copy { copy, .. } | MemberSource::SharedCopy { copy, .. } => {
                     copy.clone()
@@ -369,6 +387,7 @@ fn a_selection_with_nothing_in_it_is_refused_by_every_path() {
 #[allow(clippy::unwrap_used)]
 fn a_reference_names_which_of_three_members_it_means() {
     let (_tmp, env) = home();
+    unreadable_registered_project(&env);
     let named = |which: MemberWhich| MemberRef {
         kind: MemberKind::Skill,
         name: "code-quality".to_owned(),

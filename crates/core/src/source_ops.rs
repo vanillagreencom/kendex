@@ -189,6 +189,7 @@ pub use subscribe::{
     Subscribed, install_from, install_project_carrying, install_project_from_personal, subscribe,
     subscribe_and_install, subscribe_project_to,
 };
+pub(crate) use subscribe::{matching_subscription, subscribe_decl};
 
 pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineReport> {
     prepare_source_change(env, scope, SourceChange::Remove { name })?.plan(env)
