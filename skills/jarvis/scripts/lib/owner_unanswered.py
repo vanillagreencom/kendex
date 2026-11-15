@@ -73,9 +73,11 @@ def archive_files(archive, since):
     floor = since.replace(second=0, microsecond=0)
     files = sorted(path for path in archive.rglob("*") if path.is_file() and path != index)
     present = {path.relative_to(archive).as_posix() for path in files}
-    for name, end in sorted(ends.items()):
-        if name not in present and (end is None or end >= floor):
-            print("owner-unanswered: archive-pruned=%s" % (archive / name), file=sys.stderr)
+    pruned = [archive / name for name, end in sorted(ends.items())
+              if name not in present and (end is None or end >= floor)]
+    if pruned:
+        print("owner-unanswered: archive-pruned=%d first=%s last=%s" %
+              (len(pruned), pruned[0], pruned[-1]), file=sys.stderr)
 
     def skipped(path):
         end = ends.get(path.relative_to(archive).as_posix())
@@ -246,8 +248,8 @@ def main():
         "A file the owner sent as its own message within %d seconds of its text, in the same thread or "
         "both top level, counts as that message." % PAIR_SECS), epilog=(
         "Records come from the selected handoff and the archive beside it, whose INDEX.md skips files that "
-        "ended before the window. A file INDEX.md lists inside the window that is gone prints "
-        "`owner-unanswered: archive-pruned=PATH` on stderr and the run goes on: the messages that file "
+        "ended before the window. Gone files INDEX.md lists inside the window print one line "
+        "`owner-unanswered: archive-pruned=COUNT first=PATH last=PATH` on stderr and the run goes on: the messages those files "
         "covered can be listed. A refusal prints `owner-unanswered: KEY=VALUE` and its cause's first line on "
         "stderr. Exit 2 keys: since-invalid, older-invalid. Exit 1 keys: mailbox-unreadable (VALUE is the "
         "box), handoff-missing (VALUE is the selected handoff), handoff-unreadable (VALUE is the file), "
