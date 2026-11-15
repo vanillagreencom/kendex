@@ -211,6 +211,48 @@ def state_entries(lines):
     return [(number, "".join(text)) for number, text in found]
 
 
+def change_state(lines, change, identity):
+    """Apply one progress record's replacement to State, using its shared entry reader.
+
+    Successors replay the same recorded change with its original record id.
+    A legacy entry names its durable id on the opening line; indented account
+    text belongs to that entry and is replaced with it.
+    """
+    if change == "none":
+        return lines
+    match = re.fullmatch(r"(set|remove) State (\S+)(?: ([^\r\n]+))?", change)
+    if not match or (match[1] == "set") != bool(match[3] and match[3].strip()):
+        raise ValueError("state-change-invalid", change)
+    action, key, next_action = match.groups()
+    entries = state_entries(lines)
+    token = re.compile(r"(?<![\w=:-])" + re.escape(key) + r"(?![\w=:-])")
+    matches = []
+    for number, text in entries:
+        opening = text.splitlines()[0]
+        named = re.match(r"^- (\S+):(?: |$)", opening)
+        if (named and named[1] == key) or (not named and token.search(opening)):
+            matches.append((number, text))
+    if len(matches) > 1:
+        raise ValueError("state-entry-ambiguous", key)
+    replacement = ["- %s: %s (record=%s)\n" % (key, next_action.strip(), identity)] if action == "set" else []
+    updated = list(lines)
+    if matches:
+        number, text = matches[0]
+        # state_entries omits blank separators; remove just the entry's own lines.
+        occupied = sum(bool(line.strip()) for line in text.splitlines())
+        end = number - 1
+        while occupied:
+            occupied -= bool(lines[end].strip())
+            end += 1
+        updated[number - 1:end] = replacement
+    elif replacement:
+        _, end = section(lines, "State")
+        if end and not lines[end - 1].endswith("\n"):
+            updated[end - 1] += "\n"
+        updated[end:end] = replacement + ["\n"]
+    return updated
+
+
 def state_ids(text):
     """The tracker ids and the mailbox and Slack ids text names, in order and each once."""
     tracker, other = {}, {}

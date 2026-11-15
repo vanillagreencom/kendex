@@ -13,7 +13,7 @@ import unittest
 from mail_world import SCRIPTS, MailWorld, make_project
 
 sys.path.insert(0, str(SCRIPTS / "lib"))
-from progress import index_ends, records  # noqa: E402
+from progress import change_state, index_ends, records, state_entries  # noqa: E402
 
 STAMP = "2026-10-18T23:05:01Z"
 HANDOFF = ("# Handoff\n\n## State\n\nwork: KEN-1\n\n## Sub-agents\n\nnone\n\n## Instructions in force\n\nnone\n\n"
@@ -65,6 +65,8 @@ class ProgressLog(MailWorld):
     def setUp(self):
         super().setUp()
         self.home = make_project(self.root / "home", overseer=False)
+        for name in ("CONFIG", "DATA", "STATE", "CACHE"):
+            self.env["XDG_" + name + "_HOME"] = str(self.root / name.lower())
         self.handoff = self.home / "state/handoff.md"
         self.handoff.parent.mkdir()
         self.executable("date", "#!/bin/sh\necho " + STAMP + "\n")
@@ -113,6 +115,93 @@ class ProgressLog(MailWorld):
         self.assertEqual(self.log().returncode, 0)
         self.assertEqual([row["id"] for row in records(self.handoff.read_text())][1:],
                          ["P-20261018T230501Z", "P-20261018T230501Z-2"])
+
+    def assert_state_change(self, change, expected):
+        result = self.log(dict(FIELDS, **{"--state-change": change}))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = self.handoff.read_text()
+        self.assertEqual([entry for _, entry in state_entries(text.splitlines(keepends=True))], expected)
+        self.assertEqual(records(text)[-1]["State change"], change)
+        return text
+
+    def test_state_replacement_and_removal(self):
+        retained = '- session=control: Runs on control; hold review for KEN-1; wake=mail; report covered through C1:1791680510.123\n'
+        old = state_handoff(retained + '- KEN-1: old next action\n  old account that must go\n')
+        self.handoff.write_text(old)
+        replacement = '- KEN-1: Read the reply (record=P-20261018T230501Z)\n'
+        self.assert_state_change('set State KEN-1 Read the reply', [retained, replacement])
+        self.assert_state_change('remove State KEN-1', [retained])
+        self.assert_state_change('set State KEN-2 Retry unread evidence',
+                                 [retained, '- KEN-2: Retry unread evidence (record=P-20261018T230501Z-3)\n'])
+        # A disabled writer must fail the same production-output assertion.
+        with tempfile.TemporaryDirectory(dir=self.root) as folder:
+            copy = Path(folder) / 'jarvis'
+            shutil.copytree(SCRIPTS.parent / 'scripts', copy / 'scripts')
+            script = copy / 'scripts/progress-log'
+            source = script.read_text()
+            target = 'lines = change_state(lines, values["State change"], identity)'
+            self.assertEqual(source.count(target), 1)
+            script.write_text(source.replace(target, 'lines = list(lines)'))
+            original, self.scripts = self.scripts, copy / 'scripts'
+            try:
+                self.handoff.write_text(old)
+                with self.assertRaises(AssertionError):
+                    self.assert_state_change('set State KEN-1 Read the reply', [retained, replacement])
+            finally:
+                self.scripts = original
+
+    def test_state_change_refusals_write_nothing(self):
+        rows = (
+            ('set State KEN-1', HANDOFF, 'state-change-invalid'),
+            ('remove State KEN-1 extra', HANDOFF, 'state-change-invalid'),
+            ('set State KEN-1 next\nsecond action', HANDOFF, 'state-change-invalid'),
+            ('set State KEN-1 next', HANDOFF.replace('## State', '## Other'), 'section-missing'),
+            ('set State KEN-1 next', HANDOFF + '\n## State\n', 'section-ambiguous'),
+            ('set State KEN-1 next', state_handoff('- KEN-1: first\n- KEN-1: second\n'), 'state-entry-ambiguous'),
+        )
+        for change, before, key in rows:
+            with self.subTest(change=change, key=key):
+                self.handoff.write_text(before)
+                result = self.log(dict(FIELDS, **{"--state-change": change}))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stderr.split('=', 1)[0], 'progress-log: ' + key)
+                self.assertEqual(self.handoff.read_text(), before)
+
+    def test_successor_rebuilds_checkpoint_and_later_records(self):
+        # Each fixture is a checkpoint and later records, never the live home.
+        rows = (
+            ('session and wake', '- session=control: old location\n- wake=mail: old registration\n',
+             [('set State session=control Runs on control; hold review; reports covered through C1:1791680510.123',
+               '- session=control: Runs on control; hold review; reports covered through C1:1791680510.123'),
+              ('set State wake=mail Wait for registered mailbox wake in run/mail',
+               '- wake=mail: Wait for registered mailbox wake in run/mail')]),
+            ('open ask', '- ask=C1:1791680510.123: old question\n',
+             [('set State ask=C1:1791680510.123 Await answer to "Should we ship today?"',
+               '- ask=C1:1791680510.123: Await answer to "Should we ship today?"')]),
+            ('unfinished operation', '- KEN-1: old operation\n  old accumulated account\n',
+             [('set State KEN-1 Read existing child output at run/child/result before resuming',
+               '- KEN-1: Read existing child output at run/child/result before resuming')]),
+            ('unavailable tracker read', '- KEN-1: old tracker evidence\n',
+             [('set State KEN-1 Retry unavailable tracker read; evidence unread',
+               '- KEN-1: Retry unavailable tracker read; evidence unread')]),
+        )
+        for name, checkpoint, changes in rows:
+            with self.subTest(case=name):
+                before = state_handoff(checkpoint)
+                self.handoff.write_text(before)
+                expected = []
+                for index, (change, entry) in enumerate(changes):
+                    result = self.log(dict(FIELDS, **{"--state-change": change}))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    suffix = '' if index == 0 else '-' + str(index + 1)
+                    expected.append(entry + ' (record=P-20261018T230501Z' + suffix + ')\n')
+                actual = self.handoff.read_text()
+                replay = before.splitlines(keepends=True)
+                for record in records(actual):
+                    replay = change_state(replay, record['State change'], record['id'])
+                rebuilt = [entry for _, entry in state_entries(replay)]
+                self.assertEqual(rebuilt, expected)
+                self.assertEqual([entry for _, entry in state_entries(actual.splitlines(keepends=True))], expected)
 
     def test_unwritable_and_subdirectory(self):
         result = self.log()
