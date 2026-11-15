@@ -372,11 +372,11 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
     assert_eq "$(jq -c --arg d "$dev_rid" --arg r "$review_rid" \
       '[.stages[] | select(.kind != "validate")] | map({kind, round: (if .round_id == $d then "dev" elif .round_id == $r then "review" else .round_id end), outcome, closed: (.end != null)})' "$state")" \
       '[{"kind":"implement","round":"dev","outcome":"pass","closed":true},{"kind":"review","round":"review","outcome":"pass","closed":true}]' \
-      "$name: the round stages are the dev round (its kind set to the receipt's by dev-artifact-check) and the review round, each closed once with its word"
+      "$name: the round stages are the dev round (its kind set to the receipt's by dev-return check) and the review round, each closed once with its word"
     [[ "$scenario" == killed ]] || assert_eq "$(validate_stages "$state" "$dev_rid")" \
       "$(jq -cn --arg run "$run_dir" '[{run_dir: $run, closed: true, outcome: "pass"}]')" \
       "$name: exactly one validate stage, opened by admission and closed by its job"
-    assert_eq "$(state_get "$state" '.validate_rounds | length')" 1 "$name: dev-artifact-check recorded one validate round"
+    assert_eq "$(state_get "$state" '.validate_rounds | length')" 1 "$name: dev-return check recorded one validate round"
     assert_eq "$(state_get "$state" '.child_sessions | to_entries | map(.value.status) | unique | join(",")')" closed \
       "$name: every child session is retired"
     assert_eq "$(sed -n 's/^review-depth: //p' "$wt/tmp/lane.log")" "change_class=small review_depth=bot native_approval=unchanged" \

@@ -248,13 +248,6 @@ PY
   [ "$?" -eq 0 ] || exit 1
 }
 
-# sk_historical_mailbox ROOT: install the unchanged historical writer and helpers.
-sk_historical_mailbox() {
-  rm -- "$1/.agents/skills/mailbox/scripts" || exit 1
-  cp -R "$SK_ROOT/skills/slack/tests/fixtures/mailbox-pre-read-events/scripts" \
-    "$1/.agents/skills/mailbox/scripts" || exit 1
-}
-
 # sk_event_filter ROOT JQ: the mailbox store produces changed event fields.
 sk_event_filter() {
   local body

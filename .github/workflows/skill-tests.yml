@@ -535,7 +535,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "worktree-restack", "rest", "jarvis", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "worktree-restack", "rest", "jarvis", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: guards 9m09s
@@ -558,20 +558,18 @@ jobs:
     # Slack retains the budget of the rest shard it splits from on both OSes.
     # Jarvis keeps the ceiling and run-all deadline its suites had in `rest`.
     # `orch-rest` builds kendex and the two package runtimes and runs the
-    # runtimes' Rust targets, and Linux `orch-dev` holds the account
-    # readers: both take the 30-minute ceiling until the first merge group
-    # that runs the four orch legs records each leg's per-suite seconds and
+    # runtimes' Rust targets: it takes the 30-minute ceiling until the first
+    # merge group that runs the orch legs records each leg's per-suite seconds and
     # step times here, the measurement every orch budget is owed.
-    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'jarvis' || matrix.shard == 'orch-rest' || (matrix.os == 'ubuntu-latest' && matrix.shard == 'orch-dev')) && 30 || 15 }}
+    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'jarvis' || matrix.shard == 'orch-rest') && 30 || 15 }}
     # change-scope's change-scope suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
     # shard that runs those suites must be one that installed a kendex
     # whatever the roster looks like later. The macOS legs keep the skip, for
     # the reason the install step gives.
-    # ORCH_REQUIRE_KENDEX does the same for claude-model-classes.sh and
-    # tier-model-fixture.sh, whose rows ask a real kendex tier-model and which
-    # the `orch-rest` shard runs.
+    # ORCH_REQUIRE_KENDEX does the same for tier-model-fixture.sh, whose rows
+    # ask a real kendex tier-model and which the `orch-rest` shard runs.
     env: &skill-suite-env
       # REVISIT(D026): one profile serves every real macOS battery invocation.
       RUN_ALL_NATIVE_CONTRACTS: ${{ matrix.os == 'macos-latest' && format('{0}/tools/macos-test-contracts', github.workspace) || '' }}
@@ -762,7 +760,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
-        if: ((matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis' || matrix.shard == 'mailbox') && runner.os == 'Linux') || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'slack'
+        if: ((matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis' || matrix.shard == 'mailbox') && runner.os == 'Linux') || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'slack'
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
         if: (matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis') && runner.os == 'Linux'
@@ -808,7 +806,7 @@ jobs:
       # 46 s for agent-runtime on macOS (run 43100964025); orch-runtime's is
       # unmeasured.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack'
+        if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack'
         with:
           workspaces: |
             skills/agent-runtime/runtime
@@ -829,7 +827,7 @@ jobs:
           key: package-runtimes
           save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       - name: the package runtimes, built
-        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack'
+        if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack'
         run: |
           set -euo pipefail
           cache="$RUNNER_TEMP/agent-runtime"
@@ -871,7 +869,7 @@ jobs:
           exit "$fail"
       # The macOS guards-hooks and guards-tools legs run a Jarvis suite each.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (runner.os == 'macOS' && (matrix.shard == 'guards-hooks' || matrix.shard == 'guards-tools'))
+        if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (runner.os == 'macOS' && (matrix.shard == 'guards-hooks' || matrix.shard == 'guards-tools'))
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -890,12 +888,9 @@ jobs:
           fi
           tmux -V
 
-      # ---- shards: orch-oversee, orch-dev, orch-state, orch-rest ----------
+      # ---- shards: orch-state, orch-rest ---------------------------------
       # run-all.sh's shard_of owns the families and their complement, by
-      # suite name and RUNNER_OS. Oversee names, the report suites among
-      # them, enter `orch-oversee`; dev and review names enter `orch-dev`.
-      # On Linux the account-reader `lanes*` family joins
-      # `orch-dev`, and `orch-state` keeps the other lane and workflow-state
+      # suite name. `orch-state` keeps the lane and workflow-state
       # names. `orch-rest` takes the remaining suites. A new suite joins one
       # family by name, and
       # orch-shard-partition.test.sh proves complete, unique ownership on
@@ -904,38 +899,8 @@ jobs:
       #
       # run-all.sh runs a shard's suites `nproc` at a time and prints each
       # one's `suite=<name> seconds=<n>` line. No merge group has run these
-      # four legs: the first that does records each leg's per-suite seconds
+      # two legs: the first that does records each leg's per-suite seconds
       # here, and the orch budgets in this file follow from it.
-      - name: orch suites — the oversee entries and the status report
-        if: matrix.shard == 'orch-oversee'
-        run: |
-          set --
-          candidates=()
-          for t in skills/orch/tests/*.sh; do
-            [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
-          done
-          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
-          [ "$kept" != "  " ] || exit 0
-          for t in "${candidates[@]}"; do
-            case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
-          done
-          bash skills/orch/tests/run-all.sh --battery skills/orch/tests --shard orch-oversee "$@"
-
-      - name: 'orch suites: the dev and review names and, on Linux, the account readers'
-        if: matrix.shard == 'orch-dev'
-        run: |
-          set --
-          candidates=()
-          for t in skills/orch/tests/*.sh; do
-            [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
-          done
-          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
-          [ "$kept" != "  " ] || exit 0
-          for t in "${candidates[@]}"; do
-            case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
-          done
-          bash skills/orch/tests/run-all.sh --battery skills/orch/tests --shard orch-dev "$@"
-
       - name: 'orch suites: the lane and workflow-state suites'
         if: matrix.shard == 'orch-state'
         run: |
@@ -950,23 +915,6 @@ jobs:
             case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
           done
           bash skills/orch/tests/run-all.sh --battery skills/orch/tests --shard orch-state "$@"
-
-      # claude-model-classes.sh runs the orch Claude plugin under Claude Code
-      # and fails under CI where no claude is on PATH. The pin is at or above
-      # 2.1.287, the first release with the callbacks the plugin uses, and the
-      # npm package fetches its platform binary at install, so install scripts
-      # run; the version check fails here on a launcher without one.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: matrix.shard == 'orch-rest'
-        with:
-          node-version: 22.19.0
-      - name: Claude Code for the orch plugin suite
-        if: matrix.shard == 'orch-rest'
-        run: |
-          set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/claude-code" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code@2.1.292
-          "$RUNNER_TEMP/claude-code/node_modules/.bin/claude" --version
-          echo "$RUNNER_TEMP/claude-code/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: orch suites — every suite the shards above do not run
         if: matrix.shard == 'orch-rest'
@@ -1802,7 +1750,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: &macos-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: &macos-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
         # The native eligibility owner declares unsupported and empty shards,
         # and those whose families another macOS job retains. The partition
@@ -1824,8 +1772,6 @@ jobs:
             shard: guards-commit-tail
           - os: macos-latest
             shard: jarvis
-          - os: macos-latest
-            shard: orch-dev
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env

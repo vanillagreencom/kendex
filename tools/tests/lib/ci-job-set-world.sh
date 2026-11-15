@@ -79,8 +79,8 @@ queue_only_of() { # PATH
 }
 
 # The whole shard roster, in the matrix's order.
-ROSTER='["review-gate","refresh","orch-oversee","orch-dev","orch-state","orch-rest","guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls","worktree","worktree-restack","rest","jarvis","slack","mailbox","node","pi-claude-bridge"]'
-ORCH='"orch-oversee","orch-dev","orch-state","orch-rest"'
+ROSTER='["review-gate","refresh","orch-state","orch-rest","guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls","worktree","worktree-restack","rest","jarvis","slack","mailbox","node","pi-claude-bridge"]'
+ORCH='"orch-state","orch-rest"'
 # The expected queue list comes from each row's shards, with the platform
 # exclusions held to the workflow by orch-shard-partition.test.sh.
 macos_shards() { # SHARDS: the macOS-capable members in the same order

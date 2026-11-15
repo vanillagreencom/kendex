@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export DEV_VALIDATE_CLI="${DEV_VALIDATE_CLI-$SCRIPT_DIR/dev-validate-run}"
-export CHANGE_SCOPE_PATHS_CLI="${CHANGE_SCOPE_PATHS_CLI-$SCRIPT_DIR/../../change-scope/scripts/harness-only}"
-exec "$SCRIPT_DIR/orch-runtime" validate entry "$@"

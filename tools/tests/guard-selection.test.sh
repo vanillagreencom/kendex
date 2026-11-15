@@ -327,9 +327,8 @@ OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DE
   && ok 'a workflow edit selects the shipped aggregate suite' \
   || bad 'a workflow edit selects the shipped aggregate suite' "rc=$RC out=$OUT"
 
-# A change to these orch scripts and libraries must reach the real hooks
-# and refresh readers. Preserve suite text for the mapper, but stop bodies
-# before execution: this row proves selection, not those suites' contracts.
+# The replay base: the two tools suites keep their text for the mapper and
+# stop before execution, so the row below proves selection alone.
 git -C "$actual" reset -q --hard "$actual_base"
 for suite in ci-aggregate.test.sh vendored-settings-libs.test.sh; do
   stub_replay_suite "tools/tests/$suite"
@@ -338,80 +337,6 @@ guard_fixture_suite_environment "$actual"
 git -C "$actual" add tools/ci-job-set tools/tests/ci-aggregate.test.sh tools/tests/vendored-settings-libs.test.sh
 git -C "$actual" commit -q -m replay
 replay_base="$(git -C "$actual" rev-parse HEAD)"
-for input in \
-  skills/orch/scripts/lib/adapters/claude.sh \
-  skills/orch/scripts/lib/lane-launch.sh \
-  skills/orch/scripts/lib/lane-model.sh \
-  skills/orch/scripts/lib/lane-relaunch.sh \
-  skills/orch/scripts/lib/overseer-launch.sh \
-  skills/orch/scripts/oversee; do
-  printf '\n# KEN-3966 replay\n' >> "$actual/$input"
-  printf '\n# KEN-3966 replay\n' >> "$actual/.agents/$input"
-done
-RC=0
-: >"$REPLAY_CARGO_LOG"
-OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
-  DEV_VALIDATE_SCOPED=true "$GUARD" --selection --range "$replay_base" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && grep -Fxq 'test --manifest-path crates/core/Cargo.toml --quiet' "$REPLAY_CARGO_LOG" \
-  && ok 'the real runtime selector reaches the copied fixture cargo boundary' \
-  || bad 'the real runtime selector reaches the copied fixture cargo boundary' "rc=$RC cargo=$(cat "$REPLAY_CARGO_LOG") out=$OUT"
-for suite in refresh/tests/refresh-consumer.test.sh; do
-  [ "$RC" -eq 0 ] && grep -Fxq "=== $suite" <<<"$OUT" \
-    && ok "KEN-3966 replay selects $suite" || bad "KEN-3966 replay selects $suite" "rc=$RC out=$OUT"
-done
-
-# A launch change spans the shared library, its source and render, and the
-# changed contract suites. Keep real reader text; the existing replay
-# fixtures replace suite bodies, so this proves selection and runner verdicts.
-git -C "$actual" reset -q --hard "$replay_base"
-for input in skills/orch/scripts/lib/lane-launch.sh skills/orch/references/skill-rules.md; do
-  printf '\n# launch replay\n' >> "$actual/$input"
-  printf '\n# launch replay\n' >> "$actual/.agents/$input"
-done
-for input in skills/orch/tests/lane-launch-trust.sh skills/orch/tests/lane_context_adapters.sh \
-  skills/orch/tests/lane-claims.sh; do
-  printf '\n# launch replay\n' >> "$actual/$input"
-done
-# A lifecycle caller whose input note covers a changed library is a noted
-# reader and runs; guard-scoped.test.sh's launcher fixture holds the scoped
-# exclusion of production readers no note names.
-direct_launch_selection() { # SELECTED PATHS
-  grep -Fxq 'skills/orch/tests/lane-launch-trust.sh' <<<"$1" &&
-    grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1"
-}
-scoped_selection=""
-for variant in scoped normal; do
-  replay_scoped=true
-  replay_args=(--selection --range "$replay_base")
-  [ "$variant" = scoped ] || { replay_scoped=false; replay_args=(--range "$replay_base"); }
-  RC=0
-  replay_started=$SECONDS
-  OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
-    DEV_VALIDATE_SCOPED="$replay_scoped" "$GUARD" "${replay_args[@]}" 2>&1)" || RC=$?
-  selected="$(sed -n 's/^guard-note: selected-suite=//p' <<<"$OUT" | sort -u)"
-  selected_count="$(awk 'NF { n++ } END { print n + 0 }' <<<"$selected")"
-  printf 'launch-replay variant=%s exit=%s seconds=%s suites=%s\n' "$variant" "$RC" "$((SECONDS - replay_started))" "$selected_count"
-  printf '%s\n' "$selected"
-  [ "$RC" -eq 0 ] && ok "launch replay $variant reaches a pass verdict" \
-    || bad "launch replay $variant reaches a pass verdict" "$OUT"
-  case "$variant" in
-    scoped)
-      scoped_selection=$selected
-      direct_launch_selection "$selected" && ok 'the incident scoped run keeps direct launch suites' \
-        || bad 'the incident scoped run keeps direct launch suites' "$OUT"
-      ;;
-    normal)
-      # The scoped narrowing never reaches a normal run: it keeps every
-      # scoped suite and the lifecycle callers main propagation reaches.
-      missing="$(comm -23 <(printf '%s\n' "$scoped_selection") <(printf '%s\n' "$selected"))"
-      [ -n "$scoped_selection" ] && [ -z "$missing" ] \
-        && grep -Fxq 'skills/orch/tests/lanes-usage-pct.sh' <<<"$selected" \
-        && ok 'normal selection retains the complete main reach for the incident diff' \
-        || bad 'normal selection retains the complete main reach for the incident diff' "missing=$missing out=$OUT"
-      ;;
-  esac
-done
-
 # A noncanonical source and its render reach the shipped glob consumer
 # through its input declaration. Its one-member tools roster makes the mapped
 # count identify that consumer.

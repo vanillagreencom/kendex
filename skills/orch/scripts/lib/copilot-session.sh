@@ -11,11 +11,8 @@
 # event, whose reading a turn end reads first, and the status line command,
 # the fallback where no extension reading of the session stands.
 # `copilot-statusline`, the script beside this library's directory, is that
-# command: it persists the JSON it received as a record bound to the session,
-# and lib/adapters/copilot.sh reads it back for the shared context judge.
-# Nothing here parses a pane or a screen. The session store the CLI keeps
-# beside it, `session-state/<id>/workspace.yaml`, is read here for one line:
-# the id a session is resumed by.
+# command: it persists the JSON it received as a record bound to the session.
+# Nothing here parses a pane or a screen.
 #
 # One record per session, at `<COPILOT_HOME>/lane-status/<session_id>.json`,
 # under the account directory the session runs on. The record carries the CLI's
@@ -110,11 +107,4 @@ copilot_session_fields() { # RECORD
   CS_WINDOW="${line%%	*}"; line="${line#*	}"
   CS_NANO_AIU="${line%%	*}"
   CS_ALLOW_ALL="${line#*	}"
-}
-
-# The session id a session's workspace.yaml names, from its `id:` line, empty
-# where the file names none. The CLI writes it as a plain line as a session
-# starts and before any turn (measured on 1.0.88).
-copilot_session_id() { # WORKSPACE_YAML
-  awk 'index($0, "id: ") == 1 { print substr($0, 5); exit }' "$1"
 }

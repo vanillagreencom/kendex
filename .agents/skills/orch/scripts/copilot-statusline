@@ -10,11 +10,12 @@
 #
 # Copilot keeps no live context figure a reader can open: the transcript holds
 # no live count and the footer is a display. This command is the fallback
-# live producer, behind the orch copilot-lane-context extension, whose reading
+# live producer, behind the copilot-lane-context extension agent-runtime
+# installs, whose reading
 # of the session the lane's turn-end hook reads first. The record it writes
 # through lib/copilot-session.sh, at
 # `<COPILOT_HOME>/lane-status/<session_id>.json`, is what that hook reads the
-# context through where no extension reading stands (lib/adapters/copilot.sh), and
+# context through where no extension reading stands, and
 # copilot_session_write there states its fields. It is also the one record that
 # carries allow_all_enabled, read for the allow-all stop cause whether or not an
 # extension reading stands (lib/copilot-session.sh copilot_session_stop_cause).

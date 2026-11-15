@@ -604,10 +604,9 @@ done
 
 # A private env file line that would print is refused, never run: no
 # consumer that parses stdout sees its words, and each one stops on the
-# loader's refusal. A result is status|stdout|first stderr line, and the
-# lanes stdout is the JSON type jq reads from it.
+# loader's refusal. A result is status|stdout|first stderr line.
 PROJ11="$TMP_ROOT/proj11"
-mkdir -p "$PROJ11/accounts"
+mkdir -p "$PROJ11"
 git -C "$PROJ11" init -q
 printf '%s\n' 'echo env-file-output' 'KENDEX_STDOUT_TEST=private-value' > "$PROJ11/.env.local"
 s11_record() { # NAME COMMAND... — writes NAME's result under PROJ11
@@ -623,32 +622,21 @@ for variant in production runs-file; do
   refusal="kendex-env: private-env-line file=$PROJ11/.env.local lineno=1"
   expected_loader="1||$refusal"
   expected_value="1||$refusal"
-  expected_lanes="1||$refusal"
   if [[ "$variant" == runs-file ]]; then
     scripts="$RUNS_FILE_SCRIPTS"
     expected_loader="0||env-file-output"
     expected_value="0|private-value|env-file-output"
-    expected_lanes="0|array|env-file-output"
   fi
   (
     unset KENDEX_ENV_FILE KENDEX_STDOUT_TEST CODEX_HOME
-    unset AGENT_RUNTIME_ACCOUNT_DIRS AGENT_RUNTIME_ACCOUNT_ALIASES AGENT_RUNTIME_ACCOUNT_EXCLUDE AGENT_RUNTIME_ACCOUNT_RETIRE
-    export LANES_HOME="$PROJ11/accounts" OVERSEE_WATCH_STATE_DIR="$PROJ11/state"
     cd "$PROJ11"
     # shellcheck source=/dev/null
     source "$scripts/lib/kendex-env.sh"
     s11_record loader kendex_load_project_env "$PROJ11"
     s11_record value "$scripts/orch-env" KENDEX_STDOUT_TEST default
-    # The writer finishes before jq reads what it wrote.
-    s11_record lanes-raw "$scripts/lanes" list --json
-    s11_record lanes-type jq -r type "$PROJ11/lanes-raw-out"
-    IFS='|' read -r lanes_rc _ lanes_first < "$PROJ11/lanes-raw"
-    IFS='|' read -r _ lanes_type _ < "$PROJ11/lanes-type"
-    printf '%s|%s|%s\n' "$lanes_rc" "$lanes_type" "$lanes_first" > "$PROJ11/lanes"
   )
   assert_eq "$(cat "$PROJ11/loader")" "$expected_loader" "$variant: loader result"
   assert_eq "$(cat "$PROJ11/value")" "$expected_value" "$variant: orch-env result"
-  assert_eq "$(cat "$PROJ11/lanes")" "$expected_lanes" "$variant: lanes result"
 done
 
 # Scenario 12: a key in either project file never reaches a variable the

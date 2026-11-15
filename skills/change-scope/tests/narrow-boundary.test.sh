@@ -173,12 +173,12 @@ language_rows=0
 while IFS='|' read -r name shebang quote expected; do
   language_rows=$((language_rows + 1))
   language_file="$SANDBOX/$name"
-  printf '%s\n' "$shebang" "$quote" 'source ../../orch/scripts/lib/lane-relaunch.sh' "$quote" >"$language_file"
+  printf '%s\n' "$shebang" "$quote" 'source ../../orch/scripts/lib/copilot-session.sh' "$quote" >"$language_file"
   assert_eq "the include walk reads $name under its source language" "$expected" \
     "$(sourced_paths "$SANDBOX" "skills/change-scope/scripts/$name" "$language_file")"
 done <<'LANGUAGES'
-helper.sh|||path skills/orch/scripts/lib/lane-relaunch.sh
-shell-helper|#!/usr/bin/env bash||path skills/orch/scripts/lib/lane-relaunch.sh
+helper.sh|||path skills/orch/scripts/lib/copilot-session.sh
+shell-helper|#!/usr/bin/env bash||path skills/orch/scripts/lib/copilot-session.sh
 helper.py|#!/usr/bin/env python3|"""|
 python-helper|#!/usr/bin/env python3|"""|
 LANGUAGES
@@ -199,7 +199,7 @@ fi
 # shellcheck source=/dev/null
 . "$SANDBOX/reader-control.sh"
 assert_eq "a reader without the language check misreads Python documentation" \
-  "path skills/orch/scripts/lib/lane-relaunch.sh" \
+  "path skills/orch/scripts/lib/copilot-session.sh" \
   "$(sourced_paths_control "$SANDBOX" skills/change-scope/scripts/helper.py "$SANDBOX/helper.py")"
 
 boundary_drift() { # CATALOG CONF
@@ -304,7 +304,7 @@ while IFS='|' read -r label edit expected; do
   measured="$fixture/change-scope/scripts/change-scope"
   case "$edit" in
     declare-extra)
-      printf '%s\n' '# measures-with: skills/orch/scripts/lib/lane-claims.sh' >>"$measured" ;;
+      printf '%s\n' '# measures-with: skills/orch/scripts/resolve-base-branch' >>"$measured" ;;
     drop-conf-row)
       grep -vxF 'path *skills/change-scope/scripts/lib/branch-growth.sh' "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
@@ -323,20 +323,20 @@ while IFS='|' read -r label edit expected; do
     source-unknown-variable)
       printf '%s\n' 'source "$OTHER_SKILL_LIB/kendex-env.sh"' >>"$measured" ;;
     source-spelled-*)
-      # One new dependency, lib/lane-relaunch.sh, in the spelling the row
+      # One new dependency, lib/copilot-session.sh, in the spelling the row
       # names; each must resolve to that one catalog path.
       case "$edit" in
-        source-spelled-quoted) spelled='source "$SCRIPT_DIR/../../orch/scripts/lib/lane-relaunch.sh"' ;;
-        source-spelled-split-quoted) spelled='source "$SCRIPT_DIR"/../../orch/scripts/lib/lane-relaunch.sh' ;;
-        source-spelled-unquoted) spelled='true; . $SCRIPT_DIR/../../orch/scripts/lib/lane-relaunch.sh' ;;
-        source-spelled-braced) spelled='source ${SCRIPT_DIR}/../../orch/scripts/lib/lane-relaunch.sh' ;;
-        source-spelled-relative) spelled='source ../../orch/scripts/lib/lane-relaunch.sh' ;;
-        source-spelled-absolute) spelled="source $fixture/orch/scripts/lib/lane-relaunch.sh" ;;
+        source-spelled-quoted) spelled='source "$SCRIPT_DIR/../../orch/scripts/lib/copilot-session.sh"' ;;
+        source-spelled-split-quoted) spelled='source "$SCRIPT_DIR"/../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-unquoted) spelled='true; . $SCRIPT_DIR/../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-braced) spelled='source ${SCRIPT_DIR}/../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-relative) spelled='source ../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-absolute) spelled="source $fixture/orch/scripts/lib/copilot-session.sh" ;;
         *) echo "unknown spelling $edit" >&2; exit 1 ;;
       esac
       printf '%s\n' "$spelled" >>"$measured" ;;
     source-substitution)
-      printf '%s\n' 'source "$(dirname "$0")/lib/lane-relaunch.sh"' >>"$measured" ;;
+      printf '%s\n' 'source "$(dirname "$0")/lib/copilot-session.sh"' >>"$measured" ;;
     source-bare-variable)
       printf '%s\n' 'source "$file" >&2' >>"$measured" ;;
     declare-missing)
@@ -364,15 +364,15 @@ while IFS='|' read -r label edit expected; do
   expected="${expected//@LAST_LINE@/$(grep -c '' "$measured")}"
   assert_eq "$label" "$expected" "$(boundary_drift "$fixture" "$conf")"
 done <<'FIXTURES'
-a dependency declared without its conf row is named|declare-extra|uncovered path=skills/orch/scripts/lib/lane-claims.sh
+a dependency declared without its conf row is named|declare-extra|uncovered path=skills/orch/scripts/resolve-base-branch
 a conf row dropped while the declaration still carries it is named|drop-conf-row|uncovered path=skills/change-scope/scripts/lib/branch-growth.sh
 a boundary row no declaration backs is named|add-conf-row|unbacked glob=*skills/orch/scripts/lanes
-a library sourced without a declaration is named, spelled quoted|source-spelled-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled split-quoted|source-spelled-split-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled unquoted|source-spelled-unquoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled braced|source-spelled-braced|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled relative|source-spelled-relative|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/lane-relaunch.sh
-a library sourced without a declaration is named, spelled absolute|source-spelled-absolute|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/lane-relaunch.sh
+a library sourced without a declaration is named, spelled quoted|source-spelled-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled split-quoted|source-spelled-split-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled unquoted|source-spelled-unquoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled braced|source-spelled-braced|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled relative|source-spelled-relative|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled absolute|source-spelled-absolute|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
 another skill's library of the same name is named|source-other-skill|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/linear/scripts/lib/kendex-env.sh
 a library that is not in the catalog is named|source-nowhere|unresolved-source file=skills/change-scope/scripts/change-scope source=skills/change-scope/scripts/lib/not-there.sh
 a library under a variable the script does not own is reported|source-unknown-variable|unsupported-source file=skills/change-scope/scripts/change-scope line=@LAST_LINE@

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Tests for `orch_resolve_gh_repo`, the orch entry point every waiter
-# and oversee-watch ask which repository they are acting on. It
-# forwards to `kendex_github_resolve_gh_repo` in the github skill, which owns
-# the ladder; the rows below run through the orch entry point, so a wrapper
-# that stopped forwarding reddens every one of them.
+# Tests for `kendex_github_resolve_gh_repo`, the one answer to which
+# repository a caller is acting on.
 #
 # Its reason to exist: `gh repo view` answers for the working directory and
 # ignores GH_REPO, so each inline copy of it handed a caller acting on another
@@ -13,26 +10,30 @@
 #
 # One case per behaviour surface; shaped input is one table, one asserted row
 # per shape.
-# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
-# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/github/scripts/,
-# skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# shellcheck source=lib/assertions.sh
-source "$TEST_DIR/lib/assertions.sh"
+PASS=0
+FAIL=0
+# assert_eq GOT WANT LABEL [ERR] — one row; a failed row prints ERR's text.
+assert_eq() {
+  if [[ "$1" == "$2" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$3"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"
+    [[ -z "${4:-}" || ! -s "$4" ]] || sed 's/^/        stderr:   /' "$4"
+  fi
+}
 
-LIVE_LIB="$REPO_ROOT/skills/orch/scripts/lib/gh-repo.sh"
-LIVE_FN=orch_resolve_gh_repo
-# The resolver itself, which the wrapper sources by a fixed relative path. The
-# must-fail control mutates a copy of this file, so it names the owner rather
-# than the entry point.
-SHARED_LIB="$REPO_ROOT/skills/github/scripts/lib/gh-repo.sh"
-SHARED_FN=kendex_github_resolve_gh_repo
+# The resolver; the must-fail control mutates a private copy of it.
+LIB="$REPO_ROOT/skills/github/scripts/lib/gh-repo.sh"
+FN=kendex_github_resolve_gh_repo
 
 # `gh repo view` stand-in. STUB_REPO_VIEW is what it answers; empty means it
 # printed nothing, the shape a checkout gh cannot resolve produces.
@@ -105,7 +106,7 @@ table() {
   for row in "$@"; do
     IFS='|' read -r label env root expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
-    run_resolve "$env" "$root" "$LIVE_LIB" "$LIVE_FN"
+    run_resolve "$env" "$root" "$LIB" "$FN"
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done
 }
@@ -149,11 +150,11 @@ echo "=== must-fail control ==="
 # Without it the checkout's repository wins, exactly the wrong-repository
 # verdict the rule exists to prevent.
 MUTANT="$TMP_ROOT/gh-repo-mutant.sh"
-cp "$SHARED_LIB" "$MUTANT"
+cp "$LIB" "$MUTANT"
 assert_eq "$(grep -Fc -- 'if [ -n "${GH_REPO:-}" ]; then' "$MUTANT")" "1" "control finds the live rule"
 sed -i.bak 's/^  if \[ -n "${GH_REPO:-}" \]; then$/  if [ -n "" ]; then/' "$MUTANT"
 assert_eq "$(grep -Fc -- 'if [ -n "${GH_REPO:-}" ]; then' "$MUTANT")" "0" "control applied the mutation"
-run_resolve 'GH_REPO=other/elsewhere,STUB_REPO_VIEW=cwd-owner/cwd-repo' origin-repo "$MUTANT" "$SHARED_FN"
+run_resolve 'GH_REPO=other/elsewhere,STUB_REPO_VIEW=cwd-owner/cwd-repo' origin-repo "$MUTANT" "$FN"
 assert_eq "$(observe 'rc=0 out=cwd-owner/cwd-repo')" "rc=0 out=cwd-owner/cwd-repo" \
   "must-fail control: without the GH_REPO branch the checkout's repository wins" "$ERR"
 

@@ -161,7 +161,6 @@ prose|https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/D
 prose|echo "a title (kendex#537)"|0:
 prose|echo "reinstall; kendex refresh"|0:
 prose|echo ready # reinstall; kendex refresh|0:
-caller|skills/orch/tests/claude-model-classes.sh|0:caller
 caller|skills/change-scope/tests/change-scope.test.sh|0:caller
 python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list
 ROWS
@@ -214,7 +213,7 @@ order="$(tr '\n' ' ' < "$SUITE_LOG")"
 [ "$RC:$order" = "0:zzz-pooled $alone_name " ] && ok 'orch native dispatch retains runner isolation order' || bad 'orch native dispatch retains runner isolation order' "$RC $order $OUT"
 
 # A caller suite in a shard CI gives a kendex (orch-rest) runs; a suite in
-# one CI gives none (orch-oversee) cannot depend on one and does not.
+# one CI gives none (orch-state) cannot depend on one and does not.
 cp "$GUARD" "$TMP/native/tools/guard"
 rm "$R/skills/orch/tests/$alone_name.sh" "$R/skills/orch/tests/zzz-pooled.sh"
 for name in zzz-caller zzz-second; do
@@ -225,11 +224,11 @@ printf '%s\n' '$name' >> "\$SUITE_LOG"
 printf 'pass: 1 fail: 0\n'
 SH
 done
-printf '#!/bin/sh\nprintf "oversee_zzz\\n" >> "$SUITE_LOG"\nexit 97\n' > "$R/skills/orch/tests/oversee_zzz.sh"
+printf '#!/bin/sh\nprintf "lane_zzz\\n" >> "$SUITE_LOG"\nexit 97\n' > "$R/skills/orch/tests/lane_zzz.sh"
 run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
 [ "$RC" -ne 0 ] && [ "$RAN" = 'zzz-caller zzz-second ' ] && [[ "$OUT" == *'suite=zzz-caller '*'fail=1'* ]] \
   && [[ "$OUT" == *'remedy=release-engine'* ]] && [[ "$OUT" == *'selected-suite=skills/orch/tests/zzz-caller.sh'* ]] \
-  && [[ "$OUT" != *'selected-suite=skills/orch/tests/oversee_zzz.sh'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \
+  && [[ "$OUT" != *'selected-suite=skills/orch/tests/lane_zzz.sh'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \
   && ok 'kendex suites only: the caller fails under the release engine' \
   || bad 'kendex suites only: the caller fails under the release engine' "$RC $RAN $OUT"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
@@ -263,7 +262,7 @@ done
 cp "$GUARD" "$TMP/native/tools/guard"
 rm "$TMP/native/tools/ci-job-set"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
-[ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && [[ "$OUT" == *'guard-note: suites=all reason=kendex-unread tree=skills/orch'* ]] \
+[ "$RC:$RAN" = '1:lane_zzz zzz-caller zzz-second ' ] && [[ "$OUT" == *'guard-note: suites=all reason=kendex-unread tree=skills/orch'* ]] \
   && ok 'an unread kendex selection runs the whole package' || bad 'an unread kendex selection runs the whole package' "$RC $RAN $OUT"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 2/2
 [ "$RC:$RAN" = '1:' ] && [[ "$OUT" == *'guard: kendex-unread=skills/orch'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \

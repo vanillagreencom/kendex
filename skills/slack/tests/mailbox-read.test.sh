@@ -1,34 +1,22 @@
 #!/usr/bin/env bash
 # Surface: mailbox store snapshots. Inputs: skills/mailbox/scripts/**,
-# skills/slack/scripts/lib/**, skills/slack/tests/lib/** and
-# skills/slack/tests/fixtures/mailbox-pre-read-events/**.
+# skills/slack/scripts/lib/** and skills/slack/tests/lib/**.
 # The unchanged CLI is the output oracle, including complete rows, tracker
 # confirmation, logical numbering after compaction and appended tails.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
-for format in current historical bound-reader; do
-ROOT="$(sk_new_root "store-reader-$format")"
-[ "$format" = current ] || sk_historical_mailbox "$ROOT"
-if [ "$format" = bound-reader ]; then
-  sk_mutant bound-reader mailbox.py 'path = MAILBOX_READ_FILES\[0\]' \
-    'path = self.root / LANE_MAIL.parent / "lib/lane-mail-store.py"'
-fi
+ROOT="$(sk_new_root store-reader-current)"
 PROBE_RC=0
 env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
   GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
   python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$ROOT" || PROBE_RC=$?
-if [ "$format" = bound-reader ]; then
-  sk_assert_red "$PROBE_RC" 0 'control: importing the historical bound reader fails the same output probe'
-else
-  assert_eq "$PROBE_RC" 0 "$format: in-process reader preserves the CLI output and cursor contract"
-fi
+assert_eq "$PROBE_RC" 0 "current: in-process reader preserves the CLI output and cursor contract"
 sk_bin_reset
-done
 
 # The CLI maps overseer mail in a linked worktree to the main checkout.
 # Separate tmp directories expose a reader that incorrectly uses the bound
-# checkout. Historical reader code in both roots cannot supply read_events.
+# checkout.
 while IFS='|' read -r mode shape; do
   MAIN_NAME="store-linked-$mode-$shape"
   if [ "$shape" = newline ]; then MAIN_NAME=$'store-linked\n'"$mode-$shape"; fi
@@ -37,9 +25,8 @@ while IFS='|' read -r mode shape; do
   WORK_ROOT="$SK_TMP/linked checkout-$mode-$shape"
   git -C "$MAIN_ROOT" worktree add --quiet --detach "$WORK_ROOT" HEAD || exit 1
   mkdir -p "$WORK_ROOT/.agents/skills/mailbox" "$WORK_ROOT/.agents/skills/orch" "$WORK_ROOT/tmp"
-  cp -R "$SK_ROOT/skills/slack/tests/fixtures/mailbox-pre-read-events/scripts" "$WORK_ROOT/.agents/skills/mailbox/scripts"
+  ln -s "$SK_ROOT/skills/mailbox/scripts" "$WORK_ROOT/.agents/skills/mailbox/scripts"
   ln -s "$SK_ROOT/skills/orch/scripts" "$WORK_ROOT/.agents/skills/orch/scripts"
-  sk_historical_mailbox "$MAIN_ROOT"
   if [ "$mode" = bound-box ]; then
     sk_mutant linked-bound-box mailbox.py 'self\.box = Path\(mailbox_root\) / "tmp" / "lane-mail" / "overseer"' \
       'self.box = self.root / "tmp" / "lane-mail" / "overseer" # Path(mailbox_root)'
@@ -94,9 +81,8 @@ pair-bound|or time.monotonic() >= deadline|or False
 ROWS
 
 sk_fake_start
-for format in current historical; do
+for format in current; do
   ROOT="$(sk_new_root "relay-format-$format")"
-  [ "$format" = current ] || sk_historical_mailbox "$ROOT"
   sk_bin_reset
   sk_bind "$ROOT"
   sk_poll "$ROOT"

@@ -133,31 +133,18 @@ fn the_guard_hooks_scan_clean() {
     }
 }
 
-/// The launch table's source spells `--dangerously-skip-permissions` in a
-/// row a lane launch really runs: the one Critical finding, which kendex's
-/// own table accepts for exactly that line's text and a verbose reading
-/// still lists. The launch table's comment naming the switch is a mention,
-/// read off the file at the line the mention reports, wherever it stands.
-///
-/// The launch tests hand the launch lines they check to their stubs and
-/// assertions: a quoted string a test assigns or prints, and an argument
-/// of a function the tests define, on the line that names the function or
-/// a line continuing it. The stub a Rust test plants names the switch in
-/// its comment and compares its arguments with it in a `[` test. orch's
-/// Rust test code, its `#[cfg(test)]` items and every file under
-/// `tests/rust/`, spells the switch as the data it hands its fixtures.
-/// Each is a mention, and the skill scores clean. A reading that counted
-/// them again would be reading a test's data as a command, and this is
-/// where that fails; so does a table that lets an edit to the launcher's
-/// accepted line keep its acceptance
-/// (`allowance.rs::a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names`).
+/// orch's tests hand the launch lines they check to their stubs and
+/// assertions. The stub a Rust test plants names the switch in its comment
+/// and compares its arguments with it in a `[` test. orch's Rust test code,
+/// its `#[cfg(test)]` items and every file under `tests/rust/`, spells the
+/// switch as the data it hands its fixtures. Each is a mention, and the
+/// skill scores clean with no accepted finding. A reading that counted them
+/// again would be reading a test's data as a command, and this is where
+/// that fails.
 #[test]
-fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
+fn orch_reads_its_fixtures_as_mentions() {
     let result = shipped("orch");
-    let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let fixtures = [
-        "skills/orch/tests/lane-launch-rm-prompts.sh",
-        "skills/orch/tests/lane-launch-trust.sh",
         "skills/orch/tests/rust/fixtures/stub-bypass-gated/claude",
         "skills/orch/tests/rust/controller.rs",
         "skills/orch/tests/rust/walk.rs",
@@ -165,40 +152,17 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     ];
     assert_eq!(found(&result), vec![], "{:#?}", result.findings);
     assert_eq!(result.safety.score, 100);
-    assert_eq!(
-        found_in(&result.accepted),
-        vec![("safety-bypass", Severity::Critical, lane_launch)],
-        "{:#?}",
-        result.accepted
-    );
+    assert_eq!(found_in(&result.accepted), vec![], "{:#?}", result.accepted);
     let mentioned = |location: &str| {
         result
             .mentions
             .iter()
             .filter(|mention| mention.location == location)
-            .map(|mention| (mention.rule.as_str(), mention.line))
+            .map(|mention| mention.rule.as_str())
             .collect::<Vec<_>>()
     };
-    let [("safety-bypass", Some(line))] = mentioned(lane_launch)[..] else {
-        panic!(
-            "one safety-bypass mention in {lane_launch}: {:#?}",
-            result.mentions
-        );
-    };
-    let launcher = std::fs::read_to_string(root().join("orch/scripts/lib/lane-launch.sh"))
-        .unwrap_or_else(|why| panic!("{lane_launch}: {why}"));
-    let named = usize::try_from(line)
-        .ok()
-        .and_then(|line| launcher.lines().nth(line.checked_sub(1)?));
-    assert!(
-        named.is_some_and(|text| text.contains("--dangerously-skip-permissions")),
-        "{lane_launch}:{line} names the switch: {named:?}"
-    );
     for fixture in fixtures {
-        let rules: Vec<&str> = mentioned(fixture)
-            .into_iter()
-            .map(|(rule, _)| rule)
-            .collect();
+        let rules = mentioned(fixture);
         assert!(
             !rules.is_empty() && rules.iter().all(|rule| *rule == "safety-bypass"),
             "{fixture}: {:#?}",
@@ -210,7 +174,7 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
         .iter()
         .map(|mention| mention.location.as_str())
         .filter(|location| !location.ends_with(".md"))
-        .filter(|location| *location != lane_launch && !fixtures.contains(location))
+        .filter(|location| !fixtures.contains(location))
         .collect();
     assert_eq!(elsewhere, Vec::<&str>::new(), "{:#?}", result.mentions);
 }

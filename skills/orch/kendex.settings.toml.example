@@ -78,13 +78,6 @@ ORCH_LANE_HOST = "local"
 # absolute, and a harness is named at most once.
 # AGENT_RUNTIME_HARNESS_BINARIES = "claude=/opt/claude/bin/claude,pi=/opt/pi/bin/pi"
 
-# The provider overseer-host resolves for Jarvis's session backend, which
-# reads a recorded overseer session through it: "tmux", the included
-# provider, or an executable script path speaking schemas/overseer-host.md.
-# The orch runtime's controller start, succession and register use tmux
-# directly and read no value here.
-# ORCH_OVERSEER_HOST = "tmux"
-
 # How much a lane prints into its own window. "quiet" prints one line per
 # finished step and writes each filled-in report to a file. "normal" prints
 # every report as it is written. Any other value refuses the launch as

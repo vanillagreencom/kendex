@@ -7,9 +7,9 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SK
 ```bash
 bash skills/orch/tests/run-all.sh
 bash skills/orch/tests/run-all.sh lane-host   # subset by name fragment
-bash skills/orch/tests/run-all.sh lanes oversee               # either fragment
-bash skills/orch/tests/run-all.sh '!lanes' '!oversee'         # neither
-bash skills/orch/tests/run-all.sh =lanes                     # that suite alone
+bash skills/orch/tests/run-all.sh lane copilot                # either fragment
+bash skills/orch/tests/run-all.sh '!lane' '!copilot'          # neither
+bash skills/orch/tests/run-all.sh =lane-marker               # that suite alone
 cargo test --manifest-path skills/orch/runtime/Cargo.toml    # the runtime's rows
 ```
 

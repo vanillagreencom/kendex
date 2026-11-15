@@ -243,9 +243,7 @@ while IFS='|' read -r path shard expected macos; do
     "$("$JOB_SET" --suite-kendex macOS "$path" "$shard")"
 done <<'ROWS'
 skills/orch/tests/lanes-pick-spread.sh|orch-state|none
-skills/orch/tests/claude-model-classes.sh|orch-rest|checkout|macos
-skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
-skills/orch/tests/dev_return.sh|orch-dev|none
+skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout|macos
 skills/github/tests/pr-view.test.sh||checkout|macos
 skills/jarvis/tests/task.test.sh||checkout
 refresh/tests/refresh-consumer.test.sh||checkout

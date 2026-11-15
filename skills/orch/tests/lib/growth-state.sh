@@ -3,7 +3,7 @@
 # mutant_scripts NAME [FILE] — a must-fail control mutates a private copy of
 # one script, never the shipped one. Every orch script finds its siblings and
 # lib/ through its own directory without resolving a symlink, so a lone `cp`
-# of restack-skip dies on startup, and a control whose mutant never runs
+# of orch-env dies on startup, and a control whose mutant never runs
 # credits a pass to nothing. This builds $TMP_ROOT/NAME/scripts as real
 # directories of symlinks to the shipped scripts, with FILE, a path relative
 # to scripts/, the one private copy, which the caller mutates with
@@ -230,26 +230,4 @@ round_run_dir() {
   base="$(jq -r '.base_sha' "$2/tmp/dev-round-$3-$4.json")" || return 1
   delegated_at="$(jq -r '.delegated_at' "$2/tmp/dev-round-$3-$4.json")" || return 1
   validate_run_dir "$1" "${5:-full}" 0 "$base" "$delegated_at"
-}
-
-# plant_validate_stage STATE WORKTREE ISSUE RID RUN_DIR MODE [OUTCOME] [START]
-# — the validate stage the runtime records for a run of RID under RUN_DIR
-# (`orch-runtime validate start`, then its close): a proof row in MODE,
-# closed with OUTCOME (pass by default; `open` leaves it running), started
-# at START (1 by default). The proof carries every field the runtime
-# writes, so the state stays readable to it. dev-return check reads the
-# newest stage's run for the round's receipt and the stage's mode for a fix
-# receipt's mode gate.
-plant_validate_stage() {
-  local state="$1" worktree="$2" issue="$3" round_id="$4" run_dir="$5" mode="$6" outcome="${7:-pass}" start="${8:-1}"
-  "$state" --state-dir "$worktree/tmp" update "$issue" --arg round "$round_id" --arg dir "$run_dir" \
-    --arg mode "$mode" --arg outcome "$outcome" --argjson start "$start" '
-    .stages = ((.stages // []) + [{kind: "validate", round_id: $round, start: $start,
-      end: (if $outcome == "open" then null else $start + 1 end),
-      run_dir: $dir}
-      + (if $outcome == "open" then {} else {outcome: $outcome} end)
-      + (if $mode == "none" then {} else {proof: {tree: "", head: "", base: "", mode: $mode,
-          caller: "dev", cmd: "true", class: "standard", docs_only: false, paths_hash: "",
-          scoped: false, selection: "all", finding_prefix: "", timeout_secs: 20,
-          poll_secs: 1, cap_secs: 31}} end)])' >/dev/null
 }

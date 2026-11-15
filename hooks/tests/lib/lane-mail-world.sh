@@ -333,7 +333,7 @@ OVERSEER_PANE=%9
 OVERSEER_SERVER=$PPID
 OVERSEER_SERVER_START=1790000000
 
-# The launch home the fleet record's `.overseer.home` names for the overseer
+# The launch home the fleet record's `.controller.home` names for the overseer
 # session, which the transcript ownership gate holds the payload's transcript to.
 # OVERSEER_HOME_DIR by default, a claude config dir whose projects tree the
 # owned transcript below sits under; a row naming a codex home passes its own.
@@ -376,7 +376,7 @@ BELOW_MARK_LINE=$(marks_reply below)
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
 # lane rules find nothing, with the orch install and the judge beside the hook
-# and a fleet state whose `.overseer` names this pane.
+# and a fleet state whose `.controller` names this pane.
 new_overseer() { # NAME [PANE] [SERVER]
   new_lane "$1" main
   unmark_lanes

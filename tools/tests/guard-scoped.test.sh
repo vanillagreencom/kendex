@@ -449,9 +449,8 @@ runner_text = runner.read_text()
 # The phase holds below rewrite the runner. They are harness, not a change
 # under test: a changed run-all.sh selects its tree's whole set.
 subprocess.run(["git", "update-index", "--skip-worktree", "skills/orch/tests/run-all.sh"], cwd=repo, check=True)
-grace_text = (Path(guard).parent.parent / "skills/orch/scripts/lib/job-unit.sh").read_text()
-grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
-                 if line.startswith("JOB_UNIT_KILL_GRACE=")))
+grace = int(next(line.split("=", 1)[1] for line in runner_text.splitlines()
+                 if line.startswith("STOP_GRACE=")))
 packages = ["pi-extensions/startup", "pi-extensions/z-later"]
 for name in packages:
   package = Path(repo) / name

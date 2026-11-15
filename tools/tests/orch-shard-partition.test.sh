@@ -459,9 +459,7 @@ linear|linear, bot-instructions and preflight suites|skills/preflight/tests|prec
 worktree|worktree suites|skills/worktree/tests|worktree_output_prune
 worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack
 jarvis|Jarvis suites|skills/jarvis/tests|task.test
-orch-oversee|orch suites — the oversee entries and the status report|skills/orch/tests|oversee_report
-orch-dev|'"'"'orch suites: the dev and review names and, on Linux, the account readers'"'"'|skills/orch/tests|lanes-usage-pct
-orch-state|'"'"'orch suites: the lane and workflow-state suites'"'"'|skills/orch/tests|lane-state
+orch-state|'"'"'orch suites: the lane and workflow-state suites'"'"'|skills/orch/tests|lane-marker
 orch-rest|orch suites — every suite the shards above do not run|skills/orch/tests|setup'
 
 # These three controls must reject their private mutants before baseline assertions.
@@ -497,22 +495,22 @@ done
 
 # Each orch shard is one step's. Dropping a step leaves the suites shard_of
 # gives that shard in no shard: the rest step still finds the orch battery
-# claimed by the other three steps, so it runs none of them.
-wf_orch_dropped="$TMP/wf-orch-dev-dropped.yml"
+# claimed by the other two steps, so it runs none of them.
+wf_orch_dropped="$TMP/wf-orch-state-dropped.yml"
 awk '
-  index($0, "- name: '"'"'orch suites: the dev and review names") { drop = 1; hits++; next }
+  index($0, "- name: '"'"'orch suites: the lane and workflow-state suites") { drop = 1; hits++; next }
   drop && substr($0, 1, 8) == "      - " { drop = 0 }
   drop { next }
   { print }
   END { exit hits != 1 }
-' "$WORKFLOW" > "$wf_orch_dropped" || bad "orch-dev step removal matched other than once"
-edited "$WORKFLOW" "$wf_orch_dropped" orch-dev-dropped
-claims_file "$wf_orch_dropped" "$TMP/orch-dev-dropped"
+' "$WORKFLOW" > "$wf_orch_dropped" || bad "orch-state step removal matched other than once"
+edited "$WORKFLOW" "$wf_orch_dropped" orch-state-dropped
+claims_file "$wf_orch_dropped" "$TMP/orch-state-dropped"
 check "must-fail: a dropped orch shard step leaves its suites in no shard" \
-  "$(selected --shard orch-dev | sed 's#^#skills/orch/tests/#; s#$#.sh#' | sort)" \
-  "$(comm -23 <(sort -u "$HEAD_CLAIMS") <(sort -u "$TMP/orch-dev-dropped"))"
+  "$(selected --shard orch-state | sed 's#^#skills/orch/tests/#; s#$#.sh#' | sort)" \
+  "$(comm -23 <(sort -u "$HEAD_CLAIMS") <(sort -u "$TMP/orch-state-dropped"))"
 [[ "$FAIL" -eq 0 ]] || exit 1
-printf 'control: orch-dev-dropped suites=%s\n' "$(comm -23 <(sort -u "$HEAD_CLAIMS") <(sort -u "$TMP/orch-dev-dropped")| wc -l | tr -d ' ')"
+printf 'control: orch-state-dropped suites=%s\n' "$(comm -23 <(sort -u "$HEAD_CLAIMS") <(sort -u "$TMP/orch-state-dropped")| wc -l | tr -d ' ')"
 
 # The old literal Slack declaration answered its own search after removal.
 wf_self_claim="$TMP/wf-slack-self-claim.yml"
@@ -549,43 +547,43 @@ check "no filter runs the whole battery" "$roster" "$(selected)"
 # here is a substring match: a prefix match drops a suite that carries the
 # filter mid-name.
 check "a bare argument selects by substring" \
-  "$(printf '%s\n' "$roster" | grep -F 'oversee')" "$(selected oversee)"
+  "$(printf '%s\n' "$roster" | grep -F 'copilot')" "$(selected copilot)"
 check "two arguments are a union, not an intersection" \
-  "$(printf '%s\n' "$roster" | grep -F -e 'oversee' -e 'lanes')" \
-  "$(selected oversee lanes)"
+  "$(printf '%s\n' "$roster" | grep -F -e 'copilot' -e 'lane')" \
+  "$(selected copilot lane)"
 check "an argument written !name rejects what it matches" \
-  "$(printf '%s\n' "$roster" | grep -vF 'oversee')" "$(selected '!oversee')"
+  "$(printf '%s\n' "$roster" | grep -vF 'copilot')" "$(selected '!copilot')"
 check "a rejector overrides a selector that also matches" \
-  "$(printf '%s\n' "$roster" | grep -F 'lanes' | grep -vF 'oversee')" \
-  "$(selected lanes oversee '!oversee')"
+  "$(printf '%s\n' "$roster" | grep -F 'lane' | grep -vF 'copilot')" \
+  "$(selected lane copilot '!copilot')"
 check "an empty argument refuses instead of running everything" \
   "1" "$(status_of '')"
 check "a filter matching no suite exits non-zero" \
   "1" "$(status_of no-suite-carries-this-name)"
 check "a shard and exact selector intersect" \
-  "lanes-usage-pct" "$(selected --shard orch-dev =lanes-usage-pct)"
+  "lane-marker" "$(selected --shard orch-state =lane-marker)"
 check "a shard and exact rejector intersect" \
-  "$(selected --shard orch-dev | grep -vxF lanes-usage-pct)" \
-  "$(selected --shard orch-dev '!=lanes-usage-pct')"
+  "$(selected --shard orch-state | grep -vxF lane-marker)" \
+  "$(selected --shard orch-state '!=lane-marker')"
 # A narrowed shard step rejects every suite its suite list skipped, which can
 # be every suite of its shard: that leg runs none and passes.
 set --
-for name in $(selected --shard orch-oversee); do set -- "$@" "!=$name"; done
+for name in $(selected --shard orch-state); do set -- "$@" "!=$name"; done
 check "a shard whose rejectors reject each of its suites runs none and passes" \
-  "0|" "$(status_of --shard orch-oversee "$@")|$(selected --shard orch-oversee "$@")"
-for args in '--shard' '--shard unknown' '--shard orch-state =lanes-usage-pct'; do
+  "0|" "$(status_of --shard orch-state "$@")|$(selected --shard orch-state "$@")"
+for args in '--shard' '--shard unknown' '--shard orch-rest =lane-marker'; do
   # These words are the argument contract under test, with no shell quoting.
   # shellcheck disable=SC2086
   check "invalid or empty shard selection refuses: $args" "1" "$(status_of $args)"
 done
-check "an empty shard filter refuses" "1" "$(status_of --shard orch-dev '')"
+check "an empty shard filter refuses" "1" "$(status_of --shard orch-state '')"
 # Remove only composition from the disposable runner. The suite still exists
 # and belongs to the same shard, so this control detects a status-blind shard.
 cp "$SANDBOX/run-all.sh" "$TMP/composition-runner"
 sed 's/\[ "$OWNING_SHARD" = "$SHARD" \] || return 1/[ "$OWNING_SHARD" = "$SHARD" ]; return/' \
   "$TMP/composition-runner" > "$SANDBOX/run-all.sh"
 cmp -s "$TMP/composition-runner" "$SANDBOX/run-all.sh" && { bad "composition control matched nothing"; exit 1; }
-if [[ "$(selected --shard orch-dev =lanes-usage-pct)" != lanes-usage-pct ]]; then
+if [[ "$(selected --shard orch-state =lane-marker)" != lane-marker ]]; then
   ok "must-fail: a shard that ignores its exact filter violates composition"
 else
   bad "must-fail: the exact filter accepted a shard that ignores filters"
@@ -1011,7 +1009,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       [[ -z "${PARTITION_ONLY_SHARD:-}" || "$shard" == "$PARTITION_ONLY_SHARD" ]] || continue
       grep -qxF "$shard" <<< "$excluded" && continue
       # The runner names its platform in RUNNER_OS, and run-all.sh's shard_of
-      # reads it: the account readers leave orch-dev on macOS.
+      # reads it.
       ( cd "$PART" && RUNNER_OS="$PARTITION_RUNNER_OS" RUN_ALL_NATIVE_CONTRACTS="$native" GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
         sed -n "s%^suite-invoked: %$shard	%p"
     done
@@ -1592,11 +1590,11 @@ suite_owners "$WORKFLOW" files > "$TMP/runtime-owners"
 suite_owners "$WORKFLOW" files 3 > "$TMP/runtime-owners-macos"
 runtime_suites "$TMP/runtime-owners" "$TMP/runtime-suites"
 runtime_suites "$TMP/runtime-owners-macos" "$TMP/runtime-suites-macos"
-check "the Linux legs owning a suite that runs orch-runtime are the four orch legs, both hook legs, jarvis, mailbox, rest and slack" \
-  "$(printf '%s\n' guards-hooks guards-hooks-tail jarvis mailbox orch-dev orch-oversee orch-rest orch-state rest slack)" \
+check "the Linux legs owning a suite that runs orch-runtime are the two orch legs, both hook legs, jarvis, mailbox, rest and slack" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail jarvis mailbox orch-rest orch-state rest slack)" \
   "$(cut -f1 "$TMP/runtime-suites" | sort -u)"
-check "the macOS legs owning a suite that runs orch-runtime are three orch legs, both hook legs, rest and slack" \
-  "$(printf '%s\n' guards-hooks guards-hooks-tail orch-oversee orch-rest orch-state rest slack)" \
+check "the macOS legs owning a suite that runs orch-runtime are orch-rest, both hook legs, rest and slack" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail orch-rest rest slack)" \
   "$(cut -f1 "$TMP/runtime-suites-macos" | sort -u)"
 check "every leg owning a suite that runs orch-runtime builds the package runtimes first" "" \
   "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-suites"; unbuilt_runtime_legs "$WORKFLOW" macOS "$TMP/runtime-suites-macos")"
@@ -1616,7 +1614,7 @@ targets_runs() { # WORKFLOW SHARD OS RUST_TARGETS ; whether the targets step run
 }
 check "the runtimes' targets run on the orch-rest Linux leg where a target is listed, and where no classifier ran" \
   "true true false false false" \
-  "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-dev Linux '["orch/lib"]')"
+  "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-state Linux '["orch/lib"]')"
 check "one step runs the listed runtime targets" "1" \
   "$(grep -c 'cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args\[@\]+"${args\[@\]}"}' "$WORKFLOW")"
 

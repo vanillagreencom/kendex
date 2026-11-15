@@ -14,7 +14,6 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 EXTENSION="$(cd "$TEST_DIR/../../agent-runtime/runtime/src" && pwd)/copilot-lane-context.mjs"
 TMP_ROOT="$(mktemp -d)" || { echo "copilot-lane-context: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "copilot-lane-context: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -157,36 +156,6 @@ hooks_in "$USER_HOME/.copilot/hooks"
 run_ext default-home "$(events "$(event 0 10 100)")" COPILOT_HOME=
 assert_eq "$(run_scope)" "$USER_HOME/.copilot/hooks" "with COPILOT_HOME empty the global scope is the home's own .copilot"
 
-# The same worlds asked of lib/lane-context.sh's lane_context_copilot_hooks,
-# the rule's owner: the two spellings answer alike, `none` where neither scope
-# holds every hook; a comma stands for a space in a world's names.
-lib_scope() { bash -c 'source "$1/lib/lane-context.sh"; lane_context_copilot_hooks "$2" "$3" || echo none' _ "$SCRIPTS_DIR" "$REPO" "$COP_HOME"; }
-ext_scope() {
-  run_ext agree "$(events "$(event 0 10 100)")"
-  if [[ -n "$HOOK_RUNS" ]]; then run_scope; else echo none; fi
-}
-for world in both:both both:- lane-mail-check:both sh-only:both -:both -:- lane-mail-check:lane-mail-compact -:sh-only \
-  lane-mail-check,lane-mail-compact:both lane-mail-check,lane-mail-compact:-; do
-  clear_scopes
-  project="${world%%:*}" global="${world#*:}" project="${project//,/ }"
-  [[ "$project" == - ]] || hooks_in "$REPO/.github/hooks" "${project/both/}"
-  [[ "$global" == - ]] || hooks_in "$COP_HOME/hooks" "${global/both/}"
-  assert_eq "$(ext_scope)" "$(lib_scope)" "the extension and the library pick one scope for project=$project global=$global"
-done
-
-# The directory the extension leaves its marker in, asked of
-# lib/lane-context.sh's lane_context_copilot_pending_dir, the spelling
-# agent-runtime's trust step makes, and found where a run that exits 2 leaves
-# the extension's marker standing: the two name one directory under HOME.
-lib_pending() { HOME="$USER_HOME" bash -c 'source "$1/lib/lane-context.sh"; lane_context_copilot_pending_dir' _ "$SCRIPTS_DIR"; }
-ext_pending() {
-  run_ext pending-dir "$(events "$(event 0 10 100)")" FAKE_HOOK_EXIT=2
-  find "$USER_HOME" -type f -name s1 -exec dirname {} \; | paste -sd' ' -
-}
-clear_scopes
-hooks_in "$REPO/.github/hooks"
-assert_eq "$(ext_pending)" "$(lib_pending)" "the extension and the library name one pending directory"
-
 echo "=== every gap is written to the timeline once ==="
 MISSING="warning kendex-lane-context: hooks-missing=$REPO/.github/hooks,$COP_HOME/hooks"
 # With no scope holding the hooks, two readings run nothing. A session that
@@ -319,11 +288,6 @@ hooks_in "$COP_HOME/hooks"
 EXT="$EXT" run_ext start-ctrl "$(events "$(event 0 10 100)")"
 assert_eq "$(run_scope)" "$REPO/.github/hooks" "control: without lane-mail-start in the set a scope that cannot record the lead is run"
 
-clear_scopes
-hooks_in "$REPO/.github/hooks"
-ext_ctrl pending-dir-ctrl 'const PENDING_DIR = join(homedir(), ".cache", "lane-mail", "copilot-usage");' \
-  'const PENDING_DIR = join(homedir(), ".cache", "lane-mail", "copilot-usage-x");'
-assert_eq "$(EXT="$EXT" ext_pending)" "$(lib_pending)-x" "control: an extension naming another directory is told apart from the library's"
 ext_ctrl mark-ctrl '  markPending();' ''
 EXT="$EXT" run_ext mark-ctrl "$(events "$(event 0 10 100)")"
 assert_eq "$(run_marks)" "unmarked" "control: without the marker a reading's run starts with nothing pending"

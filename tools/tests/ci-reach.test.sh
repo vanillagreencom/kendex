@@ -17,7 +17,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REACH="$ROOT/tools/ci-reach"
 # The lock record: the orch-rest shard, which holds the two orch suites that
 # read it, and the lanes every measured class runs select it; the UI lane and
-# the orch-oversee shard, which holds no suite that reads it, do not.
+# the orch-state shard, which holds no suite that reads it, do not.
 printf '%s\n' .kendex-lock.json >"$TMP/paths"
 
 reach() { # CLASS NAMES — the answer lines, then `exit=N`
@@ -30,7 +30,7 @@ reach() { # CLASS NAMES — the answer lines, then `exit=N`
 nl='
 '
 orch_rest="Skill suites shard (orch-rest, ubuntu-latest)"
-oversee="Skill suites shard (orch-oversee, ubuntu-latest)"
+oversee="Skill suites shard (orch-state, ubuntu-latest)"
 ui="UI (vitest, tsc, biome)"
 macos="macOS cargo kendex-core"
 bot="Bot instructions"

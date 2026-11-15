@@ -13,7 +13,7 @@
 #   bash skills/orch/tests/run-all.sh lanes oversee   # either name
 #   bash skills/orch/tests/run-all.sh '!lanes' '!oversee'  # neither
 #   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
-#   bash skills/orch/tests/run-all.sh --shard orch-oversee # CI's platform partition
+#   bash skills/orch/tests/run-all.sh --shard orch-state # CI's platform partition
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
 #   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone; DIR/NAME.sh must exist
 #   bash skills/orch/tests/run-all.sh --battery DIR --battery OTHER # shared pool
@@ -301,7 +301,7 @@ if [ "${1-}" = --shard ]; then
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-oversee|orch-dev|orch-state|orch-rest) SHARD="$shard"; shift 2 ;;
+    orch-state|orch-rest) SHARD="$shard"; shift 2 ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -316,13 +316,6 @@ FILTER="$*"
 
 shard_of() { # BASE
   case "$1" in
-    *oversee*) OWNING_SHARD=orch-oversee ;;
-    *dev*|*review*) OWNING_SHARD=orch-dev ;;
-    # The account-reader family stays together, in Linux's dev pool off
-    # orch-state's deadline.
-    lanes*)
-      if [ "${RUNNER_OS:-Linux}" = Linux ]; then OWNING_SHARD=orch-dev
-      else OWNING_SHARD=orch-state; fi ;;
     *lane*|*workflow-state*) OWNING_SHARD=orch-state ;;
     *) OWNING_SHARD=orch-rest ;;
   esac

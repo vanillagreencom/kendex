@@ -11,18 +11,6 @@ ruleset = 9
 
 [[package]]
 kind = "skill"
-name = "orch"
-
-[[package.file]]
-path = "scripts/lib/lane-launch.sh"
-
-[[package.file.finding]]
-rule = "safety-bypass"
-line-hash = "36f56839c770e9d1e4f567fba984079248fa0223b9ea72f0f94df0578e887e87"
-message = "`--dangerously-skip-permissions` turns off permission prompts"
-
-[[package]]
-kind = "skill"
 name = "review-gate"
 
 [[package.file]]
