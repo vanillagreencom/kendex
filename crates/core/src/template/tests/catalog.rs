@@ -333,50 +333,65 @@ fn mixed_format_rows_keep_their_original_removal_reference() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn targeted_removal_reads_legacy_catalogs_before_mutating() {
-    for ambiguous in [false, true] {
+    // (declarations, literal legacy source, other claimant, target legacy)
+    for (declarations, unsubscribed, other, target_legacy) in [
+        (1, None, None, false),
+        (2, None, None, false),
+        (0, Some("someone/else"), Some("someone/other"), true),
+        (0, Some("./unsubscribed"), Some("./unsubscribed.git"), true),
+        (0, Some("./unsubscribed"), Some("./unsubscribed.git"), false),
+    ] {
         let (_tmp, env) = home();
         let manifest = env.global_manifest_file();
         let first = manifest.parent().unwrap().join("catalog");
         let second = manifest.parent().unwrap().join("catalog.git");
         skill(&first.join("skills"), "gh", "first");
         skill(&second.join("skills"), "gh", "second");
-        fs::write(
-            &manifest,
+        let declared = if declarations > 0 {
             format!(
-                "schema = 8\n[sources.first]\n{}\n",
+                "[sources.first]\n{}\n",
                 crate::test_util::source_path(&first)
-            ),
-        )
-        .unwrap();
+            )
+        } else {
+            String::new()
+        };
+        fs::write(&manifest, format!("schema = 8\n{declared}")).unwrap();
+        // The pre-change CLI saved its source text verbatim without subscribing.
         let legacy = Member {
             kind: MemberKind::Skill,
             name: "gh".to_owned(),
             enabled: true,
             source: MemberSource::Marketplace {
-                repo: crate::paths::slashed(&first),
+                repo: unsubscribed.map_or_else(|| crate::paths::slashed(&first), str::to_owned),
                 rev: None,
             },
         };
-        let source = source_choice(&env, &crate::paths::slashed(&second)).unwrap();
-        let MemberSource::Catalog { catalog, .. } = &source else {
-            unreachable!()
+        let other_reference = other.map_or_else(|| crate::paths::slashed(&second), str::to_owned);
+        let selected_reference = if target_legacy {
+            unsubscribed.unwrap().to_owned()
+        } else {
+            other_reference.clone()
         };
         let typed = Member {
-            source: source.clone(),
+            source: source_choice(&env, &other_reference).unwrap(),
             ..legacy.clone()
         };
-        create_from_selection(&env, "Mixed", vec![legacy.clone(), typed]).unwrap();
-        if ambiguous {
+        create_from_selection(&env, "Mixed", vec![legacy.clone(), typed.clone()]).unwrap();
+        if declarations == 2 {
             fs::write(
                 &manifest,
                 format!(
-                    "schema = 8\n[sources.first]\n{}\n[sources.second]\n{}\n",
-                    crate::test_util::source_path(&first),
+                    "schema = 8\n{declared}[sources.second]\n{}\n",
                     crate::test_util::source_path(&second)
                 ),
             )
             .unwrap();
         }
+        let MemberSource::Catalog { catalog, .. } =
+            source_choice(&env, &selected_reference).unwrap()
+        else {
+            unreachable!()
+        };
         let before = fs::read(env.templates_file()).unwrap();
         let result = remove_members(
             &env,
@@ -384,19 +399,21 @@ fn targeted_removal_reads_legacy_catalogs_before_mutating() {
             &[MemberRef {
                 kind: legacy.kind,
                 name: legacy.name.clone(),
-                which: MemberWhich::Catalog {
-                    catalog: catalog.clone(),
+                which: MemberWhich::CatalogSelection {
+                    catalog,
+                    reference: selected_reference,
                 },
             }],
         );
-        if ambiguous {
+        if declarations == 2 {
             assert!(matches!(
                 result,
                 Err(CoreError::TemplateMemberUnavailable { .. })
             ));
             assert_eq!(fs::read(env.templates_file()).unwrap(), before);
         } else {
-            assert_eq!(result.unwrap().members, vec![legacy]);
+            let expected = if target_legacy { typed } else { legacy };
+            assert_eq!(result.unwrap().members, vec![expected]);
         }
     }
 }

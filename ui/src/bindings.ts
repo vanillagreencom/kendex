@@ -3633,6 +3633,11 @@ notices?: string[] }) & { catalog?: never; repo?: never; rev?: never };
  */
 export type MemberWhich = { of: "catalog"; catalog: TemplateCatalog } | 
 /**
+ *  A source the person typed, retaining the literal address of an old
+ *  member when no declaration remains to give it a catalog reading.
+ */
+{ of: "catalog-selection"; catalog: TemplateCatalog; reference: string } | 
+/**
  *  Every member of this kind and name, whatever it came from. What a
  *  caller means when it has no way to tell them apart and wants them
  *  all gone.

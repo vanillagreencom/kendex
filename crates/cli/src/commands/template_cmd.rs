@@ -196,7 +196,10 @@ impl Picked {
             (true, _) => MemberWhich::Copy,
             (false, Some(reference)) => {
                 match template::source_choice(env, reference).map_err(|error| error.to_string())? {
-                    MemberSource::Catalog { catalog, .. } => MemberWhich::Catalog { catalog },
+                    MemberSource::Catalog { catalog, .. } => MemberWhich::CatalogSelection {
+                        catalog,
+                        reference: reference.clone(),
+                    },
                     MemberSource::Marketplace { .. }
                     | MemberSource::Copy { .. }
                     | MemberSource::SharedCopy { .. } => {

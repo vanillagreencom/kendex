@@ -445,6 +445,12 @@ pub enum MemberWhich {
     Catalog {
         catalog: TemplateCatalog,
     },
+    /// A source the person typed, retaining the literal address of an old
+    /// member when no declaration remains to give it a catalog reading.
+    CatalogSelection {
+        catalog: TemplateCatalog,
+        reference: String,
+    },
     /// Every member of this kind and name, whatever it came from. What a
     /// caller means when it has no way to tell them apart and wants them
     /// all gone.
@@ -466,9 +472,10 @@ impl MemberRef {
         }
         match (&self.which, &member.source) {
             (MemberWhich::Any, _) => true,
-            (MemberWhich::Catalog { catalog }, MemberSource::Catalog { catalog: held, .. }) => {
-                catalog.identity() == held.identity()
-            }
+            (
+                MemberWhich::Catalog { catalog } | MemberWhich::CatalogSelection { catalog, .. },
+                MemberSource::Catalog { catalog: held, .. },
+            ) => catalog.identity() == held.identity(),
             (MemberWhich::Copy, MemberSource::Copy { .. } | MemberSource::SharedCopy { .. }) => {
                 true
             }
@@ -486,7 +493,7 @@ impl MemberRef {
                 | MemberSource::SharedCopy { .. },
             )
             | (
-                MemberWhich::Catalog { .. },
+                MemberWhich::Catalog { .. } | MemberWhich::CatalogSelection { .. },
                 MemberSource::Marketplace { .. }
                 | MemberSource::Copy { .. }
                 | MemberSource::SharedCopy { .. },
@@ -794,20 +801,29 @@ pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Te
                 if wanted.kind != held.kind || wanted.name != held.name {
                     continue;
                 }
-                remove |=
-                    match (&wanted.which, &held.source) {
-                        (MemberWhich::Catalog { catalog }, MemberSource::Marketplace { .. }) => {
-                            let reading = install::member_catalog(env, held, &subscriptions)
-                                .map_err(|why| CoreError::TemplateMemberUnavailable {
+                remove |= match (&wanted.which, &held.source) {
+                    (
+                        MemberWhich::Catalog { catalog }
+                        | MemberWhich::CatalogSelection { catalog, .. },
+                        MemberSource::Marketplace { repo, .. },
+                    ) => {
+                        let reading =
+                            install::member_catalog(env, held, &subscriptions).map_err(|why| {
+                                CoreError::TemplateMemberUnavailable {
                                     name: held.name.clone(),
                                     why: why.to_string(),
-                                })?;
-                            reading
-                                .catalog
-                                .is_some_and(|held| held.identity() == catalog.identity())
+                                }
+                            })?;
+                        match reading.catalog {
+                            Some(held) => held.identity() == catalog.identity(),
+                            None => matches!(
+                                &wanted.which,
+                                MemberWhich::CatalogSelection { reference, .. } if reference == repo
+                            ),
                         }
-                        _ => wanted.names(held),
-                    };
+                    }
+                    _ => wanted.names(held),
+                };
             }
             if !remove {
                 kept_members.push(held.clone());
