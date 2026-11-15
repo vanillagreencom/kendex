@@ -1,0 +1,60 @@
+name: Release and check kendex refresh
+
+"on":
+  workflow_call:
+    # An unavailable immutable checkout supplies no proof and must start refresh.
+    outputs:
+      route:
+        description: Whether refresh work is needed; unreadable proof selects full.
+        value: ${{ jobs.release.outputs.route }}
+
+jobs:
+  release:
+    if: github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    outputs:
+      route: ${{ steps.inputs.outputs.route || 'full' }}
+    steps:
+      - name: Release a refresh stuck on its environment gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          stuck="$(gh api "repos/$GH_REPO/actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=100" \
+            --jq '.workflow_runs[] | select(.status == "waiting" and now - (.updated_at | fromdateiso8601) > 1800) | .id')"
+          for run in $stuck; do
+            # GitHub has no cancel conditioned on a run's status, and no
+            # reviewer exists to reject the gate, so re-read the run just
+            # before the cancel and skip one that has left waiting.
+            status="$(gh api "repos/$GH_REPO/actions/runs/$run" --jq .status)"
+            if [ "$status" != waiting ]; then
+              printf 'refresh-release-skipped=%s status=%s\n' "$run" "$status"
+              continue
+            fi
+            gh api --method POST "repos/$GH_REPO/actions/runs/$run/force-cancel" >/dev/null
+            printf 'refresh-released=%s\n' "$run"
+          done
+      # job.workflow_sha binds co-located code to the defining reusable workflow,
+      # not the consumer commit. See GitHub's contexts reference, job context.
+      - id: checkout
+        if: job.workflow_sha != ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: kendex
+          persist-credentials: false
+      - name: release-input-check
+        if: steps.checkout.outcome == 'success'
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          exec python3 "$GITHUB_WORKSPACE/kendex/refresh/check-inputs.py"
