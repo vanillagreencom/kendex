@@ -11,6 +11,24 @@ use crate::test_util::{rooted, source_path};
 
 use super::{git_ok, install_package, install_package_undeclared, repo, run, said};
 
+/// Callers use the help's exit-status contract to decide whether commits are gated.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_help_states_the_three_exit_statuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let output = run(&home, &home, "kendex", &["guard", "check", "--help"]);
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    for line in [
+        "0 armed.",
+        "1 not armed (drifted, absent, or core.hooksPath switching hooks off).",
+        "2 the check could not run (no commit-guards package in the repository, an unreadable hooks directory, a core.hooksPath outside the check's reach, or a repository git refuses to read).",
+    ] {
+        assert!(help.lines().any(|actual| actual == line), "missing: {line}");
+    }
+}
+
 /// Disarming removes only the helper and the package's own marked line;
 /// the hook someone else wrote survives it.
 #[test]

@@ -1,0 +1,1 @@
+- Guard help now documents the three exit statuses for checking hook arming and the exit-status taxonomy for the other guard verbs.
