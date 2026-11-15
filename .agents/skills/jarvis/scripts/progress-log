@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Append one progress record to the home handoff's Progress log section, index an archived handoff, or list State lines to correct.
 
-Usage: progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
+Usage: progress-log  # check the candidate commit
+       progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
        progress-log [--handoff PATH] --archived FILE
        progress-log [--handoff PATH] --check-state
+
+With no arguments, check staged memory notes and the standard State.
+Refusals name file, line and rule; exit 1 means violations and 2 an unread index.
+Missing handoffs are allowed before the first session writes one.
 
 The record takes the field form of references/long-session.md § Progress
 records. Its id and time come from `date -u` at this call. Run it anywhere in
@@ -55,7 +60,7 @@ PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "scripts/lib"))
 from progress import (DEFAULT_HANDOFF, FIELDS, INDEX, archive_dir, check_state, format_record,  # noqa: E402
                       change_state, enrich_index, handoff_path, ids, index_line, record_id, state_entries, state_ids)
-from sections import section  # noqa: E402
+from sections import headings, section  # noqa: E402
 import watch  # noqa: E402
 
 FIX = "fix=" + str(PACKAGE / "references/long-session.md") + "#progress-records"
@@ -268,6 +273,63 @@ def check(home, handoff):
     return 0
 
 
+def staged(home, *args):
+    """Read the candidate commit, including an alternate index supplied by Git."""
+    try:
+        result = subprocess.run(["git", *args], cwd=home, capture_output=True, timeout=30)
+        if result.returncode:
+            raise Refusal("index-unreadable", "git " + args[0])
+        return result.stdout.decode("utf-8")
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        raise Refusal("index-unreadable", "git " + args[0]) from error
+
+
+def home_check(home):
+    """Check agent-authored memory notes and State in the candidate commit.
+
+    Git cannot enforce Markdown record fields; commit-guards' local lane
+    calls this check. memory.md Notes owns the fields, and progress-log's
+    shared State reader owns entry boundaries. No live policy is consulted.
+    """
+    paths = staged(home, "ls-files", "--cached", "-z", "--", "memory", str(DEFAULT_HANDOFF)).split("\0")
+    failures = []
+    for name in dict.fromkeys(path for path in paths if path):
+        if not (name == str(DEFAULT_HANDOFF) or (name.startswith("memory/") and name.endswith(".md")
+                                         and name != "memory/MEMORY.md")):
+            continue
+        text = staged(home, "show", ":" + name)
+        lines = text.splitlines(keepends=True)
+        if name == str(DEFAULT_HANDOFF):
+            try:
+                entries = state_entries(lines)
+            except LookupError:
+                failures.append((name, 1, "state-section", "expected one State section"))
+                continue
+            for number, entry in entries:
+                # The writer also accepts named session, wake and ask ids;
+                # legacy entries bind tracker/mailbox/Slack ids anywhere.
+                opening = entry.splitlines()[0]
+                named = re.match(r"^- (\S+):(?: |$)", opening)
+                session = re.search(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
+                if not named and not session and not any(state_ids(entry)):
+                    failures.append((name, number, "state-id", "State entry requires a durable id"))
+        else:
+            heads = headings(lines)
+            for index, (start, level, _) in enumerate(heads):
+                if level != 3:
+                    continue
+                end = next((pos for pos, depth, _ in heads[index + 1:] if depth <= level), len(lines))
+                body = "".join(lines[start + 1:end])
+                for field in ("Source", "Date", "Supersedes"):
+                    label = r"(?:%s:|\*\*%s:\*\*|\*\*%s\*\*:)" % (field, field, field)
+                    if not re.search(r"(?m)^[ \t]*(?:- )?" + label + r"[ \t]*\S", body):
+                        failures.append((name, start + 1, "memory-field-" + field.lower(),
+                                         "memory note requires " + field))
+    for name, number, rule, detail in failures:
+        print("progress-log: file=%s line=%d rule=%s %s" % (name, number, rule, detail), file=sys.stderr)
+    return 1 if failures else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--handoff", type=Path, default=DEFAULT_HANDOFF)
@@ -280,6 +342,14 @@ def main():
     values = dict(zip(FIELDS, (args.operation, args.result, args.decision, args.state_change)))
     given = [option for option, value in zip(options, values.values()) if value is not None]
     home = watch.home_root(Path.cwd())
+    if not given and not args.check_state and args.archived is None:
+        if sys.argv[1:]:
+            parser.error("structural checking takes no arguments")
+        try:
+            return home_check(home)
+        except Refusal as refusal:
+            print("progress-log: %s=%s" % refusal.args, file=sys.stderr)
+            return 2
     if args.check_state:
         if given or args.archived is not None:
             parser.error("--check-state takes no record field or --archived")

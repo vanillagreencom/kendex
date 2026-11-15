@@ -1,4 +1,7 @@
 [env]
+# Init sets this only when empty. Existing homes can add this line, or call
+# the check from their existing local lane. Refresh does not set it.
+COMMIT_GUARDS_PRE_COMMIT_LOCAL = ".agents/skills/jarvis/scripts/progress-log"
 # Existing control host. Each remote needs kendex on the PATH of the account
 # its commands run as: the SSH user's `ssh HOST` PATH or, on the control host
 # with JARVIS_CONTROL_USER set, that account's login-shell PATH.
