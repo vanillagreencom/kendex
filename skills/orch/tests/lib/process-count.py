@@ -58,23 +58,11 @@ def install(root, search_path, bash, target=None, mode=None, *fixtures):
         with (root / "bash-env").open("a") as stream:
             stream.write('''
 _pc_step() {
-  local i
   case "$BASH_COMMAND" in
     mail_turn|long_pass)
       _KENDEX_PROCESS_COUNT_STEP=$BASH_COMMAND.fixture
       export _KENDEX_PROCESS_COUNT_STEP
       return ;;
-  esac
-  case "$0" in */oversee-watch)
-    _KENDEX_PROCESS_COUNT_STEP=outside
-    for ((i=1; i<${#FUNCNAME[@]}; i++)); do
-      case ${FUNCNAME[$i]} in
-        mail_turn|long_pass)
-          _KENDEX_PROCESS_COUNT_STEP=${FUNCNAME[$i]}.fixture
-          break ;;
-      esac
-    done
-    export _KENDEX_PROCESS_COUNT_STEP ;;
   esac
 }
 set -T

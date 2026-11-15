@@ -167,7 +167,12 @@ the Pi extension that runs every hook is excluded|class=standard measured=true c
 a preflight script is excluded|class=standard measured=true cause=excluded-path|skills/preflight/scripts/run.sh=2
 a doc-limits script is excluded|class=standard measured=true cause=excluded-path|skills/doc-limits/scripts/check.sh=2
 a guard chain script is excluded|class=standard measured=true cause=excluded-path|skills/commit-guards/scripts/chain.sh=2
-the lane host dispatcher is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/lane-host=2
+the lane host dispatcher is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/provider.rs=2
+the lane host's ssh carrier is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/lane-host-ssh=2
+the lane launch request is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/ops/lane.rs=2
+the lane launch effect is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/effects/launch.rs=2
+a session launch's words are excluded|class=standard measured=true cause=excluded-path|skills/agent-runtime/runtime/src/launch.rs=2
+the runtime's settings read is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/settings.rs=2
 the validation entry is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/validate/entry.rs=2
 a root AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|AGENTS.md=10
 a nested AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|skills/AGENTS.md=3

@@ -86,7 +86,7 @@ while IFS='|' read -r paths held absent; do
 done <<'ROWS'
 skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|orch/lib|-
 skills/agent-runtime/runtime/src/lib.rs|orch/lib|-
-skills/orch/scripts/pr-order|orch/validate|agent-runtime/lib
+skills/orch/scripts/lane-marker|orch/verify|orch/lib
 hooks/lane-mail-check.sh|orch/controller|orch/lib
 skills/mailbox/scripts/lane-mail|agent-runtime/controller|agent-runtime/lib
 skills/orch/tests/rust/push.rs|orch/push|orch/lib

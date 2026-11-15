@@ -309,7 +309,7 @@ while IFS='|' read -r label edit expected; do
       grep -vxF 'path *skills/change-scope/scripts/lib/branch-growth.sh' "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
     add-conf-row)
-      awk '{ print } /^path \*skills\/change-scope\/scripts\/change-scope$/ { print "path *skills/orch/scripts/lanes" }' \
+      awk '{ print } /^path \*skills\/change-scope\/scripts\/change-scope$/ { print "path *skills/orch/runtime/src/ops/lane.rs" }' \
         "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
     source-other-skill)
@@ -366,7 +366,7 @@ while IFS='|' read -r label edit expected; do
 done <<'FIXTURES'
 a dependency declared without its conf row is named|declare-extra|uncovered path=skills/orch/scripts/resolve-base-branch
 a conf row dropped while the declaration still carries it is named|drop-conf-row|uncovered path=skills/change-scope/scripts/lib/branch-growth.sh
-a boundary row no declaration backs is named|add-conf-row|unbacked glob=*skills/orch/scripts/lanes
+a boundary row no declaration backs is named|add-conf-row|unbacked glob=*skills/orch/runtime/src/ops/lane.rs
 a library sourced without a declaration is named, spelled quoted|source-spelled-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
 a library sourced without a declaration is named, spelled split-quoted|source-spelled-split-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
 a library sourced without a declaration is named, spelled unquoted|source-spelled-unquoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh

@@ -316,7 +316,7 @@ FILTER="$*"
 
 shard_of() { # BASE
   case "$1" in
-    *lane*|*workflow-state*) OWNING_SHARD=orch-state ;;
+    *lane*) OWNING_SHARD=orch-state ;;
     *) OWNING_SHARD=orch-rest ;;
   esac
 }
