@@ -6025,9 +6025,11 @@ fn a_launch_with_no_tmux_refuses_before_its_intent_persists() {
     assert_eq!(server.panes().len(), 1, "no window opened");
 }
 
-/// The hosted launch's world: the provider fixture under the project's
-/// scripts directory, its answers planted by argv, the ssh client fixture and the
-/// stub harness on the runtime's path, and a "host" worktree on this disk.
+/// The hosted launch's world: a provider under the project's scripts
+/// directory, the ssh client and the stub harness on the runtime's path, and
+/// the host's worktree on this disk. The provider is the shipped ssh one
+/// ([`HostedLaunch::ssh`]), or, for a kind kendex ships no provider of, one
+/// whose answers are planted by argv ([`HostedLaunch::new`]).
 struct HostedLaunch {
     runner: Runner,
     scripts: PathBuf,
@@ -6035,9 +6037,21 @@ struct HostedLaunch {
     host_path: PathBuf,
 }
 
-/// The name the planted provider runs under in a world's scripts
-/// directory, which its log names as the host.
+/// The name the provider runs under in a world's scripts directory, which
+/// its log names as the host.
 const PROVIDER: &str = "provider";
+
+/// `files` written in the checkout `at` and committed there with every
+/// other change it holds.
+fn commit_files(at: &Path, files: &[(&str, &str)]) {
+    for (path, text) in files {
+        let file = at.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    git(at, &["add", "."]);
+    commit(at, "row");
+}
 
 impl HostedLaunch {
     fn new(server: &Server, dir: &Path, record: Value) -> HostedLaunch {
@@ -6073,11 +6087,198 @@ impl HostedLaunch {
         world
     }
 
+    /// The world over the shipped ssh provider, `lane-host-ssh`, run under
+    /// the record's host behind a line that logs each call as the planted
+    /// provider logs it. Only the outside programs are planted: an `ssh` that
+    /// runs each remote command on this disk, in the host's home
+    /// `host-home`, and a `gh` that clones the row's source. The source is a
+    /// repository holding the clone's own scripts (the worktree skill's,
+    /// orch's, the mailbox's and the github package's, copied) and the two
+    /// setups, which answer this build's runtimes; the inventory names
+    /// `KEN-H` on `lane.example`, its clone `clone` beside the source. The
+    /// host's Claude settings consent to the bypass.
+    fn ssh(server: &Server, dir: &Path) -> HostedLaunch {
+        let dir = dir.canonicalize().unwrap();
+        let mut runner = Runner::new(server, "stub-confirm");
+        runner.verify = Some(5);
+        runner.init_fleet();
+        let scripts = runner
+            .state_dir()
+            .join(".agents")
+            .join("skills")
+            .join("orch")
+            .join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        let skills = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        write_executable(
+            &scripts.join(PROVIDER),
+            format!(
+                "#!/bin/sh\nprintf 'ORCH_LANE_HOST=%s %s\\n' \"${{ORCH_LANE_HOST##*/}}\" \"$*\" >> '{log}'\nexec '{provider}' \"$@\"\n",
+                log = scripts.join("lane-host.log").display(),
+                provider = skills.join("orch/scripts/lane-host-ssh").display(),
+            ),
+        );
+        let tools = dir.join("tools");
+        let home = dir.join("host-home");
+        let source = dir.join("source");
+        let clone = dir.join("clone");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(
+            home.join(".claude/settings.json"),
+            "{\"skipDangerousModePermissionPrompt\": true}\n",
+        )
+        .unwrap();
+        write_executable(
+            &tools.join("ssh"),
+            format!(
+                "#!/bin/bash\n# `ssh -t|-T -o OPTION ... -- TARGET LINE` runs LINE on this disk through bash in the host's home, this directory first on the search path; the window's `-t` is logged to ssh.log, the provider's `-T` to ssh-provider.log. A file `cut` here ends the provider's caller at the next `-T`, which fails as a dropped connection.\nset -u\nhere='{tools}'\ncase \"${{1:-}}\" in\n  -t) printf '%s\\n' \"$*\" >> \"$here/ssh.log\" ;;\n  -T) printf '%s\\n' \"$*\" >> \"$here/ssh-provider.log\"\n    if [ -e \"$here/cut\" ]; then rm -f \"$here/cut\"; kill -KILL $(ps -o ppid= -p \"$PPID\"); exit 255; fi ;;\n  *) exit 255 ;;\nesac\nshift\nwhile [ \"${{1:-}}\" = -o ]; do shift 2; done\n[ \"${{1:-}}\" = -- ] || exit 255\nshift 2\ncd '{home}' || exit 255\nexport HOME='{home}' PATH=\"$here:$PATH\"\nexec bash -c \"$*\"\n",
+                tools = tools.display(),
+                home = home.display(),
+            ),
+        );
+        write_executable(
+            &tools.join("gh"),
+            format!(
+                "#!/bin/bash\ncase \"$1 $2\" in\n  'repo clone') exec git clone -q -- '{source}' \"$4\" ;;\n  'repo view') printf 'o/r\\n' ;;\n  'pr list') ;;\n  *) exit 64 ;;\nesac\n",
+                source = source.display(),
+            ),
+        );
+        std::os::unix::fs::symlink(stub("stub-confirm"), tools.join("claude")).unwrap();
+        let install = source.join(".agents/skills");
+        std::fs::create_dir_all(install.join("orch/scripts")).unwrap();
+        let copy = |from: &Path, to: &Path| {
+            let out = program("cp").arg("-R").arg(from).arg(to).output().unwrap();
+            assert!(out.status.success(), "cp: {}", stderr(&out));
+        };
+        for name in ["worktree", "mailbox", "github"] {
+            std::fs::create_dir_all(install.join(name)).unwrap();
+            copy(&skills.join(name).join("scripts"), &install.join(name));
+        }
+        for name in ["resolve-base-branch", "sync-base", "lane-marker", "lib"] {
+            copy(
+                &skills.join("orch/scripts").join(name),
+                &install.join("orch/scripts"),
+            );
+        }
+        for (package, built) in [
+            ("orch", binary()),
+            ("agent-runtime", agent_runtime().to_path_buf()),
+        ] {
+            let entry = if package == "orch" {
+                "orch-runtime"
+            } else {
+                "agent-runtime"
+            };
+            std::fs::create_dir_all(install.join(package).join("scripts")).unwrap();
+            write_executable(
+                &install.join(package).join("scripts/setup"),
+                format!(
+                    "#!/bin/sh\nprintf '{entry}-setup: key=row binary=%s\\n' '{}'\n",
+                    built.display()
+                ),
+            );
+            write_executable(
+                &install.join(package).join("scripts").join(entry),
+                format!("#!/bin/sh\nexec '{}' \"$@\"\n", built.display()),
+            );
+        }
+        std::fs::write(
+            source.join("kendex.settings.toml"),
+            "[env]\nWORKTREE_DEFAULT_BRANCH = \"main\"\n",
+        )
+        .unwrap();
+        std::fs::write(source.join(".gitignore"), ".env.local\ntmp/\n").unwrap();
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["config", "gc.auto", "0"],
+            &["config", "maintenance.auto", "false"],
+        ] {
+            git(&source, args);
+        }
+        commit_files(&source, &[]);
+        let inventory = dir.join("inventory.json");
+        std::fs::write(
+            &inventory,
+            json!([{
+                "repo": "o/r",
+                "item": "KEN-H",
+                "target": "lane.example",
+                "clone": clone.display().to_string(),
+                "account": dir.join("remote-account").display().to_string(),
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(runner.state_dir().join("setup-token"), "claude-token-row\n").unwrap();
+        std::fs::write(runner.state_dir().join("auth.json"), "{\"seed\":\"row\"}\n").unwrap();
+        runner.env.extend([
+            (
+                "LANE_HOST_SSH_INVENTORY".to_owned(),
+                inventory.display().to_string(),
+            ),
+            (
+                "LANE_HOST_SSH_SOURCE".to_owned(),
+                source.display().to_string(),
+            ),
+        ]);
+        runner.tools = Some(tools.clone());
+        HostedLaunch {
+            runner,
+            scripts,
+            tools,
+            host_path: dir.join(".worktrees/clone/lane"),
+        }
+    }
+
+    /// The clone the inventory names, beside the worktree the host's
+    /// worktree command places at its one hosted lane path.
+    fn clone(&self) -> PathBuf {
+        self.host_path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .unwrap()
+            .join("clone")
+    }
+
+    /// The repository the clone is cloned from.
+    fn source(&self) -> PathBuf {
+        self.clone().parent().unwrap().join("source")
+    }
+
+    /// The host's home, where the provider's remote shell starts.
+    fn home(&self) -> PathBuf {
+        self.tools.parent().unwrap().join("host-home")
+    }
+
+    /// `path` on the host's disk, relative to the host's home as the
+    /// provider's remote shell resolves it; none where it is absent.
+    fn on_host(&self, path: &str) -> Option<String> {
+        std::fs::read_to_string(self.home().join(path)).ok()
+    }
+
+    /// A first launch over the provider, confirmed, then its attempt
+    /// retired with no landing: the lane stopped, its tree kept on the host.
+    fn launched_and_retired(&self) {
+        let first = effect_report(&self.runner.op_fleet(&self.request()));
+        assert_eq!(first["intent"]["outcome"], "confirmed", "{first}");
+        let retired = effect_report(&self.runner.op_fleet(&json!({
+            "op": "close-owned-resources",
+            "item": "KEN-H",
+            "no_landing": {"reason": "wrong-approach", "source": "overseer", "interrupt": true},
+        })));
+        assert_eq!(retired["intent"]["outcome"], "confirmed", "{retired}");
+    }
+
     fn host(&self) -> String {
         self.host_path.display().to_string()
     }
 
-    /// The host a hosted record names: the planted provider.
+    /// The host a hosted record names: the world's provider.
     fn provider(&self) -> String {
         self.scripts.join(PROVIDER).display().to_string()
     }
@@ -6154,8 +6355,8 @@ impl HostedLaunch {
 fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-    let world = HostedLaunch::new(&server, dir.path(), record);
+    let world = HostedLaunch::ssh(&server, dir.path());
+    let clone = world.clone().display().to_string();
     let panes_before = server.panes().len();
     let report = effect_report(&world.runner.op_fleet(&world.request()));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
@@ -6188,19 +6389,16 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
             ),
             format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H .claude/settings.json"),
             format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {host}/.git"),
-            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"),
-            format!("ORCH_LANE_HOST={PROVIDER} touch --item KEN-H"),
-            format!("ORCH_LANE_HOST={PROVIDER} put --item KEN-H /srv/clone/.git/lane-mail/ken-h"),
-            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"),
+            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {clone}/.git/lane-mail/ken-h"),
             format!(
-                "ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json"
+                "ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {clone}/.git/lane-launch/ken-h.json"
             ),
         ],
-        "the provider's verbs in order, each under the record's host: the marker the host lacked is put and read back before the record is read"
+        "the provider's verbs in order, each under the record's host: the marker the create wrote is read before the record"
     );
     let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
     assert!(
-        ssh.starts_with("-t -o BatchMode=yes -o ConnectTimeout=5 -- lane.example exec bash -c "),
+        ssh.starts_with("-t -o BatchMode=yes -o ConnectTimeout=5 -- lane.example exec env "),
         "the one typed line runs the provider's prefix over a client that asks no prompt and dials within the launch bound: {ssh}"
     );
     assert!(
@@ -6231,22 +6429,55 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
 }
 
 /// A create whose line adds `tree=unrebased`, the shipped ssh provider's
-/// answer where it kept the item's retained tree on its own head
-/// (`lane-host-ssh-tests.py`'s conflicting relaunch), or a preparing
-/// create (`state=preparing`, exit 75) whose `wait` answers it: the launch
-/// goes on in that tree, its observation names the tree, and the brief
-/// closes by telling the lane its restack is its own.
+/// answer to a relaunch whose tree conflicts with the moved base and is kept
+/// on its own head, or a preparing create (`state=preparing`, exit 75, a
+/// provider of another kind) whose `wait` answers it: the launch goes on in
+/// that tree, its observation names the tree, and the brief closes by
+/// telling the lane its restack is its own.
 #[test]
 fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
-    let cases = [
-        ("on the create line", "\ttree=unrebased", 0, None),
-        (
-            "on the wait",
-            "\tstate=preparing",
-            75,
-            Some("tree=unrebased\n"),
-        ),
-    ];
+    {
+        let case = "on the create line";
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let world = HostedLaunch::ssh(&server, dir.path());
+        commit_files(&world.source(), &[("shared.txt", "base\n")]);
+        world.launched_and_retired();
+        commit_files(&world.host_path, &[("shared.txt", "item\n")]);
+        commit_files(&world.source(), &[("shared.txt", "moved base\n")]);
+        let brief = dir.path().join("brief.md");
+        std::fs::write(&brief, "/orch start KEN-H\n").unwrap();
+        let mut request = world.request();
+        request["brief_file"] = json!(brief.display().to_string());
+        let report = effect_report(&world.runner.op_fleet(&request));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+        assert_eq!(
+            report["lane"]["mail_root"],
+            world.host(),
+            "{case}: {report}"
+        );
+        assert_eq!(
+            report["intent"]["observation"]["tree"], "unrebased",
+            "{case}: {report}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(world.host_path.join("shared.txt")).unwrap(),
+            "item\n",
+            "{case}: the item's work kept"
+        );
+        let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
+        assert!(
+            ssh.contains("not rebased onto the base branch. The restack is yours to run."),
+            "{case}: the lane is told its tree is kept unrebased: {ssh}"
+        );
+        effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    }
+    let cases = [(
+        "on the wait",
+        "\tstate=preparing",
+        75,
+        Some("tree=unrebased\n"),
+    )];
     for (case, fields, exit, waited) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -6309,30 +6540,10 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
 fn a_hosted_create_whose_answer_is_lost_holds_its_launch_until_a_close_confirms_the_sandbox_gone() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-    let world = HostedLaunch::new(&server, dir.path(), record);
+    let world = HostedLaunch::ssh(&server, dir.path());
     let provider = world.scripts.clone();
     let host = world.provider();
-    let account = world.runner.state_dir().display().to_string();
-    let first = format!("create --item KEN-H --repo o/r --harness claude --account {account}");
-    let create = format!("{first} --relaunch");
-    let answers_path = provider.join("lane-host.json");
-    let mut answers: Value =
-        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-    answers[first.as_str()] = json!({"kill_ancestor": 1});
-    answers["close --item KEN-H"] = json!({"stdout": "kept=none\n"});
-    answers["list"] = json!({"stdout": ""});
-    // The shipped ssh provider's lock, held by the item's own earlier
-    // create: its notice beside the 75 (`lane-host-ssh`'s `ownership-busy`).
-    answers[format!("{create}#1")] = json!({
-        "exit": 75,
-        "stderr": "lane-host-ssh: ownership-busy target=lane.example clone=/srv/clone exit=75\n",
-    });
-    answers[format!("{create}#2")] = json!({"stdout": format!(
-        "ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\n",
-        world.host()
-    )});
-    std::fs::write(&answers_path, answers.to_string()).unwrap();
+    std::fs::write(world.tools.join("cut"), "").unwrap();
     let calls = || -> Vec<String> {
         std::fs::read_to_string(provider.join("lane-host.log"))
             .unwrap_or_default()
@@ -6379,7 +6590,16 @@ fn a_hosted_create_whose_answer_is_lost_holds_its_launch_until_a_close_confirms_
         "the provider's close confirmed by its list: {after:?}"
     );
 
+    // The provider's lock beside the clone, held as an earlier create of
+    // the item holds it.
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{}.lane-host.lock", world.clone().display()))
+        .unwrap();
+    held.lock().unwrap();
     let busy = effect_report(&world.runner.op_fleet(&request));
+    drop(held);
     assert_eq!(busy["intent"]["outcome"], "failed", "{busy}");
     assert!(
         busy["intent"]["observation"]["cause"]
@@ -7145,34 +7365,15 @@ fn a_hold_fixture_whose_row_never_releases_it_ends_within_its_bound() {
 }
 
 /// A second launch on the record the first left: the provider is asked to
-/// reuse the worktree it holds, whatever session the record binds.
+/// reuse the worktree it holds, and the lane opens in the tree the first
+/// launch's work stands in.
 #[test]
 fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-    let world = HostedLaunch::new(&server, dir.path(), record);
-    let mut fleet = world.runner.fleet();
-    let mut prior = lane("KEN-H", "stopped", &world.runner, Value::Null);
-    prior["host"] = json!(world.provider());
-    prior["kind"] = json!("ssh");
-    prior["launched_at"] = json!("2026-01-29T15:20:00Z");
-    fleet["lanes"] = json!([prior]);
-    world.runner.write_fleet(&fleet);
-    let account = world.runner.state_dir().display().to_string();
-    let host = world.host();
-    let mut answers: Value = serde_json::from_str(
-        &std::fs::read_to_string(world.scripts.join("lane-host.json")).unwrap(),
-    )
-    .unwrap();
-    answers[format!(
-        "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
-    )] = json!({"stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\n")});
-    std::fs::write(
-        world.scripts.join("lane-host.json"),
-        serde_json::to_string(&answers).unwrap(),
-    )
-    .unwrap();
+    let world = HostedLaunch::ssh(&server, dir.path());
+    world.launched_and_retired();
+    commit_files(&world.host_path, &[("item.txt", "item\n")]);
     let report = effect_report(&world.runner.op_fleet(&world.request()));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert!(
@@ -7182,6 +7383,12 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
             .any(|c| c.contains(" create ") && c.ends_with(" --relaunch")),
         "the standing record's worktree is reused: {:?}",
         world.calls()
+    );
+    assert_eq!(report["lane"]["mail_root"], world.host(), "{report}");
+    assert_eq!(
+        std::fs::read_to_string(world.host_path.join("item.txt")).unwrap(),
+        "item\n",
+        "the first launch's work stands in the reused tree"
     );
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
@@ -7730,7 +7937,7 @@ fn a_bypassed_claude_launch_records_the_accounts_bypass_consent_and_honours_a_re
     );
 }
 
-/// Through the real hosted launch over the planted provider: a bypassed
+/// Through the real hosted launch over the shipped ssh provider: a bypassed
 /// Claude lane reads its host's Claude settings once `create` answered and
 /// before any window, records the consent where it is absent with every
 /// other key kept and reads it back, refuses a recorded `false` and a file
@@ -7738,67 +7945,67 @@ fn a_bypassed_claude_launch_records_the_accounts_bypass_consent_and_honours_a_re
 /// reads nothing.
 #[test]
 fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_refusal() {
-    let settings = "cat --item KEN-H .claude/settings.json";
+    let settings = ".claude/settings.json";
     let consent = json!({"skipDangerousModePermissionPrompt": true});
     let themed = json!({"theme": "dark", "skipDangerousModePermissionPrompt": true});
+    let refused = r#"{"skipDangerousModePermissionPrompt": false}"#;
+    // What stands at the host's settings path before the launch: absent,
+    // a file's text, or a directory no `cat` reads.
+    enum Standing<'a> {
+        Absent,
+        Text(&'a str),
+        Unreadable,
+    }
     type Case<'a> = (
         &'a str,
-        Value,
-        Option<&'a Value>,
+        Standing<'a>,
         Option<&'a str>,
         Result<Option<&'a Value>, &'a str>,
     );
     let cases: [Case; 5] = [
-        (
-            "absent",
-            json!({"exit": 2}),
-            Some(&consent),
-            None,
-            Ok(Some(&consent)),
-        ),
+        ("absent", Standing::Absent, None, Ok(Some(&consent))),
         (
             "other keys",
-            json!({"stdout": r#"{"theme": "dark"}"#}),
-            Some(&themed),
+            Standing::Text(r#"{"theme": "dark"}"#),
             None,
             Ok(Some(&themed)),
         ),
         (
             "refused",
-            json!({"stdout": r#"{"skipDangerousModePermissionPrompt": false}"#}),
-            None,
+            Standing::Text(refused),
             None,
             Err("bypass-refused harness=claude path=.claude/settings.json"),
         ),
         (
             "unreadable",
-            json!({"exit": 1, "stderr": "lane-host-ssh: cat-failed\n"}),
-            None,
+            Standing::Unreadable,
             None,
             Err("config-unreadable harness=claude path=.claude/settings.json cause="),
         ),
         (
             "narrower",
-            json!({"exit": 1}),
-            None,
+            Standing::Absent,
             Some("--permission-mode dontAsk"),
             Ok(None),
         ),
     ];
-    for (case, standing, read_back, permission, expected) in cases {
+    for (case, standing, permission, expected) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-        let world = HostedLaunch::new(&server, dir.path(), record);
-        let answers_path = world.scripts.join("lane-host.json");
-        let mut answers: Value =
-            serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-        answers[settings] = standing;
-        answers["put --item KEN-H .claude/settings.json"] = json!({});
-        if let Some(read_back) = read_back {
-            answers[format!("{settings}#2")] = json!({"stdout": read_back.to_string()});
-        }
-        std::fs::write(&answers_path, answers.to_string()).unwrap();
+        let world = HostedLaunch::ssh(&server, dir.path());
+        let path = world.home().join(settings);
+        std::fs::remove_file(&path).unwrap();
+        let before = match standing {
+            Standing::Absent => None,
+            Standing::Text(text) => {
+                std::fs::write(&path, text).unwrap();
+                Some(text.to_owned())
+            }
+            Standing::Unreadable => {
+                std::fs::create_dir(&path).unwrap();
+                None
+            }
+        };
         let mut request = world.request();
         if let Some(permission) = permission {
             request["permission"] = json!(permission);
@@ -7806,17 +8013,14 @@ fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_
         let panes_before = server.panes().len();
         let report = effect_report(&world.runner.op_fleet(&request));
         let calls = world.calls();
-        let puts = world.puts(".claude/settings.json");
+        let after = world.on_host(settings);
         match expected {
             Ok(written) => {
                 assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
                 assert_eq!(server.panes().len(), panes_before + 1, "{case}: one window");
-                let written: Vec<Value> = written.into_iter().cloned().collect();
                 assert_eq!(
-                    puts.iter()
-                        .map(|bytes| serde_json::from_str::<Value>(bytes).unwrap())
-                        .collect::<Vec<_>>(),
-                    written,
+                    after.map(|bytes| serde_json::from_str::<Value>(&bytes).unwrap()),
+                    written.cloned(),
                     "{case}: the consent put where it was absent, every other key kept: {calls:?}"
                 );
                 if permission.is_some() {
@@ -7838,7 +8042,7 @@ fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_
                     "{case}: {report}"
                 );
                 assert_eq!(server.panes().len(), panes_before, "{case}: no window");
-                assert_eq!(puts, Vec::<String>::new(), "{case}: nothing put");
+                assert_eq!(after, before, "{case}: nothing put");
                 assert!(
                     std::fs::metadata(world.tools.join("ssh.log")).is_err(),
                     "{case}: nothing dialled"
@@ -7990,23 +8194,15 @@ fn a_refused_launch_keeps_the_dependencys_cause_as_detail_or_beside_the_refusals
 fn a_hosted_pi_lane_is_gated_before_create_and_on_its_host_s_files() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-    let world = HostedLaunch::new(&server, dir.path(), record);
-    let account = world.runner.state_dir().display().to_string();
-    let host = world.host();
-    let answers_path = world.scripts.join("lane-host.json");
-    let mut answers: Value =
-        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-    // The record the refused launches leave stands, so this one re-enters
-    // it and asks the provider to reuse its worktree.
-    answers
-        [format!("create --item KEN-H --repo o/r --harness pi --account {account} --relaunch")] = json!({
-        "stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\tpi-root=/srv/pi-root\n")
-    });
-    answers["cat --item KEN-H /srv/pi-root/settings.json"] =
-        json!({"stdout": r#"{"compaction": {"enabled": true}}"#});
-    answers[format!("cat --item KEN-H {host}/.pi/settings.json")] = json!({"exit": 2});
-    std::fs::write(&answers_path, answers.to_string()).unwrap();
+    let world = HostedLaunch::ssh(&server, dir.path());
+    // The Pi root the provider names is the inventory's account on the host.
+    let root = world.clone().parent().unwrap().join("remote-account");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("settings.json"),
+        r#"{"compaction": {"enabled": true}}"#,
+    )
+    .unwrap();
     for (harness, model, cause, created) in [
         (
             "pi",
@@ -8020,7 +8216,10 @@ fn a_hosted_pi_lane_is_gated_before_create_and_on_its_host_s_files() {
         (
             "pi",
             Some("github-copilot/gpt-6"),
-            "compaction-on harness=pi file=/srv/pi-root/settings.json".to_owned(),
+            format!(
+                "compaction-on harness=pi file={}/settings.json",
+                root.display()
+            ),
             true,
         ),
     ] {
@@ -8051,10 +8250,10 @@ fn a_hosted_pi_lane_is_gated_before_create_and_on_its_host_s_files() {
     }
 }
 
-/// Through the real hosted launch over the planted provider: a Copilot lane
-/// is created, then its context reader is made to stand in the Copilot home
-/// the provider named (`.copilot` under the host user's home where it names
-/// none) through the provider's `put`, the extension and the settings flag
+/// Through the real hosted launch over the shipped ssh provider: a Copilot
+/// lane is created, then its context reader is made to stand in the Copilot
+/// home the provider named (`.copilot` under the host user's home where a
+/// provider of another kind names none) through the provider's `put`, the extension and the settings flag
 /// put only where they differ, and its three lane-mail hooks are found on
 /// the host before the window opens. A host holding no hooks, and a home
 /// whose flag is set false, refuse naming the host, with no window and
@@ -8065,106 +8264,140 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
         include_str!("../../../agent-runtime/runtime/src/copilot-lane-context.mjs");
     let enabled = r#"{"enabledFeatureFlags": {"EXTENSIONS": true}}"#;
     let hooks = ["lane-mail-check", "lane-mail-compact", "lane-mail-start"];
+    // The shipped provider names the inventory's account as the Copilot
+    // home; the default home is a provider's that names none, planted.
     type Case<'a> = (
         &'a str,
+        bool,
         Option<&'a str>,
-        Value,
-        Value,
+        &'a str,
         bool,
         Result<Option<Value>, &'a str>,
     );
     let cases: [Case; 5] = [
         (
             "installed",
-            Some("/srv/copilot"),
-            json!({"exit": 2}),
-            json!({"stdout": r#"{"theme": "dark"}"#}),
+            true,
+            None,
+            r#"{"theme": "dark"}"#,
             true,
             Ok(Some(
                 json!({"theme": "dark", "enabledFeatureFlags": {"EXTENSIONS": true}}),
             )),
         ),
-        (
-            "standing",
-            Some("/srv/copilot"),
-            json!({"stdout": EXTENSION}),
-            json!({"stdout": enabled}),
-            true,
-            Ok(None),
-        ),
+        ("standing", true, Some(EXTENSION), enabled, true, Ok(None)),
         (
             "default home",
-            None,
-            json!({"stdout": EXTENSION}),
-            json!({"stdout": enabled}),
+            false,
+            Some(EXTENSION),
+            enabled,
             true,
             Ok(None),
         ),
         (
             "no hooks",
-            Some("/srv/copilot"),
-            json!({"stdout": EXTENSION}),
-            json!({"stdout": enabled}),
+            true,
+            Some(EXTENSION),
+            enabled,
             false,
             Err("unsupported-for-oversee harness=copilot reason=no-context-hooks scope="),
         ),
         (
             "disabled",
-            Some("/srv/copilot"),
-            json!({"stdout": EXTENSION}),
-            json!({"stdout": r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#}),
             true,
-            Err(
-                "no-context-reader harness=copilot file=/srv/copilot/settings.json detail=disabled",
-            ),
+            Some(EXTENSION),
+            r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#,
+            true,
+            Err("no-context-reader harness=copilot file={home}/settings.json detail=disabled"),
         ),
     ];
-    for (case, named, extension, settings, held, expected) in cases {
+    for (case, shipped, extension, settings, held, expected) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-        let mut world = HostedLaunch::new(&server, dir.path(), record);
+        let mut world = if shipped {
+            HostedLaunch::ssh(&server, dir.path())
+        } else {
+            let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+            HostedLaunch::new(&server, dir.path(), record)
+        };
         world.runner.verify = Some(1);
         std::os::unix::fs::symlink(
             fixtures().join("stub-record").join("copilot"),
             world.tools.join("copilot"),
         )
         .unwrap();
-        let home = named.unwrap_or(".copilot");
-        let account = world.runner.state_dir().display().to_string();
+        let home = if shipped {
+            world
+                .clone()
+                .parent()
+                .unwrap()
+                .join("remote-account")
+                .display()
+                .to_string()
+        } else {
+            ".copilot".to_owned()
+        };
         let host = world.host();
-        let answers_path = world.scripts.join("lane-host.json");
-        let mut answers: Value =
-            serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-        let field = named.map_or(String::new(), |home| format!("\tcopilot-home={home}"));
-        answers[format!("create --item KEN-H --repo o/r --harness copilot --account {account}")] = json!({
-            "stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c{field}\n")
-        });
         let extension_path = format!("{home}/extensions/kendex-lane-context/extension.mjs");
         let settings_path = format!("{home}/settings.json");
-        answers[format!("cat --item KEN-H {extension_path}")] = extension;
-        answers[format!("cat --item KEN-H {settings_path}")] = settings;
-        answers[format!("put --item KEN-H {extension_path}")] = json!({});
-        answers[format!("put --item KEN-H {settings_path}")] = json!({});
-        for name in hooks {
-            for ext in ["sh", "json"] {
-                answers[format!("cat --item KEN-H {host}/.github/hooks/{name}.{ext}")] =
-                    json!({"exit": 2});
-                answers[format!("cat --item KEN-H {home}/hooks/{name}.{ext}")] = if held {
-                    json!({"stdout": "{}\n"})
-                } else {
-                    json!({"exit": 2})
-                };
+        if shipped {
+            let mut files = vec![(settings_path.clone(), settings.to_owned())];
+            if let Some(extension) = extension {
+                files.push((extension_path.clone(), extension.to_owned()));
             }
+            for name in hooks {
+                for ext in ["sh", "json"] {
+                    if held {
+                        files.push((format!("{home}/hooks/{name}.{ext}"), "{}\n".to_owned()));
+                    }
+                }
+            }
+            for (path, text) in files {
+                std::fs::create_dir_all(Path::new(&path).parent().unwrap()).unwrap();
+                std::fs::write(&path, text).unwrap();
+            }
+        } else {
+            let account = world.runner.state_dir().display().to_string();
+            let answers_path = world.scripts.join("lane-host.json");
+            let mut answers: Value =
+                serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+            answers
+                [format!("create --item KEN-H --repo o/r --harness copilot --account {account}")] = json!({
+                "stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\n")
+            });
+            answers[format!("cat --item KEN-H {extension_path}")] =
+                json!({"stdout": extension.unwrap()});
+            answers[format!("cat --item KEN-H {settings_path}")] = json!({"stdout": settings});
+            for name in hooks {
+                for ext in ["sh", "json"] {
+                    answers[format!("cat --item KEN-H {host}/.github/hooks/{name}.{ext}")] =
+                        json!({"exit": 2});
+                    answers[format!("cat --item KEN-H {home}/hooks/{name}.{ext}")] =
+                        json!({"stdout": "{}\n"});
+                }
+            }
+            std::fs::write(&answers_path, answers.to_string()).unwrap();
         }
-        std::fs::write(&answers_path, answers.to_string()).unwrap();
         let mut request = world.request();
         request["harness"] = json!("copilot");
         let panes_before = server.panes().len();
         let report = effect_report(&world.runner.op_fleet(&request));
         let calls = world.calls();
-        let extensions = world.puts(&extension_path);
-        let flags = world.puts(&settings_path);
+        // What the launch put: the planted provider keeps each put, the
+        // shipped one leaves the file changed where a put reached it.
+        let put = |path: &str, before: Option<&str>| -> Vec<String> {
+            if shipped {
+                std::fs::read_to_string(path)
+                    .ok()
+                    .filter(|after| Some(after.as_str()) != before)
+                    .into_iter()
+                    .collect()
+            } else {
+                world.puts(path)
+            }
+        };
+        let extensions = put(&extension_path, extension);
+        let flags = put(&settings_path, Some(settings));
         match expected {
             Ok(written) => {
                 assert_ne!(report["intent"]["outcome"], "failed", "{case}: {report}");
@@ -8205,11 +8438,12 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
             }
             Err(cause) => {
                 assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+                let cause = cause.replace("{home}", &home);
                 let observed = report["intent"]["observation"]["cause"]
                     .as_str()
                     .unwrap_or("");
                 assert!(
-                    observed.starts_with(cause)
+                    observed.starts_with(&cause)
                         && observed.ends_with(&format!(" host={}", world.provider())),
                     "{case}: {report}"
                 );
@@ -8231,7 +8465,7 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
 /// A pane agent `tmux split-window` starts takes its environment from the
 /// host's tmux server, started outside the provider's login shell whose key
 /// and proxy variables the parent reads. Through the real hosted
-/// `launch-lane`, the fixture provider and a private server: the typed line
+/// `launch-lane`, the shipped ssh provider and a private server: the typed line
 /// runs the session-environment step before the harness, so the pane agent
 /// the harness splits off reads the key its Pi `models.json` names and the
 /// proxy, as the parent does.
@@ -8239,16 +8473,44 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
 fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environment() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
-    let mut world = HostedLaunch::new(&server, dir.path(), record);
+    let mut world = HostedLaunch::ssh(&server, dir.path());
     world.runner.verify = Some(2);
-    let root = dir.path().join("pi-home");
+    // The host user's login shell sets the pool's key and proxy.
+    std::fs::write(
+        world.home().join(".bash_profile"),
+        "export POOL_KEY=fixture HTTPS_PROXY=http://proxy.test:3128\n",
+    )
+    .unwrap();
+    // The Pi root the provider names is the inventory's account on the host.
+    let root = world.clone().parent().unwrap().join("remote-account");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(
         root.join("models.json"),
         r#"{"providers":{"github-copilot":{"apiKey":"$POOL_KEY"}}}"#,
     )
     .unwrap();
+    std::fs::write(
+        root.join("settings.json"),
+        r#"{"compaction":{"enabled":false}}"#,
+    )
+    .unwrap();
+    commit_files(
+        &world.source(),
+        &[
+            (
+                ".pi/settings.json",
+                r#"{"packages":["./packages/@vanillagreen/pi-hooks"]}"#,
+            ),
+            (
+                ".pi/packages/@vanillagreen/pi-hooks/package.json",
+                r#"{"version":"1","pi":{"extensions":["./extensions/lane-mail-wake.ts"]}}"#,
+            ),
+            (
+                ".pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts",
+                "context_window",
+            ),
+        ],
+    );
     let parent_env = dir.path().join("parent.env");
     let child_env = dir.path().join("child.env");
     let child = dir.path().join("child.sh");
@@ -8271,29 +8533,6 @@ fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environm
             child.display()
         ),
     );
-    let path = world.scripts.join("lane-host.json");
-    let mut answers: Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    let account = world.runner.state_dir().display().to_string();
-    let host = world.host();
-    answers[format!("create --item KEN-H --repo o/r --harness pi --account {account}")] = json!({
-        "stdout": format!(
-            "ssh-target=lane.example\tpath={host}\tremote-prefix=exec env POOL_KEY=fixture HTTPS_PROXY=http://proxy.test:3128 PI_CODING_AGENT_DIR={} bash -c\tpi-root={}\n",
-            root.display(),
-            root.display()
-        )
-    });
-    answers[format!("cat --item KEN-H {}/settings.json", root.display())] =
-        json!({"stdout": r#"{"compaction":{"enabled":false}}"#});
-    answers[format!("cat --item KEN-H {host}/.pi/settings.json")] =
-        json!({"stdout": r#"{"packages":["./packages/@vanillagreen/pi-hooks"]}"#});
-    answers[format!("cat --item KEN-H {host}/.pi/packages/@vanillagreen/pi-hooks/package.json")] = json!({
-        "stdout": r#"{"version":"1","pi":{"extensions":["./extensions/lane-mail-wake.ts"]}}"#
-    });
-    answers[format!(
-        "cat --item KEN-H {host}/.pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
-    )] = json!({"stdout": "context_window"});
-    std::fs::write(path, answers.to_string()).unwrap();
     let mut request = world.request();
     request["harness"] = json!("pi");
     request["model"] = json!("github-copilot/gpt-6");
@@ -9345,7 +9584,7 @@ fn fleet_origin(checkouts: &[&Path]) {
 /// form is read against this row; the model recovery's continuation,
 /// in the form `effects/lane_model.rs::continuation` writes; a local relaunch
 /// that resumes its bound session; a hosted lane, through the runtime's
-/// provider call to a fixture provider.
+/// provider call to the shipped ssh provider.
 #[test]
 fn every_lane_brief_states_its_resolved_lane_output_once() {
     let text = |path: &str| {
@@ -9470,14 +9709,7 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
     }
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let world = HostedLaunch::new(
-        &server,
-        dir.path(),
-        json!({
-            "identity_file": "/srv/clone/.git/lane-host-pid",
-            "runtime": "/cache/bin/orch-runtime-k"
-        }),
-    );
+    let world = HostedLaunch::ssh(&server, dir.path());
     // The recording harness on the host.
     std::fs::remove_file(world.tools.join("claude")).unwrap();
     std::os::unix::fs::symlink(
@@ -9649,38 +9881,18 @@ fn a_launch_with_no_brief_file_starts_its_lane_on_the_armed_start_brief() {
     }
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let world = HostedLaunch::new(
-        &server,
-        dir.path(),
-        json!({
-            "identity_file": "/srv/clone/.git/lane-host-pid",
-            "runtime": "/cache/bin/orch-runtime-k"
-        }),
-    );
+    // A relaunch whose tree conflicts with the moved base, kept unrebased.
+    let world = HostedLaunch::ssh(&server, dir.path());
+    commit_files(&world.source(), &[("shared.txt", "base\n")]);
+    world.launched_and_retired();
+    commit_files(&world.host_path, &[("shared.txt", "item\n")]);
+    commit_files(&world.source(), &[("shared.txt", "moved base\n")]);
     std::fs::remove_file(world.tools.join("claude")).unwrap();
     std::os::unix::fs::symlink(
         fixtures().join("stub-record/claude"),
         world.tools.join("claude"),
     )
     .unwrap();
-    let mut fleet = world.runner.fleet();
-    let mut prior = lane("KEN-H", "stopped", &world.runner, Value::Null);
-    prior["host"] = json!(world.provider());
-    prior["kind"] = json!("ssh");
-    prior["launched_at"] = json!("2026-01-29T15:20:00Z");
-    fleet["lanes"] = json!([prior]);
-    world.runner.write_fleet(&fleet);
-    let account = world.runner.state_dir().display().to_string();
-    let answers_path = world.scripts.join("lane-host.json");
-    let mut answers: Value =
-        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-    answers[format!(
-        "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
-    )] = json!({"stdout": format!(
-        "ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\ttree=unrebased\n",
-        world.host()
-    )});
-    std::fs::write(&answers_path, answers.to_string()).unwrap();
     let report = effect_report(&world.runner.op_fleet(&world.request()));
     assert_eq!(report["intent"]["outcome"], "confirmed", "hosted: {report}");
     let recorded = launch_record_of(&world.host_path);
