@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Private bridge to orch's model classes for a task, and the attach window.
+# Private bridge to kendex's model classes for a task, and the attach window.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
-for package in mailbox; do
-  if [[ ! -d "$ROOT/$package/scripts" ]]; then
-    printf 'jarvis-session: dependency=%s\n' "$package" >&2
-    exit 1
-  fi
-done
+if [[ ! -d "$ROOT/mailbox/scripts" ]]; then
+  printf 'jarvis-session: dependency=mailbox\n' >&2
+  exit 1
+fi
 verb="$1"
 shift
 case "$verb" in
