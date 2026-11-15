@@ -447,11 +447,7 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
  {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-unsigned");
-    let mail_log = runner.state_dir().join("lane-mail.log");
-    runner
-        .env
-        .push(("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()));
+    let runner = suite_runner(&server, "stub-unsigned");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -486,15 +482,8 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
     );
     assert_eq!(intent["notice"]["key"], "successor-not-signed-in");
     assert_eq!(intent["notice"]["owner"], "sent");
-    let calls = std::fs::read_to_string(&mail_log).unwrap();
-    assert_eq!(
-        calls
-            .lines()
-            .filter(|l| l.starts_with("notice --item overseer --to owner"))
-            .count(),
-        1,
-        "{calls}"
-    );
+    let notices = owner_notices(runner.state_dir());
+    assert_eq!(notices.len(), 1, "{notices:?}");
 }
 
 /// A named account holding no credential its harness signs in with is no
@@ -1413,7 +1402,7 @@ fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     // caller's, unclaimed.
     let before = runner.fleet();
     let intent = before["intents"][0]["id"].as_str().unwrap().to_owned();
-    let mail_program = fixtures().join("lane-mail-quiet/lane-mail");
+    let mail_program = lane_mail();
     let mail_root = runner.state_dir().display().to_string();
     let refused = runner.run_env(
         &[
@@ -3136,12 +3125,8 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
 fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
-    let mail_log = runner.state_dir().join("lane-mail.log");
-    runner
-        .env
-        .push(("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()));
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let id = "request-transfer:overseer:3:1-1";
@@ -3162,17 +3147,11 @@ fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
         Some(0),
         "no open intent: {first}"
     );
-    let notices = |calls: &str| {
-        calls
-            .lines()
-            .filter(|l| l.starts_with("notice --item overseer --to owner --file "))
-            .count()
-    };
-    let calls = std::fs::read_to_string(&mail_log).unwrap_or_default();
-    assert_eq!(notices(&calls), 1, "the owed notice is sent once: {calls}");
-    assert!(
-        calls.lines().any(|l| l == format!("notice-text {text}")),
-        "{calls}"
+    let notices = owner_notices(runner.state_dir());
+    assert_eq!(
+        notices,
+        std::slice::from_ref(&text),
+        "the owed notice is sent once"
     );
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(intent["notice"]["owner"], "sent", "{intent}");
@@ -3182,11 +3161,10 @@ fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
         "the closed intent stays as it was"
     );
     let _ = reply(&runner.run(&["reconcile", "--fleet"]));
-    let calls = std::fs::read_to_string(&mail_log).unwrap_or_default();
     assert_eq!(
-        notices(&calls),
-        1,
-        "a sent notice is never sent again: {calls}"
+        owner_notices(runner.state_dir()),
+        [text],
+        "a sent notice is never sent again"
     );
 }
 
@@ -3201,14 +3179,6 @@ fn job_record(runner: &Runner, id: &str) -> String {
         .to_string()
 }
 
-fn owner_notices(mail_log: &Path) -> usize {
-    std::fs::read_to_string(mail_log)
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| l.starts_with("notice --item overseer --to owner --file "))
-        .count()
-}
-
 /// A live `request-transfer` on a fleet whose closed intent of an earlier
 /// generation still owes its notice sends the notice once, marks it `sent`,
 /// and proceeds to its own effect, `transfer-started`; the walk never fails
@@ -3217,12 +3187,8 @@ fn owner_notices(mail_log: &Path) -> usize {
 fn a_live_request_with_an_owed_notice_proceeds() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
-    let mail_log = runner.state_dir().join("lane-mail.log");
-    runner
-        .env
-        .push(("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()));
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let id = "request-transfer:overseer:2:1-1";
@@ -3254,7 +3220,7 @@ fn a_live_request_with_an_owed_notice_proceeds() {
         answer["result"].get("notices_unmarked").is_none(),
         "the mark was written: {answer}"
     );
-    assert_eq!(owner_notices(&mail_log), 1, "sent once");
+    assert_eq!(owner_notices(runner.state_dir()), [text], "sent once");
     let closed = runner.fleet()["intents"]
         .as_array()
         .unwrap()
@@ -3279,10 +3245,6 @@ fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
     runner.verify = Some(2);
     gated_readiness(&mut runner);
     runner.init_fleet();
-    let mail_log = runner.state_dir().join("lane-mail.log");
-    runner
-        .env
-        .push(("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()));
     let brief = runner.state_dir().join("handoff.md");
     std::fs::write(&brief, "HANDOFF\n").unwrap();
     let predecessor = Owned::sleep();
@@ -3305,15 +3267,9 @@ fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
     assert_eq!(log.last().unwrap()["kind"], "close");
     assert_eq!(log.last().unwrap()["item"], "overseer");
     assert_eq!(log.last().unwrap()["text"], text);
-    let calls = std::fs::read_to_string(&mail_log).unwrap();
-    let notices: Vec<&str> = calls
-        .lines()
-        .filter(|l| l.starts_with("notice --item overseer --to owner --file "))
-        .collect();
-    assert_eq!(notices.len(), 1, "{calls}");
-    assert!(
-        calls.lines().any(|l| l == format!("notice-text {text}")),
-        "{calls}"
+    assert_eq!(
+        owner_notices(runner.state_dir()),
+        std::slice::from_ref(&text)
     );
     // A reconcile after the closed outcome announces nothing again.
     let out = runner.run(&["reconcile", "--fleet"]);
@@ -3323,15 +3279,7 @@ fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
         runner.fleet()["fleet_log"].as_array().unwrap().len(),
         rows_before + 1
     );
-    let calls = std::fs::read_to_string(&mail_log).unwrap();
-    assert_eq!(
-        calls
-            .lines()
-            .filter(|l| l.starts_with("notice --item overseer"))
-            .count(),
-        1,
-        "{calls}"
-    );
+    assert_eq!(owner_notices(runner.state_dir()), [text]);
 }
 
 /// The runtime builds the successor's command from the typed launch fields
@@ -4070,10 +4018,7 @@ fn job_verb(dir: &Path, path: Option<&Path>, args: &[&str]) -> std::process::Out
     command
         .args(args)
         .current_dir(dir)
-        .env(
-            "LANE_MAIL_CLI",
-            fixtures().join("lane-mail-quiet/lane-mail"),
-        )
+        .env("LANE_MAIL_CLI", lane_mail())
         .env("TMUX", format!("{},0,0", dir.join("tmux.sock").display()));
     if let Some(path) = path {
         command.env("PATH", path);
@@ -4626,18 +4571,18 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
     let (bin, env) = watch_world(&work);
     runner.tools = Some(bin);
     runner.env.extend(env);
-    // The mailbox's first notice ends by a signal before it answers; every
-    // later call answers.
+    // The mailbox's first notice runs to its end and then ends by a signal
+    // before its answer reaches the caller; every later call answers.
     let sends = work.join("notices.log");
     let lost = work.join("notice-lost");
     let mailbox = work.join("lane-mail-lossy");
     write_executable(
         &mailbox,
         format!(
-            "#!/bin/bash\nif [ \"${{1:-}}\" = notice ]; then\n  printf 'notice\\n' >> '{sends}'\n  if [ ! -e '{lost}' ]; then : > '{lost}'; kill -KILL $$; fi\n  exit 0\nfi\nexec '{quiet}' \"$@\"\n",
+            "#!/bin/bash\nif [ \"${{1:-}}\" = notice ]; then\n  printf 'notice\\n' >> '{sends}'\n  out=\"$('{mail}' \"$@\")\" || exit $?\n  if [ ! -e '{lost}' ]; then : > '{lost}'; kill -KILL $$; fi\n  printf '%s\\n' \"$out\"\n  exit 0\nfi\nexec '{mail}' \"$@\"\n",
             sends = sends.display(),
             lost = lost.display(),
-            quiet = fixtures().join("lane-mail-quiet/lane-mail").display(),
+            mail = lane_mail().display(),
         ),
     );
     runner
@@ -5340,10 +5285,7 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
         ("ORCH_SECURITY_ALERTS".to_owned(), "off".to_owned()),
         (
             "ORCH_AGENT_RUNTIME".to_owned(),
-            fixtures()
-                .join("agent-runtime-built/agent-runtime")
-                .display()
-                .to_string(),
+            agent_runtime().display().to_string(),
         ),
         ("ORCH_STATE_DIR".to_owned(), dir.display().to_string()),
         ("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()),
@@ -5469,7 +5411,7 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
         ),
         (
             "--mail-program",
-            fixtures().join("lane-mail-quiet/lane-mail"),
+            lane_mail().to_path_buf(),
             "--mail-root",
             std::fs::canonicalize(runner.state_dir()).unwrap(),
             "--socket",
@@ -5549,8 +5491,15 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
         at_send["intents"][0]["notice"]["owner"], "owed",
         "{at_send}"
     );
-    assert_eq!(owner_notices(&mail_log), 1, "sent once");
     let calls = std::fs::read_to_string(&mail_log).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|l| l.starts_with("notice --item overseer --to owner --file "))
+            .count(),
+        1,
+        "sent once: {calls}"
+    );
     assert!(
         calls.lines().any(|l| l == format!("notice-text {text}")),
         "{calls}"
@@ -5946,10 +5895,7 @@ fn workflow_launch(
         ),
         (
             "LANE_MAIL_CLI".to_owned(),
-            fixtures()
-                .join("lane-mail-quiet/lane-mail")
-                .display()
-                .to_string(),
+            lane_mail().display().to_string(),
         ),
     ];
     world.extend(env.iter().cloned());
@@ -8018,10 +7964,7 @@ impl MarksWorld {
             // a notice or a server read stays inside it.
             (
                 "LANE_MAIL_CLI".to_owned(),
-                fixtures()
-                    .join("lane-mail-quiet/lane-mail")
-                    .display()
-                    .to_string(),
+                lane_mail().display().to_string(),
             ),
             (
                 "TMUX".to_owned(),
@@ -10017,7 +9960,7 @@ fn watch_reach(runner: &Runner, work: &Path) -> Vec<String> {
         .iter()
         .find(|(name, _)| name == "LANE_MAIL_CLI")
         .map(|(_, value)| std::path::PathBuf::from(value))
-        .unwrap_or_else(|| fixtures().join("lane-mail-quiet/lane-mail"));
+        .unwrap_or_else(|| lane_mail().to_path_buf());
     vec![
         "--mail-program".to_owned(),
         program.display().to_string(),

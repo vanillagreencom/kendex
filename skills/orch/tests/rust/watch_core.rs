@@ -1782,8 +1782,8 @@ fn link_fixture(fixture: &str, at: &Path) {
 /// that answers the credential ladder (`bin/gh`, its status from
 /// `bin/gh.auth-status`, absent for 0, every other call refused) and the
 /// github skill under the directory's install layout, where the ladder is,
-/// and an agent-runtime the readiness judge reads built (`version` alone
-/// answers). `bin` is first on `PATH`, so a row's own fakes go there too.
+/// and the built agent-runtime. `bin` is first on `PATH`, so a row's own
+/// fakes go there too.
 fn watch_env(command: &mut Command, dir: &Path) {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -1792,10 +1792,7 @@ fn watch_env(command: &mut Command, dir: &Path) {
     isolation_env(command);
     command
         .env("PATH", tool_path(&[&bin]))
-        .env(
-            "ORCH_AGENT_RUNTIME",
-            fixtures().join("agent-runtime-built/agent-runtime"),
-        )
+        .env("ORCH_AGENT_RUNTIME", agent_runtime())
         .env("LANE_MAIL_CLI", lane_mail())
         .env("ORCH_SECURITY_ALERTS", "off")
         .current_dir(dir);
@@ -2462,19 +2459,18 @@ fn plant_github(bin: &Path, sign_in: Value) {
 /// `watch run` on a one-second long cadence over [`SIGN_IN_REPO`], started
 /// with [`START_TOKEN`], which the fixture takes until a row expires it:
 /// the `gh` fixture first on `PATH`, the github package's reducer reading
-/// through it, the owner's mailbox the logging fixture, the runner's stderr
+/// through it, the owner's mailbox the real program's, the runner's stderr
 /// in `watch.err`.
 fn spawn_sign_in_watch(dir: &Path) -> Owned {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     link_fixture("gh/gh", &bin.join("gh"));
     real_github_script(&bin.join("pr-watch"), "pr-watch.sh");
-    link_fixture("lane-mail-owner/lane-mail", &bin.join("lane-mail"));
     plant_github(&bin, json!({"expired": [], "stored": null}));
     let mut command = watch_run_with(
         dir,
         &["--interval", "1", "--repo", SIGN_IN_REPO],
-        &bin.join("lane-mail"),
+        &lane_mail(),
     );
     command
         .env("GH_TOKEN", START_TOKEN)
@@ -2609,6 +2605,8 @@ fn a_token_that_expires_mid_life_is_renewed_and_the_pass_completes() {
 fn an_unrenewable_sign_in_reaches_the_owner_once_and_a_renewal_clears_it() {
     let dir = tempfile::tempdir().unwrap();
     let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    // A checkout, whose overseer mailbox the owner's notice lands in.
+    git_checkout(&state_dir);
     let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
     assert!(init.status.success(), "init: {}", stderr(&init));
     let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
@@ -2635,9 +2633,9 @@ fn an_unrenewable_sign_in_reaches_the_owner_once_and_a_renewal_clears_it() {
             .collect::<Vec<_>>()
     };
     let notices = || {
-        lines_of(&bin.join("lane-mail.log"))
+        owner_notices(&state_dir)
             .into_iter()
-            .filter(|l| l.starts_with("notice to=owner github-auth-failed: "))
+            .filter(|text| text.starts_with("github-auth-failed: "))
             .count()
     };
     assert_eq!(

@@ -7091,28 +7091,31 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
         "OVERSEE_WATCH_TRACKER".to_owned(),
         state.join("linear.sh").display().to_string(),
     ));
-    world.runner.env.push((
-        "LANE_MAIL_CLI".to_owned(),
-        fixtures()
-            .join("lane-mail-quiet/lane-mail")
-            .display()
-            .to_string(),
-    ));
     world
         .runner
         .env
         .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
     // The fourth status read is the close's first after its stop; the
-    // second capture is `lane status`'s.
-    world.plant_detached(
-        "exec true",
-        json!({
-            "status --item KEN-H --harness claude#4": {"stdout": "exited\n"},
-            "capture --item KEN-H#2": {"stdout": "❯ do the thing\n✻ Working… (esc to interrupt)\n"},
-            "close --item KEN-H": {"stdout": "kept=none\n"},
-            "list": {"stdout": ""},
-        }),
-    );
+    // second capture is `lane status`'s. The lane's mailbox on its host is
+    // empty: each of its files is absent there, the host answering.
+    let mut answers = json!({
+        "status --item KEN-H --harness claude#4": {"stdout": "exited\n"},
+        "capture --item KEN-H#2": {"stdout": "❯ do the thing\n✻ Working… (esc to interrupt)\n"},
+        "close --item KEN-H": {"stdout": "kept=none\n"},
+        "list": {"stdout": ""},
+    });
+    for file in [
+        "to-lane.jsonl",
+        "to-overseer.jsonl",
+        "to-lane.cursor",
+        "to-lane.cursor.lock",
+    ] {
+        answers[format!(
+            "cat --item KEN-H {}/tmp/lane-mail/KEN-H/{file}",
+            world.host()
+        )] = json!({"exit": 2});
+    }
+    world.plant_detached("exec true", answers);
     let panes = server.panes();
     let launched = effect_report(&world.runner.op_fleet(&world.request()));
     assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
@@ -7198,13 +7201,6 @@ fn an_exited_pane_verb_lane_holding_its_viewer_closes_on_its_exit() {
     let server = Server::start(dir.path(), "fleet");
     let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
     let mut world = HostedLaunch::new(&server, dir.path(), record);
-    world.runner.env.push((
-        "LANE_MAIL_CLI".to_owned(),
-        fixtures()
-            .join("lane-mail-quiet/lane-mail")
-            .display()
-            .to_string(),
-    ));
     world
         .runner
         .env

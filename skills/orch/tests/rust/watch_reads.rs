@@ -160,8 +160,8 @@ impl World {
         lines(&self.dir.path().join("lane-mail.log"))
     }
 
-    /// The settings a duty in this world runs under: the fixtures as the
-    /// tracker and the close's mailbox and validation programs, the team,
+    /// The settings a duty in this world runs under: the fixture as the
+    /// tracker, the real mailbox program as the close's, the team,
     /// and the alert pass off (its token file is a row's own plant; with
     /// none the pass prints its credential-unread line). A later `extra`
     /// entry overrides.
@@ -171,13 +171,9 @@ impl World {
             project: dir.to_path_buf(),
             common: dir.to_path_buf(),
         };
-        let fix = fixtures();
         let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
             ("OVERSEE_WATCH_TRACKER".into(), dir.join("linear").into()),
-            (
-                "LANE_MAIL_CLI".into(),
-                fix.join("lane-mail-quiet/lane-mail").into(),
-            ),
+            ("LANE_MAIL_CLI".into(), lane_mail().into()),
             ("LINEAR_TEAM".into(), "kendex".into()),
             ("ORCH_SECURITY_ALERTS".into(), "off".into()),
         ];

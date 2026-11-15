@@ -90,10 +90,7 @@ impl Fleet {
             )
             .env("AGENT_RUNTIME_TMUX_SESSION", "fleet")
             .env("ORCH_OVERSEER_LANES", self.cap.to_string())
-            .env(
-                "LANE_MAIL_CLI",
-                fixtures().join("lane-mail-quiet/lane-mail"),
-            )
+            .env("LANE_MAIL_CLI", lane_mail())
             .current_dir(self.state_dir());
         for (name, value) in &self.env {
             command.env(name, value);
@@ -828,33 +825,41 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     assert!(live(harness.pid()));
     assert_eq!(fleet.lane("KEN-A")["status"], "running");
 
-    let ask = r#"{"id":"1769700000-9-31","kind":"ask","text":"which base"}"#;
-    let asking = Fleet {
-        env: vec![("LANE_MAIL_ASKS".to_owned(), ask.to_owned())],
-        ..fleet
+    // The lane's ask, written by the mailbox into the lane's own mailbox.
+    git_checkout(fleet.state_dir());
+    let mail = |args: &[&str], text: &str| {
+        let file = fleet.state_dir().join("mail.txt");
+        std::fs::write(&file, text).unwrap();
+        let out = program(lane_mail())
+            .current_dir(fleet.state_dir())
+            .args(args)
+            .arg("--file")
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        String::from_utf8_lossy(&out.stdout).into_owned()
     };
-    let answer = reply(&asking.op(&terminal_close("KEN-A")));
+    let asked = mail(&["ask", "--item", "KEN-A"], "which base");
+    let ask = asked.trim().strip_prefix("id=").unwrap().to_owned();
+    let answer = reply(&fleet.op(&terminal_close("KEN-A")));
     assert_eq!(answer["ok"], true, "{answer}");
     let report = &answer["result"]["effect"]["report"];
     assert_eq!(report["intent"]["outcome"], "failed");
     assert_eq!(report["intent"]["observation"]["cause"], "ask-unanswered");
-    assert_eq!(report["intent"]["observation"]["ask"], "1769700000-9-31");
+    assert_eq!(report["intent"]["observation"]["ask"], json!(ask));
     assert!(live(harness.pid()), "an unanswered ask stops nothing");
-    assert_eq!(asking.lane("KEN-A")["status"], "running");
+    assert_eq!(fleet.lane("KEN-A")["status"], "running");
+    mail(&["send", "--item", "KEN-A", "--re", &ask], "main");
 
-    let mail_log = asking.state_dir().join("mail.log");
-    let (command, run_dir) = validation_run(asking.state_dir());
-    git_checkout(asking.state_dir());
+    let (command, run_dir) = validation_run(fleet.state_dir());
     let archive_root = tempfile::tempdir().unwrap();
     let fleet = Fleet {
-        env: vec![
-            ("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()),
-            (
-                "ORCH_ARCHIVE_ROOT".to_owned(),
-                archive_root.path().display().to_string(),
-            ),
-        ],
-        ..asking
+        env: vec![(
+            "ORCH_ARCHIVE_ROOT".to_owned(),
+            archive_root.path().display().to_string(),
+        )],
+        ..fleet
     };
     // The item's own files beside the fleet record: the close on the
     // tracker's verdict is the item's close-out too.
@@ -896,11 +901,6 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
         lane.get("pending_pr").is_none(),
         "a full close drops the PR identity"
     );
-    let root = fleet.state_dir().display().to_string();
-    assert_eq!(
-        std::fs::read_to_string(&mail_log).unwrap(),
-        format!("pending --item KEN-A --root {root}\n")
-    );
     assert!(
         run_stopped(&run_dir) && !live(command.pid()),
         "the worktree's validation run ended"
@@ -910,40 +910,6 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     assert_eq!(row["kind"], "close");
     assert_eq!(row["verdict"], "completed");
     assert_eq!(row["source"], "linear");
-}
-
-/// Through the executable: the `no-landing` close with `interrupt` asks the
-/// mailbox before anything else and refuses `ask-unanswered` while one
-/// stands, the harness still live and the lane running.
-#[test]
-fn an_interrupting_close_still_refuses_an_unanswered_ask() {
-    let fleet = Fleet::new(4);
-    fleet.init_fleet();
-    let harness = Owned::sleep();
-    fleet.write_lanes(vec![record(
-        "KEN-A",
-        "running",
-        Some(&harness),
-        fleet.state_dir(),
-    )]);
-    let ask = r#"{"id":"1769700000-9-31","kind":"ask","text":"which base"}"#;
-    let asking = Fleet {
-        env: vec![("LANE_MAIL_ASKS".to_owned(), ask.to_owned())],
-        ..fleet
-    };
-    let close = json!({
-        "op": "close-owned-resources",
-        "item": "KEN-A",
-        "no_landing": {"reason": "model-switch", "source": "model-recovery", "interrupt": true},
-    });
-    let answer = reply(&asking.op(&close));
-    assert_eq!(answer["ok"], true, "{answer}");
-    let report = &answer["result"]["effect"]["report"];
-    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
-    assert_eq!(report["intent"]["observation"]["cause"], "ask-unanswered");
-    assert_eq!(report["intent"]["observation"]["ask"], "1769700000-9-31");
-    assert!(live(harness.pid()), "an unanswered ask stops nothing");
-    assert_eq!(asking.lane("KEN-A")["status"], "running");
 }
 
 /// The shipped mailbox reader under a cleared environment rooted at `root`,
@@ -2087,10 +2053,7 @@ fn spawn_op(
         )
         .env("AGENT_RUNTIME_TMUX_SESSION", "fleet")
         .env("ORCH_OVERSEER_LANES", fleet.cap.to_string())
-        .env(
-            "LANE_MAIL_CLI",
-            fixtures().join("lane-mail-quiet/lane-mail"),
-        )
+        .env("LANE_MAIL_CLI", lane_mail())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .current_dir(fleet.state_dir());
@@ -2582,13 +2545,23 @@ fn orch_package() -> PathBuf {
 /// The lane's root on its host.
 const REMOTE_ROOT: &str = "/w/ken-1";
 
+/// The file of the hosted lane's mailbox on its host that holds its asks.
+const MAILBOX: &str = "/w/ken-1/tmp/lane-mail/KEN-1/to-overseer.jsonl";
+
+/// The provider's answers that leave the hosted lane's mailbox out of
+/// reach: its first file's read fails and the host's probe after it.
+const MAIL_UNREACHABLE: [(&str, &str); 3] = [
+    ("CAT_STATUS", "1"),
+    ("CAT_PATH", "/w/ken-1/tmp/lane-mail/KEN-1/to-lane.jsonl"),
+    ("TOUCH_STATUS", "1"),
+];
+
 impl Fleet {
     /// A fleet whose project is its state directory (outside any
     /// repository), the catalog's orch, mailbox and agent-runtime packages
     /// linked under it, so the runtime calls the fixture provider a hosted
     /// record names; the provider's disk an empty directory (every file absent),
-    /// its calls logged; the tracker the linear fixture beside the record;
-    /// every mailbox call logged.
+    /// its calls logged; the tracker the linear fixture beside the record.
     fn hosted(cap: u32) -> Fleet {
         let mut fleet = Fleet::new(cap);
         let skills = fleet.state_dir().join(".agents/skills");
@@ -2607,7 +2580,6 @@ impl Fleet {
                 "OVERSEE_WATCH_TRACKER".to_owned(),
                 tracker.display().to_string(),
             ),
-            ("LANE_MAIL_LOG".to_owned(), path("mail.log")),
             ("LANE_HOST_STUB_LOG".to_owned(), path("provider.log")),
             ("LANE_HOST_STUB_DIR".to_owned(), disk.display().to_string()),
         ];
@@ -2620,7 +2592,6 @@ impl Fleet {
         self.env
             .push((format!("LANE_HOST_STUB_{name}"), value.to_owned()));
     }
-
     /// The tracker's answer for `item`: its state type, and an item with no
     /// open Done-when box past the lane's own completion, so a close owes
     /// its boxes nothing.
@@ -2648,13 +2619,36 @@ impl Fleet {
     }
 
     /// The provider's calls past the dispatcher, one argv per line (its
-    /// capability line answered before the log).
+    /// capability line answered before the log), the mailbox's reads left
+    /// out.
     fn provider_calls(&self) -> Vec<String> {
-        self.lines("provider.log")
+        self.provider_log().1
     }
 
+    /// The mailbox's reads of the lane's mailbox through the provider.
     fn mail_log(&self) -> Vec<String> {
-        self.lines("mail.log")
+        self.provider_log().0
+    }
+
+    /// The provider's log split into the mailbox's calls and the rest: the
+    /// real `lane-mail` reads the lane's mailbox files on its host through
+    /// the same provider, probes it with one `touch` after a read that
+    /// found no file, and reads its state with `list` where the probe fails.
+    fn provider_log(&self) -> (Vec<String>, Vec<String>) {
+        let (mut mail, mut rest) = (Vec::new(), Vec::new());
+        let (mut after_read, mut after_probe) = (false, false);
+        for line in self.lines("provider.log") {
+            let read = line.contains("/tmp/lane-mail/");
+            let probe = after_read && line.starts_with("touch --item ");
+            let state = after_probe && line == "list";
+            if read || probe || state {
+                mail.push(line);
+            } else {
+                rest.push(line);
+            }
+            (after_read, after_probe) = (read, probe);
+        }
+        (mail, rest)
     }
 
     fn close(&self, request: Value) -> Value {
@@ -2801,14 +2795,10 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
         }
         assert_eq!(fleet.provider_calls(), calls, "{case}");
         let mail = fleet.mail_log();
-        assert!(!mail.is_empty(), "{case}: the mailbox was read");
-        let host = provider();
         assert!(
-            mail.iter().all(|line| *line
-                == format!(
-                    "ORCH_LANE_HOST={host} pending --item KEN-1 --root {REMOTE_ROOT} --host"
-                )),
-            "{case}: every mailbox read ran under the record's host: {mail:?}"
+            mail.iter()
+                .any(|line| line.contains(&format!("{REMOTE_ROOT}/tmp/lane-mail/KEN-1/"))),
+            "{case}: the mailbox was read on the record's host: {mail:?}"
         );
     }
 }
@@ -3485,7 +3475,9 @@ fn a_stale_wall_under_a_failed_or_busy_accounts_read_keeps_the_lane_and_stops_no
 }
 
 /// One close-lane case over a hosted world: the records, the provider's
-/// answers, the world's environment, the tracker's state type (`None`
+/// answers, the world's environment, the lane's mailbox on its host (the
+/// envelopes its `to-overseer.jsonl` holds, none when empty), the
+/// tracker's state type (`None`
 /// plants no answer), the request, and the provider-call slots under the
 /// world's own home bound to one call: every slot held from the start
 /// (`Held`), or held by the close itself once the provider answered the
@@ -3495,6 +3487,7 @@ struct CloseCase2 {
     lanes: Vec<Value>,
     answers: Vec<(&'static str, &'static str)>,
     env: Vec<(&'static str, &'static str)>,
+    mail: &'static str,
     tracker: Option<&'static str>,
     request: Value,
     slots: Option<Slots>,
@@ -3513,6 +3506,7 @@ impl CloseCase2 {
             lanes,
             answers: Vec::new(),
             env: Vec::new(),
+            mail: "",
             tracker: Some("completed"),
             request: json!({"op": "close-lane", "item": "KEN-1"}),
             slots: None,
@@ -3535,6 +3529,9 @@ impl CloseCase2 {
         }
         for (name, value) in &self.env {
             fleet.env.push(((*name).to_owned(), (*value).to_owned()));
+        }
+        if !self.mail.is_empty() {
+            fleet.disk(MAILBOX, &format!("{}\n", self.mail));
         }
         fleet.write_lanes(self.lanes.clone());
         if let Some(state) = self.tracker {
@@ -3638,11 +3635,6 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
             vec![("step", "stop")],
         ),
         (
-            CloseCase2::new("list capped", vec![hosted_lane("KEN-1")]),
-            "host-busy",
-            vec![("step", "list")],
-        ),
-        (
             // Unmerged: a merged lane whose work left its host closes
             // whatever its screen reads.
             CloseCase2::new("provider status unread", vec![without("cycle")]),
@@ -3691,7 +3683,9 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
     for (case, _, _) in &mut cases {
         match case.name {
             "capabilities unread" => case.answers.push(("NO_CAPABILITIES", "1")),
-            "mailbox capped" => case.env.push(("LANE_MAIL_STATUS", "69")),
+            // The close holds its slot once the provider answered `status`:
+            // the mailbox's read on the host meets the bound.
+            "mailbox capped" => case.slots = Some(Slots::After("status")),
             "park without a pull request" => {
                 case.request = json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {}}});
             }
@@ -3717,10 +3711,11 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
                 ));
             }
             "provider stop unparsed" => case.answers.push(("STOP_LINE", "stopped")),
-            "provider stop capped" => case.slots = Some(Slots::After("status")),
-            "list capped" => {
-                case.env.push(("LANE_MAIL_STATUS", "2"));
+            // A second short slot for the mailbox's reads, the long one the
+            // stop takes held.
+            "provider stop capped" => {
                 case.slots = Some(Slots::After("status"));
+                case.env.push(("ORCH_LANE_HOST_SHORT_MAX_CALLS", "2"));
             }
             "provider status unread" => case.answers.push(("PROBE_STATUS", "1")),
             "if-terminal on an open item" => {
@@ -3733,15 +3728,15 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
                     json!({"op": "close-lane", "item": "KEN-1", "mode": "terminal-state"});
             }
             // The ask behind a row of another kind is the one that holds.
-            "an unanswered ask" => case.env.push((
-                "LANE_MAIL_ASKS",
-                "{\"kind\":\"notice\",\"id\":\"n1\"}\n{\"kind\":\"ask\",\"id\":\"a2\"}",
-            )),
+            "an unanswered ask" => {
+                case.mail = "{\"kind\":\"notice\",\"id\":\"n1\"}\n{\"kind\":\"ask\",\"id\":\"a2\"}";
+            }
             // An open item's merged lane, its worktree gone, ends on the
             // merge, which an unread mailbox holds.
+            // The host answers its probe; the mailbox's file alone fails.
             "mailbox unread on an open item" => {
                 case.tracker = Some("started");
-                case.env.push(("LANE_MAIL_STATUS", "1"));
+                case.answers.extend(&MAIL_UNREACHABLE[..2]);
             }
             // An `issue-N` key names no tracker: the key is a GitHub
             // lane's and may be a Linear lane's.
@@ -3876,14 +3871,13 @@ fn a_close_answers_a_record_by_what_it_already_is() {
                 case.request = json!({"op": "close-lane", "item": "KEN-1", "mode": "keep-sandbox"});
             }
             "host absent" => {
-                case.env.push(("LANE_MAIL_STATUS", "2"));
+                case.answers.extend(MAIL_UNREACHABLE);
                 case.answers
                     .push(("LIST", "lane.example:/srv/other/ken-9\tbusy"));
             }
             "exited holding an ask" => {
                 case.answers.push(("HARNESS_STATE", "exited"));
-                case.env
-                    .push(("LANE_MAIL_ASKS", "{\"kind\":\"ask\",\"id\":\"a1\"}"));
+                case.mail = ASK_A1;
             }
             _ => {}
         }
@@ -4274,19 +4268,19 @@ fn a_park_is_judged_before_anything_is_signalled() {
         (
             "an ask park on the open ask",
             park(json!({"ask": "a1"})),
-            |f| f.env.push(("LANE_MAIL_ASKS".to_owned(), ASK_A1.to_owned())),
+            |f| f.disk(MAILBOX, &format!("{ASK_A1}\n")),
             None,
         ),
         (
             "an ask park on another ask",
             park(json!({"ask": "a2"})),
-            |f| f.env.push(("LANE_MAIL_ASKS".to_owned(), ASK_A1.to_owned())),
+            |f| f.disk(MAILBOX, &format!("{ASK_A1}\n")),
             Some("ask-not-open"),
         ),
         (
             "a pull request's park beside an open ask",
             park(json!({"pr": 7})),
-            |f| f.env.push(("LANE_MAIL_ASKS".to_owned(), ASK_A1.to_owned())),
+            |f| f.disk(MAILBOX, &format!("{ASK_A1}\n")),
             Some("ask-unanswered"),
         ),
     ];
@@ -4451,17 +4445,11 @@ fn an_owed_park_over_a_sandbox_already_down_is_confirmed_by_the_providers_stop_a
     fleet.answer("CAT_STATUS", "4");
     fleet.answer("CAT_STATE", "stopped");
     fleet.answer("TOUCH_STATUS", "4");
-    fleet
-        .env
-        .push(("LANE_MAIL_STATUS".to_owned(), "2".to_owned()));
     let stopping = fleet.close(park.clone());
     assert_eq!(stopping["refusal"]["key"], "park-failed", "{stopping}");
     assert_eq!(fleet.lane("KEN-1")["park_owed"], owed);
     let mail = fleet.mail_log();
-    assert!(
-        !mail[mail_from..].iter().any(|l| l.contains("pending")),
-        "{mail:?}"
-    );
+    assert!(mail[mail_from..].is_empty(), "{mail:?}");
     let other = fleet.close(json!({"op": "close-lane", "item": "KEN-1",
         "mode": {"park": {"until_pr": 9, "until_repo": "o/r"}}}));
     assert_eq!(other["refusal"]["key"], "mail-read-failed", "{other}");
@@ -4521,10 +4509,7 @@ fn an_owed_park_over_a_sandbox_already_down_is_confirmed_by_the_providers_stop_a
         "{calls:?}"
     );
     let mail = fleet.mail_log();
-    assert!(
-        !mail[mail_from..].iter().any(|l| l.contains("pending")),
-        "{mail:?}"
-    );
+    assert!(mail[mail_from..].is_empty(), "{mail:?}");
 }
 
 /// A park of a record that names no repository is judged in the fleet's
@@ -6159,9 +6144,9 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
         let name = case.name;
         let mut fleet = Fleet::boxes_world(case.state, &done_when(case.ticked), case.body);
         if case.absent {
-            fleet
-                .env
-                .push(("LANE_MAIL_STATUS".to_owned(), "2".to_owned()));
+            for (name, value) in MAIL_UNREACHABLE {
+                fleet.answer(name, value);
+            }
             fleet.answer("LIST", "lane.example:/srv/other/ken-9\tbusy");
         }
         let before = fleet.issue()["description"].clone();

@@ -138,10 +138,7 @@ impl Fleet {
                 "PATH",
                 support::tool_path(&[fixtures().join(self.gh_fixture).as_path()]),
             )
-            .env(
-                "LANE_MAIL_CLI",
-                fixtures().join("lane-mail-quiet/lane-mail"),
-            )
+            .env("LANE_MAIL_CLI", lane_mail())
             // No project settings or private env reach the test's own tree.
             .current_dir(self.state_dir());
         command

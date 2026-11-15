@@ -41,9 +41,10 @@ use serde_json::{Value, json};
 use support::*;
 
 /// The settings a wake in `dir` runs under: the agent-runtime command
-/// `agent_runtime`, the two stub harnesses, the mailbox fixture the owner
-/// is alerted through (`lane-mail` in `dir`, which logs beside itself) and
-/// the mail interval the scheduler's cadence is read from; the paste bound
+/// `agent_runtime`, the two stub harnesses, the real mailbox program the
+/// owner is alerted through (into the overseer mailbox of the checkout
+/// `dir`) and the mail interval the scheduler's cadence is read from; the
+/// paste bound
 /// is the production one, and nothing is read from the test's own tree.
 fn settings_in(dir: &Path, agent_runtime: &Path) -> Settings {
     settings_with(dir, agent_runtime, &[])
@@ -67,10 +68,7 @@ fn settings_with(dir: &Path, agent_runtime: &Path, extra: &[(&str, &str)]) -> Se
             agent_runtime.as_os_str().into(),
         ),
         ("AGENT_RUNTIME_HARNESS_BINARIES".into(), binaries.into()),
-        (
-            "LANE_MAIL_CLI".into(),
-            dir.join("lane-mail").as_os_str().into(),
-        ),
+        ("LANE_MAIL_CLI".into(), lane_mail().as_os_str().into()),
         ("ORCH_WATCH_MAIL_INTERVAL".into(), "20".into()),
     ];
     environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
@@ -139,14 +137,8 @@ impl Fleet {
         let cwd = root.join("work");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&cwd).unwrap();
-        // The mailbox fixture under the name the duty runs, logging each
-        // call beside that name: no wrapper is written at test time, which
-        // another row's child between fork and exec would hold open.
-        std::os::unix::fs::symlink(
-            fixtures().join("lane-mail-owner/lane-mail"),
-            root.join("lane-mail"),
-        )
-        .unwrap();
+        // A checkout, whose overseer mailbox an owner notice lands in.
+        git_checkout(&root);
         let init = isolated()
             .args(["--state-dir", &root.display().to_string()])
             .args(["state", "init", "--fleet"])
@@ -350,13 +342,22 @@ impl Fleet {
             .collect()
     }
 
-    /// Every notice the mailbox fixture was asked to send, `to=<to>` and
-    /// the notice's words as they stood at the call.
+    /// Every notice the overseer mailbox holds, `to=<to>` and the first line
+    /// of the notice's words.
     fn notices(&self) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("lane-mail.log"))
+        std::fs::read_to_string(self.root.join("tmp/lane-mail/overseer/to-overseer.jsonl"))
             .unwrap_or_default()
             .lines()
-            .filter_map(|l| l.strip_prefix("notice to=").map(|l| format!("to={l}")))
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|envelope| envelope["kind"] == "notice")
+            .map(|envelope| {
+                let text = envelope["text"].as_str().unwrap_or_default();
+                format!(
+                    "to={} {}",
+                    envelope["to"].as_str().unwrap_or_default(),
+                    text.lines().next().unwrap_or_default()
+                )
+            })
             .collect()
     }
 }

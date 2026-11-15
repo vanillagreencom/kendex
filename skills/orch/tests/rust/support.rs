@@ -218,12 +218,17 @@ pub fn binary() -> PathBuf {
 /// The agent-runtime binary, built once from the sibling crate into this
 /// suite's own target directory: Cargo builds a dependency's library alone,
 /// and no stable artifact dependency names its binary, so the suite asks for
-/// it by the same command.
+/// it by the same command. A row's isolated child takes the build its parent
+/// made before starting it: under the cleared environment no toolchain is
+/// found, and rustup would fetch one.
 pub fn agent_runtime() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
         let own = binary();
         let profile_dir = own.parent().expect("the binary's directory");
+        if std::env::var_os(ISOLATED_ROW).is_some() {
+            return profile_dir.join("agent-runtime");
+        }
         let target = profile_dir.parent().expect("the target directory");
         let mut args = vec![
             "build",
@@ -251,6 +256,60 @@ pub fn agent_runtime() -> &'static Path {
         assert!(bin.is_file(), "{}", bin.display());
         bin
     })
+}
+
+/// The mailbox's real `lane-mail` as an installed checkout lays it out, so
+/// it finds its siblings where an install puts them: its library beside
+/// it, orch's entry two folders up (this build's binary), whose `host` verb
+/// carries a hosted lane's mailbox read to the lane's provider, and
+/// agent-runtime's entry (the built binary), whose controller status a send
+/// to the overseer asks. Linked once per build under its own temporary
+/// directory; a link already there is this build's.
+pub fn lane_mail() -> &'static Path {
+    static CLI: OnceLock<PathBuf> = OnceLock::new();
+    CLI.get_or_init(|| {
+        let mailbox = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../mailbox/scripts")
+            .canonicalize()
+            .expect("the mailbox package's scripts");
+        let packages = Path::new(env!("CARGO_TARGET_TMPDIR")).join("packages");
+        for (at, target) in [
+            ("mailbox/scripts/lane-mail", mailbox.join("lane-mail")),
+            ("mailbox/scripts/lib", mailbox.join("lib")),
+            ("orch/scripts/orch-runtime", binary()),
+            (
+                "agent-runtime/scripts/agent-runtime",
+                agent_runtime().to_path_buf(),
+            ),
+        ] {
+            let at = packages.join(at);
+            std::fs::create_dir_all(at.parent().expect("a link's folder")).unwrap();
+            match std::os::unix::fs::symlink(&target, &at) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => panic!("link {}: {e}", at.display()),
+            }
+        }
+        packages.join("mailbox/scripts/lane-mail")
+    })
+}
+
+/// The texts of the owner notices the real mailbox holds in the overseer
+/// mailbox of the checkout `root`, in the order they landed.
+pub fn owner_notices(root: &Path) -> Vec<String> {
+    std::fs::read_to_string(root.join("tmp/lane-mail/overseer/to-overseer.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|envelope| envelope["kind"] == "notice" && envelope["to"] == "owner")
+        .map(|envelope| {
+            envelope["text"]
+                .as_str()
+                .unwrap_or_default()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
 }
 
 /// The binary as every suite starts it: its environment
@@ -380,6 +439,9 @@ pub fn reducer_listing(pulls: Vec<Value>) -> Value {
         "mergeQueue": null}}}})
 }
 
+/// The mark an isolated row's child runs under, naming the row.
+const ISOLATED_ROW: &str = "ORCH_TEST_ISOLATED_ROW";
+
 /// Whether the calling row runs here: a row that runs the runtime's code
 /// in its own process calls this first with its whole name and returns
 /// when it answers false. The runtime's git reads keep their caller's
@@ -388,13 +450,13 @@ pub fn reducer_listing(pulls: Vec<Value>) -> Value {
 /// which answers true there; the parent asserts that the child ran the
 /// row, alone, and passed.
 pub fn isolated_row(name: &str) -> bool {
-    const MARK: &str = "ORCH_TEST_ISOLATED_ROW";
-    if std::env::var_os(MARK).is_some() {
+    if std::env::var_os(ISOLATED_ROW).is_some() {
         return true;
     }
+    agent_runtime();
     let out = program(std::env::current_exe().expect("the test binary"))
         .args([name, "--exact", "--test-threads=1"])
-        .env(MARK, name)
+        .env(ISOLATED_ROW, name)
         .output()
         .expect("the row's isolated child");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1028,9 +1090,9 @@ impl Runner {
     }
 
     /// The runner's environment on `command`: the fleet server and session,
-    /// the stub harness, the quiet mailbox and validation stubs (a row
-    /// plants asks through `LANE_MAIL_ASKS` in `env`), an agent-runtime the
-    /// readiness judge reads built, the bound, the tools and the runner's
+    /// the stub harness, the real mailbox program (a row plants an ask
+    /// through it into the lane's own mailbox), the built
+    /// agent-runtime, the bound, the tools and the runner's
     /// own entries; the same for a child that is not the binary itself,
     /// such as the detached line the wall route starts.
     pub fn apply_env(&self, command: &mut Command) {
@@ -1041,14 +1103,8 @@ impl Runner {
                 "AGENT_RUNTIME_HARNESS_BINARIES",
                 format!("claude={}", self.stub.display()),
             )
-            .env(
-                "LANE_MAIL_CLI",
-                fixtures().join("lane-mail-quiet/lane-mail"),
-            )
-            .env(
-                "ORCH_AGENT_RUNTIME",
-                fixtures().join("agent-runtime-built/agent-runtime"),
-            )
+            .env("LANE_MAIL_CLI", lane_mail())
+            .env("ORCH_AGENT_RUNTIME", agent_runtime())
             .env(
                 "AGENT_RUNTIME_ACCOUNT_STATE_DIR",
                 self.state_dir().join("tmp/oversee-watch"),
@@ -1087,13 +1143,7 @@ impl Runner {
                 "AGENT_RUNTIME_HARNESS_BINARIES",
                 format!("claude={}", self.stub.display()),
             )
-            // The mailbox and validation runner a close asks, as stubs that
-            // answer no asks and stop nothing; a row plants asks through
-            // `LANE_MAIL_ASKS` in `env`.
-            .env(
-                "LANE_MAIL_CLI",
-                fixtures().join("lane-mail-quiet/lane-mail"),
-            )
+            .env("LANE_MAIL_CLI", lane_mail())
             .env("PATH", combined)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

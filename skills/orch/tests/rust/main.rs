@@ -169,7 +169,7 @@ fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
     let root = fs::canonicalize(dir.path()).unwrap();
     let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let lane_mail = packages.join("mailbox/scripts/lane-mail");
-    let built = support::fixtures().join("agent-runtime-built/agent-runtime");
+    let built = support::agent_runtime();
     let path = std::ffi::OsString::from(support::tool_path(&[]));
     let watch = |runtime: &Path, mail: &Path| {
         ready_in(
@@ -207,7 +207,7 @@ fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
     let closed = root.join("closed-lane-mail");
     fs::write(&closed, "#!/bin/sh\n").unwrap();
     fs::set_permissions(&closed, fs::Permissions::from_mode(0o644)).unwrap();
-    let (lines, code) = watch(&built, &closed);
+    let (lines, code) = watch(built, &closed);
     assert_eq!(
         (lines, code),
         (
