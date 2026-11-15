@@ -752,16 +752,19 @@ pub(super) fn member_catalog(
         }
         MemberSource::Marketplace { repo, .. } => {
             let identity = crate::source_ref::repo_identity(repo);
+            let folder_identity = crate::source_ref::repo_identity(&crate::paths::slashed(
+                std::path::Path::new(repo),
+            ));
             let matches: Vec<_> = subscriptions
                 .iter()
                 .filter(|row| {
                     if row.is_remote {
                         row.repo_identity == identity
                     } else {
-                        crate::source_ref::repo_identity(&row.repo_identity) == identity
+                        crate::source_ref::repo_identity(&row.repo_identity) == folder_identity
                             || crate::source_ref::repo_identity(&crate::paths::slashed(
                                 std::path::Path::new(&row.reference),
-                            )) == identity
+                            )) == folder_identity
                     }
                 })
                 .collect();
