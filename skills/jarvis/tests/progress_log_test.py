@@ -134,7 +134,7 @@ class ProgressLog(MailWorld):
                 self.assertEqual(result.stdout, "")
 
     def test_home_relations(self):
-        # Notes 24,33-34; Handoff 34; Progress records 87; replacement 101.
+        # Notes 24; Handoff 34; Progress records 87; replacement 102.
         memory = self.home / "memory"
         memory.mkdir()
         old = "### Prior\nSource: owner · Date: 2000-01-01 · Supersedes: none\n"
@@ -144,8 +144,17 @@ class ProgressLog(MailWorld):
             ("retained", good, state_handoff("- KEN-1: next\n"), []),
             ("missing prior", new, state_handoff("- KEN-1: next\n"),
              [("memory/facts.md", "1", "memory-supersedes")]),
-            ("still current", old + new, state_handoff("- KEN-1: next\n"),
-             [("memory/facts.md", "1", "memory-current")]),
+            ("missing linked file", new.replace("facts.md#prior", "absent.md#prior"), state_handoff("- KEN-1: next\n"),
+             [("memory/facts.md", "1", "memory-supersedes")]),
+            ("free-form prior", good.replace("[Prior](facts.md#prior)", "Prior in facts.md"),
+             state_handoff("- KEN-1: next\n"), []),
+            ("split historical marking", old + "Superseded.\nReplacement: Current.\n" + new,
+             state_handoff("- KEN-1: next\n"), []),
+            ("historical marking not parsed", old + new, state_handoff("- KEN-1: next\n"), []),
+            ("file link", good.replace("[Prior](facts.md#prior)", "[old subject](facts.md)"),
+             state_handoff("- KEN-1: next\n"), []),
+            ("external source", good.replace("[Prior](facts.md#prior)", "[prior](https://example.com/facts#prior)"),
+             state_handoff("- KEN-1: next\n"), []),
             ("duplicate", good, state_handoff("- KEN-1: next\n- KEN-1: other\n"),
              [("state/handoff.md", "6", "state-entry-ambiguous")]),
             ("missing agents", good, state_handoff("- KEN-1: next\n").replace("## Sub-agents", "## Others"),

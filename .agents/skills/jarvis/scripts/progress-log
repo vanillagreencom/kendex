@@ -52,6 +52,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import subprocess
 import sys
@@ -346,28 +347,19 @@ def home_check(home):
                     if not fields[field]:
                         failures.append((name, start + 1, "memory-field-" + field.lower(),
                                          "memory note requires " + field))
-                notes.append((name, start + 1, heads[index][2], body, fields["Supersedes"]))
-    for name, number, title, body, prior in notes:
-        if not prior or prior.lower() == "none":
-            continue
-        links = re.findall(r"\[([^]]+)\]\(([^)]+)\)", prior)
-        targets = []
-        for other in notes:
-            other_name, _, other_title, _, _ = other
-            anchor = re.sub(r"[^\w -]", "", other_title.lower()).replace(" ", "-")
-            if links:
-                for label, destination in links:
-                    path, _, fragment = destination.partition("#")
-                    target = (Path(name).parent / path).as_posix() if path else name
-                    if target == other_name and (fragment == anchor if fragment else label == other_title):
-                        targets.append(other)
-            elif prior.strip('`"') == other_title:
-                targets.append(other)
-        if not targets:
-            failures.append((name, number, "memory-supersedes", "references/memory.md:24"))
-        for old_name, old_number, old_title, old_body, _ in targets:
-            if not re.search(r"\bsuperseded\b[^\n]*" + re.escape(title), old_title + "\n" + old_body, re.I):
-                failures.append((old_name, old_number, "memory-current", "references/memory.md:33-34"))
+                notes.append((name, start + 1, heads[index][2], fields["Supersedes"]))
+    for name, number, _, prior in notes:
+        # Notes permits free-form references and historical markings. Only a
+        # supplied local link establishes a mechanically checkable target.
+        for destination in re.findall(r"\[[^]]+\]\(([^)]+)\)", prior):
+            if re.match(r"(?:[A-Za-z][\w+.-]*:|/)", destination):
+                continue
+            path, _, fragment = destination.partition("#")
+            target = posixpath.normpath((Path(name).parent / path).as_posix()) if path else name
+            anchors = {re.sub(r"[^\w -]", "", title.lower()).replace(" ", "-")
+                       for other_name, _, title, _ in notes if other_name == target}
+            if target not in tracked or (fragment and fragment not in anchors):
+                failures.append((name, number, "memory-supersedes", "references/memory.md:24"))
     for name, number, rule, detail in failures:
         print("progress-log: file=%s line=%d rule=%s %s" % (name, number, rule, detail), file=sys.stderr)
     return 1 if failures else 0
