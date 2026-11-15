@@ -133,6 +133,32 @@ class ProgressLog(MailWorld):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
 
+    def test_predecessor_tracked_symlinks(self):
+        archive = self.home / "state/archive"
+        stored = self.home / "stored"
+        stored.mkdir()
+        (stored / "earlier.md").write_text("# Earlier handoff\n")
+        self.handoff.write_text(state_handoff("Predecessor archive: [earlier](state/archive/earlier.md)\n"))
+        rows = (("../stored", True, []),
+                ("../stored", False, [("state/handoff.md", "5", "predecessor-archive")]),
+                ("../../outside", True, [("state/handoff.md", "5", "predecessor-archive")]),
+                ("archive", True, [("state/handoff.md", "5", "predecessor-archive")]))
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "earlier.md").write_text("# Outside handoff\n")
+        for target, committed, expected in rows:
+            with self.subTest(target=target, committed=committed):
+                if archive.is_symlink():
+                    archive.unlink()
+                archive.symlink_to(target, target_is_directory=True)
+                self.assertEqual(self.command(["git", "add", "state", "stored"], self.home).returncode, 0)
+                if not committed:
+                    self.assertEqual(self.command(["git", "rm", "--cached", "stored/earlier.md"], self.home).returncode, 0)
+                # The index owns resolution, even with an unstaged link replacement.
+                archive.unlink()
+                archive.symlink_to("../stored" if expected else "../../outside", target_is_directory=True)
+                self.assert_home_check(expected)
+
     def test_home_relations(self):
         # Notes 24; Handoff 34; Progress records 87; replacement 102.
         memory = self.home / "memory"
@@ -173,10 +199,12 @@ class ProgressLog(MailWorld):
 
     def test_home_structure_control(self):
         mutations = (
-            ('for field in ("Source", "Date", "Supersedes"):', 'for field in ():'),
-            ('        if sys.argv[1:]:', '        if False:'),
+            ('for field in ("Source", "Date", "Supersedes"):', 'for field in ():', "test_home_structure"),
+            ('        if sys.argv[1:]:', '        if False:', "test_home_structure"),
+            ('if not tracked_archive(home, target, tracked):', 'if target not in tracked:',
+             "test_predecessor_tracked_symlinks"),
         )
-        for old, new in mutations:
+        for old, new, method in mutations:
             with self.subTest(mutation=new), tempfile.TemporaryDirectory(dir=self.root) as folder:
                 copy = Path(folder) / "jarvis/scripts"
                 shutil.copytree(SCRIPTS, copy)
@@ -184,12 +212,12 @@ class ProgressLog(MailWorld):
                 source = script.read_text()
                 self.assertEqual(source.count(old), 1)
                 script.write_text(source.replace(old, new))
-                case = ProgressLog(methodName="test_home_structure")
+                case = ProgressLog(methodName=method)
                 case.scripts = copy
                 case.setUp()
                 try:
                     with self.assertRaises(AssertionError):
-                        case.test_home_structure()
+                        getattr(case, method)()
                 finally:
                     case.doCleanups()
 
