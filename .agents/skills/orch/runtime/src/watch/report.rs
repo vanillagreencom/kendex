@@ -867,11 +867,14 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
             let context = super::hosted::capabilities(&scripts, super::hosted::host_of(lane))
                 .map(|caps| super::context::lane(lane, caps.files, &scripts, now));
             let reading = match context {
-                Ok(super::context::LaneContext::Own { record, standing }) => format!(
-                    "tokens={} window={} standing={standing:?}",
-                    record.tokens.map_or("unread".to_owned(), |n| n.to_string()),
-                    record.window.map_or("unread".to_owned(), |n| n.to_string())
-                ),
+                Ok(super::context::LaneContext::Own { record, standing }) => match &record.gap {
+                    Some(gap) => format!("gap={gap} standing={standing:?}"),
+                    None => format!(
+                        "tokens={} window={} standing={standing:?}",
+                        record.tokens.map_or("unread".to_owned(), |n| n.to_string()),
+                        record.window.map_or("unread".to_owned(), |n| n.to_string())
+                    ),
+                },
                 Ok(super::context::LaneContext::Unrecorded) => "unrecorded".to_owned(),
                 Ok(super::context::LaneContext::Other) => "other session".to_owned(),
                 Ok(super::context::LaneContext::Unreadable { cause }) | Err(cause) => {

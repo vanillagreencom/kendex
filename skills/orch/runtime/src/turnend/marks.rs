@@ -38,6 +38,10 @@ const AGENT_INSTRUCTION: &str = "Take no new work. Let each running command fini
 
 const DETACHED_ROUTE: &str = "lane-mail-check: detached-route=orch-job-runner\nUse the orch job runner described in waiter-launch.md, Launch, or a separate session for work that must survive this session.";
 
+/// The gap of a session no source measures: no reader of its own answered
+/// and its own record holds no figure.
+const CONTEXT_UNMEASURABLE: &str = "context-unmeasurable";
+
 /// What one read of the session's own file took.
 pub(super) enum Reading {
     Measured {
@@ -171,7 +175,12 @@ pub(super) fn handoff_check(
             turn.note(&Said::UsageUnread(payload.transcript.clone()), "");
             String::new()
         }
-        Reading::None(_) => String::new(),
+        Reading::None(gap) => {
+            if gap == Some(CONTEXT_UNMEASURABLE) {
+                judge.record_gap(turn, &mailbox, CONTEXT_UNMEASURABLE);
+            }
+            String::new()
+        }
         Reading::Compacted => {
             let instruction = judge.handoff_instruction(turn, Value::Null)?;
             return Err(turn.refuse(Said::Compacted { instruction }, ""));
@@ -729,27 +738,16 @@ impl<'a> Judge<'a> {
                 return Err(self.refuse(turn, said, &cause));
             }
         };
-        let nul = |text: &str| (!text.is_empty()).then(|| text.to_owned());
         let record = ContextRecord {
-            harness: Some(harness_word(turn.harness).to_owned()),
             tokens: Some(tokens),
             window,
-            model: nul(&model),
+            model: (!model.is_empty()).then(|| model.clone()),
             capacity_source: self.source.get().map(str::to_owned),
-            session_id: nul(&self.payload.session),
-            pane_key: self.record_key(),
-            transcript: nul(transcript),
-            gap: None,
-            at: Some(record_stamp()),
+            ..self.own_record(turn)
         };
-        if !self.records() {
-            return Ok(Reading::Measured {
-                tokens,
-                window,
-                model,
-            });
-        }
-        if let Err(cause) = record.write_to(mailbox) {
+        if self.records()
+            && let Err(cause) = record.write_to(mailbox)
+        {
             turn.note(
                 &Said::ContextUnrecorded(mailbox.join(CONTEXT_RECORD)),
                 &cause,
@@ -760,6 +758,38 @@ impl<'a> Judge<'a> {
             window,
             model,
         })
+    }
+
+    /// This session's record with no reading in it, as its own payload
+    /// names the session.
+    fn own_record(&self, turn: &Turn) -> ContextRecord {
+        let nul = |text: &str| (!text.is_empty()).then(|| text.to_owned());
+        ContextRecord {
+            harness: Some(harness_word(turn.harness).to_owned()),
+            tokens: None,
+            window: None,
+            model: None,
+            capacity_source: None,
+            session_id: nul(&self.payload.session),
+            pane_key: self.record_key(),
+            transcript: nul(&self.payload.transcript),
+            gap: None,
+            at: Some(record_stamp()),
+        }
+    }
+
+    /// A launched lane's record of `gap` in `mailbox`, so its report names
+    /// why no reading stands. A write that fails is said under its own key,
+    /// since no reading stands behind it.
+    fn record_gap(&self, turn: &mut Turn, mailbox: &Path, gap: &str) {
+        let record = ContextRecord {
+            gap: Some(gap.to_owned()),
+            ..self.own_record(turn)
+        };
+        if let Err(cause) = record.write_to(mailbox) {
+            let said = Said::ContextGapUnrecorded(mailbox.join(CONTEXT_RECORD));
+            turn.note(&said, &cause);
+        }
     }
 
     /// Pi's user directory: `PI_CODING_AGENT_DIR`, else the home's
@@ -820,10 +850,9 @@ impl<'a> Judge<'a> {
     /// handed over and the usage arm recorded for this session, waited for
     /// while its pending marker stands; then the status-line record, read
     /// beside either for its stop cause and for the reading only where the
-    /// extension has none. A flag or a record that stands and cannot be
-    /// read is refused, since the handoff record clears it; a status-line
-    /// record that does not answer leaves the context unmeasured, never
-    /// read as room.
+    /// extension has none; then, where neither answers, the session's own
+    /// record. A flag or a record that stands and cannot be read is
+    /// refused, since the handoff record clears it.
     fn copilot_reading(&self, turn: &mut Turn, mailbox: &Path) -> Flow<Reading> {
         let session = self.payload.session.as_str();
         // An unbound Jarvis session's compaction is flagged nowhere.
@@ -851,15 +880,7 @@ impl<'a> Judge<'a> {
                 if let Some(reading) = extension {
                     return Ok(reading);
                 }
-                let record = match self.own_box(mailbox) {
-                    Some(mailbox) => mailbox.join(CONTEXT_RECORD),
-                    None => Leads::under(&self.vars.home)
-                        .file(session)
-                        .unwrap_or_default(),
-                };
-                turn.note(&Said::ReadingUnrecorded(record), "");
-                turn.note(&Said::SessionRecord(reason), "");
-                return Ok(Reading::None(Some("session-record")));
+                return self.session_reading(turn, mailbox, &home, reason);
             }
         };
         let granted = std::env::var("COPILOT_ALLOW_ALL").is_ok_and(|grant| grant == "true");
@@ -871,6 +892,43 @@ impl<'a> Judge<'a> {
         }
         self.source.set(Some(context::COPILOT_STATUS_LINE_SOURCE));
         self.recorded(turn, mailbox, Ok(record.usage()))
+    }
+
+    /// A Copilot lead's context from the CLI's own record of the session,
+    /// read only where neither the extension's reading nor the status-line
+    /// record answered, whose `reason` the notes carry. A record holding no
+    /// figure is a session no source measures, said under its own word and
+    /// never read as room; one that could not be read this time leaves the
+    /// context unmeasured under `session-record`.
+    fn session_reading(
+        &self,
+        turn: &mut Turn,
+        mailbox: &Path,
+        home: &Path,
+        reason: &'static str,
+    ) -> Flow<Reading> {
+        let session = self.payload.session.as_str();
+        match context::copilot_session(home, session) {
+            Ok(Usage::Absent) => {
+                turn.note(&Said::ContextUnmeasurable(session.to_owned()), reason);
+                Ok(Reading::None(Some(CONTEXT_UNMEASURABLE)))
+            }
+            Err(cause) => {
+                let record = match self.own_box(mailbox) {
+                    Some(mailbox) => mailbox.join(CONTEXT_RECORD),
+                    None => Leads::under(&self.vars.home)
+                        .file(session)
+                        .unwrap_or_default(),
+                };
+                turn.note(&Said::ReadingUnrecorded(record), "");
+                turn.note(&Said::SessionRecord(reason), &cause);
+                Ok(Reading::None(Some("session-record")))
+            }
+            read => {
+                self.source.set(Some(context::COPILOT_SESSION_SOURCE));
+                self.recorded(turn, mailbox, read)
+            }
+        }
     }
 
     /// Whether a reading of this session is still on its way to the

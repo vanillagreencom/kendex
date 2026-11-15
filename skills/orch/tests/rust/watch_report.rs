@@ -4228,6 +4228,45 @@ fn report_lists_a_lane_held_over_its_landing_or_close_with_its_cause() {
     );
 }
 
+/// A running lane's context line names the gap its turn end recorded where
+/// no reading stands, and says unrecorded where no record stands.
+#[test]
+fn report_names_the_gap_a_lanes_context_record_carries() {
+    let world = World::new();
+    let root = world.path().display().to_string();
+    let running = |item: &str| {
+        json!({"item":item,"status":"running","harness":"copilot","session_id":"s1",
+            "launched_at":"2026-10-01T06:00:00Z","mail_root":root})
+    };
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[running("KEN-7"), running("KEN-8")]}));
+    let mailbox = world.path().join("tmp/lane-mail/KEN-7");
+    std::fs::create_dir_all(&mailbox).unwrap();
+    std::fs::write(
+        mailbox.join("context.json"),
+        json!({"harness":"copilot","tokens":null,"window":null,"session_id":"s1",
+            "gap":"context-unmeasurable","at":"2026-10-01T13:00:00Z"})
+        .to_string(),
+    )
+    .unwrap();
+    let ctx = world.report_context();
+    let body = report::render(&ctx, epoch("2026-10-01T14:00:00Z")).unwrap();
+    let context = |item: &str| {
+        body.split(&format!("- {item}: "))
+            .nth(1)
+            .and_then(|lane| lane.lines().find(|l| l.starts_with("  - Context: ")))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(
+        [context("KEN-7"), context("KEN-8")],
+        [
+            "  - Context: gap=context-unmeasurable standing=Current.",
+            "  - Context: unrecorded."
+        ],
+        "{body}"
+    );
+}
+
 /// A fleet named by `--state` has its lanes' facts read from its own record,
 /// and a lane with no checkout on this disk counts the item record beside
 /// that fleet, never the configured fleet's of the same key.

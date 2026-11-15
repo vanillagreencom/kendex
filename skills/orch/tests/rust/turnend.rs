@@ -2340,6 +2340,23 @@ impl World {
         self.copilot_home().join("session-state/s1/events.jsonl")
     }
 
+    /// The CLI's own record of `s1` under the account's store: the first
+    /// `rows` rows of agent-runtime's Copilot record fixture.
+    fn session_record(&self, rows: usize) {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../agent-runtime/tests/rust/fixtures/copilot-events.jsonl");
+        let text: String = fs::read_to_string(fixture)
+            .unwrap()
+            .lines()
+            .take(rows)
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let folder = self.copilot_home().join("session-state/s1");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("workspace.yaml"), "id: s1\n").unwrap();
+        fs::write(folder.join("events.jsonl"), text).unwrap();
+    }
+
     /// The status-line record's own file.
     fn status_record(&self) -> PathBuf {
         self.copilot_home().join("lane-status").join("s1.json")
@@ -2395,21 +2412,35 @@ type StatusRow<'a> = (u64, u64, &'a Path, Option<bool>, Env<'a>, &'a str, &'a st
 
 /// A Copilot lane with no extension reading is read from its fresh
 /// status-line record, judged on the share of its window Copilot compacts
-/// at and recorded; a record of another transcript, a stale one or none
-/// leaves the context unmeasured and passes; a policy that took the
-/// granted allow-all mode is reported beside the judgement.
+/// at and recorded; a record of another transcript, a stale one or none,
+/// with no figure in the session's own record, is said under the word of a
+/// session no source measures, recorded as the lane's gap, and passes; a
+/// policy that took the granted allow-all mode is reported beside the
+/// judgement.
 #[test]
 fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record() {
     let world = World::launched();
-    let gap = |reason: &str| {
-        format!(
-            "lane-mail-check: reading-unrecorded={}\nlane-mail-check: session-record={reason}\nlane-mail-check: account=unmeasured",
-            world.mail_root().join(ITEM).join("context.json").display()
-        )
+    let gap = |out: &Out, reason: &str, row: &str| {
+        assert_eq!(
+            keyed(out),
+            "lane-mail-check: context-unmeasurable=s1\nlane-mail-check: account=unmeasured",
+            "{row}"
+        );
+        assert!(
+            out.stderr.contains(&format!("\n{reason}\n")),
+            "{row}: {}",
+            out.stderr
+        );
+        let record = world.record();
+        assert_eq!(
+            [&record["tokens"], &record["gap"], &record["session_id"]],
+            [&Value::Null, &json!("context-unmeasurable"), &json!("s1")],
+            "{row}"
+        );
     };
     let out = world.copilot_stop(&[]);
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
-    assert_eq!(keyed(&out), gap("missing"));
+    gap(&out, "missing", "none");
     let transcript = world.copilot_transcript();
     let other = world.root.join("session-state/s2/events.jsonl");
     let grant: Env = &[("COPILOT_ALLOW_ALL", "true")];
@@ -2463,7 +2494,7 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
         let out = world.copilot_stop(env);
         assert_eq!(out.code, 0, "{row}: {}", out.stderr);
         if !first.is_empty() && !first.contains(' ') {
-            assert_eq!(keyed(&out), gap(first), "{row}");
+            gap(&out, first, &row);
             continue;
         }
         assert_eq!(out.first(), *first, "{row}");
@@ -2505,7 +2536,74 @@ fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record(
     fs::write(world.status_record(), record.to_string()).unwrap();
     let out = world.copilot_stop(&[]);
     assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
-    assert_eq!(keyed(&out), gap("stale"));
+    gap(&out, "stale", "stale");
+}
+
+/// A Copilot lane neither the extension nor the status line measures is
+/// read from the CLI's own record of the session: its last tool row, or the
+/// count a later compaction left, against the extension's share of the
+/// CLI's limit, recorded under the record's own source and judged; a record
+/// holding no figure row is the word of a session no source measures. A
+/// live reading of the extension or the status line is taken over the
+/// record whatever the record holds.
+#[test]
+fn a_copilot_lane_with_no_other_reading_is_judged_on_its_own_record() {
+    let world = World::launched();
+    let source = "80% of the token limit, from the Copilot session's own events.jsonl";
+    // `(the fixture's first rows, the first line, the decision, the tokens
+    // recorded)`: past the cap at the tool row before the compaction, below
+    // it at the count the compaction left and at the last tool row after
+    // it, a tool row with no figure passed over, no figure row at all.
+    let below = "lane-mail-check: account=unmeasured";
+    let rows: &[(usize, &str, Value, Value)] = &[
+        (
+            8,
+            "lane-mail-check: context=760050",
+            json!("block"),
+            json!(760_050),
+        ),
+        (13, below, Value::Null, json!(44_648)),
+        (18, below, Value::Null, json!(44_644)),
+        (7, below, Value::Null, json!(51_958)),
+        (
+            2,
+            "lane-mail-check: context-unmeasurable=s1",
+            Value::Null,
+            Value::Null,
+        ),
+    ];
+    for (count, first, decision, tokens) in rows {
+        world.session_record(*count);
+        let out = world.copilot_stop(&[]);
+        assert_eq!(out.code, 0, "{count}: {}", out.stderr);
+        assert_eq!(out.first(), *first, "{count}");
+        let answer = if out.stdout.is_empty() {
+            Value::Null
+        } else {
+            out.json()["decision"].clone()
+        };
+        assert_eq!(answer, *decision, "{count}");
+        let record = world.record();
+        assert_eq!(record["tokens"], *tokens, "{count}");
+        if !tokens.is_null() {
+            assert_eq!(
+                [&record["window"], &record["capacity_source"]],
+                [&json!(761_600), &json!(source)],
+                "{count}"
+            );
+        }
+    }
+    // Past the cap in the record, a live reading of another source below
+    // the mark is the one judged.
+    world.session_record(8);
+    world.extension_reading(Some(100_000), 800_000, "s1", EXTENSION);
+    let out = world.copilot_stop(&[]);
+    assert_eq!((out.code, out.first()), (0, below), "{}", out.stderr);
+    fs::remove_file(world.mail_root().join(ITEM).join("context.json")).unwrap();
+    world.status_line(100_000, 1_000_000, Some(&world.copilot_transcript()), None);
+    let out = world.copilot_stop(&[]);
+    assert_eq!((out.code, out.first()), (0, below), "{}", out.stderr);
+    assert_eq!(world.record()["tokens"], json!(100_000));
 }
 
 /// The extension's reading of this session is read first and never
@@ -2645,14 +2743,10 @@ fn a_copilot_attached_launch_is_refused_on_a_gap_and_unobserved_past_the_reserve
     };
     let out = launch();
     assert_eq!(out.code, 2, "{}", out.stderr);
-    let record = world.mail_root().join(ITEM).join("context.json");
-    assert_eq!(
-        out.first(),
-        format!("lane-mail-check: reading-unrecorded={}", record.display())
-    );
+    assert_eq!(out.first(), "lane-mail-check: context-unmeasurable=s1");
     assert!(
         out.stderr
-            .contains("\nlane-mail-check: agent-input=session-record\n"),
+            .contains("\nlane-mail-check: agent-input=context-unmeasurable\n"),
         "{}",
         out.stderr
     );

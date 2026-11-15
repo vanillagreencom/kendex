@@ -503,15 +503,46 @@ fn an_overseers_copilot_reading_is_recorded_in_the_overseer_box_under_its_pane_k
     );
     world.plant_fleet(world.controller(PANE, "copilot", &account, SESSION));
     let out = session_stop(&world, &env);
-    let unrecorded = format!(
-        "reading-unrecorded={}",
-        overseer_box(&world).join("context.json").display()
-    );
+    let unmeasurable = format!("context-unmeasurable={SESSION}");
     assert_eq!(
         (out.code, out.keyed().first().copied(), blocked(&out)),
-        (0, Some(unrecorded.as_str()), None),
+        (0, Some(unmeasurable.as_str()), None),
         "{}",
         out.stderr
+    );
+    let record = box_file(&world, "context.json").unwrap();
+    assert_eq!(
+        [&record["tokens"], &record["gap"]],
+        [&Value::Null, &json!("context-unmeasurable")]
+    );
+    // The CLI's own record of the session, past the cap at its last tool
+    // row, is judged where no other reading stands.
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../agent-runtime/tests/rust/fixtures/copilot-events.jsonl");
+    let rows: String = fs::read_to_string(fixture)
+        .unwrap()
+        .lines()
+        .take(8)
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let folder = account.join("session-state").join(SESSION);
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("workspace.yaml"), format!("id: {SESSION}\n")).unwrap();
+    fs::write(folder.join("events.jsonl"), rows).unwrap();
+    let out = session_stop(&world, &env);
+    let reason = blocked(&out).unwrap_or_else(|| panic!("passed: {}", out.stderr));
+    assert!(
+        reason.starts_with("lane-mail-check: context=760050\n"),
+        "{reason}"
+    );
+    let record = box_file(&world, "context.json").unwrap();
+    assert_eq!(
+        [&record["tokens"], &record["window"], &record["pane_key"]],
+        [
+            &json!(760_050),
+            &json!(761_600),
+            &json!(caller_key(&world, PANE))
+        ]
     );
 }
 

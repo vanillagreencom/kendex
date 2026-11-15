@@ -31,6 +31,7 @@
 | 2026-10-20 | D031 | [KEN-3499](https://linear.app/vanillagreen/issue/KEN-3499) | The organization's own tooling sets up and checks the review-secret environment and app installation; review-gate keeps the ruleset report and refresh adoption's read-only environment check | Two tools writing one GitHub setting can undo each other; fleet owns it since FLT-992 | A consumer outside an organization with its own tooling needs kendex to set them up | Active | [Full](D031-organization-tooling-owns-review-secrets.md) |
 
 | 2026-11-08 | D032 | [KEN-4983](https://linear.app/vanillagreen/issue/KEN-4983) | A hosted receiver uses an explicit queue source beside standard Socket Mode; both keep the journal and mailbox keys | Sharing a Socket Mode app across machines can send an event to the wrong mailbox host; fallback creates a competing receiver | Hosted delivery needs events beyond the message handler or multiple authoritative routes for one channel | Active | [Full](D032-slack-inbound-queue.md) |
+| 2026-11-15 | D034 | [KEN-5196](https://linear.app/vanillagreen/issue/KEN-5196) | A Copilot CLI session no other reader measures is read from its own events.jsonl: the last tool row's context count, or a later successful compaction's | The record carries the CLI's own count at every tool call; its usage checkpoints hold totals only, as D015 rejects them | Copilot CLI drops these members, or the extension reads every session from its start | Active | [Full](D034-copilot-session-record-reading.md) |
 
 ---
 

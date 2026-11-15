@@ -289,6 +289,8 @@ pub enum Said {
     ReadingUnrecorded(PathBuf),
     /// Why the status-line record did not answer for this session.
     SessionRecord(&'static str),
+    /// The Copilot session no source measures, by its id.
+    ContextUnmeasurable(String),
     /// The stop a Copilot session's status-line record establishes.
     StopCause(&'static str),
     /// A Copilot context reading from a session no lead record names.
@@ -490,6 +492,7 @@ impl Said {
             Said::ReadingPending(marker) => ("reading-pending", marker.display().to_string()),
             Said::ReadingUnrecorded(record) => ("reading-unrecorded", record.display().to_string()),
             Said::SessionRecord(reason) => ("session-record", (*reason).to_owned()),
+            Said::ContextUnmeasurable(session) => ("context-unmeasurable", session.clone()),
             Said::StopCause(cause) => ("stop-cause", (*cause).to_owned()),
             Said::ReadingUnowned(session) => ("session-unrecorded", session.clone()),
             Said::ReadingUnkept { record, .. } => {
@@ -815,6 +818,9 @@ impl Said {
             ),
             Said::SessionRecord(reason) => format!(
                 "this Copilot session has no context reading from the kendex-lane-context extension, so it is read from the record its statusLine command, copilot-statusline, writes under the account directory, and that record did not answer for this session: {reason}. The context mark is not judged and the gap is reported rather than held; the account mark is judged as usual. Set statusLine in the account's settings.json to run copilot-statusline with a refreshInterval under two minutes."
+            ),
+            Said::ContextUnmeasurable(session) => format!(
+                "no source measures this Copilot session {session}: the kendex-lane-context extension recorded no reading of it, its statusLine session record did not answer, for the reason that follows, and the CLI's own record of the session, session-state/{session}/events.jsonl under the account directory, holds no context figure, which a session writes from its first tool call on. The context mark is not judged and no reading is guessed; the gap is recorded and reported rather than held, and never read as room; the account mark is judged as usual. The statusLine record's reason:"
             ),
             Said::StopCause(_) => "this Copilot session's record reports allow_all_enabled false: enterprise managed settings, for its account or for its machine, block the allow-all mode, so every tool call waits on a permission prompt nobody answers. The orch copilot-runtime reference names the remedy".to_owned(),
             Said::ReadingUnowned(session) => format!(

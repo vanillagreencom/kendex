@@ -674,6 +674,154 @@ pub fn copilot_usage(
     Ok((tokens, limit.saturating_mul(COPILOT_COMPACTION_PCT) / 100))
 }
 
+/// The capacity source of a reading taken from a Copilot session's own
+/// record, the `events.jsonl` its CLI writes in the session's folder.
+pub const COPILOT_SESSION_SOURCE: &str =
+    "80% of the token limit, from the Copilot session's own events.jsonl";
+
+/// The window a read of a Copilot session's record takes first from its
+/// end: the CLI writes a figure row at each tool call, so the last one
+/// sits near the end.
+const COPILOT_SESSION_FIRST: u64 = 65_536;
+
+/// The most of a Copilot session's record a read takes from its end, the
+/// window growing fourfold from [`COPILOT_SESSION_FIRST`] up to it: a turn
+/// end and each controller tool call pay for the read, and a figure row
+/// older than this many bytes of later rows is no reading of the session
+/// now.
+pub const COPILOT_SESSION_BOUND: u64 = 16 * TAIL_BYTES;
+
+/// The context of the Copilot session `session` under the account
+/// directory `home`, from the CLI's own record of it: the session's folder
+/// found by its id ([`crate::session::fixed_id_file`]), its `events.jsonl`
+/// read from the end. The reading is the last row in file order of the two
+/// kinds that carry the CLI's own current count against its own limit: a
+/// `tool.execution_complete` row's
+/// `data.toolTelemetry.metrics.context_current_tokens` and
+/// `context_token_limit`, and a `session.compaction_complete` row's
+/// `data.postCompactionTokens` and `tokenLimit`, the count a compaction
+/// left (measured on Copilot CLI 1.0.112). A compaction row whose
+/// `data.success` is not `true` is passed over: a compaction that did not
+/// succeed left the context as it was. Its window is the extension's,
+/// [`copilot_usage`] taking both figures, so one session reads one window
+/// from either source. A row of those kinds whose figures do not read is
+/// passed over for the one before it. A `session.usage_record` row's
+/// `inputTokens` is another quantity, below the CLI's own count, and is
+/// never taken. `Absent` where no folder, no
+/// record or no such row stands within [`COPILOT_SESSION_BOUND`]; `Err`
+/// where the id is outside the alphabet that keeps the path under its
+/// directory, or the folder or record cannot be read.
+pub fn copilot_session(home: &Path, session: &str) -> Result<Usage, String> {
+    if !session_bound(session) {
+        return Err("unbound".to_owned());
+    }
+    let folder = match crate::session::fixed_id_file(Harness::Copilot, home, Path::new(""), session)
+    {
+        Reading::Live(file) => file,
+        Reading::Gone => return Ok(Usage::Absent),
+        Reading::Unreadable { cause } => return Err(cause.to_owned()),
+    };
+    copilot_events(
+        &folder.with_file_name("events.jsonl"),
+        COPILOT_SESSION_BOUND,
+    )
+}
+
+/// [`copilot_session`]'s read of the record at `path`, no further back from
+/// its end than `bound` bytes.
+fn copilot_events(path: &Path, bound: u64) -> Result<Usage, String> {
+    let fail = |e: io::Error| format!("{}: {e}", path.display());
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Usage::Absent),
+        Err(e) => return Err(fail(e)),
+    };
+    let len = file.metadata().map_err(fail)?.len();
+    let mut window = COPILOT_SESSION_FIRST.min(bound);
+    loop {
+        // One byte before the window is read with it, so a line that starts
+        // at the window's first byte is whole and only one that starts
+        // before it is passed over.
+        let from = len.saturating_sub(window.saturating_add(1));
+        file.seek(SeekFrom::Start(from)).map_err(fail)?;
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(len - from)
+            .read_to_end(&mut bytes)
+            .map_err(fail)?;
+        let text = String::from_utf8_lossy(&bytes);
+        let lines = if from == 0 {
+            &text[..]
+        } else {
+            text.split_once('\n').map_or("", |(_, rest)| rest)
+        };
+        if let Some(usage) = lines.lines().rev().find_map(copilot_figure) {
+            return Ok(usage);
+        }
+        if from == 0 || window >= bound {
+            return Ok(Usage::Absent);
+        }
+        window = window.saturating_mul(4).min(bound);
+    }
+}
+
+/// The reading one line of a Copilot session's record carries: `None` for
+/// a line of any other kind, and for one of the two kinds whose figures do
+/// not read.
+fn copilot_figure(line: &str) -> Option<Usage> {
+    const KINDS: [&str; 2] = [
+        "\"tool.execution_complete\"",
+        "\"session.compaction_complete\"",
+    ];
+    if !KINDS.iter().any(|kind| line.contains(kind)) {
+        return None;
+    }
+    let Ok(Value::Object(row)) = serde_json::from_str::<Value>(line) else {
+        return None;
+    };
+    fn member<'v>(value: Option<&'v Value>, key: &str) -> Option<&'v Value> {
+        value.and_then(|v| v.get(key))
+    }
+    let data = row.get("data");
+    let (tokens, limit) = match word(&row, "type") {
+        "tool.execution_complete" => {
+            let metrics = member(member(data, "toolTelemetry"), "metrics");
+            (
+                member(metrics, "context_current_tokens"),
+                member(metrics, "context_token_limit"),
+            )
+        }
+        "session.compaction_complete" => {
+            if member(data, "success") != Some(&Value::Bool(true)) {
+                return None;
+            }
+            (
+                member(data, "postCompactionTokens"),
+                member(data, "tokenLimit"),
+            )
+        }
+        _ => return None,
+    };
+    let (tokens, window) = copilot_usage(tokens, limit).ok()?;
+    Some(Usage::Measured {
+        tokens,
+        window: Some(window),
+        model: member(data, "model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    })
+}
+
+/// Whether `session` is spelled in the alphabet that keeps a path named by
+/// it under its directory.
+fn session_bound(session: &str) -> bool {
+    !matches!(session, "" | "." | "..")
+        && session
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 /// The capacity source of a reading taken from a session's status-line
 /// record.
 pub const COPILOT_STATUS_LINE_SOURCE: &str =
@@ -711,11 +859,7 @@ pub fn copilot_record(
     transcript: &str,
     now: u64,
 ) -> Result<CopilotRecord, &'static str> {
-    let bound = !matches!(session, "" | "." | "..")
-        && session
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
-    if !bound {
+    if !session_bound(session) {
         return Err("unbound");
     }
     let path = home.join("lane-status").join(format!("{session}.json"));
@@ -1202,6 +1346,118 @@ mod tests {
         let record = read("s1", "").unwrap();
         assert_eq!(record.usage(), Usage::Unread);
         assert_eq!(record.stop_cause(true), None);
+    }
+
+    /// Rows of a Copilot CLI 1.0.112 session's `events.jsonl` in file order,
+    /// every id made up and every text a placeholder: a session start, a
+    /// first tool row at 35,971, a turn end, a tool row at 51,958, a tool row
+    /// with no telemetry and an attached agent's with no context figure, the
+    /// compaction whole (a tool row at 760,050, its start, three usage
+    /// records, its completion at 44,648, a usage record), a tool row at
+    /// 44,644 and three usage records after it, the CLI's limit 952,000.
+    const COPILOT_EVENTS: &str = include_str!("../../tests/rust/fixtures/copilot-events.jsonl");
+
+    /// The fixture's first `rows` lines, each line ended.
+    fn copilot_rows(rows: usize) -> String {
+        COPILOT_EVENTS
+            .lines()
+            .take(rows)
+            .map(|line| format!("{line}\n"))
+            .collect()
+    }
+
+    /// A session reads the CLI's own count at its last tool row, or the
+    /// count a later compaction left, against the extension's share of the
+    /// CLI's limit; a tool row with no figure, or a compaction that did not
+    /// succeed, is passed over for the row before it, and the usage records'
+    /// prompt figures are never taken. A
+    /// record with no figure row, or no record, is no reading; one that
+    /// cannot be read, or an id outside its alphabet, is an error.
+    #[test]
+    fn a_copilot_session_reads_its_last_context_figure_from_its_own_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let folder = home.join("session-state").join("c1");
+        let read = || copilot_session(home, "c1");
+        assert_eq!(read(), Ok(Usage::Absent), "no folder");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("workspace.yaml"), "id: c1\ncwd: /w\n").unwrap();
+        assert_eq!(read(), Ok(Usage::Absent), "no record");
+        let model = "claude-opus-5.5";
+        let rows = [
+            (18, measured(44_644, Some(761_600), model)),
+            (13, measured(44_648, Some(761_600), "")),
+            (8, measured(760_050, Some(761_600), model)),
+            (7, measured(51_958, Some(761_600), model)),
+            (2, Usage::Absent),
+            (0, Usage::Absent),
+        ];
+        let events = folder.join("events.jsonl");
+        for (count, want) in rows {
+            std::fs::write(&events, copilot_rows(count)).unwrap();
+            assert_eq!(read(), Ok(want), "the first {count} rows");
+        }
+        // The fixture's compaction row, planted here as one that did not
+        // succeed, after the rows before it.
+        let compaction = COPILOT_EVENTS.lines().nth(12).unwrap();
+        let failed = compaction.replacen(r#""success":true"#, r#""success":false"#, 1);
+        assert_ne!(failed, compaction);
+        std::fs::write(&events, format!("{}{failed}\n", copilot_rows(12))).unwrap();
+        assert_eq!(
+            read(),
+            Ok(measured(760_050, Some(761_600), model)),
+            "a compaction that did not succeed"
+        );
+        assert_eq!(copilot_session(home, ".."), Err("unbound".to_owned()));
+        std::fs::set_permissions(&events, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(read().is_err(), "a record that cannot be read");
+    }
+
+    /// The record is read from its end in a window that grows up to the
+    /// bound: a figure row followed by a long run of other rows is found
+    /// while it lies inside the bound and is no reading past it, and a line
+    /// starting at the window's first byte is read whole.
+    #[test]
+    fn a_copilot_record_is_read_from_its_end_no_further_back_than_its_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let lines: Vec<&str> = COPILOT_EVENTS.lines().collect();
+        let (figure, other) = (lines[14], lines[15]);
+        let found = measured(44_644, Some(761_600), "claude-opus-5.5");
+        let after = |count: usize| {
+            let mut text = format!("{figure}\n");
+            for _ in 0..count {
+                text.push_str(other);
+                text.push('\n');
+            }
+            text
+        };
+        let other_bytes = other.len() as u64 + 1;
+        let inside = (3 * COPILOT_SESSION_FIRST / other_bytes) as usize;
+        let past = (TAIL_BYTES / other_bytes) as usize + 1;
+        let rows = [(inside, found.clone()), (past, Usage::Absent)];
+        for (count, want) in rows {
+            std::fs::write(&path, after(count)).unwrap();
+            assert_eq!(
+                copilot_events(&path, TAIL_BYTES),
+                Ok(want),
+                "{count} rows after"
+            );
+        }
+        // The figure row starts at the first window's first byte, then one
+        // byte before it.
+        let pad = |len: usize| format!(r#"{{"type":"x","data":"{}"}}"#, "x".repeat(len - 22));
+        let tail = COPILOT_SESSION_FIRST as usize - figure.len() - 1;
+        let rows = [(tail, found), (tail + 1, Usage::Absent)];
+        for (tail, want) in rows {
+            let text = format!("{other}\n{figure}\n{}\n", pad(tail - 1));
+            std::fs::write(&path, &text).unwrap();
+            assert_eq!(
+                copilot_events(&path, COPILOT_SESSION_FIRST),
+                Ok(want),
+                "{tail} bytes after the figure row"
+            );
+        }
     }
 
     /// `pi` and `node` stand-ins in `dir`, in the contract the released
