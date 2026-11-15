@@ -3039,7 +3039,7 @@ REAL_KENDEX_SH
   REAL_MANIFEST_SCHEMA="$(real_manifest_schema)"
   # Live rows test engine migration. Legacy refusal rows reach the shell fallback
   # with the same byte assertion for its passing baselines and runner controls.
-  for row in previous older newer missing current source-catalog legacy-previous legacy-source-catalog step-control distance-control table-control manifest-control; do
+  for row in previous older unsupported newer missing current source-catalog legacy-previous legacy-source-catalog step-control distance-control table-control manifest-control; do
     manifest=kendex.toml
     case "$row" in source-catalog | legacy-source-catalog | manifest-control) manifest=kendex-local.toml ;; esac
     real_refresh_fixture "schema-$row" "$manifest"
@@ -3049,7 +3049,10 @@ REAL_KENDEX_SH
     committed="$REAL_MANIFEST_SCHEMA"
     case "$row" in
       previous | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control) committed=$((REAL_MANIFEST_SCHEMA - 1)) ;;
-      older | distance-control) committed=$((REAL_MANIFEST_SCHEMA - 2)) ;;
+      # Schema 6 has an engine migration chain; schema 5 has none and reaches
+      # the shell fallback's refusal, including its distance control.
+      older) committed=6 ;;
+      unsupported | distance-control) committed=5 ;;
       newer) committed=$((REAL_MANIFEST_SCHEMA + 1)) ;;
     esac
     python3 - "$repo/$manifest" "$committed" "$row" "$bot_table" <<'SCHEMA_FIXTURE'
@@ -3123,10 +3126,10 @@ SCHEMA_CONTROL
     run_real_refresh
     schema_passed=no
     case "$row" in
-      older | newer | missing | distance-control)
+      unsupported | newer | missing | distance-control)
         if real_refresh_stopped 'refresh-error=refresh value=' &&
             cmp -s "$real_root/schema-before" "$repo/$manifest"; then schema_passed=yes; fi ;;
-      previous | current | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control)
+      previous | older | current | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control)
         if [ "$RC" -eq 0 ] && [ -s "$TMP/state/creates" ]; then
           git --git-dir="$real_root/remote" show "refs/heads/kendex/refresh:$manifest" >"$real_root/schema-after"
           if python3 - "$real_root/schema-before" "$real_root/schema-after" "$committed" "$REAL_MANIFEST_SCHEMA" <<'SCHEMA_ASSERT'

@@ -235,8 +235,8 @@ pub(crate) fn declared(
 }
 
 /// An observed directory uses its scope position when physical identity
-/// proves it is the shared tree. Identity follows links; interpretation
-/// retains the scope spelling so a linked ancestor cannot change `..`.
+/// proves it is the shared tree and its leaf is real. Interpretation keeps
+/// the scope spelling so a linked ancestor cannot change `..`.
 /// Other folders retain their own position, including hand-made sharing.
 pub(crate) fn observed(env: &Env, scope: &Scope, name: &str, directory: PathBuf) -> Position {
     let shared = shared_tree(env, scope, name);
@@ -244,7 +244,9 @@ pub(crate) fn observed(env: &Env, scope: &Scope, name: &str, directory: PathBuf)
         crate::paths::canonical(&directory),
         crate::paths::canonical(&shared.directory),
     ) {
-        (Ok(at), Ok(shared_at)) if at == shared_at => shared.directory,
+        (Ok(at), Ok(shared_at)) if at == shared_at && !shared.directory.is_symlink() => {
+            shared.directory
+        }
         // A foreign leaf link names a hand-made folder at its target;
         // only a known shared-tree alias has a scope-owned reading.
         (Ok(at), _) if directory.is_symlink() => at,

@@ -54,7 +54,10 @@ pub fn apply(
             env,
             selection.kind,
             &selection.name,
-            &crate::render::skill::links::catalog(&target, &dest),
+            &crate::render::skill::links::catalog(
+                &crate::paths::reduced(&target),
+                &crate::paths::reduced(&dest),
+            ),
             super::Untagged::Delivered,
         )?;
         warnings.extend(
