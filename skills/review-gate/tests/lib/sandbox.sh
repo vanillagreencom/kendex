@@ -15,6 +15,8 @@ PRISTINE="$TMP/pristine"
 mkdir -p "$PRISTINE/.agents/skills" "$PRISTINE/.github/workflows" "$PRISTINE/docs"
 cp -R "$SKILL_DIR" "$PRISTINE/.agents/skills/review-gate"
 cp -R "$SKILL_DIR/../harness-ci" "$PRISTINE/.agents/skills/harness-ci"
+# harness-ci requires change-scope, so an install lays it beside harness-ci.
+cp -R "$SKILL_DIR/../change-scope" "$PRISTINE/.agents/skills/change-scope"
 printf '[env]\n' >"$PRISTINE/kendex.settings.toml"
 printf '[]\n' >"$PRISTINE/.kendex-generated.json"
 printf 'sandbox\n' >"$PRISTINE/docs/guide.md"
@@ -61,9 +63,10 @@ run_install_latest() { # SCRIPT RELEASE COMMIT FAIL_AT INSTALL_RC [GITHUB_ASSIGN
   local script="$1" release="$2" commit="$3" fail_at="$4" install_rc="$5"
   local github_env="${6:-}" gh_env="${7:-}" token_env=()
   local pin="${8:-}" tags="${9:-}" checkout="$TMP/installer-checkout"
-  mkdir -p "$checkout/.agents/skills/review-gate/scripts" "$checkout/.agents/skills/harness-ci/scripts/lib" "$checkout/.github/workflows"
+  mkdir -p "$checkout/.agents/skills/review-gate/scripts" "$checkout/.agents/skills/harness-ci/scripts/lib" "$checkout/.agents/skills/change-scope" "$checkout/.github/workflows"
   cp -- "$script" "$checkout/.agents/skills/review-gate/scripts/install-latest.sh"
   cp "$SKILL_DIR/../harness-ci/scripts/lib/change-class.sh" "$checkout/.agents/skills/harness-ci/scripts/lib/"
+  cp -R "$SKILL_DIR/../change-scope/." "$checkout/.agents/skills/change-scope/"
   rm -f "${checkout:?}/.github/workflows/kendex-refresh.yml"
   if [ -n "$pin" ]; then
     printf '    uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@%s\n' "$pin" >"$checkout/.github/workflows/kendex-refresh.yml"

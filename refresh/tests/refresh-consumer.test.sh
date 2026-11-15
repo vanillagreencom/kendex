@@ -1221,7 +1221,7 @@ for mode in absent absent-control current current-control; do
         ok 'absent committed settings leave the whole body unchanged'
       else bad 'absent committed settings body' "$OUT"; fi ;;
     absent-control)
-      if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
+      if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/kendex.settings.toml"; then
         ok 'control: an unguarded scan of absent settings turns the clean-body assertion red'
       else bad 'absent settings guard control' "$OUT"; fi ;;
     current)
@@ -1464,6 +1464,7 @@ cp "$repo/.agents/skills/harness-ci/scripts/change-class" "$TMP/class-double"
 cp "$repo/.kendex-generated.json" "$TMP/class-inventory"
 cp -R "$SKILL_DIR/../harness-ci/." "$repo/.agents/skills/harness-ci/"
 cp "$repo/.agents/skills/harness-ci/scripts/change-class" "$TMP/class-proof-script"
+cp "$repo/.agents/skills/change-scope/scripts/change-scope" "$TMP/class-proof-scope"
 printf '[".kendex-generated.json","rendered.txt"]\n' >"$repo/.kendex-generated.json"
 mkdir -p "$repo/.github"
 printf 'old bot instructions\n' >"$repo/.github/copilot-instructions.md"
@@ -1474,16 +1475,17 @@ for row in \
   'paths-unread|none'; do
   IFS='|' read -r proof control <<<"$row"
   cp "$TMP/class-proof-script" "$repo/.agents/skills/harness-ci/scripts/change-class"
+  cp "$TMP/class-proof-scope" "$repo/.agents/skills/change-scope/scripts/change-scope"
   cp "$TMP/class-runner" "$runner"
   if [ "$control" != none ]; then
-    python3 - "$repo/.agents/skills/harness-ci/scripts/change-class" <<'PROOF_CONTROL'
+    python3 - "$repo/.agents/skills/change-scope/scripts/change-scope" <<'PROOF_CONTROL'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve()
 text = p.read_text()
-old = '; RENDER_MEASURED=measured'
-changed = text.replace(old, '')
-assert changed != text
+old = '\n    RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured\n'
+assert text.count(old) == 1, text.count(old)
+changed = text.replace(old, old.replace('; RENDER_MEASURED=measured', ''))
 p.write_text(changed)
 PROOF_CONTROL
   fi
@@ -1522,6 +1524,7 @@ mkdir -p "$TMP/judging-release/skills"
 cp -R "$REFRESH_DIR" "$TMP/judging-release/refresh"
 cp -R "$SKILL_DIR" "$TMP/judging-release/skills/review-gate"
 cp -R "$SKILL_DIR/../harness-ci" "$TMP/judging-release/skills/harness-ci"
+cp -R "$SKILL_DIR/../change-scope" "$TMP/judging-release/skills/change-scope"
 cp -R "$SKILL_DIR/../orch" "$TMP/judging-release/skills/orch"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$TMP/judging-release/refresh/adopt-refresh.sh"
 chmod +x "$TMP/judging-release/refresh/adopt-refresh.sh"
@@ -1530,6 +1533,8 @@ chmod +x "$repo/.agents/skills/harness-ci/scripts/change-class"
 git -C "$SKILL_DIR" show a75766f9d:skills/review-gate/scripts/refresh-consumer.sh >"$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh"
 cp "$TMP/judging-release/refresh/adopt-refresh.sh" "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 printf '[".github/copilot-instructions.md",".kendex-generated.json","rendered.txt"]\n' >"$repo/.kendex-generated.json"
+# This consumer installs no orch; the release runner reads orch from its own tree.
+mv -- "$repo/.agents/skills/orch" "$TMP/consumer-orch"
 commit "$repo"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/retired-inline" HEAD
@@ -1567,6 +1572,7 @@ runner="$repo/refresh/refresh-consumer.sh"
 reset_default
 rm -- "$repo/.agents/skills/review-gate/scripts/refresh-consumer.sh" "$repo/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 rm -f -- "$TMP/state/classifier-proof"
+mv -- "$TMP/consumer-orch" "$repo/.agents/skills/orch"
 cp "$TMP/class-double" "$repo/.agents/skills/harness-ci/scripts/change-class"
 cp "$TMP/class-inventory" "$repo/.kendex-generated.json"
 cp "$TMP/class-runner" "$runner"
@@ -1900,6 +1906,8 @@ printf '#!/usr/bin/env bash\nexit 1\n' >"$repo/.agents/skills/review-gate/script
 cp "$SKILL_DIR/templates/review-gate-writer.yml" "$repo/.github/workflows/review-gate-writer.yml"
 record_adoption "$repo" .github/workflows/review-gate-writer.yml .agents/skills/review-gate/templates/review-gate-writer.yml
 cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
+# This consumer installs no orch.
+rm -rf -- "${repo:?}/.agents/skills/orch"
 commit "$repo"
 git init --bare -q "$TMP/legacy-remote"
 git --git-dir="$TMP/legacy-remote" config gc.auto 0

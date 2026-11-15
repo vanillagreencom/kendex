@@ -403,7 +403,7 @@ jq -cn --args \
   -- ${committed[@]+"${committed[@]}"}
 SETTINGS_PARSE
 then
-  printf 'refresh-error=settings-extraction value=%s\n' "$ROOT/.agents/skills/orch" >&2
+  printf 'refresh-error=settings-extraction value=%s\n' "$ROOT/kendex.settings.toml" >&2
   exit 1
 fi
 # Sets settings_report from the parse and setting_notes. A failed report
