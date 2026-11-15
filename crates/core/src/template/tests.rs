@@ -554,3 +554,111 @@ fn one_marketplace_spelled_three_ways_is_one_member() {
     .unwrap();
     assert_eq!(emptied.members, Vec::new());
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn folder_bookmarks_keep_their_marketplaces_through_template_actions() {
+    let (_tmp, env) = home();
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        "schema = 8\n[sources.plain]\npath = './catalog/'\n[sources.suffixed]\npath = 'catalog.git'\n",
+    )
+    .unwrap();
+    let refs: Vec<String> = ["catalog", "catalog.git"]
+        .iter()
+        .map(|folder| crate::paths::slashed(&env.home.join(folder)))
+        .collect();
+    for repo in &refs {
+        crate::bookmark::add(
+            &env,
+            crate::bookmark::Bookmark {
+                repo: repo.clone(),
+                item: crate::bookmark::BookmarkItem::Package {
+                    kind: ItemKind::Skill,
+                },
+                name: "gh".to_owned(),
+            },
+        )
+        .unwrap();
+    }
+    // The Bookmarks selection action passes these saved references to
+    // template admission, with the same kind and name in both folders.
+    let members: Vec<Member> = crate::bookmark::list(&env)
+        .unwrap()
+        .into_iter()
+        .map(|bookmark| Member {
+            kind: MemberKind::Skill,
+            name: bookmark.name,
+            enabled: true,
+            source: MemberSource::Marketplace {
+                repo: bookmark.repo,
+                rev: None,
+            },
+        })
+        .collect();
+    for (name, initial, additions) in [
+        ("Created", members.clone(), Vec::new()),
+        ("Added", vec![members[0].clone()], vec![members[1].clone()]),
+    ] {
+        let created = create_from_selection(&env, name, initial).unwrap();
+        let saved = if additions.is_empty() {
+            created
+        } else {
+            add_members(&env, name, additions).unwrap()
+        };
+        assert_eq!(saved.members, members);
+        assert_eq!(
+            add_members(&env, name, members.clone()).unwrap().members,
+            members
+        );
+        let kept = remove_members(
+            &env,
+            name,
+            &[MemberRef {
+                kind: MemberKind::Skill,
+                name: "gh".to_owned(),
+                which: MemberWhich::Marketplace {
+                    repo: refs[1].clone(),
+                },
+            }],
+        )
+        .unwrap();
+        assert_eq!(kept.members, vec![members[0].clone()]);
+    }
+
+    // Different package names can install together; grouping and the
+    // relative personal subscriptions must still select their own folders.
+    let mut installable = members;
+    for (member, (folder, offered)) in installable
+        .iter_mut()
+        .zip([("catalog", "only-plain"), ("catalog.git", "only-suffixed")])
+    {
+        skill(&env.home.join(folder).join("skills"), offered, "Body.");
+        member.name = offered.to_owned();
+    }
+    let template = create_from_selection(&env, "Grouped", installable).unwrap();
+    let resolved = resolve(&env, &template).unwrap();
+    assert!(resolved.missing.is_empty());
+    assert_eq!(resolved.groups.len(), 2);
+    for (repo, alias, offered) in [
+        (&refs[0], "plain", "only-plain"),
+        (&refs[1], "suffixed", "only-suffixed"),
+    ] {
+        let group = resolved
+            .groups
+            .iter()
+            .find(|group| group.repo == *repo)
+            .unwrap();
+        assert_eq!(group.source.as_deref(), Some(alias));
+        assert_eq!(
+            group
+                .items
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![offered]
+        );
+    }
+}

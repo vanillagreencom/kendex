@@ -234,8 +234,9 @@ impl Member {
     /// and name from two marketplaces are two members, and the same
     /// identity saved twice is one.
     ///
-    /// The repository is folded through [`crate::source_ref::repo_identity`],
-    /// which is this repository's one judge of whether two references name
+    /// The saved reference goes through [`crate::source_ref::marketplace_identity`],
+    /// preserving a folder's resolved directory and folding repositories.
+    /// This is the shared judge of whether two saved references name
     /// one marketplace — the same value [`install::resolve`] groups by and
     /// `subscription_for` matches a subscription on. A stored `repo` is a
     /// reference to subscribe with and a spelling to show, never a value to
@@ -244,7 +245,9 @@ impl Member {
     /// while the row a person could act on named only the first.
     pub fn identity(&self) -> (MemberKind, &str, Option<String>) {
         let repo = match &self.source {
-            MemberSource::Marketplace { repo, .. } => Some(crate::source_ref::repo_identity(repo)),
+            MemberSource::Marketplace { repo, .. } => {
+                Some(crate::source_ref::marketplace_identity(repo))
+            }
             MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => None,
         };
         (self.kind, self.name.as_str(), repo)
@@ -303,7 +306,8 @@ impl MemberRef {
             // [`Member::identity`] uses, so admission, dedup, grouping and
             // removal all read one value.
             (MemberWhich::Marketplace { repo }, MemberSource::Marketplace { repo: held, .. }) => {
-                crate::source_ref::repo_identity(repo) == crate::source_ref::repo_identity(held)
+                crate::source_ref::marketplace_identity(repo)
+                    == crate::source_ref::marketplace_identity(held)
             }
             (MemberWhich::Copy, MemberSource::Marketplace { .. })
             | (

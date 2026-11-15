@@ -201,9 +201,9 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
         }
         match &member.source {
             MemberSource::Marketplace { repo, rev } => {
-                let identity = crate::source_ref::repo_identity(repo);
+                let identity = crate::source_ref::marketplace_identity(repo);
                 let group = groups.entry(identity).or_insert_with(|| {
-                    let source = subscription_for(&personal, repo);
+                    let source = subscription_for(env, &personal, repo);
                     ResolvedGroup {
                         repo: repo.clone(),
                         source,
@@ -617,16 +617,19 @@ fn disagreeing_revs(repo: &str, held: Option<&str>, wanted: Option<&str>) -> Str
 
 /// The personal subscription that already carries this repository, by the
 /// identity every source comparison uses rather than by spelling.
-fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
-    let identity = crate::source_ref::repo_identity(repo);
+fn subscription_for(env: &Env, personal: &Manifest, repo: &str) -> Option<String> {
+    let identity = crate::source_ref::marketplace_identity(repo);
     personal
         .sources
         .iter()
         .find(|(_, decl)| {
-            decl.repo
-                .as_deref()
-                .or(decl.path.as_deref())
-                .is_some_and(|declared| crate::source_ref::repo_identity(declared) == identity)
+            crate::source_ops::declared_identity(
+                env,
+                &Scope::Global,
+                decl.repo.as_deref(),
+                decl.path.as_deref(),
+            )
+            .is_some_and(|declared| declared == identity)
         })
         .map(|(name, _)| name.clone())
 }

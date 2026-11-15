@@ -76,3 +76,16 @@ pub fn repo_identity(repo: &str) -> String {
     let (head, path) = trimmed.split_at(path_start);
     format!("{}{path}", head.to_ascii_lowercase())
 }
+
+/// A saved marketplace reference: a folder's resolved, slashed directory
+/// stays literal; repository references retain their host-specific fold.
+/// Bookmarks and templates both store full directory references, so a
+/// repository suffix must not merge two folders in either personal list.
+pub(crate) fn marketplace_identity(reference: &str) -> String {
+    let path = std::path::Path::new(reference);
+    if path.is_absolute() {
+        crate::paths::slashed(path)
+    } else {
+        repo_identity(reference)
+    }
+}

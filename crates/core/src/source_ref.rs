@@ -354,6 +354,7 @@ pub(crate) fn decode_segment(reference: &str, segment: &str) -> Result<String> {
 }
 
 mod identity;
+pub(crate) use identity::marketplace_identity;
 pub use identity::{owner_repo, repo_identity};
 
 mod tree;
