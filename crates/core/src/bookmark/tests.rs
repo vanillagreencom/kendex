@@ -382,10 +382,7 @@ fn one_relative_folder_declared_in_two_places_is_two_marketplaces() {
         .into_iter()
         .map(|row| row.repo_identity)
         .collect();
-    let folders: Vec<String> = expected
-        .iter()
-        .map(|(_, folder)| crate::source_ref::repo_identity(folder))
-        .collect();
+    let folders: Vec<String> = expected.iter().map(|(_, folder)| folder.clone()).collect();
     assert_eq!(identities, folders);
 
     let resolved = resolve(&machine.env).unwrap();
@@ -403,6 +400,73 @@ fn one_relative_folder_declared_in_two_places_is_two_marketplaces() {
             "{item:?}"
         );
     }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn folder_suffixes_keep_saved_items_and_subscriptions_distinct() {
+    let machine = machine();
+    let manifest = machine.env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        "schema = 8\n[sources.plain]\npath = './catalog/'\n[sources.suffixed]\npath = 'catalog.git'\n",
+    )
+    .unwrap();
+    let suffixed = machine.home.join("catalog.git/skills/gh");
+    fs::create_dir_all(&suffixed).unwrap();
+    fs::write(
+        suffixed.join("SKILL.md"),
+        "---\nname: gh\ndescription: suffixed skill\n---\nBody.\n",
+    )
+    .unwrap();
+
+    // These are the full references the pre-fix bookmark writer persisted.
+    let bookmarks: Vec<Bookmark> = ["catalog", "catalog.git"]
+        .iter()
+        .map(|folder| {
+            package(
+                &crate::paths::slashed(&machine.home.join(folder)),
+                ItemKind::Skill,
+                "gh",
+            )
+        })
+        .collect();
+    fs::write(
+        machine.env.bookmarks_file(),
+        toml::to_string(&super::index::Index {
+            bookmarks: bookmarks.clone(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(machine.env.bookmarks_file()).unwrap();
+    let subscriptions = crate::source_ops::subscriptions(&machine.env).unwrap();
+    let resolved = resolve(&machine.env).unwrap();
+    for ((saved, row), alias) in resolved
+        .iter()
+        .zip(&subscriptions)
+        .zip(["plain", "suffixed"])
+    {
+        assert_eq!(saved.repo_identity, saved.bookmark.repo);
+        assert_eq!(row.repo_identity, saved.repo_identity);
+        assert_eq!(saved.reach, Reach::Offered);
+        assert_eq!(
+            saved.catalog,
+            Some(Catalog::Subscription {
+                scope: Scope::Global,
+                source: alias.to_owned()
+            })
+        );
+    }
+    assert_eq!(resolved.len(), 2);
+    assert_ne!(resolved[0].repo_identity, resolved[1].repo_identity);
+    assert_eq!(fs::read(machine.env.bookmarks_file()).unwrap(), before);
+
+    remove(&machine.env, &bookmarks[1]).unwrap();
+    assert_eq!(list(&machine.env).unwrap(), vec![bookmarks[0].clone()]);
+    add(&machine.env, bookmarks[1].clone()).unwrap();
+    assert_eq!(list(&machine.env).unwrap(), bookmarks);
 }
 
 /// A package the marketplace has dropped keeps its row, says so, and is

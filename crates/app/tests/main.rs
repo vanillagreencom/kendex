@@ -13,6 +13,7 @@ mod bindings;
 mod cask_symlink_launch;
 mod fork_beside;
 mod icons;
+mod marketplace_folder_identity;
 mod marketplace_pending_reads;
 mod marketplace_rows_absent_manifest;
 mod marketplace_rows_records;

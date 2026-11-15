@@ -50,11 +50,10 @@ pub enum Reach {
 #[serde(rename_all = "camelCase")]
 pub struct SavedItem {
     pub bookmark: Bookmark,
-    /// The marketplace folded to one string, from
-    /// [`crate::source_ref::repo_identity`] — for a folder, over the
-    /// directory the bookmark records, which is what
-    /// [`crate::source_ops::declared_identity`] folds a declaration of that
-    /// folder to. Carried rather than left to
+    /// The marketplace identity from [`Bookmark::identity`]: a repository
+    /// folded by [`crate::source_ref::repo_identity`], or the resolved
+    /// directory a folder bookmark records, matching
+    /// [`crate::source_ops::declared_identity`]. Carried rather than left to
     /// the reader: a surface deciding whether the row it is drawing is
     /// saved compares this against its own marketplace's identity, and a
     /// second spelling of that fold outside core is a second answer.
@@ -81,7 +80,7 @@ fn one(
     subscriptions: &[crate::source_ops::Subscription],
     bookmark: Bookmark,
 ) -> Result<SavedItem> {
-    let repo_identity = crate::source_ref::repo_identity(&bookmark.repo);
+    let (repo_identity, _, _) = bookmark.identity();
     let (catalog, reach) = stands(env, subscriptions, &repo_identity, &bookmark);
     Ok(SavedItem {
         bookmark,

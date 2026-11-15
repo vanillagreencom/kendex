@@ -63,7 +63,7 @@ fn world() -> (tempfile::TempDir, std::path::PathBuf) {
         "[marketplace]\nname = \"cat\"\n\n[bundles.starter]\nskills = [\"gh\"]\n",
     );
 
-    let other = home.join("other");
+    let other = home.join("catalog.git");
     skill(&other.join("skills"), "gh", "other bytes");
     write(
         &other.join("kendex.toml"),
@@ -185,7 +185,7 @@ fn an_item_is_saved_listed_shown_installed_and_forgotten() {
 fn an_ambiguous_name_refuses_naming_the_selector_it_needs() {
     let (_tmp, home) = world();
     let catalog = home.join("catalog");
-    let other = home.join("other");
+    let other = home.join("catalog.git");
     let fresh = home.join("fresh");
 
     for source in [&catalog, &other] {
