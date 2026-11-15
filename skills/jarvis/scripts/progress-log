@@ -52,6 +52,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import subprocess
 import sys
@@ -292,7 +293,8 @@ def home_check(home):
     shared State reader owns entry boundaries. No live policy is consulted.
     """
     paths = staged(home, "ls-files", "--cached", "-z", "--", "memory", str(DEFAULT_HANDOFF)).split("\0")
-    failures = []
+    failures, notes = [], []
+    tracked = set(staged(home, "ls-files", "--cached", "-z").split("\0"))
     for name in dict.fromkeys(path for path in paths if path):
         if not (name == str(DEFAULT_HANDOFF) or (name.startswith("memory/") and name.endswith(".md")
                                          and name != "memory/MEMORY.md")):
@@ -300,11 +302,22 @@ def home_check(home):
         text = staged(home, "show", ":" + name)
         lines = text.splitlines(keepends=True)
         if name == str(DEFAULT_HANDOFF):
+            if not any(title == "Sub-agents" for _, _, title in headings(lines)):
+                failures.append((name, 1, "handoff-sub-agents", "references/long-session.md:34"))
+            # Handoff replacement's archive requirement applies to an explicit
+            # predecessor pointer, never to an inferred generation or date.
+            for number, line in enumerate(lines, 1):
+                if re.match(r"\s*(?:- )?(?:\*\*)?Predecessor", line, re.I):
+                    for path in re.findall(r"(?:state/)?archive/[^\s`)]+\.md", line):
+                        target = path if path.startswith("state/") else "state/" + path
+                        if target not in tracked:
+                            failures.append((name, number, "predecessor-archive", "workflows/session.md:102"))
             try:
                 entries = state_entries(lines)
             except LookupError:
                 failures.append((name, 1, "state-section", "expected one State section"))
                 continue
+            seen = set()
             for number, entry in entries:
                 # The writer also accepts named session, wake and ask ids;
                 # legacy entries bind tracker/mailbox/Slack ids anywhere.
@@ -313,6 +326,12 @@ def home_check(home):
                 session = re.search(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
                 if not named and not session and not any(state_ids(entry)):
                     failures.append((name, number, "state-id", "State entry requires a durable id"))
+                tokens = re.findall(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
+                durable = state_ids(opening)
+                key = named[1] if named else next(iter(tokens + durable[0] + durable[1]), None)
+                if key is not None and key in seen:
+                    failures.append((name, number, "state-entry-ambiguous", "references/long-session.md:87"))
+                seen.add(key)
         else:
             heads = headings(lines)
             for index, (start, level, _) in enumerate(heads):
@@ -320,11 +339,26 @@ def home_check(home):
                     continue
                 end = next((pos for pos, depth, _ in heads[index + 1:] if depth <= level), len(lines))
                 body = "".join(lines[start + 1:end])
+                fields = {}
                 for field in ("Source", "Date", "Supersedes"):
                     label = r"(?:%s:|\*\*%s:\*\*|\*\*%s\*\*:)" % (field, field, field)
-                    if not re.search(r"(?m)^[ \t]*(?:- )?" + label + r"[ \t]*\S", body):
+                    match = re.search(r"(?<![\w*])" + label + r"[ \t]*(.*?)(?=(?:\*\*)?(?:Source|Date|Supersedes)(?::|\*\*:)|\n|$)", body)
+                    fields[field] = match[1].strip(" \t;|·") if match else ""
+                    if not fields[field]:
                         failures.append((name, start + 1, "memory-field-" + field.lower(),
                                          "memory note requires " + field))
+                notes.append((name, start + 1, heads[index][2], fields["Supersedes"]))
+    for name, number, _, prior in notes:
+        # Notes defines no reference grammar. Only a plain local path and
+        # optional fragment establish evidence; other forms stay unjudged.
+        for path, fragment in re.findall(r"\[[^]\n]+\]\(([\w./-]*)(?:#([\w-]+))?\)", prior):
+            if path.startswith("/") or not (path or fragment):
+                continue
+            target = posixpath.normpath((Path(name).parent / path).as_posix()) if path else name
+            anchors = {re.sub(r"[^\w -]", "", title.lower()).replace(" ", "-")
+                       for other_name, _, title, _ in notes if other_name == target}
+            if target not in tracked or (fragment and fragment not in anchors):
+                failures.append((name, number, "memory-supersedes", "references/memory.md:24"))
     for name, number, rule, detail in failures:
         print("progress-log: file=%s line=%d rule=%s %s" % (name, number, rule, detail), file=sys.stderr)
     return 1 if failures else 0

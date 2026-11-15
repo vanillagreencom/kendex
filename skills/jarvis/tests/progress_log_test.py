@@ -98,12 +98,20 @@ class ProgressLog(MailWorld):
             formatted = "".join("- " + shape.format(field=field) + " " + value + "\n" for field, value in values)
             populated = good.replace(fields, formatted)
             rows.append((shape + " populated", populated, states, []))
+            inline = " · ".join(shape.format(field=field) + " " + value for field, value in values) + "\n"
+            rows.append((shape + " inline", good.replace(fields, inline), states, []))
             for field, value in values:
                 label = "- " + shape.format(field=field)
                 for replacement in ("", label + " \t\n"):
                     rows.append((shape + " " + field, populated.replace(label + " " + value + "\n", replacement), states,
                                  [("memory/facts.md", "3", "memory-field-" + field.lower())]))
         rows.append(("idless", good, "- Call the vendor\n", [("state/handoff.md", "5", "state-id")]))
+        rows.append(("checkpoint", good, "Checkpoint: checked 2000-01-01; log none\n" + states, []))
+        rows.append(("predecessor", good, "Predecessor archive: [earlier](archive/earlier.md)\n" + states, []))
+        archive = self.home / "state/archive/earlier.md"
+        archive.parent.mkdir()
+        archive.write_text("# Earlier handoff\n")
+        self.assertEqual(self.command(["git", "add", "state/archive"], self.home).returncode, 0)
         for name, text, state, expected in rows:
             with self.subTest(row=name, text=text):
                 note.write_text(text)
@@ -125,12 +133,48 @@ class ProgressLog(MailWorld):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
 
+    def test_home_relations(self):
+        # Notes 24; Handoff 34; Progress records 87; replacement 102.
+        memory = self.home / "memory"
+        memory.mkdir()
+        old = "### Prior\nSource: owner · Date: 2000-01-01 · Supersedes: none\n"
+        new = "### Current\nSource: owner · Date: 2000-01-01 · Supersedes: [Prior](facts.md#prior)\n"
+        good = old + "Superseded by Current.\n" + new
+        rows = (
+            ("retained", good, state_handoff("- KEN-1: next\n"), []),
+            ("missing prior", new, state_handoff("- KEN-1: next\n"),
+             [("memory/facts.md", "1", "memory-supersedes")]),
+            ("missing linked file", new.replace("facts.md#prior", "absent.md#prior"), state_handoff("- KEN-1: next\n"),
+             [("memory/facts.md", "1", "memory-supersedes")]),
+            ("free-form prior", good.replace("[Prior](facts.md#prior)", "Prior in facts.md"),
+             state_handoff("- KEN-1: next\n"), []),
+            ("split historical marking", old + "Superseded.\nReplacement: Current.\n" + new,
+             state_handoff("- KEN-1: next\n"), []),
+            ("historical marking not parsed", old + new, state_handoff("- KEN-1: next\n"), []),
+            ("file link", good.replace("[Prior](facts.md#prior)", "[old subject](facts.md)"),
+             state_handoff("- KEN-1: next\n"), []),
+            ("optional link title", good.replace("[Prior](facts.md#prior)", '[Prior](facts.md#prior "Historical note")'),
+             state_handoff("- KEN-1: next\n"), []),
+            ("external source", good.replace("[Prior](facts.md#prior)", "[prior](https://example.com/facts#prior)"),
+             state_handoff("- KEN-1: next\n"), []),
+            ("duplicate", good, state_handoff("- KEN-1: next\n- KEN-1: other\n"),
+             [("state/handoff.md", "6", "state-entry-ambiguous")]),
+            ("missing agents", good, state_handoff("- KEN-1: next\n").replace("## Sub-agents", "## Others"),
+             [("state/handoff.md", "1", "handoff-sub-agents")]),
+            ("missing archive", good, state_handoff("Predecessor archive: [earlier](archive/earlier.md)\n"),
+             [("state/handoff.md", "5", "predecessor-archive")]),
+        )
+        for name, note, handoff, expected in rows:
+            with self.subTest(row=name):
+                (memory / "facts.md").write_text(note)
+                self.handoff.write_text(handoff)
+                self.assertEqual(self.command(["git", "add", "memory", "state/handoff.md"], self.home).returncode, 0)
+                self.assert_home_check(expected)
+
     def test_home_structure_control(self):
         mutations = (
             ('for field in ("Source", "Date", "Supersedes"):', 'for field in ():'),
             ('        if sys.argv[1:]:', '        if False:'),
-            ('label = r"(?:%s:|\\*\\*%s:\\*\\*|\\*\\*%s\\*\\*:)" % (field, field, field)',
-             'label = r"(?:\\*\\*)?" + field + r"(?::\\*\\*|\\*\\*:|:)"'),
         )
         for old, new in mutations:
             with self.subTest(mutation=new), tempfile.TemporaryDirectory(dir=self.root) as folder:
