@@ -321,8 +321,8 @@ def home_check(home):
                 end = next((pos for pos, depth, _ in heads[index + 1:] if depth <= level), len(lines))
                 body = "".join(lines[start + 1:end])
                 for field in ("Source", "Date", "Supersedes"):
-                    if not re.search(r"(?m)^[ \t]*(?:- )?(?:\*\*)?" + field
-                                     + r"(?::\*\*|\*\*:|:)[ \t]*\S", body):
+                    label = r"(?:%s:|\*\*%s:\*\*|\*\*%s\*\*:)" % (field, field, field)
+                    if not re.search(r"(?m)^[ \t]*(?:- )?" + label + r"[ \t]*\S", body):
                         failures.append((name, start + 1, "memory-field-" + field.lower(),
                                          "memory note requires " + field))
     for name, number, rule, detail in failures:

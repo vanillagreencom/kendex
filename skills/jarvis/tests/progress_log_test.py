@@ -92,12 +92,17 @@ class ProgressLog(MailWorld):
         fields = "- Source: owner statement\n- Date: 2000-01-01\n- Supersedes: none\n"
         good = "# Facts\n\n### Access\nThe folder opens.\n" + fields
         states = "- KEN-1: next\n- session=control: hold\n- wake=mail: wait\n- ask=owner: await reply\n"
-        rows = [("passing", good, states, [])]
-        for field in ("Source", "Date", "Supersedes"):
-            for replacement in ("", "- " + field + ": \n"):
-                original = next(line for line in fields.splitlines(keepends=True) if line.startswith("- " + field + ":"))
-                rows.append((field, good.replace(original, replacement), states,
-                             [("memory/facts.md", "3", "memory-field-" + field.lower())]))
+        rows = []
+        values = (("Source", "owner statement"), ("Date", "2000-01-01"), ("Supersedes", "none"))
+        for shape in ("{field}:", "**{field}:**", "**{field}**:"):
+            formatted = "".join("- " + shape.format(field=field) + " " + value + "\n" for field, value in values)
+            populated = good.replace(fields, formatted)
+            rows.append((shape + " populated", populated, states, []))
+            for field, value in values:
+                label = "- " + shape.format(field=field)
+                for replacement in ("", label + " \t\n"):
+                    rows.append((shape + " " + field, populated.replace(label + " " + value + "\n", replacement), states,
+                                 [("memory/facts.md", "3", "memory-field-" + field.lower())]))
         rows.append(("idless", good, "- Call the vendor\n", [("state/handoff.md", "5", "state-id")]))
         for name, text, state, expected in rows:
             with self.subTest(row=name, text=text):
@@ -124,6 +129,8 @@ class ProgressLog(MailWorld):
         mutations = (
             ('for field in ("Source", "Date", "Supersedes"):', 'for field in ():'),
             ('        if sys.argv[1:]:', '        if False:'),
+            ('label = r"(?:%s:|\\*\\*%s:\\*\\*|\\*\\*%s\\*\\*:)" % (field, field, field)',
+             'label = r"(?:\\*\\*)?" + field + r"(?::\\*\\*|\\*\\*:|:)"'),
         )
         for old, new in mutations:
             with self.subTest(mutation=new), tempfile.TemporaryDirectory(dir=self.root) as folder:
