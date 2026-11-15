@@ -8,13 +8,23 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agent_runtime::effects::Target;
+use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
+use agent_runtime::journal::Env;
+use agent_runtime::process::{self, Identity};
 use agent_runtime::reading::Reading;
+use agent_runtime::record::{self, Locking};
+use agent_runtime::rows;
 
 use super::answer::Said;
+use super::marks;
 use super::payload::{Caller, Payload};
 use super::{Arm, Flow, Turn, Vars};
 use crate::marker;
+use crate::ops::store::{self, Write};
+use crate::send;
+use crate::settings::Settings;
 
 /// The bound on one `git` read of the lane's checkout.
 const GIT_BOUND: Duration = Duration::from_secs(30);
@@ -29,6 +39,18 @@ pub struct Lane {
     pub mail_root: PathBuf,
     /// The mailbox this lane reads, empty where the root holds no fleet lane.
     pub item: Option<String>,
+}
+
+/// Who a call in a launched lane is, by [`Lane::seat`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Seat {
+    Lead,
+    /// Another process in the lane's checkout: a job the lead started, or a
+    /// one-shot run.
+    Elsewhere,
+    /// The lane record could not be read, with the cause: the lane's mail
+    /// is handed to no one, and every other judgement is the lead's.
+    Unread(String),
 }
 
 impl Lane {
@@ -173,6 +195,75 @@ impl Lane {
         Ok(self.bound_here(bound))
     }
 
+    /// Whether this call is the lane's lead, for a launched lane's item. The
+    /// lead is the lane's own harness process: a call whose session is the
+    /// one the lane record names is it, and any other is it where the
+    /// record's launch process stands on the call's ancestor chain with no
+    /// other harness process between and still runs, so a native session
+    /// change in that process keeps the lane's mail and a job the lead's
+    /// shell started gets none. A record naming no session, no fleet record
+    /// and no record for the item leave the call the lead's, since the
+    /// launch binds it; a launch naming no process while the record names a
+    /// session is a relaunch in flight, whose mail waits for its confirm. A
+    /// process table that cannot be read leaves the call the lead's, noted,
+    /// so a host fault never silences the lane. The lead's own session start
+    /// from a cleared session binds the record to it.
+    pub(super) fn seat(&self, turn: &mut Turn, vars: &Vars, payload: &Payload) -> Flow<Seat> {
+        let Some(item) = &self.item else {
+            return Ok(Seat::Lead);
+        };
+        if !self.launched(turn)? {
+            return Ok(Seat::Lead);
+        }
+        let settings = match marks::marks_settings(turn, &self.root, vars.private_env) {
+            Ok(settings) => settings,
+            Err(cause) => return Ok(Seat::Unread(cause)),
+        };
+        let record = match send::lane_record(&settings, item) {
+            Ok(Some(record)) => record,
+            Ok(None) => return Ok(Seat::Lead),
+            Err(e) => return Ok(Seat::Unread(e.to_string())),
+        };
+        let Some(bound) = record.session_id.filter(|bound| !bound.is_empty()) else {
+            return Ok(Seat::Lead);
+        };
+        if bound == payload.session {
+            return Ok(Seat::Lead);
+        }
+        let launch = record.launch.as_ref().and_then(|launch| {
+            Some(Identity {
+                pid: u32::try_from(launch.pid?).ok()?,
+                start: launch.start.clone()?,
+            })
+        });
+        let Some(launch) = launch else {
+            return Ok(Seat::Elsewhere);
+        };
+        let target = record
+            .harness
+            .as_deref()
+            .and_then(Harness::parse)
+            .and_then(|harness| Target::new(&settings.engine.harness_binaries, harness).ok());
+        let is_harness = |name: &str| {
+            Harness::ALL
+                .iter()
+                .any(|harness| harness.owns_process(name))
+                || target.as_ref().is_some_and(|target| target.owns(name))
+        };
+        match served(&launch, &is_harness) {
+            Reading::Live(_) => {}
+            Reading::Gone => return Ok(Seat::Elsewhere),
+            Reading::Unreadable { cause } => {
+                turn.note(&Said::LaneProcess(cause), "");
+                return Ok(Seat::Lead);
+            }
+        }
+        if cleared_start(turn, payload) && !payload.session.is_empty() {
+            rebind(turn, &settings, item, &payload.session, launch);
+        }
+        Ok(Seat::Lead)
+    }
+
     fn bound_here(&self, bound: Option<String>) -> bool {
         bound.is_some_and(|bound| OsStr::new(&bound) == self.root.as_os_str())
     }
@@ -254,6 +345,53 @@ fn bound_root(turn: &mut Turn, common: Option<&Path>, item: &str) -> Flow<Option
         Reading::Unreadable { .. } => {
             Err(turn.stall(Said::Marker(marker::marker_path(common, item)), ""))
         }
+    }
+}
+
+/// Whether this call runs under the harness process `launch` names, live
+/// under its recorded start: `Gone` where it does not.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the turn end's one read of the lane's recorded harness process, which tells its lead from a job in its checkout; it acts on nothing"
+)]
+fn served(launch: &Identity, is_harness: &dyn Fn(&str) -> bool) -> Reading<Identity> {
+    match rows::served_by_here(launch.pid, is_harness) {
+        Ok(true) => process::still_runs(launch),
+        Ok(false) => Reading::Gone,
+        Err(unread) => Reading::Unreadable {
+            cause: unread.cause,
+        },
+    }
+}
+
+/// A session start whose payload names its source `clear`: a new native
+/// session in the same harness process. A start, a resume and a compaction
+/// keep the session the launch bound.
+pub(super) fn cleared_start(turn: &Turn, payload: &Payload) -> bool {
+    let start = match &turn.arm {
+        Some(Arm::Row { event }) => event == "SessionStart",
+        Some(Arm::Start) => true,
+        _ => false,
+    };
+    start && payload.field("source").and_then(|s| s.as_str()) == Some("clear")
+}
+
+/// The lane record of `item` bound to `session`, the lead's new session in
+/// the process `launch` names. A write that fails is noted and the call
+/// goes on as the lead's; one that binds nothing found the launch moved.
+fn rebind(turn: &mut Turn, settings: &Settings, item: &str, session: &str, launch: Identity) {
+    let fleet = record::fleet_path(&settings.state_dir);
+    let write = Write::LaneSession {
+        lane: item.to_owned(),
+        session: session.to_owned(),
+        launch,
+    };
+    let written = Env::system().map_err(|e| e.to_string()).and_then(|env| {
+        store::run_write(&fleet, Locking::FLOCK, &settings.store, &env, &write)
+            .map_err(|e| e.to_string())
+    });
+    if let Err(cause) = written {
+        turn.note(&Said::LaneSessionUnbound, &cause);
     }
 }
 

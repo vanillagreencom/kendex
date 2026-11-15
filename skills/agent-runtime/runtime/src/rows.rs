@@ -653,6 +653,55 @@ pub fn top_level_here(server: u32) -> Result<bool, Unwritten> {
     ))
 }
 
+/// Whether the call this process's parent `from` serves runs under the
+/// recorded harness process `recorded`: `recorded` stands on `from`'s
+/// ancestor chain, `from` included, and no other process `is_harness`
+/// names stands between them, so a job a lane lead's tool shell started
+/// under a harness of its own is told apart from the lead. Codex's native
+/// process directly under a recorded installed Node launcher, which
+/// `launcher` judges, is the launcher's own. A chain that ends first, or a
+/// cycle the walk's bound of 64 steps ends, is not served by `recorded`.
+pub fn served_by(
+    rows: &[process::Row],
+    from: u32,
+    recorded: u32,
+    is_harness: &dyn Fn(&str) -> bool,
+    launcher: &dyn Fn(u32) -> bool,
+) -> bool {
+    let by_pid: HashMap<u32, &process::Row> = rows.iter().map(|row| (row.pid, row)).collect();
+    let mut pid = from;
+    for _ in 0..64 {
+        if pid == recorded {
+            return true;
+        }
+        let Some(row) = by_pid.get(&pid).filter(|_| pid > 1) else {
+            return false;
+        };
+        let launched = row.name == "codex" && row.ppid == recorded && launcher(recorded);
+        if is_harness(&row.name) && !launched {
+            return false;
+        }
+        pid = row.ppid;
+    }
+    false
+}
+
+/// [`served_by`] for this process's own parent, over one read of the
+/// process table.
+pub fn served_by_here(
+    recorded: u32,
+    is_harness: &dyn Fn(&str) -> bool,
+) -> Result<bool, crate::reading::Unreadable> {
+    let rows = process::table()?;
+    Ok(served_by(
+        &rows,
+        std::os::unix::process::parent_id(),
+        recorded,
+        is_harness,
+        &codex_launcher,
+    ))
+}
+
 /// Whether `pid` is the installed `@openai/codex` Node launcher.
 fn codex_launcher(pid: u32) -> bool {
     process::command_lines().is_ok_and(|lines| {
@@ -983,6 +1032,98 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let _ = tx.send(top_level(&cycle, 22, SERVER, &|_| false));
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(false));
+    }
+
+    /// A call is served by the recorded harness process where that process
+    /// stands on its chain with only shells, hook runners and the recorded
+    /// Codex launcher's native child between; a job the lead's tool shell
+    /// started under a harness of its own is not, nor is a chain that never
+    /// reaches the record, a parent the table lacks, or a cycle the walk's
+    /// bound ends. Every pid is synthetic.
+    #[test]
+    fn served_by_reads_the_recorded_harness_through_shells_and_codexs_launcher_and_refuses_a_nested_harness()
+     {
+        let table = |chain: &[(u32, u32, &str)]| -> Vec<process::Row> {
+            chain
+                .iter()
+                .map(|&(pid, ppid, name)| process::Row {
+                    pid,
+                    ppid,
+                    pgrp: pid,
+                    name: name.to_owned(),
+                })
+                .collect()
+        };
+        let harness = |name: &str| matches!(name, "claude" | "codex" | "pi");
+        let launcher = |pid: u32| pid == 31;
+        let cases: [(&str, Vec<process::Row>, u32, bool); 8] = [
+            (
+                "the lead's hook under shells",
+                table(&[(21, 10, "claude"), (22, 21, "sh"), (23, 22, "bash")]),
+                21,
+                true,
+            ),
+            (
+                "the call's parent is the recorded harness",
+                table(&[(23, 10, "pi")]),
+                23,
+                true,
+            ),
+            (
+                "a job under the lead's tool shell",
+                table(&[
+                    (21, 10, "claude"),
+                    (24, 21, "bash"),
+                    (25, 24, "claude"),
+                    (23, 25, "sh"),
+                ]),
+                21,
+                false,
+            ),
+            (
+                "codex under its recorded installed node launcher",
+                table(&[(31, 10, "node"), (32, 31, "codex"), (23, 32, "bash")]),
+                31,
+                true,
+            ),
+            (
+                "codex under another recorded node",
+                table(&[(33, 10, "node"), (32, 33, "codex"), (23, 32, "bash")]),
+                33,
+                false,
+            ),
+            (
+                "a recorded process off the chain",
+                table(&[(21, 10, "claude"), (26, 10, "bash"), (23, 26, "sh")]),
+                21,
+                false,
+            ),
+            (
+                "a parent the table lacks",
+                table(&[(23, 99, "sh")]),
+                21,
+                false,
+            ),
+            (
+                "a chain that ends at the first process",
+                table(&[(2, 1, "systemd"), (23, 2, "sh")]),
+                21,
+                false,
+            ),
+        ];
+        for (what, rows, recorded, want) in cases {
+            assert_eq!(
+                served_by(&rows, 23, recorded, &harness, &launcher),
+                want,
+                "{what}"
+            );
+        }
+        let cycle = table(&[(22, 23, "bash"), (23, 22, "sh")]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(served_by(&cycle, 23, 21, &|_| false, &|_| false));
         });
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(false));
     }

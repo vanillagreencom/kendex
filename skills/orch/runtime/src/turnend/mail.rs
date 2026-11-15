@@ -14,7 +14,7 @@ use std::rc::Rc;
 use agent_runtime::reading::Reading;
 
 use super::answer::{self, Harness, Routes, Said};
-use super::identity::{Lane, shell_quoted};
+use super::identity::{Lane, Seat, shell_quoted};
 use super::payload::{Caller, Payload};
 use super::role::Binding;
 use super::{Answer, Arm, Flow, Turn, Vars};
@@ -65,7 +65,8 @@ impl Ack {
 
 /// The session's unread mail: held at a turn end, refused at a tool call
 /// only where a halt stands, handed over as context at the arms that carry
-/// one. A launched lane reads its own mailbox; a session with no lane item
+/// one. A launched lane's mailbox is read by the lane's lead, as the head of
+/// the judgement told it from a job in its checkout; a session with no lane item
 /// reads the checkout's overseer mailbox only as [`overseer_reader`] admits
 /// it. A session that reads neither, or whose mailbox has never been
 /// written, has nothing here. The halt arm acknowledges nothing; every
@@ -119,9 +120,6 @@ pub(super) fn check(
         };
         turn.refuse(said, &cause(&refusal))
     })?;
-    if peeked.unread.is_empty() {
-        return Ok(());
-    }
     // The reader's `--ack` stops short of an unread halt, so no answer here
     // consumes one: it stands until the lane runs the plain read named
     // here, which names the lane's root so it reads this mailbox from any
@@ -131,6 +129,15 @@ pub(super) fn check(
         .iter()
         .map(|(_, envelope)| envelope)
         .find(|envelope| envelope.halt == Some(true));
+    if peeked.unread.is_empty() || (*arm == Arm::Halt && halt.is_none()) {
+        return Ok(());
+    }
+    // The record that names the lane's lead could not be read: the lines
+    // are handed to no one.
+    if let Seat::Unread(cause) = &turn.seat {
+        let cause = cause.clone();
+        return Err(turn.refuse(Said::LaneRecord, &cause));
+    }
     let command = halt.map(|_| read_command(mailbox.cli(), item, &lane.root));
     if *arm == Arm::Halt {
         let (Some(halt), Some(command)) = (halt, command) else {
@@ -245,7 +252,8 @@ pub(super) fn question_tool_check(
 /// runs no further request after a continued turn, tells the overseer
 /// through the lane's own mailbox instead and ends. A gap in the reader,
 /// the listing or the record passes the turn end unjudged, since nothing
-/// the lane does at its turn end repairs its mailbox.
+/// the lane does at its turn end repairs its mailbox, and so does a lane
+/// record that cannot say who the lane's lead is.
 pub(super) fn idle_check(
     turn: &mut Turn,
     vars: &Vars,
@@ -257,6 +265,11 @@ pub(super) fn idle_check(
         return Ok(());
     };
     if *arm != Arm::Stop || turn.caller != Caller::Lead || !lane.launched(turn)? {
+        return Ok(());
+    }
+    if let Seat::Unread(cause) = &turn.seat {
+        let cause = cause.clone();
+        turn.note(&Said::LaneRecord, &cause);
         return Ok(());
     }
     let Ok(reader) = mail_reader(turn, lane, vars) else {

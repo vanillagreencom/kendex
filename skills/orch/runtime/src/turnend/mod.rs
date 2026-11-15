@@ -26,7 +26,7 @@ use std::time::SystemTime;
 use agent_runtime::clock::SystemClock;
 use agents::Deadline;
 use answer::{Harness, Said};
-use identity::Lane;
+use identity::{Lane, Seat};
 use payload::{Caller, Leads, Payload};
 
 /// The event a run judges: the argument the hook beside the turn-end hook
@@ -192,6 +192,9 @@ struct Turn {
     /// has no arm.
     arm: Option<Arm>,
     caller: Caller,
+    /// Whether a launched lane's call is its lead, asked once at the head
+    /// of the judgement; the lead's for any other call.
+    seat: Seat,
     /// A continued turn, a tool call, a row and the lane arm report what the
     /// lane cannot clear and pass: holding a continued turn is the loop
     /// `stop_hook_active` exists to end, and a halt the lane could clear only
@@ -231,6 +234,7 @@ impl Turn {
             harness,
             arm: None,
             caller: Caller::Lead,
+            seat: Seat::Lead,
             reported: false,
             stderr: String::new(),
             ack: None,
@@ -479,6 +483,23 @@ fn judged(
     payload: &Payload,
     continued: bool,
 ) -> Flow {
+    // A call in a launched lane that is not its lead moves nothing of the
+    // lane's: a halt refuses it as it refuses a subagent, and every other
+    // arm passes. A row moves nothing of a lane's but the bind a cleared
+    // session start makes.
+    let asked = match arm {
+        Arm::Row { .. } => identity::cleared_start(turn, payload),
+        _ => true,
+    };
+    if lane.item.is_some() && turn.caller != Caller::Subagent && asked {
+        turn.seat = lane.seat(turn, vars, payload)?;
+        if turn.seat == Seat::Elsewhere {
+            if *arm != Arm::Halt {
+                return Err(turn.pass());
+            }
+            turn.caller = Caller::Subagent;
+        }
+    }
     role::session_pane(turn, vars, lane, payload)?;
     if let Arm::Row { .. } = arm {
         if lane.item.is_none() {

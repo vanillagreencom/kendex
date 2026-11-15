@@ -2026,7 +2026,7 @@ pub(super) fn record_launch_outcome(
             } else {
                 record::delete(lane, "viewer");
             }
-            record::set(lane, "session_id", string_or_null(&r.session_id));
+            bind_session(lane, r.session_id.as_deref());
             // The home a local launch read its sessions under, which a
             // relaunch reads the bound session from, and whether it named it.
             if let Some(home) = &r.home {
@@ -2066,6 +2066,47 @@ pub(super) fn record_launch_outcome(
         Outcome::NotStarted => {}
     }
     Ok(())
+}
+
+/// The one write of a lane record's native session: the launch's confirm
+/// and a session its own harness process starts in place of the bound one.
+fn bind_session(lane: &mut Document, session: Option<&str>) {
+    record::set(lane, "session_id", session.map_or(Value::Null, Value::from));
+}
+
+/// The first lane record of `item` bound to `session`, which the lane's own
+/// harness process started, where that record runs the launch `launch`
+/// names; a lane that runs another launch, or none, is left as it is, so a
+/// call judged against a launch a relaunch has replaced binds nothing. The
+/// attempt's stamp and the launch stay the launch's own.
+pub(crate) fn rebind_session(
+    doc: &mut Document,
+    item: &str,
+    session: &str,
+    launch: &Identity,
+) -> Value {
+    let lane = doc
+        .get_mut("lanes")
+        .and_then(Value::as_array_mut)
+        .and_then(|lanes| {
+            lanes
+                .iter_mut()
+                .filter_map(Value::as_object_mut)
+                .find(|lane| lane.get("item").and_then(Value::as_str) == Some(item))
+        });
+    let Some(lane) = lane else {
+        return json!({"bound": false});
+    };
+    let running = lane.get("status").and_then(Value::as_str) == Some(LaneStatus::Running.word());
+    let runs = lane.get("launch").is_some_and(|recorded| {
+        recorded.get("pid").and_then(Value::as_u64) == Some(u64::from(launch.pid))
+            && recorded.get("start").and_then(Value::as_str) == Some(launch.start.as_str())
+    });
+    if !running || !runs {
+        return json!({"bound": false});
+    }
+    bind_session(lane, Some(session));
+    json!({"bound": true})
 }
 
 /// The cloud session's close row a cloud lane's close writes beside its own:
@@ -2834,6 +2875,65 @@ mod tests {
             "pending_pr": {"pr": 5814, "repo": "o/r", "head": "abc"},
             "cycles": 2,
         })
+    }
+
+    /// A session the lane's own harness process started is bound only where
+    /// the lane still runs the launch the caller judged: a moved launch, a
+    /// relaunch's null one, a lane still preparing and an item with no lane
+    /// are left as they are; a bind writes the session and nothing else.
+    #[test]
+    fn rebind_session_binds_only_the_running_launch_it_names() {
+        let judged = Identity {
+            pid: 6000,
+            start: "ticks:6000".into(),
+        };
+        let lane = |item: &str, status: &str, launch: Option<&Identity>| {
+            let mut lane = record(item, status, launch);
+            lane["session_id"] = json!("s0");
+            lane
+        };
+        let moved = Identity {
+            pid: 6000,
+            start: "ticks:7000".into(),
+        };
+        let cases: [(&str, Value, bool); 5] = [
+            (
+                "the running launch",
+                lane("KEN-1", "running", Some(&judged)),
+                true,
+            ),
+            (
+                "a moved launch",
+                lane("KEN-1", "running", Some(&moved)),
+                false,
+            ),
+            (
+                "a relaunch's null launch",
+                lane("KEN-1", "running", None),
+                false,
+            ),
+            (
+                "a lane still preparing",
+                lane("KEN-1", "preparing", Some(&judged)),
+                false,
+            ),
+            (
+                "no lane for the item",
+                lane("KEN-2", "running", Some(&judged)),
+                false,
+            ),
+        ];
+        for (what, before, bound) in cases {
+            let mut doc = Document::new();
+            doc.insert("lanes".into(), json!([before.clone()]));
+            let report = rebind_session(&mut doc, "KEN-1", "s1", &judged);
+            assert_eq!(report, json!({"bound": bound}), "{what}");
+            let mut want = before;
+            if bound {
+                want["session_id"] = json!("s1");
+            }
+            assert_eq!(doc["lanes"], json!([want]), "{what}");
+        }
     }
 
     /// A first launch's brief requests a cycle; the touched set its brief

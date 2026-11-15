@@ -472,6 +472,13 @@ pub enum Write {
         expected: PathBuf,
     },
     Heal(Heal),
+    /// The lane `lane`'s native session rebound to `session`, started by the
+    /// harness process `launch` names, while the lane still runs that launch.
+    LaneSession {
+        lane: String,
+        session: String,
+        launch: agent_runtime::process::Identity,
+    },
 }
 
 /// A finding's bucket write: the entry is the file's one value, or, at
@@ -592,6 +599,11 @@ fn transition(
             expected,
         } => model_reset(path, doc, env, lane, session, &one_value(expected)?),
         Write::Heal(given) => Ok(heal::heal(doc, given)?),
+        Write::LaneSession {
+            lane,
+            session,
+            launch,
+        } => Ok(super::lane::rebind_session(doc, lane, session, launch)),
     }
 }
 

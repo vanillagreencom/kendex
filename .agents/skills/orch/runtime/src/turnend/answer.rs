@@ -115,6 +115,14 @@ pub enum Said {
     Reader(PathBuf),
     /// The settings that name the mailbox reader could not be read.
     ReaderUnsettled,
+    /// The lane record that names the session lane mail is handed to could
+    /// not be read.
+    LaneRecord,
+    /// Whether the call runs under the lane's own harness process could not
+    /// be read, with the reader's cause word.
+    LaneProcess(&'static str),
+    /// The lane record could not be bound to the lead's new session.
+    LaneSessionUnbound,
     /// The reader's peek ended other than with its answer: its exit status,
     /// or the word for a run that gave none.
     Inbox(String),
@@ -431,6 +439,9 @@ impl Said {
             Said::CompactionUnrecorded(session) => ("session-unrecorded", session.clone()),
             Said::Reader(path) => ("reader", path.display().to_string()),
             Said::ReaderUnsettled => ("reader", "unsettled".to_owned()),
+            Said::LaneRecord => ("lane-record", "unread".to_owned()),
+            Said::LaneProcess(cause) => ("lane-process", format!("unread cause={cause}")),
+            Said::LaneSessionUnbound => ("lane-session", "unbound".to_owned()),
             Said::Inbox(status) => ("inbox", status.clone()),
             Said::InboxHeader => ("inbox", "header".to_owned()),
             Said::InboxEnvelope => ("inbox", "envelope".to_owned()),
@@ -589,6 +600,9 @@ impl Said {
                 path.display()
             ),
             Said::ReaderUnsettled => "the lane mailbox has a to-lane.jsonl and the settings that name its reader could not be read, so whatever it holds cannot be handed over:".to_owned(),
+            Said::LaneRecord => "the lane's record in the fleet state names the one session the lane's mail is handed to, and it could not be read, so nothing of the lane's mail is handed over or judged here and none is marked read; the cause follows:".to_owned(),
+            Said::LaneProcess(_) => "whether this call runs under the lane's own harness process could not be read, so it is judged as the lane's lead".to_owned(),
+            Said::LaneSessionUnbound => "this session started in place of the one the lane's record names, in the lane's own harness process, and the record could not be bound to it, so the watch reads the lane's context as another session's until a later start or a relaunch binds it; the session goes on as the lane's lead. The writer's words follow:".to_owned(),
             Said::Inbox(status) => format!(
                 "the lane mailbox reader exited {status}, so whether messages are waiting is unknown:"
             ),

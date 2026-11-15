@@ -187,7 +187,19 @@ impl World {
         payload: &str,
         env: &[(&str, &str)],
     ) -> Out {
-        let mut command = isolated();
+        self.run_in(isolated(), dir, hooks, args, payload, env)
+    }
+
+    /// `command`, which starts the verb, run as [`World::turn_in`] runs it.
+    fn run_in(
+        &self,
+        mut command: std::process::Command,
+        dir: &Path,
+        hooks: &Path,
+        args: &[&str],
+        payload: &str,
+        env: &[(&str, &str)],
+    ) -> Out {
         command
             .arg("turn-end")
             .arg("--hook-dir")
@@ -1082,6 +1094,267 @@ fn unread_mail_holds_a_lanes_turn_end_and_is_marked_read_once_the_refusal_is_wri
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(!out.stderr.contains("unread="), "{}", out.stderr);
     assert_eq!(world.cursor(), "3");
+}
+
+impl World {
+    /// The fleet record holding the lane's record, bound to `session` or,
+    /// before its launch binds one, to none.
+    fn bind(&self, session: Option<&str>) {
+        let lane = json!({"item": ITEM, "status": "running", "session_id": session});
+        fs::write(
+            self.lane
+                .join("tmp")
+                .join(agent_runtime::record::FLEET_FILE_NAME),
+            json!({ "lanes": [lane] }).to_string(),
+        )
+        .unwrap();
+    }
+}
+
+/// A Claude payload of the session `session`, with `fields` added.
+fn of_session(session: &str, fields: Value) -> String {
+    let mut payload = json!({ "session_id": session });
+    for (key, value) in fields.as_object().unwrap() {
+        payload[key] = value.clone();
+    }
+    payload.to_string()
+}
+
+#[test]
+fn lane_mail_is_the_session_its_record_names_and_a_call_before_the_binding_is_the_leads() {
+    let world = World::launched();
+    world.bind(Some("lead-1"));
+    world.direct("d1", "rebase", false);
+    let bash = json!({"tool_name": "Bash"});
+
+    // Another session in the lane's checkout is handed nothing, reads no
+    // cursor, and its turn end is held neither for the mail nor as idle.
+    let out = world.mail("claude", &["deliver"], &of_session("job-1", bash.clone()));
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(world.cursor(), "", "{}", out.stderr);
+    let out = world.mail("claude", &[], &of_session("job-1", json!({})));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(!out.stderr.contains("unread="), "{}", out.stderr);
+    assert!(!out.stderr.contains("idle="), "{}", out.stderr);
+    assert_eq!(world.sent_count(), "", "no idle judgement recorded");
+    assert_eq!(world.cursor(), "");
+
+    // The session the record names is handed it and marks it read.
+    let out = world.mail("claude", &[], &of_session("lead-1", json!({})));
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: unread=1");
+    assert_eq!(world.cursor(), "1");
+
+    // Before the launch binds a session, a call is the lead's.
+    world.bind(None);
+    world.direct("d2", "push", false);
+    let out = world.mail("claude", &["deliver"], &of_session("job-1", bash.clone()));
+    let context = out.json()["hookSpecificOutput"]["additionalContext"].clone();
+    assert!(
+        context
+            .as_str()
+            .is_some_and(|c| c.starts_with("lane-mail-check: unread=1\n")),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(world.cursor(), "2");
+
+    // A halt refuses another session as it refuses a subagent: the read is
+    // neither shown nor passed.
+    world.bind(Some("lead-1"));
+    world.direct("h1", "stop the push", true);
+    let command = read_command(&world);
+    let read = json!({"tool_name": "Bash", "tool_input": {"command": command}});
+    let out = world.mail("claude", &["halt"], &of_session("job-1", read.clone()));
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: halt=h1");
+    assert!(!out.stderr.contains(&command), "{}", out.stderr);
+    let out = world.mail("claude", &["halt"], &of_session("lead-1", read));
+    assert_eq!(
+        (out.code, out.stderr.as_str()),
+        (0, ""),
+        "the lead's read passes"
+    );
+
+    // A record that cannot be read hands the mail to no session.
+    fs::write(
+        world
+            .lane
+            .join("tmp")
+            .join(agent_runtime::record::FLEET_FILE_NAME),
+        "{",
+    )
+    .unwrap();
+    let out = world.mail("claude", &["deliver"], &of_session("lead-1", bash));
+    assert_eq!(
+        out.first(),
+        "lane-mail-check: lane-record=unread",
+        "{}",
+        out.stderr
+    );
+    assert_eq!(world.cursor(), "2");
+}
+
+impl World {
+    /// The fleet record holding the lane's record, bound to `session` and
+    /// to a launch whose harness process is this test process under `start`,
+    /// so a verb this process starts runs under the lane's own harness.
+    fn bind_here(&self, session: Option<&str>, start: &str) {
+        let lane = json!({
+            "item": ITEM,
+            "harness": "claude",
+            "status": "running",
+            "session_id": session,
+            "session_since": "2026-11-15T10:00:00Z",
+            "launch": {"pane": "%7", "server": 41020, "pid": std::process::id(), "start": start},
+        });
+        fs::write(self.fleet(), json!({ "lanes": [lane] }).to_string()).unwrap();
+    }
+
+    fn fleet(&self) -> PathBuf {
+        self.lane
+            .join("tmp")
+            .join(agent_runtime::record::FLEET_FILE_NAME)
+    }
+
+    fn lane_record(&self) -> Value {
+        let fleet: Value =
+            serde_json::from_str(&fs::read_to_string(self.fleet()).unwrap()).unwrap();
+        fleet["lanes"][0].clone()
+    }
+
+    /// The verb run from the lane under `harness`'s install, with the
+    /// mailbox package's reader named, as a child of the program `job`.
+    fn job_mail(&self, job: &Path, harness: &str, args: &[&str], payload: &str) -> Out {
+        let reader = lane_mail().display().to_string();
+        let env = [("LANE_MAIL_CLI", reader.as_str())];
+        let mut command = program(job);
+        command.arg(binary()).arg("--no-private-env");
+        self.run_in(
+            command,
+            &self.lane,
+            &self.hooks(harness),
+            args,
+            payload,
+            &env,
+        )
+    }
+}
+
+/// A session start of `session` from `source`.
+fn started(session: &str, source: &str) -> String {
+    of_session(
+        session,
+        json!({"hook_event_name": "SessionStart", "source": source}),
+    )
+}
+
+#[test]
+fn a_new_session_in_the_lanes_own_harness_is_handed_its_mail_and_binds_the_record_at_a_cleared_start()
+ {
+    let world = World::launched();
+    let start = start_of(std::process::id());
+    world.bind_here(Some("s0"), &start);
+    let before = world.lane_record();
+    world.direct("d1", "rebase", false);
+    let row = ["row", "SessionStart"];
+
+    // A start that keeps the session binds nothing; a cleared one binds the
+    // record to the new session and leaves the launch and its stamp.
+    let out = world.mail("claude", &row, &started("s1", "startup"));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    assert_eq!(world.lane_record(), before);
+    let out = world.mail("claude", &row, &started("s1", "clear"));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    let mut bound = before.clone();
+    bound["session_id"] = json!("s1");
+    assert_eq!(world.lane_record(), bound);
+
+    // A session the record does not name, in the lane's own process, is
+    // the lead: its turn end is handed the mail and marks it read.
+    let out = world.mail("claude", &[], &of_session("s2", json!({})));
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: unread=1");
+    assert_eq!(world.cursor(), "1");
+
+    // The recorded pid under another start is no longer the lane's process:
+    // a cleared start binds nothing and the mail waits.
+    world.bind_here(Some("s1"), "ticks:1");
+    world.direct("d2", "push", false);
+    let moved = world.lane_record();
+    let out = world.mail("claude", &row, &started("s3", "clear"));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    assert_eq!(world.lane_record(), moved);
+    let out = world.mail("claude", &[], &of_session("s3", json!({})));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    assert_eq!(world.cursor(), "1");
+
+    // A record naming no session is the launch's to bind: the call is the
+    // lead's and binds nothing.
+    world.bind_here(None, &start);
+    let unbound = world.lane_record();
+    let out = world.mail("claude", &row, &started("s4", "clear"));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    assert_eq!(world.lane_record(), unbound);
+    let out = world.mail("claude", &[], &of_session("s4", json!({})));
+    assert_eq!(out.first(), "lane-mail-check: unread=1", "{}", out.stderr);
+    assert_eq!(world.cursor(), "2");
+}
+
+#[test]
+fn a_job_under_the_lane_lead_is_handed_nothing_and_moves_no_record_of_the_lanes() {
+    let world = World::launched();
+    world.bind_here(Some("s0"), &start_of(std::process::id()));
+    let before = world.lane_record();
+    world.direct("d1", "rebase", false);
+    // A harness of its own between the verb and the lane's process: the
+    // kernel names a script's process for its file.
+    let job = world.root.join("job").join("claude");
+    fs::create_dir_all(job.parent().unwrap()).unwrap();
+    write_executable(&job, "#!/bin/sh\n\"$@\"\nexit $?\n");
+    let context = world.lane_box().join("context.json");
+    let bash = json!({"tool_name": "Bash"});
+
+    let out = world.job_mail(&job, "claude", &["halt"], &of_session("j1", bash.clone()));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    assert!(
+        !context.exists(),
+        "the job's tool call binds no context record"
+    );
+    let out = world.job_mail(
+        &job,
+        "claude",
+        &["deliver"],
+        &of_session("j1", bash.clone()),
+    );
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    let out = world.job_mail(&job, "claude", &[], &of_session("j1", json!({})));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    let out = world.job_mail(&job, "pi", &[], &of_session("j1", json!({})));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    let out = world.job_mail(
+        &job,
+        "claude",
+        &["row", "SessionStart"],
+        &started("j2", "clear"),
+    );
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    assert_eq!(world.cursor(), "0", "the job moves no cursor");
+    assert_eq!(world.sent_count(), "", "no idle judgement recorded");
+    assert!(
+        !world
+            .lane_box()
+            .join(agent_runtime::rows::LANE_FILE)
+            .exists()
+    );
+    assert_eq!(world.lane_record(), before);
+
+    // The same tool call from the lane's own process binds the context
+    // record to its session.
+    let out = world.mail("claude", &["halt"], &of_session("j1", bash));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let record: Value = serde_json::from_str(&fs::read_to_string(&context).unwrap()).unwrap();
+    assert_eq!(record["session_id"], "j1");
 }
 
 #[test]
