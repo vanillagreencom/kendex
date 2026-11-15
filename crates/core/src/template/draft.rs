@@ -196,8 +196,6 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
             continue;
         }
         let origin = origin_of(
-            env,
-            &scope,
             &crate::manifest::manifest_file_name(env, &scope),
             &manifest,
             &row.decl,
@@ -226,8 +224,6 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
             derived: false,
             required_by: Vec::new(),
             origin: origin_of(
-                env,
-                &scope,
                 &crate::manifest::manifest_file_name(env, &scope),
                 &manifest,
                 decl,
@@ -511,8 +507,6 @@ fn offered_locally(
 
 /// What the template would record for one declared package.
 fn origin_of(
-    env: &Env,
-    scope: &Scope,
     manifest_file: &str,
     manifest: &Manifest,
     decl: &crate::manifest::ItemDecl,
@@ -553,10 +547,6 @@ fn origin_of(
                 crate::names::shown(&decl.source)
             ),
         };
-    };
-    let repo = match source.repo {
-        Some(_) => repo,
-        None => crate::paths::slashed(&crate::source::path_root(env, scope, &repo)),
     };
     let rev = decl.rev.clone().or_else(|| source.rev.clone());
     // An installed copy whose bytes have drifted from the marketplace's is

@@ -6,9 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AppSettings,
   Draft_Serialize,
-  MarketplaceRow,
   Member_Serialize,
-  Scope,
   Template_Serialize,
 } from "@/bindings";
 import { commands } from "@/bindings";
@@ -529,84 +527,61 @@ describe("installing a template into a place", () => {
 });
 
 describe("saving a marketplace selection into a template", () => {
-  const subscriptions = [
-    {
-      scope: { scope: "global" },
-      name: "kendex",
-      repo: "vanillagreencom/kendex",
-      resolvedPath: "/catalog",
-    },
-    ...["/projects/one", "/projects/two"].map((root) => ({
-      scope: { scope: "project", root },
-      name: "kendex",
-      repo: null,
-      path: "./catalog",
-      resolvedPath: `${root}/catalog`,
-    })),
-  ] as MarketplaceRow[];
-
-  it.each<{ scope: Scope; repo: string }>([
-    { scope: { scope: "global" }, repo: "vanillagreencom/kendex" },
-    {
-      scope: { scope: "project", root: "/projects/one" },
-      repo: "/projects/one/catalog",
-    },
-    {
-      scope: { scope: "project", root: "/projects/two" },
-      repo: "/projects/two/catalog",
-    },
-  ])(
-    "saves the selected marketplace as $repo into the picked template",
-    async ({ scope, repo }) => {
-      vi.mocked(commands.templatesList).mockResolvedValue({
-        status: "ok",
-        data: [RUST_SERVICE],
-      });
-      vi.mocked(commands.templateAddMembers).mockResolvedValue({
-        status: "ok",
-        data: RUST_SERVICE,
-      });
-      const saveable = membersFor(
-        [
-          {
-            catalog: {
-              by: "subscription",
-              scope,
-              source: "kendex",
-            },
-            row: { kind: "skill", name: "gh" } as never,
-            recordsUnreadable: false,
-          },
-        ],
-        subscriptions,
-      );
-      // The identity a template saves is the repository, never the alias:
-      // an alias is a per-place manifest key and a template belongs to no
-      // place.
-      expect(saveable.members).toEqual([
+  it("saves the packages the table ticked into the template that is picked", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [RUST_SERVICE],
+    });
+    vi.mocked(commands.templateAddMembers).mockResolvedValue({
+      status: "ok",
+      data: RUST_SERVICE,
+    });
+    const saveable = membersFor(
+      [
         {
-          kind: "skill",
-          name: "gh",
-          enabled: true,
-          source: {
-            held: "marketplace",
-            repo,
-            rev: null,
+          catalog: {
+            by: "subscription",
+            scope: { scope: "global" },
+            source: "kendex",
           },
+          row: { kind: "skill", name: "gh" } as never,
+          recordsUnreadable: false,
         },
-      ]);
+      ],
+      [
+        {
+          scope: { scope: "global" },
+          name: "kendex",
+          repo: "vanillagreencom/kendex",
+        } as never,
+      ],
+    );
+    // The identity a template saves is the repository, never the alias:
+    // an alias is a per-place manifest key and a template belongs to no
+    // place.
+    expect(saveable.members).toEqual([
+      {
+        kind: "skill",
+        name: "gh",
+        enabled: true,
+        source: {
+          held: "marketplace",
+          repo: "vanillagreencom/kendex",
+          rev: null,
+        },
+      },
+    ]);
 
-      mount(
-        <AddToTemplateDialog saveable={saveable} open onOpenChange={() => {}} />,
-      );
-      await settle();
-      await act(async () => button(document, "Save").click());
-      expect(commands.templateAddMembers).toHaveBeenCalledWith(
-        "Rust service",
-        saveable.members,
-      );
-    },
-  );
+    mount(
+      <AddToTemplateDialog saveable={saveable} open onOpenChange={() => {}} />,
+    );
+    await settle();
+    await act(async () => button(document, "Save").click());
+    expect(commands.templateAddMembers).toHaveBeenCalledWith(
+      "Rust service",
+      saveable.members,
+    );
+  });
 });
 
 describe("a template install that stopped part-way", () => {
@@ -647,53 +622,35 @@ describe("a template install that stopped part-way", () => {
 });
 
 describe("a marketplace selection nothing can name", () => {
-  it.each(["unsubscribed", "unresolved-folder"])(
-    "names the %s row it cannot record and refuses to save none of them",
-    async (state) => {
-      vi.mocked(commands.templatesList).mockResolvedValue({
-        status: "ok",
-        data: [RUST_SERVICE],
-      });
-      const saveable = membersFor(
-        [
-          {
-            catalog:
-              state === "unsubscribed"
-                ? { by: "repo", repo: "someone/unsubscribed" }
-                : {
-                    by: "subscription",
-                    scope: { scope: "global" },
-                    source: "folder",
-                  },
-            row: { kind: "skill", name: "stranger" } as never,
-            recordsUnreadable: false,
-          },
-        ],
-        state === "unsubscribed"
-          ? []
-          : [
-              {
-                scope: { scope: "global" },
-                name: "folder",
-                repo: null,
-                path: "./catalog",
-                resolvedPath: null,
-              } as MarketplaceRow,
-            ],
-      );
-      expect(saveable.members).toEqual([]);
-      expect(saveable.dropped).toEqual(["stranger"]);
+  it("names the rows it cannot record and refuses to save none of them", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [RUST_SERVICE],
+    });
+    // A row from a bare repository: no subscription, so no repository a
+    // template could record it under.
+    const saveable = membersFor(
+      [
+        {
+          catalog: { by: "repo", repo: "someone/unsubscribed" },
+          row: { kind: "skill", name: "stranger" } as never,
+          recordsUnreadable: false,
+        },
+      ],
+      [],
+    );
+    expect(saveable.members).toEqual([]);
+    expect(saveable.dropped).toEqual(["stranger"]);
 
-      mount(
-        <AddToTemplateDialog saveable={saveable} open onOpenChange={() => {}} />,
-      );
-      await settle();
-      // The row is named rather than silently missing from a count, and
-      // there is nothing to save.
-      expect(document.body.textContent).toContain("stranger");
-      expect(button(document, "Save").disabled).toBe(true);
-    },
-  );
+    mount(
+      <AddToTemplateDialog saveable={saveable} open onOpenChange={() => {}} />,
+    );
+    await settle();
+    // The row is named rather than silently missing from a count, and
+    // there is nothing to save.
+    expect(document.body.textContent).toContain("stranger");
+    expect(button(document, "Save").disabled).toBe(true);
+  });
 });
 
 describe("an edited marketplace package in the modal", () => {

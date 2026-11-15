@@ -109,6 +109,44 @@ fn a_member_of_the_default_marketplace_resolves_onto_the_seeded_subscription() {
     );
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_git_suffixed_folder_member_finds_its_subscription() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let catalog = home.join("X/catalog.git");
+    skill(&catalog.join("skills"), "gh", "catalog bytes");
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &manifest,
+        format!(
+            "schema = 8\n[sources.folder]\n{}\n",
+            crate::test_util::source_path(&catalog)
+        ),
+    )
+    .unwrap();
+    let template = create_from_selection(
+        &env,
+        "Folder",
+        vec![Member {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            enabled: true,
+            source: MemberSource::Marketplace {
+                repo: crate::paths::slashed(&catalog),
+                rev: None,
+            },
+        }],
+    )
+    .unwrap();
+    let resolution = resolve(&env, &template).unwrap();
+    assert_eq!(resolution.groups.len(), 1);
+    assert_eq!(resolution.groups[0].source.as_deref(), Some("folder"));
+    assert!(resolution.missing.is_empty());
+}
+
 /// A copy the store no longer holds keeps its member visible and names it
 /// as missing, and installing refuses rather than writing the rest.
 #[test]

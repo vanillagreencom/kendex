@@ -808,44 +808,6 @@ fn a_folder_marketplace_is_saved_under_one_spelling() {
     );
 }
 
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_relative_project_folder_is_saved_against_its_declaring_scope() {
-    let project = seeded();
-    let manifest = project.root.join("kendex.toml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    let declared = crate::test_util::source_path(&project.catalog);
-    assert_eq!(text.matches(&declared).count(), 1);
-    fs::write(&manifest, text.replace(&declared, "path = '../catalog'")).unwrap();
-    let scope = Scope::Project {
-        root: project.root.clone(),
-    };
-    let lock_path = crate::lock::lock_path(&project.env, &scope);
-    let mut lock = match crate::lock::load_file(&lock_path).unwrap() {
-        crate::lock::LockFile::Current(lock) => lock,
-        other => panic!("expected fixture lock, got {other:?}"),
-    };
-    for entry in lock
-        .entries
-        .values_mut()
-        .filter(|entry| entry.source == "cat")
-    {
-        entry.source_repo = "../catalog".to_owned();
-    }
-    crate::lock::save(&lock_path, &lock).unwrap();
-    let draft = draft_from_project(&project.env, &project.root).unwrap();
-    let member = draft
-        .members
-        .iter()
-        .find(|member| member.name == "gh")
-        .unwrap();
-    let DraftOrigin::Marketplace { repo, .. } = &member.origin else {
-        panic!("expected marketplace member");
-    };
-    let expected = crate::paths::slashed(&project.root.join("../catalog"));
-    assert_eq!(repo, &expected);
-}
-
 /// A refused replacement puts back the slots AND takes out the licence
 /// files the run introduced, leaving the ones an earlier copy came under
 /// where they are.

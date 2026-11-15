@@ -379,12 +379,9 @@ pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Res
             });
         }
     }
-    let personal = crate::engine::ops::manifest_for_reading(env, &Scope::Global)?;
     let mut kept: Vec<Member> = Vec::new();
     for member in members {
-        if !kept.iter().any(|held| {
-            held.identity_at(Some((env, &personal))) == member.identity_at(Some((env, &personal)))
-        }) {
+        if !kept.iter().any(|held| held.identity() == member.identity()) {
             kept.push(member);
         }
     }
