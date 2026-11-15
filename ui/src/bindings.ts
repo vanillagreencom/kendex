@@ -3429,7 +3429,7 @@ export type MarketplaceRow = {
 	/**
 	 *  Where that folder is on this machine, from
 	 *  [`kendex_core::source::path_root`]: the declaration resolved against
-	 *  the place that declares it, slashed. What `repo_identity` folds for
+	 *  the place that declares it, slashed. What `repo_identity` carries for
 	 *  a folder, and what a bookmark of one records. Two directories
 	 *  never share a string, which the spelling alone cannot promise:
 	 *  rootedness is the running platform's answer, and a POSIX-rooted path
@@ -5020,11 +5020,10 @@ export type Said = {
 export type SavedItem = {
 	bookmark: Bookmark,
 	/**
-	 *  The marketplace folded to one string, from
-	 *  [`crate::source_ref::repo_identity`] — for a folder, over the
-	 *  directory the bookmark records, which is what
-	 *  [`crate::source_ops::declared_identity`] folds a declaration of that
-	 *  folder to. Carried rather than left to
+	 *  The marketplace identity from [`Bookmark::identity`]: a repository
+	 *  folded by [`crate::source_ref::repo_identity`], or the resolved
+	 *  directory a folder bookmark records, matching
+	 *  [`crate::source_ops::declared_identity`]. Carried rather than left to
 	 *  the reader: a surface deciding whether the row it is drawing is
 	 *  saved compares this against its own marketplace's identity, and a
 	 *  second spelling of that fold outside core is a second answer.

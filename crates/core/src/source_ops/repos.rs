@@ -64,7 +64,7 @@ pub struct Subscription {
 ///
 /// A repository is folded by [`crate::source_ref::repo_identity`]. A folder
 /// is the directory it resolves to from the place that declares it,
-/// [`crate::source::path_root`], folded the same way. The relative spelling
+/// [`crate::source::path_root`], slashed without a repository fold. The relative spelling
 /// is never the identity: `catalog` declared in two projects is two
 /// directories, and folding the spelling would let a reader affirm one of
 /// them and install from the other.
@@ -74,12 +74,13 @@ pub fn declared_identity(
     repo: Option<&str>,
     path: Option<&str>,
 ) -> Option<String> {
-    let reference = match (repo, path) {
-        (Some(repo), _) => repo.to_owned(),
-        (None, Some(path)) => crate::paths::slashed(&crate::source::path_root(env, scope, path)),
-        (None, None) => return None,
-    };
-    Some(crate::source_ref::repo_identity(&reference))
+    match (repo, path) {
+        (Some(repo), _) => Some(crate::source_ref::repo_identity(repo)),
+        (None, Some(path)) => Some(crate::paths::slashed(&crate::source::path_root(
+            env, scope, path,
+        ))),
+        (None, None) => None,
+    }
 }
 
 /// Every subscription across the personal scope and every project,
