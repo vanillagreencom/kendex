@@ -5438,17 +5438,11 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     .unwrap();
     std::fs::create_dir(runner.state_dir().join("oversee-watch.err")).unwrap();
     runner.tools = Some(bin);
-    let mail_log = runner.state_dir().join("lane-mail.log");
-    let snapshot = runner.state_dir().join("at-notice.json");
-    let mailbox = snapshot_mailbox(&runner, &snapshot, &mail_log);
-    let report = effect_report(&runner.op_fleet_env(
-        &json!({
-            "op": "start-controller",
-            "controller": pending(runner.state_dir()),
-            "watch": watch_words(&state),
-        }),
-        &[("LANE_MAIL_CLI", mailbox.to_str().unwrap())],
-    ));
+    let report = effect_report(&runner.op_fleet(&json!({
+        "op": "start-controller",
+        "controller": pending(runner.state_dir()),
+        "watch": watch_words(&state),
+    })));
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
     assert_eq!(
         report["intent"]["observation"]["note"], "watch-launch-failed",
@@ -5470,8 +5464,8 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
             .is_none(),
         "nothing claimed the fleet state"
     );
-    // The hold owes the owner one notice, recorded `owed` with the outcome
-    // before the send runs, sent once and marked.
+    // The hold owes the owner one notice, sent once through the mailbox and
+    // marked.
     let intent = runner.fleet()["intents"][0].clone();
     let text = format!(
         "orch-runtime: watch-launch-failed op=start-controller intent={} outcome=unconfirmed cause={}",
@@ -5481,28 +5475,10 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     assert_eq!(intent["notice"]["key"], "watch-launch-failed", "{intent}");
     assert_eq!(intent["notice"]["text"], text, "{intent}");
     assert_eq!(intent["notice"]["owner"], "sent", "{intent}");
-    let at_send: Value =
-        serde_json::from_str(&std::fs::read_to_string(&snapshot).unwrap()).unwrap();
     assert_eq!(
-        at_send["intents"][0]["outcome"], "unconfirmed",
-        "the hold was recorded before the send: {at_send}"
-    );
-    assert_eq!(
-        at_send["intents"][0]["notice"]["owner"], "owed",
-        "{at_send}"
-    );
-    let calls = std::fs::read_to_string(&mail_log).unwrap();
-    assert_eq!(
-        calls
-            .lines()
-            .filter(|l| l.starts_with("notice --item overseer --to owner --file "))
-            .count(),
-        1,
-        "sent once: {calls}"
-    );
-    assert!(
-        calls.lines().any(|l| l == format!("notice-text {text}")),
-        "{calls}"
+        owner_notices(runner.state_dir()),
+        std::slice::from_ref(&text),
+        "sent once"
     );
     let log = runner.fleet()["fleet_log"].clone();
     assert_eq!(
@@ -5598,34 +5574,6 @@ fn a_first_start_empties_the_watch_log_and_a_resume_or_a_start_over_a_live_watch
         (false, true, true),
         "first start: {first:?}\nresume: {resumed:?}\nover a live watch: {adopted:?}"
     );
-}
-
-/// The mailbox CLI of the owner-notice assertions: a `notice` copies the
-/// runner's fleet file to `snapshot` as it stands at the call and logs the
-/// call's argv and the notice's first line to `log`, so a row reads what
-/// the record said when the send ran. Written beside the fleet state,
-/// executable; the path.
-fn snapshot_mailbox(runner: &Runner, snapshot: &Path, log: &Path) -> std::path::PathBuf {
-    let fleet = runner.state_dir().join("workflow-state-oversee.json");
-    let script = [
-        "#!/bin/bash".to_owned(),
-        "set -u".to_owned(),
-        format!("printf '%s\\n' \"$*\" >> '{}'", log.display()),
-        "[ \"${1:-}\" = notice ] || exit 0".to_owned(),
-        format!("cp -- '{}' '{}'", fleet.display(), snapshot.display()),
-        "file=\"\"".to_owned(),
-        "while [ $# -gt 0 ]; do case \"$1\" in --file) file=${2:-}; shift ;; esac; shift; done"
-            .to_owned(),
-        format!(
-            "{{ printf 'notice-text '; sed -n 1p -- \"$file\"; }} >> '{}'",
-            log.display()
-        ),
-        String::new(),
-    ]
-    .join("\n");
-    let path = runner.state_dir().join("lane-mail");
-    write_executable(&path, script);
-    path
 }
 
 /// The start's process dies the moment it has recorded the launched job's

@@ -76,7 +76,6 @@ impl World {
             ("linear", "linear-fixture/linear.sh"),
             ("linear-held", "linear-hold/linear.sh"),
             ("gh", "gh/gh"),
-            ("lane-mail", "lane-mail-owner/lane-mail"),
         ] {
             std::os::unix::fs::symlink(fix.join(fixture), world.dir.path().join(name)).unwrap();
         }
@@ -152,12 +151,6 @@ impl World {
             &format!("graphql pulls owner={owner} name={name}"),
             reducer_listing(pulls),
         )
-    }
-
-    /// The owner mailbox fixture's log, one argv line per call plus its
-    /// `sent …` records.
-    fn mail_calls(&self) -> Vec<String> {
-        lines(&self.dir.path().join("lane-mail.log"))
     }
 
     /// The settings a duty in this world runs under: the fixture as the
@@ -3784,13 +3777,142 @@ fn a_verifying_item_with_an_open_branch_box_is_named_once() {
 }
 
 /// The owner's tracker answers, the description repair and the due tracker
-/// asks. The reads go through the linear fixture under the tracker's quota
-/// rule and the mailbox fixture logs every verb.
+/// asks, on the real mailbox program. The row makes its asks with the
+/// mailbox's own `ask`, which posts each to the tracker: the linear fixture,
+/// installed beside the mailbox as the linear package's CLI with a map of
+/// its own. The watch's reads go through the linear fixture under the
+/// tracker's quota rule.
 #[test]
 fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_whole_read() {
     let action = "Post the message. Copy its link. The link closes this ask.";
     let body = "Engineering body.\n\nKeep these bytes.\n\n";
     let mut world = World::new();
+    let root = std::fs::canonicalize(world.dir.path()).unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "gc.auto", "0"],
+        vec!["config", "maintenance.auto", "false"],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(&root)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    }
+    // The checkout's settings, where the mailbox finds the fleet record and
+    // the owner its asks are posted for.
+    std::fs::write(
+        root.join("kendex.settings.toml"),
+        format!(
+            "[env]\nORCH_STATE_DIR = \"{}\"\nORCH_OWNER_EMAIL = \"owner@example.com\"\nORCH_OWNER_ASK_LABEL = \"owner-gated\"\n",
+            root.display()
+        ),
+    )
+    .unwrap();
+    // The overseer an answer is sent to: recorded, its process gone.
+    let mut fleet = world.fleet();
+    fleet["controller"] = json!({"runtime": "tmux", "generation": 1,
+        "server": GONE_PID.to_string(), "server_start": 1,
+        "server_socket": root.join("no-server").display().to_string(),
+        "pane": "%99", "harness_pid": GONE_PID.to_string(), "harness_start": "1",
+        "harness": "claude", "cwd": root.display().to_string()});
+    world.write_fleet(&fleet);
+    // The mailbox as an install lays it out, with the linear package's CLI
+    // and the shim that runs it from the root a call names, as the watch
+    // runs it from the project root.
+    let skills = root.join("skills");
+    let mailbox = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/scripts")
+        .canonicalize()
+        .unwrap();
+    for (at, target) in [
+        ("mailbox/scripts/lane-mail", mailbox.join("lane-mail")),
+        ("mailbox/scripts/lib", mailbox.join("lib")),
+        (
+            "agent-runtime/scripts/agent-runtime",
+            agent_runtime().to_path_buf(),
+        ),
+        (
+            "linear/scripts/linear.sh",
+            fixtures().join("linear-fixture/linear.sh"),
+        ),
+        (
+            "orch/tests/rust/fixtures/lane-mail-hold/lane-mail",
+            fixtures().join("lane-mail-hold/lane-mail"),
+        ),
+    ] {
+        let at = skills.join(at);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(target, at).unwrap();
+    }
+    let lane_mail = skills.join("mailbox/scripts/lane-mail");
+    let mail = |args: &[&str]| -> String {
+        let out = program(&lane_mail)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "lane-mail {args:?}: {}", stderr(&out));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let question = root.join("question.txt");
+    std::fs::write(&question, "Approve the action?\n").unwrap();
+    let question = question.display().to_string();
+    // An owner ask on `issue`, due at once, posted to the tracker under the
+    // comment `comment`: its id.
+    let ask = |issue: &str, comment: &str| -> String {
+        let posting = json!({
+            "users list": {"body": [{"id": "maya", "name": "Maya Owner", "email": "owner@example.com", "display_name": "maya"}]},
+            "teams keys": {"body": {"urlKey": "test", "keys": ["KEN"]}},
+            "graphql OwnerTracker": {"body": {"issue": {"description": body, "assignee": null,
+                "labels": {"pageInfo": {"hasNextPage": false}, "nodes": [{"name": "skills"}]}}}},
+            "issues update": {"body": {}},
+            "comments create": {"body": {"success": true, "data": {"success": true, "comment": {"id": comment}}}},
+        });
+        std::fs::write(
+            skills.join("linear/scripts/linear.json"),
+            posting.to_string(),
+        )
+        .unwrap();
+        let out = mail(&[
+            "ask",
+            "--item",
+            "overseer",
+            "--to",
+            "owner",
+            "--issue",
+            issue,
+            "--do",
+            action,
+            "--wait",
+            "0",
+            "--options",
+            "approve,hold",
+            "--recommend",
+            "approve",
+            "--effect",
+            "none",
+            "--file",
+            &question,
+        ]);
+        out.lines()
+            .find_map(|l| l.strip_prefix("id="))
+            .unwrap_or_else(|| panic!("ask {issue}: {out}"))
+            .to_owned()
+    };
+    let root_text = root.display().to_string();
+    // The answers and closes the real mailbox holds for the ask `id`.
+    let closes = |id: &str| -> Vec<Value> {
+        mail(&["events", "--item", "overseer", "--root", &root_text])
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|e| e["re"] == id && (e["kind"] == "answer" || e["kind"] == "resolution"))
+            .collect()
+    };
+    let answered = ask("KEN-7", "question-1");
+    let due = ask("KEN-8", "question-2");
     world.linear("statuses list", statuses());
     world.linear("issues list", json!({"body": []}));
     world.linear(
@@ -3799,7 +3921,10 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     );
     world.linear(
         "issues list --assignee",
-        json!({"body": [{"id": "KEN-7", "labels": ["skills", "owner-gated"], "description": body, "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-7"}]}),
+        json!({"body": [
+            {"id": "KEN-7", "labels": ["skills", "owner-gated"], "description": body, "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-7"},
+            {"id": "KEN-8", "labels": ["skills", "owner-gated"], "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-8"}
+        ]}),
     );
     world.linear("issues update", json!({"body": {}}));
     world.linear("comments create", json!({"body": {"success": true}}));
@@ -3810,23 +3935,15 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
             {"id": "owner-comment", "body": "OK", "user": "maya", "user_email": "Owner@example.com", "created_at": "2026-10-02T00:00:00.001Z", "updated_at": "2026-10-02T00:00:00.001Z"},
             {"id": "other-comment", "body": "Not me", "user": "riley", "user_email": "other@example.test", "created_at": "2026-10-02T00:00:00.002Z", "updated_at": "2026-10-02T00:00:00.002Z"},
             {"id": "old-comment", "body": "Before", "user": "maya", "user_email": "owner@example.com", "created_at": "2026-09-30T00:00:00.000Z", "updated_at": "2026-09-30T00:00:00.000Z"}
-        ]}}),
+        ], "KEN-8": []}}),
     );
-    let ask = json!({"id": "ask-1", "kind": "ask", "to": "owner", "issue": "KEN-7", "do": action, "tracker_posted": true,
-        "tracker_comment": "question-1", "tracker_label": "owner-gated", "options": ["approve", "hold"], "recommend": "approve"});
-    std::fs::write(
-        world.dir.path().join("owner-asks.jsonl"),
-        format!("{ask}\n"),
-    )
-    .unwrap();
-    std::fs::write(world.dir.path().join("owner-due.jsonl"), format!("{ask}\n")).unwrap();
-    let lane_mail = world.dir.path().join("lane-mail").display().to_string();
+    let cli = isolated_program(&skills.join("orch/tests/rust/fixtures/lane-mail-hold/lane-mail"));
+    let cli = cli.display().to_string();
     let settings = world.settings(&[
-        ("LANE_MAIL_CLI", &lane_mail),
+        ("LANE_MAIL_CLI", &cli),
         ("ORCH_OWNER_EMAIL", "owner@example.com"),
         ("ORCH_OWNER_ASK_LABEL", "owner-gated"),
     ]);
-    let root = settings.roots.common.display().to_string();
     let clock = FakeClock::new();
     let mut body_fn = tracker::body(world.context(settings, None));
     let mut baseline = Baseline::default();
@@ -3841,16 +3958,20 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         linear_log.contains(
             "issues list --assignee owner@example.com --label owner-gated --max --format=safe\n"
         ),
-        "the owner's items under the posted ask's label: {linear_log}"
+        "the owner's items under the posted asks' label: {linear_log}"
     );
     let repaired =
         format!("issues update KEN-7 --description **Maya, what you do:** {action}\n\n{body}");
-    assert!(
-        linear_log.contains(&repaired),
-        "the description repair restores the name, action and body: {linear_log}"
+    assert_eq!(
+        (
+            linear_log.matches(&repaired).count(),
+            linear_log.matches("issues update KEN-8").count()
+        ),
+        (1, 0),
+        "the description repair restores the name, action and body once, where the line is missing: {linear_log}"
     );
     assert!(
-        linear_log.contains("comments bulk-list KEN-7 --format=safe\n"),
+        linear_log.contains("comments bulk-list KEN-7 KEN-8 --format=safe\n"),
         "{linear_log}"
     );
     assert_eq!(
@@ -3860,83 +3981,66 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         1,
         "the answer handed over is marked under the owner's comment: {linear_log}"
     );
+    // The owner's comment after the question is the answer, handed back
+    // before the due asks are closed: each due ask then closes at its
+    // deadline, the answered one on its answer and the other on its
+    // recommendation.
+    let kinds = |id: &str| -> Vec<(Value, Value, Value)> {
+        closes(id)
+            .iter()
+            .map(|e| (e["kind"].clone(), e["by"].clone(), e["text"].clone()))
+            .collect()
+    };
     assert_eq!(
-        world.mail_calls(),
-        vec![
-            format!("pending --item overseer --root {root} --to owner"),
-            format!(
-                "send --item overseer --root {root} --re ask-1 --delivery-id linear:owner-comment --file {}",
-                world
-                    .dir
-                    .path()
-                    .join("oversee-watch.tracker-answer")
-                    .display()
-            ),
-            "sent linear:owner-comment OK re=ask-1".to_owned(),
-            format!("pending --item overseer --root {root} --to owner --due"),
-            format!("resolve --item overseer --root {root} --id ask-1 --default"),
-            format!("events --item overseer --root {root}"),
+        kinds(&answered),
+        [
+            (json!("answer"), json!("text"), json!("OK")),
+            (json!("resolution"), json!("default"), json!(""))
         ],
-        "the owner's comment after the question is the answer; the other author's, the question's and the older one are not; the due ask closes after the whole read; the marks read the mailbox last"
-    );
-    // The second pass: the description now opens with its action line, so
-    // no repair; the answer landed before under its delivery id, which the
-    // mailbox refuses as repeated, no failure; the due ask is asked again.
-    world.linear(
-        "issues list --assignee",
-        json!({"body": [{"id": "KEN-7", "labels": ["skills", "owner-gated"], "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner"}]}),
-    );
-    let second = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
-    assert_eq!(rendered(&second), Vec::<String>::new());
-    let linear_log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
-    assert_eq!(
-        linear_log.matches("issues update").count(),
-        1,
-        "the line is restored once: {linear_log}"
+        "the owner's answer alone, not the other author's, the question's or the older one, then the close: {:?}",
+        closes(&answered)
     );
     assert_eq!(
-        linear_log.matches("comments create").count(),
-        1,
-        "a repeated answer is marked no second time: {linear_log}"
-    );
-    let calls = world.mail_calls();
-    assert_eq!(calls.iter().filter(|c| c.starts_with("send ")).count(), 2);
-    assert_eq!(
-        calls.iter().filter(|c| c.starts_with("sent ")).count(),
-        1,
-        "the repeat lands nothing: {calls:?}"
-    );
-    assert_eq!(
-        calls.iter().filter(|c| c.starts_with("resolve ")).count(),
-        2,
-        "{calls:?}"
+        kinds(&due),
+        [
+            (json!("answer"), json!("default"), json!("approve")),
+            (json!("resolution"), json!("default"), json!(""))
+        ],
+        "{:?}",
+        closes(&due)
     );
     // An unread tracker (a failed owner-items read) hands nothing back and
     // closes no due ask: the pass is not failed, its own lines stand.
+    let later = ask("KEN-9", "question-3");
     world.linear(
         "issues list --assignee",
         json!({"exit": 1, "stderr": "linear: auth-failed source=api-key"}),
     );
-    let third = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
-    assert_eq!(rendered(&third), Vec::<String>::new());
-    let calls = world.mail_calls();
+    let second = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+    assert_eq!(rendered(&second), Vec::<String>::new());
     assert_eq!(
-        calls.iter().filter(|c| c.starts_with("resolve ")).count(),
-        2,
-        "an unread tracker closes no due ask: {calls:?}"
+        closes(&later),
+        Vec::<Value>::new(),
+        "an unread tracker closes no due ask"
     );
-    assert_eq!(calls.iter().filter(|c| c.starts_with("send ")).count(), 2);
-    // A refused mailbox read of the asks is unread the same way, never no asks.
+    // A refused mailbox read of the asks is unread the same way, never no
+    // asks: no tracker item is read.
     world.linear("issues list --assignee", json!({"body": []}));
-    std::fs::write(world.dir.path().join("pending.fail"), "").unwrap();
-    let fourth = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1720).unwrap();
-    assert_eq!(rendered(&fourth), Vec::<String>::new());
+    let box_file = root.join("tmp/lane-mail/overseer/to-overseer.jsonl");
+    let held = root.join("to-overseer.held");
+    std::fs::rename(&box_file, &held).unwrap();
+    std::fs::create_dir(&box_file).unwrap();
+    let third = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1480);
+    std::fs::remove_dir(&box_file).unwrap();
+    std::fs::rename(&held, &box_file).unwrap();
+    assert_eq!(rendered(&third.unwrap()), Vec::<String>::new());
     let linear_log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
     assert_eq!(
         linear_log.matches("issues list --assignee").count(),
-        3,
+        2,
         "a refused ask read reads no tracker item: {linear_log}"
     );
+    assert_eq!(closes(&later), Vec::<Value>::new());
 }
 
 /// A posted owner ask closed by any route gets its tracker marks from the

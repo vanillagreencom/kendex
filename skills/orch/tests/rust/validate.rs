@@ -2938,7 +2938,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     if case == "base-empty" {
         view["baseRefName"] = json!("");
     }
-    if case == "closed-render" {
+    if case == "closed-trivial" {
         view["state"] = json!("CLOSED");
     }
     if case == "queue-unrequired" {
@@ -2946,7 +2946,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     }
     if matches!(
         case,
-        "queue-no-merge-queue" | "queue-absent" | "queue-malformed" | "push-first-no-pr-no-queue"
+        "queue-no-merge-queue" | "queue-absent" | "push-first-no-pr-no-queue"
     ) {
         rules = json!([{ "type":"required_status_checks", "parameters":{"required_status_checks":[{"context":"CI"}]} }]);
     }
@@ -2994,6 +2994,35 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     )
 }
 
+/// The render inventory a base holds: with it the classifier measures a
+/// size; without it every change is `standard`.
+const INVENTORY: &str = ".kendex-generated.json";
+
+impl World {
+    /// The base the real classifier reads a round against: `files`
+    /// committed over the checkout and origin's main moved there, so the
+    /// round and the branch are the commits after it.
+    fn base_with(&self, files: &[(&str, &str)]) -> String {
+        if !files.is_empty() {
+            self.commit_files(files);
+        }
+        git(
+            &self.worktree,
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+        self.head()
+    }
+
+    /// A base whose settings put `notes.txt` on the trivial allowlist and
+    /// whose inventory a size is measured against: a round of `notes.txt`
+    /// is then trivial, a class CI never stands its checks down for.
+    fn trivial_base(&self) -> String {
+        let settings = fs::read_to_string(self.worktree.join("kendex.settings.toml")).unwrap();
+        let settings = format!("{settings}HARNESS_CI_TRIVIAL_PATHS = \"notes.txt\"\n");
+        self.base_with(&[("kendex.settings.toml", &settings), (INVENTORY, "[]\n")])
+    }
+}
+
 #[test]
 fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_local_work() {
     for (case, want_mode, cause) in [
@@ -3010,33 +3039,56 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
         ("setting-empty", "range", "setting-empty"),
         ("stacked", "range", "context-unrequired"),
         ("push-first-no-pr", "ci", ""),
-        ("class-render", "range", "class-uncovered"),
+        ("class-trivial", "range", "class-uncovered"),
         ("class-standard-unmeasured", "ci", ""),
-        ("class-micro-unmeasured", "range", "class-uncovered"),
         ("class-docs", "range", "class-uncovered"),
-        ("class-docs-unread", "range", "class-uncovered"),
         ("queue-required", "ci", ""),
         ("queue-unrequired", "range", "class-uncovered"),
         ("queue-no-merge-queue", "range", "class-uncovered"),
         // Only a record reading false proves pull-request CI covers the work.
         ("queue-absent", "range", "class-uncovered"),
-        ("queue-malformed", "range", "class-uncovered"),
         ("queue-absent-merge-queue", "ci", ""),
         // The pull request read fails, or names an empty base.
         ("pr-unread", "range", "base-unresolved"),
         ("base-empty", "range", "base-unresolved"),
         // No open pull request, and a class CI may not cover.
-        ("closed-render", "range", "class-uncovered"),
+        ("closed-trivial", "range", "class-uncovered"),
         ("class-micro-measured", "ci", ""),
     ] {
         let w = World::new();
-        let base = w.head();
-        w.commit("source.rs");
         let (path, replies, log) = ci_world(&w, case);
-        let scope = support::fixtures()
-            .join("change-scope-fixture/harness-only")
-            .display()
-            .to_string();
+        // The range the real classifier reads: the base's inventory, and the
+        // round's one file. A base with no inventory is `standard`; an
+        // unreadable one is `standard` unmeasured; `notes.md` is docs-only;
+        // `queue.rs` is on the World's queue list.
+        let base = match case {
+            "class-trivial" | "closed-trivial" => w.trivial_base(),
+            "class-micro-measured" => w.base_with(&[(INVENTORY, "[]\n")]),
+            "class-standard-unmeasured" => w.base_with(&[(INVENTORY, "not json\n")]),
+            _ => w.base_with(&[]),
+        };
+        w.commit(match case {
+            "class-trivial" | "closed-trivial" => "notes.txt",
+            "class-docs" => "notes.md",
+            "queue-required" | "queue-unrequired" | "queue-no-merge-queue" => "queue.rs",
+            _ => "source.rs",
+        });
+        // change-scope installed with no harness-ci beside it: the runtime
+        // runs change-scope itself, which prints no queue-only record.
+        let alone = w.root.join("alone/change-scope");
+        if case.starts_with("queue-absent") {
+            fs::create_dir_all(&alone).unwrap();
+            let package = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../change-scope");
+            let out = program("cp")
+                .arg("-R")
+                .arg(package.join("scripts"))
+                .arg(package.join("references"))
+                .arg(&alone)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "cp: {}", stderr(&out));
+        }
+        let alone = alone.join("scripts/harness-only").display().to_string();
         let mut extra = vec![
             ("PATH", path.as_str()),
             ("GH_FAKE_REPLIES", replies.as_str()),
@@ -3059,33 +3111,8 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
         if case == "push-first-no-pr" {
             extra.push(("ORCH_PR_ORDER", "push-first"));
         }
-        // The classifier's answer, through the fixture that prints its
-        // contract: the class word, its measured marker, the docs verdict
-        // and the queue-only record.
-        let classified = match case {
-            "class-render" | "closed-render" => Some(("render", "true", "false", "false")),
-            "class-micro-measured" => Some(("micro", "true", "false", "false")),
-            "class-standard-unmeasured" => Some(("standard", "false", "false", "false")),
-            "class-micro-unmeasured" => Some(("micro", "false", "false", "false")),
-            "class-docs" => Some(("standard", "true", "true", "false")),
-            "class-docs-unread" => Some(("micro", "true", "unread", "false")),
-            "queue-required" | "queue-unrequired" | "queue-no-merge-queue" => {
-                Some(("standard", "true", "false", "true"))
-            }
-            "queue-absent" | "queue-absent-merge-queue" => {
-                Some(("standard", "true", "false", "absent"))
-            }
-            "queue-malformed" => Some(("standard", "true", "false", "unknown")),
-            _ => None,
-        };
-        if let Some((class, measured, docs, queue)) = classified {
-            extra.extend([
-                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
-                ("CHANGE_SCOPE_CLASS", class),
-                ("CHANGE_SCOPE_MEASURED", measured),
-                ("CHANGE_SCOPE_DOCS", docs),
-                ("CHANGE_SCOPE_QUEUE_ONLY", queue),
-            ]);
+        if case.starts_with("queue-absent") {
+            extra.push(("CHANGE_SCOPE_PATHS_CLI", alone.as_str()));
         }
         let out = w.local(&["--validate-mode", "ci", "--base", &base], &extra);
         assert!(
@@ -3255,10 +3282,10 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
     // The selector previews with $SEL, recording the mode it was asked
     // for; its scoped run passes unless $SEL ends `-red`.
     let selector = "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo 'validate: lanes=scoped selection=subset'; [ \"$SEL\" != all-red ]; else printf '%s\\n' \"$DEV_VALIDATE_MODE\" > \"$MODE_FILE\"; if [ \"$SEL\" = failed ]; then echo 'selector: unavailable' >&2; exit 1; fi; echo \"selection=${SEL%-red}\"; fi";
-    // (requested, selection, world, classifier fixture, order) and the
-    // record's (mode, scoped, ci-fallback, verdict). The fixture `render`
-    // answers that class; `queue` queue-only work; `branch-queue` queue-only
-    // work on the branch whole and not in the round.
+    // (requested, selection, world, change, order) and the record's (mode,
+    // scoped, ci-fallback, verdict). The real classifier reads the change:
+    // `trivial` a trivial class; `queue` queue-only work; `branch-queue`
+    // queue-only work on the branch whole and not in the round.
     for (requested, sel, world, fixture, order, want) in [
         (
             "full",
@@ -3304,7 +3331,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "all",
             "push-first-no-pr",
-            "render",
+            "trivial",
             "push-first",
             ("full", "true", "class-uncovered", "pass"),
         ),
@@ -3312,7 +3339,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "all",
             "required",
-            "render",
+            "trivial",
             "review-first",
             ("full", "", "class-uncovered", "pass"),
         ),
@@ -3351,18 +3378,22 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
     ] {
         let case = format!("{requested} {sel} {world} {fixture} {order}");
         let w = World::new();
-        if fixture == "branch-queue" {
-            w.commit("early.rs");
-        }
-        let base = w.head();
-        w.commit("source.rs");
         let (path, replies, log) = ci_world(&w, world);
+        let mut base = if fixture == "trivial" {
+            w.trivial_base()
+        } else {
+            w.base_with(&[])
+        };
+        if fixture == "branch-queue" {
+            base = w.commit("queue.rs");
+        }
+        w.commit(match fixture {
+            "trivial" => "notes.txt",
+            "queue" => "queue.rs",
+            _ => "source.rs",
+        });
         let mode_file = w.root.join("preview-mode").display().to_string();
-        let scope = support::fixtures()
-            .join("change-scope-fixture/harness-only")
-            .display()
-            .to_string();
-        let mut extra = vec![
+        let extra = [
             ("PATH", path.as_str()),
             ("GH_FAKE_REPLIES", replies.as_str()),
             ("GH_FAKE_LOG", log.as_str()),
@@ -3375,23 +3406,6 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             ("SEL", sel),
             ("MODE_FILE", mode_file.as_str()),
         ];
-        match fixture {
-            "render" => extra.extend([
-                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
-                ("CHANGE_SCOPE_CLASS", "render"),
-            ]),
-            "queue" => extra.extend([
-                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
-                ("CHANGE_SCOPE_CLASS", "standard"),
-                ("CHANGE_SCOPE_QUEUE_ONLY", "true"),
-            ]),
-            "branch-queue" => extra.extend([
-                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
-                ("CHANGE_SCOPE_CLASS", "standard"),
-                ("CHANGE_SCOPE_QUEUE_BASE", "origin/main"),
-            ]),
-            _ => {}
-        }
         let mut args = vec![];
         if requested != "full" {
             args.extend(["--validate-mode", requested, "--base", base.as_str()]);

@@ -255,24 +255,6 @@ impl World {
         }
     }
 
-    fn real_report_github(&self) -> PathBuf {
-        let path = self.path().join("real-github");
-        let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../github/scripts/github.sh")
-            .canonicalize()
-            .unwrap();
-        let text = format!(
-            "#!/bin/sh\ncd '{}' || exit 1\nexec env -i HOME='{}' PATH='{}' LANG=C.UTF-8 TMPDIR='{}' GH_TOKEN=fixture GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null '{}' \"$@\"\n",
-            self.path().display(),
-            self.path().display(),
-            tool_path(&[self.path()]),
-            std::env::temp_dir().display(),
-            actual.display()
-        );
-        write_executable(&path, text);
-        path
-    }
-
     fn real_report_mail(&self) -> PathBuf {
         real_mail(self.path())
     }
@@ -302,7 +284,7 @@ impl World {
         report::Context {
             fleet: self.fleet_path(),
             settings,
-            github: self.real_report_github(),
+            github: real_github_script(&self.path().join("real-github"), "github.sh"),
             gh: self.path().join("gh"),
             repos: vec!["owner/repo".to_owned()],
             shared: Default::default(),
