@@ -285,6 +285,31 @@ def staged(home, *args):
         raise Refusal("index-unreadable", "git " + args[0]) from error
 
 
+def tracked_archive(home, target, tracked):
+    pending, resolved, links = target.split("/"), [], set()
+    while pending:
+        part = pending.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not resolved:
+                return False
+            resolved.pop()
+            continue
+        resolved.append(part)
+        path = "/".join(resolved)
+        if tracked.get(path) == "120000":
+            if path in links:
+                return False
+            links.add(path)
+            link = staged(home, "show", ":" + path)
+            if posixpath.isabs(link):
+                return False
+            pending = link.split("/") + pending
+            resolved.pop()
+    return "/".join(resolved) in tracked
+
+
 def home_check(home):
     """Check agent-authored memory notes and State in the candidate commit.
 
@@ -294,7 +319,8 @@ def home_check(home):
     """
     paths = staged(home, "ls-files", "--cached", "-z", "--", "memory", str(DEFAULT_HANDOFF)).split("\0")
     failures, notes = [], []
-    tracked = set(staged(home, "ls-files", "--cached", "-z").split("\0"))
+    tracked = {row.split("\t", 1)[1]: row.split(" ", 1)[0]
+               for row in staged(home, "ls-files", "--stage", "-z").split("\0") if row}
     for name in dict.fromkeys(path for path in paths if path):
         if not (name == str(DEFAULT_HANDOFF) or (name.startswith("memory/") and name.endswith(".md")
                                          and name != "memory/MEMORY.md")):
@@ -310,7 +336,7 @@ def home_check(home):
                 if re.match(r"\s*(?:- )?(?:\*\*)?Predecessor", line, re.I):
                     for path in re.findall(r"(?:state/)?archive/[^\s`)]+\.md", line):
                         target = path if path.startswith("state/") else "state/" + path
-                        if target not in tracked:
+                        if not tracked_archive(home, target, tracked):
                             failures.append((name, number, "predecessor-archive", "workflows/session.md:102"))
             try:
                 entries = state_entries(lines)
