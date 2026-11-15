@@ -651,6 +651,7 @@ class HomeInitContract(unittest.TestCase):
                                      (str(home), ["AGENTS.md", "memory/MEMORY.md", "state"], []))
                     outcomes = {row["path"]: (row["key"], row["outcome"], row.get("cause")) for row in report["settings"]}
                     self.assertEqual(outcomes, {
+                        "kendex.settings.toml": ("COMMIT_GUARDS_PRE_COMMIT_LOCAL",) + (("merged", None) if tomllib else ("refused", "toml-reader-missing")),
                         ".claude/settings.json": ("autoMemoryEnabled", "merged", None),
                         ".codex/config.toml": ("features.memories",) + (("merged", None) if tomllib else ("refused", "toml-reader-missing"))})
                 else:
@@ -674,6 +675,30 @@ class HomeInitContract(unittest.TestCase):
                 self.assertTrue(all(row["outcome"] in ("kept", "refused") for row in report["settings"]))
                 self.assertEqual(self.snapshot(home), homes[caller])
         self.assertEqual(homes["init"], homes["start"])
+
+    def test_init_local_lane(self):
+        if not self.has_tomllib():
+            self.skipTest("toml reader unavailable")
+        key = "COMMIT_GUARDS_PRE_COMMIT_LOCAL"
+        check = ".agents/skills/jarvis/scripts/progress-log"
+        for name, before, kept in (("absent", "# home settings\n", False),
+                                   ("empty", '[env]\n' + key + ' = "" # retained\n', False),
+                                   ("own", '[env]\n' + key + ' = "tools/own" # retained\n', True)):
+            with self.subTest(row=name):
+                home = self.home(name)
+                path = home / "kendex.settings.toml"
+                path.write_text(before)
+                result = self.run_init(home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if kept:
+                    self.assertEqual(path.read_text(), before)
+                    self.assertIn("init-local-lane=kept check=" + check, result.stderr)
+                else:
+                    import tomllib
+                    self.assertEqual(tomllib.loads(path.read_text())["env"][key], check)
+                after = self.snapshot(home)
+                self.assertEqual(self.run_init(home).returncode, 0)
+                self.assertEqual(self.snapshot(home), after)
 
     def test_initialized_home_clone_starts(self):
         # A clone carries AGENTS.md and memory/MEMORY.md but not an empty
@@ -710,7 +735,8 @@ class HomeInitContract(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertEqual((sorted(report["created"]), report["kept"]), (["memory/MEMORY.md", "state"], ["AGENTS.md"]))
         self.assertEqual({row["path"]: row["outcome"] for row in report["settings"]},
-                         {".claude/settings.json": "kept", ".codex/config.toml": "kept" if self.has_tomllib() else "refused"})
+                         {"kendex.settings.toml": "merged" if self.has_tomllib() else "refused",
+                          ".claude/settings.json": "kept", ".codex/config.toml": "kept" if self.has_tomllib() else "refused"})
         self.assertEqual({path: (home / path).read_bytes() for path in kept}, kept)
 
     @staticmethod

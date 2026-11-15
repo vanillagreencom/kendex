@@ -77,6 +77,61 @@ class ProgressLog(MailWorld):
             args += ["--handoff", str(handoff)]
         return self.command([sys.executable, "-B", self.scripts / "progress-log", *args], cwd or self.home)
 
+    def assert_home_check(self, expected):
+        result = self.command([sys.executable, "-B", self.scripts / "progress-log"], self.home)
+        self.assertEqual(result.returncode, 1 if expected else 0, result.stderr)
+        # The commit-lane diagnostic contract carries file, line and rule.
+        actual = [tuple(line.split()[index].split("=", 1)[1] for index in (1, 2, 3))
+                  for line in result.stderr.splitlines()]
+        self.assertEqual(actual, expected)
+
+    def test_home_structure(self):
+        memory = self.home / "memory"
+        memory.mkdir()
+        note = memory / "facts.md"
+        fields = "- Source: owner statement\n- Date: 2000-01-01\n- Supersedes: none\n"
+        good = "# Facts\n\n### Access\nThe folder opens.\n" + fields
+        states = "- KEN-1: next\n- session=control: hold\n- wake=mail: wait\n- ask=owner: await reply\n"
+        rows = [("passing", good, states, [])]
+        for field in ("Source", "Date", "Supersedes"):
+            for replacement in ("", "- " + field + ": \n"):
+                original = next(line for line in fields.splitlines(keepends=True) if line.startswith("- " + field + ":"))
+                rows.append((field, good.replace(original, replacement), states,
+                             [("memory/facts.md", "3", "memory-field-" + field.lower())]))
+        rows.append(("idless", good, "- Call the vendor\n", [("state/handoff.md", "5", "state-id")]))
+        for name, text, state, expected in rows:
+            with self.subTest(row=name, text=text):
+                note.write_text(text)
+                self.handoff.write_text(state_handoff(state))
+                staged = self.command(["git", "add", "memory", "state/handoff.md"], self.home)
+                self.assertEqual(staged.returncode, 0, staged.stderr)
+                # A good unstaged replacement must not hide the staged violation.
+                note.write_text(good)
+                self.handoff.write_text(state_handoff(states))
+                self.assert_home_check(expected)
+        # Index text is outside this structural contract; freshness is consumer policy.
+        (memory / "MEMORY.md").write_text("# Memory index\nUnspecified row syntax is left alone.\n")
+        self.assertEqual(self.command(["git", "add", "memory", "state/handoff.md"], self.home).returncode, 0)
+        self.assert_home_check([])
+
+    def test_home_structure_control(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as folder:
+            copy = Path(folder) / "jarvis/scripts"
+            shutil.copytree(SCRIPTS, copy)
+            script = copy / "progress-log"
+            source = script.read_text()
+            old = 'for field in ("Source", "Date", "Supersedes"):'
+            self.assertEqual(source.count(old), 1)
+            script.write_text(source.replace(old, 'for field in ():'))
+            case = ProgressLog(methodName="test_home_structure")
+            case.scripts = copy
+            case.setUp()
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_home_structure()
+            finally:
+                case.doCleanups()
+
     def test_records(self):
         # Each row: handoff text, fields, then the whole expected handoff or
         # the refusal. owner-unanswered and the successor read this form.
