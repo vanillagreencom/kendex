@@ -1550,24 +1550,25 @@ fn every_event_renders_to_its_recorded_bytes() {
 }
 
 // The hosted close through `watch run`.
-/// The watch over a stalled cloud lane, started with the provider and
-/// runtime-entry fixtures under the project's scripts directory and the
-/// `gh` fixture first on `PATH`, `extra` on its environment.
-fn spawn_hosted_watch_run(dir: &Path, extra: &[(&str, &str)]) -> std::process::Child {
+/// The watch over a stalled cloud lane in `dir`, the state directory its
+/// close verb is asked under, started as the leader of its own process
+/// group, so a crash that ends the group ends it and the close it runs
+/// together, with the `gh` fixture first on `PATH`.
+fn spawn_hosted_watch_run(dir: &Path) -> Owned {
+    use std::os::unix::process::CommandExt;
     let mut command = watch_run_command(dir, &["--interval", "1"]);
-    for (name, value) in extra {
-        command.env(name, value);
-    }
-    command.spawn().expect("spawn watch run")
+    command.env("ORCH_STATE_DIR", dir).process_group(0);
+    Owned(command.spawn().expect("spawn watch run"))
 }
 
 /// Through `watch run` over a cloud lane whose pull request stood still
 /// past the stall bound and whose directive went unanswered past the cloud
-/// stall bound, the close verb (`close-lane CC-1` through the runtime's
-/// entry) is asked once with the close marker written before it; the
-/// fixture ends the runtime before it
-/// answers, and the next run finds the marker beside the open lane, asks
-/// nothing, and says `lane-close-unconfirmed` as the duty's failure.
+/// stall bound, the real close verb (`close-lane CC-1` through the
+/// runtime's entry) is asked once with the close marker written before it;
+/// the tracker's CLI, whose read the close makes before it writes anything,
+/// ends the watch's process group, the close with it, before it answers.
+/// The next run finds the marker beside the open lane, asks nothing, and
+/// says `lane-close-unconfirmed` as the duty's failure.
 #[test]
 fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -1575,25 +1576,28 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
     let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
     assert!(init.status.success(), "init: {}", stderr(&init));
     let state = state_dir.join(FLEET_FILE_NAME);
-    // The scripts directory the lane duty resolves under the project root,
-    // the two fixtures linked there with their planted answers beside.
+    // The scripts directory the lane duty resolves under the project root:
+    // the runtime's entry this build's binary, its close reading the
+    // tracker through the planted CLI that logs the read and crashes.
     let scripts = state_dir.join(".agents/skills/orch/scripts");
     std::fs::create_dir_all(&scripts).unwrap();
-    link_fixture("lane-host/lane-host", &scripts.join("lane-host"));
-    link_fixture("runtime-close/orch-runtime", &scripts.join("orch-runtime"));
-    std::fs::write(
-        scripts.join("lane-host.json"),
-        json!({"capabilities": {"stdout": "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\tpane=local"}})
-            .to_string(),
-    )
-    .unwrap();
-    let closed = json!({"protocol": "orch-runtime-v1", "ok": true, "result": {"item": "CC-1",
-        "word": "closed", "observation": {"item_files": "removed", "archive": "/archive/CC-1"}}});
-    std::fs::write(
-        scripts.join("orch-runtime.json"),
-        json!({"exit": 0, "stdout": format!("{closed}\n")}).to_string(),
-    )
-    .unwrap();
+    let tracker = state_dir.join("crash-tracker");
+    let tracker_log = state_dir.join("crash-tracker.log");
+    write_executable(
+        &tracker,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nkill -KILL 0\n",
+            tracker_log.display()
+        ),
+    );
+    write_executable(
+        &scripts.join("orch-runtime"),
+        format!(
+            "#!/bin/sh\nexec env OVERSEE_WATCH_TRACKER='{}' '{}' \"$@\"\n",
+            tracker.display(),
+            binary().display()
+        ),
+    );
     // The `gh` the entry's credential ladder and the lane duty share: the
     // ladder's `auth status` answered here, every other call the `gh`
     // fixture's, its map and log in `bin`.
@@ -1642,35 +1646,32 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
         ),
     });
     baseline.store(&paths.baseline).unwrap();
-    let close_log = scripts.join("orch-runtime.log");
     let marker = orch_runtime::watch::hosted::close_marker_path(
         orch_runtime::watch::lanes::watch_state_dir(&settings_in(&state_dir, 20).claim_store),
         "CC-1",
     );
-    // Run 1: the fixture ends the runtime before it answers.
-    let child = spawn_hosted_watch_run(&state_dir, &[("RUNTIME_CLOSE_KILL_PARENT", "1")]);
-    let cut = bounded_output(
-        child,
-        secs(30),
-        "the runtime ran on past the fixture's kill",
-    );
-    assert!(!cut.status.success(), "{}", cut.status);
-    let calls = |log: &Path| -> Vec<String> {
-        std::fs::read_to_string(log)
+    let asked = || -> Vec<String> {
+        std::fs::read_to_string(&tracker_log)
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
             .collect()
     };
-    // The entry names no `--state-dir`, so the runtime's is the default
-    // under the project root.
+    let lane_status = || -> Value {
+        let fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+        fleet["lanes"][0]["status"].clone()
+    };
+    // Run 1: the crash ends the watch and its close before the close answers.
+    let child = spawn_hosted_watch_run(&state_dir);
+    let cut = bounded_output(
+        child,
+        secs(30),
+        "the runtime ran on past the tracker's crash",
+    );
+    assert!(!cut.status.success(), "{}", cut.status);
     assert_eq!(
-        calls(&close_log),
-        vec![format!(
-            "--state-dir {} op --fleet --request {}",
-            state_dir.join("tmp").display(),
-            r#"{"item":"CC-1","op":"close-lane"}"#
-        )],
+        asked(),
+        vec!["issues bulk-get CC-1 --format=raw"],
         "one close asked: {}",
         stderr(&cut)
     );
@@ -1679,8 +1680,13 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
         "the marker written before the close stands: {}",
         marker.display()
     );
+    assert_eq!(
+        lane_status(),
+        json!("running"),
+        "the crashed close wrote nothing"
+    );
     // Run 2: the gone claim taken over, the marker found, nothing asked.
-    let mut child = spawn_hosted_watch_run(&state_dir, &[]);
+    let mut child = spawn_hosted_watch_run(&state_dir);
     await_claim(&mut child, &paths);
     let deadline = Instant::now() + secs(20);
     loop {
@@ -1702,18 +1708,14 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
         "{}",
         stderr(&stop)
     );
-    let out = child.wait_with_output().unwrap();
+    let out = output(child);
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(
-        calls(&close_log).len(),
-        1,
-        "no second close: {:?}",
-        calls(&close_log)
-    );
+    assert_eq!(asked().len(), 1, "no second close: {:?}", asked());
     assert!(
         std::fs::metadata(&marker).is_ok(),
         "the marker stands beside the open lane"
     );
+    assert_eq!(lane_status(), json!("running"));
     let err = stderr(&out);
     assert!(
         err.contains("lane-close-unconfirmed item=CC-1"),
@@ -1828,43 +1830,73 @@ fn watch_run_with(dir: &Path, flags: &[&str], mail: &Path) -> Command {
 /// The output of a start that must end on its own within `bound`: one
 /// that runs on past it is a runner the row forbids, killed and reported
 /// as `overrun`.
-fn bounded_output(
-    mut child: std::process::Child,
-    bound: Duration,
-    overrun: &str,
-) -> std::process::Output {
+fn bounded_output(mut child: Owned, bound: Duration, overrun: &str) -> std::process::Output {
     let deadline = Instant::now() + bound;
-    while child.try_wait().ok().flatten().is_none() {
+    while child.0.try_wait().ok().flatten().is_none() {
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
             panic!("{overrun}");
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    child.wait_with_output().unwrap()
+    output(child)
+}
+
+/// The held `child`'s output once it ends: its two pipes read to their
+/// ends side by side, as `Child::wait_with_output` reads them, then its
+/// status.
+fn output(mut child: Owned) -> std::process::Output {
+    use std::io::Read;
+    let read = |pipe: Option<Box<dyn Read + Send>>| {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    };
+    let stdout = child
+        .0
+        .stdout
+        .take()
+        .map(|p| Box::new(p) as Box<dyn Read + Send>);
+    let stderr = child
+        .0
+        .stderr
+        .take()
+        .map(|p| Box::new(p) as Box<dyn Read + Send>);
+    let (stdout, stderr) = std::thread::scope(|scope| {
+        let err = scope.spawn(|| read(stderr));
+        (read(stdout), err.join().unwrap_or_default())
+    });
+    let status = child.0.wait().expect("wait");
+    std::process::Output {
+        status,
+        stdout,
+        stderr,
+    }
 }
 
 /// Spawn `watch run` in `dir` with `flags`; it claims as the child's pid.
-fn spawn_watch_run(dir: &Path, flags: &[&str]) -> std::process::Child {
-    watch_run_command(dir, flags)
-        .spawn()
-        .expect("spawn watch run")
+fn spawn_watch_run(dir: &Path, flags: &[&str]) -> Owned {
+    Owned(
+        watch_run_command(dir, flags)
+            .spawn()
+            .expect("spawn watch run"),
+    )
 }
 
 /// Wait until the runner `child` has claimed `paths`, bounded; a child
 /// that ends first fails the row with its stderr.
-fn await_claim(child: &mut std::process::Child, paths: &Paths) {
+fn await_claim(child: &mut Owned, paths: &Paths) {
     let deadline = Instant::now() + secs(10);
     loop {
         if let Ok(Some(claim)) = watch::claim::read(paths)
-            && claim.pid == child.id()
+            && claim.pid == child.pid()
         {
             return;
         }
-        if let Ok(Some(status)) = child.try_wait() {
+        if let Ok(Some(status)) = child.0.try_wait() {
             let mut err = String::new();
-            if let Some(stderr) = child.stderr.as_mut() {
+            if let Some(stderr) = child.0.stderr.as_mut() {
                 let _ = std::io::Read::read_to_string(stderr, &mut err);
             }
             panic!("the runner ended {status}: {err}");
@@ -1887,7 +1919,7 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
     let mut command = watch_run_command(&state_dir, &["--interval", "240"]);
     std::fs::write(state_dir.join("bin/gh.auth-status"), "1\n").unwrap();
     let out = bounded_output(
-        command.spawn().unwrap(),
+        Owned(command.spawn().unwrap()),
         secs(30),
         "the watch ran on with no credential selected",
     );
@@ -1933,7 +1965,7 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
         let mut command = watch_run_command(&state_dir, &["--interval", "240"]);
         command.env(key, value);
         let out = bounded_output(
-            command.spawn().unwrap(),
+            Owned(command.spawn().unwrap()),
             secs(30),
             "the watch ran on under a setting outside its form",
         );
@@ -1980,7 +2012,7 @@ fn a_watch_run_on_an_unbuilt_agent_runtime_refuses_before_the_ladder_and_any_cla
         )
         .env("AGENT_RUNTIME_CACHE", state_dir.join("cache"));
     let out = bounded_output(
-        command.spawn().unwrap(),
+        Owned(command.spawn().unwrap()),
         secs(30),
         "the watch ran on with agent-runtime unbuilt",
     );
@@ -2029,7 +2061,7 @@ fn a_watch_started_with_a_gone_mail_program_is_refused_before_it_claims() {
         &gone,
     );
     let out = bounded_output(
-        command.spawn().unwrap(),
+        Owned(command.spawn().unwrap()),
         secs(30),
         "the watch ran on with its mail program gone",
     );
@@ -2066,7 +2098,7 @@ fn a_watch_run_refusal_carries_the_ladders_sources_after_its_warning() {
         .env("GH_TOKEN", "ghp_rowEnvToken")
         .env("KENDEX_GITHUB_AUTH_TIMEOUT", "2.55");
     let out = bounded_output(
-        command.spawn().unwrap(),
+        Owned(command.spawn().unwrap()),
         secs(30),
         "the watch ran on with no credential selected",
     );
@@ -2109,10 +2141,12 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
     fleet["intents"] = json!([gone]);
     std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
-    let mut child = watch_run_command(&state_dir, &[])
-        .env("ORCH_REPORT_EVERY_MINUTES", "120")
-        .spawn()
-        .expect("spawn watch run");
+    let mut child = Owned(
+        watch_run_command(&state_dir, &[])
+            .env("ORCH_REPORT_EVERY_MINUTES", "120")
+            .spawn()
+            .expect("spawn watch run"),
+    );
     let paths = Paths::of(&state).unwrap();
     await_claim(&mut child, &paths);
     let deadline = Instant::now() + secs(10);
@@ -2130,7 +2164,7 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
         "{}",
         stderr(&stop)
     );
-    let out = child.wait_with_output().unwrap();
+    let out = output(child);
     assert!(out.status.success(), "{}", stderr(&out));
     let mut logged = log_lines(&paths);
     logged.sort();
@@ -2208,7 +2242,7 @@ fn an_owed_send_no_receipt_settles_reaches_the_log_once_per_cause_through_watch_
         "{}",
         stderr(&stop)
     );
-    let out = child.wait_with_output().unwrap();
+    let out = output(child);
     assert!(out.status.success(), "{}", stderr(&out));
     let lines: Vec<String> = log_lines(&paths)
         .into_iter()
@@ -2276,7 +2310,7 @@ fn a_single_pass_follow_past_ten_thousand_lines_prints_each_line_under_the_logs_
         "{}",
         stderr(&stop)
     );
-    let out = child.wait_with_output().unwrap();
+    let out = output(child);
     assert!(out.status.success(), "{}", stderr(&out));
     let reader = state_dir.join("reader");
     std::fs::create_dir_all(&reader).unwrap();
@@ -2292,7 +2326,11 @@ fn a_single_pass_follow_past_ten_thousand_lines_prints_each_line_under_the_logs_
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let out = bounded_output(follow, secs(60), "the follow ran past its quiet expiry");
+    let out = bounded_output(
+        Owned(follow),
+        secs(60),
+        "the follow ran past its quiet expiry",
+    );
     assert!(out.status.success(), "{}", stderr(&out));
     let printed: Vec<String> = String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -2355,7 +2393,7 @@ fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successo
     let standing = watch::status(&paths).unwrap().claim.expect("the claim");
     assert_eq!(
         (standing.pid, standing.standing),
-        (child.id(), "live"),
+        (child.pid(), "live"),
         "the runner lives through the succession"
     );
     let after = log_lines(&paths);
@@ -2382,7 +2420,7 @@ fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successo
         "{}",
         stderr(&stop)
     );
-    let out = child.wait_with_output().unwrap();
+    let out = output(child);
     assert!(out.status.success(), "{}", stderr(&out));
 }
 
@@ -2426,7 +2464,7 @@ fn plant_github(bin: &Path, sign_in: Value) {
 /// the `gh` fixture first on `PATH`, the github package's reducer reading
 /// through it, the owner's mailbox the logging fixture, the runner's stderr
 /// in `watch.err`.
-fn spawn_sign_in_watch(dir: &Path) -> std::process::Child {
+fn spawn_sign_in_watch(dir: &Path) -> Owned {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     link_fixture("gh/gh", &bin.join("gh"));
@@ -2442,7 +2480,7 @@ fn spawn_sign_in_watch(dir: &Path) -> std::process::Child {
         .env("GH_TOKEN", START_TOKEN)
         .env("OVERSEE_WATCH_PR_WATCH", bin.join("pr-watch"))
         .stderr(std::fs::File::create(dir.join("watch.err")).unwrap());
-    command.spawn().expect("spawn watch run")
+    Owned(command.spawn().expect("spawn watch run"))
 }
 
 /// The epoch second now, the floor a pass that starts after a plant is
@@ -2483,14 +2521,14 @@ fn await_github_pass(
     }
 }
 
-fn stop_watch(state_dir: &Path, mut child: std::process::Child) {
+fn stop_watch(state_dir: &Path, mut child: Owned) {
     let stop = watch_cmd(state_dir, &["watch", "stop", "--fleet"]);
     assert!(
         reply(&stop)["ok"].as_bool().unwrap_or(false),
         "{}",
         stderr(&stop)
     );
-    assert!(child.wait().unwrap().success());
+    assert!(child.0.wait().unwrap().success());
 }
 
 fn lines_of(path: &Path) -> Vec<String> {
@@ -2828,7 +2866,7 @@ fn a_watch_under_a_checkout_with_its_own_mailbox_alerts_and_asks_only_what_its_s
         "notice": {"key": "job-launch-failed", "text": "the planted notice", "owner": "owed"}
     }]);
     std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
-    let mut child = world.watch(&world.reach()).spawn().expect("watch run");
+    let mut child = Owned(world.watch(&world.reach()).spawn().expect("watch run"));
     let named = format!("-S {} ", world.named_socket().display());
     let notice = format!(
         "notice --item overseer --to owner --file {}",
@@ -2847,9 +2885,9 @@ fn a_watch_under_a_checkout_with_its_own_mailbox_alerts_and_asks_only_what_its_s
         if noticed && asked {
             break;
         }
-        if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
-            let _ = child.kill();
-            let out = child.wait_with_output().unwrap();
+        if Instant::now() >= deadline || child.0.try_wait().unwrap().is_some() {
+            let _ = child.0.kill();
+            let out = output(child);
             panic!(
                 "noticed={noticed} asked={asked}: tmux {:?} named {:?} checkout {:?}: {}",
                 world.log("tmux.log"),
@@ -2925,7 +2963,7 @@ fn a_watch_start_naming_no_mailbox_or_server_is_refused_before_any_server_or_ale
     ];
     let paths = Paths::of(&world.checkout().join(FLEET_FILE_NAME)).unwrap();
     for (flag, key, fields) in cases {
-        let child = world.watch(&without(flag)).spawn().expect("watch run");
+        let child = Owned(world.watch(&without(flag)).spawn().expect("watch run"));
         let out = bounded_output(child, secs(20), "a start naming too little ran on");
         assert_eq!(out.status.code(), Some(1), "{flag}: {}", stderr(&out));
         let answer = reply(&out);

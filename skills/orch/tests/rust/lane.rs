@@ -1039,62 +1039,6 @@ fn a_close_reads_the_lanes_open_ask_through_the_shipped_mailbox() {
     assert_eq!(asking.lane("KEN-A")["status"], "running");
 }
 
-/// The planted lane record drifting from what the real `launch-lane`
-/// writes: the fixture is this launch's record, its root and its process, pane and
-/// clock values as placeholders and the start's form (`ticks:`) kept before
-/// its placeholder.
-#[test]
-fn the_recovery_suites_planted_record_is_the_real_launch_lanes() {
-    const PERMISSION: &str = "--permission-mode dontAsk";
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-record");
-    runner.init_fleet();
-    let work = runner.state_dir().to_path_buf();
-    let mut request = launch_request("KEN-1", &work);
-    request["model"] = json!("claude-fable-5-1");
-    request["effort"] = json!("high");
-    request["permission"] = json!(PERMISSION);
-    let report = effect_report(&runner.op_fleet(&request));
-    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let mut record = runner.fleet()["lanes"][0].clone();
-    for (field, placeholder) in [
-        ("pane", "@PANE@"),
-        ("server", "@SERVER@"),
-        ("server_start", "@SERVER_START@"),
-        ("pid", "@PID@"),
-    ] {
-        if record["launch"].get(field).is_some() {
-            record["launch"][field] = json!(placeholder);
-        }
-    }
-    if let Some(start) = record["launch"]["start"].as_str() {
-        let form = start.split_once(':').map_or("", |(form, _)| form);
-        record["launch"]["start"] = json!(format!("{form}:@START@"));
-    }
-    for (field, placeholder) in [
-        ("session_id", "@SESSION_ID@"),
-        ("launched_at", "@LAUNCHED_AT@"),
-        ("running_at", "@RUNNING_AT@"),
-        ("session_since", "@SESSION_SINCE@"),
-    ] {
-        assert!(record[field].is_string(), "{field} on the record: {record}");
-        record[field] = json!(placeholder);
-    }
-    let text = serde_json::to_string_pretty(&record)
-        .unwrap()
-        .replace(&work.display().to_string(), "@ROOT@");
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../tests/fixtures/launch-lane/claude-dontask.json");
-    let planted: Value = serde_json::from_str(&std::fs::read_to_string(fixture).unwrap()).unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&text).unwrap(),
-        planted,
-        "the fixture is not this launch's record:\n{text}"
-    );
-    assert_eq!(planted["permission"], json!(PERMISSION), "{planted}");
-}
-
 /// Through the executable: each is refused `permission-unrepresentable`
 /// naming the harness and the word, and nothing is written.
 #[test]

@@ -1109,12 +1109,17 @@ fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> Closed {
             };
         }
     };
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    ended(&out)
+}
+
+/// The close verb's end read whole: its reply by its word, else its status.
+/// The verb answers 0 or 1 with its reply, and its argument parser 2 before
+/// it acts; any other end without a reply, a panic's 101 or a signal, may
+/// follow its act.
+fn ended(out: &std::process::Output) -> Closed {
     let Ok(reply) = serde_json::from_slice::<Value>(&out.stdout) else {
+        let stderr = String::from_utf8_lossy(&out.stderr);
         let line = first_line(&stderr);
-        // The verb answers 0 or 1 with its reply, and its argument parser
-        // 2 before it acts; any other end without a reply, a panic's 101 or
-        // a signal, may follow its act.
         return match out.status.code() {
             Some(rc @ (1 | 2)) => Closed::Failed {
                 cause: format!("exit={rc} {line}").trim_end().to_owned(),
@@ -2545,6 +2550,55 @@ mod tests {
             Err(Asked::Unknown(cause)) if cause.starts_with("host-create-unanswered capabilities exit=-1")
         ));
         assert!(ask("answers", Some("exit 0"), Duration::from_secs(10)).is_ok());
+    }
+
+    /// A close verb that printed no reply: its usage refusal (2) or a
+    /// failure before it acted (1) closed nothing and is failed with the
+    /// status and its first line; a panic's 101 or a signal may follow its
+    /// act and is unanswered, so its marker stands.
+    #[test]
+    fn a_close_that_printed_no_reply_is_failed_on_one_or_two_and_unanswered_otherwise() {
+        use std::os::unix::process::ExitStatusExt;
+        let end = |raw: i32, stderr: &str| {
+            ended(&std::process::Output {
+                status: std::process::ExitStatus::from_raw(raw),
+                stdout: Vec::new(),
+                stderr: stderr.as_bytes().to_vec(),
+            })
+        };
+        let cases = [
+            (
+                1 << 8,
+                "\nrefused before acting\n",
+                Closed::Failed {
+                    cause: "exit=1 refused before acting".to_owned(),
+                },
+            ),
+            (
+                2 << 8,
+                "error: unexpected argument\n",
+                Closed::Failed {
+                    cause: "exit=2 error: unexpected argument".to_owned(),
+                },
+            ),
+            (
+                101 << 8,
+                "thread 'main' panicked\n",
+                Closed::Unanswered {
+                    cause: "exit status: 101 thread 'main' panicked".to_owned(),
+                },
+            ),
+            (
+                9,
+                "",
+                Closed::Unanswered {
+                    cause: "signal: 9 (SIGKILL)".to_owned(),
+                },
+            ),
+        ];
+        for (raw, stderr, closed) in cases {
+            assert_eq!(end(raw, stderr), closed, "{raw}");
+        }
     }
 
     /// The capability line read whole: every key once, each value in its
