@@ -98,7 +98,7 @@ suite_result "$RUNNER" "$R/skills/orch/tests/open-terminal-context.sh" direct Li
 [ "$RC" -ne 0 ] && [ -z "$RESULT" ] && ok 'a failed checkout build starts no suite' || bad 'a failed checkout build starts no suite' "$OUT"
 BUILD_STATUS=0
 
-# Cargo can fail after guard has filled another worker with an orch-dev suite.
+# Cargo can fail after guard has filled another worker with an orch-state suite.
 if python3 - "$RUNNER" "$TMP" "$BASH" <<'PY'
 import os
 from pathlib import Path
@@ -122,7 +122,7 @@ while not Path(sys.argv[1]).exists():
 WAIT
 exit 9
 ''')
-(runner.parent / "dev-env-block.sh").write_text('trap \'printf stopped > "$STOPPED"; exit 0\' TERM\nprintf ready > "$READY"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\nprintf done > "$DONE"\n')
+(runner.parent / "lane-env-block.sh").write_text('trap \'printf stopped > "$STOPPED"; exit 0\' TERM\nprintf ready > "$READY"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\nprintf done > "$DONE"\n')
 (runner.parent / "open-terminal-env-fail.sh").write_text('printf "pass: 1 fail: 0\\n"\n')
 try:
     env = dict(os.environ, RUNNER_OS="Linux")
@@ -131,7 +131,7 @@ try:
     os.mkfifo(env["FIFO"])
     hold = os.open(env["FIFO"], os.O_RDWR)
     try:
-        result = subprocess.run([bash, str(runner), "--local", "=dev-env-block", "=open-terminal-env-fail"], env=env, capture_output=True, text=True, timeout=25)
+        result = subprocess.run([bash, str(runner), "--local", "=lane-env-block","=open-terminal-env-fail"], env=env, capture_output=True, text=True, timeout=25)
         assert result.returncode == 1, result.stdout + result.stderr
         stopped = Path(env["STOPPED"]).exists()
         if not stopped:
@@ -147,7 +147,7 @@ try:
 finally:
     cargo.write_text(original_cargo)
     (root / "host-bin/nproc").unlink()
-    (runner.parent / "dev-env-block.sh").unlink()
+    (runner.parent / "lane-env-block.sh").unlink()
     (runner.parent / "open-terminal-env-fail.sh").unlink()
 PY
 then ok 'pooled environment failure stops earlier suites'

@@ -9,9 +9,7 @@
 # A real suite run with all four exported at a sandbox repository leaves
 # that repository's log and index untouched. Neutralize lib/git-env.sh beside
 # links to the rest and the same run writes to it.
-# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
-# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
-# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
+# Inputs: skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -76,8 +74,6 @@ assert_eq "$(fingerprint "$sandbox")" \
 mutant="$TMP/mutant/skills/orch"
 mkdir -p "$mutant/tests/lib"
 ln -s "$REPO_ROOT/skills/orch/scripts" "$mutant/scripts"
-mkdir -p "$mutant/../mailbox"
-ln -s "$REPO_ROOT/skills/mailbox/scripts" "$mutant/../mailbox/scripts"
 ln -s "$TEST_DIR/$SUBJECT" "$mutant/tests/$SUBJECT"
 for lib in "$TEST_DIR"/lib/*; do
   [[ "${lib##*/}" == git-env.sh ]] || ln -s "$lib" "$mutant/tests/lib/${lib##*/}"
@@ -98,36 +94,45 @@ else
 fi
 
 # --- 2. Scratch below a linked worktree does not discover its checkout ----
-# The prune suite writes fleet state before it can fail. That write must stay
-# in its fixture, never in the main checkout shared by linked worktrees.
+# A suite whose TMPDIR lies inside a linked worktree makes its scratch below
+# it with mktemp -d. The ceiling lib/git-env.sh sets at TMPDIR stops git's
+# discovery there, so a fixture built in that scratch never lands in the
+# worktree's repository. The probe below is such a suite, reduced to the
+# discovery: beside the real lib it finds no checkout; beside the neutralized
+# lib of 1b it finds the linked worktree. The scratch is always below TMPDIR,
+# because git applies a ceiling only to a strict ancestor of where it starts.
 ceiling_sandbox="$TMP/ceiling-sandbox"
 new_sandbox "$ceiling_sandbox"
 linked="$TMP/linked"
 git -C "$ceiling_sandbox" worktree add -q -b fixture "$linked"
 mkdir -p "$linked/tmp"
-shared_state="$ceiling_sandbox/tmp/workflow-state-oversee.json"
+linked_top="$(cd "$linked" && pwd -P)"
 
-run_prune_suite() { # SUITE ; no git redirects, scratch inside a worktree
+probe_tree="$TMP/probe"
+mkdir -p "$probe_tree"
+ln -s "$TEST_DIR/lib" "$probe_tree/lib"
+cat > "$probe_tree/ceiling-probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+printf 'top=%s\n' "$(git -C "$scratch" rev-parse --show-toplevel 2>/dev/null || true)"
+PROBE
+ln -s "$probe_tree/ceiling-probe.sh" "$mutant/tests/ceiling-probe.sh"
+
+run_probe() { # PROBE ; no git redirects, TMPDIR inside a linked worktree
   env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
     -u ORCH_STATE_DIR TMPDIR="$linked/tmp" \
-    bash "$1" > "$TMP/prune.out" 2>&1
+    bash "$1" 2> "$TMP/probe.err"
 }
 
-prune_status=0
-run_prune_suite "$TEST_DIR/workflow-state-prune.sh" || prune_status=$?
-assert_eq "$prune_status" "0" "the prune suite passes with scratch inside a linked worktree" "$TMP/prune.out"
-if [[ ! -e "$shared_state" ]]; then
-  pass "scratch fixtures leave the main checkout's fleet state absent"
+assert_eq "$(run_probe "$probe_tree/ceiling-probe.sh")" "top=" \
+  "scratch below a linked worktree discovers no checkout" "$TMP/probe.err"
+if [[ "$(run_probe "$mutant/tests/ceiling-probe.sh")" == "top=$linked_top" ]]; then
+  pass "must-fail: without the lib scratch below a linked worktree discovers it"
 else
-  fail "scratch fixtures wrote fleet state in the main checkout"
-fi
-
-ln -s "$TEST_DIR/workflow-state-prune.sh" "$mutant/tests/workflow-state-prune.sh"
-run_prune_suite "$mutant/tests/workflow-state-prune.sh" || true
-if [[ -f "$shared_state" ]]; then
-  pass "must-fail: without the lib scratch fixtures write shared fleet state"
-else
-  fail "must-fail: the neutralized lib did not expose the shared fleet state write"
+  fail "must-fail: the neutralized lib did not expose the linked worktree, so the control proves nothing"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
