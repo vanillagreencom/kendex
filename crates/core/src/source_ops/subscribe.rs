@@ -376,8 +376,8 @@ fn check_subscription(
                 crate::source_ref::repo_identity(new) == crate::source_ref::repo_identity(old)
             }
             (None, None, Some(new), Some(old)) => {
-                super::declared_identity(env, scope, None, Some(new))
-                    == super::declared_identity(env, scope, None, Some(old))
+                crate::paths::slashed(&crate::source::path_root(env, scope, new))
+                    == crate::paths::slashed(&crate::source::path_root(env, scope, old))
             }
             _ => false,
         };
