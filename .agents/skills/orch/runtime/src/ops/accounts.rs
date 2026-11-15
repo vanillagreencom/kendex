@@ -513,8 +513,7 @@ pub fn fleet_facts(
     Ok(facts)
 }
 
-/// The accounts a `cloud-session` host may launch on (`lane_tier_inputs`,
-/// `lib/lane-usage.sh`): where `host`'s capability line declares
+/// The accounts a `cloud-session` host may launch on: where `host`'s capability line declares
 /// `launch=cloud-session`, the rows whose `ORCH_LANE_CLOUD_REPOS` entry
 /// names the `owner/repo` of this checkout's github.com origin
 /// ([`crate::repo::origin`]), compared as GitHub reads names, without case;

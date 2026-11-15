@@ -2648,7 +2648,7 @@ exit 9
 
     def test_close_archives_the_state_the_lane_settings_place_outside_tmp(self):
         # The lane's settings name a state directory outside both tmp trees;
-        # its close archives the item's state there, which oversee-cycle reads
+        # its close archives the item's state there, which orch's cycle recorder reads
         # once the sandbox is gone.
         state_dir = self.root / "lane-state"
         (self.source / "kendex.settings.toml").write_text(f'[env]\nORCH_STATE_DIR = "{state_dir}"\n')

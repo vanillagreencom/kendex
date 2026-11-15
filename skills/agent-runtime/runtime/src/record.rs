@@ -527,8 +527,8 @@ pub fn create_document(path: &Path, doc: &Document) -> Result<()> {
 // Documents
 // ---------------------------------------------------------------------------
 
-/// The fleet record's fixed file name: `workflow-state` writes the key
-/// `oversee` into `workflow-state-<KEY>.json`.
+/// The fleet record's fixed file name: a record's `workflow-state-<KEY>.json`
+/// under the key `oversee`.
 pub const FLEET_FILE_NAME: &str = "workflow-state-oversee.json";
 
 /// A document as the file holds it: one JSON object in its own key order.

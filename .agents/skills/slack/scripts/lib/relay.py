@@ -69,9 +69,9 @@ answers the overseer, and the relay holds mailbox posts except replies to
 messages the owner typed in the channel, which still post in their threads,
 a notice whose --ref names a /report directive, which posts as a new
 message, and a notice whose --ref names a directive a satellite forwarded,
-which posts under a root that quotes the request. oversee-report's report
+which posts under a root that quotes the request. The orch watch's report
 notice carries no --ref, so it is an ordinary owner notice under the hold,
-and oversee-report sends none during
+and the watch sends none during
 ORCH_REPORT_QUIET_HOURS.
 Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
@@ -201,7 +201,7 @@ TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 # The delivery id of a /report directive is its trigger_id under this
 # prefix. `report` writes it and `RootRelay.routes` reads it as typed in
 # Slack, so a notice whose --ref names the directive posts, held or not.
-# oversee-report's report notice names no directive: an ordinary notice.
+# The orch watch's report notice names no directive: an ordinary notice.
 COMMAND_KEY = "command:"
 # A forwarded owner directive: a satellite Jarvis's `jarvis-session forward`
 # sends the request under this delivery key, its text ending in one

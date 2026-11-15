@@ -507,8 +507,7 @@ pub struct Pass<'a> {
     /// The state directory the receipts are read under, the item states
     /// stand in and a relaunch logs to.
     pub state_dir: &'a Path,
-    /// The claim store, beside which the relaunch markers live
-    /// (`lib/lane-claims.sh`, `lane_claims_dir`).
+    /// The claim store, beside which the relaunch markers live.
     pub claim_store: &'a Path,
     /// The account records' root the wall records are written under.
     pub account_state: &'a agent_runtime::settings::Judged<std::path::PathBuf>,
@@ -1768,7 +1767,7 @@ enum Routed {
 /// `ORCH_WALL_RELAUNCH=auto` a qualifying account takes the lane through the
 /// record's own relaunch, started detached through the one runner, its marker
 /// written first for the outcome reader. A hosted lane of any kind has its
-/// harness stopped through the provider first (`lane-host stop --item
+/// harness stopped through the provider first (its `stop --item
 /// --harness`), and a stop not confirmed refuses the relaunch as
 /// `stop-failed` with the status, or `stop-unanswered` where it gave no
 /// answer. A relaunch refused after the pick is said
@@ -2620,7 +2619,7 @@ pub fn counters_of(doc: &Document, validation_runs: Option<usize>) -> Option<Cou
     })
 }
 
-/// A cause key (`lib/cause-keys.jq`, `cause_key`): a trimmed string that
+/// A cause key: a trimmed string that
 /// is not empty, `TBD` or `general`.
 fn cause_key(value: Option<&Value>) -> Option<String> {
     let text = value?.as_str()?.trim();

@@ -1,6 +1,5 @@
 //! Workflow records: the item state `<state-dir>/workflow-state-<ITEM>.json`
-//! and the fleet state `workflow-state-oversee.json`, in the shape the
-//! `workflow-state` script writes.
+//! and the fleet state `workflow-state-oversee.json`.
 //!
 //! A record is held as the document the file holds, a `serde_json::Map` in
 //! the file's own key order. The typed structs here are read views derived
@@ -27,8 +26,7 @@ use serde_json::{Map, Value};
 use crate::error::{Error, Result};
 
 /// The item state file for `item` under `dir`:
-/// `workflow-state-<ITEM>.json`, the name `workflow-state`'s `get_state_file`
-/// builds.
+/// `workflow-state-<ITEM>.json`.
 pub fn item_path(dir: &Path, item: &str) -> PathBuf {
     dir.join(format!("workflow-state-{item}.json"))
 }
@@ -114,7 +112,7 @@ pub trait Record: Sized {
 
 /// The kinds a `stages[]` entry carries: `dev` and `review` opened by
 /// `new-round-id`, `implement` and `fix` set on a dev stage by
-/// `dev-artifact-check`, `validate` written per validation run.
+/// `dev-return check`, `validate` written per validation run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StageKind {
@@ -365,8 +363,7 @@ pub struct Attachment {
 
 /// The validation mode a run records: the project's whole battery, its
 /// range command over the changes since a base, or a round deferred to
-/// required CI after publication (`dev-validate-run --help` § Validation
-/// modes).
+/// required CI after publication (`orch-runtime validate entry --help`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ValidateMode {
@@ -442,7 +439,7 @@ pub struct Proof {
 }
 
 /// The earlier run a start reused in place of running its command
-/// (`dev-validate-run --help`: the `pass-run=` and `bound-run=` lines).
+/// (the run log's `pass-run=` and `bound-run=` lines).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Reused {
@@ -561,8 +558,8 @@ pub struct RebaseObligation {
 
 /// One `lanes[]` record as read. The named fields are the ones the lane
 /// operations read or write; `extra` carries the rest for a report. Only
-/// `item` and `status` are required, the two every shell reader selects
-/// on; a record a hand or the released launcher wrote may lack any other.
+/// `item` and `status` are required, the two every reader selects on; a
+/// record a hand wrote may lack any other.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lane {
     pub item: String,
@@ -578,8 +575,8 @@ pub struct Lane {
     pub account: Option<String>,
     /// The home the lane's last confirmed local launch ran its sessions
     /// under, as that launch prepared it; a relaunch reads the bound
-    /// session there. No released writer writes it: a record without it is
-    /// read by the rule the released reader used.
+    /// session there. A record without it relaunches under its account,
+    /// else under the home a fresh launch picks (`relaunch_route`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
     /// That launch named no home: an accountless Claude launch on its
@@ -630,8 +627,7 @@ pub struct Lane {
     /// The touched set the admission judged: the union
     /// of the item's Location paths, the brief's paths, the change-scope
     /// paths over the named range and the paths a running lane added,
-    /// sorted and unique. `None` on a record the released launcher wrote
-    /// with no judgement.
+    /// sorted and unique. `None` on a record written with no judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched: Option<Vec<String>>,
     /// The paths the launch named in scope: a file the brief names as an
@@ -768,7 +764,7 @@ pub struct CycleRow {
     pub cycle: Value,
     pub lines: Vec<String>,
     /// What the recorder could not read, in its own lines
-    /// (`oversee-cycle: class-unread cause=`, `rounds-unread`,
+    /// (`cycle: class-unread cause=`, `rounds-unread`,
     /// `merged-unread`, `negative-interval`), for the close's answer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
@@ -1039,7 +1035,7 @@ fn validate(path: &Path, snapshot: &Snapshot) -> Result<()> {
 // Initialization and inspection
 // ---------------------------------------------------------------------------
 
-/// What `workflow-state init` takes beside the item: the fields a caller
+/// What `orch-runtime state init` takes beside the item: the fields a caller
 /// knows at creation, each written empty where it names none.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct InitFields {
@@ -1052,8 +1048,8 @@ pub struct InitFields {
     pub sub_issues: Option<Value>,
 }
 
-/// The object `workflow-state init` writes (`cmd_init`), key for key and in
-/// its order. `issue_id` is the item, or `oversee` for the fleet state.
+/// The object `orch-runtime state init` writes, key for key and in its
+/// order. `issue_id` is the item, or `oversee` for the fleet state.
 pub fn init_document(issue_id: &str, fields: &InitFields) -> Document {
     let value = serde_json::json!({
         "issue_id": issue_id,

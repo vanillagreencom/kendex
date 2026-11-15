@@ -1405,11 +1405,7 @@ fn resolve(
         (Some((Reused::PassRun { run_dir }, _)), _, _) => {
             let last = fs::read_to_string(Path::new(run_dir).join("log"))
                 .ok()
-                .and_then(|log| {
-                    log.lines()
-                        .rfind(|l| l.starts_with("validate:"))
-                        .map(str::to_owned)
-                });
+                .and_then(|log| files::selection_line(&log).map(str::to_owned));
             let mut text = format!(
                 "runner=none pass-run={run_dir}: that run passed this command over the same tree\n"
             );

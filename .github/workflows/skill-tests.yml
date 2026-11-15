@@ -479,7 +479,7 @@ jobs:
   # 499s, and the ruff its py-names lane needs) and `guards-tools` (34 files,
   # 475s). `rest` ran 780s over 79 files and gave the worktree roster alone to
   # `worktree`, 382s over 22 files, keeping 57 files at 398s. `orch-rest` ran
-  # 675s over 64 files and gave the lane, workflow-state and round-artifact
+  # 675s over 64 files and gave the lane, state and round-artifact
   # suites to `orch-state`, 382s over 30 files, keeping 34 at 293s.
   # `guards-tools` later grew past both legs' ceilings and splits in three,
   # `guards-hooks` and `guards-tools-tail` beside it. The hooks name seam
@@ -509,8 +509,8 @@ jobs:
   # flock, setsid or timeout at all, and carries sha256sum only in recent
   # releases (26 has /sbin/sha256sum; the runner image's own release decides),
   # so none of the four is a BSD difference to fix at a site — a script that
-  # must run without one carries its own fallback there (workflow-state and
-  # lanes fall back to a mkdir mutex, release-digests to shasum). Each of the
+  # must run without one carries its own fallback there (the mailbox's
+  # lane-mail falls back to a mkdir mutex, release-digests to shasum). Each of the
   # four is
   # linked in on its own, never through a package's gnubin directory, so
   # nothing else in coreutils or util-linux shadows a BSD tool. What needs one

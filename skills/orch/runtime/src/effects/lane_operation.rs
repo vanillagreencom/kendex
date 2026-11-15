@@ -604,8 +604,8 @@ impl<'a> LaneOperation<'a> {
         .map_err(|e| format!("{}: {e}", e.key())))
     }
 
-    /// The provider's close of a hosted lane's sandbox (`lane-host close
-    /// --item ITEM [--merged]`), signalled before it runs: what it answered,
+    /// The provider's close of a hosted lane's sandbox (its `close --item
+    /// ITEM [--merged]`), signalled before it runs: what it answered,
     /// or `Err` with the cause of a close that refused at the dispatcher or
     /// gave no answer.
     pub(super) fn host_close(

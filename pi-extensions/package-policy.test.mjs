@@ -278,7 +278,7 @@ test("a missing or diverged package-config.ts is reported", () => {
 
 // A Pi dev round runs as a pi-agents-tmux background child under the
 // `bgTaskTimeoutMs` deadline, and that child starts the full validation run
-// `dev-validate-run` bounds with DEV_VALIDATE_TIMEOUT_SECS. A default deadline
+// `orch-runtime validate entry` bounds with DEV_VALIDATE_TIMEOUT_SECS. A default deadline
 // at or under that bound kills the child while its own run goes on. The bound
 // is read through kendex-env.sh, the one reader of the settings contract, with
 // only PATH passed so neither a session export nor the private env file can

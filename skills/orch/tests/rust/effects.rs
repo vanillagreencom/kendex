@@ -6025,8 +6025,8 @@ fn a_launch_with_no_tmux_refuses_before_its_intent_persists() {
     assert_eq!(server.panes().len(), 1, "no window opened");
 }
 
-/// The hosted launch's world: the provider fixture as the project's
-/// `lane-host`, its answers planted by argv, the ssh client fixture and the
+/// The hosted launch's world: the provider fixture under the project's
+/// scripts directory, its answers planted by argv, the ssh client fixture and the
 /// stub harness on the runtime's path, and a "host" worktree on this disk.
 struct HostedLaunch {
     runner: Runner,
@@ -6296,7 +6296,7 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
     }
 }
 
-/// Through the real `lane-host`: a launch whose `op` ends inside the
+/// Through the runtime's provider call: a launch whose `op` ends inside the
 /// provider's create leaves the phase it recorded before it, and the
 /// reconcile holds the launch `host-create-unknown`, the lane `preparing`
 /// and its slot charged, since the provider may hold a sandbox for it; the
@@ -9344,8 +9344,8 @@ fn fleet_origin(checkouts: &[&Path]) {
 /// `watch/lanes.rs::start_brief` writes, pinned here so a change to that
 /// form is read against this row; the model recovery's continuation,
 /// in the form `effects/lane_model.rs::continuation` writes; a local relaunch
-/// that resumes its bound session; a hosted lane, through the real
-/// `lane-host` dispatcher and a fixture provider.
+/// that resumes its bound session; a hosted lane, through the runtime's
+/// provider call to a fixture provider.
 #[test]
 fn every_lane_brief_states_its_resolved_lane_output_once() {
     let text = |path: &str| {

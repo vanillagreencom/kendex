@@ -2150,8 +2150,8 @@ fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<St
 
 /// The host path of the state directory a hosted checkout's settings files
 /// and private env file name (`settings::state_dir_named`), relative to the
-/// clone its `.git` names, as the checkout's own `workflow-state` resolves
-/// it, with that clone. A `.git` the host cannot `cat` is a clone's own
+/// clone its `.git` names, as the checkout's own runtime resolves it, with
+/// that clone. A `.git` the host cannot `cat` is a clone's own
 /// directory, confirmed by its `HEAD`, and the clone is the root. `None` is
 /// a worktree the host no longer has, whose clone [`retained_clone`] keeps.
 pub(crate) fn configured_state_dir(

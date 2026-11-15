@@ -4992,7 +4992,10 @@ fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pend
             .stdout,
     )
     .unwrap();
-    let lstart = lstart.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lstart = format!(
+        "lstart:{}",
+        lstart.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
     plant_transfer(&runner, &server, predecessor.pid(), &lstart);
     let tools = dir.path().join("tools");
     std::fs::create_dir_all(&tools).unwrap();

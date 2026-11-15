@@ -4,10 +4,10 @@
 # hands its `statusLine` command on stdin, for every reader that wants a live
 # context figure or the stop cause of a Copilot session.
 #
-# Copilot keeps no live context count anywhere a reader can open: its
-# `events.jsonl` transcript carries usage only in the event a session writes as
-# it ends, and the pane footer is a display. Two commands receive a live count:
-# the orch copilot-lane-context extension, on Copilot's `session.usage_info`
+# Copilot's `events.jsonl` record holds a context count in each
+# `tool.execution_complete` row (Copilot CLI 1.0.112), and the pane footer is a
+# display. Two commands receive a live count: agent-runtime's
+# copilot-lane-context extension, on Copilot's `session.usage_info`
 # event, whose reading a turn end reads first, and the status line command,
 # the fallback where no extension reading of the session stands.
 # `copilot-statusline`, the script beside this library's directory, is that

@@ -2011,26 +2011,18 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 ops::artifact::DevReturn::Write(r) => Some(r.id.worktree.as_path()),
                 ops::artifact::DevReturn::Check(r) => r.worktree.as_deref(),
             };
-            let entry = match &op {
-                ops::artifact::DevReturn::Write(_) => "dev-return-write",
-                ops::artifact::DevReturn::Check(_) => "dev-artifact-check",
-            };
             let result = artifact_settings(&flags, worktree).and_then(|settings| match op {
                 ops::artifact::DevReturn::Write(r) => ops::artifact::write(&settings, &r),
                 ops::artifact::DevReturn::Check(r) => {
                     ops::artifact::check(&settings, &r, &SystemClock)
                 }
             });
-            artifact_reply(result, text, entry)
+            artifact_reply(result, text, ops::artifact::DEV_RETURN)
         }
         Verb::Round { op, text } => {
             let worktree = match &op {
                 ops::artifact::Round::Stamp(r) | ops::artifact::Round::Cut(r) => &r.id.worktree,
                 ops::artifact::Round::Recover(r) => &r.id.worktree,
-            };
-            let entry = match &op {
-                ops::artifact::Round::Recover(_) => "round-recover",
-                ops::artifact::Round::Stamp(_) | ops::artifact::Round::Cut(_) => "dev-round-write",
             };
             let result = artifact_settings(&flags, Some(worktree)).and_then(|settings| {
                 let env = Env::system()?;
@@ -2040,7 +2032,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     ops::artifact::Round::Recover(r) => ops::artifact::recover(&settings, &r, &env),
                 }
             });
-            artifact_reply(result, text, entry)
+            artifact_reply(result, text, ops::artifact::ROUND)
         }
         Verb::ReviewArtifact { op, text } => {
             use ops::review_artifact::{self as review, ReviewArtifact};
@@ -2065,7 +2057,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                         review::check_review(&r, state, &SystemClock)
                     }),
             };
-            artifact_reply(result, text, "review-artifact-check")
+            artifact_reply(result, text, review::REVIEW_ARTIFACT)
         }
         Verb::Lane { op } => lane_verb(op, &flags)?,
         Verb::ContainerClose { checkout, parent } => {

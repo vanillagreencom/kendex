@@ -530,8 +530,8 @@ pub fn records_locked<'a, R>(
 }
 
 /// `paths` without the lock file and the mutex directory of each of
-/// `records`: the lock pathname stays, since the shell store locks it with
-/// no check that the inode it holds is still the one the pathname names; a
+/// `records`: the lock pathname stays, since a writer locks it with no
+/// check that the inode it holds is still the one the pathname names; a
 /// waiter on an unlinked inode and a writer on a new one would both hold
 /// "the" lock once the key is created again.
 pub fn without_record_locks(paths: Vec<PathBuf>, records: &[PathBuf]) -> Vec<PathBuf> {

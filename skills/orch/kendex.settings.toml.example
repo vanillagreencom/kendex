@@ -59,7 +59,7 @@ WORKTREE_CLI = ""
 # Where lanes run. "local" runs them on this machine. "claude-cloud" runs
 # them in Claude Code's own cloud sessions. A path to a script runs them
 # wherever that script reaches. Each is a host kind (schemas/lane-host.md
-# § Host kinds); how lane-host resolves the value: schemas/lane-host.md.
+# § Host kinds); how the runtime resolves the value: schemas/lane-host.md.
 ORCH_LANE_HOST = "local"
 
 # The permission posture every launched lane and overseer runs under.
@@ -193,7 +193,7 @@ REVIEWER_SLOT_BUDGET = "0"
 # The project's validation declaration, the one source orch-runtime validate
 # start resolves a run's mode from. A blank command is no declaration. What
 # each mode runs, the bound and the reuse rules:
-# `.agents/skills/orch/scripts/dev-validate-run --help`.
+# `orch-runtime validate entry --help`.
 
 # The whole battery. A start with none refuses.
 # DEV_VALIDATE_CMD = "tools/check --full"
@@ -330,8 +330,8 @@ AGENT_RUNTIME_TMUX_VERIFY_SECS = "15"
 # reaches that session on your own tmux server.
 # AGENT_RUNTIME_TMUX_SESSION = "kendex"
 
-# Long provider processes lane-host runs at once, per home: every overseer and
-# checkout on the machine shares the count.
+# Long provider processes the runtime runs at once, per home: every overseer
+# and checkout on the machine shares the count.
 ORCH_LANE_HOST_MAX_CALLS = "4"
 
 # Short provider calls have their own per-home cap, so a held create cannot
@@ -339,11 +339,11 @@ ORCH_LANE_HOST_MAX_CALLS = "4"
 ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
 
 # Seconds a short provider call at the ORCH_LANE_HOST_SHORT_MAX_CALLS cap
-# waits for a slot before it refuses as lane-host-busy with exit 69.
+# waits for a slot before it refuses as host-busy.
 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
-# Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
-# slot before it refuses as lane-host-busy with exit 69.
+# Seconds a long provider call at the ORCH_LANE_HOST_MAX_CALLS cap waits for
+# a slot before it refuses as host-busy.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # Seconds a write into a window just opened reads it again until its shell is

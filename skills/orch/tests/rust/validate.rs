@@ -932,7 +932,14 @@ fn record_reads_the_last_valid_selection_candidate_and_refuses_unreadable_eviden
             "",
             "unreported",
         ),
-        ("validate:  lanes=one selection=all", "", "unreported"),
+        // A line of another form after the selection is no candidate: the
+        // entry's own refusal or notice opens `validate:` too.
+        ("validate:  lanes=one selection=all", "before", "all"),
+        (
+            "validate: over-bound expected-secs=21 bound=20",
+            "before",
+            "all",
+        ),
     ];
     for (line, lanes, selection) in rows {
         let w = World::new();
@@ -967,7 +974,7 @@ fn record_reads_the_last_valid_selection_candidate_and_refuses_unreadable_eviden
     let refused = w.entry(&["--record", "--run-dir", &dir], &[]);
     assert_eq!(refused.status.code(), Some(2));
     assert!(
-        stderr(&refused).starts_with("dev-validate-run: record-unreadable"),
+        stderr(&refused).starts_with("validate: record-unreadable"),
         "{}",
         stderr(&refused)
     );
@@ -1359,15 +1366,14 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
         let first = stderr(&out).lines().next().unwrap_or_default().to_owned();
         assert_eq!(out.status.code(), Some(2), "{args:?}: {first}");
         assert!(
-            first.starts_with(&format!("dev-validate-run: {want}")),
+            first.starts_with(&format!("validate: {want}")),
             "{args:?}: {first}"
         );
     }
     let empty_cmd = w.local(&["--fresh"], &[("DEV_VALIDATE_CMD", "")]);
     assert_eq!(empty_cmd.status.code(), Some(2));
     assert!(
-        stderr(&empty_cmd)
-            .starts_with("dev-validate-run: empty-validate-cmd setting=DEV_VALIDATE_CMD"),
+        stderr(&empty_cmd).starts_with("validate: empty-validate-cmd setting=DEV_VALIDATE_CMD"),
         "{}",
         stderr(&empty_cmd)
     );
@@ -1386,7 +1392,7 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
         assert_eq!(start.status.code(), Some(2), "{key}: {}", text(&start));
         assert!(
             stderr(&start).contains(&format!(
-                "dev-validate-run: setting-invalid key={key} value={value}"
+                "validate: setting-invalid key={key} value={value}"
             )),
             "{key}: {}",
             stderr(&start)
@@ -1952,7 +1958,7 @@ fn a_host_without_systemd_run_runs_the_job_under_setsid_beyond_its_starters_grou
     );
     assert_eq!(out.status.code(), Some(2), "{}", text(&out));
     assert!(
-        stderr(&out).contains("dev-validate-run: missing-command cause=commands=perl"),
+        stderr(&out).contains("validate: missing-command cause=commands=perl"),
         "{}",
         stderr(&out)
     );
@@ -1965,7 +1971,7 @@ fn a_host_without_systemd_run_runs_the_job_under_setsid_beyond_its_starters_grou
     assert_eq!(out.status.code(), Some(2), "{}", text(&out));
     // The cause is the launcher's own: setsid could not be run.
     assert!(
-        stderr(&out).starts_with("dev-validate-run: launch-failed cause=launch-failed cause="),
+        stderr(&out).starts_with("validate: launch-failed cause=launch-failed cause="),
         "{}",
         stderr(&out)
     );
@@ -2317,7 +2323,7 @@ fn a_declared_selection_over_the_bound_refuses_before_any_run_but_reuse_needs_no
         )],
     );
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("dev-validate-run: over-bound expected-secs=21 bound=20"));
+    assert!(stderr(&out).contains("validate: over-bound expected-secs=21 bound=20"));
     assert!(!w.worktree.join("tmp/validation-runs").exists());
     let first = w.local(&[], &[]);
     assert!(first.status.success());
@@ -2618,7 +2624,7 @@ fn a_base_a_restack_left_unreachable_and_pruned_is_refused_by_name_and_runs_noth
     );
     assert_eq!(
         stderr(&out).trim(),
-        format!("dev-validate-run: invalid-base base={base}")
+        format!("validate: invalid-base base={base}")
     );
     let runs = fs::read_dir(w.worktree.join("tmp"))
         .unwrap()

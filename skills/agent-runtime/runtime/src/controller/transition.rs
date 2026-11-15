@@ -1403,9 +1403,9 @@ mod tests {
             brief_file: None,
             session: None,
             watch: Some(vec![
-                "oversee-watch".to_owned(),
-                "--state".to_owned(),
-                "f".to_owned(),
+                "orch-runtime".to_owned(),
+                "watch".to_owned(),
+                "run".to_owned(),
             ]),
         }))
     }

@@ -1944,8 +1944,7 @@ unset REFRESH_SKILL
 
 # The shipped workflow preserves a trusted checkout before refresh replaces
 # catalog files. Real adoption must read new template bytes without executing
-# refreshed adoption code, including for a renamed writer. Only orch's read-only
-# parse runs from the refreshed tree, without the app credential.
+# refreshed adoption code, including for a renamed writer.
 sandbox
 repo="$DIR"
 git -C "$repo" branch -M main

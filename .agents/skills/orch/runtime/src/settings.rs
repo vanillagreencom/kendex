@@ -36,7 +36,7 @@ pub const LANE_CAP_KEY: &str = "ORCH_OVERSEER_LANES";
 /// declared `claude-cloud` kind owns this cap, whatever its host name.
 pub const CLOUD_LANE_CAP_KEY: &str = "ORCH_OVERSEER_CLOUD_LANES";
 /// The watch's state directory, which holds the claim store `<dir>/claims`
-/// (`lib/lane-claims.sh`, `lane_claims_dir`) and the relaunch markers; the
+/// and the relaunch markers; the
 /// main checkout's `tmp/oversee-watch` when unset.
 pub const CLAIM_STATE_DIR_KEY: &str = "OVERSEE_WATCH_STATE_DIR";
 /// The mailbox program a close asks for a lane's unanswered asks; empty
@@ -45,7 +45,7 @@ pub const LANE_MAIL_CLI_KEY: &str = "LANE_MAIL_CLI";
 /// The mailbox package's program under the project's install.
 pub const LANE_MAIL_CLI_DEFAULT: &str = ".agents/skills/mailbox/scripts/lane-mail";
 // The project's validation declaration, which `validate start`
-// resolves the mode from (`dev-validate-run --help`).
+// resolves the mode from (`orch-runtime validate entry --help`).
 /// The project's whole battery; empty is no declaration, which a start
 /// refuses.
 pub const DEV_VALIDATE_CMD_KEY: &str = "DEV_VALIDATE_CMD";

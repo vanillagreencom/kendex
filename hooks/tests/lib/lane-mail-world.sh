@@ -307,7 +307,7 @@ export TMUX_PANE_PID
 cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
 #!/bin/sh
 # `display-message -p -t <pane> '#{pid}'`, and `'#{pid} #{start_time}'` for
-# the server's start the orch lib/tmux-server.sh reads, and nothing else:
+# the server's start agent-runtime's tmux host reads, and nothing else:
 # TMUX_SERVER_ID is what this fixture's server answers and TMUX_SERVER_START
 # when it started, and no value at all is a pane tmux cannot resolve, which is
 # every session outside a live server.
@@ -399,7 +399,8 @@ wake_row_process_table() {
 }
 
 # The overseer's own native transcript: the claude file the payload's session
-# s1 owns under OVERSEER_HOME_DIR, the shape lib/adapters/claude.sh names, so
+# s1 owns under OVERSEER_HOME_DIR, the shape agent-runtime's session reader
+# names, so
 # the ownership gate reads it as this session's own, into TRANSCRIPT, which
 # the overseer rows write and read as the lane rows do their own flat one. It
 # holds OVERSEER_CONTEXT, the reading as the judge takes it.

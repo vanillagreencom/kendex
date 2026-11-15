@@ -493,7 +493,7 @@ later_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
 printf '# over bound\n' >> "$timing/$timing_tests/$timing_suite.sh"
 attempts_before="$(cat "$timing/tmp/attempts")"
 timing_run env DEV_VALIDATE_TIMEOUT_SECS=412 "${runner[@]}" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
-[ "$RC" -eq 2 ] && grep -Fxq 'dev-validate-run: over-bound expected-secs=413 bound=412' <<<"$OUT" \
+[ "$RC" -eq 2 ] && grep -Fxq 'validate: over-bound expected-secs=413 bound=412' <<<"$OUT" \
   && [ "$(cat "$timing/tmp/attempts")" = "$attempts_before" ] \
   && ok 'the native admission owner refuses a measured over-bound selection before execution' \
   || bad 'the native admission owner refuses a measured over-bound selection before execution' "$OUT"

@@ -163,7 +163,7 @@ class OwnerNote(MailWorld):
             ("server-gone", dict(live, server=self.gone_server, server_socket=str(self.root / "gone.sock")), {},
              "no-reader", "live=false"),
             ("server-unreachable", dict(live, server_socket=silent), {}, "reader-unjudged", "cause=server-unreachable"),
-            ("process-unreadable", dict(live, harness_pid=live["server"], harness_start="Thu Nov 13 10:00:00 2026"),
+            ("process-unreadable", dict(live, harness_pid=live["server"], harness_start="lstart:Thu Nov 13 10:00:00 2026"),
              {"PATH": str(self.failing_ps) + os.pathsep + self.env["PATH"]}, "reader-unjudged", "cause=ps-exit-2"),
             ("pending", dict(live, pending={"harness": "claude", "model": "opus"}), {}, None, None),
             ("successor", dict(live, generation=2), {}, None, None),

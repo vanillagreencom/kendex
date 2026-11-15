@@ -807,11 +807,11 @@ for row in \
   if [ "$expected" = warning ]; then
     want="::warning::run-all-budget run=202 attempt=2 os=macOS shard=orch-state suite=slow seconds=$seconds bound=$cap review=$review margin-percent=$percent"
   fi
-  assert_eq "$got" "$want" "$name annotation consumed by oversee-watch"
+  assert_eq "$got" "$want" "$name annotation the orch watch consumes"
 done
 
 # Restore the unchanged review rule, or drop the margin or annotation. Each
-# control drives the same budget oracle that oversee-watch consumes.
+# control drives the same budget oracle that the orch watch consumes.
 for row in 'review-only|301|900|300|125' 'margin|721|900|1000|125' 'annotation|721|900|300|125'; do
   IFS='|' read -r rule seconds cap review percent <<<"$row"
   cp "$B/run-all.sh" "$B/control"

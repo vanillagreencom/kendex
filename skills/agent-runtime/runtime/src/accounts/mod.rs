@@ -870,8 +870,7 @@ impl PickRequest {
     }
 }
 
-/// The window a lane is judged on, `lane-model.sh`'s `model_binding`: its
-/// bucket, its percentage used, its reset and, for a model-scoped window,
+/// The window a lane is judged on: its bucket, its percentage used, its reset and, for a model-scoped window,
 /// its label, the identity that tells two model windows at one reset
 /// apart.
 #[derive(Debug, Clone, PartialEq)]
@@ -1083,8 +1082,8 @@ pub struct Projection {
     pub room: f64,
 }
 
-/// Whether the window a lane is judged on is the one the reader rated
-/// (`lane-model.sh`'s `same_window`): the reader's binding bucket, at its
+/// Whether the window a lane is judged on is the one the reader rated: the
+/// reader's binding bucket, at its
 /// reset, under its label, compared in the normalized spelling; a window
 /// with no label matches only a window with none. Two model windows at
 /// one reset are two windows, and the reader's measured rate is the one
@@ -2086,7 +2085,7 @@ mod tests {
         assert!(!names("x", "/h/.y", "oldclaude"));
     }
 
-    /// `model_binding` on `lane-model.sh`'s own cases: the scoped window
+    /// `model_binding`'s cases: the scoped window
     /// whose label names the model, in either direction over the
     /// normalized spellings, a trailing `[1m]` dropped, an unlabeled
     /// window for every model, and the fullest shared window otherwise.

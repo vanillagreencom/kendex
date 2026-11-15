@@ -93,7 +93,7 @@
 #   ::warning::run-all-budget run=<id> attempt=<n> os=<name> shard=<name> suite=<name|job> seconds=<n> bound=<n> review=<n> margin-percent=<n>
 #
 # A warning means seconds times margin-percent exceed 100 times the bound.
-# The review field stays in the annotation consumed by oversee-watch; it
+# The review field stays in the annotation the orch watch consumes; it
 # does not trigger a warning. Job seconds count from the
 # caller's job-start epoch. Nonempty RUN_ALL_REVIEW_SECS enables warnings.
 # That input, RUN_ALL_MARGIN_PERCENT, RUN_ALL_JOB_SECS and

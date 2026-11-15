@@ -8,8 +8,9 @@
 #                  "command": "<path>/.agents/skills/orch/scripts/copilot-statusline",
 #                  "refreshInterval": 30}
 #
-# Copilot keeps no live context figure a reader can open: the transcript holds
-# no live count and the footer is a display. This command is the fallback
+# Copilot's `events.jsonl` record holds a context count in each
+# `tool.execution_complete` row (Copilot CLI 1.0.112), and the footer is a
+# display. This command is the fallback
 # live producer, behind the copilot-lane-context extension agent-runtime
 # installs, whose reading
 # of the session the lane's turn-end hook reads first. The record it writes

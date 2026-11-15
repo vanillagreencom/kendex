@@ -24,7 +24,8 @@
 # the offending lines a rule collected follow that line rather than precede
 # it.
 # The final validate: line reports the repository scans to
-# dev-validate-run --record; it comes after any nested guard's report.
+# orch-runtime validate entry --record; it comes after any nested guard's
+# report.
 set -uo pipefail
 # Resolved before the cd below: the sibling tools this script runs live
 # beside it, not necessarily in the repository it judges.
@@ -452,8 +453,8 @@ note_covers() { # ITEM PATH
   return 1
 }
 
-# The lanes --full runs. dev-validate-run hands over what the classifier and
-# its docs reader answer over one range: DEV_VALIDATE_CLASS,
+# The lanes --full runs. orch-runtime validate entry hands over what the
+# classifier and its docs reader answer over one range: DEV_VALIDATE_CLASS,
 # DEV_VALIDATE_DOCS_ONLY and the changed paths in the file DEV_VALIDATE_PATHS
 # names, the three inputs CI's changes job gives tools/ci-job-set. An unset
 # class is a run outside that runner, and runs every lane. So does a class
@@ -1736,7 +1737,7 @@ PY
       case "$hit" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
       while IFS= read -r line; do
         # Remove comments before cutting at their separators. Candidate lines
-        # avoid whole-file quote recovery hiding claude-model-classes calls.
+        # avoid whole-file quote recovery hiding a call behind a misread quote.
         uncommented "$line"
         command_segments "$BARE"
         # Masked whitespace is quoted data, not a command-word boundary.
@@ -1764,8 +1765,8 @@ PY
 # empty for every other query. One batch extracts file metadata and compares
 # the document-read lines, retaining source text inside that process.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
-# less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
-# `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
+# less any trailing dots, so `/kendex-env` is no name in `/kendex-env.sh` and
+# `/orch` none in `/orch-runtime`. Status 2 is a file it could not read.
 scan_load() { # DIR
   local role f files tree rel path i q kind value record cache key key_tree
   local scan_input="" reader_patterns=() query_keys=() nl=$'\n'

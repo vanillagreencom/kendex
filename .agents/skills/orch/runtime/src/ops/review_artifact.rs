@@ -24,6 +24,10 @@ use crate::settings;
 use crate::state;
 use agent_runtime::clock::Clock;
 
+/// The word every rejection's detail and every refusal under `--text`
+/// opens with.
+pub const REVIEW_ARTIFACT: &str = "review-artifact";
+
 #[derive(Debug, Subcommand)]
 pub enum ReviewArtifact {
     /// Create `tmp/` and print the artifact path an agent writes to.
@@ -133,8 +137,7 @@ pub fn path(r: &MintPath, clock: &dyn Clock) -> Result<Answer> {
     })
 }
 
-/// The item records' directory by its one key, as `workflow-state` resolves
-/// it: the `--state-dir` flag, else the caller's `ORCH_STATE_DIR`, else the
+/// The item records' directory by its one key: the `--state-dir` flag, else the caller's `ORCH_STATE_DIR`, else the
 /// checkout's settings files and private env file, else `tmp`; a relative
 /// directory joins the common root. No other setting is read, so no other
 /// key can refuse the check; a directory that cannot be resolved refuses as
@@ -273,7 +276,7 @@ fn read(path: &Path, meta: &fs::Metadata, boundary: Option<u64>, worktree: &Path
             return Ok(Read::Stale(finding(
                 "stale",
                 format!(
-                    "review-artifact-check: stale mtime={mtime} delegated_at={boundary}\nThe artifact belongs to an earlier round."
+                    "{REVIEW_ARTIFACT}: stale mtime={mtime} delegated_at={boundary}\nThe artifact belongs to an earlier round."
                 ),
             )));
         }
@@ -282,7 +285,7 @@ fn read(path: &Path, meta: &fs::Metadata, boundary: Option<u64>, worktree: &Path
         Read::Unread(finding(
             "invalid",
             format!(
-                "review-artifact-check: unparsable path={}\n{cause}",
+                "{REVIEW_ARTIFACT}: unparsable path={}\n{cause}",
                 path.display()
             ),
         ))
@@ -305,7 +308,7 @@ fn read(path: &Path, meta: &fs::Metadata, boundary: Option<u64>, worktree: &Path
             return Ok(Read::Rejected(finding(
                 "invalid",
                 format!(
-                    "review-artifact-check: value_count count={count}\nAn artifact must hold exactly one JSON object."
+                    "{REVIEW_ARTIFACT}: value_count count={count}\nAn artifact must hold exactly one JSON object."
                 ),
             )));
         }
@@ -316,7 +319,9 @@ fn read(path: &Path, meta: &fs::Metadata, boundary: Option<u64>, worktree: &Path
     ) {
         return Ok(Read::Unread(finding(
             "invalid",
-            "review-artifact-check: verdict field=verdict state=missing_or_null\nEvery review artifact must carry verdict: pass or action_required.",
+            format!(
+                "{REVIEW_ARTIFACT}: verdict field=verdict state=missing_or_null\nEvery review artifact must carry verdict: pass or action_required."
+            ),
         )));
     }
     Ok(gates(artifact, worktree))
@@ -363,7 +368,7 @@ fn gates(artifact: Value, worktree: &Path) -> Read {
             return Read::Rejected(finding(
                 "invalid",
                 format!(
-                    "review-artifact-check: head_read worktree={}",
+                    "{REVIEW_ARTIFACT}: head_read worktree={}",
                     worktree.display()
                 ),
             ));
@@ -409,7 +414,7 @@ fn moving_tree(artifact: &Value, head: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "review-artifact-check: moving_tree head={} expected={head} dirty_paths={}\nRepeat the review after development finishes.",
+        "{REVIEW_ARTIFACT}: moving_tree head={} expected={head} dirty_paths={}\nRepeat the review after development finishes.",
         json_word(reviewed),
         json_word(dirty)
     ))
@@ -436,14 +441,16 @@ fn admits_no_review(text: &str) -> bool {
 fn no_review(artifact: &Value) -> Option<String> {
     let qa = qa(artifact)?.as_object()?;
     if qa.get("review_performed") == Some(&Value::Bool(false)) {
-        return Some("review-artifact-check: no_review review_performed=false\nThe artifact states that no review happened.".to_owned());
+        return Some(format!(
+            "{REVIEW_ARTIFACT}: no_review review_performed=false\nThe artifact states that no review happened."
+        ));
     }
     let reason = qa
         .get("reason")
         .filter(|v| !matches!(v, Value::Null | Value::Bool(false)));
     if admits_no_review(&reason.map(to_text).unwrap_or_default()) {
         return Some(format!(
-            "review-artifact-check: no_review review_reason={}\nThe reason states that no review happened.",
+            "{REVIEW_ARTIFACT}: no_review review_reason={}\nThe reason states that no review happened.",
             json_word(reason)
         ));
     }
@@ -466,7 +473,7 @@ fn finding_arrays(artifact: &Value) -> Option<String> {
         return None;
     }
     Some(format!(
-        "review-artifact-check: finding_arrays {}\nDeclaring qa_metadata commits the artifact to both finding arrays, empty ones included: a review with nothing to say writes []. An artifact with no qa_metadata does not have to carry them.",
+        "{REVIEW_ARTIFACT}: finding_arrays {}\nDeclaring qa_metadata commits the artifact to both finding arrays, empty ones included: a review with nothing to say writes []. An artifact with no qa_metadata does not have to carry them.",
         bad.join(" ")
     ))
 }
@@ -538,7 +545,7 @@ fn finding_item(artifact: &Value) -> Option<String> {
                 return None;
             }
             Some(format!(
-                "review-artifact-check: finding_item path={array}[{i}] missing={} invalid={}\nEvery blockers[]/suggestions[] item requires: id, title, location (path plus symbol, no line numbers), description, recommendation, priority (integer 1-4), estimate (1-5); suggestions also category (fix|issue), and category:issue also impact (who hits this, on what real path)",
+                "{REVIEW_ARTIFACT}: finding_item path={array}[{i}] missing={} invalid={}\nEvery blockers[]/suggestions[] item requires: id, title, location (path plus symbol, no line numbers), description, recommendation, priority (integer 1-4), estimate (1-5); suggestions also category (fix|issue), and category:issue also impact (who hits this, on what real path)",
                 missing.join(","),
                 invalid.join(",")
             ))
@@ -558,7 +565,7 @@ fn test_cost(artifact: &Value) -> Option<String> {
         Some(Value::Array(entries)) => entries,
         Some(other) => {
             return Some(format!(
-                "review-artifact-check: test_cost field=tests type={}\n{TEST_FORM}",
+                "{REVIEW_ARTIFACT}: test_cost field=tests type={}\n{TEST_FORM}",
                 type_word(other)
             ));
         }
@@ -575,7 +582,7 @@ fn test_cost(artifact: &Value) -> Option<String> {
             _ => Some("invalid=verdict"),
         }?;
         Some(format!(
-            "review-artifact-check: test_cost path=tests[{i}] test={} {problem}\n{TEST_FORM}",
+            "{REVIEW_ARTIFACT}: test_cost path=tests[{i}] test={} {problem}\n{TEST_FORM}",
             json_word(entry.get("test"))
         ))
     })
@@ -605,9 +612,7 @@ const NULL_TOKENS: [&str; 13] = [
 
 fn declaration(artifact: &Value) -> Declaration {
     let invalid = |what: String| {
-        Declaration::Invalid(format!(
-            "review-artifact-check: measurement_declaration {what}"
-        ))
+        Declaration::Invalid(format!("{REVIEW_ARTIFACT}: measurement_declaration {what}"))
     };
     let text = match artifact.get("measurement_failed") {
         None | Some(Value::Null) => return Declaration::Absent,
@@ -759,7 +764,7 @@ fn evidence_zero(field: &str, name: &str, v: Option<&Value>) -> Option<String> {
             _ => false,
         }
     }
-    let at = format!("review-artifact-check: perf_evidence field=qa_metadata.perf_qa.{field}");
+    let at = format!("{REVIEW_ARTIFACT}: perf_evidence field=qa_metadata.perf_qa.{field}");
     match v {
         None | Some(Value::Null) => Some(format!(
             "{at} state=missing\nThe benchmark payload requires {name}."
@@ -789,7 +794,7 @@ fn evidence_zero(field: &str, name: &str, v: Option<&Value>) -> Option<String> {
 }
 
 fn measure_zero(pq: &serde_json::Map<String, Value>) -> Option<String> {
-    let at = "review-artifact-check: perf_evidence field=qa_metadata.perf_qa";
+    let at = format!("{REVIEW_ARTIFACT}: perf_evidence field=qa_metadata.perf_qa");
     let named = ["name", "unit"].into_iter().find_map(|f| {
         let v = pq.get(f);
         let ok = v
@@ -829,7 +834,7 @@ fn perf(artifact: &Value) -> Option<String> {
     };
     let Value::Object(pq) = pq else {
         return Some(format!(
-            "review-artifact-check: perf_evidence field=qa_metadata.perf_qa type={}\nThe benchmark payload must be an object.",
+            "{REVIEW_ARTIFACT}: perf_evidence field=qa_metadata.perf_qa type={}\nThe benchmark payload must be an object.",
             type_word(pq)
         ));
     };
@@ -849,12 +854,12 @@ fn perf(artifact: &Value) -> Option<String> {
             }
             "measure" => measure_zero(pq),
             _ => Some(format!(
-                "review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind value={}\n{kinds}",
+                "{REVIEW_ARTIFACT}: perf_evidence field=qa_metadata.perf_qa.metric_kind value={}\n{kinds}",
                 json_word(Some(&json!(kind)))
             )),
         },
         other => Some(format!(
-            "review-artifact-check: perf_evidence field=qa_metadata.perf_qa.metric_kind type={}\n{kinds}",
+            "{REVIEW_ARTIFACT}: perf_evidence field=qa_metadata.perf_qa.metric_kind type={}\n{kinds}",
             type_word(other)
         )),
     }
@@ -870,14 +875,14 @@ fn zero_sample(artifact: &Value) -> Option<String> {
         .find(|c| c.zero_samples)
         .map(|c| {
             format!(
-                "review-artifact-check: zero_sample measurement={} samples=0\nThe citation \"{}\" reports no samples.",
+                "{REVIEW_ARTIFACT}: zero_sample measurement={} samples=0\nThe citation \"{}\" reports no samples.",
                 c.kind, c.label
             )
         })
         .or_else(|| {
             cites.iter().find(|c| c.zero_threads).map(|c| {
                 format!(
-                    "review-artifact-check: zero_sample measurement=stability threads=0\nThe citation \"{}\" reports no threads.",
+                    "{REVIEW_ARTIFACT}: zero_sample measurement=stability threads=0\nThe citation \"{}\" reports no threads.",
                     c.label
                 )
             })
@@ -966,7 +971,7 @@ fn file_once(file: &Path, r: &CheckArtifact) -> Result<Outcome> {
                 path: None,
                 read: None,
                 missing: Some(format!(
-                    "review-artifact-check: missing path={}\nNo artifact exists at this path.",
+                    "{REVIEW_ARTIFACT}: missing path={}\nNo artifact exists at this path.",
                     file.display()
                 )),
             });
@@ -1031,7 +1036,7 @@ fn glob_once(agent: &str, delegated_at: u64, worktree: &Path) -> Result<Outcome>
         path: None,
         read: None,
         missing: Some(format!(
-            "review-artifact-check: missing_glob pattern={}/review-{agent}-*.json\nNo artifact matches this pattern.",
+            "{REVIEW_ARTIFACT}: missing_glob pattern={}/review-{agent}-*.json\nNo artifact matches this pattern.",
             tmp.display()
         )),
     }))

@@ -5,7 +5,7 @@
 //! through the one request, the stray sweep, the reset the banner names, the
 //! account and lane wall records, the wall relaunch through the route,
 //! `lane-long`'s counters, the mark line's payload, and the hosted readings
-//! over the `lane-host`, runtime-entry and `gh` fixtures linked into a row's
+//! over the provider, runtime-entry and `gh` fixtures linked into a row's
 //! world. The rows drive the duties directly with the readers the
 //! production duty injects, applying each pass's changes to the baseline as
 //! the runner's commit would.
@@ -588,8 +588,8 @@ fn a_usage_limit_screen_is_reported_once_and_an_older_screen_is_not_a_wall() {
     }
 }
 
-/// The account wall record `lanes` reads for the rows' spent account
-/// (`lib/account-wall.sh`, `account_wall_record`): `walls/<cksum>.json`
+/// The account wall record the account walk reads for the rows' spent
+/// account: `walls/<cksum>.json`
 /// beside the claim store, or none.
 fn wall_record(settings: &Settings) -> Option<AccountWall> {
     let path = account_wall::account_wall_path(
@@ -5414,7 +5414,7 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
 
 /// A walled hosted lane's harness must not run on beside the successor the
 /// relaunch opens: a walled lane whose kind declares a local pane has its
-/// harness stopped through `lane-host stop --item --harness` under the
+/// harness stopped through the provider's `stop --item --harness` under the
 /// record's host before the relaunch starts; a stop the provider refuses,
 /// or answers with exit 0 and a line that is not `stopped item=ITEM
 /// processes=N`, leaves the wall to the overseer with
@@ -5524,7 +5524,7 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
 
 /// A lane on a provider that owns its harness's session (`pane=verb`),
 /// walled by its Pi session rows read through the provider, has its harness
-/// stopped through `lane-host stop --item --harness` before the relaunch
+/// stopped through the provider's `stop --item --harness` before the relaunch
 /// starts, as a `pane=local` lane's is: a relaunch beside the running
 /// harness would run two sessions for one item. A stop the provider refuses
 /// leaves the wall to the overseer with `reason=stop-failed` and nothing
@@ -6576,7 +6576,7 @@ fn on_disk(disk: &Path, path: &str, text: &str) {
     std::fs::write(file, text).unwrap();
 }
 
-/// Through the real `lane-host` to a provider serving the host's disk: the
+/// Through the runtime's provider call to a provider serving the host's disk: the
 /// host's last row, a turn ended on the account's limit, is `usage-limit`;
 /// a file at the same path on this disk is never read. The fleet record is
 /// a hosted record planted as `main` wrote it (`host` the provider, `kind`
@@ -6642,7 +6642,7 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
     );
 }
 
-/// Through the real `lane-host` to a provider serving the host's disk, the
+/// Through the runtime's provider call to a provider serving the host's disk, the
 /// record is read in both places the local read names: the clone its `.git`
 /// names under the state directory its settings name (none: `tmp`), and the
 /// lane root's `tmp`, where a lane whose launch forbids writing the main

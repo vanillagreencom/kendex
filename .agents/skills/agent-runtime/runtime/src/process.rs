@@ -6,8 +6,8 @@
 //! On Linux the start is the `starttime` field of `/proc/<pid>/stat`, in
 //! clock ticks since boot, read as a file; elsewhere it is the `lstart`
 //! column of `ps`, which is the one portable spelling. A recorded start is
-//! read back in its own form, so the shell writers' bare `lstart` text and
-//! this crate's `ticks:` form each match the process they name.
+//! read back in its own form, `ticks:` or `lstart:`, so each matches the
+//! process it names; a start in neither form is unreadable, `start-form`.
 //!
 //! Every read here answers with a [`Reading`]: the process
 //! live under its identity, gone (no live process holds the pid, an exited
@@ -362,41 +362,37 @@ fn start_lstart(pid: u32) -> Reading<String> {
 }
 
 /// The form a recorded start is written in, so a reader matches a live pid's
-/// start in the same form. The runtime writes the host form; a shell writer
-/// records the bare `ps -o lstart` text; the non-Linux reader records
-/// `lstart:`. All three are admitted.
+/// start in the same form: the host form on Linux, `lstart:` where the
+/// reader has no `/proc`.
 enum StartForm {
     Ticks,
     Lstart,
 }
 
-fn start_form(recorded: &str) -> StartForm {
-    if recorded.starts_with("ticks:") {
-        StartForm::Ticks
-    } else {
-        StartForm::Lstart
-    }
-}
-
-/// The comparable body of a recorded start: the digits after `ticks:`, or
-/// the `lstart` text with any `lstart:` prefix dropped and its blanks
-/// squeezed, as `ps -o lstart` and the shell's `lane_process_start` squeeze
-/// it. Two spellings of one process's start compare equal here.
-fn normalize_start(recorded: &str) -> String {
+/// The form of a recorded start and its comparable body: the digits after
+/// `ticks:`, or the text after `lstart:` with its blanks squeezed, as
+/// `ps -o lstart` pads it. `None` for a start in neither form.
+fn recorded_start(recorded: &str) -> Option<(StartForm, String)> {
     if let Some(ticks) = recorded.strip_prefix("ticks:") {
-        return ticks.trim().to_owned();
+        return Some((StartForm::Ticks, ticks.trim().to_owned()));
     }
-    let body = recorded.strip_prefix("lstart:").unwrap_or(recorded);
-    body.split_whitespace().collect::<Vec<_>>().join(" ")
+    let text = recorded.strip_prefix("lstart:")?;
+    Some((
+        StartForm::Lstart,
+        text.split_whitespace().collect::<Vec<_>>().join(" "),
+    ))
 }
 
-/// A live pid's start read in `form` and normalized.
+/// A live pid's start read in `form`, its comparable body.
 fn start_in_form(pid: u32, form: StartForm) -> Reading<String> {
     let read = match form {
         StartForm::Ticks => start_ticks(pid),
         StartForm::Lstart => start_lstart(pid),
     };
-    read.map(|start| normalize_start(&start))
+    read.map(|start| match recorded_start(&start) {
+        Some((_, body)) => body,
+        None => start,
+    })
 }
 
 /// The process group holding the terminal of `pane_pid`'s process: the
@@ -427,16 +423,21 @@ pub fn foreground_group(pane_pid: u32) -> Reading<Option<u32>> {
 /// holds the pid, and also when the pid now carries another start: the
 /// recorded process ended either way, and [`identity`] tells the two apart
 /// for a caller that needs to. The recorded start is read in its own form,
-/// so a `ticks:`, an `lstart:` and a bare `lstart` start each match the
-/// live pid they name.
+/// so a `ticks:` and an `lstart:` start each match the live pid they name;
+/// a start in neither form is `Unreadable` with `start-form`.
 pub fn still_runs(id: &Identity) -> Reading<Identity> {
     match identity(id.pid) {
         Reading::Live(_) => {}
         Reading::Gone => return Reading::Gone,
         Reading::Unreadable { cause } => return Reading::Unreadable { cause },
     }
-    match start_in_form(id.pid, start_form(&id.start)) {
-        Reading::Live(start) if start == normalize_start(&id.start) => Reading::Live(id.clone()),
+    let Some((form, recorded)) = recorded_start(&id.start) else {
+        return Reading::Unreadable {
+            cause: "start-form",
+        };
+    };
+    match start_in_form(id.pid, form) {
+        Reading::Live(start) if start == recorded => Reading::Live(id.clone()),
         Reading::Live(_) | Reading::Gone => Reading::Gone,
         Reading::Unreadable { cause } => Reading::Unreadable { cause },
     }
@@ -916,11 +917,12 @@ mod tests {
     /// here carried: a mismatch that is read and refused, never an
     /// unsupported form.
     fn mismatched_start(live: &str) -> String {
-        let mismatch = match start_form(live) {
-            StartForm::Ticks => "ticks:0".to_owned(),
-            StartForm::Lstart => "lstart:Thu Jan  1 00:00:00 1970".to_owned(),
+        let mismatch = match recorded_start(live) {
+            Some((StartForm::Ticks, _)) => "ticks:0".to_owned(),
+            _ => "lstart:Thu Jan  1 00:00:00 1970".to_owned(),
         };
-        assert_ne!(normalize_start(live), normalize_start(&mismatch));
+        let body = |start: &str| recorded_start(start).map(|(_, body)| body);
+        assert_ne!(body(live), body(&mismatch));
         mismatch
     }
 
@@ -1226,32 +1228,41 @@ mod tests {
         );
     }
 
-    /// One reader admits every start form a shipped writer
-    /// produced. A `ticks:`, an `lstart:` and a bare `ps -o lstart` start
-    /// each match the live process they name, and any other value is `Gone`.
+    /// One reader admits every start form the runtime writes. A `ticks:`
+    /// and an `lstart:` start each match the live process they name, a
+    /// mismatch in either form is `Gone`, and the bare `ps -o lstart` text,
+    /// in no form, is unreadable `start-form`.
     #[test]
-    fn still_runs_matches_every_shipped_start_form_and_rejects_a_mismatch() {
+    fn still_runs_matches_every_written_start_form_and_refuses_a_bare_one() {
         let me = std::process::id();
-        // The lstart text a shell writer records bare, and the
-        // non-Linux reader records with an `lstart:` prefix.
+        // The lstart text the non-Linux reader records with its prefix.
         let Reading::Live(prefixed) = start_lstart(me) else {
             panic!("own lstart");
         };
-        let bare = prefixed
-            .strip_prefix("lstart:")
-            .expect("lstart prefix")
-            .to_owned();
         // The host form the runtime itself records (ticks on Linux).
         let Reading::Live(native) = identity(me) else {
             panic!("own identity");
         };
-        for form in [native.start.clone(), prefixed.clone(), bare.clone()] {
+        for form in [native.start.clone(), prefixed.clone()] {
             let id = Identity {
                 pid: me,
                 start: form.clone(),
             };
             assert_eq!(still_runs(&id), Reading::Live(id.clone()), "form {form:?}");
         }
+        let bare = Identity {
+            pid: me,
+            start: prefixed
+                .strip_prefix("lstart:")
+                .expect("lstart prefix")
+                .to_owned(),
+        };
+        assert_eq!(
+            still_runs(&bare),
+            Reading::Unreadable {
+                cause: "start-form"
+            }
+        );
         // A start in the host's own form that this process never carried.
         let mismatch = Identity {
             pid: me,

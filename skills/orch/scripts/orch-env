@@ -27,7 +27,7 @@
 # Retired settings: ORCH_CONSUMER_REPOS is refused when set, even empty,
 # on every settings read. Consumers refresh through their own Actions workflow.
 #
-# Not for a round cap. Those resolve through `workflow-state cap`, which
+# Not for a round cap. Those resolve through `orch-runtime state cap`, which
 # holds the one table of their defaults; pairing orch-env with a default
 # here would be the second copy that table exists to prevent.
 set -euo pipefail

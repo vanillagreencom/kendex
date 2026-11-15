@@ -169,7 +169,8 @@ ready_rows
 PR_SELECTOR='pullRequest(number'
 
 # merge-attempt writes this section after each attempt. The parsed field is
-# consumed by oversee-cycle, so unrelated route text supplies no decision.
+# consumed by orch's cycle recorder, so unrelated route text supplies no
+# decision.
 merge_decision_rows() {
   local name body want
   while IFS='|' read -r name body want; do
@@ -405,7 +406,7 @@ a later run that failed leaves CI never green@$(extra_run "$HEAD_PATH" 9999 pull
 ROWS
 
 echo "=== every check run on the head is a span, a superseded run's included ==="
-# oversee-cycle splits the gap before CI green by these spans, so a span
+# orch's cycle recorder splits the gap before CI green by these spans, so a span
 # from a run the current one superseded is still time a check ran.
 span_rows() {
   local label edit want

@@ -90,8 +90,8 @@ ORCH_POST_MERGE_CMD = "if git diff --quiet $ORCH_POST_MERGE_BEFORE $ORCH_POST_ME
 # the bound.
 AGENT_RUNTIME_TMUX_VERIFY_SECS = "15"
 
-# Long provider processes lane-host runs at once, per home: every overseer and
-# checkout on the machine shares the count.
+# Long provider processes the runtime runs at once, per home: every overseer
+# and checkout on the machine shares the count.
 ORCH_LANE_HOST_MAX_CALLS = "4"
 
 # Short provider calls have their own per-home cap, so a held create cannot
@@ -99,7 +99,7 @@ ORCH_LANE_HOST_MAX_CALLS = "4"
 ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
 
 # Seconds a short provider call at the ORCH_LANE_HOST_SHORT_MAX_CALLS cap
-# waits for a slot before it refuses as lane-host-busy with exit 69.
+# waits for a slot before it refuses as host-busy.
 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
 # The kendex owner program spends a live Claude API grant first, as a Pi lane on anthropic/; a grant past its end reads walled, so the walk then takes Claude cloud, with Codex on its own accounts as fallback.
@@ -112,8 +112,8 @@ ORCH_LANE_PREFERENCE = "pi:anthropic/claude-opus-5-5:high,claude@claude-cloud:cl
 # kendex on PATH.
 ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/kendex,4claude=vanillagreencom/kendex,10claude=vanillagreencom/kendex,1claude=vanillagreencom/kendex,7claude=vanillagreencom/kendex,claude=vanillagreencom/kendex"
 
-# Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
-# slot before it refuses as lane-host-busy with exit 69.
+# Seconds a long provider call at the ORCH_LANE_HOST_MAX_CALLS cap waits for
+# a slot before it refuses as host-busy.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # Maximum Kendex lanes held by this overseer.
@@ -269,7 +269,7 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
 # Preview the same suite selection before launching validation; how a run
-# uses it: `.agents/skills/orch/scripts/dev-validate-run --help`. CI holds the
+# uses it: `orch-runtime validate entry --help`. CI holds the
 # full record.
 DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; then branch=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$branch) || exit; fi; tools/guard --selection --range $base"
 
@@ -291,7 +291,7 @@ QUEUE_WAIT_REACH_CMD = "tools/ci-reach"
 DEV_VALIDATE_FINDING_PREFIX = "guard: "
 
 # The bound on either run, in whole seconds; what happens past it, and the
-# wait derived from it: `.agents/skills/orch/scripts/dev-validate-run --help`.
+# wait derived from it: `orch-runtime validate entry --help`.
 DEV_VALIDATE_TIMEOUT_SECS = "3600"
 
 # Whether `tools/guard --full` runs the macOS and Windows cross-target checks

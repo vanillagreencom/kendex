@@ -1,7 +1,7 @@
 //! The wall records the observation duty keeps: the account wall record
 //! under `walls/` beside the claim store,
-//! which `lanes` reads an account walled by until the reset its banner
-//! named (`lib/account-wall.sh`), and the lane record's own wall,
+//! which the account walk reads an account walled by until the reset its
+//! banner named, and the lane record's own wall,
 //! `lanes[].walled` opened on the first sighting and closed into `pauses`
 //! when the wall ends.
 //!

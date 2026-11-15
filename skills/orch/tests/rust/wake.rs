@@ -1508,8 +1508,8 @@ fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
     assert_eq!(sent(&fleet).len(), 1, "{:?}", calls(&log));
 }
 
-/// The bare `ps -o lstart` start of `pid`, its blanks squeezed, in the C
-/// locale and UTC: the form a shell writer records a lane's `wake` in.
+/// The `lstart:` start of `pid`, its `ps -o lstart` text with its blanks
+/// squeezed, in the C locale and UTC: the form every host reads.
 fn lstart_of(pid: u32) -> String {
     let out = Command::new("ps")
         .args(["-o", "lstart=", "-p", &pid.to_string()])
@@ -1518,14 +1518,15 @@ fn lstart_of(pid: u32) -> String {
         .output()
         .expect("ps");
     assert!(out.status.success(), "ps: {}", stderr(&out));
-    String::from_utf8_lossy(&out.stdout)
+    let text = String::from_utf8_lossy(&out.stdout)
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    format!("lstart:{text}")
 }
 
 /// A lane record naming a detached print-mode turn, `wake {pid, start}` in
-/// the bare `lstart` form a shell writer records, holds the lane while that
+/// the `lstart:` form, holds the lane while that
 /// process runs: the pane reads idle beside such a turn, and a paste then
 /// would start a second turn on the session. Nothing is typed or marked
 /// while it runs; once it has ended the next pass delivers once; a writer
@@ -1553,7 +1554,7 @@ fn a_print_mode_turn_the_record_names_holds_the_lane_until_it_ends_and_moves_no_
         vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
     );
     assert_eq!(fleet.turns("lead-1").len(), 1);
-    lane["wake"] = json!({"pid": 4242, "start": "Thu Jan 1 00:00:00 1970"});
+    lane["wake"] = json!({"pid": 4242, "start": "lstart:Thu Jan 1 00:00:00 1970"});
     fleet.set_lanes(vec![lane]);
     let again = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");

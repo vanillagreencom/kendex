@@ -221,19 +221,19 @@ fn path_mints_the_canonical_name_under_tmp_and_refuses_an_unsafe_agent_or_a_miss
             "a path-unsafe agent name",
             wt.clone(),
             "evil/../name",
-            "review-artifact-check: agent value=evil/../name".into(),
+            "review-artifact: agent value=evil/../name".into(),
         ),
         (
             "an empty agent name",
             wt.clone(),
             "",
-            "review-artifact-check: agent value=".into(),
+            "review-artifact: agent value=".into(),
         ),
         (
             "a missing worktree",
             format!("{wt}/nope"),
             "reviewer-test",
-            format!("review-artifact-check: worktree path={wt}/nope"),
+            format!("review-artifact: worktree path={wt}/nope"),
         ),
     ];
     for (label, worktree, agent, refusal) in rows {
@@ -269,8 +269,8 @@ fn file_mode_checks_existence_then_freshness_then_one_json_value_with_a_verdict(
     let pass = w.stamped(PASS);
     let two = format!("{pass}\n{pass}");
     let no_verdict = w.stamped(r#"{"items":[]}"#);
-    let stale = format!("review-artifact-check: stale mtime={BEFORE} delegated_at={DELEG}");
-    let verdict = "review-artifact-check: verdict field=verdict state=missing_or_null";
+    let stale = format!("review-artifact: stale mtime={BEFORE} delegated_at={DELEG}");
+    let verdict = "review-artifact: verdict field=verdict state=missing_or_null";
     for (label, text, mtime, boundary, code, reason, first) in [
         ("a valid file", pass.as_str(), None, false, 0, "valid", "-"),
         (
@@ -280,7 +280,7 @@ fn file_mode_checks_existence_then_freshness_then_one_json_value_with_a_verdict(
             false,
             1,
             "invalid",
-            "review-artifact-check: value_count count=2",
+            "review-artifact: value_count count=2",
         ),
         (
             "an old mtime without a boundary",
@@ -385,7 +385,7 @@ fn file_mode_checks_existence_then_freshness_then_one_json_value_with_a_verdict(
             (
                 Some(1),
                 "invalid".to_owned(),
-                format!("review-artifact-check: unparsable path={}", path.display())
+                format!("review-artifact: unparsable path={}", path.display())
             ),
             "{label}"
         );
@@ -420,7 +420,7 @@ fn file_mode_checks_existence_then_freshness_then_one_json_value_with_a_verdict(
                 Some(1),
                 Value::Null,
                 "missing".to_owned(),
-                format!("review-artifact-check: missing path={missing}")
+                format!("review-artifact: missing path={missing}")
             ),
             "{label}"
         );
@@ -594,14 +594,14 @@ fn glob_mode_answers_the_newest_fresh_artifact_and_falls_back_only_past_stale_or
     assert_eq!(
         missing.first(),
         format!(
-            "review-artifact-check: missing_glob pattern={}/tmp/review-ghost-agent-*.json",
+            "review-artifact: missing_glob pattern={}/tmp/review-ghost-agent-*.json",
             w.wt.display()
         )
     );
     w.put("review-staleonly-1.json", &pass(&w), Some(BEFORE));
     assert_eq!(
         w.glob("staleonly", &[]).first(),
-        format!("review-artifact-check: stale mtime={BEFORE} delegated_at={DELEG}")
+        format!("review-artifact: stale mtime={BEFORE} delegated_at={DELEG}")
     );
 }
 
@@ -614,27 +614,25 @@ fn the_artifact_must_name_the_worktree_head_with_no_dirty_paths() {
             "a dirty starting tree",
             json!({"verdict":"pass","head":h,"dirty_paths":["src/changed.rs"]}),
             format!(
-                "review-artifact-check: moving_tree head=\"{h}\" expected={h} dirty_paths=[\"src/changed.rs\"]"
+                "review-artifact: moving_tree head=\"{h}\" expected={h} dirty_paths=[\"src/changed.rs\"]"
             ),
         ),
         (
             "a different starting head",
             json!({"verdict":"pass","head":"previous-commit","dirty_paths":[]}),
             format!(
-                "review-artifact-check: moving_tree head=\"previous-commit\" expected={h} dirty_paths=[]"
+                "review-artifact: moving_tree head=\"previous-commit\" expected={h} dirty_paths=[]"
             ),
         ),
         (
             "a missing starting head",
             json!({"verdict":"pass","dirty_paths":[]}),
-            format!("review-artifact-check: moving_tree head=null expected={h} dirty_paths=[]"),
+            format!("review-artifact: moving_tree head=null expected={h} dirty_paths=[]"),
         ),
         (
             "missing dirty paths",
             json!({"verdict":"pass","head":h}),
-            format!(
-                "review-artifact-check: moving_tree head=\"{h}\" expected={h} dirty_paths=null"
-            ),
+            format!("review-artifact: moving_tree head=\"{h}\" expected={h} dirty_paths=null"),
         ),
     ] {
         let path = w.put("review-external-F.json", &body.to_string(), None);
@@ -665,10 +663,7 @@ fn the_artifact_must_name_the_worktree_head_with_no_dirty_paths() {
         (
             Some(1),
             "invalid".to_owned(),
-            format!(
-                "review-artifact-check: head_read worktree={}",
-                bare.display()
-            )
+            format!("review-artifact: head_read worktree={}", bare.display())
         ),
         "a worktree whose HEAD cannot be read"
     );
@@ -677,7 +672,7 @@ fn the_artifact_must_name_the_worktree_head_with_no_dirty_paths() {
 #[test]
 fn a_self_reported_no_review_is_refused() {
     let w = World::new();
-    let flag = "review-artifact-check: no_review review_performed=false";
+    let flag = "review-artifact: no_review review_performed=false";
     table(
         &w,
         &[
@@ -693,7 +688,7 @@ fn a_self_reported_no_review_is_refused() {
                 r#"{"verdict":"pass","qa_metadata":{"reason":"no_scope_provided"}}"#,
                 1,
                 "no_review",
-                r#"review-artifact-check: no_review review_reason="no_scope_provided""#,
+                r#"review-artifact: no_review review_reason="no_scope_provided""#,
             ),
             (
                 "review_performed false, arrays present",
@@ -707,14 +702,14 @@ fn a_self_reported_no_review_is_refused() {
                 r#"{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{"reason":"Not-Reviewed"}}"#,
                 1,
                 "no_review",
-                r#"review-artifact-check: no_review review_reason="Not-Reviewed""#,
+                r#"review-artifact: no_review review_reason="Not-Reviewed""#,
             ),
             (
                 "no review written apart",
                 r#"{"verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{"reason":"there was no review"}}"#,
                 1,
                 "no_review",
-                r#"review-artifact-check: no_review review_reason="there was no review""#,
+                r#"review-artifact: no_review review_reason="there was no review""#,
             ),
             (
                 "a reason that admits nothing",
@@ -744,7 +739,7 @@ fn a_self_reported_no_review_is_refused() {
 #[test]
 fn a_qa_shaped_artifact_carries_both_finding_arrays() {
     let w = World::new();
-    let arrays = |bad: &str| format!("review-artifact-check: finding_arrays {bad}");
+    let arrays = |bad: &str| format!("review-artifact: finding_arrays {bad}");
     let rows: Vec<(&str, &str, i32, &str, String)> = vec![
         (
             "qa-shaped without the arrays",
@@ -826,9 +821,7 @@ fn a_qa_shaped_artifact_carries_both_finding_arrays() {
 fn every_finding_item_carries_the_schema_fields_and_the_first_offender_is_named() {
     let w = World::new();
     let item = |path: &str, missing: &str, invalid: &str| {
-        format!(
-            "review-artifact-check: finding_item path={path} missing={missing} invalid={invalid}"
-        )
+        format!("review-artifact: finding_item path={path} missing={missing} invalid={invalid}")
     };
     let ok = r#"{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2}"#;
     let with = |blockers: &str, suggestions: &str| {
@@ -1013,7 +1006,7 @@ fn every_finding_item_carries_the_schema_fields_and_the_first_offender_is_named(
 #[test]
 fn a_test_review_names_the_cost_of_every_test_it_keeps_or_adds() {
     let w = World::new();
-    let cost = |at: &str| format!("review-artifact-check: test_cost {at}");
+    let cost = |at: &str| format!("review-artifact: test_cost {at}");
     let with = |tests: &str| {
         format!(
             r#"{{"agent":"reviewer-test","verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{{}}{tests}}}"#
@@ -1084,9 +1077,9 @@ fn a_test_review_names_the_cost_of_every_test_it_keeps_or_adds() {
 #[test]
 fn a_zero_sample_citation_is_refused_and_a_zero_result_is_not() {
     let w = World::new();
-    let mutation = "review-artifact-check: zero_sample measurement=mutation samples=0";
-    let stability = "review-artifact-check: zero_sample measurement=stability samples=0";
-    let threads = "review-artifact-check: zero_sample measurement=stability threads=0";
+    let mutation = "review-artifact: zero_sample measurement=mutation samples=0";
+    let stability = "review-artifact: zero_sample measurement=stability samples=0";
+    let threads = "review-artifact: zero_sample measurement=stability threads=0";
     table(
         &w,
         &[
@@ -1230,7 +1223,7 @@ fn a_perf_payload_carries_the_evidence_its_metric_kind_produces() {
         )
     };
     let at = |field: &str, rest: &str| {
-        format!("review-artifact-check: perf_evidence field=qa_metadata.perf_qa{field} {rest}")
+        format!("review-artifact: perf_evidence field=qa_metadata.perf_qa{field} {rest}")
     };
     let ic = r#"{"bench_a":{"baseline":1204883,"current":1204883}}"#;
     let pc = r#"{"halt":{"mailboxes":[1,10,40],"baseline":[19,37,97],"changed":[13,13,13]}}"#;
@@ -1519,7 +1512,7 @@ fn a_declaration_names_its_instrument_and_silences_only_the_measurement_gate_vis
             r#"{{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":{m}}}"#
         )
     };
-    let refused = |what: &str| format!("review-artifact-check: measurement_declaration {what}");
+    let refused = |what: &str| format!("review-artifact: measurement_declaration {what}");
     let rows: Vec<(&str, String, i32, &str, String)> = vec![
         ("a single period", declared(r#"".""#), 1, "invalid_declaration", refused("state=punctuation")),
         ("n/a", declared(r#""n/a""#), 1, "invalid_declaration", refused(r#"state=null_token value="n/a""#)),
@@ -1539,11 +1532,11 @@ fn a_declaration_names_its_instrument_and_silences_only_the_measurement_gate_vis
         ("a number", declared("0"), 1, "invalid_declaration", refused("type=number")),
         ("an object", declared(r#"{"why":"broke"}"#), 1, "invalid_declaration", refused("type=object")),
         ("an array", declared(r#"["broke"]"#), 1, "invalid_declaration", refused("type=array")),
-        ("null is no declaration", declared("null"), 1, "zero_sample", "review-artifact-check: zero_sample measurement=mutation samples=0".into()),
-        ("a declaration does not suppress the no-review gate", r#"{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{"review_performed":false}}"#.into(), 1, "no_review", "review-artifact-check: no_review review_performed=false".into()),
-        ("nor the finding-item gate", r#"{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[{"title":"t"}],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{}}"#.into(), 1, "incomplete", "review-artifact-check: finding_item path=suggestions[0] missing=id,location,description,recommendation,priority,estimate,category invalid=".into()),
-        ("nor the qa-shape gate", r#"{"verdict":"pass","summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{}}"#.into(), 1, "incomplete", "review-artifact-check: finding_arrays blockers=absent suggestions=absent".into()),
-        ("nor the missing verdict", r#"{"summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}"#.into(), 1, "invalid", "review-artifact-check: verdict field=verdict state=missing_or_null".into()),
+        ("null is no declaration", declared("null"), 1, "zero_sample", "review-artifact: zero_sample measurement=mutation samples=0".into()),
+        ("a declaration does not suppress the no-review gate", r#"{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{"review_performed":false}}"#.into(), 1, "no_review", "review-artifact: no_review review_performed=false".into()),
+        ("nor the finding-item gate", r#"{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[{"title":"t"}],"measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{}}"#.into(), 1, "incomplete", "review-artifact: finding_item path=suggestions[0] missing=id,location,description,recommendation,priority,estimate,category invalid=".into()),
+        ("nor the qa-shape gate", r#"{"verdict":"pass","summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for the changed file","qa_metadata":{}}"#.into(), 1, "incomplete", "review-artifact: finding_arrays blockers=absent suggestions=absent".into()),
+        ("nor the missing verdict", r#"{"summary":"mutation: killed 0/0","measurement_failed":"cargo-mutants selected 0 mutants for the changed file"}"#.into(), 1, "invalid", "review-artifact: verdict field=verdict state=missing_or_null".into()),
     ];
     for (label, body, code, reason, first) in rows {
         let out = w.body(&body);
@@ -1565,25 +1558,25 @@ fn a_declaration_names_its_instrument_and_silences_only_the_measurement_gate_vis
             "a declaration is echoed and records the citation it silenced",
             declared(&format!("{decl:?}")),
             decl,
-            Some("review-artifact-check: zero_sample measurement=mutation samples=0"),
+            Some("review-artifact: zero_sample measurement=mutation samples=0"),
         ),
         (
             "the echo is the declaration trimmed",
             declared(&format!("\"  {decl}  \"")),
             decl,
-            Some("review-artifact-check: zero_sample measurement=mutation samples=0"),
+            Some("review-artifact: zero_sample measurement=mutation samples=0"),
         ),
         (
             "exactly the bar",
             declared(r#""aa bbbb cccccccccccc""#),
             "aa bbbb cccccccccccc",
-            Some("review-artifact-check: zero_sample measurement=mutation samples=0"),
+            Some("review-artifact: zero_sample measurement=mutation samples=0"),
         ),
         (
             "three words past the floor",
             declared(r#""cargo-mutants selected zero-mutants""#),
             "cargo-mutants selected zero-mutants",
-            Some("review-artifact-check: zero_sample measurement=mutation samples=0"),
+            Some("review-artifact: zero_sample measurement=mutation samples=0"),
         ),
         (
             "the tolerant shape adopts it without qa_metadata",
@@ -1591,7 +1584,7 @@ fn a_declaration_names_its_instrument_and_silences_only_the_measurement_gate_vis
                 r#"{{"verdict":"pass","summary":"mutation: killed 0/0","measurement_failed":{decl:?}}}"#
             ),
             decl,
-            Some("review-artifact-check: zero_sample measurement=mutation samples=0"),
+            Some("review-artifact: zero_sample measurement=mutation samples=0"),
         ),
         (
             "a declaration covers an empty perf payload",
@@ -1600,7 +1593,7 @@ fn a_declaration_names_its_instrument_and_silences_only_the_measurement_gate_vis
             ),
             decl,
             Some(
-                "review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles positive_values=0",
+                "review-artifact: perf_evidence field=qa_metadata.perf_qa.percentiles positive_values=0",
             ),
         ),
         (
@@ -1854,18 +1847,14 @@ fn an_unreadable_declined_state_refuses_before_any_artifact() {
         (
             "an item with no record",
             "KEN-404",
-            "review-artifact-check: declined_state issue=KEN-404",
+            "review-artifact: declined_state issue=KEN-404",
         ),
         (
             "declined_items that are no list",
             "KEN-2",
-            "review-artifact-check: declined_state issue=KEN-2",
+            "review-artifact: declined_state issue=KEN-2",
         ),
-        (
-            "a blank item",
-            "",
-            "review-artifact-check: declined_state issue=",
-        ),
+        ("a blank item", "", "review-artifact: declined_state issue="),
     ] {
         let out = run(issue, &[], true);
         assert_eq!(
@@ -1934,7 +1923,7 @@ fn refusals_exit_two_with_the_keyed_line_and_no_result() {
                 "--delegated-at",
                 "1",
             ],
-            format!("review-artifact-check: worktree path={wt}/does-not-exist"),
+            format!("review-artifact: worktree path={wt}/does-not-exist"),
         ),
         (
             "a path-unsafe agent in glob mode",
@@ -1947,7 +1936,7 @@ fn refusals_exit_two_with_the_keyed_line_and_no_result() {
                 "--delegated-at",
                 "1",
             ],
-            "review-artifact-check: agent value=a*".to_owned(),
+            "review-artifact: agent value=a*".to_owned(),
         ),
         (
             "an mtime before the epoch, with a boundary",
@@ -1960,7 +1949,7 @@ fn refusals_exit_two_with_the_keyed_line_and_no_result() {
                 "--delegated-at",
                 &deleg,
             ],
-            format!("review-artifact-check: mtime path={early}"),
+            format!("review-artifact: mtime path={early}"),
         ),
         (
             "an mtime before the epoch, in glob mode",
@@ -1973,7 +1962,7 @@ fn refusals_exit_two_with_the_keyed_line_and_no_result() {
                 "--delegated-at",
                 &deleg,
             ],
-            format!("review-artifact-check: mtime path={early}"),
+            format!("review-artifact: mtime path={early}"),
         ),
     ] {
         let out = w.run(&args);

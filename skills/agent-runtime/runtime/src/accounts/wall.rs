@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::record::cksum;
 
-/// One spelling per account (`lib/lane-claims.sh`, `lane_claims_canon`):
-/// the resolved path where the directory stands, else the spelling with
+/// One spelling per account: the resolved path where the directory stands, else the spelling with
 /// its trailing slashes off.
 pub fn canon(config_dir: &str) -> String {
     if !config_dir.is_empty()
@@ -43,8 +42,8 @@ pub struct AccountWall {
     pub resets_at: u64,
     /// The latest first sighting of a banner naming this reset: a fall of
     /// the weekly figure from one read before it proves no reset after the
-    /// wall. Absent where `lib/account-wall.sh` wrote the record, which no
-    /// fall then frees.
+    /// wall. Absent where no sighting was recorded, and no fall then frees
+    /// the record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seen_at: Option<u64>,
 }
@@ -101,7 +100,7 @@ pub struct AccountWallWrite {
 /// `lanes` never reads half a record.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the account wall record, under the account records' root, read for the sighting it holds and written whole and renamed into place, the bytes `lib/account-wall.sh` reads"
+    reason = "the account wall record, under the account records' root, read for the sighting it holds and written whole and renamed into place, the bytes the account walk reads"
 )]
 pub fn record_account_wall(
     account_state: &Path,

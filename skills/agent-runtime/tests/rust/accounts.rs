@@ -1152,8 +1152,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
 }
 
 /// The succession walk's and the turn-end hook's trigger
-/// (`lib/overseer-launch.sh` `ol_pick_record`, `hooks/lane-mail-check.sh`'s
-/// account mark): `--min-headroom-pct T` is the bound `100 - T` in the
+/// (`hooks/lane-mail-check.sh`'s account mark): `--min-headroom-pct T` is the bound `100 - T` in the
 /// record's own unit, and `--binding-floor` holds the account's own binding
 /// bucket to the bound beside the model's window. An account at 85 used is
 /// room under the setting and walled under a trigger of 20, named or

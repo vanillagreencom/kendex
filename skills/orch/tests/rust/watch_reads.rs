@@ -1472,7 +1472,7 @@ fn timeline_seven() -> Value {
 
 /// Through the real tracker duty, its cycle recorder and the real
 /// `pr-timeline` over the `gh` fixture's GraphQL answer, and for a hosted
-/// lane the real `lane-host` to the fixture provider, a table of cases:
+/// lane the runtime's provider call to the fixture provider, a table of cases:
 ///
 /// - a hosted parked lane whose item ended at its merge, read ended before
 ///   the GitHub duty (which runs after the tracker on the shared cadence)
@@ -4166,7 +4166,7 @@ fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
 
 /// The world of a hosted lane's status read: the catalog's packages linked
 /// under the state directory, the project the runtime takes its scripts
-/// from, so the real `lane-host` dispatcher reaches the provider the record
+/// from, so the runtime's provider call reaches the provider the record
 /// names.
 fn install_scripts(runner: &support::Runner) {
     let skills = runner.state_dir().join(".agents").join("skills");

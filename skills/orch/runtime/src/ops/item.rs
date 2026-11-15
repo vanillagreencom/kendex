@@ -85,8 +85,8 @@ pub struct BeginRound {
 ///
 /// Without `run_dir` the runtime mints the run's identity: `run_id` is `<UTC
 /// stamp>-<nonce>` and `run_dir` is `<worktree>/tmp/dev-validate-<run_id>`
-/// under the item's recorded worktree, the directory `dev-validate-run --run-id
-/// <run_id>` then creates. The request is idempotent per round: while an
+/// under the item's recorded worktree, the directory `orch-runtime validate
+/// entry --run-id <run_id>` then creates. The request is idempotent per round: while an
 /// admitted run of the round stands open, a repeat returns that run and writes
 /// nothing, whatever clock or nonce the call carries, so a replayed delegation
 /// command continues the attempt it admitted instead of minting a second
@@ -443,8 +443,9 @@ pub enum RunCause {
     RunDirAbsent,
     /// The recorded child is gone and left no sentinel.
     ProcessGone,
-    /// The directory holds no sentinel and no recorded child: the launch
-    /// failed or the child died before it recorded its process id.
+    /// The directory holds no sentinel and the run has no runtime job whose
+    /// identity could be read: the launch failed, or a runner outside the
+    /// runtime started it.
     PidUnrecorded,
     /// The started run's unit ended under the user manager with no
     /// sentinel.
@@ -528,8 +529,8 @@ pub(crate) fn run_id_of(run_dir: &str) -> String {
     name.strip_prefix(RUN_DIR_PREFIX).unwrap_or(name).to_owned()
 }
 
-/// The run id the runtime mints: the compact UTC stamp `dev-validate-run`
-/// names its directories with, then the call's nonce, so two admissions in
+/// The run id the runtime mints: the compact UTC stamp `validate entry`'s
+/// `--run-id` takes, then the call's nonce, so two admissions in
 /// one second never share a directory.
 fn mint_run_id(env: &Env) -> String {
     let stamp: String = env
@@ -1234,7 +1235,7 @@ fn run_file(run_dir: &Path, name: &str) -> std::result::Result<Option<String>, S
     }
 }
 
-/// The `key=value` line of a run record, as `dev-validate-run` writes its
+/// The `key=value` line of a run record, as a validation run writes its
 /// `start` and `timing` files.
 fn record_field(text: &str, key: &str) -> Option<String> {
     text.lines()
@@ -1269,10 +1270,6 @@ fn sentinel_ended(run_dir: &Path) -> std::result::Result<Option<RunRead>, String
     }))
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "a validation run's recorded pid is read beside the record for the stage's reconcile; it is never signalled here"
-)]
 fn read_run(run_dir: &Path, job: Option<&ValidateJob>) -> RunRead {
     // Three-valued: the directory is opened for listing, and
     // only `NotFound` proves it absent; a path that is not a directory, or
@@ -1304,37 +1301,16 @@ fn read_run(run_dir: &Path, job: Option<&ValidateJob>) -> RunRead {
             other => other,
         };
     }
-    // A run its caller's runner started: the sentinel first, then the
-    // child's bare pid.
+    // A run with no runtime job is read by its sentinel alone: a pid file
+    // beside it names no identity to read, so without the sentinel the run
+    // is lost.
     match sentinel_ended(run_dir) {
-        Ok(Some(ended)) => return ended,
-        Ok(None) => {}
-        Err(cause) => return RunRead::Unreadable(cause),
-    }
-    let pid = match run_file(run_dir, "pid") {
-        Ok(None) => {
-            return RunRead::Gone {
-                outcome: StageOutcome::Lost,
-                cause: RunCause::PidUnrecorded,
-            };
-        }
-        Ok(Some(text)) => match text.trim().parse::<u32>() {
-            Ok(pid) => pid,
-            Err(e) => return RunRead::Unreadable(format!("pid: {e}")),
-        },
-        Err(cause) => return RunRead::Unreadable(cause),
-    };
-    // The caller's runner records the child's pid and no process start, so
-    // this is a pid read, not an identity read: a reused pid keeps a dead
-    // run open; it never closes a live one. A run the runtime started is
-    // read by its job's identity above.
-    match process::identity(pid) {
-        Reading::Live(_) => RunRead::Live { pid },
-        Reading::Gone => RunRead::Gone {
+        Ok(Some(ended)) => ended,
+        Ok(None) => RunRead::Gone {
             outcome: StageOutcome::Lost,
-            cause: RunCause::ProcessGone,
+            cause: RunCause::PidUnrecorded,
         },
-        Reading::Unreadable { cause } => RunRead::Unreadable(format!("pid {pid}: {cause}")),
+        Err(cause) => RunRead::Unreadable(cause),
     }
 }
 

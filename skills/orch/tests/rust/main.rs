@@ -488,7 +488,7 @@ fn op_records_a_verification_verdict_and_refuses_a_word_that_is_none() {
         dir.path(),
         "verify.json",
         &format!(
-            r#"{{"op": "record-verification", "head": "{head}", "verdict": "none", "reason": "no CI configured: no active workflows and no required checks on main", "source": "ci-wait --required-only"}}"#
+            r#"{{"op": "record-verification", "head": "{head}", "verdict": "none", "reason": "no CI configured: no active workflows and no required checks on main", "source": "verify-pr"}}"#
         ),
     );
     let out = run(
@@ -508,7 +508,7 @@ fn op_records_a_verification_verdict_and_refuses_a_word_that_is_none() {
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(state["verification"]["head"], head);
     assert_eq!(state["verification"]["verdict"], "none");
-    assert_eq!(state["verification"]["source"], "ci-wait --required-only");
+    assert_eq!(state["verification"]["source"], "verify-pr");
     assert!(state["verification"]["at"].as_str().is_some());
 
     let text = fs::read_to_string(&path).unwrap();
@@ -516,7 +516,7 @@ fn op_records_a_verification_verdict_and_refuses_a_word_that_is_none() {
         dir.path(),
         "pending.json",
         &format!(
-            r#"{{"op": "record-verification", "head": "{head}", "verdict": "pending", "reason": "checks still running", "source": "ci-wait --required-only"}}"#
+            r#"{{"op": "record-verification", "head": "{head}", "verdict": "pending", "reason": "checks still running", "source": "verify-pr"}}"#
         ),
     );
     let out = run(

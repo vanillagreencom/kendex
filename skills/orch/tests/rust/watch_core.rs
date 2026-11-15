@@ -224,9 +224,8 @@ fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
     assert!(live(sleeper.pid()), "the sleeper was never touched");
 }
 
-/// The claim record a released repeat loop writes (`lib/watch-pid.sh`)
-/// carries no `start=`, and a loop that ended without its trap leaves it
-/// naming a dead pid. A start-less record is read by its pid alone: while
+/// A claim record with no `start=`, left naming a dead pid by a loop that
+/// ended without its trap. A start-less record is read by its pid alone: while
 /// the pid runs, `status` answers `unreadable` with cause `start-missing`
 /// and a start refuses with nothing written; once no process holds it, the
 /// record reads `gone` and is taken over with `start=none` on the line.
@@ -1551,7 +1550,7 @@ fn every_event_renders_to_its_recorded_bytes() {
 }
 
 // The hosted close through `watch run`.
-/// The watch over a stalled cloud lane, started with the `lane-host` and
+/// The watch over a stalled cloud lane, started with the provider and
 /// runtime-entry fixtures under the project's scripts directory and the
 /// `gh` fixture first on `PATH`, `extra` on its environment.
 fn spawn_hosted_watch_run(dir: &Path, extra: &[(&str, &str)]) -> std::process::Child {

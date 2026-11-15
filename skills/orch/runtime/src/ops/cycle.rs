@@ -30,6 +30,9 @@ use crate::state::{self, CycleRow, FleetState, Lane};
 use crate::verify::ci_proof;
 use crate::watch::hosted::{self, Answer as HostAnswer};
 
+/// The word every note the recorder could not read opens with.
+const CYCLE: &str = "cycle";
+
 /// The class bases, lane-controlled seconds; only the recorded waits, a
 /// clean final-head CI run and the merge group are forgiven.
 pub const TARGETS: [(&str, i64); 5] = [
@@ -113,10 +116,7 @@ pub fn record(
         Err(tried) => (
             Value::Null,
             Value::Null,
-            vec![
-                format!("oversee-cycle: rounds-unread item={item}"),
-                tried.clone(),
-            ],
+            vec![format!("{CYCLE}: rounds-unread item={item}"), tried.clone()],
         ),
     };
     notes.extend(tier_note);
@@ -160,7 +160,7 @@ pub fn record(
                 Ok(at) => Value::from(at),
                 Err(cause) => {
                     notes.push(format!(
-                        "oversee-cycle: merged-unread commit={resolved} cause={cause}"
+                        "{CYCLE}: merged-unread commit={resolved} cause={cause}"
                     ));
                     Value::Null
                 }
@@ -204,7 +204,7 @@ pub fn record(
     let line = line_of(item, &cycle);
     let mut lines = vec![line];
     if let Some(cause) = &class.cause {
-        notes.push(format!("oversee-cycle: class-unread cause={cause}"));
+        notes.push(format!("{CYCLE}: class-unread cause={cause}"));
     }
     if let Some(repeat) = repeat_miss(fleet, lane, &cycle)? {
         lines.push(repeat);
@@ -224,10 +224,7 @@ fn launch_tier(lane: &Lane) -> (Option<String>, Option<String>) {
         Some(_) => (None, None),
         None => (
             None,
-            Some(format!(
-                "oversee-cycle: launch-tier-missing item={}",
-                lane.item
-            )),
+            Some(format!("{CYCLE}: launch-tier-missing item={}", lane.item)),
         ),
     }
 }
@@ -249,7 +246,7 @@ fn negative_notes(item: &str, timeline: &Value) -> Vec<String> {
         })
         .map(|round| {
             format!(
-                "oversee-cycle: negative-interval item={item} kind={} head={} secs={}",
+                "{CYCLE}: negative-interval item={item} kind={} head={} secs={}",
                 text(round.get("kind")),
                 text(round.get("head")),
                 text(round.get("secs"))
@@ -2894,7 +2891,7 @@ mod tests {
             launch_tier(&untiered),
             (
                 None,
-                Some("oversee-cycle: launch-tier-missing item=KEN-1".to_owned())
+                Some("cycle: launch-tier-missing item=KEN-1".to_owned())
             ),
             "a record written before launches recorded a tier warns"
         );
@@ -2968,10 +2965,7 @@ mod tests {
         t["rounds"] = json!([{"kind": "review", "head": "h1", "secs": -40}, {"kind": "fix", "head": "h1", "secs": 30}]);
         assert_eq!(
             negative_notes("KEN-1", &t),
-            vec![
-                "oversee-cycle: negative-interval item=KEN-1 kind=review head=h1 secs=-40"
-                    .to_owned()
-            ]
+            vec!["cycle: negative-interval item=KEN-1 kind=review head=h1 secs=-40".to_owned()]
         );
         let c = cycle(
             &lane("KEN-1", json!({})),

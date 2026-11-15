@@ -104,7 +104,7 @@ pub struct RecordOutcome {
     /// transfer records as the successor's `server_start`. `launch.start`
     /// is the harness process start, not this. Left out, the record is
     /// unstarted: the successor's watch start owns and fills it, and
-    /// `oversee register` from that pane writes the next generation.
+    /// `controller adopt` from that pane writes the next generation.
     #[serde(default)]
     pub server_start: Option<u64>,
     /// The socket of the server `launch` names, recorded as the successor's

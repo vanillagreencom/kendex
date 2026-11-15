@@ -1559,7 +1559,7 @@ mod tests {
                     head: "e".repeat(40),
                     verdict: "none".into(),
                     reason: "no CI configured".into(),
-                    source: "ci-wait --required-only".into(),
+                    source: "verify-pr".into(),
                 }),
                 "record-verification",
             ),

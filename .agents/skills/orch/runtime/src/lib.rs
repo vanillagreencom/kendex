@@ -3,12 +3,10 @@
 //! operations over them, plus the standing scheduler that decides when each
 //! duty is due.
 //!
-//! The crate owns the item and fleet state files in the shape the
-//! `workflow-state` script writes, every transition over them, and the write
-//! check (the content comparison under the file's lock). It writes a record
-//! as a patch on the document it read, so a field it does not transition
-//! keeps its value and position, and it refuses only what the script's
-//! readers refuse on the same file. It does not own process or
+//! The crate owns the item and fleet state files, every transition over
+//! them, and the write check (the content comparison under the file's lock).
+//! It writes a record as a patch on the document it read, so a field it does
+//! not transition keeps its value and position. It does not own process or
 //! native-session identity, launch, observation, delivery or the exact stop:
 //! those are `agent-runtime`'s, and an operation that needs one persists its
 //! intent here, runs the effect through that crate (`effects`) and records

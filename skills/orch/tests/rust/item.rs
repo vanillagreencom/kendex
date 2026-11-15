@@ -1,8 +1,8 @@
 //! The item transitions: rounds, validation admission, accepted results with
 //! their outcome and end, a round's admitted runs reconciled against the host,
 //! the verification record and the handoff record. Each row applies the
-//! library's operations to the item fixture beside this file, in the shape the
-//! `workflow-state` script writes, under an injected clock; the last rows run
+//! library's operations to the item fixture beside this file, under an
+//! injected clock; the last rows run
 //! the built binary so the wire names of the new fields are the ones a workflow
 //! writes.
 #![allow(
@@ -1415,7 +1415,7 @@ mod dev_artifacts {
             assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
             assert!(out.stdout.is_empty());
             let want = format!(
-                "dev-return-write: run-record-unreadable path={} {cause}",
+                "dev-return: run-record-unreadable path={} {cause}",
                 dir.display()
             );
             assert!(stderr(&out).starts_with(&want), "{}", stderr(&out));
@@ -1608,7 +1608,7 @@ mod dev_artifacts {
                 .unwrap();
             assert_eq!(out.status.code(), Some(2), "{rest:?} {}", stderr(&out));
             assert!(
-                stderr(&out).starts_with(&format!("dev-return-write: {key} ")),
+                stderr(&out).starts_with(&format!("dev-return: {key} ")),
                 "{rest:?} {}",
                 stderr(&out)
             );
@@ -1637,7 +1637,7 @@ mod dev_artifacts {
                 .unwrap();
             assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
             assert!(
-                stderr(&out).starts_with(&format!("dev-return-write: {key} ")),
+                stderr(&out).starts_with(&format!("dev-return: {key} ")),
                 "{}",
                 stderr(&out)
             );
@@ -1723,7 +1723,7 @@ mod dev_artifacts {
                 .unwrap();
             assert_eq!(out.status.code(), Some(2), "{rest:?} {}", stderr(&out));
             assert!(
-                stderr(&out).starts_with(&format!("dev-round-write: {key} ")),
+                stderr(&out).starts_with(&format!("round: {key} ")),
                 "{rest:?} {}",
                 stderr(&out)
             );
@@ -1774,7 +1774,7 @@ mod dev_artifacts {
                 .unwrap();
             assert_eq!(out.status.code(), Some(2), "{args:?} {}", stderr(&out));
             assert!(
-                stderr(&out).starts_with(&format!("dev-artifact-check: {key} ")),
+                stderr(&out).starts_with(&format!("dev-return: {key} ")),
                 "{args:?} {}",
                 stderr(&out)
             );
@@ -2235,7 +2235,7 @@ mod dev_artifacts {
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         let artifact = text
             .trim()
-            .strip_prefix("round-recover: recovered artifact=")
+            .strip_prefix("round: recovered artifact=")
             .unwrap_or_else(|| panic!("{text} {}", stderr(&out)));
         let v: Value = serde_json::from_str(&fs::read_to_string(artifact).unwrap()).unwrap();
         assert_eq!(v["validate"], "FAILING: lint");
@@ -2344,7 +2344,7 @@ mod dev_artifacts {
         let minted = w.doc()["dev_round_id"].as_str().unwrap().to_owned();
         assert_eq!(
             String::from_utf8_lossy(&out.stdout).trim(),
-            format!("round-recover: redelegate round-id={minted} from=r1 reason=no-transcript")
+            format!("round: redelegate round-id={minted} from=r1 reason=no-transcript")
         );
         let out = w
             .command()
@@ -3811,7 +3811,7 @@ mod dev_artifacts {
             let out = w.no_change(key, kind, validate, PERMIT, extra);
             assert_eq!(out.status.code(), Some(2), "{want}: {}", stderr(&out));
             assert!(
-                stderr(&out).starts_with(&format!("dev-return-write: {want} ")),
+                stderr(&out).starts_with(&format!("dev-return: {want} ")),
                 "{want}: {}",
                 stderr(&out)
             );
@@ -3938,8 +3938,7 @@ mod dev_artifacts {
         let out = w.no_change("issue-8", "implement", "not-run", PERMIT, &[]);
         assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
         assert!(
-            stderr(&out)
-                .starts_with("dev-return-write: repo-unresolved item=issue-8 cause=unresolved"),
+            stderr(&out).starts_with("dev-return: repo-unresolved item=issue-8 cause=unresolved"),
             "{}",
             stderr(&out)
         );
@@ -4567,8 +4566,8 @@ fn admission_is_idempotent_per_round_and_mints_the_next_attempt_on_request() {
         format!("{WORKTREE}/tmp/dev-validate-20260129T152000Z-4242")
     );
     assert_eq!(a.start, NOW_SECS);
-    // The id fits dev-validate-run's --run-id grammar and the run index
-    // grammar lane-gitfile.sh reads (`^dev-validate-[A-Za-z0-9-]+$`).
+    // The id fits `validate entry`'s --run-id grammar and the run index
+    // grammar the watch reads (`^dev-validate-[A-Za-z0-9-]+$`).
     let (stamp, nonce) = a.run_id.split_once('-').unwrap();
     assert_eq!(stamp.len(), 16);
     assert!(stamp[..8].bytes().all(|b| b.is_ascii_digit()));
@@ -4774,7 +4773,7 @@ fn a_non_pass_outcome_closes_the_admitted_run_and_keeps_its_cost() {
     for (outcome, word) in rows {
         let path = item_file(dir.path());
         let a = admitted(apply(&path, &admit(ROUND, None), &env(), LOCK).unwrap());
-        // The cost row dev-artifact-check writes for the round's receipt.
+        // The cost row `dev-return check` writes for the round's receipt.
         let mut doc = object(&path);
         doc.insert(
             "validate_rounds".into(),
@@ -5002,7 +5001,7 @@ impl Drop for Owned {
     }
 }
 
-/// A run directory as `dev-validate-run` leaves it: its `start` record and
+/// A run directory as a validation run leaves it: its `start` record and
 /// the files the row plants.
 fn run_dir(path: &str, files: &[(&str, String)]) -> PathBuf {
     let dir = PathBuf::from(path);
@@ -5035,10 +5034,11 @@ fn closed(outcome: StageOutcome, cause: RunCause, seconds: Option<u64>) -> RunSt
 }
 
 /// The reconcile closes every admitted run that will not
-/// end on its own, with the word the host supports, keeps a live run open
-/// and reports what it could not read, and touches no cost.
+/// end on its own, with the word the host supports, keeps an unreadable run
+/// open and reports it, and touches no cost. A run with no runtime job and
+/// no sentinel is lost, whatever pid file stands beside it.
 #[test]
-fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
+fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_an_unreadable_one_open() {
     let dir = tempfile::tempdir().unwrap();
     let worktree = dir.path().join("wt");
     fs::create_dir_all(worktree.join("tmp")).unwrap();
@@ -5056,9 +5056,9 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
         run(&path, &reconcile("no-such-round")).unwrap_err().key(),
         "round-unknown"
     );
-    // Nine attempts of the round, each admitted at its own second.
+    // Eight attempts of the round, each admitted at its own second.
     let mut runs = Vec::new();
-    for i in 0..9 {
+    for i in 0..8 {
         let request = if i == 0 {
             admit(ROUND, None)
         } else {
@@ -5067,22 +5067,19 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
         runs.push(admitted(run_at(&path, &request, NOW_SECS + i).unwrap()).run_dir);
     }
     let [
-        live,
+        pidded,
         refused,
-        gone,
         failing,
         bounded,
         passing,
         unlaunched,
         garbled,
         skewed,
-    ] = <[String; 9]>::try_from(runs).unwrap();
+    ] = <[String; 8]>::try_from(runs).unwrap();
+    // A pid file naming a live process and no sentinel.
     let mut live_child = Owned::sleep();
-    run_dir(&live, &[("pid", format!("{}\n", live_child.pid()))]);
+    run_dir(&pidded, &[("pid", format!("{}\n", live_child.pid()))]);
     // `refused`: the start was refused; the directory never came to be.
-    let mut gone_child = Owned::sleep();
-    run_dir(&gone, &[("pid", format!("{}\n", gone_child.pid()))]);
-    gone_child.end();
     let iso = |secs: u64| at(secs).iso();
     run_dir(
         &failing,
@@ -5121,7 +5118,7 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
         &skewed,
         &[("exit", format!("guard-exit=1 at={}\n", iso(ROUND_START)))],
     );
-    // The cost row dev-artifact-check writes for the round's receipt.
+    // The cost row `dev-return check` writes for the round's receipt.
     let mut doc = object(&path);
     doc.insert(
         "validate_rounds".into(),
@@ -5133,18 +5130,12 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
     let applied = apply(&path, &reconcile(ROUND), &at(NOW_SECS + 100), LOCK).unwrap();
     let report = &applied.report;
     assert_eq!(
-        state_of(report, &live),
-        RunState::Live {
-            pid: live_child.pid()
-        }
+        state_of(report, &pidded),
+        closed(StageOutcome::Lost, RunCause::PidUnrecorded, None)
     );
     assert_eq!(
         state_of(report, &refused),
         closed(StageOutcome::Stopped, RunCause::RunDirAbsent, None)
-    );
-    assert_eq!(
-        state_of(report, &gone),
-        closed(StageOutcome::Lost, RunCause::ProcessGone, None)
     );
     assert_eq!(
         state_of(report, &failing),
@@ -5184,11 +5175,10 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
             .find(|s| s.run_dir.as_deref() == Some(dir))
             .unwrap()
     };
-    assert_eq!((stage(&live).end, stage(&live).outcome), (None, None));
     assert_eq!((stage(&garbled).end, stage(&garbled).outcome), (None, None));
     let expected = [
+        (&pidded, StageOutcome::Lost, NOW_SECS + 100),
         (&refused, StageOutcome::Stopped, NOW_SECS + 100),
-        (&gone, StageOutcome::Lost, NOW_SECS + 100),
         (&failing, StageOutcome::Fail, NOW_SECS + 60),
         (&bounded, StageOutcome::NoVerdict, NOW_SECS + 70),
         (&passing, StageOutcome::Pass, NOW_SECS + 80),
@@ -5214,35 +5204,17 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
         assert_eq!(keys(row), expected, "{}", row["run_dir"]);
     }
 
-    // A repeat reads only what stands open: the live and the unreadable
-    // run; the closed runs keep their words and are not rows.
+    // A repeat reads only what stands open: the unreadable run; the closed
+    // runs keep their words and are not rows.
     let again = run_at(&path, &reconcile(ROUND), NOW_SECS + 200).unwrap();
     let Report::ReconcileRound(r) = &again.report else {
         panic!("{:?}", again.report)
     };
-    let mut open: Vec<&str> = r.runs.iter().map(|run| run.run_dir.as_str()).collect();
-    open.sort_unstable();
-    let mut expected = [live.as_str(), garbled.as_str()];
-    expected.sort_unstable();
-    assert_eq!(open, expected);
+    let open: Vec<&str> = r.runs.iter().map(|run| run.run_dir.as_str()).collect();
+    assert_eq!(open, [garbled.as_str()]);
     assert_eq!(stage(&failing).end, Some(NOW_SECS + 60));
     assert_eq!(validate_stages(&path), stages, "the repeat wrote nothing");
-
-    // The live run's child ends without its sentinel: lost, at the read.
     live_child.end();
-    let ended = run_at(&path, &reconcile(ROUND), NOW_SECS + 300).unwrap();
-    assert_eq!(
-        state_of(&ended.report, &live),
-        closed(StageOutcome::Lost, RunCause::ProcessGone, None)
-    );
-    let s = validate_stages(&path)
-        .into_iter()
-        .find(|s| s.run_dir.as_deref() == Some(live.as_str()))
-        .unwrap();
-    assert_eq!(
-        (s.outcome, s.end),
-        (Some(StageOutcome::Lost), Some(NOW_SECS + 300))
-    );
     // A round with nothing open reconciles to no rows.
     let path = item_file(dir.path());
     let none = run(&path, &reconcile(ROUND)).unwrap();
@@ -5269,7 +5241,7 @@ fn record_verification_writes_the_record_once_and_a_later_write_replaces_it() {
             reason: format!(
                 "no CI configured: no active workflows and no required checks on main ({verdict})"
             ),
-            source: "ci-wait --required-only".into(),
+            source: "verify-pr".into(),
         })
     };
     let first = apply(
@@ -5296,7 +5268,7 @@ fn record_verification_writes_the_record_once_and_a_later_write_replaces_it() {
     assert_eq!(keys(record), ["head", "verdict", "reason", "source", "at"]);
     assert_eq!(record["head"], "a".repeat(40));
     assert_eq!(record["verdict"], "none");
-    assert_eq!(record["source"], "ci-wait --required-only");
+    assert_eq!(record["source"], "verify-pr");
     assert_eq!(record["at"], env().iso());
 
     // A later head's verdict replaces the record where it stands.

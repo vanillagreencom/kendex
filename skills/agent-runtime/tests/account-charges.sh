@@ -53,12 +53,12 @@ ENV=(env HOME="$HOME_DIR" PATH="$BIN:$PATH" AGENT_RUNTIME_ACCOUNT_DIRS="$ACCOUNT
   AGENT_RUNTIME_ACCOUNT_STATE_DIR="$TMP_ROOT/state" AGENT_RUNTIME_USAGE_TTL=0 AGENT_RUNTIME_USAGE_MAX_AGE=0)
 
 # The fleet record F: one running lane on the account, its launch identity
-# the suite's own `sleep`, recorded in the `ps -o lstart` form every host
+# the suite's own `sleep`, recorded in the `lstart:` form every host
 # reads, in the locale and zone the runtime's reader asks `ps` for.
 FLEET="$TMP_ROOT/fleet.json"
 sleep 300 &
 LANE_PID=$!
-START="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$LANE_PID" | tr -s ' ' | sed 's/^ //; s/ $//')"
+START="lstart:$(LC_ALL=C TZ=UTC ps -o lstart= -p "$LANE_PID" | tr -s ' ' | sed 's/^ //; s/ $//')"
 jq -n --arg account "$ACCOUNT" --argjson pid "$LANE_PID" --arg start "$START" '{
   issue_id: "oversee", triaged: [], launch_queue: [], fleet_log: [],
   lanes: [{item: "KEN-1", window: "orch-KEN-1", harness: "claude", status: "running",

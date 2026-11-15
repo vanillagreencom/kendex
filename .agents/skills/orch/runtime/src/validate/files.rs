@@ -25,6 +25,16 @@ pub fn fields(path: &Path) -> Result<BTreeMap<String, String>> {
         .collect())
 }
 
+/// The battery's selection line opens with this, its own form: a refusal or
+/// notice of the entry also opens `validate:` and can land in a run's log
+/// after it.
+const SELECTION: &str = "validate: lanes=";
+
+/// The last selection line of a run's log.
+pub fn selection_line(log: &str) -> Option<&str> {
+    log.lines().rfind(|l| l.starts_with(SELECTION))
+}
+
 pub fn mode(word: &str) -> Result<ValidateMode> {
     match word {
         "full" => Ok(ValidateMode::Full),
@@ -104,7 +114,7 @@ impl RunFile {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((None, fallback)),
             Err(e) => return Err(unreadable("record-unreadable", e)),
         };
-        let Some(line) = log.lines().rfind(|l| l.starts_with("validate:")) else {
+        let Some(line) = selection_line(&log) else {
             return Ok((None, fallback));
         };
         let words: Vec<_> = line.split(' ').collect();

@@ -24,11 +24,19 @@ use crate::validate::files::{self, RunFile};
 use agent_runtime::clock::Clock;
 use agent_runtime::journal::Env;
 
+/// The word every refusal of `dev-return write|check` opens with under
+/// `--text`.
+pub const DEV_RETURN: &str = "dev-return";
+
 #[derive(Debug, Subcommand)]
 pub enum DevReturn {
     Write(Box<WriteReturn>),
     Check(CheckReturn),
 }
+
+/// The word every refusal of `round stamp|cut|recover` under `--text`, and
+/// every text answer of `round recover`, opens with.
+pub const ROUND: &str = "round";
 
 #[derive(Debug, Subcommand)]
 pub enum Round {
@@ -2113,9 +2121,9 @@ fn report_field<'a>(report: &'a str, key: &str) -> Option<&'a str> {
 
 fn recovery_answer(state: &str, round: &str, from: &str, reason: &str) -> Answer {
     let text = match state {
-        "exhausted" => format!("round-recover: exhausted round-id={round} reason={reason}"),
+        "exhausted" => format!("{ROUND}: exhausted round-id={round} reason={reason}"),
         "redelegate" => {
-            format!("round-recover: redelegate round-id={round} from={from} reason={reason}")
+            format!("{ROUND}: redelegate round-id={round} from={from} reason={reason}")
         }
         _ => unreachable!("a replacement is redelegated or exhausted"),
     };
@@ -2255,7 +2263,7 @@ fn reconcile_recovery(settings: &Settings, r: &RecoverRound, env: &Env) -> Resul
                     super::RunState::Live { .. } | super::RunState::LiveUnit { .. } => {
                         return Ok(Some(Answer {
                             value: json!({"state":"round-live","run_dir":run.run_dir}),
-                            text: format!("round-recover: round-live run-dir={}", run.run_dir),
+                            text: format!("{ROUND}: round-live run-dir={}", run.run_dir),
                             status: 4,
                         }));
                     }
@@ -2548,7 +2556,7 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
     }
     Ok(Answer {
         value: json!({"state":"recovered","artifact":artifact}),
-        text: format!("round-recover: recovered artifact={}", artifact.display()),
+        text: format!("{ROUND}: recovered artifact={}", artifact.display()),
         status: 0,
     })
 }

@@ -1039,11 +1039,8 @@ fn a_close_reads_the_lanes_open_ask_through_the_shipped_mailbox() {
     assert_eq!(asking.lane("KEN-A")["status"], "running");
 }
 
-/// The lane record the shell suites plant drifting from what the real
-/// `launch-lane` writes: `tests/lane_model_recovery.sh` reads the
-/// permission words off the record the fixture holds, and `tests/lane-state.sh` and
-/// `tests/lane_close.sh` read its launch identity in the start's form, so
-/// the fixture is this launch's record, its root and its process, pane and
+/// The planted lane record drifting from what the real `launch-lane`
+/// writes: the fixture is this launch's record, its root and its process, pane and
 /// clock values as placeholders and the start's form (`ticks:`) kept before
 /// its placeholder.
 #[test]
@@ -2617,8 +2614,8 @@ fn state_remove_refuses_a_failed_removal_naming_the_archive_that_holds_the_path(
 
 // --- the close verb ---
 
-/// The provider kendex's rows stand up behind the real `lane-host`
-/// dispatcher: the reusable fixture provider, which declares the static ssh
+/// The provider kendex's rows stand up behind the runtime's provider call:
+/// the reusable fixture provider, which declares the static ssh
 /// kind's line and answers from its `LANE_HOST_STUB_*` environment.
 fn provider() -> String {
     orch_package()
@@ -2644,9 +2641,8 @@ const REMOTE_ROOT: &str = "/w/ken-1";
 impl Fleet {
     /// A fleet whose project is its state directory (outside any
     /// repository), the catalog's orch, mailbox and agent-runtime packages
-    /// linked under it, so the runtime runs the real `lane-host` dispatcher
-    /// from its scripts directory, over the fixture provider a hosted record
-    /// names; the provider's disk an empty directory (every file absent),
+    /// linked under it, so the runtime calls the fixture provider a hosted
+    /// record names; the provider's disk an empty directory (every file absent),
     /// its calls logged; the tracker the linear fixture beside the record;
     /// every mailbox call logged.
     fn hosted(cap: u32) -> Fleet {
@@ -5929,9 +5925,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                     "{case}"
                 );
                 assert!(
-                    notes
-                        .iter()
-                        .any(|n| n == "oversee-cycle: rounds-unread item=KEN-1"),
+                    notes.iter().any(|n| n == "cycle: rounds-unread item=KEN-1"),
                     "{case}: {notes:?}"
                 );
                 for path in &tried {

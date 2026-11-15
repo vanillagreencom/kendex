@@ -12,6 +12,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// The word every refusal and notice of `validate entry` opens with.
+const VALIDATE: &str = "validate";
+
 #[derive(ClapArgs)]
 #[command(
     long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues: it prints state=running with the run directory, and --wait --run-dir follows the run on.
@@ -203,14 +206,14 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
         Err(Failure { error, exit }) => {
             let diagnostic = match &*error {
                 Error::OverBound { expected, bound } => {
-                    format!("dev-validate-run: over-bound expected-secs={expected} bound={bound}")
+                    format!("{VALIDATE}: over-bound expected-secs={expected} bound={bound}")
                 }
                 Error::ValidateUnreadable { read, cause } => {
-                    format!("dev-validate-run: {read} cause={cause}")
+                    format!("{VALIDATE}: {read} cause={cause}")
                 }
                 _ => crate::protocol::diagnostic_line(&error).replacen(
                     "orch-runtime:",
-                    "dev-validate-run:",
+                    &format!("{VALIDATE}:"),
                     1,
                 ),
             };
@@ -344,7 +347,7 @@ fn entry(
         if args.base.is_some() {
             let _ = writeln!(
                 std::io::stderr(),
-                "dev-validate-run: option-ignored option=--base validate-mode=full"
+                "{VALIDATE}: option-ignored option=--base validate-mode=full"
             );
         }
         None

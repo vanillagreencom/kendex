@@ -1006,7 +1006,7 @@ fn a_providers_codex_row_past_its_week_is_spent_on_a_credit_above_the_floor() {
     }
 }
 
-/// `lanes`' `host_row_or_local`: the listing carries this machine's reading
+/// A host row or the local one: the listing carries this machine's reading
 /// of a billed account and the provider's beside it, local first, and a
 /// pick judges one of them. The same account at local wall 0 and provider
 /// wall 99 on a seat: the chooser refuses and the named reading names the
@@ -1284,7 +1284,7 @@ fn a_failed_local_read_beside_the_providers_shared_week_is_unmeasured_for_the_mo
     assert_eq!(judged, unmeasured);
 }
 
-/// `lane-model.sh`'s fixed sample divisor: the session window's observed
+/// The fixed sample divisor: the session window's observed
 /// usage is shared among the lanes live at the sample, never among the
 /// lanes live now. One sample held constant, the week at 70 percent with
 /// its reset under an hour on and its rate measured at 15 points an hour,
@@ -1402,7 +1402,7 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
     drop(children);
 }
 
-/// `lane-model.sh`'s measured rate: the rate the reader measured on the
+/// The measured rate: the rate the reader measured on the
 /// binding window is the whole account's delta, shared among the lanes live
 /// at the sample, except on a model window, which no lane on another model
 /// spends. The weekly window at 50 with 80 hours to its reset, 0.3 points
@@ -1410,8 +1410,8 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
 /// per-lane share's, and the record carries the reader's rate fields, since
 /// the judged window is the reader's; a model window at 50 with the same
 /// rate is charged the rate whole and walled; a window the reader did not
-/// rate carries `one-sample`. The window's identity carries its label
-/// (`lane-model.sh`'s `same_window`): two model windows at one reset are
+/// rate carries `one-sample`. The window's identity carries its label:
+/// two model windows at one reset are
 /// two windows, so a Fable read of an account whose reader rated its Opus
 /// window carries `one-sample` and no rate, never Opus's measured rate,
 /// which the mark judge would ask succession on.
@@ -1947,7 +1947,7 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
         world.settings.accounts.get().unwrap().exclude,
         vec!["sclaude", "pi2"]
     );
-    // The alias overlay as `lanes` reads it: an item without `=` or with
+    // The alias overlay as a pick reads it: an item without `=` or with
     // an empty side is passed over, never refused.
     assert_eq!(
         world
@@ -1967,8 +1967,8 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
 /// usage the usage fixture answers from a planted body, one Codex lane,
 /// `.acodex`, whose plan windows are spent and whose credits stand, and
 /// one Pi root, `.pi1`; a `tmux` that answers nothing and the usage
-/// fixture as `curl` first on `PATH`; the shipped `lane-host` dispatcher
-/// under the provider fixture `tests/fixtures/lane-host` with its rows
+/// fixture as `curl` first on `PATH`; the provider fixture
+/// `tests/fixtures/lane-host` with its rows
 /// planted per arm; a checkout of the row's own and a fleet of the row's
 /// own. The runtime is asked through the boundary.
 struct Producer {
@@ -2357,7 +2357,7 @@ struct Arm<'a> {
     asks: Vec<Ask>,
 }
 
-/// The shipped producers' worlds: the shipped `lanes` listing, its provider
+/// The shipped producers' worlds: the listing, its provider
 /// fixture and its stated pool, read by the runtime through the boundary,
 /// one arm per input the shell `lanes pick` verb reads and the judge must
 /// keep. Every other row plants the listing itself, so an input the shell
@@ -2367,7 +2367,7 @@ struct Arm<'a> {
 /// `named_account_judgment`, `measure_lane`, `measure_copilot_pool`,
 /// `pick_host_rows`, `host_row_or_local`, `emit_lane`,
 /// `validate_lane_settings`, `lane_pick_harness`, `lane_tier_inputs`,
-/// `lane_host_pool` and `lib/lane-model.sh`'s judge: `lane_judge`'s six
+/// `lane_host_pool` and the judge: `lane_judge`'s six
 /// verdict words, `credits` among them, and `host_row_or_local`'s three
 /// triggers) for each pool kind the site applies to (a local kind, the
 /// Codex credit balance, the Copilot pool, the `anthropic/` API grant, a
@@ -2381,8 +2381,8 @@ struct Arm<'a> {
 /// refusal, which the loader owns; the dispatcher's class form, unnamed
 /// harness, `--exclude-lane` beside `--lane` and `--projected` without
 /// `--lane`, which no shipped caller passes; the reader's sites inside
-/// `measure_lane`, whose statuses the shipped `lanes list` still measures
-/// and whose one judge outcome, unmeasured, the local kind's questions ask;
+/// `measure_lane`, whose statuses the listing measures and whose one judge
+/// outcome, unmeasured, the local kind's questions ask;
 /// the reader's own failures, which an unread listing holds, and its
 /// caches; and a cell whose input reaches the site another cell's question
 /// asks (the reader's exclusion of a local kind on this machine's read and
@@ -2449,8 +2449,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             stamp(now() + 86_400)
         ))
     };
-    // The dispatcher's own `claude-cloud` capability line (`scripts/lane-host`),
-    // the one the shipped `lane-host` admits from a provider.
+    // The runtime's own `claude-cloud` capability line, the one it admits
+    // from a provider.
     let cloud_line = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\trelaunch=fresh\tpark=none\taccounts=none\tpool=cloud-credit\tland=handoff\tpane=local";
     let pi_named = || {
         flags(&[

@@ -248,10 +248,9 @@ type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathB
 /// The destination is the home the lane's last confirmed launch recorded,
 /// where its bound session was written (a private Codex home links the
 /// account's store), in the mode it ran in; a lane that recorded none reads
-/// its account. A record with neither is one no released writer gave a
-/// home, so it is read as the released relaunch read it: under the home a
-/// fresh launch picks (`served`, the fleet server's, else the inherited
-/// home or the default). A resume runs under the home its session was
+/// its account. A record with neither relaunches under the home a fresh
+/// launch picks (`served`, the fleet server's, else the inherited home or
+/// the default). A resume runs under the home its session was
 /// found under.
 fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane, served: Option<&Path>) -> Result<Route> {
     let handoff = standing_handoff(run, &lane.item)?;

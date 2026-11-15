@@ -245,8 +245,8 @@ static PI_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(^|\s)[0-9]+(\.[0-9]+)?%/[0-9]+(\.[0-9]+)?[kKmMgG]?(\s|$)").unwrap()
 });
 
-/// Codex's refusal of one turn for the selected model's capacity
-/// (`lane-state.sh` `MODEL_CAPACITY`), drawn above the composer the lane
+/// Codex's refusal of one turn for the selected model's capacity, drawn
+/// above the composer the lane
 /// then sits at: the one marker that tells this idle from a finished turn's.
 static CODEX_CAPACITY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"Selected model is at capacity").unwrap());
