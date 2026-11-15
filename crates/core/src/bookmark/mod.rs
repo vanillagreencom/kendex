@@ -131,7 +131,7 @@ impl Bookmark {
     /// same name stay two.
     pub fn identity(&self) -> (String, BookmarkItem, &str) {
         (
-            crate::source_ref::marketplace_identity(&self.repo),
+            crate::source_ref::marketplace_identity(&self.repo, None),
             self.item,
             self.name.as_str(),
         )

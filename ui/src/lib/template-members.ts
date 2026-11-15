@@ -8,13 +8,14 @@ import { sameScope } from "@/lib/scope";
 
 /** What a template records for a package picked in a marketplace: the
  *  repository or folder the subscription points at, and the revision it
- *  reads at — not the alias.
+ *  reads at — not the alias. A folder uses its resolved path because the
+ *  declared spelling belongs to the place that declares it.
  *
  *  An alias is a per-place manifest key and a template belongs to no
  *  place, so two projects spelling one marketplace differently would save
  *  as two different members. `null` where the subscription list has not
- *  answered for this row yet, which is a row that cannot be saved rather
- *  than one saved under a guess.
+ *  answered for this row yet, or its folder has no resolved path, which
+ *  is a row that cannot be saved rather than one saved under a guess.
  *
  *  The revision comes off the same row as the repository, so a pinned
  *  subscription is saved pinned: read again later it could have moved, and
@@ -27,7 +28,7 @@ export function subscribedAt(
   const row = rows.find(
     (one) => one.name === source && sameScope(one.scope, scope),
   );
-  const repo = row?.repo ?? row?.path ?? null;
+  const repo = row?.repo ?? row?.resolvedPath ?? null;
   return repo === null ? null : { repo, rev: row?.rev ?? null };
 }
 

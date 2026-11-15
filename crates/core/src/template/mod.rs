@@ -244,9 +244,16 @@ impl Member {
     /// two strings, and comparing them raw admitted the same package twice
     /// while the row a person could act on named only the first.
     pub fn identity(&self) -> (MemberKind, &str, Option<String>) {
+        self.identity_at(None)
+    }
+
+    fn identity_at(
+        &self,
+        context: Option<(&Env, &crate::manifest::Manifest)>,
+    ) -> (MemberKind, &str, Option<String>) {
         let repo = match &self.source {
             MemberSource::Marketplace { repo, .. } => {
-                Some(crate::source_ref::marketplace_identity(repo))
+                Some(crate::source_ref::marketplace_identity(repo, context))
             }
             MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => None,
         };
@@ -291,6 +298,14 @@ pub enum MemberWhich {
 impl MemberRef {
     /// Whether this reference names that member.
     pub fn names(&self, member: &Member) -> bool {
+        self.names_at(member, None)
+    }
+
+    fn names_at(
+        &self,
+        member: &Member,
+        context: Option<(&Env, &crate::manifest::Manifest)>,
+    ) -> bool {
         if self.kind != member.kind || self.name != member.name {
             return false;
         }
@@ -306,8 +321,8 @@ impl MemberRef {
             // [`Member::identity`] uses, so admission, dedup, grouping and
             // removal all read one value.
             (MemberWhich::Marketplace { repo }, MemberSource::Marketplace { repo: held, .. }) => {
-                crate::source_ref::marketplace_identity(repo)
-                    == crate::source_ref::marketplace_identity(held)
+                crate::source_ref::marketplace_identity(repo, context)
+                    == crate::source_ref::marketplace_identity(held, context)
             }
             (MemberWhich::Copy, MemberSource::Marketplace { .. })
             | (
@@ -584,13 +599,13 @@ pub fn delete(env: &Env, name: &str) -> Result<()> {
 /// template as it now stands.
 pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
     admit(&members)?;
+    let personal = crate::engine::ops::manifest_for_reading(env, &crate::model::Scope::Global)?;
     change(env, name, |template| {
         for member in members {
-            if !template
-                .members
-                .iter()
-                .any(|held| held.identity() == member.identity())
-            {
+            if !template.members.iter().any(|held| {
+                held.identity_at(Some((env, &personal)))
+                    == member.identity_at(Some((env, &personal)))
+            }) {
                 template.members.push(member);
             }
         }
@@ -602,10 +617,13 @@ pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Templa
 /// from the store with it, and so do the customizations that were its.
 pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Template> {
     let before = get(env, name)?;
+    let personal = crate::engine::ops::manifest_for_reading(env, &crate::model::Scope::Global)?;
     let after = change(env, name, |template| {
-        template
-            .members
-            .retain(|held| !members.iter().any(|wanted| wanted.names(held)));
+        template.members.retain(|held| {
+            !members
+                .iter()
+                .any(|wanted| wanted.names_at(held, Some((env, &personal))))
+        });
         // Inside the same change, so the index write carries the members
         // and their settings together: a template that kept a removed
         // package's declarations would inject them into the manifest of

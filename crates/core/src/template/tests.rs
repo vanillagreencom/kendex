@@ -662,3 +662,75 @@ fn folder_bookmarks_keep_their_marketplaces_through_template_actions() {
         );
     }
 }
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn legacy_folder_references_keep_personal_subscription_standing() {
+    let (_tmp, env) = home();
+    let manifest = env.global_manifest_file();
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    for folder in ["catalog", "catalog.git", "owner/catalog.git"] {
+        skill(&env.home.join(folder).join("skills"), "gh", "Body.");
+    }
+    for enabled in [true, false] {
+        fs::write(&manifest, format!(
+            "schema = 8\n[sources.plain]\npath = './catalog/'\nenabled = {enabled}\n[sources.suffixed]\npath = 'catalog.git'\nenabled = {enabled}\n[sources.nested]\npath = 'owner/catalog.git'\nenabled = {enabled}\n"
+        )).unwrap();
+        for (index, (spelling, alias, folder)) in [
+            ("./catalog", "plain", "catalog"),
+            ("catalog/", "plain", "catalog"),
+            ("./catalog.git/", "suffixed", "catalog.git"),
+            ("catalog.git", "suffixed", "catalog.git"),
+            ("owner/catalog.git", "nested", "owner/catalog.git"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let absolute = crate::paths::slashed(&env.home.join(folder));
+            let member = |repo: &str| Member {
+                kind: MemberKind::Skill,
+                name: "gh".to_owned(),
+                enabled: true,
+                source: MemberSource::Marketplace {
+                    repo: repo.to_owned(),
+                    rev: None,
+                },
+            };
+            let name = format!("Legacy {enabled} {index}");
+            let template = create_from_selection(&env, &name, vec![member(spelling)]).unwrap();
+            let index_before = fs::read(env.templates_file()).unwrap();
+            let resolved = resolve(&env, &template).unwrap();
+            assert_eq!(resolved.groups.len(), 1);
+            assert_eq!(resolved.groups[0].source.as_deref(), Some(alias));
+            assert_eq!(resolved.missing.is_empty(), enabled);
+            assert_eq!(fs::read(env.templates_file()).unwrap(), index_before);
+            if !enabled {
+                let before = fs::read(&manifest).unwrap();
+                assert!(matches!(
+                    install(&env, &template, &crate::model::Scope::Global, None, None),
+                    Err(CoreError::TemplateMemberUnavailable { .. })
+                ));
+                assert_eq!(fs::read(&manifest).unwrap(), before);
+            }
+            // An existing relative record and a new scoped producer's
+            // absolute reference are one member, also when removing it.
+            assert_eq!(
+                add_members(&env, &name, vec![member(&absolute)])
+                    .unwrap()
+                    .members,
+                template.members
+            );
+            let emptied = remove_members(
+                &env,
+                &name,
+                &[MemberRef {
+                    kind: MemberKind::Skill,
+                    name: "gh".to_owned(),
+                    which: MemberWhich::Marketplace { repo: absolute },
+                }],
+            )
+            .unwrap();
+            assert!(emptied.members.is_empty());
+        }
+    }
+}

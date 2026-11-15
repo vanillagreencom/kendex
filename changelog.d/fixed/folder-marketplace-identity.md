@@ -1,1 +1,1 @@
-- Keep folder marketplaces whose names differ by `.git` separate in marketplace cards, saved bookmarks and templates.
+- Keep folder marketplaces whose names differ by `.git` separate in marketplace cards, saved bookmarks and templates, including templates saved with relative folder references.

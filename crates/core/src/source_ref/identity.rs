@@ -79,12 +79,55 @@ pub fn repo_identity(repo: &str) -> String {
 
 /// A saved marketplace reference: a folder's resolved, slashed directory
 /// stays literal; repository references retain their host-specific fold.
-/// Bookmarks and templates both store full directory references, so a
-/// repository suffix must not merge two folders in either personal list.
-pub(crate) fn marketplace_identity(reference: &str) -> String {
+/// Legacy templates also hold relative declarations without a source
+/// scope. Their existing personal subscription supplies that context;
+/// otherwise they retain the historical personal-scope reading. Reads
+/// derive this identity without rewriting the stored reference.
+pub(crate) fn marketplace_identity(
+    reference: &str,
+    context: Option<(&crate::env::Env, &crate::manifest::Manifest)>,
+) -> String {
+    if let Some((env, personal)) = context {
+        for decl in personal.sources.values() {
+            let matches = match (&decl.repo, &decl.path) {
+                (Some(repo), _) => {
+                    !crate::source::is_path_identity(reference)
+                        && repo_identity(repo) == repo_identity(reference)
+                }
+                (None, Some(path)) => {
+                    crate::source::declared_path_identity(path)
+                        == crate::source::declared_path_identity(reference)
+                }
+                (None, None) => false,
+            };
+            if matches
+                && let Some(identity) = crate::source_ops::declared_identity(
+                    env,
+                    &crate::model::Scope::Global,
+                    decl.repo.as_deref(),
+                    decl.path.as_deref(),
+                )
+            {
+                return identity;
+            }
+        }
+    }
     let path = std::path::Path::new(reference);
-    if path.is_absolute() {
-        crate::paths::slashed(path)
+    if crate::source::is_path_identity(reference)
+        || matches!(
+            super::parse_typed(reference),
+            Ok(super::SourceRef::Path { .. })
+        )
+    {
+        match context {
+            Some((env, _)) => crate::paths::slashed(&crate::source::path_root(
+                env,
+                &crate::model::Scope::Global,
+                reference,
+            )),
+            None if path.is_absolute() => crate::paths::slashed(path),
+            None => crate::source::declared_path_identity(reference),
+        }
     } else {
         repo_identity(reference)
     }
