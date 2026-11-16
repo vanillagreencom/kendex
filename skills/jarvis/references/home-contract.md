@@ -29,7 +29,7 @@ An app-managed home's file tools can be limited to `state/`; that access grants 
 ## Memory store and index
 
 - The home has one memory store. Notes hold the content under subject headings, following [Notes](memory.md#notes).
-- The home has one memory index at `memory/MEMORY.md`.
+- The home has one memory index at `memory/MEMORY.md`. Once committed, this recovery entry point remains present in the candidate commit; an initial empty home may omit it.
 - Each index row names a note and when to read it. Its location is the note's file and subject heading only. Include no read command in a row.
 - Home files have no size cap.
 
@@ -43,3 +43,9 @@ An app-managed home's file tools can be limited to `state/`; that access grants 
 - A terminal session reads the note with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Subject heading'`, using the file and exact heading from its index row.
 - A session with only search access searches for the subject heading in the named file and reads that section.
 - Read the selected heading and its content. Stop before the next heading of the same or higher level.
+
+## Consumer recovery policy
+
+The consumer owns its index columns and routing layout, memory-directory population, and any requirement that headings be globally unique beyond [Notes](memory.md#notes)' replacement identity rules. It also owns resolution and replacement checks for legacy free-form note identities outside those supported forms. Register these checks in the home's standing instructions when adopting those conventions.
+
+A home that adopts private task files owns their inventory, one-to-one file/record correspondence, unique task records, lifecycle status vocabulary, resumption trigger and result destination, including refusal of a missing task file. The package does not require private task files. Tracker work and State durable-id uniqueness retain their existing owners under [Homes](long-session.md#homes) and [Progress records](long-session.md#progress-records).

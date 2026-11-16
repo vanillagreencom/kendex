@@ -48,6 +48,7 @@ or `progress-log: tracker-unmatched=ID,...` on stderr. Refusal keys, exit 2:
 handoff-missing, handoff-unreadable, section-missing, section-ambiguous.
 """
 import argparse
+from datetime import date
 import fcntl
 import json
 import os
@@ -319,17 +320,23 @@ def home_check(home):
     """
     paths = staged(home, "ls-files", "--cached", "-z", "--", "memory", str(DEFAULT_HANDOFF)).split("\0")
     failures, notes = [], []
+    # An index deletion proves establishment even in an otherwise empty candidate.
+    for name in staged(home, "diff", "--cached", "--diff-filter=D", "--name-only", "--",
+                       "memory/MEMORY.md", str(DEFAULT_HANDOFF)).splitlines():
+        failures.append((name, 1, "recovery-entry-missing", "references/home-contract.md#memory-store-and-index"))
     tracked = {row.split("\t", 1)[1]: row.split(" ", 1)[0]
                for row in staged(home, "ls-files", "--stage", "-z").split("\0") if row}
     for name in dict.fromkeys(path for path in paths if path):
-        if not (name == str(DEFAULT_HANDOFF) or (name.startswith("memory/") and name.endswith(".md")
-                                         and name != "memory/MEMORY.md")):
+        if not (name == str(DEFAULT_HANDOFF) or (name.startswith("memory/") and name.endswith(".md"))):
             continue
         text = staged(home, "show", ":" + name)
         lines = text.splitlines(keepends=True)
         if name == str(DEFAULT_HANDOFF):
-            if not any(title == "Sub-agents" for _, _, title in headings(lines)):
-                failures.append((name, 1, "handoff-sub-agents", "references/long-session.md:34"))
+            for required in ("State", "Sub-agents", "Instructions in force", "Progress log"):
+                count = sum(title == required for _, _, title in headings(lines))
+                if count != 1:
+                    rule = "handoff-sub-agents" if required == "Sub-agents" and count == 0 else "handoff-section"
+                    failures.append((name, 1, rule, "references/long-session.md#handoff"))
             # Handoff replacement's archive requirement applies to an explicit
             # predecessor pointer, never to an inferred generation or date.
             for number, line in enumerate(lines, 1):
@@ -343,14 +350,17 @@ def home_check(home):
             except LookupError:
                 failures.append((name, 1, "state-section", "expected one State section"))
                 continue
-            seen = set()
+            seen, sessions = set(), set()
+            state_start, state_end = section(lines, "State")
+            checkpoints = re.findall(r"(?m)^Checkpoint:.*?\bsession (\S+)", "".join(lines[state_start:state_end]))
             for number, entry in entries:
                 # The writer also accepts named session, wake and ask ids;
                 # legacy entries bind tracker/mailbox/Slack ids anywhere.
                 opening = entry.splitlines()[0]
                 named = re.match(r"^- (\S+):(?: |$)", opening)
                 session = re.search(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
-                if not named and not session and not any(state_ids(entry)):
+                label = re.match(r"^- SESSION (\S+)", opening)
+                if not named and not session and not label and not any(state_ids(entry)):
                     failures.append((name, number, "state-id", "State entry requires a durable id"))
                 tokens = re.findall(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
                 durable = state_ids(opening)
@@ -358,33 +368,80 @@ def home_check(home):
                 if key is not None and key in seen:
                     failures.append((name, number, "state-entry-ambiguous", "references/long-session.md:87"))
                 seen.add(key)
+                # change_state writes the named key followed by a colon delimiter.
+                session_text = named[1] + " " + opening[named.end():] if named else opening
+                explicit = re.findall(r"(?<![\w-])session=(\S+)", session_text)
+                identities = set(explicit + ([label[1]] if label else []))
+                for identity in identities:
+                    if identity in sessions:
+                        failures.append((name, number, "session-ambiguous", "references/long-session.md#handoff"))
+                    sessions.add(identity)
+                if identities and (len(checkpoints) != 1 or identities != {checkpoints[0].rstrip(",;")}):
+                    failures.append((name, number, "session-checkpoint", "references/long-session.md#handoff"))
         else:
             heads = headings(lines)
             for index, (start, level, _) in enumerate(heads):
                 if level != 3:
                     continue
                 end = next((pos for pos, depth, _ in heads[index + 1:] if depth <= level), len(lines))
-                body = "".join(lines[start + 1:end])
+                # Descendant history belongs to that child, never the current subject.
+                current_end = next((pos for pos, _, _ in heads[index + 1:] if pos < end), end)
+                body = "".join(lines[start + 1:current_end])
                 fields = {}
-                for field in ("Source", "Date", "Supersedes"):
+                for field in ("Source", "Date", "Supersedes", "Replaced by"):
                     label = r"(?:%s:|\*\*%s:\*\*|\*\*%s\*\*:)" % (field, field, field)
-                    match = re.search(r"(?<![\w*])" + label + r"[ \t]*(.*?)(?=(?:\*\*)?(?:Source|Date|Supersedes)(?::|\*\*:)|\n|$)", body)
+                    match = re.search(r"(?<![\w*])" + label + r"[ \t]*(.*?)(?=(?:\*\*)?(?:Source|Date|Supersedes|Replaced by)(?::|\*\*:)|\n|$)", body)
                     fields[field] = match[1].strip(" \t;|·") if match else ""
-                    if not fields[field]:
+                    if not fields[field] and field != "Replaced by":
                         failures.append((name, start + 1, "memory-field-" + field.lower(),
                                          "memory note requires " + field))
-                notes.append((name, start + 1, heads[index][2], fields["Supersedes"]))
-    for name, number, _, prior in notes:
-        # Notes defines no reference grammar. Only a plain local path and
-        # optional fragment establish evidence; other forms stay unjudged.
-        for path, fragment in re.findall(r"\[[^]\n]+\]\(([\w./-]*)(?:#([\w-]+))?\)", prior):
+                notes.append((name, start + 1, heads[index][2], fields))
+
+    def resolve(name, reference):
+        """Resolve supported identities; legacy consumer forms return None."""
+        reference = reference.rstrip(".")
+        link = re.fullmatch(r"\[[^]\n]+\]\(([\w./-]*)(?:#([\w-]+))?\)", reference)
+        if link:
+            path, fragment = link.groups()
             if path.startswith("/") or not (path or fragment):
-                continue
+                return None
             target = posixpath.normpath((Path(name).parent / path).as_posix()) if path else name
-            anchors = {re.sub(r"[^\w -]", "", title.lower()).replace(" ", "-")
-                       for other_name, _, title, _ in notes if other_name == target}
-            if target not in tracked or (fragment and fragment not in anchors):
-                failures.append((name, number, "memory-supersedes", "references/memory.md:24"))
+            candidates = [note for note in notes if note[0] == target and
+                          (not fragment or re.sub(r"[^\w -]", "", note[2].lower()).replace(" ", "-") == fragment)]
+            # A file-only legacy link can prove absence, but selects no subject.
+            if not fragment:
+                return [] if target not in tracked else None
+            return candidates
+        if reference.startswith("note="):
+            return [note for note in notes if note[2] == reference[len("note="):]]
+        return None
+
+    for name, number, title, fields in notes:
+        prior = fields["Supersedes"].rstrip(".")
+        if prior.startswith("prior-version: "):
+            previous = prior[len("prior-version: "):]
+            try:
+                valid = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", previous)) and (
+                    date.fromisoformat(previous) < date.fromisoformat(fields["Date"].rstrip(".")))
+            except ValueError:
+                valid = False
+            if not valid:
+                failures.append((name, number, "memory-self-date", "references/memory.md#notes"))
+        else:
+            targets = resolve(name, prior)
+            if targets is not None:
+                if len(targets) != 1:
+                    failures.append((name, number, "memory-supersedes", "references/memory.md#notes"))
+                elif targets[0][:3] == (name, number, title):
+                    failures.append((name, number, "memory-self-date", "references/memory.md#notes"))
+                else:
+                    replacement = resolve(targets[0][0], targets[0][3]["Replaced by"])
+                    if replacement is None or [row[:3] for row in replacement] != [(name, number, title)]:
+                        failures.append((name, number, "memory-replaced-current", "references/memory.md#notes"))
+        if fields["Replaced by"]:
+            targets = resolve(name, fields["Replaced by"])
+            if targets is None or len(targets) != 1 or targets[0][:3] == (name, number, title):
+                failures.append((name, number, "memory-replacement", "references/memory.md#notes"))
     for name, number, rule, detail in failures:
         print("progress-log: file=%s line=%d rule=%s %s" % (name, number, rule, detail), file=sys.stderr)
     return 1 if failures else 0

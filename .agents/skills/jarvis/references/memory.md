@@ -14,7 +14,7 @@ Read a named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'He
 
 For a request to remember a fact or establish a workstream, start at [Personal additions](home-contract.md#personal-additions), the addition route that selects the record's existing owner. Read this section for the note's fields and index update.
 
-- Put each note under its own `###` heading naming one subject.
+- Put each note under its own `###` heading naming one subject. Its Source, Date and Supersedes fields belong before any child heading; History fields cannot supply current metadata. This also applies to a subject note in the memory index.
 - When you create or update a note, add or update its index row under the [home contract](home-contract.md).
 
 | Field | Content |
@@ -22,6 +22,8 @@ For a request to remember a fact or establish a workstream, start at [Personal a
 | Source | The user statement or original record that supports the note. |
 | Date | When the fact was checked or the user gave the ruling. Read the clock under [verification.md:Sources](verification.md#sources). |
 | Supersedes | The prior note this replaces, or none. |
+
+For notes claiming replacement, use these identities in Supersedes and replacement pointers: `note=EXACT HEADING`, or a local Markdown link `[label](file.md#heading-anchor)` with an optional file for a same-file heading. Each identity resolves to exactly one subject. A heading identity searches the memory store; a file-qualified link permits equal headings in different files. Duplicate matching headings in one file are ambiguous. For replacement of the same subject in place, use `prior-version: YYYY-MM-DD` in Supersedes, with a valid prior checked date earlier than the current Date. A replaced subject carries `Replaced by: IDENTITY` before any child heading, pointing to the replacing subject. A Supersedes pointer to another subject requires that subject's replacement pointer to point back. A plain current note with Supersedes set to none needs no replacement field. Legacy free-form identities retain the consumer's resolution and replacement checks under [Consumer recovery policy](home-contract.md#consumer-recovery-policy).
 
 | Category | Holds |
 |---|---|
