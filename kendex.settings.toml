@@ -290,10 +290,6 @@ QUEUE_WAIT_REACH_CMD = "tools/ci-reach"
 # skills/orch/references/artifact-checks.md.
 DEV_VALIDATE_FINDING_PREFIX = "guard: "
 
-# The bound on either run, in whole seconds; what happens past it, and the
-# wait derived from it: `orch-runtime validate entry --help`.
-DEV_VALIDATE_TIMEOUT_SECS = "3600"
-
 # Whether `tools/guard --full` runs the macOS and Windows cross-target checks
 # and cargo doc: "run" runs them unless the branch provably touched no crate,
 # no workspace compiler input and no file compiled code includes; "ci" leaves

@@ -3,10 +3,11 @@
 //! read in its pane's foreground, on the ground the close intent recorded. A
 //! live harness is asked for its unanswered asks first, a `no-landing`
 //! disposition stops only the attempt's own identity and only idle, unless
-//! it interrupts a turn (a model switch), where the ask guard alone stands;
-//! the worktree's validation runs are ended before the window closes, and the
-//! worktree itself is released after it, or kept with its reason on the lane
-//! record. Every
+//! it interrupts a turn (a model switch), where the ask guard alone stands,
+//! and keeps the worktree and its validation runs for the session that takes
+//! the item over; on every other ground the worktree's validation runs are
+//! ended before the window closes, and the worktree itself is released after
+//! it, or kept with its reason on the lane record. Every
 //! handle the lane records is an obligation of the close intent's set, read
 //! and discharged through the operation handle, which acts only on a standing
 //! token. The lane's launch record is read once, at the open's bootstrap; the
@@ -65,11 +66,13 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     if operation.lane_moved(&lane) {
         return moved_lane(run, operation, close.overseer, close.observed(json!({})));
     }
-    // The worktree's validation runs are owed from the close's start,
-    // acquired before the first signal; so is the worktree itself, except
-    // under a `no-landing` disposition, which keeps the attempt's work.
-    operation.owe_validation()?;
+    // The worktree's validation runs and the worktree itself are owed from
+    // the close's start, acquired before the first signal, except under a
+    // `no-landing` disposition: it retires the attempt for the session that
+    // takes the item over, which keeps the worktree and its runs with their
+    // stage bindings and end notices.
     if !close.no_landing() {
+        operation.owe_validation()?;
         operation.owe_worktree(&lane)?;
     }
     // The harness is the set's, by role, never the lane's launch record.
@@ -338,16 +341,19 @@ impl Close<'_> {
 
     /// The close of what remains once every process the close names has
     /// ended: the worktree's validation runs are stopped, whose answer
-    /// discharges that obligation, then the set's standing window is closed,
-    /// then the worktree is released or kept with its reason, then the
-    /// obligations are judged. A validation stop or a handle that did not
-    /// settle leaves the lane, with the cause, for a repeated close.
+    /// discharges that obligation, unless a `no-landing` disposition keeps
+    /// them, then the set's standing window is closed, then the worktree is
+    /// released or kept with its reason, then the obligations are judged. A
+    /// validation stop or a handle that did not settle leaves the lane, with
+    /// the cause, for a repeated close.
     fn finish(
         &self,
         mut operation: LaneOperation,
         mut observation: Value,
     ) -> Result<EffectOutcome> {
-        if let Err(cause) = operation.stop_validations(self.lane)? {
+        if !self.no_landing()
+            && let Err(cause) = operation.stop_validations(self.lane)?
+        {
             observation["validate"] = json!("stop-failed");
             observation["cause"] = json!(cause);
             return Ok(self.hold(operation, observation));

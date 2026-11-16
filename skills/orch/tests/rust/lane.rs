@@ -1674,7 +1674,8 @@ fn a_launch_below_standard_after_its_miss_is_refused_until_one_at_standard_confi
 /// whose recorded harness is gone retires the attempt and keeps the item's
 /// work: the lane reads stopped with its pending return, parked record,
 /// launch, recovery route and counter, the log row carries the disposition,
-/// and the retired
+/// the worktree's unfinished validation run goes on unstopped for the
+/// session that takes the item over, and the retired
 /// attempt charges nothing.
 #[test]
 fn a_no_landing_disposition_retires_the_attempt_and_keeps_the_work() {
@@ -1685,6 +1686,7 @@ fn a_no_landing_disposition_retires_the_attempt_and_keeps_the_work() {
     lane["parked"] = json!({"head": "abc", "repo": "o/r", "at": "2026-10-24T20:00:00Z"});
     fleet.write_lanes(vec![lane]);
     end(&mut harness);
+    let (command, run_dir) = validation_run(fleet.state_dir());
     let before = fleet.lane("KEN-A");
     let disposition = json!({
         "op": "close-owned-resources",
@@ -1696,6 +1698,10 @@ fn a_no_landing_disposition_retires_the_attempt_and_keeps_the_work() {
     let report = &answer["result"]["effect"]["report"];
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["intent"]["close"]["ground"], "no-landing");
+    assert!(
+        live(command.pid()) && !run_stopped(&run_dir),
+        "the worktree's validation run goes on"
+    );
     let mut kept = before.clone();
     kept["status"] = json!("stopped");
     assert_eq!(
