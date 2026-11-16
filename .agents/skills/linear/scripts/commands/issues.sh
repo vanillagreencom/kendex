@@ -2008,7 +2008,7 @@ resolve_issue_update_state() {
 require_unsynced_description() {
     local issue_id="$1" issue_result="$2" formatted links
     formatted=$(format_issue_single "$issue_result") || return 1
-    links=$(jq -r '.github_sync | join(",")' <<<"$formatted") || return 1
+    links=$(jq -r '(.github_sync // []) | join(",")' <<<"$formatted") || return 1
     if [ -n "$links" ]; then
         printf 'linear: refused=synced-description issue=%s github=%s override=--synced-description\n' "$issue_id" "$links" >&2
         return 1

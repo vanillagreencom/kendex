@@ -28,7 +28,9 @@ issue=$(jq -cn --arg id "$(jq -r '.variables.id // "PROJ-1"' <<<"$payload")" --a
    inverseRelations: {nodes: [], pageInfo: {hasNextPage: false}},
    syncedWith: (if $mode == "synced" and $id != "PROJ-0" then
      [{metadata: {owner: "Reporter", repo: "Project", number: 42}}]
-     elif $mode == "other" then [{metadata: {}}] else [] end)}')
+     elif $mode == "other" then [{metadata: {}}]
+     elif $mode == "null" then null else [] end)}
+  | if $mode == "absent" then del(.syncedWith) else . end')
 case "$query" in
   *'issueUpdate(id:'*) result=$(jq -cn --argjson issue "$issue" '{issueUpdate: {success: true, issue: $issue}}') ;;
   *'issue(id:'*) result=$(jq -cn --argjson issue "$issue" '{issue: $issue}') ;;
@@ -51,7 +53,10 @@ while IFS='|' read -r name action mode form override expected; do
     empty) args+=(--description=) ;;
     file) args+=(--description-file "$TMP_ROOT/body.md") ;;
     file-equals) args+=(--description-file="$TMP_ROOT/body.md") ;;
-    fields) args+=(--title renamed --clear-labels --remove-parent) ;;
+    fields)
+      args+=(--title renamed --remove-parent)
+      [[ "$action" != update ]] || args+=(--clear-labels)
+      ;;
   esac
   [[ "$override" != yes ]] || args+=(--synced-description)
   log="$TMP_ROOT/requests"
@@ -93,6 +98,10 @@ flagged-file|update|synced|file|yes|pass
 flagged-bulk|bulk-update|synced|inline|yes|pass
 unsynced|update|none|inline|no|pass
 unsynced-bulk|bulk-update|none|inline|no|pass
+null-sync|update|null|inline|no|pass
+null-sync-bulk|bulk-update|null|inline|no|pass
+absent-sync|update|absent|inline|no|pass
+absent-sync-bulk|bulk-update|absent|inline|no|pass
 other-sync|update|other|inline|no|pass
 fields|update|synced|fields|no|pass
 bulk-fields|bulk-update|synced|fields|no|pass
