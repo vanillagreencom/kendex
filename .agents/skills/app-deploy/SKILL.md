@@ -48,7 +48,7 @@ A dispatch whose requested version has a SemVer pre-release identifier (`v1.0.0-
 
 ## Main channel
 
-Each completed `main` build publishes all assets under an immutable `main-build-<run>-<attempt>-<commit>` tag, then replaces the single `feed.json` pointer on the pre-release named `main` at the fixed `rolling-main` tag. `kendex update --git` and `install.sh --git` resolve the pointer once, so one install cannot combine two builds, and a binary installed from it stays on this channel. One workflow group holds a main run through all targets, publication and the channel update; a newer push replaces only an older wholly pending workflow. If the `rolling-main` release exists without `feed.json`, delete that empty release and rerun the newest main workflow; the publisher treats only a missing release as a fresh channel.
+Each completed `main` build publishes all assets under an immutable `main-build-<run>-<attempt>-<commit>` tag, then replaces the single `feed.json` pointer on the pre-release named `main` at the fixed `rolling-main` tag. `kendex update --git` and `install.sh --git` resolve the pointer once, so one install cannot combine two builds, and a binary installed from it stays on this channel. One workflow group holds a main run through all targets, publication and the channel update. It queues up to 100 pending runs so a push without release inputs cannot replace a pending source build; GitHub cancels additional arrivals when that queue is full. If the `rolling-main` release exists without `feed.json`, delete that empty release and rerun the newest main workflow; the publisher treats only a missing release as a fresh channel.
 
 ## Secrets
 

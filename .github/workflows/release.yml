@@ -46,10 +46,14 @@ env:
 
 # Hold the whole main run through publication: a pending matrix target can
 # otherwise be replaced even when another target of that run is building.
+# Queue main pushes so a later no-input push cannot replace a pending source
+# build. GitHub's queue:max holds up to 100 pending workflow runs:
+# https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
 # Release dispatches get unique workflow groups and job-level groups.
 concurrency:
   group: release-workflow-${{ github.event_name == 'push' && github.ref || github.run_id }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # Environment admission judges the run ref, not the checkout. A dispatch

@@ -589,6 +589,9 @@ fn later_pushes_never_cancel_running_builds_or_publication() {
 /// from replacing those pending targets and making publication impossible.
 /// The real workflow must hold one main group across all jobs, including
 /// publication and the channel update. Tag runs must keep separate groups.
+/// Later no-input pushes must also keep pending source-build runs: queue:max
+/// retains up to 100 pending runs, beyond which GitHub cancels new arrivals.
+/// https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
 #[test]
 fn a_main_run_holds_its_pending_targets_until_publication() {
     let workflow = workflow();
@@ -606,10 +609,15 @@ fn a_main_run_holds_its_pending_targets_until_publication() {
             Some("false"),
             "a main push can cancel the active workflow"
         );
+        assert_eq!(
+            concurrency_value(&lines, "queue", 0),
+            Some("max"),
+            "a no-input main push can replace a pending source-build workflow"
+        );
     };
     check(&workflow);
 
-    let block = format!("concurrency:\n  group: {group}\n  cancel-in-progress: false\n");
+    let block = format!("concurrency:\n  group: {group}\n  cancel-in-progress: false\n  queue: max\n");
     assert_eq!(workflow.matches(&block).count(), 1);
     // Preserve every matched line in a shell no-op. Removing just the outer
     // block recreates the live mixed running/pending case: all job groups
@@ -633,15 +641,20 @@ fn a_main_run_holds_its_pending_targets_until_publication() {
         ("pending matrix target", String::new()),
         (
             "shared main group",
-            "concurrency:\n  group: release-workflow-${{ github.run_id }}\n  cancel-in-progress: false\n".to_owned(),
+            block.replace(group, "release-workflow-${{ github.run_id }}"),
         ),
         (
             "isolated tags",
-            "concurrency:\n  group: release-workflow-${{ github.ref }}\n  cancel-in-progress: false\n".to_owned(),
+            block.replace(group, "release-workflow-${{ github.ref }}"),
         ),
         (
             "active workflow",
             block.replace("cancel-in-progress: false", "cancel-in-progress: true"),
+        ),
+        ("pending source build", block.replace("  queue: max\n", "")),
+        (
+            "single pending workflow",
+            block.replace("queue: max", "queue: single"),
         ),
     ] {
         assert_eq!(with_decoy.matches(&block).count(), 1);
@@ -649,6 +662,7 @@ fn a_main_run_holds_its_pending_targets_until_publication() {
         assert_ne!(with_decoy, mutant);
         assert!(mutant.contains(group), "{rule} lost the matched text");
         assert!(mutant.contains("cancel-in-progress: false"));
+        assert!(mutant.contains("queue: max"));
         assert!(
             std::panic::catch_unwind(|| check(&mutant)).is_err(),
             "{rule}"
