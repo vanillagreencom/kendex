@@ -414,10 +414,17 @@ while IFS='|' read -r name action issue file expected; do
   run_linear issues "$action" "$issue" --attach "$TMP_ROOT/$file"
   if [[ "$expected" == valid ]]; then
     assert_eq "$name: attachment succeeds" "$RC" 0
+    if [[ "$action" == bulk-update && "$file" == shot.png ]]; then
+      assert_log "$name: live lookup precedes upload" \
+        'length == 5 and all(.[0:2][]; .query | contains("query GetIssue("))
+          and (.[2].query | contains("fileUpload(")) and .[3].put != null
+          and (.[4].query | contains("issueUpdate("))'
+    else
     assert_log "$name: live lookup precedes upload" \
       'length == 4 and (.[0].query | contains("query GetIssue("))
         and (.[1].query | contains("fileUpload(")) and .[2].put != null
         and (.[3].query | contains("issueUpdate(") or contains("attachmentCreate("))'
+    fi
   else
     assert_ne "$name: missing issue refuses the attachment" "$RC" 0
     assert_log "$name: lookup is the only request, with no upload or mutation" \

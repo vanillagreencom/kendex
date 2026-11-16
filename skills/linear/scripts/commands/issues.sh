@@ -209,6 +209,10 @@ Update Options:
                         LINEAR_REQUIRE_REACH empty; otherwise the opening
                         and stored-body owner-action rules above apply.
   --description-file <path>  Read new description from file (preferred for markdown)
+  --synced-description  Allow update/bulk-update/complete to write a description
+                        shared with a GitHub issue by Linear sync, including
+                        image appends and completion checklist/evidence edits.
+                        Otherwise refused before any upload or write.
   --project <name|uuid> Move to project (name or UUID, auto-resolved)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
@@ -830,6 +834,8 @@ bulk_update_issues() {
     local update_args=()
     local attach_paths=()
     local description="" description_set="false" state="" project=""
+    local description_write="false"
+    local synced_description="false"
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -863,6 +869,11 @@ bulk_update_issues() {
                 description="$_val"
                 description_set="true"
             fi
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
+            update_args+=("$1")
             shift
             ;;
         --remove-parent | --clear-cycle | --clear-estimate)
@@ -904,6 +915,7 @@ bulk_update_issues() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
+    description_write=$(issue_description_write "$description_set" ${attach_paths[@]+"${attach_paths[@]}"}) || return 1
     # Each issue's update repeats this check against its stored body and prints
     # its own advisories; this pass keeps only a refusal, before any write.
     if [[ "$description_set" == "true" ]]; then
@@ -925,7 +937,7 @@ bulk_update_issues() {
     # update_issue still refuses per issue in the write loop below (a
     # --milestone missing from that issue's project, a label for that issue's
     # team), after earlier issues are written. This loop reads each issue at
-    # most once, and only when the state check or the issue's team needs it:
+    # most once when the state, description write or project lookup needs it:
     # the guard above pins every issue to LINEAR_TEAM when one is set. The map
     # project is judged in each issue's own team; issue_project_id keeps each
     # team's result for the update_issue subshells below.
@@ -934,14 +946,15 @@ bulk_update_issues() {
         linear_own_team || return 1
         own_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
     fi
-    if [[ -n "$state" || -n "$project_map" ]]; then
+    if [[ -n "$state" || -n "$project_map" || ( "$description_write" == true && "$synced_description" == false ) ]]; then
         local preflight_failed=0 issue_result effective_description team_id
         for id in "${identifiers[@]}"; do
             issue_result=""
-            if [[ -n "$state" || -z "$own_team_id" ]] && ! issue_result=$(get_issue "$id" --format=raw); then
+            if [[ -n "$state" || -z "$own_team_id" || "$description_write" == true ]] && ! issue_result=$(get_issue "$id" --format=raw); then
                 preflight_failed=1
                 continue
             fi
+            require_unsynced_description "$id" "$issue_result" "$description_write" "$synced_description" || preflight_failed=1
             if [ -n "$state" ]; then
                 effective_description="$description"
                 if [ "$description_set" != true ]; then
@@ -1991,6 +2004,37 @@ resolve_issue_update_state() {
     jq -r '.id' <<<"$resolved"
 }
 
+# Uploads use this same content-type classifier when deciding which files
+# append embeds to the description rather than creating separate attachments.
+issue_description_write() {
+    local description_set="$1" content_type path
+    shift
+    if [ "$description_set" = true ]; then
+        printf 'true\n'
+        return 0
+    fi
+    for path in "$@"; do
+        content_type=$(attach_upload_content_type "$path") || return 1
+        case "$content_type" in
+        image/*) printf 'true\n'; return 0 ;;
+        esac
+    done
+    printf 'false\n'
+}
+
+# Linear's GitHub sync propagates description writes to the linked issue.
+# Use the formatter's existing sync classification for updates and completion.
+require_unsynced_description() {
+    local issue_id="$1" issue_result="$2" description_write="$3" consent="$4" formatted links
+    [[ "$description_write" == true && "$consent" == false ]] || return 0
+    formatted=$(format_issue_single "$issue_result") || return 1
+    links=$(jq -r '(.github_sync // []) | join(",")' <<<"$formatted") || return 1
+    if [ -n "$links" ]; then
+        printf 'linear: refused=synced-description issue=%s github=%s override=--synced-description\n' "$issue_id" "$links" >&2
+        return 1
+    fi
+}
+
 update_issue() {
     local issue_id="$1"
     shift
@@ -2001,6 +2045,7 @@ update_issue() {
     local description=""
     local description_set="false"
     local description_file=""
+    local synced_description="false"
     local project=""
     local priority=""
     local assignee=""
@@ -2091,6 +2136,10 @@ update_issue() {
         --description=*)
             description="${1#*=}"
             description_set="true"
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
             shift
             ;;
         --description-file)
@@ -2247,6 +2296,9 @@ update_issue() {
     # Get issue to find its team for state and label lookup - use raw format
     local issue_result
     issue_result=$(get_issue "$issue_id" --format=raw) || return 1
+    local description_write
+    description_write=$(issue_description_write "$description_set" ${attach_paths[@]+"${attach_paths[@]}"}) || return 1
+    require_unsynced_description "$issue_id" "$issue_result" "$description_write" "$synced_description" || return 1
     # The header shape is judged against the stored body, which an owner
     # action line may be placed on, replaced on or removed from. The sentinel
     # keeps the stored body's trailing newlines through the capture.
@@ -2356,16 +2408,8 @@ update_issue() {
     # seed it from the issue's current one so the embed is an append, not a
     # wipe. Non-images queue for attachmentCreate after the update.
     if [ ${#attach_paths[@]} -gt 0 ]; then
-        if [[ "$description_set" == "false" ]]; then
-            local has_image_attach=0 attach_probe
-            for attach_probe in "${attach_paths[@]}"; do
-                case "$(attach_upload_content_type "$attach_probe")" in
-                image/*) has_image_attach=1 ;;
-                esac
-            done
-            if [ "$has_image_attach" = "1" ]; then
-                description=$(echo "$issue_result" | jq -r '.issue.description // empty')
-            fi
+        if [[ "$description_set" == false && "$description_write" == true ]]; then
+            description=$(jq -r '.issue.description // empty' <<<"$issue_result") || return 1
         fi
         upload_attach_paths "${attach_paths[@]}" || return $?
     fi
@@ -3550,7 +3594,8 @@ complete_issue() {
     local issue_id="$1"
     shift
 
-    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>] [--done-when-waived <N[,N...]>] [--done-when-superseded <N[,N...]>] [--evidence-file <path>] [--post-merge-at <UTC>]"
+    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>] [--done-when-waived <N[,N...]>] [--done-when-superseded <N[,N...]>] [--evidence-file <path>] [--post-merge-at <UTC>] [--synced-description]"
+    local synced_description="false"
     local summary=""
     local summary_file=""
     local done_when_met=""
@@ -3570,6 +3615,10 @@ complete_issue() {
         --format=*)
             output_format="${1#*=}"
             linear_require_format "$output_format" ids || return 1
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
             shift
             ;;
         --evidence-file)
@@ -3825,9 +3874,11 @@ complete_issue() {
     if jq -e '.changed' <<<"$tick" >/dev/null; then
         local ticked_description
         ticked_description=$(jq -r '.description + "."' <<<"$tick") || return 1
+        require_unsynced_description "$issue_id" "$issue_result" true "$synced_description" || return 1
         update_args+=(--description "${ticked_description%.}")
     fi
 
+    [ "$synced_description" != true ] || update_args+=(--synced-description)
     update_args+=(--state "$completion_state")
 
     if [ -n "$summary" ]; then
@@ -3871,6 +3922,7 @@ complete_issue() {
             # The retry drops only the summary options: the comment is posted,
             # and the Done-when boxes still ride the update that sets Done.
             local retry="'issues.sh complete $issue_id"
+            [ "$synced_description" != true ] || retry+=" --synced-description"
             if [ -n "$done_when_met" ]; then
                 retry+=" --done-when-met $done_when_met"
             fi
@@ -3902,6 +3954,7 @@ complete_issue() {
         replacement=$(jq -er '.issue.identifier' <<<"$issue_result") || return 1
         if ! complete_superseded_issues "$replacement" ${superseded_ids[@]+"${superseded_ids[@]}"}; then
             local retry_options='[]'
+            [ "$synced_description" != true ] || retry_options='["--synced-description"]'
             if [ -n "$done_when_met" ]; then
                 retry_options=$(jq -c --arg value "$done_when_met" '. + ["--done-when-met", $value]' <<<"$retry_options") || return 1
             fi
