@@ -4,7 +4,7 @@ What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md);
 
 ## One definition each
 
-- `scripts/commit-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`, and `--skip-unscoped` withholds the ones a caller that stages nothing leaves nothing for — which lanes defer to the shared markdown selector read off their own scripts, what that selector resolves to asked of `lib/md-scope.sh`. It also withholds `PUSH_WITHHELD_CHECKS`, which names the checks owned by commit or CI.
+- `scripts/commit-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`, and `--skip-unscoped` withholds `PUSH_WITHHELD_CHECKS`, which names the checks owned by commit or CI, independent of scope or Markdown settings.
 - `scripts/lib/common.sh` holds the shared scan helpers, `gg_content_carriers` and `gg_grep_lane`. `scripts/lib/messages.sh` emits a stable key and value before the English explanation and owns the collection-error exit.
 - `scripts/lib/configured-paths.sh` holds a glob-list lane's list, excludes, matcher, index walk and `gg_note_skip`.
 - `scripts/lib/staged-lines.sh` is `gg_added_lines`, the lines the staged diff or a commit range adds to one path, off one pinned `-U0` diff.
@@ -67,7 +67,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 `scripts/pre-commit` judges one commit snapshot: staged content, with tracked configuration read from the index. Order:
 
-1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a silent skip where neither exists. An installed copy that does not complete is a step that did not complete, and blocks. `scripts/lib/siblings.sh` owns resolution for both hooks. Pre-push does not repeat doc-limits.
+1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a silent skip where neither exists. An installed copy that does not complete is a step that did not complete, and blocks. `scripts/lib/siblings.sh` owns companion resolution for this chain.
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
 3. One review-file check, resolved the same way: `github-repository-settings check --staged` when that package resolves, otherwise `bot-instructions check --staged` when installed. A failing or unrunnable selected owner never falls back. Both packages use the bot-instructions record protocol. Its attested `unconfigured` result prints `not-adopted=` under the selected package's name and passes at exit 0 or the older exit 2. The second library record must be `bot-instructions: renders=none`; bot-instructions' `schemas/validators.md` § `orphan` owns that proof. The wrapper's preceding check-location record stays visible.
 4. `commit-guards all --staged`.

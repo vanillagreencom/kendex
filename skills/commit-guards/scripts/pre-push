@@ -196,8 +196,7 @@ local_boundary() { # VAR WHY LOCAL-OID — VAR gets the base, WHY the cause abov
   # Where none does — a branch cut from one published branch that merged
   # another — the default branch decides, using default_base. With
   # no usable default branch the base is the survivors' common ancestor, so
-  # the branch is still judged over a range: the whole tree hands the range
-  # lanes no history, and changelog-entries would pass the branch's own major.
+  # destination comparison still has a baseline for byte-ceiling's ratchet.
   #
   # A remote spelled as a URL rather than as a name (`git push https://... main`)
   # has no remote.<name>.url entry, so tracking_describes_push fails and the

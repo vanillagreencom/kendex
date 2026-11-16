@@ -119,7 +119,7 @@ COMMIT_OUT="$(git -C "$NONREPEAT" commit -qm 'feat: commit through armed hooks' 
 }
 COMMIT_STEPS="$(printf '%s\n' "$COMMIT_OUT" | awk '/^commit-guards: step=/ { sub(/^commit-guards: step=/, ""); sub(/ .*/, ""); print }' | paste -sd ' ' -)"
 assert_eq "armed pre-commit runs every default content check" \
-  'suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets' "$COMMIT_STEPS"
+  'conflict-markers changelog-entries md-type md-refs py-names secrets' "$COMMIT_STEPS"
 PUSH_RC=0
 PUSH_OUT="$(git -C "$NONREPEAT" push origin main 2>&1)" || PUSH_RC=$?
 assert_eq "the armed commit pushes successfully" 0 "$PUSH_RC"

@@ -31,7 +31,7 @@ GG_CHECK="commit-guards"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
-# The owner of COMMIT_GUARDS_MD_SCOPE's meaning, for --skip-unscoped below.
+# The owner of COMMIT_GUARDS_MD_SCOPE's meaning, for range selection below.
 # Sourcing it defines gg_md_bare_scope and two constants and does nothing
 # else; the selecting helpers it also defines go unused here.
 # shellcheck source=lib/md-scope.sh
@@ -65,11 +65,9 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # md-type takes the range under every setting: CHANGE_SCOPED_CHECKS below.
 RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-type md-refs py-names secrets"
 # The markdown lanes whose verdict compares a change with its base: a
-# finding blocks only where the change raised its count. A whole-tree sweep
-# at push, where the index equals HEAD, finds nothing introduced, so these
-# take the range a caller hands under every COMMIT_GUARDS_MD_SCOPE, as
-# byte-ceiling does, and a --skip-unscoped run that hands no range withholds
-# them under every setting: their bare run compares the index with HEAD.
+# finding blocks only where the change raised its count. Their bare run
+# compares the index with HEAD, so these take the range a caller hands under
+# every COMMIT_GUARDS_MD_SCOPE, as byte-ceiling does.
 CHANGE_SCOPED_CHECKS="md-type"
 # Checks this package no longer ships, read until its next major release: a
 # setting or a call naming one is dropped with one retired-check warning,
@@ -80,8 +78,8 @@ RETIRED_CHECKS="md-format todo-ban prose comments suppression-ban"
 # the range lands on: changelog-entries asks which version increases the
 # branch made, md-type which shape findings it introduced. A caller that
 # knows that base hands it as --history, and these lanes take --against it in
-# place of the range: the push hook's remote head can predate base commits
-# the branch carries, which it never authored.
+# place of the range: a destination can predate base commits the branch
+# carries, which it never authored.
 HISTORY_SCOPED_CHECKS="changelog-entries md-type"
 # Push repeats no content check owned by pre-commit or range check owned by
 # merge-group CI. Only enabled byte-ceiling judges a distinct destination.
@@ -267,24 +265,9 @@ case "$CHECKS" in
     ;;
 esac
 
-# A check whose CONFIGURED scope selects from the staged diff reads nothing
-# at all under a caller that stages nothing: it reports a count of zero and a
-# clean verdict over content it never opened, which is the verdict about
-# nothing this dispatcher exists not to give. A caller that knows its scope
-# stages nothing asks for those to be withheld; each is named here, and the
-# verdict record below lists only the checks that ran.
-#
-# Two questions, and neither answers the other. WHICH checks take their bare
-# scope from the shared markdown selector is asked of each check's own script,
-# rather than listed here, so a lane that starts deferring to it later cannot
-# slip past either decision below in silence. WHAT that selector would resolve
-# to is asked of the selector itself, because deferring to it says where the
-# answer comes from and not what it is.
-#
-# Both decisions read both answers. A lane is withheld only where its bare
-# scope opens no file, and handed a RANGE only where a range is not narrower
-# than the scope the project configured — under `all` it is, and the sweep
-# wins.
+# A range must not narrow a lane's configured whole-tree scope. Ask the
+# lane's own script whether it uses the shared Markdown selector, and ask
+# that selector what its bare scope resolves to.
 MD_SELECTOR="lib/md-scope.sh"
 
 defers_to_md_selector() { # CHECK — 0 when the check takes its bare scope from the selector
@@ -296,7 +279,7 @@ defers_to_md_selector() { # CHECK — 0 when the check takes its bare scope from
 }
 
 # What a bare run of such a lane resolves to, resolved once on FIRST NEED and
-# kept, so both decisions below read one value and cannot disagree.
+# kept for subsequent scope selections.
 #
 # Lazily, and that is the point rather than an optimization: gg_md_bare_scope
 # refuses an invalid COMMIT_GUARDS_MD_SCOPE, and a run that never needed the
@@ -312,9 +295,8 @@ md_bare_scope() { # -> the answer in MD_BARE_SCOPE
   gg_md_bare_scope MD_BARE_SCOPE
 }
 
-# The scope this run hands ONE check, in SCOPE. Read by the withholding pass
-# and by the run loop, so the two cannot disagree about what a check was
-# given. Bash 3.2: an empty array expands guarded at every use.
+# The scope this run hands ONE check, in SCOPE.
+# Bash 3.2: an empty array expands guarded at every use.
 SCOPE=()
 scope_for() { # CHECK
   SCOPE=()

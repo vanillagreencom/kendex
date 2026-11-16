@@ -134,27 +134,6 @@ staged_batch() { # NAME — a committed 300 KB binary, and a staged change that 
 # end.
 UNENDED='```\nunclosed\n'
 fx_staged_md() { staged_batch staged-md; put doc.md "$UNENDED"; }
-# A committed, unended document and nothing staged: the markdown lanes
-# select their files from the staged diff, so an unflagged batch opens it
-# never and calls the tree clean.
-fx_committed_md() { # NAME
-  clean "$1"
-  put doc.md "$UNENDED"
-  commit
-}
-# A committed dead reference md-refs judges, and nothing staged.
-fx_committed_refs() { # NAME
-  clean "$1"
-  put AGENTS.md '# Agents\n\nSee [the guide](missing.md).\n'
-  commit
-}
-# A committed README holding a value table, and nothing staged: md-type's
-# bare run measures it against HEAD, the commit that added it.
-fx_committed_table() { # NAME
-  clean "$1"
-  put README.md '# Tool\n\nA tool.\n\n## Setup\n\n\174 Key \174 Default \174\n\174---\174---\174\n\174 a \174 1 \174\n'
-  commit
-}
 full_scope() { repo "$1"; put big.txt "\0$(head -c 2047 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
 # An unended document committed BEFORE the base tag, then one commit that
 # touches no markdown: the range since base excludes the document entirely.

@@ -1715,9 +1715,8 @@ jobs:
   markdown:
     # The range scans check the change against the merge group's base: md-type
     # refuses a shape finding the group introduced, md-refs a dead reference.
-    # This required check prevents a hook bypass from putting Markdown on main
-    # that the next local push must refuse. CI requires it on every merge
-    # group.
+    # This required check catches Markdown findings in commits that bypassed
+    # the local hooks. CI requires it on every merge group.
     name: Markdown (shape + references)
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
