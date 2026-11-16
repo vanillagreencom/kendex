@@ -56,10 +56,11 @@ try:
     assert datetime.timedelta(0) <= now - saved_at <= datetime.timedelta(hours=24)
     # GitHub allows rerun requests for 30 days, then waiting or running for 35.
     # Read that whole window, independent of list order. Partition it
-    # so an hourly caller stays below GitHub's 1,000-result search cap.
-    split = saved_at - datetime.timedelta(days=30)
+    # so busy hourly callers stay below GitHub's 1,000-result search cap.
+    start = saved_at - datetime.timedelta(days=65)
     history = {}
-    for start, end in ((saved_at - datetime.timedelta(days=65), split), (split, now)):
+    while start < now:
+        end = min(start + datetime.timedelta(days=7), now)
         query = urllib.parse.urlencode(dict(branch=os.environ['DEFAULT_BRANCH'],
                                             created=start.isoformat() + '..' + end.isoformat(), per_page=100))
         pages = json.loads(command('gh', 'api', '--paginate', '--slurp',
@@ -70,6 +71,7 @@ try:
         for recent in batch:
             assert recent['id'] not in history or history[recent['id']] == recent
             history[recent['id']] = recent
+        start = end
     assert run['id'] in history
     assert current['attempt'] == 1
     for recent in history.values():

@@ -1,0 +1,1 @@
+- Hourly refreshes can skip idle work in repositories with more than 1,000 runs in their older refresh history.
