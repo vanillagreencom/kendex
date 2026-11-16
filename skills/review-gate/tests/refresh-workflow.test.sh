@@ -44,7 +44,7 @@ check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
       esac
     done
     cron="$(schedule_cron "$file")" || return 2
-    if [ "$cron" != '17 * * * *' ]; then
+    if [ "$cron" != '43 8 * * *' ]; then
       printf 'caller=%s cron=%s\n' "$index" "$cron"
       failed=1
     fi
@@ -58,8 +58,8 @@ for file in "$TEMPLATE" "$CALLER"; do
 done
 
 # Each control uses the same assertions as the shipped callers.
-plant "$TEMPLATE" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/template.yml"
-plant "$CALLER" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/caller.yml"
+plant "$TEMPLATE" '    - cron: "43 8 * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/template.yml"
+plant "$CALLER" '    - cron: "43 8 * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/caller.yml"
 
 while IFS='|' read -r shape expected_exit; do
   case "$shape" in
