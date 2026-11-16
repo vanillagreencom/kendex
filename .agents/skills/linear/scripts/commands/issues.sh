@@ -209,6 +209,9 @@ Update Options:
                         LINEAR_REQUIRE_REACH empty; otherwise the opening
                         and stored-body owner-action rules above apply.
   --description-file <path>  Read new description from file (preferred for markdown)
+  --synced-description  Allow update/bulk-update to replace a description shared
+                        with a GitHub issue by Linear sync; otherwise refused
+                        before any write, naming the linked issue.
   --project <name|uuid> Move to project (name or UUID, auto-resolved)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
@@ -830,6 +833,7 @@ bulk_update_issues() {
     local update_args=()
     local attach_paths=()
     local description="" description_set="false" state="" project=""
+    local synced_description="false"
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -863,6 +867,11 @@ bulk_update_issues() {
                 description="$_val"
                 description_set="true"
             fi
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
+            update_args+=("$1")
             shift
             ;;
         --remove-parent | --clear-cycle | --clear-estimate)
@@ -934,13 +943,16 @@ bulk_update_issues() {
         linear_own_team || return 1
         own_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
     fi
-    if [[ -n "$state" || -n "$project_map" ]]; then
+    if [[ -n "$state" || -n "$project_map" || ( "$description_set" == true && "$synced_description" == false ) ]]; then
         local preflight_failed=0 issue_result effective_description team_id
         for id in "${identifiers[@]}"; do
             issue_result=""
-            if [[ -n "$state" || -z "$own_team_id" ]] && ! issue_result=$(get_issue "$id" --format=raw); then
+            if [[ -n "$state" || -z "$own_team_id" || "$description_set" == true ]] && ! issue_result=$(get_issue "$id" --format=raw); then
                 preflight_failed=1
                 continue
+            fi
+            if [[ "$description_set" == true && "$synced_description" == false ]]; then
+                require_unsynced_description "$id" "$issue_result" || preflight_failed=1
             fi
             if [ -n "$state" ]; then
                 effective_description="$description"
@@ -1991,6 +2003,18 @@ resolve_issue_update_state() {
     jq -r '.id' <<<"$resolved"
 }
 
+# Linear's GitHub sync propagates description writes to the linked issue.
+# Use the formatter's existing sync classification for both update routes.
+require_unsynced_description() {
+    local issue_id="$1" issue_result="$2" formatted links
+    formatted=$(format_issue_single "$issue_result") || return 1
+    links=$(jq -r '.github_sync | join(",")' <<<"$formatted") || return 1
+    if [ -n "$links" ]; then
+        printf 'linear: refused=synced-description issue=%s github=%s override=--synced-description\n' "$issue_id" "$links" >&2
+        return 1
+    fi
+}
+
 update_issue() {
     local issue_id="$1"
     shift
@@ -2001,6 +2025,7 @@ update_issue() {
     local description=""
     local description_set="false"
     local description_file=""
+    local synced_description="false"
     local project=""
     local priority=""
     local assignee=""
@@ -2091,6 +2116,10 @@ update_issue() {
         --description=*)
             description="${1#*=}"
             description_set="true"
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
             shift
             ;;
         --description-file)
@@ -2247,6 +2276,9 @@ update_issue() {
     # Get issue to find its team for state and label lookup - use raw format
     local issue_result
     issue_result=$(get_issue "$issue_id" --format=raw) || return 1
+    if [[ "$description_set" == true && "$synced_description" == false ]]; then
+        require_unsynced_description "$issue_id" "$issue_result" || return 1
+    fi
     # The header shape is judged against the stored body, which an owner
     # action line may be placed on, replaced on or removed from. The sentinel
     # keeps the stored body's trailing newlines through the capture.
