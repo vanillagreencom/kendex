@@ -761,10 +761,57 @@ has_exit_trap() { # FILE
 # runuser and other launchers pass the quoted -c operand to a separate shell.
 # Keep its lines in a separate file so neither shell borrows the other's trap.
 # Bash's existing quote probes delimit the operand; this is not shell parsing.
+DOUBLE_SHELL_PARENT=''
+DOUBLE_SHELL_CHILD=''
+double_shell_bodies() { # RAW DOUBLE-QUOTED OPERAND -> parent/child projections
+  local body="$1" i=0 ch='' next='' expansion='' closed=0
+  DOUBLE_SHELL_PARENT=''
+  DOUBLE_SHELL_CHILD=''
+  while [ "$i" -lt "${#body}" ]; do
+    ch="${body:i:1}"
+    next="${body:i+1:1}"
+    # The parent consumes these escapes without running the escaped character.
+    if [ "$ch" = '\' ]; then
+      case "$next" in
+        '$' | '`' | '"' | '\' | $'\n')
+          DOUBLE_SHELL_CHILD="$DOUBLE_SHELL_CHILD$next"
+          DOUBLE_SHELL_PARENT="$DOUBLE_SHELL_PARENT ${next//[!$'\n']/ }"
+          i=$((i + 2))
+          continue ;;
+      esac
+    fi
+    case "$ch$next" in
+      '$(' | '`'*)
+        expansion="$ch"
+        i=$((i + 1))
+        if [ "$ch" = '$' ]; then expansion='$('; i=$((i + 1)); fi
+        closed=0
+        while [ "$i" -lt "${#body}" ]; do
+          ch="${body:i:1}"
+          expansion="$expansion$ch"
+          i=$((i + 1))
+          case "$ch" in ')' | '`') ;; *) continue ;; esac
+          substitution_parse_result "$expansion" || return 1
+          case "$SUBSTITUTION_PARSE_RESULT" in open:*) continue ;; esac
+          closed=1
+          break
+        done
+        [ "$closed" = 1 ] || return 1
+        # The parent executes this expansion before passing the operand.
+        DOUBLE_SHELL_PARENT="$DOUBLE_SHELL_PARENT$expansion"
+        DOUBLE_SHELL_CHILD="$DOUBLE_SHELL_CHILD${expansion//[!$'\n']/ }"
+        ;;
+      *)
+        DOUBLE_SHELL_CHILD="$DOUBLE_SHELL_CHILD$ch"
+        DOUBLE_SHELL_PARENT="$DOUBLE_SHELL_PARENT${ch//[!$'\n']/ }"
+        i=$((i + 1)) ;;
+    esac
+  done
+}
 shell_scope_count=0
 mktemp_scope_lines() { # FILE -> untrapped invocation line numbers
   local file="$1" scope='' child='' line='' prefix='' source='' prior='' tail=''
-  local n=0 start=0 consumed=0 status=0 body='' i=0 quote='' again=0
+  local n=0 start=0 consumed=0 status=0 body='' i=0 quote='' again=0 parent=''
   local child_re="(^|[[:space:];(&|])([^[:space:];(&|)]*\/)?(bash|sh)[[:space:]]+-[a-zA-Z]*c[[:space:]]+([\"'])"
   shell_scope_count=$((shell_scope_count + 1))
   scope="$TMP/shell-scope.$shell_scope_count"
@@ -799,7 +846,9 @@ mktemp_scope_lines() { # FILE -> untrapped invocation line numbers
       body="$prior${line:0:consumed}"
       body="${body:1}"
       if [ "$quote" = '"' ]; then
-        body="$(sed 's/\\\([$`"\\]\)/\1/g' <<<"$body")" || return 1
+        double_shell_bodies "$body" || return 1
+        body="$DOUBLE_SHELL_CHILD"
+        parent="$DOUBLE_SHELL_PARENT"
       fi
       shell_scope_count=$((shell_scope_count + 1))
       child="$TMP/shell-child.$shell_scope_count"
@@ -808,9 +857,13 @@ mktemp_scope_lines() { # FILE -> untrapped invocation line numbers
       while [ "$i" -lt "$start" ]; do printf '\n' >>"$child"; i=$((i + 1)); done
       printf '%s\n' "$body" >>"$child" || return 1
       mktemp_scope_lines "$child" || return 1
-      printf "%s''" "$prefix" >>"$scope"
-      i="$start"
-      while [ "$i" -lt "$n" ]; do printf '\n' >>"$scope"; i=$((i + 1)); done
+      if [ "$quote" = '"' ]; then
+        printf '%s"%s"' "$prefix" "$parent" >>"$scope"
+      else
+        printf "%s''" "$prefix" >>"$scope"
+        i="$start"
+        while [ "$i" -lt "$n" ]; do printf '\n' >>"$scope"; i=$((i + 1)); done
+      fi
       line="$tail"
       again=1
       source=''

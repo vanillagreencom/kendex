@@ -114,7 +114,7 @@ child_shell_scopes() {
   # runuser's quoted bash -c operand is the production shape from FLT-1736.
   # Vary the cleanup owner, keeping the allocation in the same child body.
   for shell in 'runuser -u dev -- bash' sh; do
-    for state in own missing parent child sibling inline inline-sibling double comment substitution substitution-missing; do
+    for state in own missing parent child sibling inline inline-sibling comment substitution substitution-missing; do
       expected='scripts/child.sh:4: [mktemp-trap]'
       {
         printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
@@ -128,9 +128,6 @@ child_shell_scopes() {
         if [ "$state" = comment ]; then
           printf "# %s -c '\n" "$shell"
           printf '%s\n' 'D="$(mktemp -d)"' 'trap "rm -rf -- ${D:?}" EXIT'
-        elif [ "$state" = double ]; then
-          printf '%s -c "\n' "$shell"
-          printf '%s\n' 'D=\"\$(mktemp -d)\"' 'trap '\''rm -rf -- \"\${D:?}\"'\'' EXIT' '"'
         elif [ "$state" = inline-sibling ]; then
           printf "%s -c 'trap \"echo done\" EXIT'; %s -c 'D=\"\$(mktemp -d)\"'\n" "$shell" "$shell"
           expected='scripts/child.sh:3: [mktemp-trap]'
@@ -151,19 +148,62 @@ child_shell_scopes() {
       } >"$R/scripts/child.sh"
       run_pf
       case "$state" in
-        own | inline | double | comment | substitution) clean "$shell -c $state cleanup belongs to its shell" 1 ;;
+        own | inline | comment | substitution) clean "$shell -c $state cleanup belongs to its shell" 1 ;;
         *) fires "$shell -c $state cannot borrow cleanup from another shell" "$expected" ;;
       esac
     done
   done
 }
 
+double_shell_ownership() {
+  local form owner cleanup parent_call child_call expected first_line label
+  seed double-shell-ownership
+  # Double-quoted operands expand while the parent forms the command. A
+  # backslash defers the expansion to the child, including in mixed bodies.
+  for form in dollar backtick; do
+    case "$form" in
+      dollar) parent_call='D=\"$(mktemp -d)\"'; child_call='C=\"\$(mktemp -d)\"' ;;
+      backtick) parent_call='D=\"`mktemp -d`\"'; child_call='C=\"\`mktemp -d\`\"' ;;
+    esac
+    for owner in parent child both; do
+      for cleanup in parent child both none; do
+        first_line=4
+        {
+          printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+          case "$cleanup" in parent | both) printf '%s\n' "trap ':' EXIT"; first_line=5 ;; esac
+          printf '%s\n' 'bash -c "'
+          case "$owner" in parent | both) printf '%s\n' "$parent_call" ;; esac
+          case "$owner" in child | both) printf '%s\n' "$child_call" ;; esac
+          case "$cleanup" in child | both) printf '%s\n' "trap ':' EXIT" ;; esac
+          printf '%s\n' '"'
+        } >"$R/scripts/double.sh"
+        run_pf
+        label="$form expansion owner=$owner cleanup=$cleanup"
+        case "$owner:$cleanup" in
+          parent:parent | parent:both | child:child | child:both | both:both) clean "$label" 1 ;;
+          *)
+            if [ "$owner:$cleanup" = both:parent ]; then first_line=$((first_line + 1)); fi
+            expected="scripts/double.sh:$first_line: [mktemp-trap]"
+            fires "$label" "$expected" ;;
+        esac
+      done
+    done
+  done
+}
+
+if [ "${1:-}" = --double-shells-only ]; then
+  double_shell_ownership
+  pf_summary
+  exit
+fi
 if [ "${1:-}" = --child-shells-only ]; then
   child_shell_scopes
+  double_shell_ownership
   pf_summary
   exit
 fi
 child_shell_scopes
+double_shell_ownership
 
 echo "=== benign patterns across every lane stay clean ==="
 seed benign
