@@ -77,8 +77,9 @@ class ProgressLog(MailWorld):
             args += ["--handoff", str(handoff)]
         return self.command([sys.executable, "-B", self.scripts / "progress-log", *args], cwd or self.home)
 
-    def assert_home_check(self, expected):
-        result = self.command([sys.executable, "-B", self.scripts / "progress-log"], self.home)
+    def assert_home_check(self, expected, handoff=None):
+        args = [] if handoff is None else ["--handoff", str(handoff)]
+        result = self.command([sys.executable, "-B", self.scripts / "progress-log", *args], self.home)
         self.assertEqual(result.returncode, 1 if expected else 0, result.stderr)
         # The commit-lane diagnostic contract carries file, line and rule.
         actual = [tuple(line.split()[index].split("=", 1)[1] for index in (1, 2, 3))
@@ -90,7 +91,7 @@ class ProgressLog(MailWorld):
         memory.mkdir()
         note = memory / "facts.md"
         fields = "- Source: owner statement\n- Date: 2000-01-01\n- Supersedes: none\n"
-        good = "# Facts\n\n### Access\nThe folder opens.\n" + fields
+        good = "# Facts\n\n### Access\n" + fields + "\nThe folder opens.\n"
         states = "- KEN-1: next\n- session=control: hold\n- wake=mail: wait\n- ask=owner: await reply\n"
         rows = []
         values = (("Source", "owner statement"), ("Date", "2000-01-01"), ("Supersedes", "none"))
@@ -130,8 +131,62 @@ class ProgressLog(MailWorld):
             with self.subTest(selector=selected):
                 result = self.command([sys.executable, "-B", self.scripts / "progress-log",
                                        "--handoff", str(selected)], self.home)
-                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, "")
+
+    def test_initial_metadata_block(self):
+        memory = self.home / "memory"
+        memory.mkdir()
+        note = memory / "facts.md"
+        fields = ("Source: owner.", "Date: 2000-01-02.", "Supersedes: none.")
+        rows = (
+            ("inline", " ".join(fields) + "\n\nBody.\n", []),
+            ("multiline", "\n".join(fields) + "\n\nBody.\n", []),
+            ("leading blanks", "\n\n" + "\n".join(fields), []),
+            ("split block", " ".join(fields[:2]) + "\n\nBody.\n\n" + fields[2],
+             [("memory/facts.md", "1", "memory-field-supersedes")]),
+            ("separated fields", " ".join(fields[:2]) + "\n\n" + fields[2],
+             [("memory/facts.md", "1", "memory-field-supersedes")]),
+            ("body first", "Body.\n\n" + " ".join(fields),
+             [("memory/facts.md", "1", "memory-field-" + field) for field in ("source", "date", "supersedes")]),
+        )
+        for label, body, expected in rows:
+            with self.subTest(row=label):
+                note.write_text("### Fact\n" + body)
+                self.assertEqual(self.command(["git", "add", "memory"], self.home).returncode, 0)
+                note.write_text("### Fact\n" + " ".join(fields))
+                self.assert_home_check(expected)
+
+    def test_selected_commit_handoff(self):
+        selected = self.home / "state/delegate/handoff.md"
+        selected.parent.mkdir()
+        good = state_handoff("- KEN-1: next\n")
+        selected.write_text(good)
+        self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
+        self.assertEqual(self.command(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                                       "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                       "commit", "-qm", "established selected handoff"], self.home).returncode, 0)
+        for selector in ("state/delegate/handoff.md", selected):
+            for label, content, expected in (
+                    ("valid", good, []),
+                    ("required section", good.replace("## Sub-agents", "## Other"),
+                     [("state/delegate/handoff.md", "1", "handoff-sub-agents")]),
+                    ("deleted", None,
+                     [("state/delegate/handoff.md", "1", "recovery-entry-missing")])):
+                with self.subTest(selector=selector, row=label):
+                    if content is None:
+                        selected.unlink()
+                    else:
+                        selected.write_text(content)
+                    # Default violations are irrelevant when an override selects another file.
+                    self.handoff.write_text("## State\n")
+                    self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
+                    selected.write_text(good)
+                    self.assert_home_check(expected, selector)
+        self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
+        self.assert_home_check([("state/handoff.md", "1", "handoff-sub-agents"),
+                                ("state/handoff.md", "1", "handoff-section"),
+                                ("state/handoff.md", "1", "handoff-section")])
 
     def test_predecessor_tracked_symlinks(self):
         archive = self.home / "state/archive"
@@ -289,7 +344,8 @@ class ProgressLog(MailWorld):
     def test_home_structure_control(self):
         mutations = (
             ('for field in ("Source", "Date", "Supersedes", "Replaced by"):', 'for field in ():', "test_home_structure"),
-            ('        if sys.argv[1:]:', '        if False:', "test_home_structure"),
+            ('selected = os.path.relpath(handoff, home)', 'selected = str(DEFAULT_HANDOFF)',
+             "test_selected_commit_handoff"),
             ('if not tracked_archive(home, target, tracked):', 'if target not in tracked:',
              "test_predecessor_tracked_symlinks"),
         )

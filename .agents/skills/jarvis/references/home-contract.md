@@ -48,4 +48,6 @@ An app-managed home's file tools can be limited to `state/`; that access grants 
 
 The consumer owns its index columns and routing layout, memory-directory population, and any requirement that headings be globally unique beyond [Notes](memory.md#notes)' replacement identity rules. It also owns resolution and replacement checks for legacy free-form note identities outside those supported forms. Register these checks in the home's standing instructions when adopting those conventions.
 
+The consumer owns migration and checks for legacy session records outside the explicit forms in [Handoff](long-session.md#handoff), including title-case, number-led and embedded historical SESSION forms. It owns uniqueness of additional handoff sections, live memory audits, freshness rules, and reporting of audit findings, files and notes.
+
 A home that adopts private task files owns their inventory, one-to-one file/record correspondence, unique task records, lifecycle status vocabulary, resumption trigger and result destination, including refusal of a missing task file. The package does not require private task files. Tracker work and State durable-id uniqueness retain their existing owners under [Homes](long-session.md#homes) and [Progress records](long-session.md#progress-records).
