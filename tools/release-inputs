@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# release-inputs EVENT BEFORE AFTER: publish build=true|false for release.yml.
+# Only a main push with a readable diff containing no release input skips.
+# Dispatches always build their selected release, including an older commit.
+set -euo pipefail
+
+build=true
+if [ "$1" = push ]; then
+  # --no-renames keeps a move out of a release directory visible as a deletion.
+  # An absent before commit (including a new ref's zero SHA) cannot prove a skip.
+  if git diff --quiet --no-renames "$2" "$3" -- \
+    crates/ 'Cargo.*' ui/ .cargo/ 'rust-toolchain*' \
+    docs/authoring/README.md .github/workflows/release.yml \
+    'tools/release-*' tools/apt-install; then
+    build=false
+  fi
+fi
+printf 'build=%s\n' "$build"

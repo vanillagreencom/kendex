@@ -46,10 +46,14 @@ env:
 
 # Hold the whole main run through publication: a pending matrix target can
 # otherwise be replaced even when another target of that run is building.
+# Queue main pushes so a later no-input push cannot replace a pending source
+# build. GitHub's queue:max holds up to 100 pending workflow runs:
+# https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
 # Release dispatches get unique workflow groups and job-level groups.
 concurrency:
   group: release-workflow-${{ github.event_name == 'push' && github.ref || github.run_id }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # Environment admission judges the run ref, not the checkout. A dispatch
@@ -65,12 +69,20 @@ jobs:
       mode: ${{ steps.source.outputs.mode }}
       source-commit: ${{ steps.source.outputs.source-commit }}
       release-tag: ${{ steps.source.outputs.release-tag }}
+      build: ${{ steps.inputs.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Check release inputs
+        id: inputs
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: tools/release-inputs "$EVENT_NAME" "$PUSH_BEFORE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       - name: Select the release source
         id: source
         shell: bash
@@ -146,6 +158,7 @@ jobs:
 
   build:
     needs: prepare
+    if: needs.prepare.outputs.build == 'true'
     concurrency:
       group: release-build-${{ needs.prepare.outputs.mode == 'main' && github.ref || github.run_id }}-${{ matrix.target }}
       cancel-in-progress: false
