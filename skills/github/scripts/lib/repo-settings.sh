@@ -47,6 +47,24 @@ kendex_github_default_branch() {
   printf '%s\n' "$out"
 }
 
+# Whether the repository permits arming auto-merge. GraphQL exposes this
+# setting to installation tokens whose REST repository response omits it.
+# GitHub's Repository.autoMergeAllowed contract:
+# https://docs.github.com/en/graphql/reference/repos#repository
+# Uses gh's current repository placeholders. Stdout: true or false;
+# exit 1 when the read fails or answers no boolean.
+kendex_github_auto_merge_allowed() {
+  local answer=""
+  answer=$(gh api graphql \
+    -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { autoMergeAllowed } }' \
+    -F owner='{owner}' -F repo='{repo}' \
+    --jq '.data.repository.autoMergeAllowed | tojson' 2>/dev/null) || return 1
+  case "$answer" in
+    true | false) printf '%s\n' "$answer" ;;
+    *) return 1 ;;
+  esac
+}
+
 # The merge method a pull request into BASE takes, chosen from the methods
 # the caller accepts. A merge_queue rule on BASE fixes the method to the
 # queue's merge_method. Otherwise the allowed set is the repository's

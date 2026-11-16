@@ -703,7 +703,7 @@ merge_gate_gap() {
         'required_thread_resolution required_review_thread_resolution flag'
         'dismiss_stale_reviews dismiss_stale_reviews_on_push flag'
     )
-    allow=$(with_token "$token" gh api 'repos/{owner}/{repo}' --jq '.allow_auto_merge' 2>/dev/null) || allow=""
+    allow=$(with_token "$token" kendex_github_auto_merge_allowed) || allow=""
     case "$allow" in
         true) ;;
         false) echo allow_auto_merge; return 0 ;;
