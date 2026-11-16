@@ -14,6 +14,9 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 # The kept refusal. Without it an invalid post-merge Deadline files.
 control_expect "update refuses merge with set at merge"
+control_expect "create refuses that row exists with 2026-11-17T08:00:00Z"
+control_expect "update refuses that row exists with 2026-11-17T08:00:00Z"
+control_expect "bulk-update refuses that row exists with 2026-11-17T08:00:00Z"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	[[ $verdict != "{"* ]]' \
 	'	true'

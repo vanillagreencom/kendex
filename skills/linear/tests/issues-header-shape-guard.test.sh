@@ -106,6 +106,7 @@ SUPERSESSION_LINE='**Supersession**: none found; searched: refresh, linked workt
 SOURCE_LINE='**Source**: review of owner/repo#47'
 body() { printf '%s\n' "$@" >"$TMP_ROOT/body.md"; }
 
+if [[ ${LINEAR_HEADER_FIELDS_ONLY:-0} != 1 ]]; then
 # The opening matrix calls the actual shared owner. Entry-point rows below
 # prove create/update/bulk wiring without repeating this whole matrix per verb.
 source "$SKILL_DIR/scripts/lib/issue-validation.sh"
@@ -432,6 +433,8 @@ assert "the complete writes the ticked box" \
   jq -s -e 'any(.[]; .variables.input.description // "" | contains("- [x] first"))' "$CURL_LOG"
 : >"$FILED"
 
+fi
+
 echo "=== post-merge box fields still refuse ==="
 # Each rule refuses and each operation is wired for a refusal and a write; the
 # Deadline rule's own table is issues-complete-done-when's filing rows.
@@ -444,7 +447,12 @@ while IFS='|' read -r operation trigger deadline rule; do
   description="$(printf '%s\n' "$OUTCOME" "$REACH_LINE" '## Done when' \
     "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: $trigger; Deadline: $deadline" \
     '' "$SUPERSESSION_LINE")"
-  run_linear "${box_args[@]}" --description "$description"
+  if [[ "$operation" == update ]]; then
+    body "$description"
+    run_linear "${box_args[@]}" --description-file "$TMP_ROOT/body.md"
+  else
+    run_linear "${box_args[@]}" --description "$description"
+  fi
   if [ "$rule" = valid ]; then
     assert_advised "$operation accepts $trigger with $deadline" "$mutation"
   else
@@ -461,7 +469,15 @@ create|release owner/repo v*|+72h|valid
 update|merge|+72h|valid
 bulk-update|merge|2026-10-02T00:00:00Z|valid
 create|2026-10-01T00:00:00Z|2026-10-02T00:00:00Z|valid
+create|that row exists|2026-11-17T08:00:00Z|post-merge-fields
+update|that row exists|2026-11-17T08:00:00Z|post-merge-fields
+bulk-update|that row exists|2026-11-17T08:00:00Z|post-merge-fields
+create|merge|+24h|valid
+update|2026-11-16T08:00:00Z|2026-11-17T08:00:00Z|valid
+bulk-update|release owner/repo v*|+24h|valid
 ROWS
+
+[[ ${LINEAR_HEADER_FIELDS_ONLY:-0} != 1 ]] || exit 0
 
 # A missing opening beside a refused box leaves the box refusal alone on stderr.
 run_linear issues create --title "Post-merge check" --description "$(printf '%s\n' "$SOURCE_LINE" "$REACH_LINE" '## Done when' \
