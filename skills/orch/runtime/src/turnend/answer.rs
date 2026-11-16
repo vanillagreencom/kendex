@@ -184,6 +184,9 @@ pub enum Said {
     FleetState(PathBuf),
     /// Nothing can wake the bound controller; the start command follows.
     WakeUnarmed,
+    /// The bound controller's follow runs, but its harness starts no turn on
+    /// a background process's output; the start command follows.
+    WakeUnwatched,
     /// The wake check could not judge, under the gap's key (`wake-record`,
     /// `wake-setting`, `wake-process`) and the input it names.
     WakeUnjudged {
@@ -465,6 +468,7 @@ impl Said {
             Said::OverseerUnread { count, .. } => ("unread", count.to_string()),
             Said::FleetState(path) => ("fleet-state", path.display().to_string()),
             Said::WakeUnarmed => ("wake", "unarmed".to_owned()),
+            Said::WakeUnwatched => ("wake", "unwatched".to_owned()),
             Said::WakeUnjudged { gap, value } => (gap, value.clone()),
             Said::CallUnrecorded(session) => ("session-unrecorded", session.clone()),
             Said::NoticeUnwritten => ("notice", "unwritten".to_owned()),
@@ -693,6 +697,7 @@ impl Said {
             }
             Said::FleetState(_) => "the checkout's overseer mailbox holds a file, and whether a live watch holds the fleet state and reads it could not be settled from the watch's claim named above, so the mailbox is neither read here nor passed as read; the cause follows:".to_owned(),
             Said::WakeUnarmed => "the registered session has no running wake process; arm it before ending the turn:".to_owned(),
+            Said::WakeUnwatched => "the registered session's follow runs, but this harness starts no turn on a background process's output, so the watch cannot wake this session once its turn ends; hold the follow inside the turn, polling it until oversight stops, or say in this turn that the session is unwatched:".to_owned(),
             Said::WakeUnjudged { .. } => "the wake check is unjudged; independent turn-end checks still run".to_owned(),
             Said::CallUnrecorded(session) => format!(
                 "this finished Copilot tool call's session {session} is no lead session this install recorded at a session start or at a turn end its own transcript proved, so it may be a subagent's: the unread lines are not handed over here and stay unread for the lead's turn end, which hands them over and acknowledges them"

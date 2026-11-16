@@ -58,6 +58,29 @@ fn wake_setting(world: &TurnWorld) -> Vec<(String, String)> {
     ]
 }
 
+/// A Codex session on the world's pane `pane` with its account directory
+/// named, and that directory.
+fn codex_on(world: &TurnWorld, pane: &str) -> (Vec<(String, String)>, PathBuf) {
+    let account = world.root.join("accounts/codex-1");
+    fs::create_dir_all(&account).unwrap();
+    let mut env = world.on_pane(pane);
+    env.push(("CODEX_HOME".to_owned(), account.display().to_string()));
+    (env, account)
+}
+
+/// A live claim's watch working in [`watch_cwd`], opened by hand.
+fn live_claim(world: &TurnWorld, watch: &Owned) -> PathBuf {
+    let cwd = watch_cwd(world);
+    plant_claim(
+        world,
+        u64::from(watch.pid()),
+        Some(&watch.start()),
+        &cwd,
+        "hand",
+    );
+    cwd
+}
+
 /// A bound controller nothing can wake is held at its turn end with the
 /// command that starts its wake, and on a continued turn told it and
 /// passed: a live watch is followed by a waiter on the watch's log (only
@@ -65,76 +88,121 @@ fn wake_setting(world: &TurnWorld) -> Vec<(String, String)> {
 /// with no live watch by the process its setting names, Jarvis's watch
 /// loop; a Jarvis session the record binds as its home's overseer is
 /// checked as the binding's controller. A session no claim or setting
-/// covers is woken by a single pass's exit and passes.
+/// covers is woken by a single pass's exit and passes. A running waiter
+/// wakes no Codex session, which starts no turn on a background process's
+/// output: its overseer is held as unwatched, while the home's own watch
+/// loop, which types into the session, still wakes it.
 #[test]
 fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
     type Plant = fn(&TurnWorld, &Owned) -> (Vec<Owned>, Vec<(String, String)>);
     struct Case {
         name: &'static str,
+        harness: &'static str,
         plant: Plant,
         jarvis: bool,
         continued: bool,
         held: Option<&'static str>,
         told: bool,
+        word: &'static str,
     }
     const FOLLOW: &str = "sh \"[RUN_DIR]/follow.sh\" \"[RUN_DIR]/watch.log\" [NEXT_LINE]";
     let cases = [
         Case {
             name: "a live watch with no waiter",
+            harness: "claude",
             plant: |world, watch| {
-                let cwd = watch_cwd(world);
-                plant_claim(
-                    world,
-                    u64::from(watch.pid()),
-                    Some(&watch.start()),
-                    &cwd,
-                    "hand",
-                );
+                live_claim(world, watch);
                 (Vec::new(), Vec::new())
             },
             jarvis: false,
             continued: false,
             held: Some(FOLLOW),
             told: false,
+            word: "unarmed",
         },
         Case {
             name: "a live watch with its waiter",
+            harness: "claude",
             plant: |world, watch| {
-                let cwd = watch_cwd(world);
-                plant_claim(
-                    world,
-                    u64::from(watch.pid()),
-                    Some(&watch.start()),
-                    &cwd,
-                    "hand",
-                );
+                let cwd = live_claim(world, watch);
                 (vec![waiter(&cwd.join("tmp/waiter.a1"))], Vec::new())
             },
             jarvis: false,
             continued: false,
             held: None,
             told: false,
+            word: "unarmed",
         },
         Case {
             name: "a live watch with no waiter, on a continued turn",
+            harness: "claude",
             plant: |world, watch| {
-                let cwd = watch_cwd(world);
-                plant_claim(
-                    world,
-                    u64::from(watch.pid()),
-                    Some(&watch.start()),
-                    &cwd,
-                    "hand",
-                );
+                live_claim(world, watch);
                 (Vec::new(), Vec::new())
             },
             jarvis: false,
             continued: true,
             held: None,
             told: true,
+            word: "unarmed",
+        },
+        Case {
+            name: "a Codex overseer's live watch with its waiter",
+            harness: "codex",
+            plant: |world, watch| {
+                let cwd = live_claim(world, watch);
+                (vec![waiter(&cwd.join("tmp/waiter.d4"))], Vec::new())
+            },
+            jarvis: false,
+            continued: false,
+            held: Some(FOLLOW),
+            told: false,
+            word: "unwatched",
+        },
+        Case {
+            name: "a Codex overseer's live watch with its waiter, on a continued turn",
+            harness: "codex",
+            plant: |world, watch| {
+                let cwd = live_claim(world, watch);
+                (vec![waiter(&cwd.join("tmp/waiter.e5"))], Vec::new())
+            },
+            jarvis: false,
+            continued: true,
+            held: None,
+            told: true,
+            word: "unwatched",
+        },
+        Case {
+            name: "a Codex overseer's live watch with no waiter",
+            harness: "codex",
+            plant: |world, watch| {
+                live_claim(world, watch);
+                (Vec::new(), Vec::new())
+            },
+            jarvis: false,
+            continued: false,
+            held: Some(FOLLOW),
+            told: false,
+            word: "unarmed",
+        },
+        Case {
+            name: "a Codex overseer with no claim, the home's watch loop running",
+            harness: "codex",
+            plant: |world, _| {
+                let home = world.checkout.display().to_string();
+                let script = world.root.join("jarvis/watch-loop");
+                let held = running_script(&script, &["--home", &home]);
+                (vec![held], wake_setting(world))
+            },
+            jarvis: false,
+            continued: false,
+            held: None,
+            told: false,
+            word: "unarmed",
         },
         Case {
             name: "a watch a succession restarted, its waiter on the watch's log",
+            harness: "claude",
             plant: |world, watch| {
                 let cwd = watch_cwd(world);
                 plant_claim(
@@ -155,9 +223,11 @@ fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
             continued: false,
             held: None,
             told: false,
+            word: "unarmed",
         },
         Case {
             name: "a watch a succession restarted, its waiter on another log",
+            harness: "claude",
             plant: |world, watch| {
                 let cwd = watch_cwd(world);
                 plant_claim(
@@ -178,17 +248,21 @@ fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
             continued: false,
             held: Some("Link [RUN_DIR]/watch.log to "),
             told: false,
+            word: "unarmed",
         },
         Case {
             name: "the home's watch loop absent",
+            harness: "claude",
             plant: |world, _| (Vec::new(), wake_setting(world)),
             jarvis: false,
             continued: false,
             held: Some("jarvis-session watch --home HOME"),
             told: false,
+            word: "unarmed",
         },
         Case {
             name: "the home's watch loop running",
+            harness: "claude",
             plant: |world, _| {
                 let home = world.checkout.display().to_string();
                 let script = world.root.join("jarvis/watch-loop");
@@ -199,22 +273,27 @@ fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
             continued: false,
             held: None,
             told: false,
+            word: "unarmed",
         },
         Case {
             name: "no live watch and no setting",
+            harness: "claude",
             plant: |_, _| (Vec::new(), Vec::new()),
             jarvis: false,
             continued: false,
             held: None,
             told: false,
+            word: "unarmed",
         },
         Case {
             name: "a Jarvis session bound as its home's overseer, its watch loop absent",
+            harness: "claude",
             plant: |world, _| (Vec::new(), wake_setting(world)),
             jarvis: true,
             continued: false,
             held: Some("jarvis-session watch --home HOME"),
             told: false,
+            word: "unarmed",
         },
     ];
     for case in cases {
@@ -222,19 +301,24 @@ fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
         let mut env = if case.jarvis {
             jarvis_on(&world, true).0
         } else {
-            let (env, account) = claude_on(&world, PANE);
-            world.plant_fleet(world.controller(PANE, "claude", &account, SESSION));
+            let (env, account) = match case.harness {
+                "claude" => claude_on(&world, PANE),
+                "codex" => codex_on(&world, PANE),
+                other => panic!("no session planter for {other}"),
+            };
+            world.plant_fleet(world.controller(PANE, case.harness, &account, SESSION));
             env
         };
         let watch = Owned::sleep();
         let (held_processes, setting) = (case.plant)(&world, &watch);
         env.extend(setting);
-        let out = turn_end(&world, "claude", &env, case.continued);
+        let out = turn_end(&world, case.harness, &env, case.continued);
         let name = case.name;
         let keyed = out.keyed();
+        let word = format!("wake={}", case.word);
         if let Some(start) = case.held {
             assert_eq!(out.code, 2, "{name}: {}", out.stderr);
-            assert_eq!(keyed, ["wake=unarmed"], "{name}: {}", out.stderr);
+            assert_eq!(keyed, [word.as_str()], "{name}: {}", out.stderr);
             assert!(out.stderr.contains(start), "{name}: {}", out.stderr);
         } else {
             assert_eq!(out.code, 0, "{name}: {}", out.stderr);
@@ -243,7 +327,7 @@ fn an_overseer_with_no_live_wake_is_held_and_told_on_a_continued_turn() {
                 .filter(|line| line.starts_with("wake"))
                 .collect();
             if case.told {
-                assert_eq!(wake, [&"wake=unarmed"], "{name}: {}", out.stderr);
+                assert_eq!(wake, [&word.as_str()], "{name}: {}", out.stderr);
                 assert!(out.stderr.contains(FOLLOW), "{name}: {}", out.stderr);
             } else {
                 assert!(wake.is_empty(), "{name}: {}", out.stderr);

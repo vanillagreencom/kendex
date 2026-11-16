@@ -133,6 +133,22 @@ impl Harness {
         }
     }
 
+    /// Whether output a background process writes after a turn ended starts
+    /// a new turn in the idle session, so a running follow of the fleet's
+    /// watch can wake it. Claude Code's `Monitor` turns each line into a
+    /// turn; Pi's background task sends each output with a turn trigger;
+    /// Copilot CLI starts a turn when a background command exits, which a
+    /// single pass does. Codex starts none, for a detached process or a
+    /// running exec session alike.
+    pub fn starts_turn_on_output(self) -> bool {
+        match self {
+            Harness::Claude => true,
+            Harness::Codex => false,
+            Harness::Copilot => true,
+            Harness::Pi => true,
+        }
+    }
+
     /// Whether a process name is this harness's own session process.
     pub fn owns_process(self, name: &str) -> bool {
         match self {
