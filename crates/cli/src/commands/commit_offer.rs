@@ -211,6 +211,13 @@ pub fn begin(command: &str, flags: CommitFlags) {
     });
 }
 
+/// `add` will apply its newly installed packages' effects after this offer.
+pub(super) fn adding_with_repo_effects() -> bool {
+    SESSION.get().is_some_and(|session| {
+        session.command == "add" && session.flags.allow_repo_effects == Some(true)
+    })
+}
+
 /// The record, whole even after a panic elsewhere poisoned the lock: an
 /// answer already written is still the answer.
 fn record_of() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, Outcome>> {

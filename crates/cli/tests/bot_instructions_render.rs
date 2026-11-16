@@ -89,6 +89,51 @@ fn armed(project: &Path) -> bool {
     .unwrap()
 }
 
+/// The skip instruction is part of add's setup contract (KEN-5246).
+#[test]
+#[allow(clippy::unwrap_used)]
+fn add_reports_only_repository_setup_that_is_still_needed() {
+    for allowed in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp).join("home");
+        let project = home.join("dev/app");
+        write(
+            &project.join("kendex.toml"),
+            "schema = 8\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n",
+        );
+        let package = project.join("catalog/skills/bot-instructions");
+        write(&package.join("SKILL.md"), DECLARATION);
+        let script = package.join("scripts/bot-instructions");
+        write(&script, RENDERS);
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        git(&project, &["init", "-q", "-b", "main"]);
+        let mut args = vec![
+            "add",
+            "cat",
+            "--skill",
+            "bot-instructions",
+            "--yes",
+            "--leave",
+        ];
+        if allowed {
+            args.push("--allow-repo-effects");
+        }
+        let ran = kendex(&home, &project, &args);
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "{said}");
+        assert_eq!(
+            said.contains("bot-instructions: render skipped"),
+            !allowed,
+            "{said}"
+        );
+        assert_eq!(armed(&project), allowed);
+        assert_eq!(
+            project.join(".github/copilot-instructions.md").exists(),
+            allowed
+        );
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_render_runs_where_nobody_set_the_package_up_and_records_nothing() {
