@@ -426,6 +426,16 @@ cases += [('intervening-unnamed-render', dict(history=[dict(id=9, run_attempt=1,
           ('history-bound', dict(history=[dict(id=n, run_attempt=1, conclusion='success',
                                                created_at='2026-09-01T00:00:00Z', updated_at='2026-09-01T00:00:00Z')
                                          for n in range(1000, 2000)] + world['history']), 'full')]
+# Fleet and vg exceeded 1,000 runs in the older 35 days of the rerun horizon.
+older_start = datetime.datetime(2026, 8, 13, 1, tzinfo=datetime.timezone.utc)
+dense_history = [dict(id=1000 + n, run_attempt=1, conclusion='success',
+                      created_at=(older_start + datetime.timedelta(minutes=37 * n)).isoformat(),
+                      updated_at=(older_start + datetime.timedelta(minutes=37 * n)).isoformat())
+                 for n in range(1334)]
+assert len(dense_history) > 1000
+assert all(now - datetime.timedelta(days=65) < datetime.datetime.fromisoformat(r['created_at']) <
+           now - datetime.timedelta(days=30) for r in dense_history)
+cases.append(('dense-older-history', dict(history=dense_history + world['history']), 'skip'))
 # The same run ID can name several attempts. A record must bind the current
 # producer attempt; an intervening rerun has unproved earlier work.
 for location in ('record', 'intervening', 'older'):
@@ -488,6 +498,15 @@ def execute_check(body, name, overrides, route):
 
 for name, overrides, route in cases:
     execute_check(check_step['run'], name, overrides, route)
+original = 'end = min(start + datetime.timedelta(days=7), now)'
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, original.replace('days=7', 'days=35') + ' # ' + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'dense-older-history')
+try: execute_check(broken, 'control-oversized-history-window', case[1], 'skip')
+except AssertionError as error:
+    assert error.args[0][:2] == ('refresh-decision', 'control-oversized-history-window'), error
+else: raise AssertionError('must-fail control missed oversized history window')
 original = "if previous['inputs'] != inputs:"
 assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, 'if False: # ' + original)
@@ -526,7 +545,11 @@ assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, original.replace('continue', 'break # continue'))
 assert broken != check_step['run']
 case = next(row for row in cases if row[0] == 'older-attempt-2-success')
-try: execute_check(broken, 'control-stop-at-record-run', case[1], 'full')
+# Keep the older rerun after the record in the same API window, so the
+# planted break actually hides it regardless of window traversal order.
+overrides = copy.deepcopy(case[1])
+overrides['history'][1]['created_at'] = '2026-10-15T22:00:00Z'
+try: execute_check(broken, 'control-stop-at-record-run', overrides, 'full')
 except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
 else: raise AssertionError('must-fail control missed older rerun')
 original = next(line for line in check_step['run'].splitlines() if 'days=65' in line)
