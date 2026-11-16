@@ -14,7 +14,7 @@ Read a named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'He
 
 For a request to remember a fact or establish a workstream, start at [Personal additions](home-contract.md#personal-additions), the addition route that selects the record's existing owner. Read this section for the note's fields and index update.
 
-- Put each note under its own `###` heading naming one subject. Its Source, Date and Supersedes fields belong before any child heading; History fields cannot supply current metadata. This also applies to a subject note in the memory index.
+- Put each note under its own `###` heading naming one subject. Its Source, Date and Supersedes fields belong together in the initial metadata block, before body paragraphs or child headings. Use one line or contiguous field lines, with optional blank lines before the block. History fields cannot supply current metadata. The `progress-log` commit check enforces this block. This also applies to a subject note in the memory index.
 - When you create or update a note, add or update its index row under the [home contract](home-contract.md).
 
 | Field | Content |
