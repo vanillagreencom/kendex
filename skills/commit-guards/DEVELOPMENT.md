@@ -104,17 +104,13 @@ The shared binary classifier selects blobs for the ceiling and warning. Text and
 
 Sizes are `git cat-file -s` of the diff's source and destination blobs. The source size is the tighten-only baseline when it already exceeds the ceiling, so which tree the source blob comes from decides what the ratchet permits: `--base` takes it from the merge base, `--against` from the ref's own tree, `--staged` from the index's parent. `--all` has no source blob; an oversized binary file's prior is its row in `COMMIT_GUARDS_BYTE_BASELINE`, read from the index. Rows naming text files are ignored. Rename detection is pinned on and held to exact content in every lane that diffs.
 
-## suppression-ban patterns
-
-The pathspec table is in CHECKS.md § suppression-ban. The bare-allow count runs over `gg_content_carriers`, then one `git grep --cached -c` per surviving `*.rs` carrier; a count that never arrived is a collection error, never 0. A tracked `*.rs` path holding a tab or newline is a config error.
-
 ## Settings sources
 
 `scripts/lib/settings.sh` resolves each key environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; `.env` is never read. Env files take `KEY=value` or `export KEY=value`, parsed, never sourced. Only an absent source is skipped; one that exists but is unusable (unreadable, a directory, FIFO, socket or device, a dangling symlink) is exit 2. `COMMIT_GUARDS_SETTINGS_FILE=/dev/null` selects no file source. Scripts `cd` to `git rev-parse --show-toplevel` first, so every relative path is repo-root-relative; a per-check flag overrides every source.
 
 ## Excludes format
 
-The row format, the `!` carve and the `\!` escape are stated in `SKILL.md § Configuration`; every excludes list shares it, and a bare `!` is a config error. A baseline is `path<TAB>N`, `LC_ALL=C` sorted, unique paths, N a positive integer; a malformed, unsorted or duplicated row is exit 2, never repaired, by `gg_validate_baseline` in `scripts/lib/common.sh` for both baselines. The path-glob lists (`COMMIT_GUARDS_CHANGELOG_PATHS`, `COMMIT_GUARDS_MD_PATHS`, `COMMIT_GUARDS_MD_REFS_PATHS`) load through `gg_load_path_globs`: an absolute pattern, one escaping the repository, one leading with `-`, and an empty effective list are exit 2. For md-refs, `gg_md_load_paths` combines each base list with its matching EXTRA list before this check. The caller runs under `set -f`, which the loader checks; without it the patterns expand against the work tree.
+The row format, the `!` carve and the `\!` escape are stated in `SKILL.md § Configuration`; every excludes list shares it, and a bare `!` is a config error. A baseline is `path<TAB>N`, `LC_ALL=C` sorted, unique paths, N a positive integer; a malformed, unsorted or duplicated row is exit 2, never repaired, by `gg_validate_baseline` in `scripts/lib/common.sh` for the binary baseline. The path-glob lists (`COMMIT_GUARDS_CHANGELOG_PATHS`, `COMMIT_GUARDS_MD_PATHS`, `COMMIT_GUARDS_MD_REFS_PATHS`) load through `gg_load_path_globs`: an absolute pattern, one escaping the repository, one leading with `-`, and an empty effective list are exit 2. For md-refs, `gg_md_load_paths` combines each base list with its matching EXTRA list before this check. The caller runs under `set -f`, which the loader checks; without it the patterns expand against the work tree.
 
 ## Probing a terminal-only code path
 

@@ -40,9 +40,9 @@ source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/md-scope.sh
 source "$SCRIPT_DIR/lib/md-scope.sh"
 
-KNOWN_CHECKS="byte-ceiling suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets commit-msg"
+KNOWN_CHECKS="byte-ceiling conflict-markers changelog-entries md-type md-refs py-names secrets commit-msg"
 # Binary size is opt-in because no proven failure requires a default ceiling.
-BATCH_DEFAULT="suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
+BATCH_DEFAULT="conflict-markers changelog-entries md-type md-refs py-names secrets"
 # The checks the batch hands --staged when it is asked for commit scope.
 # md-type judges touched documents; md-refs checks every configured document
 # for broken incoming references. The rest read the index by design.
@@ -78,7 +78,7 @@ CHANGE_SCOPED_CHECKS="md-type"
 # setting or a call naming one is dropped with one retired-check warning,
 # never check-unknown, and counts toward no exit. Each refused for style
 # alone and prevented no harm.
-RETIRED_CHECKS="md-format todo-ban prose comments"
+RETIRED_CHECKS="md-format todo-ban prose comments suppression-ban"
 # The range lanes whose baseline is the branch's base rather than the tree
 # the range lands on: changelog-entries asks which version increases the
 # branch made, md-type which shape findings it introduced. A caller that

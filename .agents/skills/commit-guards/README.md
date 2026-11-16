@@ -4,7 +4,7 @@ Repository checks installed as Git hooks. Maintainers use them to check source f
 
 ## Features
 
-- Check conflict markers, file growth and lint suppressions.
+- Check conflict markers and binary file growth.
 - Check changelog fragments and required change entries.
 - Check markdown shape against its docs-writing file type, and its references.
 - Check Python files for undefined names.
@@ -38,7 +38,7 @@ Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. S
 ```toml
 [env]
 COMMIT_GUARDS_BYTE_CEILING_KB = "500"
-COMMIT_GUARDS_CHECKS = "suppression-ban conflict-markers"
+COMMIT_GUARDS_CHECKS = "conflict-markers"
 ```
 
 `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names a project check the pre-commit hook runs last. Writing that check: [references/hooks-and-settings.md § Repo-local check](references/hooks-and-settings.md#repo-local-check).

@@ -18,7 +18,7 @@ GG="$SKILL_DIR/scripts/commit-guards"
 unset CI GITHUB_ACTIONS COMMIT_GUARDS_CHECKS COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 CM="<<<<""<<<"
-TWO="COMMIT_GUARDS_CHECKS=conflict-markers suppression-ban"
+TWO="COMMIT_GUARDS_CHECKS=conflict-markers changelog-entries"
 
 # The production clock reads date in separate processes. A file carries its
 # deterministic input across those reads, including command substitutions.
@@ -71,7 +71,7 @@ assert_eq() { # LABEL EXPECT ACTUAL
 }
 
 # A repository with one clean commit tagged base, then a staged conflict
-# marker, so conflict-markers fails the staged batch and suppression-ban
+# marker, so conflict-markers fails the staged batch and changelog-entries
 # passes it.
 R=""
 fixture() { # NAME
@@ -111,9 +111,9 @@ for row in \
   fixture "$name"
   head="$(git -C "$R" rev-parse HEAD)"
   assert_eq "$name: the batch keeps the guard's verdict" "$status" \
-    "$(run "$R" "COMMIT_GUARDS_CHECKS=$guard suppression-ban" "all --staged")"
+    "$(run "$R" "COMMIT_GUARDS_CHECKS=$guard changelog-entries" "all --staged")"
   assert_eq "$name: each guard's outcome, batch scope and starting commit" \
-    "$guard,staged,$outcome,$head;suppression-ban,staged,clean,$head" "$(rows "$(log_of "$R")")"
+    "$guard,staged,$outcome,$head;changelog-entries,staged,clean,$head" "$(rows "$(log_of "$R")")"
   assert_eq "$name: each guard carries the clock's elapsed time" "" "$(unmeasured "$(log_of "$R")")"
   assert_eq "$name: starts are whole epoch seconds and durations have three decimals" \
     '1700000000,0.125;1700000000,0.125' "$(times "$(log_of "$R")")"
@@ -154,15 +154,15 @@ gg_mutant CLEAN_GG commit-guards 'outcome=incomplete' 'outcome=clean'
 fixture false-clean
 head="$(git -C "$R" rev-parse HEAD)"
 assert_eq "must-fail: falsifying an incomplete row leaves the batch dependency error" 2 \
-  "$(run "$R" 'COMMIT_GUARDS_CHECKS=secrets suppression-ban' 'all --staged' "$CLEAN_GG")"
+  "$(run "$R" 'COMMIT_GUARDS_CHECKS=secrets changelog-entries' 'all --staged' "$CLEAN_GG")"
 assert_eq "must-fail: the incomplete outcome assertion detects a false clean row" \
-  "secrets,staged,clean,$head;suppression-ban,staged,clean,$head" "$(rows "$(log_of "$R")")"
+  "secrets,staged,clean,$head;changelog-entries,staged,clean,$head" "$(rows "$(log_of "$R")")"
 # A copy that reads the clock again before the guard runs measures nothing.
 gg_mutant UNTIMED_GG commit-guards 'ended="$(clock)" || ended=""' 'ended="$started"'
 fixture untimed
 run "$R" "$TWO" "all --staged" "$UNTIMED_GG" >/dev/null
 assert_eq "must-fail: a duration taken before the guard runs is not a measurement" \
-  "1:conflict-markers:0.000;2:suppression-ban:0.000" "$(unmeasured "$(log_of "$R")" | paste -sd ';' -)"
+  "1:conflict-markers:0.000;2:changelog-entries:0.000" "$(unmeasured "$(log_of "$R")" | paste -sd ';' -)"
 # A copy that writes under the work tree root.
 gg_mutant INTREE_GG commit-guards 'gg_git_path RUN_LOG . rev-parse --git-common-dir' 'gg_git_path RUN_LOG . rev-parse --show-toplevel'
 fixture intree

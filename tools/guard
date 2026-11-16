@@ -3,8 +3,8 @@
 # commit-guards pre-commit chain (COMMIT_GUARDS_PRE_COMMIT_LOCAL). Every rule
 # a shipped package already judges is that package's: doc-limits caps document
 # bytes, byte-ceiling protects against large files,
-# changelog-entries judges changelog fragments, suppression-ban catches blanket
-# allows, conflict-markers catches merge markers, md-type holds markdown to its
+# changelog-entries judges changelog fragments, conflict-markers catches merge
+# markers, md-type holds markdown to its
 # file type's shape, and md-refs keeps its references live. What is here is
 # what none of them ships.
 # Repository scans read the working tree. COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS

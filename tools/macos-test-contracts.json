@@ -98,7 +98,6 @@
     "skills/commit-guards/tests/run-log.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/secrets.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/settings-precedence.test.sh": "linux-duplicate",
-    "skills/commit-guards/tests/suppression-ban.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/terminal-paths.test.sh": "native",
     "skills/decider/tests/decider-base-collision.test.sh": "linux-duplicate",
     "skills/decider/tests/decider-index-parse.test.sh": "linux-duplicate",
