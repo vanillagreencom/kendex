@@ -91,7 +91,7 @@ class ProgressLog(MailWorld):
         note = memory / "facts.md"
         fields = "- Source: owner statement\n- Date: 2000-01-01\n- Supersedes: none\n"
         good = "# Facts\n\n### Access\nThe folder opens.\n" + fields
-        states = "- KEN-1: next\n- session=control hold\n- wake=mail: wait\n- ask=owner: await reply\n"
+        states = "- KEN-1: next\n- session=control: hold\n- wake=mail: wait\n- ask=owner: await reply\n"
         rows = []
         values = (("Source", "owner statement"), ("Date", "2000-01-01"), ("Supersedes", "none"))
         for shape in ("{field}:", "**{field}:**", "**{field}**:"):
@@ -261,6 +261,30 @@ class ProgressLog(MailWorld):
                     self.assertIn(refusal, kinds, result.stderr)
                 else:
                     self.assertEqual(kinds, [])
+
+    def test_session_writer_checkpoint(self):
+        # progress-log's State writer is the producer; the commit lane reads its output.
+        rows = (
+            ("named session", "", "session=control", "Hold", "control"),
+            ("named session colon id", "", "session=control:west:", "Hold", "control:west:"),
+            ("named ask", "", "ask=owner", "Hold session=control", "control"),
+            ("bare session", "- session=control Hold\n", None, None, "control"),
+            ("SESSION label", "- SESSION control session=control\n", None, None, "control"),
+            ("standalone SESSION", "- SESSION control\n", None, None, "control"),
+        )
+        for name, initial, key, action, identity in rows:
+            for checkpoint in (identity, "different"):
+                with self.subTest(row=name, checkpoint=checkpoint):
+                    source = state_handoff(initial).replace("session control;", "session " + checkpoint + ";")
+                    self.handoff.write_text(source)
+                    if key is not None:
+                        result = self.log(dict(FIELDS, **{"--state-change": "set State " + key + " " + action}))
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.command(["git", "add", "state/handoff.md"], self.home).returncode, 0)
+                    checked = self.command([sys.executable, "-B", self.scripts / "progress-log"], self.home)
+                    self.assertEqual(checked.returncode, 0 if checkpoint == identity else 1, checked.stderr)
+                    rules = [line.split("rule=", 1)[1].split()[0] for line in checked.stderr.splitlines()]
+                    self.assertEqual(rules, [] if checkpoint == identity else ["session-checkpoint"])
 
     def test_home_structure_control(self):
         mutations = (

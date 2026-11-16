@@ -359,7 +359,8 @@ def home_check(home):
                 opening = entry.splitlines()[0]
                 named = re.match(r"^- (\S+):(?: |$)", opening)
                 session = re.search(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
-                if not named and not session and not any(state_ids(entry)):
+                label = re.match(r"^- SESSION (\S+)", opening)
+                if not named and not session and not label and not any(state_ids(entry)):
                     failures.append((name, number, "state-id", "State entry requires a durable id"))
                 tokens = re.findall(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
                 durable = state_ids(opening)
@@ -367,8 +368,9 @@ def home_check(home):
                 if key is not None and key in seen:
                     failures.append((name, number, "state-entry-ambiguous", "references/long-session.md:87"))
                 seen.add(key)
-                explicit = re.findall(r"(?<![\w-])session=(\S+)", opening)
-                label = re.match(r"^- SESSION (\S+)", opening)
+                # change_state writes the named key followed by a colon delimiter.
+                session_text = named[1] + " " + opening[named.end():] if named else opening
+                explicit = re.findall(r"(?<![\w-])session=(\S+)", session_text)
                 identities = set(explicit + ([label[1]] if label else []))
                 for identity in identities:
                     if identity in sessions:
