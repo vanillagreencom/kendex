@@ -9,11 +9,11 @@
 //! `ORCH_COPILOT_HOLD_SECS` from that key's stamp and holds every verdict
 //! that permits a merge and the review period's own answers; the
 //! reviewer's silence is bounded by `PR_REVIEW_WAIT_SECS` per period, each
-//! `timeout` ending one period and counted. A fallback, or an error retry
-//! that cannot stand, owes the lane's overseer the `copilot-fallback`
-//! notice where the item runs in a lane: written `owed` in the write that
-//! records the outcome, sent into the lane's mailbox after it and marked,
-//! so a call that finds it owed sends it. The workflow repeats the call
+//! `timeout` ending one period and counted. A fallback under the `approval`
+//! gate, or an error retry that cannot stand, owes the lane's overseer the
+//! `copilot-fallback` notice where the item runs in a lane: written `owed`
+//! in the write that records the outcome, sent into the lane's mailbox
+//! after it and marked, so a call that finds it owed sends it. The workflow repeats the call
 //! under its own budget: `pending` and `unreadable` are results, never
 //! verdicts, as `verify-pr` answers them.
 use agent_runtime::intent::Notice;
@@ -529,6 +529,7 @@ pub fn run(
         notice_dir: settings.state_dir.join("review"),
         nonce: env.round_id(),
         draft: false,
+        off: false,
         pull: None,
         eligibility: None,
         private_env: settings.private_env,
@@ -579,6 +580,8 @@ struct Gate<'a> {
     nonce: String,
     /// Whether the head reads draft and this call did not mark it ready.
     draft: bool,
+    /// Whether the gate mode is `off`, where no approval waits on a request.
+    off: bool,
     /// The `pulls/N` read the call made, for the eligibility to reuse.
     pull: Option<Pull>,
     /// The head's eligibility, judged once per call (`ineligible`).
@@ -605,7 +608,20 @@ impl Gate<'_> {
         // review, independently of the gate mode.
         let marked = self.mark_ready(&mut record)?;
         if mode == GateMode::Off {
-            return self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
+            // The organization's workflow skips a draft and never runs on its
+            // ready mark, so a head the gate's own mark made ready asks
+            // Copilot until a request is recorded: a call whose reads failed
+            // leaves it to the next. No approval waits on that request: the
+            // hold reads Copilot's work as it stood before the call's own POST.
+            self.off = true;
+            let verdict = self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
+            let owed = record.as_ref().is_some_and(|head| {
+                head.ready == Some(Ready::Done) && (head.request.is_none() || head.held_as_draft())
+            });
+            if owed && self.review.copilot_requests {
+                self.request(record, true)?;
+            }
+            return verdict;
         }
 
         // An approval carried from an earlier commit is no review of this
@@ -1236,8 +1252,9 @@ impl Gate<'_> {
     /// published: a regression blocker standing open refuses it, and
     /// Copilot's work in flight within its hold keeps it `pending`, the
     /// review the gate itself asked for included. The hold stands under
-    /// either gate mode: an `off` gate asks Copilot for nothing, yet a
-    /// review already running on the head still lands before the merge.
+    /// either gate mode: an `off` gate asks Copilot only on its own ready
+    /// mark, yet a review already running on the head still lands before the
+    /// merge.
     fn permit(&mut self, verdict: Verdict, record: Option<&HeadRecord>) -> Step<Verdict> {
         if let Some(location) = regression_blocker(self.path, &loaded(self.path)?.doc)? {
             return Ok(Verdict::new(
@@ -1366,12 +1383,13 @@ impl Gate<'_> {
     /// The notice a fallback with `cause` owes the lane's overseer, as the
     /// record holds it: its first line, `owed`. A `draft` fallback is the
     /// head waiting on its own ready mark and a `refresh` head takes the
-    /// overseer's refresh route, so neither owes one; nor does an item
-    /// with no launch marker, which runs in no lane. A marker that cannot
-    /// be read may be a lane's, so the notice is owed and a later call's
-    /// send reads the marker again.
+    /// overseer's refresh route, so neither owes one; nor does a fallback
+    /// under the `off` gate, whose notice would ask for an approval nothing
+    /// waits on; nor does an item with no launch marker, which runs in no
+    /// lane. A marker that cannot be read may be a lane's, so the notice is
+    /// owed and a later call's send reads the marker again.
     fn notice_for(&mut self, cause: &str, exit: Option<i32>) -> Option<Notice> {
-        if matches!(cause, "draft" | "refresh") {
+        if self.off || matches!(cause, "draft" | "refresh") {
             return None;
         }
         match self.lane_root() {

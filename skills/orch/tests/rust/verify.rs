@@ -6646,14 +6646,14 @@ fn a_review_setting_outside_its_form_refuses_the_verbs_that_read_it() {
 
 /// A ready mark GitHub refused stands `marking` under the head, and the
 /// call the workflow repeats sends it again under either gate mode: the
-/// repeat marks the draft, records it `done`, and under `approval` requests
-/// the review. A head first seen without the mark is marked by a later
-/// call that asks, and its `draft` fallback gives way to the request.
+/// repeat marks the draft, records it `done` and requests the review. A
+/// head first seen without the mark is marked by a later call that asks,
+/// and its `draft` fallback gives way to the request.
 #[test]
 fn a_refused_ready_mark_is_sent_again_and_its_request_follows() {
     let ready = format!("pr ready {PR} --repo {REPO}");
     let marks = |gh: &Github| gh.log().iter().filter(|line| **line == ready).count();
-    for (policy, status, requests) in [("enforce", "pending", 1), ("off", "complete", 0)] {
+    for (policy, status, requests) in [("enforce", "pending", 1), ("off", "complete", 1)] {
         let mut gh = Github::review_world();
         gh.policy(&format!("[env]\nREVIEW_GATE_MODE = \"{policy}\"\n"));
         gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
@@ -6672,10 +6672,9 @@ fn a_refused_ready_mark_is_sent_again_and_its_request_follows() {
         assert_eq!(marks(&gh), 2, "{policy}: {:?}", gh.log());
         assert_eq!(gh.head_record()["ready"], "done", "{policy}");
         assert_eq!(gh.requests(), requests, "{policy}: {:?}", gh.log());
+        assert_eq!(second["request"]["outcome"], "requested", "{second}");
         if policy == "off" {
             assert_eq!(second["verdict"], "off", "{second}");
-        } else {
-            assert_eq!(second["request"]["outcome"], "requested", "{second}");
         }
     }
 
@@ -6693,6 +6692,156 @@ fn a_refused_ready_mark_is_sent_again_and_its_request_follows() {
     assert_eq!(second["request"]["outcome"], "requested", "{second}");
     assert_eq!(second["request"]["recorded_now"], true, "{second}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+}
+
+/// The organization's workflow skips a draft and never runs on its ready
+/// mark, so under the `off` gate the call that marks a lane's draft ready
+/// asks Copilot once and still answers `complete off`: nothing waits on
+/// the request, and a refused one owes the lane no notice. A repeated call
+/// on the head, `PR_COPILOT_REQUESTS=off` and a pull request already ready
+/// send nothing.
+#[test]
+fn under_the_off_gate_the_calls_own_ready_mark_requests_copilot_once() {
+    let ready = format!("pr ready {PR} --repo {REPO}");
+    let off_draft = || {
+        let mut gh = Github::review_world();
+        gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+            .answer(
+                &pull_path(),
+                rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+            )
+            .answer(&format!("pr ready {PR}"), json!({}));
+        gh
+    };
+    let off = |reply: &Value| {
+        assert_eq!(reply["status"], "complete", "{reply}");
+        assert_eq!(reply["verdict"], "off", "{reply}");
+    };
+
+    // (a) The mark, then the one request, answered at once.
+    let mut gh = off_draft();
+    let marked = ok_result(&gh.review(true, &[]));
+    off(&marked);
+    assert_eq!(marked["request"]["outcome"], "requested", "{marked}");
+    assert_eq!(marked["request"]["recorded_now"], true, "{marked}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["ready"], "done");
+    let log = gh.log();
+    let (mark, request) = (
+        log.iter().position(|l| *l == ready),
+        log.iter().position(|l| l == REQUEST_LINE),
+    );
+    assert!(mark.is_some() && mark < request, "{log:?}");
+
+    // (b) A repeated call with the mark on the same head sends nothing,
+    // even where Copilot's run ended with no review of the head.
+    let acts_path = gh.dir.path().join("replies.acts.json");
+    let mut acts: Value = serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+    acts["events"][PR.to_string()][0]["created_at"] = json!("2026-01-29T15:00:00Z");
+    fs::write(&acts_path, acts.to_string()).unwrap();
+    let ended = with(
+        with(
+            copilot_check(31, "completed"),
+            "conclusion",
+            json!("cancelled"),
+        ),
+        "started_at",
+        json!("2026-01-29T15:00:30Z"),
+    );
+    gh.answer(&check_runs(HEAD, 1), check_runs_page(1, vec![ended]));
+    let repeat = ok_result(&gh.review(true, &[]));
+    off(&repeat);
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+
+    // (c) With requests off, the mark is made and nothing is sent or
+    // recorded.
+    let gh = off_draft();
+    let quiet = ok_result(&gh.review(true, REQUESTS_OFF));
+    off(&quiet);
+    assert_eq!(gh.head_record()["ready"], "done");
+    assert_eq!(quiet["request"], Value::Null, "{quiet}");
+    assert_eq!(gh.head_record()["request"], Value::Null);
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+
+    // (d) A pull request already ready takes its request from the
+    // workflow: the call makes no mark and sends nothing.
+    let gh = Github::review_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
+    let open = ok_result(&gh.review(true, &[]));
+    off(&open);
+    assert_eq!(open["request"], Value::Null, "{open}");
+    assert!(!gh.log().contains(&ready), "{:?}", gh.log());
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+
+    // A refused request in a lane falls back and owes the lane nothing.
+    let mut gh = off_draft();
+    gh.refused(
+        &format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers"),
+        422,
+        "Validation Failed",
+    );
+    let lane = LaneWorld::new(&gh, true);
+    let cli = lane.cli.display().to_string();
+    let refused = ok_result(&gh.review_in(&lane.root, true, &[("LANE_MAIL_CLI", &cli)]));
+    off(&refused);
+    assert_eq!(refused["request"]["cause"], "refused", "{refused}");
+    assert_eq!(refused["notices"], Value::Null, "{refused}");
+    assert_eq!(gh.head_record()["notices"], Value::Null);
+    assert_eq!(lane.calls(), 0);
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+}
+
+/// Under the `off` gate the request is owed by the head the gate's own
+/// mark made ready, not by the call that made it: a marking call whose
+/// read failed leaves it to the next call, which sends it once. A pull
+/// request opened ready, whose request the workflow made, has no mark of
+/// the gate's and takes no second request, even once Copilot's run ended
+/// with no review.
+#[test]
+fn under_the_off_gate_a_request_the_marking_call_lost_goes_out_on_a_later_call() {
+    let mut gh = Github::review_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+        .answer(&format!("pr ready {PR}"), json!({}))
+        .fail(&pull_path());
+    let lost = ok_result(&gh.review(true, &[]));
+    assert_eq!(lost["status"], "unreadable", "{lost}");
+    assert_eq!(gh.head_record()["ready"], "done");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    gh.answer(
+        &pull_path(),
+        rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+    );
+    let next = ok_result(&gh.review(true, &[]));
+    assert_eq!(next["status"], "complete", "{next}");
+    assert_eq!(next["request"]["outcome"], "requested", "{next}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    ok_result(&gh.review(false, &[]));
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+
+    let mut gh = Github::review_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let running = ok_result(&gh.review(true, &[]));
+    assert_eq!(running["copilot"]["state"], "pending", "{running}");
+    let ended = with(
+        with(
+            copilot_check(31, "completed"),
+            "conclusion",
+            json!("cancelled"),
+        ),
+        "started_at",
+        json!("2026-01-29T15:00:30Z"),
+    );
+    gh.answer(&check_runs(HEAD, 1), check_runs_page(1, vec![ended]));
+    let later = ok_result(&gh.review(true, &[]));
+    assert_eq!(later["status"], "complete", "{later}");
+    assert_eq!(later["request"], Value::Null, "{later}");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
 }
 
 /// A ready mark whose answer was lost, its call killed before or after the
