@@ -1,6 +1,6 @@
 # commit-guards
 
-Repository checks installed as Git hooks. Maintainers use them to check source files, markdown and commit messages before a commit completes, and the whole branch before a push leaves the machine.
+Repository checks installed as Git hooks. Maintainers use them to check source files, markdown and commit messages before a commit completes, and binary growth against the destination before a push leaves the machine.
 
 ## Features
 
@@ -19,9 +19,9 @@ kendex add vanillagreencom/kendex --skill commit-guards
 
 ## How it works
 
-You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. When you push, the pre-push hook runs the document byte-ceiling check over the pushed tree and then the enabled checks over what the push would change on the remote. A check that reads only staged files is skipped there where the push gives it no range to read instead, because a push stages nothing, and the hook names each one it skipped. The credential scan runs at commit and in CI, never at push: [CHECKS.md § secrets](CHECKS.md#secrets) says why and what that leaves to CI. A failed check stops the commit or the push and prints the problem.
+You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. At push, only an explicitly enabled byte-ceiling judges what the push would do to the destination. The default check set runs no content check at push. A failed check stops the commit or the push and prints the problem.
 
-The push check is there because Git runs no hook when it replays a commit. A rebase or a cherry-pick can leave a branch in a state no commit hook ever saw.
+Git runs no commit hook when it replays a commit. CI must judge replayed commits, including document limits, Markdown shape and references, changelog changes and credentials. Push reads no record or cache of earlier hook results. Check ownership and destination scopes: [references/hooks-and-settings.md § Pre-push scope](references/hooks-and-settings.md#pre-push-scope).
 
 ## Git hooks
 

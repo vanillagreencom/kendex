@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Sibling gate resolution, and the doc-limits lane both hook chains run.
+# Sibling gate resolution and the pre-commit doc-limits lane.
 #
 # Sibling gates resolve against the JUDGED work tree first: the shim may exec
 # a hook lane from a shared install in another checkout (linked worktrees
@@ -10,12 +10,6 @@
 # skills/ layout; the install beside the calling script serves only a tree
 # carrying no copy.
 #
-# One copy because two hooks call it. pre-commit runs the doc-limits lane over
-# the staged snapshot; pre-push runs it over the pushed tree, which that
-# hook's own index-drift refusal has already held equal to HEAD. A second
-# spelling in either hook would be a twin, and the two would drift apart on
-# the first change to the re-vendor rule.
-#
 # Sourced, never executed — strict on its own terms rather than its caller's,
 # like the other libraries beside it. gg_message, gg_fail and gg_project_root
 # resolve at call time, so the caller's own bootstrap order is free.
@@ -24,24 +18,11 @@ set -euo pipefail
 # shellcheck source=skill-roots.sh
 source "${BASH_SOURCE[0]%/*}/skill-roots.sh"
 
-# The roots gg_resolve_sibling walked, for a skip to name. A diagnostic that
-# lists one of two searched places is worse than none: it sends the reader to
-# the directory that was never the problem.
-gg_searched_roots() { # SCRIPTS-DIR
-  local project=""
-  gg_project_root project "$1" || project=""
-  [ "$project" = "$PWD" ] && project=""
-  case "$project" in
-    "") printf '%s' "$PWD" ;;
-    *) printf '%s and %s' "$PWD" "$project" ;;
-  esac
-}
-
 gg_resolve_sibling() { # SCRIPTS-DIR SKILL — skill directory on stdout; 1 when no side carries it
   local scripts="$1" skill="$2" base="" dir="" root="" project=""
   # The judged tree first, then the project this copy is installed under.
   # That order is the re-vendor rule: a tree carrying its own copy of a gate
-  # gates its own commit or push with it, so $PWD outranks everything.
+  # gates its own commit with it, so $PWD outranks everything.
   #
   # The project root is the addition. git runs a hook from the work-tree top
   # level, which is the project root only when the two are the same
@@ -82,21 +63,14 @@ Reinstall the package at $(gg_shown "$2") with kendex refresh; if that does not 
 # aggregator. Whether the SKILL is present decides, not whether its script
 # happens to be runnable: a present skill with a missing, dangling or
 # unexecutable script is a broken install. -L catches a dangling symlink,
-# which -e reports as absent. At commit it is named by gg_lane_incomplete and
-# blocks nothing. The pre-push lane keeps its fail-closed contract and
-# refuses, since the push is the last local judgement of the whole tree's
-# document ceilings.
+# which -e reports as absent. An incomplete lane is named and blocks nothing.
 gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean, skipped or unrunnable at commit, 1 violations, 2 could not complete
   local scripts="$1" skill="" lane="" out="" status=0
   if ! skill="$(gg_resolve_sibling "$scripts" doc-limits)"; then
-    [ "$GG_CHECK" = "pre-commit" ] && return 0
-    gg_message lane-absent "doc-limits roots=$(gg_searched_roots "$scripts") skills=$GG_SKILL_ROOTS fallback=$scripts/../../doc-limits" "=== $GG_CHECK: doc-limits not installed — skipped (no doc-limits skill under $(gg_searched_roots "$scripts") ($GG_SKILL_ROOTS), nor at $scripts/../../doc-limits)"
     return 0
   fi
   lane="$skill/scripts/doc-limits"
   if [ ! -x "$lane" ]; then
-    [ "$GG_CHECK" = "pre-commit" ] \
-      || gg_fail lane-missing "$lane" "the doc-limits skill is installed at $skill but $lane is missing or not executable — reinstall it"
     gg_lane_incomplete "$lane" "$skill"
     return 0
   fi

@@ -14,8 +14,7 @@
 # a present package does not ship runnable is named unrun and blocks
 # nothing, except the selected github-repository-settings owner. The repo-local entry
 # is the committer's own setting, so a missing one still blocks.
-# Sibling resolution and the doc-limits lane, which the pre-push lane runs
-# too, are lib/siblings.sh's.
+# Sibling resolution and the doc-limits lane are lib/siblings.sh's.
 set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
@@ -91,9 +90,7 @@ run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
   esac
 }
 
-# The doc-limits lane first, as the pre-push lane runs it first: sibling
-# resolution and the lane itself are lib/siblings.sh's, so the two hooks
-# cannot disagree about which copy of a gate judges a tree.
+# Sibling resolution selects the committing tree's doc-limits copy first.
 doc_limits_status=0
 gg_doc_limits_lane "$SCRIPT_DIR" || doc_limits_status=$?
 case "$doc_limits_status" in

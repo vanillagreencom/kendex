@@ -16,7 +16,7 @@ tags: [automation]
 
 # Doc Limits
 
-Run the document byte-ceiling check before review and in CI. The commit-guards pre-commit and pre-push chains use the staged mode; at push the index is held equal to HEAD first, so that mode measures the tree being pushed.
+Run the document byte-ceiling check before review and in CI. The commit-guards pre-commit chain uses the staged mode.
 
 ```bash
 .agents/skills/doc-limits/scripts/doc-limits
