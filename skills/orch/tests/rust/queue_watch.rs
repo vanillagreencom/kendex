@@ -162,7 +162,7 @@ impl World {
     fn new() -> World {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        let item = root.join(format!("workflow-state-{ITEM_ID}.json"));
+        let item = support::item_record(&root, ITEM_ID);
         fs::write(&item, ITEM).unwrap();
         std::os::unix::fs::symlink(fixtures().join("queue-watch/gh"), root.join("gh")).unwrap();
         support::real_github_script(&root.join("github.sh"), "github.sh");

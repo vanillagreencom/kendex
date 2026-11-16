@@ -130,7 +130,7 @@ pub(crate) fn text_cmd(settings: &crate::settings::ValidateSettings) -> Option<S
 pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String, String)> {
     // A state directory that does not stand holds no item, so nothing
     // admitted the run; any other failed read is no answer.
-    let entries = match fs::read_dir(state_dir) {
+    let entries = match fs::read_dir(state::items_dir(state_dir)) {
         Ok(entries) => entries,
         Err(e) if e.kind() == ErrorKind::NotFound => {
             return Err(Error::RunUnadmitted {
@@ -150,15 +150,13 @@ pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String
             cause: e.to_string(),
         })?;
         let name = entry.file_name();
-        let Some(item) = name
-            .to_str()
-            .and_then(|n| n.strip_prefix("workflow-state-"))
-            .and_then(|n| n.strip_suffix(".json"))
-        else {
+        let Some(item) = name.to_str() else {
             continue;
         };
-        let path = entry.path();
-        if state::Kind::of_path(&path) != state::Kind::Item {
+        let path = state::item_path(state_dir, item);
+        if !entry.file_type().is_ok_and(|t| t.is_dir())
+            || state::Kind::of_path(&path) != state::Kind::Item
+        {
             continue;
         }
         let Some(snapshot) = load(&path)? else {

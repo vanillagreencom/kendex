@@ -191,7 +191,7 @@ growth_round_write() {
     esac
     previous="$arg"
   done
-  if [[ -n "$worktree" && -n "$issue" && -n "$round_id" && -f "$worktree/tmp/workflow-state-$issue.json" ]]; then
+  if [[ -n "$worktree" && -n "$issue" && -n "$round_id" && -f "$worktree/tmp/items/$issue/workflow-state-$issue.json" ]]; then
     "$state" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
   fi
   env ORCH_STATE_DIR="$worktree/tmp" "$writer" "$@"

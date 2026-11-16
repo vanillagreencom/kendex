@@ -90,7 +90,7 @@ SH
 set -euo pipefail
 common="$(git rev-parse --path-format=absolute --git-common-dir)"
 item="$(git branch --show-current)"
-state="${common%/.git}/tmp/workflow-state-$item.json"
+state="${common%/.git}/tmp/items/$item/workflow-state-$item.json"
 tries=0
 until [ -f "$state" ] && jq -e '[.stages[]? | select(.kind == "validate")] | length > 0' "$state" >/dev/null 2>&1; do
   tries=$((tries + 1))
@@ -115,6 +115,9 @@ SH
   chmod +x "$main/.git/hooks/pre-commit"
   # The round prune's mark at 100, where no volume short of full reaches
   # it, so the host's disk never changes the job's answer.
+  # A confined lane writes only what its grants hold: the world's two plants
+  # it writes, the bare origin its push lands in and the gh fake's call log,
+  # are named in the overseer's ORCH_LANE_WRITABLE.
   cat > "$main/kendex.settings.toml" <<TOML
 [env]
 WORKTREE_DEFAULT_BRANCH = "main"
@@ -128,6 +131,7 @@ AGENT_RUNTIME_TMUX_SESSION = "fleet"
 AGENT_RUNTIME_TMUX_VERIFY_SECS = "20"
 AGENT_RUNTIME_HARNESS_BINARIES = "claude=$stub"
 ORCH_ROUND_PRUNE_DISK_PCT = "100"
+ORCH_LANE_WRITABLE = "$root/origin.git:$(cd -- "$STUB_DIR" && pwd -P)"
 TOML
   git -C "$main" add .
   git -C "$main" commit -qm 'chore: consumer base'

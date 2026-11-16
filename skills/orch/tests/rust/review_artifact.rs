@@ -1636,7 +1636,7 @@ fn a_declaration_names_its_instrument_and_silences_only_the_measurement_gate_vis
 fn record(dir: &Path, issue: &str, declined: Value) {
     fs::create_dir_all(dir).unwrap();
     fs::write(
-        dir.join(format!("workflow-state-{issue}.json")),
+        support::item_record(dir, issue),
         json!({"issue": issue, "declined_items": declined}).to_string(),
     )
     .unwrap();

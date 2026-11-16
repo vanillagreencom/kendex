@@ -168,7 +168,7 @@ impl Repo {
     }
 
     fn record_path(&self, item: &str) -> PathBuf {
-        self.state.join(format!("workflow-state-{item}.json"))
+        support::item_record(&self.state, item)
     }
 
     /// The item's record as the store writes it, with `extra` merged in.
@@ -797,7 +797,11 @@ mod push {
         fs::write(repo.map(), &text).unwrap();
         let mode = |m: u32| {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&repo.state, fs::Permissions::from_mode(m)).unwrap();
+            fs::set_permissions(
+                repo.record_path("KEN-1").parent().unwrap(),
+                fs::Permissions::from_mode(m),
+            )
+            .unwrap();
         };
         mode(0o555);
         let out = repo.push("branch");
@@ -1593,7 +1597,7 @@ mod prune {
 
         fn record(&self, doc: Value) {
             fs::write(
-                self.state.join(format!("workflow-state-{}.json", self.key)),
+                support::item_record(&self.state, &self.key),
                 doc.to_string(),
             )
             .unwrap();
@@ -1605,8 +1609,7 @@ mod prune {
 
         fn read(&self) -> Value {
             serde_json::from_str(
-                &fs::read_to_string(self.state.join(format!("workflow-state-{}.json", self.key)))
-                    .unwrap(),
+                &fs::read_to_string(support::item_record(&self.state, &self.key)).unwrap(),
             )
             .unwrap()
         }
@@ -2017,7 +2020,7 @@ mod qa {
             fs::create_dir_all(&state).unwrap();
             if let Some(labels) = labels {
                 fs::write(
-                    state.join("workflow-state-ISSUE-1.json"),
+                    support::item_record(&state, "ISSUE-1"),
                     json!({"issue_id": "ISSUE-1", "worktree": repo, "branch": "item", "qa_labels": labels}).to_string(),
                 )
                 .unwrap();
@@ -2059,7 +2062,7 @@ mod qa {
 
         fn decision(&self) -> Value {
             let doc: Value = serde_json::from_str(
-                &fs::read_to_string(self.state.join("workflow-state-ISSUE-1.json")).unwrap(),
+                &fs::read_to_string(support::item_record(&self.state, "ISSUE-1")).unwrap(),
             )
             .unwrap();
             doc["qa_decision"].clone()
@@ -2149,11 +2152,17 @@ mod qa {
             "{}",
             stderr(&out)
         );
-        assert!(fs::metadata(change.state.join("workflow-state-ISSUE-1.json")).is_err());
+        assert!(fs::metadata(orch_runtime::state::item_path(&change.state, "ISSUE-1")).is_err());
         let held = Change::new(&[("a.rs", "x")], Some(json!([])));
         let mode = |m: u32| {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&held.state, fs::Permissions::from_mode(m)).unwrap();
+            fs::set_permissions(
+                support::item_record(&held.state, "ISSUE-1")
+                    .parent()
+                    .unwrap(),
+                fs::Permissions::from_mode(m),
+            )
+            .unwrap();
         };
         mode(0o555);
         let out = held.scan("main", json!([]), &[]);

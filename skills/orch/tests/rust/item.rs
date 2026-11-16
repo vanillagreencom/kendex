@@ -73,7 +73,7 @@ fn run(path: &Path, request: &Request) -> Result<Applied, Error> {
 }
 
 fn item_file(dir: &Path) -> PathBuf {
-    let path = dir.join("workflow-state-KEN-4687.json");
+    let path = support::item_record(dir, "KEN-4687");
     fs::write(&path, ITEM).unwrap();
     path
 }
@@ -266,7 +266,7 @@ mod dev_artifacts {
             w
         }
         fn item(&self) -> PathBuf {
-            self.state.join("workflow-state-issue-8.json")
+            support::item_record(&self.state, "issue-8")
         }
         fn doc(&self) -> Value {
             serde_json::from_str(&fs::read_to_string(self.item()).unwrap()).unwrap()
@@ -3141,7 +3141,7 @@ mod dev_artifacts {
             fs::remove_file(&lock).unwrap();
         }
         fs::set_permissions(
-            &w.state,
+            state.parent().unwrap(),
             <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o555),
         )
         .unwrap();
@@ -3151,7 +3151,7 @@ mod dev_artifacts {
             &["--expect-items-from-round"],
         );
         fs::set_permissions(
-            &w.state,
+            state.parent().unwrap(),
             <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
         )
         .unwrap();
@@ -3514,7 +3514,7 @@ mod dev_artifacts {
         /// answer for it with that description.
         fn linear_item(&self, key: &str, body: Option<&str>) {
             fs::write(
-                self.state.join(format!("workflow-state-{key}.json")),
+                support::item_record(&self.state, key),
                 json!({"worktree": self.wt, "branch": "work", "dev_round_id": "r1",
                        "pre_delegate_sha": self.head(),
                        "stages": [{"kind": "dev", "round_id": "r1", "start": 1, "end": null}]})
@@ -3702,7 +3702,7 @@ mod dev_artifacts {
         );
         assert_eq!(closed["report"]["outcome"], "no-change", "{closed}");
         let state: Value = serde_json::from_str(
-            &fs::read_to_string(w.state.join("workflow-state-KEN-9.json")).unwrap(),
+            &fs::read_to_string(support::item_record(&w.state, "KEN-9")).unwrap(),
         )
         .unwrap();
         assert_eq!(state["stages"][0]["kind"], "implement");
@@ -4645,7 +4645,7 @@ fn admission_is_idempotent_per_round_and_mints_the_next_attempt_on_request() {
 
     // An item recording no worktree can name no directory: refused, with
     // nothing written.
-    let bare = dir.path().join("workflow-state-KEN-1.json");
+    let bare = support::item_record(dir.path(), "KEN-1");
     fs::write(
         &bare,
         ITEM.replacen(
@@ -4741,7 +4741,7 @@ fn accept_result_closes_the_round_stage_once_with_its_outcome() {
     assert_eq!(err.key(), "round-superseded");
     // A stage another writer closed without a word carries none; the reply
     // says so.
-    let unworded = dir.path().join("workflow-state-KEN-2.json");
+    let unworded = support::item_record(dir.path(), "KEN-2");
     fs::write(
         &unworded,
         ITEM.replacen("\"end\": null", "\"end\": 1769600900", 1),
@@ -5041,7 +5041,7 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_an_unreadable_one_op
     let dir = tempfile::tempdir().unwrap();
     let worktree = dir.path().join("wt");
     fs::create_dir_all(worktree.join("tmp")).unwrap();
-    let path = dir.path().join("workflow-state-KEN-4687.json");
+    let path = support::item_record(dir.path(), "KEN-4687");
     fs::write(
         &path,
         ITEM.replacen(
@@ -5582,7 +5582,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     // A record `workflow-state set handoff` writes names no round and no
     // route and carries `resumed_at: null`; the resume still stamps it, and
     // a supersede of an unresumed one carries no stamp over.
-    let unrouted = dir.path().join("workflow-state-KEN-3.json");
+    let unrouted = support::item_record(dir.path(), "KEN-3");
     let mut doc: Document = serde_json::from_str(ITEM).unwrap();
     doc.insert(
         "handoff".into(),
@@ -6013,7 +6013,7 @@ fn a_directed_items_acceptance_names_its_directive_or_refuses_authorization_miss
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("state");
     fs::create_dir_all(&state).unwrap();
-    let path = state.join("workflow-state-directive-m-7.json");
+    let path = support::item_record(&state, "directive-m-7");
     fs::write(&path, ITEM).unwrap();
     // The directed round and its one run of the declared command: the run's
     // close is the runner's verdict and names no authorization.

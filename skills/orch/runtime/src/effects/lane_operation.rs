@@ -1139,11 +1139,9 @@ mod tests {
             "notice": {"to": ITEM, "key": "validate-done", "owner": "owed",
                        "text": format!("validation-end run=done state=pass run-dir={}", done.display())}
         }));
-        std::fs::write(
-            crate::state::item_path(&w.settings.state_dir, ITEM),
-            serde_json::to_vec(&item).unwrap(),
-        )
-        .unwrap();
+        let record = crate::state::item_path(&w.settings.state_dir, ITEM);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::fs::write(record, serde_json::to_vec(&item).unwrap()).unwrap();
         let env = env();
         let run = super::super::Run {
             engine: super::super::engine_run(

@@ -1393,7 +1393,7 @@ fn a_long_lane_is_reported_once_per_age_interval_with_its_records_counts() {
         "# Lane status\n- Step: dev round 1\n",
     )
     .unwrap();
-    std::fs::write(tmp.join("workflow-state-KEN-9.json"), COUNTS_STATE).unwrap();
+    std::fs::write(support::item_record(&tmp, "KEN-9"), COUNTS_STATE).unwrap();
     std::fs::write(
         tmp.join("validation-runs"),
         "dev-validate-runs-v1\ndev-validate-implement\ndev-validate-fix\ndev-validate-restack-a\ndev-validate-restack-b\n",
@@ -3403,13 +3403,13 @@ fn a_standing_handoff_is_said_once_per_record_and_a_resumed_one_clears() {
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     let state_dir = driver.state_dir.clone();
-    let fleet_place = move |item: &str| state_dir.join(format!("workflow-state-{item}.json"));
+    let fleet_place = move |item: &str| support::item_record(&state_dir, item);
     std::fs::write(fleet_place("KEN-1"), handoff_state(HANDOFF_RECORD)).unwrap();
     // KEN-2's record stands only in its root's tmp, the fleet's place
     // holding a state with no record.
     std::fs::write(fleet_place("KEN-2"), "{\"cycles\":0}\n").unwrap();
     std::fs::write(
-        root.join("tmp/workflow-state-KEN-2.json"),
+        support::item_record(&root.join("tmp"), "KEN-2"),
         handoff_state(r#"{"written_at":"t"}"#),
     )
     .unwrap();
@@ -3490,9 +3490,9 @@ fn a_refused_handoff_read_is_the_pass_s_failure_and_the_other_lanes_news_stands(
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     let state_dir = driver.state_dir.clone();
-    let fleet_place = move |item: &str| state_dir.join(format!("workflow-state-{item}.json"));
+    let fleet_place = move |item: &str| support::item_record(&state_dir, item);
     std::fs::write(fleet_place("KEN-1"), "{\"cycles\":0}\n").unwrap();
-    let torn = root.join("tmp/workflow-state-KEN-1.json");
+    let torn = support::item_record(&root.join("tmp"), "KEN-1");
     std::fs::write(&torn, "{\"handoff\":").unwrap();
     std::fs::write(fleet_place("KEN-2"), handoff_state(HANDOFF_RECORD)).unwrap();
     driver.baseline.apply(Change::Set {
@@ -4695,13 +4695,13 @@ fn a_long_hosted_lane_s_stage_and_counters_are_read_through_the_provider() {
             "cat --item KEN-1 /remote/KEN-1/tmp/lane-status-KEN-1.md",
             ok("# Lane status\n- Step: dev round 1\n"),
         ),
-        ("cat --item KEN-1 /remote/KEN-1/tmp/workflow-state-KEN-1.json", ok(COUNTS_STATE)),
+        ("cat --item KEN-1 /remote/KEN-1/tmp/items/KEN-1/workflow-state-KEN-1.json", ok(COUNTS_STATE)),
         (
             "cat --item KEN-1 /remote/KEN-1/tmp/validation-runs",
             ok("dev-validate-runs-v1\ndev-validate-implement\ndev-validate-fix\ndev-validate-restack-a\ndev-validate-restack-b\n"),
         ),
         ("cat --item KEN-2 /remote/KEN-2/tmp/lane-status-KEN-2.md", answer(1, "")),
-        ("cat --item KEN-2 /remote/KEN-2/tmp/workflow-state-KEN-2.json", answer(1, "")),
+        ("cat --item KEN-2 /remote/KEN-2/tmp/items/KEN-2/workflow-state-KEN-2.json", answer(1, "")),
         ("cat --item KEN-2 /remote/KEN-2/tmp/validation-runs", answer(1, "")),
     ]);
     world.plant_gh(json!({"repos/o/r/pulls?head=o:cc-4&state=open": {"body": []}}));
@@ -4790,7 +4790,7 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
     // the other standing one's close-out removed its record.
     let state_dir = host.clone_of("KEN-2").join("tmp");
     std::fs::create_dir_all(&state_dir).unwrap();
-    std::fs::write(state_dir.join("workflow-state-KEN-2.json"), "{}").unwrap();
+    std::fs::write(support::item_record(&state_dir, "KEN-2"), "{}").unwrap();
     // A clone holding a file no render owns: the host's `kendex` owns none,
     // so the provider refuses the close and keeps the clone.
     std::fs::write(host.clone_of("KEN-5").join("notes.txt"), "kept\n").unwrap();
@@ -6558,9 +6558,9 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
             "not json\n"
         };
         let place = if in_clone {
-            remote.join("clone/tmp/workflow-state-KEN-4.json")
+            remote.join("clone/tmp/items/KEN-4/workflow-state-KEN-4.json")
         } else {
-            lane_root.join("tmp/workflow-state-KEN-4.json")
+            lane_root.join("tmp/items/KEN-4/workflow-state-KEN-4.json")
         };
         let clone_root = remote.join("clone").display().to_string();
         for (path, text) in [

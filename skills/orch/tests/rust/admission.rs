@@ -369,7 +369,7 @@ fn stage(dir: &Path, item: &str, kind: &str) {
 /// The stages `list` as the item state of `item` under `dir` records them,
 /// over a state that stands there or a new one.
 fn stages(dir: &Path, item: &str, list: Value) {
-    let path = dir.join(format!("workflow-state-{item}.json"));
+    let path = support::item_record(dir, item);
     let mut doc: Value = std::fs::read_to_string(&path)
         .map(|text| serde_json::from_str(&text).unwrap())
         .unwrap_or_else(|_| json!({}));
@@ -1330,7 +1330,7 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
     hosted["kind"] = json!("ssh");
     fleet.write_lanes(vec![held, hosted]);
     std::fs::create_dir_all(root.join("tmp")).unwrap();
-    std::fs::write(root.join("tmp/workflow-state-KEN-H.json"), "[]").unwrap();
+    std::fs::write(support::item_record(&root.join("tmp"), "KEN-H"), "[]").unwrap();
     fleet.item("KEN-L", "`src/a.sh`", 0, &[]);
     fleet.item("KEN-S", "`src/r.sh`", 0, &[]);
     let before = fleet.fleet();

@@ -2126,7 +2126,9 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> (Counters, R
         scripts,
         host,
         &lane.item,
-        &format!("{root}/tmp/workflow-state-{}.json", lane.item),
+        &state::item_path(&Path::new(root).join("tmp"), &lane.item)
+            .display()
+            .to_string(),
     ) {
         Answer::Live(text) => text,
         Answer::Unreadable { cause } => return unread(out, cause),
@@ -2219,7 +2221,7 @@ fn clone_of(gitfile: &str) -> Option<PathBuf> {
 
 /// What a hosted lane's work leaves on its host, the proof a merged lane is
 /// done: its worktree's `.git`, then the item's live state record
-/// `<clone>/tmp/workflow-state-<ITEM>.json`, each through `cat`, the clone the
+/// `<clone>/tmp/items/<ITEM>/workflow-state-<ITEM>.json`, each through `cat`, the clone the
 /// one that `.git` names. `Gone` is the close-out done, the worktree gone or
 /// the record removed; `Live` the record standing, a close-out still running
 /// or a lane resumed; `Unreadable` a read that failed, the provider's cause

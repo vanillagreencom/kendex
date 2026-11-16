@@ -458,7 +458,7 @@ impl Github {
     /// No replies: every read is a failed request.
     fn empty() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("workflow-state-KEN-4687.json"), ITEM).unwrap();
+        fs::write(support::item_record(dir.path(), "KEN-4687"), ITEM).unwrap();
         Github {
             dir,
             replies: Map::new(),
@@ -532,7 +532,7 @@ impl Github {
     }
 
     fn item(&self) -> PathBuf {
-        self.dir.path().join("workflow-state-KEN-4687.json")
+        support::item_record(self.dir.path(), "KEN-4687")
     }
 
     fn state(&self) -> Value {
@@ -5234,6 +5234,14 @@ fn a_fallback_recorded_beside_an_approval_sends_its_notice_into_the_lanes_box_on
         "{fell_back}"
     );
     assert_eq!(lane.calls(), 1);
+    // The notice's text file is the lane's own scratch, in its worktree's
+    // tmp, and the state directory takes none.
+    let calls = fs::read_to_string(lane.dir.join("calls")).unwrap();
+    let scratch = format!("--file {}/tmp/review/KEN-4687.", lane.root.display());
+    assert!(calls.contains(&scratch), "{calls}");
+    let item = gh.item();
+    let state = orch_runtime::state::dir_of(&item).unwrap();
+    assert!(!state.join("review").exists(), "{calls}");
     assert_eq!(
         lane.head_at_send(0)["notices"],
         json!([{"key": "copilot-fallback", "text": line, "to": "KEN-4687", "owner": "owed"}]),

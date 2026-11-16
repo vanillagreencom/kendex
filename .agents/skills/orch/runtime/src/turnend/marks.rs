@@ -1057,8 +1057,8 @@ impl<'a> Judge<'a> {
         if let Seat::Overseer { key, pane, .. } = &self.seat {
             return Ok(self.succession(&agent, &context, key, pane, mark));
         }
-        let state_args = match self.file.parent() {
-            Some(dir) if !self.file.as_os_str().is_empty() => {
+        let state_args = match crate::state::dir_of(&self.file) {
+            Some(dir) => {
                 format!(" --state-dir {}", shell_quoted(dir))
             }
             _ => String::new(),

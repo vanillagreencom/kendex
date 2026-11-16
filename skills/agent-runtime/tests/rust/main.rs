@@ -2397,6 +2397,61 @@ echo "confined=${AGENT_RUNTIME_CONFINED:-none}"
     );
 }
 
+/// A pane whose environment names a `TMPDIR` outside the grants (the tmux
+/// server's) still hands its program a scratch: the words point `TMPDIR`
+/// at the private `/tmp`, and the outside folder takes nothing.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scratch() {
+    use agent_runtime::confine::{Grants, Word, linux_words};
+    let (_dir, root) = wrapper_root();
+    let [home, wt, outside] = ["home", "wt", "outside"].map(|n| root.join(n));
+    for dir in [&home, &wt, &outside] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let grants = Grants {
+        writable: vec![wt.clone()],
+        seats: Vec::new(),
+        read_only: Vec::new(),
+        runtime_dir: None,
+        sockets: Vec::new(),
+        desktop: false,
+        gh_token: None,
+        file: root.join("grants.json"),
+    };
+    let words: Vec<String> = linux_words(&grants)
+        .into_iter()
+        .map(|word| match word {
+            Word::Plain(word) => word,
+            Word::Display(_) | Word::Text(_) => panic!("a shell word without its grant"),
+        })
+        .collect();
+    let script = r#"scratch=$(mktemp 2>/dev/null) && echo scratch=written || echo scratch=refused
+echo "tmpdir=$TMPDIR""#;
+    let out = Command::new("bwrap")
+        .args(&words)
+        .args(["/bin/sh", "-c", script])
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("TMPDIR", &outside)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        ["scratch=written", "tmpdir=/tmp"]
+    );
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+}
+
 /// The probe judges the `PATH` the launch's shell searches: no `bwrap`
 /// there, a `bwrap` whose trial run is refused (its own line carried), and
 /// the host's working one.

@@ -757,7 +757,7 @@ fn validation_world() -> (World, PathBuf) {
     let mut item: Value =
         serde_json::from_str(include_str!("fixtures/workflow-state-KEN-4687.json")).unwrap();
     item["worktree"] = json!(w.root.display().to_string());
-    let path = w.root.join(format!("workflow-state-{CLOUD}.json"));
+    let path = support::item_record(&w.root, CLOUD);
     std::fs::write(&path, serde_json::to_vec(&item).unwrap()).unwrap();
     (w, path)
 }
@@ -1076,7 +1076,7 @@ impl World {
                 request = request.display(),
                 item = self
                     .root
-                    .join(format!("workflow-state-{CLOUD}.json"))
+                    .join(format!("items/{CLOUD}/workflow-state-{CLOUD}.json"))
                     .display(),
             ),
         );
@@ -1144,7 +1144,7 @@ fn two_walkers_of_one_notice_make_one_send_the_later_reading_the_earliers_inside
     assert_eq!(record["key"], key, "{record}");
     assert_eq!(w.stage(&item, &run_dir)["notice"]["owner"], "sent");
     assert_eq!(w.cli_calls(), one_call_of(&w, "validation-end run="));
-    let notice_files = std::fs::read_dir(w.root.join("validate"))
+    let notice_files = std::fs::read_dir(w.root.join("tmp").join("validate"))
         .map(|d| {
             d.filter(|e| {
                 e.as_ref()

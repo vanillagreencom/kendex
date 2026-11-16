@@ -72,7 +72,12 @@ pub(super) struct Granted {
     /// the operator's next session.
     missing: Vec<(PathBuf, &'static str)>,
     usage: Option<PathBuf>,
-    /// The read-only folders under the cache folder, made where absent.
+    /// The item's own folder of the state directory, made before the window
+    /// so its bind stands.
+    item_dir: PathBuf,
+    /// The read-only folders made where absent, so a lane cannot plant one:
+    /// those under the cache folder and the launch records' under the
+    /// common git folder.
     kept: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
@@ -121,16 +126,20 @@ fn resolved(path: &Path) -> Option<PathBuf> {
 }
 
 /// The grants of a local launch of `item` on `harness` from `mail_root`
-/// under `homes`: writable its checkout (the root, the root's `tmp` where a
-/// worktree setup links it elsewhere, the common git folder of a linked
-/// worktree with its hooks and configuration read-only) and the room
-/// pick's usage records; the seats its own launch runs under and every
+/// under `homes`: writable its checkout (the root, and the common git
+/// folder of a linked worktree with its hooks, its configuration and the
+/// launch records every lane's hook resolves read-only), the item's own
+/// folder of the state directory, whose other entries stay read-only, and
+/// the room pick's usage records; the seats its own launch runs under and every
 /// configured account of a harness its second opinion can run on, each
 /// with its settings file read-only; the build caches under the home and
 /// the folders `ORCH_LANE_WRITABLE` names; the user's runtime folder
 /// hidden; the display where the record holds `desktop`. A confined launch also
 /// takes the `gh` token the operator's login answers now, handed through
-/// the lane's private folder.
+/// the lane's private folder. A confined launch whose worktree's `tmp`
+/// leads outside it is refused `grant-tmp-linked`: the link's target is
+/// shared, the state directory or another lane's folder among what it can
+/// hold.
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's reads of the paths it grants and of `gh auth token`, before the window; it writes nothing"
@@ -144,22 +153,44 @@ pub(super) fn of(
     homes: &LaunchHome,
     desktop: bool,
 ) -> Result<Granted> {
+    let item = crate::marker::item_name(item)?;
     let checkout = crate::marker::checkout(mail_root)?;
     let root = resolved(&checkout.root).unwrap_or_else(|| checkout.root.clone());
+    let answer = confine::answer(Host::this(), harness);
+    let tmp = checkout.root.join("tmp");
+    if answer == Answer::Confined
+        && let Some(target) = resolved(&tmp).filter(|t| !t.starts_with(&root))
+    {
+        return Err(refused(
+            "grant-tmp-linked",
+            &[
+                ("path", &tmp.display().to_string()),
+                ("target", &target.display().to_string()),
+            ],
+        ));
+    }
     let mut writable = vec![root.clone()];
     let mut read_only = Vec::new();
-    for dir in [checkout.root.join("tmp"), checkout.common.clone()] {
-        if let Some(dir) = resolved(&dir).filter(|d| !d.starts_with(&root)) {
-            writable.push(dir);
-        }
-    }
+    let mut kept = Vec::new();
     if let Some(common) = resolved(&checkout.common) {
+        if !common.starts_with(&root) {
+            writable.push(common.clone());
+        }
         for name in ["hooks", "config"] {
             if std::fs::symlink_metadata(common.join(name)).is_ok() {
                 read_only.push(common.join(name));
             }
         }
+        // The launcher alone writes these: a marker names the root another
+        // lane's hook resolves.
+        for name in ["lane-mail", "lane-launch"] {
+            read_only.push(common.join(name));
+            kept.push(common.join(name));
+        }
     }
+    let state = resolved(&settings.state_dir).unwrap_or_else(|| settings.state_dir.clone());
+    let item_dir = crate::state::item_dir(&state, item);
+    writable.push(item_dir.clone());
     let usage = settings.account_state.get()?.join("usage");
     writable.push(usage.clone());
     // The lane's own seats: the account it spends, the home it runs under
@@ -219,16 +250,16 @@ pub(super) fn of(
         .as_deref()
         .map(PathBuf::from)
         .filter(|h| h.is_absolute());
-    let (caches, kept) = build_caches(home.as_deref());
+    let (caches, cache_kept) = build_caches(home.as_deref());
     writable.extend(caches);
-    read_only.extend(kept.iter().cloned());
+    read_only.extend(cache_kept.iter().cloned());
+    kept.extend(cache_kept);
     let lane_writable = lane_writable(
         settings.lane_writable.as_deref(),
         home.as_deref(),
         &seat_paths,
     )?;
     writable.extend(lane_writable.iter().cloned());
-    let answer = confine::answer(Host::this(), harness);
     let private = folder(&root, item);
     let token = match answer {
         Answer::Confined => gh_token(),
@@ -251,6 +282,7 @@ pub(super) fn of(
         answer,
         missing,
         usage: Some(usage),
+        item_dir,
         kept,
         lane_writable,
         token,
@@ -397,8 +429,9 @@ impl Granted {
     }
 
     /// Write what the grants stand on before the window: the usage folder,
-    /// each absent settings file in its empty form, and the token at mode
-    /// 0600 in the lane's private folder, which the marker made.
+    /// the item's own folder, the read-only folders, each absent settings
+    /// file in its empty form, and the token at mode 0600 in the lane's
+    /// private folder, which the marker made.
     #[allow(
         clippy::disallowed_methods,
         reason = "the launch writes the files its grants bind before the window opens; the token's file is the lane's own, at mode 0600"
@@ -421,6 +454,7 @@ impl Granted {
         if let Some(usage) = &self.usage {
             std::fs::create_dir_all(usage).map_err(|e| failed(usage, e))?;
         }
+        std::fs::create_dir_all(&self.item_dir).map_err(|e| failed(&self.item_dir, e))?;
         for dir in &self.kept {
             std::fs::create_dir_all(dir).map_err(|e| failed(dir, e))?;
         }

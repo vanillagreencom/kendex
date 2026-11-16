@@ -205,10 +205,13 @@ pub fn mutex_lock(path: &Path, deadline: &Deadline) -> Result<MutexDir> {
     }
 }
 
-/// Take the exclusive lock beside `path`, creating the lock file if needed.
-/// The guard is released when the returned value is dropped.
+/// Take the exclusive lock beside `path`, creating the lock file, and its
+/// folder where it is missing, as the store's writes make theirs. The
+/// guard is released when the returned value is dropped.
 pub fn lock(path: &Path) -> Result<Guard> {
     let lock_file = lock_path(path);
+    let parent = lock_file.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|e| Error::io("open-lock", parent, e))?;
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -1014,6 +1017,23 @@ mod tests {
         Duration::from_millis(100),
         Duration::from_millis(50),
     ];
+
+    /// A lock on a record whose folder was never made takes the lock, as a
+    /// lock beside a record in a standing folder does: the folder and the
+    /// lock file are made, and nothing else.
+    #[test]
+    fn a_lock_on_a_record_whose_folder_was_never_made_makes_the_folder_and_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let item = dir.path().join("items").join("ken-1");
+        let path = item.join("workflow-state-ken-1.json");
+        let ran = locked(&path, Locking::FLOCK, || Ok::<_, Error>(7)).unwrap();
+        assert_eq!(ran, 7);
+        let names: Vec<_> = fs::read_dir(&item)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [lock_path(&path).file_name().unwrap().to_owned()]);
+    }
 
     /// The holder keeps the flock past the waiter's limit, and the waiter
     /// refuses once its clock reaches the deadline: the sleeps sum to the

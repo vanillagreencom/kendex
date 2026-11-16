@@ -23,7 +23,7 @@ fi
 mkdir -p "${VALIDATE_MANAGER_DIR:?}"
 printf '%s\n' "$unit" >> "$VALIDATE_MANAGER_DIR/launches"
 printf '%s\n' "${words[@]}" > "$VALIDATE_MANAGER_DIR/$unit.argv"
-[ -z "${VALIDATE_AT_LAUNCH:-}" ] || cp -- "${ORCH_STATE_DIR:?}/workflow-state-KEN-4687.json" "$VALIDATE_AT_LAUNCH"
+[ -z "${VALIDATE_AT_LAUNCH:-}" ] || cp -- "${ORCH_STATE_DIR:?}/items/KEN-4687/workflow-state-KEN-4687.json" "$VALIDATE_AT_LAUNCH"
 case "${VALIDATE_START_ANSWER:-success}" in
   # A client older than a property it is handed refuses the name as it
   # builds its message, before any call (measured on systemd 262 with an

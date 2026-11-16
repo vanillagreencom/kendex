@@ -868,7 +868,7 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     // tracker's verdict is the item's close-out too.
     // The item record is read as a record: the validation stop reads every
     // item of the state directory for a stage that admitted a run.
-    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-A.json");
+    let item_state = plant(fleet.state_dir(), "items/KEN-A/workflow-state-KEN-A.json");
     std::fs::write(&item_state, json!({"stages": []}).to_string()).unwrap();
     let status_file = plant(fleet.state_dir(), "lane-status-KEN-A.md");
     let answer = reply(&fleet.op(&terminal_close("KEN-A")));
@@ -2329,7 +2329,8 @@ fn age(path: &Path, secs: u64) {
 }
 
 /// `state remove` through the executable on a directory with no fleet
-/// state: the item's state, status file, handoff and run directory leave,
+/// state: the item's state with every file of its own folder, its status
+/// file, handoff and run directory leave,
 /// the mailbox and the record's lock stay, the siblings stand, the archive
 /// the reply names holds every path that left beside the mailbox and the
 /// `--archive` path, its `records.json` declaring the item's record the
@@ -2349,19 +2350,20 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
     let dir = fleet.state_dir();
     git_checkout(dir);
     let leaves = [
-        plant(dir, "workflow-state-KEN-A.json"),
+        plant(dir, "items/KEN-A/workflow-state-KEN-A.json"),
+        plant(dir, "items/KEN-A/review.notice"),
         plant(dir, "handoffs/KEN-A-handoff.md"),
         plant(dir, "KEN-A.run/stdout.log"),
         plant(dir, "lane-status-KEN-A.md"),
     ];
     let stays = [
-        plant(dir, "workflow-state-KEN-A.json.lock"),
+        plant(dir, "items/KEN-A/workflow-state-KEN-A.json.lock"),
         plant(dir, "lane-mail/KEN-A/to-lane.jsonl"),
-        plant(dir, "workflow-state-KEN-AB.json"),
+        plant(dir, "items/KEN-AB/workflow-state-KEN-AB.json"),
         plant(dir, "audit-KEN-B.json"),
     ];
     let extra = plant(dir, "extra/tmp/dev-return-KEN-A-1-1.json");
-    let expired = dir.join("workflow-state-KEN-Z.json");
+    let expired = support::item_record(dir, "KEN-Z");
     std::fs::write(&expired, "{}\n").unwrap();
     age(&expired, 10 * 86_400);
     let out = fleet.run(&[
@@ -2398,8 +2400,9 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
     let mut want: Vec<String> = [
         "KEN-A.run",
         "handoffs/KEN-A-handoff.md",
+        "items/KEN-A/review.notice",
+        "items/KEN-A/workflow-state-KEN-A.json",
         "lane-status-KEN-A.md",
-        "workflow-state-KEN-A.json",
     ]
     .iter()
     .map(|rel| format!("{}/{rel}", relative(dir)))
@@ -2409,7 +2412,8 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
     let kept = PathBuf::from(answer["result"]["kept"].as_str().expect("the archive"));
     let listed = archived(&kept);
     for rel in [
-        "workflow-state-KEN-A.json",
+        "items/KEN-A/workflow-state-KEN-A.json",
+        "items/KEN-A/review.notice",
         "handoffs/KEN-A-handoff.md",
         "KEN-A.run/stdout.log",
         "lane-status-KEN-A.md",
@@ -2449,7 +2453,8 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
         .collect();
     members.sort();
     let mut want: Vec<(String, String)> = [
-        ("workflow-state-KEN-A.json", "state"),
+        ("items/KEN-A/workflow-state-KEN-A.json", "state"),
+        ("items/KEN-A/review.notice", "along"),
         ("handoffs/KEN-A-handoff.md", "along"),
         ("KEN-A.run", "along"),
         ("lane-status-KEN-A.md", "along"),
@@ -2473,7 +2478,10 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
         .collect();
     assert_eq!(
         pruned,
-        vec![format!("{}/workflow-state-KEN-Z.json", relative(dir))]
+        vec![format!(
+            "{}/items/KEN-Z/workflow-state-KEN-Z.json",
+            relative(dir)
+        )]
     );
     assert!(
         std::fs::symlink_metadata(dir.join("extra")).is_ok(),
@@ -2813,7 +2821,7 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
         }
         fleet.write_lanes(vec![hosted_lane("KEN-1")]);
         fleet.plant_tracker("KEN-1", "completed");
-        let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+        let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
         let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
         assert_eq!(answer["ok"], true, "{case}: {answer}");
         let result = &answer["result"];
@@ -2869,7 +2877,7 @@ fn a_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_archived_and_
     git_checkout(fleet.state_dir());
     fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
     fleet.plant_tracker("KEN-1", "completed");
-    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
     let held = relative(&item_state);
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
     assert_eq!(answer["ok"], true, "{answer}");
@@ -2929,7 +2937,7 @@ fn an_unmerged_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_rem
     unmerged.as_object_mut().unwrap().remove("cycle");
     fleet.write_lanes(vec![unmerged]);
     fleet.plant_tracker("KEN-1", "canceled");
-    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
     assert_eq!(answer["ok"], true, "{answer}");
     let result = &answer["result"];
@@ -3031,7 +3039,7 @@ fn a_hosted_lane_whose_merge_landed_and_worktree_left_ends_with_its_items_files_
     );
 
     fleet.write_lanes(vec![hosted_lane("KEN-1")]);
-    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
     let result = &answer["result"];
     assert_eq!(result["word"], "closed", "{answer}");
@@ -3072,7 +3080,7 @@ fn a_hosted_lane_whose_merge_landed_and_worktree_left_ends_with_its_items_files_
 /// asking the provider nothing.
 #[test]
 fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left_the_clone() {
-    const RECORD: &str = "/w/clone/tmp/workflow-state-KEN-1.json";
+    const RECORD: &str = "/w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json";
     for (case, standing, cat_status, refused) in [
         ("record standing", true, None, Some(("pane-missing", None))),
         (
@@ -3212,7 +3220,7 @@ fn a_kept_sandbox_retires_the_attempt_and_asks_the_provider_for_no_stop_or_close
     drop(fleet.host().lead("KEN-1", "claude"));
     fleet.write_lanes(vec![fleet.ssh_lane("KEN-1")]);
     fleet.plant_tracker("KEN-1", "started");
-    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1", "mode": "keep-sandbox"}));
     let result = &answer["result"];
     assert_eq!(result["word"], "stopped", "{answer}");
@@ -3243,7 +3251,7 @@ fn a_cloud_close_ends_the_record_keeps_the_session_and_writes_its_close_row() {
         "session_since": "2026-01-29T15:00:00Z",
     })]);
     fleet.plant_tracker("KEN-1", "completed");
-    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
     let result = &answer["result"];
     assert_eq!(result["word"], "closed", "{answer}");
@@ -3572,7 +3580,7 @@ impl CloseCase2 {
         if let Some(state) = self.tracker {
             fleet.plant_tracker("KEN-1", state);
         }
-        plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+        plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
         let answer = fleet.close(self.request.clone());
         (fleet, answer)
     }
@@ -3924,7 +3932,7 @@ fn a_close_answers_a_record_by_what_it_already_is() {
         assert_eq!(fleet.provider_calls(), calls, "{}", case.name);
         // The item's files leave with a close that ends the item, the done
         // record's an earlier close's to have taken.
-        let item_state = fleet.state_dir().join("workflow-state-KEN-1.json");
+        let item_state = support::item_record(fleet.state_dir(), "KEN-1");
         assert_eq!(
             std::fs::symlink_metadata(&item_state).is_ok(),
             !matches!(
@@ -4128,7 +4136,7 @@ fn a_park_is_judged_before_anything_is_signalled() {
             |f| {
                 f.undisk("/w/ken-1/.git");
                 std::fs::write(
-                    f.state_dir().join("workflow-state-KEN-1.json"),
+                    support::item_record(f.state_dir(), "KEN-1"),
                     r#"{"version":1,"issue_id":"KEN-1","branch":"ken-1"}"#,
                 )
                 .unwrap();
@@ -4263,7 +4271,7 @@ fn a_park_is_judged_before_anything_is_signalled() {
             |f| {
                 f.undisk("/w/ken-1/.git");
                 std::fs::write(
-                    f.state_dir().join("workflow-state-KEN-1.json"),
+                    support::item_record(f.state_dir(), "KEN-1"),
                     r#"{"version":1,"issue_id":"KEN-1","branch":"ken-1"}"#,
                 )
                 .unwrap();
@@ -5440,7 +5448,7 @@ fn the_cycle_verbs_print_the_rollup_and_a_running_lanes_stages() {
         json!({"item": "KEN-3", "status": "running"}),
     ]);
     std::fs::write(
-        fleet.state_dir().join("workflow-state-KEN-2.json"),
+        support::item_record(fleet.state_dir(), "KEN-2"),
         json!({"stages": [
             {"kind": "fix", "round_id": "r2", "start": 20, "end": null, "superseded": true, "reason": "restacked"},
             {"kind": "dev", "round_id": "r1", "start": 10, "end": 15}
@@ -5748,7 +5756,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         let mut log = Vec::new();
         match (case, fix) {
             ("the clone's state", Some(fix)) => put(
-                &clone.join("tmp/workflow-state-KEN-1.json"),
+                &clone.join("tmp/items/KEN-1/workflow-state-KEN-1.json"),
                 &rounds_state(fix).to_string(),
             ),
             ("the merge's saved copy", Some(fix)) => {
@@ -5760,9 +5768,12 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                 put(&on_host(7), &rounds_state(fix).to_string());
             }
             ("the archive its close kept", Some(fix)) => log.push(archive(
-                Some("clone/tmp/workflow-state-KEN-1.json\n"),
+                Some("clone/tmp/items/KEN-1/workflow-state-KEN-1.json\n"),
                 None,
-                &[("clone/tmp/workflow-state-KEN-1.json", rounds_state(fix))],
+                &[(
+                    "clone/tmp/items/KEN-1/workflow-state-KEN-1.json",
+                    rounds_state(fix),
+                )],
                 &[],
             )),
             // A copy of this merge the list leaves out comes first in the
@@ -5794,7 +5805,10 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                     None,
                     None,
                     &[
-                        ("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(9)),
+                        (
+                            "w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json",
+                            rounds_state(9),
+                        ),
                         (&saved(7)[1..], rounds_state(9)),
                     ],
                     &[],
@@ -5802,10 +5816,10 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                 tried.push(undeclared.clone());
             }
             ("a marker naming a non-ASCII path", Some(fix)) => log.push(archive(
-                Some("clon\u{e9}/tmp/workflow-state-KEN-1.json\n"),
+                Some("clon\u{e9}/tmp/items/KEN-1/workflow-state-KEN-1.json\n"),
                 None,
                 &[(
-                    "clon\u{e9}/tmp/workflow-state-KEN-1.json",
+                    "clon\u{e9}/tmp/items/KEN-1/workflow-state-KEN-1.json",
                     rounds_state(fix),
                 )],
                 &[],
@@ -5813,12 +5827,15 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             // The clone's tmp archived through its recorded path, then the
             // state file through its physical one, which the marker names.
             ("a marker naming a hard-link entry", Some(fix)) => log.push(archive(
-                Some("var/w/clone/tmp/workflow-state-KEN-1.json\n"),
+                Some("var/w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json\n"),
                 None,
-                &[("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(fix))],
                 &[(
-                    "var/w/clone/tmp/workflow-state-KEN-1.json",
-                    "w/clone/tmp/workflow-state-KEN-1.json",
+                    "w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json",
+                    rounds_state(fix),
+                )],
+                &[(
+                    "var/w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json",
+                    "w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json",
                 )],
             )),
             // The item's close-out over an `--archive` tree holding another
@@ -5830,11 +5847,11 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                 removed();
                 let dir = fleet.state_dir();
                 std::fs::write(
-                    dir.join("workflow-state-KEN-1.json"),
+                    support::item_record(dir, "KEN-1"),
                     rounds_state(fix).to_string(),
                 )
                 .unwrap();
-                let nested = dir.join("a-tree/tmp/workflow-state-KEN-1.json");
+                let nested = dir.join("a-tree/tmp/items/KEN-1/workflow-state-KEN-1.json");
                 std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
                 std::fs::write(&nested, rounds_state(9).to_string()).unwrap();
                 let project = tempfile::tempdir().unwrap();
@@ -6449,7 +6466,7 @@ fn a_landing_the_close_cannot_record_holds_the_lane_until_a_disposal_gives_it_up
         .push(("PATH".to_owned(), tool_path(&[bin.as_path()])));
     fleet.write_lanes(vec![hosted_lane("KEN-1")]);
     fleet.plant_tracker("KEN-1", "completed");
-    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
     let delivery = json!({"commit": {"commit": "0123456789abcdef0123456789abcdef01234567"}});
     let mut request = json!({"op": "close-lane", "item": "KEN-1", "delivery": delivery});
     let disposal = |of: &str| {
@@ -6535,7 +6552,7 @@ fn a_landing_the_close_cannot_record_holds_the_lane_until_a_disposal_gives_it_up
 /// nothing.
 #[test]
 fn a_merged_hosted_lane_whose_work_left_its_host_closes_whatever_its_screen_reads() {
-    const RECORD: &str = "/w/clone/tmp/workflow-state-KEN-1.json";
+    const RECORD: &str = "/w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json";
     let working = "❯ do the thing\n✻ Working… (esc to interrupt)\n";
     for (case, capture_fails, standing) in [
         ("working, its record standing", false, true),

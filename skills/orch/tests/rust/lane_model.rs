@@ -609,9 +609,7 @@ fn a_record_naming_no_class_or_reason_is_refused_before_anything_stops() {
 fn item_record(runner: &Runner, handoff_session: &str, bound: &Value) -> std::path::PathBuf {
     let out = runner.run(&["state", "init", "--item", ITEM]);
     assert!(out.status.success(), "init: {}", stderr(&out));
-    let path = runner
-        .state_dir()
-        .join(format!("workflow-state-{ITEM}.json"));
+    let path = support::item_record(runner.state_dir(), ITEM);
     let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     doc["handoff"] = json!({"session_id": handoff_session, "cause": "model-switched"});
     doc["model_checks"] = json!({"current": {
@@ -749,7 +747,7 @@ fn a_predecessor_stop_that_cannot_start_is_refused_to_its_caller() {
             "launcher refused",
             |state| {
                 std::fs::create_dir(
-                    state.join(format!("workflow-state-{ITEM}.predecessor-stop.unit")),
+                    support::item_record(state, ITEM).with_extension("predecessor-stop.unit"),
                 )
                 .unwrap();
             },
@@ -796,9 +794,8 @@ fn a_predecessor_stop_that_cannot_start_is_refused_to_its_caller() {
         );
         assert!(
             std::fs::symlink_metadata(
-                runner
-                    .state_dir()
-                    .join(format!("workflow-state-{ITEM}.predecessor-stop.log"))
+                support::item_record(runner.state_dir(), ITEM)
+                    .with_extension("predecessor-stop.log")
             )
             .is_err(),
             "{name}: no job started"
@@ -907,7 +904,7 @@ fn the_predecessor_stopper_runs_outside_the_group_it_stops() {
     );
     bystander.kill().unwrap();
     bystander.wait().unwrap();
-    let log = work.join(format!("workflow-state-{ITEM}.predecessor-stop.log"));
+    let log = support::item_record(&work, ITEM).with_extension("predecessor-stop.log");
     assert!(
         std::fs::symlink_metadata(&log).is_ok(),
         "the stop ran as its own job"
@@ -1192,9 +1189,7 @@ fn a_predecessor_stop_whose_item_record_is_gone_is_refused_unrecorded() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-record");
-    let path = runner
-        .state_dir()
-        .join(format!("workflow-state-{ITEM}.json"));
+    let path = support::item_record(runner.state_dir(), ITEM);
     let file = runner.state_dir().join("lane-host-pid");
     std::fs::write(&file, "not a group record").unwrap();
     let request = runner.state_dir().join("stop.json");

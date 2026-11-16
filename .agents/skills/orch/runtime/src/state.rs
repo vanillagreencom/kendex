@@ -1,5 +1,6 @@
-//! Workflow records: the item state `<state-dir>/workflow-state-<ITEM>.json`
-//! and the fleet state `workflow-state-oversee.json`.
+//! Workflow records: the item state
+//! `<state-dir>/items/<ITEM>/workflow-state-<ITEM>.json` and the fleet state
+//! `<state-dir>/workflow-state-oversee.json`.
 //!
 //! A record is held as the document the file holds, a `serde_json::Map` in
 //! the file's own key order. The typed structs here are read views derived
@@ -25,10 +26,49 @@ use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
 
-/// The item state file for `item` under `dir`:
-/// `workflow-state-<ITEM>.json`.
+/// The folder every item's own folder stands in under the state directory
+/// `dir`.
+pub fn items_dir(dir: &Path) -> PathBuf {
+    dir.join("items")
+}
+
+/// The folder of `item`'s own records under the state directory `dir`,
+/// `items/<ITEM>`: the record, its lock, its mutex and its temporary files,
+/// and nothing of another item or of the fleet, so a confined lane can be
+/// granted it alone.
+pub fn item_dir(dir: &Path, item: &str) -> PathBuf {
+    items_dir(dir).join(item)
+}
+
+/// The key the fleet record is kept under: its file stands at the top of
+/// the state directory, in no item's folder.
+pub const FLEET_KEY: &str = "oversee";
+
+/// The state file for the key `item` under the state directory `dir`:
+/// `items/<ITEM>/workflow-state-<ITEM>.json`, and the fleet record for
+/// [`FLEET_KEY`], which the overseer's and the controller's turn ends read
+/// as their own record.
 pub fn item_path(dir: &Path, item: &str) -> PathBuf {
-    dir.join(format!("workflow-state-{item}.json"))
+    if item == FLEET_KEY {
+        return record::fleet_path(dir);
+    }
+    item_dir(dir, item).join(format!("workflow-state-{item}.json"))
+}
+
+/// The state directory a state file of [`item_path`]'s stands in, its
+/// inverse; `None` for a path outside that layout.
+pub fn dir_of(path: &Path) -> Option<&Path> {
+    let item = item_of(path)?;
+    if item == FLEET_KEY {
+        return path.parent();
+    }
+    let folder = path
+        .parent()
+        .filter(|f| f.file_name() == Some(item.as_ref()))?;
+    let items = folder
+        .parent()
+        .filter(|i| i.file_name() == Some("items".as_ref()))?;
+    items.parent()
 }
 
 /// The item an item state file's path names, the inverse of [`item_path`];
@@ -1241,6 +1281,29 @@ mod tests {
 
     fn snapshot(path: &Path) -> Snapshot {
         load(path).unwrap().unwrap()
+    }
+
+    /// An item's record stands in a folder of the item's own under the
+    /// state directory, so its lock and temporary files do too, and the
+    /// directory is read back from the record's path.
+    #[test]
+    fn an_item_record_stands_in_the_item_s_own_folder() {
+        let path = item_path(Path::new("/s"), "KEN-1");
+        assert_eq!(path, Path::new("/s/items/KEN-1/workflow-state-KEN-1.json"));
+        assert_eq!(
+            item_dir(Path::new("/s"), "KEN-1"),
+            Path::new("/s/items/KEN-1")
+        );
+        assert_eq!(item_of(&path), Some("KEN-1"));
+        assert_eq!(dir_of(&path), Some(Path::new("/s")));
+        assert_eq!(dir_of(Path::new("/s/workflow-state-KEN-1.json")), None);
+        assert_eq!(
+            dir_of(Path::new("/s/items/KEN-2/workflow-state-KEN-1.json")),
+            None
+        );
+        let fleet = item_path(Path::new("/s"), FLEET_KEY);
+        assert_eq!(fleet, record::fleet_path(Path::new("/s")));
+        assert_eq!(dir_of(&fleet), Some(Path::new("/s")));
     }
 
     #[test]

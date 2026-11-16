@@ -1942,13 +1942,13 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     for item in [
         "KEN-0", "KEN-A", "KEN-B", "KEN-C", "KEN-D", "KEN-E", "KEN-G", "KEN-H", "KEN-R",
     ] {
-        touch(&dir.join(format!("workflow-state-{item}.json")));
-        touch(&dir.join(format!("workflow-state-{item}.json.lock")));
+        touch(&support::item_record(dir, item));
+        touch(&support::item_record(dir, item).with_extension("json.lock"));
         touch(&dir.join(format!("lane-status-{item}.md")));
         touch(&dir.join("handoffs").join(format!("{item}-handoff.md")));
         touch(&dir.join("lane-mail").join(item).join("to-lane.jsonl"));
         for path in [
-            dir.join(format!("workflow-state-{item}.json")),
+            support::item_record(dir, item),
             dir.join(format!("lane-status-{item}.md")),
             dir.join("handoffs").join(format!("{item}-handoff.md")),
         ] {
@@ -1957,7 +1957,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     }
     touch(&dir.join("handoffs").join("KEN-F-handoff.md"));
     touch(&dir.join("handoffs").join("OVERSEER-HANDOFF.md"));
-    touch(&dir.join("workflow-state-KEN-10.json"));
+    touch(&support::item_record(dir, "KEN-10"));
     touch(&paths.log);
     touch(&wake::record_path(&world.fleet_path()));
     let pruned = world.pass(wall).unwrap();
@@ -1969,7 +1969,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     let gone = |path: PathBuf| std::fs::symlink_metadata(&path).is_err();
     for item in ["KEN-0", "KEN-A", "KEN-B", "KEN-G", "KEN-H"] {
         assert!(
-            gone(dir.join(format!("workflow-state-{item}.json"))),
+            gone(support::item_record(dir, item)),
             "{item}: the record pruned"
         );
         for path in [
@@ -1979,7 +1979,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
             assert!(!gone(path.clone()), "{}: the close-out's", path.display());
         }
         assert!(
-            !gone(dir.join(format!("workflow-state-{item}.json.lock"))),
+            !gone(support::item_record(dir, item).with_extension("json.lock")),
             "{item}: the record's lock stays"
         );
         assert!(
@@ -1989,8 +1989,8 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     }
     for item in ["KEN-C", "KEN-D", "KEN-E", "KEN-R"] {
         for path in [
-            dir.join(format!("workflow-state-{item}.json")),
-            dir.join(format!("workflow-state-{item}.json.lock")),
+            support::item_record(dir, item),
+            support::item_record(dir, item).with_extension("json.lock"),
             dir.join(format!("lane-status-{item}.md")),
             dir.join("handoffs").join(format!("{item}-handoff.md")),
         ] {
@@ -2004,7 +2004,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
         wt("KEN-R").join("draft.txt"),
         dir.join("handoffs").join("KEN-F-handoff.md"),
         dir.join("handoffs").join("OVERSEER-HANDOFF.md"),
-        dir.join("workflow-state-KEN-10.json"),
+        support::item_record(dir, "KEN-10"),
         paths.log.clone(),
         wake::record_path(&world.fleet_path()),
         world.fleet_path(),
@@ -2124,7 +2124,7 @@ fn retention_leaves_a_standing_instruction_older_than_the_cutoff_byte_for_byte()
         ],
         "standing": standing
     }));
-    touch(&world.path().join("workflow-state-KEN-A.json"));
+    touch(&support::item_record(world.path(), "KEN-A"));
     let mut runner = runner(&world, &clock);
     runner.register(
         Duty::Retention,
@@ -2179,7 +2179,7 @@ fn the_retention_duty_prints_nothing_and_removes_through_the_runner() {
         "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
         "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-A", "closed", &old, json!({}))]
     }));
-    touch(&world.path().join("workflow-state-KEN-A.json"));
+    touch(&support::item_record(world.path(), "KEN-A"));
     let mut runner = runner(&world, &clock);
     runner.register(
         Duty::Retention,
@@ -2195,7 +2195,7 @@ fn the_retention_duty_prints_nothing_and_removes_through_the_runner() {
         clock.await_sleepers(1);
     });
     assert!(ended.is_ok(), "{ended:?}");
-    assert!(std::fs::symlink_metadata(world.path().join("workflow-state-KEN-A.json")).is_err());
+    assert!(std::fs::symlink_metadata(support::item_record(world.path(), "KEN-A")).is_err());
     assert_eq!(lines(&paths.log), Vec::<String>::new(), "nothing printed");
     let baseline = Baseline::load(&paths.baseline).unwrap();
     assert_eq!(baseline.passes.get(&Duty::Retention), Some(&wall));
@@ -2428,7 +2428,7 @@ fn the_retention_duty_compacts_the_overseer_mailbox_and_says_a_refusal() {
     })
     .unwrap();
     assert_eq!(answered.failed, None, "the compaction answered");
-    let old = world.path().join("workflow-state-KEN-9.json");
+    let old = support::item_record(world.path(), "KEN-9");
     std::fs::write(&old, "{}\n").unwrap();
     set_modified(&old, wall - 10 * 86_400);
     std::fs::create_dir_all(world.path().join("tmp/lane-mail/Overseer")).unwrap();
@@ -2508,12 +2508,12 @@ fn a_record_whose_lock_stays_held_keeps_its_item_and_the_pass_takes_the_rest() {
     let paths = world.paths();
     let clock = FakeClock::new();
     let wall = clock.wall_secs();
-    let record = world.path().join("workflow-state-KEN-S.json");
+    let record = support::item_record(world.path(), "KEN-S");
     std::fs::write(&record, "{}\n").unwrap();
     set_modified(&record, wall - 10 * 86_400);
-    let mutex = world.path().join("workflow-state-KEN-S.json.lock.d");
+    let mutex = support::item_record(world.path(), "KEN-S").with_extension("json.lock.d");
     std::fs::create_dir(&mutex).unwrap();
-    let scratch = world.path().join("workflow-state-KEN-T.json");
+    let scratch = support::item_record(world.path(), "KEN-T");
     std::fs::write(&scratch, "{}\n").unwrap();
     set_modified(&scratch, wall - 10 * 86_400);
     let mut runner = runner(&world, &clock);
@@ -2558,11 +2558,11 @@ fn no_lock_file_leaves_and_a_record_leaves_without_its_lock() {
     let world = World::new();
     let wall = FakeClock::new().wall_secs();
     let dir = world.path();
-    let record = dir.join("workflow-state-KEN-9.json");
+    let record = support::item_record(dir, "KEN-9");
     std::fs::write(&record, "{}\n").unwrap();
-    let record_lock = dir.join("workflow-state-KEN-9.json.lock");
+    let record_lock = support::item_record(dir, "KEN-9").with_extension("json.lock");
     touch(&record_lock);
-    let record_mutex = dir.join("workflow-state-KEN-9.json.lock.d");
+    let record_mutex = support::item_record(dir, "KEN-9").with_extension("json.lock.d");
     std::fs::create_dir(&record_mutex).unwrap();
     for path in [&record, &record_lock, &record_mutex] {
         set_modified(path, wall - 10 * 86_400);
@@ -2591,7 +2591,7 @@ set -euo pipefail
 args=("$@")
 while [[ "$1" != -T ]]; do shift; done
 record=$(grep 'workflow-state-KEN-9.json$' "$2")
-state="/${record%/*}"
+state="/${record%/items/*}"
 "$ORCH" --no-private-env --state-dir "$state" state set --fleet /lanes/1/status running /lanes/1/session_since new-session > /dev/null
 printf 'new turn\n' >> "$state/lane-mail/KEN-9/to-lane.jsonl"
 exec "$REAL_TAR" "${args[@]}"
@@ -2625,7 +2625,7 @@ exec "$REAL_TAR" "${args[@]}"
         "issue_id": "oversee", "launch_queue": [], "fleet_log": [],
         "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-9", "done", &old, json!({}))]
     }));
-    let record = world.path().join("workflow-state-KEN-9.json");
+    let record = support::item_record(world.path(), "KEN-9");
     std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
     set_modified(&record, wall - 10 * 86_400);
     let mailbox = world.path().join("lane-mail/KEN-9");
@@ -2786,7 +2786,7 @@ fn retention_retires_an_ended_row_without_remaining_files() {
         "issue_id": "oversee", "launch_queue": [], "fleet_log": [],
         "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-9", "done", &old, json!({}))]
     }));
-    let record = world.path().join("workflow-state-KEN-9.json");
+    let record = support::item_record(world.path(), "KEN-9");
     std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
     let removed = isolated()
         .arg("--state-dir")
@@ -2854,7 +2854,7 @@ fn ended_lane_world(world: &World, wall: u64) -> PathBuf {
         "issue_id": "oversee", "launch_queue": [], "fleet_log": [],
         "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-9", "done", &old, json!({}))]
     }));
-    let record = world.path().join("workflow-state-KEN-9.json");
+    let record = support::item_record(world.path(), "KEN-9");
     std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
     set_modified(&record, wall - 10 * 86_400);
     record
@@ -2874,7 +2874,7 @@ fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
     let wall = clock.wall_secs();
     let record = ended_lane_world(&world, wall);
     let dir = world.path();
-    let expired = dir.join("workflow-state-KEN-5.json");
+    let expired = support::item_record(dir, "KEN-5");
     std::fs::write(&expired, "{}\n").unwrap();
     set_modified(&expired, wall - 10 * 86_400);
     let script = dir.join("validate-KEN-9.sh");
@@ -3041,7 +3041,7 @@ fn retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes
         ("KEN-12", json!({"branch": "ken-12"}), false),
     ];
     for (item, state, _) in &shapes {
-        let path = project.join(format!("workflow-state-{item}.json"));
+        let path = support::item_record(project, item);
         std::fs::write(&path, serde_json::to_string(state).unwrap()).unwrap();
         set_modified(&path, wall - 10 * day);
     }
@@ -3049,7 +3049,7 @@ fn retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes
     for (item, _, kept) in &shapes {
         let name = format!("workflow-state-{item}.json");
         assert_eq!(
-            std::fs::symlink_metadata(project.join(&name)).is_ok(),
+            std::fs::symlink_metadata(orch_runtime::state::item_path(project, item)).is_ok(),
             *kept,
             "{name} kept={kept}"
         );
@@ -4124,7 +4124,7 @@ fn report_blocked_reads_none_only_when_every_active_lane_was_read() {
             lanes[0]["session_since"] = json!(agent_runtime::clock::iso_utc(since));
             std::fs::create_dir_all(world.path().join("tmp")).unwrap();
             std::fs::write(
-                world.path().join("tmp").join("workflow-state-KEN-2.json"),
+                support::item_record(&world.path().join("tmp"), "KEN-2"),
                 json!({ "post_pr_stop": standing }).to_string(),
             )
             .unwrap();
@@ -4272,7 +4272,7 @@ fn report_reads_lane_facts_of_the_fleet_its_state_names() {
     .unwrap();
     for (dir, rounds) in [(other.as_path(), 2), (world.path(), 7)] {
         std::fs::write(
-            state::item_path(dir, "KEN-6"),
+            support::item_record(dir, "KEN-6"),
             json!({"rereview_cycles":rounds,"restacks":1,"stages":[]}).to_string(),
         )
         .unwrap();

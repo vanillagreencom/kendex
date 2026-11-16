@@ -308,16 +308,14 @@ fn laneless_records(
     judged: &BTreeSet<&str>,
     cutoff: u64,
 ) -> Result<Vec<Unit>> {
-    let fleet_name = name_of(&paths.state);
     let mut out = Vec::new();
     let mut linked: Option<Vec<crate::archive::Worktree>> = None;
-    for path in read_dir(&paths.dir)? {
-        if name_of(&path) == fleet_name {
+    for folder in read_dir(&state::items_dir(&paths.dir))? {
+        if !std::fs::symlink_metadata(&folder).is_ok_and(|meta| meta.is_dir()) {
             continue;
         }
-        let Some(item) = state::item_of(&path).map(str::to_owned) else {
-            continue;
-        };
+        let item = name_of(&folder);
+        let path = state::item_path(&paths.dir, &item);
         if judged.contains(item.as_str()) {
             continue;
         }

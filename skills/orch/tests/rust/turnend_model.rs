@@ -134,7 +134,7 @@ fn launched_entry(world: &TurnWorld, model: &str, lane: &Path) -> Value {
 
 /// The item's record under the lane's state directory.
 fn item_path(lane: &Path) -> PathBuf {
-    lane.join("tmp").join(format!("workflow-state-{ITEM}.json"))
+    support::item_record(&lane.join("tmp"), ITEM)
 }
 
 /// The recovery's job record beside the fleet record, which its launcher
@@ -1252,8 +1252,7 @@ fn group_member(world: &TurnWorld) -> u32 {
 
 /// The predecessor stop's job log beside the item's record.
 fn stop_log(lane: &Path) -> PathBuf {
-    lane.join("tmp")
-        .join(format!("workflow-state-{ITEM}.predecessor-stop.log"))
+    item_path(lane).with_extension("predecessor-stop.log")
 }
 
 /// A hosted lane's switch whose turn end runs in the group its launch
@@ -1376,11 +1375,7 @@ fn a_hosted_lanes_switch_whose_handoff_or_stop_cannot_start_stops_nothing() {
         (
             "stopper refused",
             |lane| {
-                fs::create_dir(
-                    lane.join("tmp")
-                        .join(format!("workflow-state-{ITEM}.predecessor-stop.unit")),
-                )
-                .unwrap();
+                fs::create_dir(item_path(lane).with_extension("predecessor-stop.unit")).unwrap();
             },
             "recovery-unstarted",
             "model-predecessor-unstarted",

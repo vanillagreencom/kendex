@@ -4859,7 +4859,7 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
     fleet["lanes"][0]["cycle"] = json!({"pr": 7});
     fleet["lanes"][0]["repo"] = json!("o/r");
     runner.write_fleet(&fleet);
-    let record = runner.state_dir().join("workflow-state-KEN-W.json");
+    let record = support::item_record(runner.state_dir(), "KEN-W");
     std::fs::write(&record, "{}\n").unwrap();
     let close = json!({"op": "close-lane", "item": "KEN-W"});
     // The worktree package as planted: it records whether the harness runs
@@ -7076,7 +7076,7 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
     );
     assert!(
         read.contains(&format!(
-            "cat --item KEN-H {}/tmp/workflow-state-KEN-H.json",
+            "cat --item KEN-H {}/tmp/items/KEN-H/workflow-state-KEN-H.json",
             world.host()
         )),
         "the lane's files read under the worktree the host named: {read:?}"
@@ -10034,7 +10034,7 @@ impl Confined {
         write_executable(
             &probe,
             format!(
-                "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {stub} \"$@\" >&3 2>&3 3>&-\n",
+                "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  for file in ${{PROBE_FILES:-}}; do (: >> \"$file\") 2>/dev/null && echo \"file=${{file##*/}} written\" || echo \"file=${{file##*/}} refused\"; done\n  [ -z \"${{PROBE_RUN:-}}\" ] || eval \"$PROBE_RUN\"\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {stub} \"$@\" >&3 2>&3 3>&-\n",
                 stub = stub("stub-confirm").display()
             ),
         );
@@ -10079,10 +10079,15 @@ impl Confined {
     /// of them are whole, bounded: a resumed launch confirms by its
     /// session, which can stand before the probe has run.
     fn probe(&self, item: &str, launches: usize) -> String {
+        self.probe_in(self.runner.state_dir(), item, launches)
+    }
+
+    /// [`Confined::probe`] for a lane whose worktree is `worktree`.
+    fn probe_in(&self, worktree: &Path, item: &str, launches: usize) -> String {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let mut text = String::new();
-            for entry in std::fs::read_dir(self.runner.state_dir()).unwrap() {
+            for entry in std::fs::read_dir(worktree).unwrap() {
                 let entry = entry.unwrap();
                 if entry
                     .file_name()
@@ -10098,7 +10103,7 @@ impl Confined {
             assert!(
                 Instant::now() < deadline,
                 "probe {launches} of {item}: {text} {:?}",
-                std::fs::read_dir(self.runner.state_dir())
+                std::fs::read_dir(worktree)
                     .unwrap()
                     .map(|e| e.unwrap().file_name())
                     .collect::<Vec<_>>()
@@ -10107,12 +10112,54 @@ impl Confined {
         }
     }
 
+    /// The folders the probe creates a file in.
     fn seat_env(&self, seats: &str) {
-        let out = tmux(
-            &self.server.socket,
-            &["set-environment", "-g", "PROBE_SEATS", seats],
-        );
+        self.probe_env("PROBE_SEATS", seats);
+    }
+
+    /// The files the probe opens to append nothing to.
+    fn file_env(&self, files: &str) {
+        self.probe_env("PROBE_FILES", files);
+    }
+
+    fn probe_env(&self, name: &str, value: &str) {
+        let out = tmux(&self.server.socket, &["set-environment", "-g", name, value]);
         assert!(out.status.success(), "{}", stderr(&out));
+    }
+
+    /// A linked worktree of the state directory's checkout, as a fleet
+    /// lane's is, signed in as the account its launch names: its common git
+    /// folder is the checkout's, outside the worktree.
+    fn linked_worktree(&self, name: &str) -> PathBuf {
+        let state = self.runner.state_dir();
+        git(
+            state,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        );
+        let wt = self.dir.path().join(name);
+        git(
+            state,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                &wt.display().to_string(),
+                "-b",
+                name,
+            ],
+        );
+        plant_credential(&wt);
+        wt
     }
 }
 
@@ -10315,4 +10362,115 @@ fn a_lane_writes_a_build_cache_under_the_cache_folder_and_is_refused_the_runtime
     let probe = world.probe("KEN-K", 1);
     assert!(probe.contains("seat=go-build written"), "{probe}");
     assert!(probe.contains("seat=agent-runtime refused"), "{probe}");
+}
+
+/// A lane in a linked worktree writes its own item's folder of the
+/// overseer's state directory and nothing else of it: the directory itself,
+/// so the fleet record, and another item's folder are refused, and so is
+/// another lane's marker under the common git folder it otherwise writes.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_writes_its_item_s_folder_and_is_refused_the_state_directory_another_item_s_and_a_marker()
+{
+    let world = Confined::new();
+    let state = world.runner.state_dir().to_path_buf();
+    let wt = world.linked_worktree("ken-i");
+    let other = support::item_record(&state, "KEN-O");
+    std::fs::write(&other, "{}\n").unwrap();
+    let marker = state.join(".git/lane-mail/ken-o");
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    std::fs::write(&marker, "/elsewhere\n").unwrap();
+    let own = orch_runtime::state::item_dir(&state, "KEN-I");
+    world.seat_env(&format!(
+        "{} {} {}",
+        own.display(),
+        other.parent().unwrap().display(),
+        state.display()
+    ));
+    world.file_env(&format!(
+        "{} {}",
+        state.join("workflow-state-oversee.json").display(),
+        marker.display()
+    ));
+    world.launch(&launch_request("KEN-I", &wt));
+    let probe = world.probe_in(&wt, "KEN-I", 1);
+    let named = state.file_name().unwrap().to_string_lossy().into_owned();
+    for line in [
+        "seat=KEN-I written".to_owned(),
+        "seat=KEN-O refused".to_owned(),
+        format!("seat={named} refused"),
+        "file=workflow-state-oversee.json refused".to_owned(),
+        "file=ken-o refused".to_owned(),
+    ] {
+        assert!(probe.contains(&line), "{line}: {probe}");
+    }
+}
+
+/// A confined lane's job writes its end notice's scratch in the lane's own
+/// worktree, which its grants hold: the job's end reaches its send, and the
+/// state directory takes no new file.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_confined_lane_s_job_end_writes_its_notice_in_its_worktree_and_nothing_in_the_state_directory()
+{
+    let world = Confined::new();
+    let state = world.runner.state_dir().to_path_buf();
+    let wt = world.linked_worktree("ken-j");
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "'{}' launch-job --name probe-job --run \"$PWD/tmp/probe-job\" --owner KEN-J -- true",
+            support::binary().display()
+        ),
+    );
+    world.launch(&launch_request("KEN-J", &wt));
+    world.probe_in(&wt, "KEN-J", 1);
+    let log = wt.join("tmp/probe-job.log");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mark = loop {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if let Some(mark) = text.lines().find_map(|l| l.strip_prefix("job-end-notice=")) {
+            break mark.to_owned();
+        }
+        assert!(Instant::now() < deadline, "the job's end: {text}");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(!mark.starts_with("unsent:notice-"), "{mark}");
+    assert!(wt.join("tmp/validate").is_dir(), "{mark}");
+    assert!(!state.join("validate").exists(), "{mark}");
+}
+
+/// A worktree whose `tmp` links outside it shares the link's target with
+/// whatever else stands there: a confined launch is refused by name before
+/// any window, naming the link and where it leads.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_confined_launch_refuses_a_worktree_tmp_that_links_outside_it() {
+    let world = Confined::new();
+    let wt = world.linked_worktree("ken-l");
+    let shared = world.dir.path().join("shared-tmp");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::os::unix::fs::symlink(&shared, wt.join("tmp")).unwrap();
+    let report = effect_report(&world.runner.op_fleet(&launch_request("KEN-L", &wt)));
+    let observation = &report["intent"]["observation"];
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(observation["cause"], "grant-tmp-linked", "{report}");
+    assert_eq!(
+        observation["path"],
+        std::fs::canonicalize(&wt)
+            .unwrap()
+            .join("tmp")
+            .display()
+            .to_string(),
+        "{report}"
+    );
+    assert_eq!(
+        observation["target"],
+        std::fs::canonicalize(&shared)
+            .unwrap()
+            .display()
+            .to_string(),
+        "{report}"
+    );
+    assert_eq!(world.server.panes().len(), 1, "no window opened");
 }

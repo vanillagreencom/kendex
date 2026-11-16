@@ -33,6 +33,15 @@ pub use account_planters::*;
 mod isolation;
 pub use isolation::*;
 
+/// An item's record under the state directory `dir`, at the place
+/// orch-runtime reads and writes it, its folder made so a row can plant
+/// the file there.
+pub fn item_record(dir: &Path, item: &str) -> PathBuf {
+    let path = orch_runtime::state::item_path(dir, item);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    path
+}
+
 /// A copy of the executable `from` at `to`, made by a child `cp`, for the
 /// reason [`write_executable`] writes through a child: a copy this test
 /// process makes holds `to` open for writing, every other test thread's child

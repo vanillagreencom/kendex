@@ -474,7 +474,7 @@ pub fn close_out(
     records_locked(&held, locking, |unlocked| {
         match unlocked.into_iter().next() {
             Some((_, cause)) => Err(cause),
-            None => close_out_held(root, project, state_dir, item, extra, &record, now),
+            None => close_out_held(root, project, state_dir, item, extra, now),
         }
     })
 }
@@ -564,8 +564,9 @@ fn names_item(name: &str, item: &str) -> bool {
     })
 }
 
-/// The entries of the state directory named for `item`, each direct entry
-/// and each file under `handoffs/`, but the mailbox and the fleet's and the
+/// The entries of the state directory that are `item`'s: each entry of its
+/// own folder, each direct entry named for it and each file under
+/// `handoffs/` named for it, but the mailbox and the fleet's and the
 /// runner's own records (the runner's share the log's stem).
 fn lane_paths(paths: &Paths, item: &str) -> Result<Vec<PathBuf>> {
     let fleet_name = name_of(&paths.state);
@@ -578,13 +579,14 @@ fn lane_paths(paths: &Paths, item: &str) -> Result<Vec<PathBuf>> {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     );
-    let mut out = Vec::new();
+    let mut out = read_dir(&state::item_dir(&paths.dir, item))?;
     for entry in read_dir(&paths.dir)? {
         let name = name_of(&entry);
         if name == fleet_name
             || name == fleet_lock
             || name.starts_with(&runner)
             || name == "lane-mail"
+            || entry == state::items_dir(&paths.dir)
         {
             continue;
         }
@@ -610,7 +612,6 @@ fn close_out_held(
     state_dir: &Path,
     item: &str,
     extra: &[PathBuf],
-    record: &Path,
     now: u64,
 ) -> Result<CloseOut> {
     let mut evidence = Vec::new();
@@ -618,7 +619,7 @@ fn close_out_held(
     let mut own = Vec::new();
     if stands(state_dir)? {
         let paths = Paths::of(&record::fleet_path(state_dir))?;
-        own.push(paths.dir.join(name_of(record)));
+        own.push(state::item_path(&paths.dir, item));
         for path in without_record_locks(lane_paths(&paths, item)?, &own) {
             targets.push(path.clone());
             evidence.push(path);

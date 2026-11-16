@@ -24,6 +24,19 @@ from unittest import mock
 PACKAGE = Path(__file__).resolve().parents[2]
 
 
+def item_record(state_dir, item="TEST-1"):
+    """The item's state file under a state directory, as orch-runtime places it."""
+    return Path(state_dir) / "items" / item / f"workflow-state-{item}.json"
+
+
+def plant_record(state_dir, text, item="TEST-1"):
+    """Write the item's state file under a state directory, its folder made."""
+    record = item_record(state_dir, item)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(text)
+    return record
+
+
 class SshHostTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -570,7 +583,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
             done = subprocess.run([str(path / ".agents/skills/orch/scripts/orch-runtime"), "--state-dir", str(path / "tmp"),
                                    "state", "init", "--item", "TEST-1"], cwd=path, env=self.env, capture_output=True)
             self.assertEqual(done.returncode, 0, done.stderr)
-            record = path / "tmp/workflow-state-TEST-1.json"
+            record = item_record(path / "tmp")
             record.write_text(json.dumps({**json.loads(record.read_text()), "handoff": planted}) + "\n")
         # The prefix execs this native process. Block TERM until its callback
         # returns so the fixture can report the hook result before exiting.
@@ -597,8 +610,8 @@ signal.sigwait({signal.SIGTERM})
             self.assertTrue(ready, "native callback did not return before its parent deadline")
             reply = json.loads(child.stdout.readline())
             self.assertEqual(reply["exit"], 0, reply)
-            self.assertTrue((path / "tmp/workflow-state-TEST-1.json").exists(), reply)
-            state = json.loads((path / "tmp/workflow-state-TEST-1.json").read_text())
+            self.assertTrue(item_record(path / "tmp").exists(), reply)
+            state = json.loads(item_record(path / "tmp").read_text())
             read = self.hosted_state_read(path)
             self.assertEqual(read.returncode, 0, read.stderr)
             self.assertEqual(json.loads(read.stdout), state)
@@ -818,7 +831,7 @@ rc=0
 
     def assert_hosted_state(self, fields, path, run):
         self.assertEqual(run.returncode, 0, run.stderr)
-        state_file = path / "tmp/workflow-state-TEST-1.json"
+        state_file = item_record(path / "tmp")
         self.assertTrue(state_file.is_file(), state_file)
         state = json.loads(state_file.read_bytes())
         self.assertEqual(state["worktree"], str(path))
@@ -854,12 +867,12 @@ rc=0
             fields, path, run = self.hosted_state_launch()
             with self.assertRaises(AssertionError):
                 self.assert_hosted_state(fields, path, run)
-        self.assertTrue((self.root / "control-state/workflow-state-TEST-1.json").is_file())
-        self.assertFalse((path / "tmp/workflow-state-TEST-1.json").exists())
+        self.assertTrue(item_record(self.root / "control-state").is_file())
+        self.assertFalse(item_record(path / "tmp").exists())
 
     def hosted_state_read(self, path):
         """The item's state in the lane worktree's tmp, fetched through the provider's cat and read by jq."""
-        fetched = self.call("cat", "--item", "TEST-1", str(path / "tmp/workflow-state-TEST-1.json"))
+        fetched = self.call("cat", "--item", "TEST-1", str(item_record(path / "tmp")))
         if fetched.returncode != 0:
             return fetched
         scratch = self.root / "state-read"
@@ -870,7 +883,7 @@ rc=0
     def test_hosted_state_read_and_archive_keep_the_prefix_state(self):
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
-        expected = json.loads((path / "tmp/workflow-state-TEST-1.json").read_bytes())
+        expected = json.loads(item_record(path / "tmp").read_bytes())
         read = self.hosted_state_read(path)
         self.assertEqual(read.returncode, 0, read.stderr)
         self.assertEqual(json.loads(read.stdout), expected)
@@ -878,7 +891,7 @@ rc=0
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
-            member = str(path / "tmp/workflow-state-TEST-1.json").lstrip("/")
+            member = str(item_record(path / "tmp")).lstrip("/")
             self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
             self.assertEqual(json.loads(saved.extractfile(member).read()), expected)
 
@@ -886,17 +899,17 @@ rc=0
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
         original = self.script.read_text()
-        rule = 'state="$2/tmp/workflow-state-$3.json"'
+        rule = 'state="$2/tmp/items/$3/workflow-state-$3.json"'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(rule, 'state="$1/tmp/workflow-state-$3.json"'))
+            self.executable(self.script, original.replace(rule, 'state="$1/tmp/items/$3/workflow-state-$3.json"'))
             closed = self.call("close", "--item", "TEST-1")
             self.assertEqual(closed.returncode, 0, closed.stderr)
             archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
             with tarfile.open(archive) as saved:
                 self.assertEqual(saved.extractfile("lane-host-state").read(), b"\n")
-                member = str(path / "tmp/workflow-state-TEST-1.json").lstrip("/")
+                member = str(item_record(path / "tmp")).lstrip("/")
                 self.assertIsNotNone(saved.extractfile(member))
 
     def test_control_lane_mail_marker(self):
@@ -2656,15 +2669,14 @@ exit 9
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
         self.assertEqual(self.create().returncode, 0)
         state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 4}')
+        plant_record(state_dir, '{"cycles": 4}')
         # An older copy in the clone's tmp, from before the settings moved it.
-        (Path(self.row["clone"]) / "tmp").mkdir(exist_ok=True)
-        (Path(self.row["clone"]) / "tmp/workflow-state-TEST-1.json").write_text('{"cycles": 9}')
+        plant_record(Path(self.row["clone"]) / "tmp", '{"cycles": 9}')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
-            member = str(state_dir / "workflow-state-TEST-1.json").lstrip("/")
+            member = str(item_record(state_dir)).lstrip("/")
             self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 4}')
 
@@ -2677,14 +2689,14 @@ exit 9
         self.assertEqual(self.create().returncode, 0)
         state_dir = Path(self.row["clone"]).parent / "lane-state"
         state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 6}')
+        plant_record(state_dir, '{"cycles": 6}')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         self.assertTrue(archive.is_absolute(), archive)
         with tarfile.open(archive) as saved:
             member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
+            self.assertEqual(member, str(item_record(state_dir)).lstrip("/"))
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 6}')
 
     def test_close_follows_a_symlink_before_dots_in_the_state_directory(self):
@@ -2700,17 +2712,16 @@ exit 9
         target.mkdir(parents=True)
         (Path(self.row["clone"]) / "tmp").mkdir(exist_ok=True)
         (Path(self.row["clone"]) / "tmp/link").symlink_to(target)
-        (Path(self.row["clone"]) / "tmp/lane-state").mkdir()
-        (Path(self.row["clone"]) / "tmp/lane-state/workflow-state-TEST-1.json").write_text('{"cycles": 9}')
+        plant_record(Path(self.row["clone"]) / "tmp/lane-state", '{"cycles": 9}')
         state_dir = (self.root / "elsewhere/lane-state").resolve()
         state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 2}')
+        plant_record(state_dir, '{"cycles": 2}')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
             member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
+            self.assertEqual(member, str(item_record(state_dir)).lstrip("/"))
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 2}')
 
     def test_close_archives_the_state_the_lane_private_env_places(self):
@@ -2722,14 +2733,14 @@ exit 9
         path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
         state_dir = (self.root / "private-state").resolve()
         state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 5}')
+        plant_record(state_dir, '{"cycles": 5}')
         (path / ".env.local").write_text(f'ORCH_STATE_DIR="{state_dir}"\nORCH_CONSUMER_REPOS=owner/other\n')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
             member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
+            self.assertEqual(member, str(item_record(state_dir)).lstrip("/"))
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 5}')
 
     def test_close_stops_when_the_state_directory_does_not_resolve(self):

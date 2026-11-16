@@ -2225,7 +2225,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
             .unwrap();
         assert!(ran.status.success(), "{line}: {}", stderr(&ran));
     }
-    let state = state_dir.join(format!("workflow-state-{ITEM}.json"));
+    let state = orch_runtime::state::item_path(&state_dir, ITEM);
     let state: Value = serde_json::from_str(&fs::read_to_string(state).unwrap()).unwrap();
     assert_eq!(state["branch"], ITEM, "{state}");
     assert_eq!(state["handoff"]["context"], request["context"], "{state}");
@@ -2240,11 +2240,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
 fn a_standing_handoff_passes_and_an_unreadable_transcript_is_held() {
     let world = World::launched();
     let past = world.transcript("t.jsonl", &[claude_usage("m", 650_000)]);
-    let state = world
-        .lane
-        .join("tmp")
-        .join(format!("workflow-state-{ITEM}.json"));
-    fs::create_dir_all(state.parent().unwrap()).unwrap();
+    let state = support::item_record(&world.lane.join("tmp"), ITEM);
     fs::write(&state, json!({"handoff": {"remaining": ["x"]}}).to_string()).unwrap();
     let payload = json!({"transcript_path": past}).to_string();
     let out = world.turn("claude", &[], &payload);

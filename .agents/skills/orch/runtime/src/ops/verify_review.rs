@@ -526,7 +526,7 @@ pub fn run(
         checkout: settings.roots.project.clone(),
         lane: None,
         mail: Mailbox::new(settings.lane_mail_cli.clone()),
-        notice_dir: settings.state_dir.join("review"),
+        notice_dir: settings.roots.project.join("tmp").join("review"),
         nonce: env.round_id(),
         draft: false,
         off: false,
@@ -575,7 +575,8 @@ struct Gate<'a> {
     /// is at stake.
     lane: Option<Reading<PathBuf>>,
     mail: Mailbox,
-    /// Where a notice's text is written for the mailbox program to read.
+    /// Where a notice's text is written for the mailbox program to read:
+    /// `tmp/review/` of the call's own checkout, a lane's own worktree.
     notice_dir: PathBuf,
     nonce: String,
     /// Whether the head reads draft and this call did not mark it ready.

@@ -178,14 +178,16 @@ pub(crate) enum NoticeSend {
 /// most once, and where the fleet record cannot be read, since the mailbox
 /// route would send to a session lane with no owed record. The file the
 /// program reads the notice from is this walker's own scratch,
-/// `<key>.<the request's stamp>.notice`, created exclusively and removed by
-/// this walker alone, so a second walker of the same notice (the owed walk
-/// meeting the job's send in flight) never removes the file the first's
-/// program is about to read; the record carries the key, never the file.
-/// Both routes run `reach`'s program in its root.
+/// `<key>.<the request's stamp>.notice` under `tmp/validate/` of the
+/// writer's own checkout (a lane's own worktree, which its grants hold),
+/// created exclusively and removed by this walker alone, so a second
+/// walker of the same notice (the owed walk meeting the job's send in
+/// flight) never removes the file the first's program is about to read;
+/// the record carries the key, never the file. Both routes run `reach`'s
+/// program in its root.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the end notice's file, this walker's own under the state directory, created exclusively for the mailbox program to read and removed by this walker after its send"
+    reason = "the end notice's file, this walker's own under its checkout's tmp, created exclusively for the mailbox program to read and removed by this walker after its send"
 )]
 pub(crate) fn send_notice(
     settings: &Settings,
@@ -197,7 +199,7 @@ pub(crate) fn send_notice(
     locking: Locking,
 ) -> NoticeSend {
     use std::io::Write;
-    let dir = settings.state_dir.join("validate");
+    let dir = settings.roots.project.join("tmp").join("validate");
     if let Err(e) = fs::create_dir_all(&dir) {
         return NoticeSend::Marked(format!("unsent:notice-dir:{e}"));
     }

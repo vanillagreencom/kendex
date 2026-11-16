@@ -886,7 +886,7 @@ state="" member="" from="$2"
 test -d "$from" || from="$1"
 loader="$1/.agents/skills/orch/scripts/lib/kendex-env.sh"
 if test -r "$loader"; then
-  state="$2/tmp/workflow-state-$3.json"
+  state="$2/tmp/items/$3/workflow-state-$3.json"
   if ! test -f "$state"; then
     # ORCH_STATE_DIR as the checkout's settings and private env file set it,
     # else tmp; a relative value joins the clone.
@@ -895,7 +895,7 @@ if test -r "$loader"; then
       exit 1
     fi
     case "$dir" in /*) ;; *) dir="$1/$dir" ;; esac
-    state="$dir/workflow-state-$3.json"
+    state="$dir/items/$3/workflow-state-$3.json"
   fi
   names=(lane-host-state)
   if test -f "$state"; then

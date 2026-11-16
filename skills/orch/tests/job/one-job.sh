@@ -69,7 +69,7 @@ unset ORCH_STATE_DIR ORCH_DELIVERY ORCH_PR_ORDER AGENT_RUNTIME_TMUX_SESSION AGEN
   AGENT_RUNTIME_TMUX_VERIFY_SECS ORCH_LANE_CLOSE_SECS DEV_VALIDATE_CMD DEV_VALIDATE_RANGE_CMD DEV_VALIDATE_CI_CONTEXT \
   DEV_VALIDATE_SELECTION_CMD DEV_VALIDATE_TIMEOUT_SECS WORKTREE_DEFAULT_BRANCH WORKTREE_BASE_DIR WORKTREE_SYMLINKS \
   KENDEX_ENV_FILE GH_REPO GITHUB_REPOSITORY GITHUB_TOKEN GH_BOT_TOKEN KENDEX_SESSION_OWNER HT_SESSION_OWNER \
-  CI_WAIT_MAX_SECS ORCH_ROUND_PRUNE_DISK_PCT
+  CI_WAIT_MAX_SECS ORCH_ROUND_PRUNE_DISK_PCT ORCH_LANE_WRITABLE
 one_job_bin "$TMP_ROOT/bin"
 export PATH="$TMP_ROOT/bin:$SEALED:$PATH"
 mkdir -p "$TMP_ROOT/home"
@@ -244,7 +244,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
     "$(jq -cn --argjson s "$ONE_JOB_SERVER_PID" --arg p "$PANE" --argjson pid "$PID" '[{status: "running", server: $s, pane: $p, pid: $pid}]')" \
     "$name: the fleet record holds the lane with its launch identity on the suite's server"
   lane_status="$wt/tmp/lane-status"
-  state="$main/tmp/workflow-state-$key.json"
+  state="$main/tmp/items/$key/workflow-state-$key.json"
 
   case "$scenario" in
     handoff)
@@ -431,15 +431,18 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
   # reaches gh is a tracker read or close of an issue of owner/repo, the
   # open-PR probe of the item's branch, a verify-head read of owner/repo or
   # the launch's read of its checkout's repository, which a GitHub item is
-  # bound to. An api call with any flag beside its path would be a write.
+  # bound to, and the launcher's own read of the operator's token, which it
+  # hands a confined lane as a file. An api call with any flag beside its
+  # path would be a write.
   assert_eq "$(awk -v k="$key" '
       $0 == "repo view --json nameWithOwner -q .nameWithOwner" { next }
+      $0 == "auth token" { next }
       $1 == "issue" && $2 == "view" && $3 ~ /^[0-9]+$/ && $4 == "--repo" && $5 == "owner/repo" { next }
       $1 == "issue" && $2 == "close" && $3 ~ /^[0-9]+$/ && $4 == "--repo" && $5 == "owner/repo" && $6 == "--reason" && $7 == "completed" && NF == 7 { next }
       index($0, "pr list --state open --head " k " ") == 1 { next }
       $1 == "api" && index($2, "repos/owner/repo/") == 1 && NF == 2 { next }
       { print "outside: " $0 }' <<<"$calls")" "" \
-    "$name: every gh call is a tracker read or close on owner/repo, the open-PR probe of the item's branch, a verify-head read of owner/repo or the checkout's repository read"
+    "$name: every gh call is a tracker read or close on owner/repo, the open-PR probe of the item's branch, a verify-head read of owner/repo, the checkout's repository read or the launcher's token read"
   # --- local versus tracker: a GitHub item's tracker calls name its own issue
   # and close it once; a local item reaches no tracker.
   if [[ "$tracker" == github ]]; then

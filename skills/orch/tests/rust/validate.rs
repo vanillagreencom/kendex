@@ -62,7 +62,7 @@ impl World {
             &worktree,
             &["update-ref", "refs/remotes/origin/main", "HEAD"],
         );
-        let item = state.join(format!("workflow-state-{ITEM_ID}.json"));
+        let item = support::item_record(&state, ITEM_ID);
         fs::write(
             &item,
             ITEM.replacen(

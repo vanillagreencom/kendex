@@ -4502,7 +4502,7 @@ fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
     let root = dir.path().join("worktree");
     std::fs::create_dir_all(root.join("tmp")).unwrap();
     std::fs::write(
-        root.join("tmp").join("workflow-state-KEN-2.json"),
+        support::item_record(&root.join("tmp"), "KEN-2"),
         r#"{"stages":[{"kind":"fix"}],"restacks":1,"rereview_cycles":2}"#,
     )
     .unwrap();
@@ -4591,7 +4591,7 @@ fn lane_status_names_a_stage_only_while_it_is_open_in_the_lanes_current_session(
         ),
     ] {
         std::fs::write(
-            root.join("tmp").join("workflow-state-KEN-2.json"),
+            support::item_record(&root.join("tmp"), "KEN-2"),
             json!({ "stages": stages }).to_string(),
         )
         .unwrap();
@@ -4824,8 +4824,8 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         &local,
         &[
             ("kendex.settings.toml", settings),
-            ("records/workflow-state-KEN-2.json", counts),
-            ("tmp/workflow-state-KEN-2.json", decoy),
+            ("records/items/KEN-2/workflow-state-KEN-2.json", counts),
+            ("tmp/items/KEN-2/workflow-state-KEN-2.json", decoy),
             ("tmp/lane-status-KEN-2.md", "Step: review\n"),
         ],
     );
@@ -4835,8 +4835,8 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         &[
             ("kendex.settings.toml", settings),
             (".env.local", "export ORCH_STATE_DIR=kept\n"),
-            ("kept/workflow-state-KEN-3.json", counts),
-            ("records/workflow-state-KEN-3.json", decoy),
+            ("kept/items/KEN-3/workflow-state-KEN-3.json", counts),
+            ("records/items/KEN-3/workflow-state-KEN-3.json", decoy),
         ],
     );
     let main = dir.path().canonicalize().unwrap().join("main");
@@ -4869,16 +4869,19 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         &configured,
         &[
             ("kendex.settings.toml", settings),
-            ("records/workflow-state-KEN-5.json", decoy),
-            ("tmp/workflow-state-KEN-5.json", decoy),
+            ("records/items/KEN-5/workflow-state-KEN-5.json", decoy),
+            ("tmp/items/KEN-5/workflow-state-KEN-5.json", decoy),
         ],
     );
-    plant(&unnamed, &[("tmp/workflow-state-KEN-6.json", decoy)]);
+    plant(
+        &unnamed,
+        &[("tmp/items/KEN-6/workflow-state-KEN-6.json", decoy)],
+    );
     plant(
         &main,
         &[
-            ("records/workflow-state-KEN-5.json", counts),
-            ("tmp/workflow-state-KEN-6.json", counts),
+            ("records/items/KEN-5/workflow-state-KEN-5.json", counts),
+            ("tmp/items/KEN-6/workflow-state-KEN-6.json", counts),
         ],
     );
     let disk = dir.path().join("disk");
@@ -4887,7 +4890,7 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         &[
             (".git/HEAD", "ref: refs/heads/main\n"),
             ("kendex.settings.toml", settings),
-            ("records/workflow-state-KEN-4.json", counts),
+            ("records/items/KEN-4/workflow-state-KEN-4.json", counts),
             ("tmp/lane-status-KEN-4.md", "Step: review\n"),
             (
                 "tmp/validation-runs",
@@ -4900,12 +4903,12 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         &[
             (".git", "gitdir: /remote/clone/.git/worktrees/KEN-7\n"),
             ("kendex.settings.toml", settings),
-            ("records/workflow-state-KEN-7.json", decoy),
+            ("records/items/KEN-7/workflow-state-KEN-7.json", decoy),
         ],
     );
     plant(
         &disk.join("remote").join("clone"),
-        &[("records/workflow-state-KEN-7.json", counts)],
+        &[("records/items/KEN-7/workflow-state-KEN-7.json", counts)],
     );
     let provider = orch_package()
         .join("tests")
@@ -4964,13 +4967,22 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
     }
     let calls = std::fs::read_to_string(&log).unwrap_or_default();
     for (item, path) in [
-        ("KEN-4", "/remote/KEN-4/tmp/workflow-state-KEN-4.json"),
+        (
+            "KEN-4",
+            "/remote/KEN-4/tmp/items/KEN-4/workflow-state-KEN-4.json",
+        ),
         ("KEN-4", "/remote/KEN-4/.git/HEAD"),
         ("KEN-4", "/remote/KEN-4/kendex.settings.toml"),
-        ("KEN-4", "/remote/KEN-4/records/workflow-state-KEN-4.json"),
+        (
+            "KEN-4",
+            "/remote/KEN-4/records/items/KEN-4/workflow-state-KEN-4.json",
+        ),
         ("KEN-7", "/remote/KEN-7/.git"),
         ("KEN-7", "/remote/KEN-7/kendex.settings.toml"),
-        ("KEN-7", "/remote/clone/records/workflow-state-KEN-7.json"),
+        (
+            "KEN-7",
+            "/remote/clone/records/items/KEN-7/workflow-state-KEN-7.json",
+        ),
     ] {
         assert!(
             calls.contains(&format!("cat --item {item} {path}")),
@@ -4991,7 +5003,7 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
             "status --item KEN-7 --harness codex",
             "cat --item KEN-7 /remote/KEN-7/tmp/validation-runs",
             "touch --item KEN-7",
-            "cat --item KEN-7 /remote/KEN-7/tmp/workflow-state-KEN-7.json",
+            "cat --item KEN-7 /remote/KEN-7/tmp/items/KEN-7/workflow-state-KEN-7.json",
             "touch --item KEN-7",
             "cat --item KEN-7 /remote/KEN-7/.git",
             "cat --item KEN-7 /remote/KEN-7/kendex.settings.toml",
@@ -4999,7 +5011,7 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
             "touch --item KEN-7",
             "cat --item KEN-7 /remote/KEN-7/.env.local",
             "touch --item KEN-7",
-            "cat --item KEN-7 /remote/clone/records/workflow-state-KEN-7.json",
+            "cat --item KEN-7 /remote/clone/records/items/KEN-7/workflow-state-KEN-7.json",
         ],
         "{calls}"
     );

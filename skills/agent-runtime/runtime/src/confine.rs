@@ -276,6 +276,7 @@ pub fn linux_words(grants: &Grants) -> Vec<Word> {
     for (name, value) in [
         (CONFINED_VAR, "1".to_owned()),
         (GRANTS_VAR, grants.file.display().to_string()),
+        ("TMPDIR", "/tmp".to_owned()),
     ] {
         words.extend([plain("--setenv"), plain(name), Word::Plain(value)]);
     }

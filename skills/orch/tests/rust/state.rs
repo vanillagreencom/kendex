@@ -37,7 +37,7 @@ impl Store {
     }
 
     fn item_path(&self, item: &str) -> PathBuf {
-        self.state_dir().join(format!("workflow-state-{item}.json"))
+        support::item_record(&self.state_dir(), item)
     }
 
     fn fleet_path(&self) -> PathBuf {
@@ -1007,7 +1007,7 @@ fn handoff_standing_reads_the_state_directory_then_the_worktree_and_resume_stamp
     let wt = store.dir.path().join("wt");
     fs::create_dir_all(wt.join("tmp")).unwrap();
     fs::create_dir_all(store.state_dir()).unwrap();
-    let wt_file = wt.join("tmp/workflow-state-KEN-9.json");
+    let wt_file = support::item_record(&wt.join("tmp"), "KEN-9");
     let wt_text = wt.display().to_string();
     let held = r#"{"issue_id":"KEN-9","handoff":{"remaining":["x"]}}"#;
     let spent = r#"{"issue_id":"KEN-9","handoff":{"remaining":["x"],"resumed_at":1}}"#;
@@ -1144,7 +1144,7 @@ fn handoff_standing_reads_the_state_directory_then_the_worktree_and_resume_stamp
     ]);
     let linked = root.join("linked");
     fs::create_dir_all(linked.join("tmp")).unwrap();
-    fs::write(linked.join("tmp/workflow-state-KEN-9.json"), held).unwrap();
+    fs::write(support::item_record(&linked.join("tmp"), "KEN-9"), held).unwrap();
     let mut command = support::isolated();
     command
         .current_dir(&linked)
@@ -1161,7 +1161,7 @@ fn handoff_standing_reads_the_state_directory_then_the_worktree_and_resume_stamp
         result["file"],
         fs::canonicalize(&linked)
             .unwrap()
-            .join("tmp/workflow-state-KEN-9.json")
+            .join("tmp/items/KEN-9/workflow-state-KEN-9.json")
             .display()
             .to_string()
     );
@@ -1698,7 +1698,7 @@ exec "$REAL_TAR" "$@"
     assert_eq!(refusal["refusal"]["key"], "record-missing", "{late_reply}");
     assert!(!path.exists(), "no record recreated");
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
-    let standing: Vec<String> = fs::read_dir(store.state_dir())
+    let standing: Vec<String> = fs::read_dir(path.parent().unwrap())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| n.starts_with(&name))
