@@ -108,6 +108,63 @@ fires() { # LABEL FINDING-HEAD...
   ok "$label"
 }
 
+child_shell_scopes() {
+  local shell state expected
+  seed child-shell-scopes
+  # runuser's quoted bash -c operand is the production shape from FLT-1736.
+  # Vary the cleanup owner, keeping the allocation in the same child body.
+  for shell in 'runuser -u dev -- bash' sh; do
+    for state in own missing parent child sibling inline inline-sibling double comment substitution substitution-missing; do
+      expected='scripts/child.sh:4: [mktemp-trap]'
+      {
+        printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+        if [ "$state" = child ]; then
+          printf '%s\n' 'D="$(mktemp -d)"'
+          expected='scripts/child.sh:3: [mktemp-trap]'
+        elif [ "$state" = parent ]; then
+          printf '%s\n' 'trap "rm -rf -- ${D:?}" EXIT'
+          expected='scripts/child.sh:5: [mktemp-trap]'
+        fi
+        if [ "$state" = comment ]; then
+          printf "# %s -c '\n" "$shell"
+          printf '%s\n' 'D="$(mktemp -d)"' 'trap "rm -rf -- ${D:?}" EXIT'
+        elif [ "$state" = double ]; then
+          printf '%s -c "\n' "$shell"
+          printf '%s\n' 'D=\"\$(mktemp -d)\"' 'trap '\''rm -rf -- \"\${D:?}\"'\'' EXIT' '"'
+        elif [ "$state" = inline-sibling ]; then
+          printf "%s -c 'trap \"echo done\" EXIT'; %s -c 'D=\"\$(mktemp -d)\"'\n" "$shell" "$shell"
+          expected='scripts/child.sh:3: [mktemp-trap]'
+        elif [ "$state" = inline ]; then
+          printf "%s -c 'D=\"\$(mktemp -d)\"; trap \"rm -rf -- \${D:?}\" EXIT'\n" "$shell"
+        else
+          case "$state" in
+            substitution*) printf "result=\$(%s -c '\n" "$shell" ;;
+            *) printf "%s -c '\n" "$shell" ;;
+          esac
+          [ "$state" = child ] || printf '%s\n' 'D="$(mktemp -d)"'
+          case "$state" in own | child | substitution) printf '%s\n' 'trap "rm -rf -- ${D:?}" EXIT' ;; esac
+          case "$state" in substitution*) printf "')\n" ;; *) printf "'\n" ;; esac
+        fi
+        if [ "$state" = sibling ]; then
+          printf "%s -c '\ntrap \"echo done\" EXIT\n'\n" "$shell"
+        fi
+      } >"$R/scripts/child.sh"
+      run_pf
+      case "$state" in
+        own | inline | double | comment | substitution) clean "$shell -c $state cleanup belongs to its shell" 1 ;;
+        *) fires "$shell -c $state cannot borrow cleanup from another shell" "$expected" ;;
+      esac
+    done
+  done
+}
+
+if [ "${1:-}" = --child-shells-only ]; then
+  child_shell_scopes
+  pf_summary
+  exit
+fi
+child_shell_scopes
+
 echo "=== benign patterns across every lane stay clean ==="
 seed benign
 # mktemp is fine under errexit; a new script that declares strict mode is fine.
