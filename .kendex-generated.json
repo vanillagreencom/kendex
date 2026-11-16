@@ -871,7 +871,6 @@
   ".agents/skills/orch/schemas/dev-return.md",
   ".agents/skills/orch/schemas/dev-round.md",
   ".agents/skills/orch/schemas/lane-host.md",
-  ".agents/skills/orch/schemas/overseer-host.md",
   ".agents/skills/orch/schemas/workflow-state.md",
   ".agents/skills/orch/scripts/base-freshness",
   ".agents/skills/orch/scripts/copilot-statusline",

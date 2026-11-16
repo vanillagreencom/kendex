@@ -1,6 +1,6 @@
 # Handoff Workflow
 
-Launch one or more independent work-item sessions. Launch-only: nothing here monitors what it starts.
+Launch one or more independent work-item sessions. This workflow only launches: nothing here monitors what it starts.
 
 | Input | Meaning |
 |-------|---------|
@@ -11,19 +11,18 @@ Launch one or more independent work-item sessions. Launch-only: nothing here mon
 
 ## 0. Resolve The Harness
 
-An explicit user choice wins. Otherwise, with several items and `codex_app.create_thread` exposed, use `codex-app`; else resolve the normal terminal harness for this environment.
+An explicit user choice wins. Otherwise, with several items and `codex_app.create_thread` exposed, use `codex-app`; else use the terminal harness of this environment.
 
 ## 1. Gate The Launch List
 
-**Container preflight** — Linear items only, before any worktree is created.
+1. For a Linear item, before any worktree is created, read the item:
 
-```bash
-.agents/skills/linear/scripts/linear.sh issues get [ITEM]
-```
+   ```bash
+   .agents/skills/linear/scripts/linear.sh issues get [ITEM]
+   ```
 
-Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) per item. A container drops off the launch list and is replaced by its unblocked DIRECT children (`depth == 0`), each of which reruns this preflight. A blocked item drops off with its live blockers named.
-
-- **Deduplicate.** Keep one entry per issue id. Apply the Ancestor gate to each final launch item.
+2. Apply the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to each item. A container leaves the launch list and is replaced by its unblocked direct children (`depth == 0`), each of which takes step 1 again. A blocked item leaves the list with its live blockers named.
+3. Keep one entry per issue id, and apply the Ancestor gate to each final launch item.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -46,27 +45,39 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 **Skip if** `harness == codex-app`.
 
-Read `orch-env ORCH_LANE_PREFERENCE ""` for the program's default harness, model and effort. Select the model class and effort through [Model class](../references/skill-rules.md#delegation), and keep a model the brief names. Choose each item's account under [oversee.md](oversee.md) § 3 Lane directive step 3, through the preference walk or the account judge, and its permission posture for this task: the settings' `ORCH_LAUNCH_PERMISSION`, `bypass` unless set, or a `permission` word in the request. Launch each item with one `launch-lane` request, composed as [oversee.md](oversee.md) § 3 Lane directive step 4 composes it, its brief a file ([lane-directive.md § Brief file](../references/lane-directive.md#brief-file)):
+1. Read `orch-env ORCH_LANE_PREFERENCE ""` for the program's default harness, model and effort. Select the model class and effort through [Model class](../references/skill-rules.md#model-class), and keep a model the brief names.
+2. Choose each item's account under [oversee.md](oversee.md) § Lane directive step 3, through the preference walk or the account judge. The permission posture is `AGENT_RUNTIME_LAUNCH_PERMISSION`, `bypass` unless set, or a `permission` word in the request.
+3. Where `orch-runtime state exists --fleet` answers false, run `orch-runtime state init --fleet`: the launch records every lane in the fleet state, `orch-runtime state path --fleet`, and refuses `record-missing` until it exists.
+4. Launch each item with one `launch-lane` request, composed as [oversee.md](oversee.md) § Lane directive step 4 composes it, its brief a file ([lane-directive.md § Brief file](../references/lane-directive.md#brief-file)):
 
-```bash
-.agents/skills/orch/scripts/orch-runtime op --fleet --effect-exit --request [REQUEST_FILE]
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --fleet --effect-exit --request [REQUEST_FILE]
+   ```
 
-The runtime records every lane it launches in the fleet state, `orch-runtime state path --fleet`, and refuses `record-missing` until that state exists: where `orch-runtime state exists --fleet` answers false, run `orch-runtime state init --fleet` first. A handoff starts no watch, so nothing here monitors what it launches.
+A handoff starts no watch.
 
-An item whose brief authorizes a project-scope `kendex refresh` or `kendex apply` in its lane, a refresh lane, takes `refresh: true` in its request at its launch and at every relaunch: the lane's session-start drift notice then says those commands run there with the CLI's own `--lane-refresh` instead of saying they never run there. Every launch clears `WAYLAND_DISPLAY`, `DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE` from the lane's process (`LAUNCH_SCRUB` in `skills/agent-runtime/runtime/src/launch.rs`), and a relaunch drops a recorded `live_display` grant ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)). When an item must change harnesses, its new brief includes this sentence: `Continue [ITEM] from the prior [HARNESS] transcript at [TRANSCRIPT_PATH]; read it first, then resume the orch workflow.`
+An item whose brief authorizes a project-scope `kendex refresh` or `kendex apply` in its lane, a refresh lane, takes `refresh: true` in its request at its launch and at every relaunch: the lane's session-start drift notice then says those commands run there with the CLI's own `--lane-refresh`.
+
+Every lane launch clears `WAYLAND_DISPLAY`, `DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE` from the lane's process (`DESKTOP_DISPLAY` in `skills/agent-runtime/runtime/src/launch.rs`). A request naming `desktop: true`, where the brief needs the owner's live display, keeps them and reaches the window's Wayland and X11 sockets; the lane record keeps it for every relaunch and recovery.
+
+When an item must change harnesses, its new brief includes this sentence: `Continue [ITEM] from the prior [HARNESS] transcript at [TRANSCRIPT_PATH]; read it first, then resume the orch workflow.`
 
 ### Codex Desktop threads
 
-**Skip if** `harness != codex-app`. Use this branch only inside a runtime that exposes the `codex_app` thread tools; never emulate app handoff with terminal launch, `codex debug app-server`, raw `codex app-server`, or manual instructions.
+**Skip if** `harness != codex-app`. Use this branch only inside a runtime that exposes the `codex_app` thread tools; never emulate an app handoff with a terminal launch, `codex debug app-server`, raw `codex app-server` or manual instructions.
 
-```bash
-.agents/skills/orch/scripts/resolve-base-branch .
-```
+1. Resolve the base branch:
 
-For each item, create exactly one thread with `codex_app.create_thread`, targeting the current saved project with a separate worktree environment for that issue: never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}`; use `working-tree` only when the user explicitly asks for a dirty local snapshot. The prompt is `$orch start [ISSUE_ID]` (or `$orch start github [OWNER/REPO]#[N]`). If the runtime creates the thread before accepting a prompt, call `codex_app.send_message_to_thread` once with that same prompt. Title the thread with the item identifier when `codex_app.set_thread_title` is exposed, and record the returned thread ID.
+   ```bash
+   .agents/skills/orch/scripts/resolve-base-branch .
+   ```
 
-Full contract: [references/codex-runtime.md](../references/codex-runtime.md).
+2. For each item, create exactly one thread with `codex_app.create_thread`, targeting the current saved project with a separate worktree environment for that issue. Never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread.
+3. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}`; use `working-tree` only when the user asks for a dirty local snapshot.
+4. The prompt is `$orch start [ISSUE_ID]`, or `$orch start github [OWNER/REPO]#[N]`. Where the runtime creates the thread before it accepts a prompt, call `codex_app.send_message_to_thread` once with that prompt.
+5. Title the thread with the item identifier where `codex_app.set_thread_title` is exposed, and record the returned thread ID.
+
+The full contract: [codex-runtime.md § Codex Desktop app handoff](../references/codex-runtime.md#codex-desktop-app-handoff).
 
 ## 3. Return
 
