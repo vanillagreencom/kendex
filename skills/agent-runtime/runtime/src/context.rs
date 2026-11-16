@@ -815,7 +815,7 @@ fn copilot_figure(line: &str) -> Option<Usage> {
 
 /// Whether `session` is spelled in the alphabet that keeps a path named by
 /// it under its directory.
-fn session_bound(session: &str) -> bool {
+pub fn session_bound(session: &str) -> bool {
     !matches!(session, "" | "." | "..")
         && session
             .bytes()

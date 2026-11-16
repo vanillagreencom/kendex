@@ -2328,6 +2328,55 @@ fn age(path: &Path, secs: u64) {
     std::fs::File::open(path).unwrap().set_modified(at).unwrap();
 }
 
+/// A confined lane's `state remove` is the overseer's close-out: under the
+/// wrapper's marker the command says so and removes, archives and locks
+/// nothing; the same remove unmarked, the close-out the overseer's terminal
+/// close runs, takes the item's files after their archive.
+#[test]
+fn a_confined_lanes_state_remove_steps_aside_and_an_unconfined_remove_takes_the_items_files() {
+    let archive_root = tempfile::tempdir().unwrap();
+    let mut fleet = Fleet {
+        env: vec![
+            (
+                "ORCH_ARCHIVE_ROOT".to_owned(),
+                archive_root.path().display().to_string(),
+            ),
+            ("AGENT_RUNTIME_CONFINED".to_owned(), "1".to_owned()),
+        ],
+        ..Fleet::new(1)
+    };
+    let dir = fleet.state_dir().to_path_buf();
+    git_checkout(&dir);
+    let record = plant(&dir, "items/KEN-A/workflow-state-KEN-A.json");
+    let status = plant(&dir, "lane-status-KEN-A.md");
+    let remove = ["state", "remove", "--item", "KEN-A"];
+    let out = fleet.run(&remove);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout_of(&out),
+        "state-remove: left cause=confined owner=overseer\n"
+    );
+    for path in [&record, &status] {
+        assert!(path.exists(), "{} left", path.display());
+    }
+    let mut lock = record.clone().into_os_string();
+    lock.push(".lock");
+    assert!(!Path::new(&lock).exists(), "a lock taken");
+    assert_eq!(
+        std::fs::read_dir(archive_root.path()).unwrap().count(),
+        0,
+        "an archive written"
+    );
+    fleet
+        .env
+        .retain(|(name, _)| name != "AGENT_RUNTIME_CONFINED");
+    let answer = reply(&fleet.run(&remove));
+    assert_eq!(answer["ok"], true, "{answer}");
+    for path in [&record, &status] {
+        assert!(!path.exists(), "{} stands", path.display());
+    }
+}
+
 /// `state remove` through the executable on a directory with no fleet
 /// state: the item's state with every file of its own folder, its status
 /// file, handoff and run directory leave,
@@ -5317,6 +5366,39 @@ fn a_container_close_refuses_an_invalid_parent_id() {
         );
         assert!(container.calls().is_empty(), "{parent}");
     }
+}
+
+/// A confined lane's close of its container is the overseer's: under the
+/// wrapper's marker the command says so and leaves the container with no
+/// tracker read, no lock and no folder; the overseer's run of the same
+/// close, unmarked, closes it.
+#[test]
+fn a_confined_lanes_container_close_steps_aside_and_the_overseers_closes_it() {
+    let mut container = Container::new(
+        container_replies("completed", json!([child("KEN-1", "completed")]), true),
+        None,
+    );
+    container
+        .fleet
+        .env
+        .push(("AGENT_RUNTIME_CONFINED".to_owned(), "1".to_owned()));
+    let out = container.close("KEN-C");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout_of(&out),
+        "container-close: left cause=confined owner=overseer\n"
+    );
+    assert!(container.calls().is_empty(), "{:?}", container.calls());
+    assert!(
+        !container.checkout.join("tmp").exists(),
+        "a lock or folder made"
+    );
+    container
+        .fleet
+        .env
+        .retain(|(name, _)| name != "AGENT_RUNTIME_CONFINED");
+    let out = container.close("KEN-C");
+    assert_eq!(stdout_of(&out), "closed KEN-C\n", "{}", stderr(&out));
 }
 
 /// One lock under the shared checkout serializes every closer: while

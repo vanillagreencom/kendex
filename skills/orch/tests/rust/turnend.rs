@@ -1276,7 +1276,7 @@ fn started(session: &str, source: &str) -> String {
 }
 
 #[test]
-fn a_new_session_in_the_lanes_own_harness_is_handed_its_mail_and_binds_the_record_at_a_cleared_start()
+fn a_new_session_in_the_lanes_own_harness_is_handed_its_mail_and_kept_on_its_item_record_at_a_cleared_start()
  {
     let world = World::launched();
     let start = start_of(std::process::id());
@@ -1284,17 +1284,26 @@ fn a_new_session_in_the_lanes_own_harness_is_handed_its_mail_and_binds_the_recor
     let before = world.lane_record();
     world.direct("d1", "rebase", false);
     let row = ["row", "SessionStart"];
+    let kept = || {
+        let path = item_record(&world.lane.join("tmp"), ITEM);
+        fs::read_to_string(path).map_or(Value::Null, |text| {
+            serde_json::from_str::<Value>(&text).unwrap()["lane_session"].clone()
+        })
+    };
 
-    // A start that keeps the session binds nothing; a cleared one binds the
-    // record to the new session and leaves the launch and its stamp.
+    // A start that keeps the session keeps nothing; a cleared one keeps the
+    // new session and the launch it started in on the item's own record,
+    // for the watch to bind, and leaves the fleet record as it was.
     let out = world.mail("claude", &row, &started("s1", "startup"));
     assert_eq!((out.code, out.stderr.as_str()), (0, ""));
     assert_eq!(world.lane_record(), before);
+    assert_eq!(kept(), Value::Null);
     let out = world.mail("claude", &row, &started("s1", "clear"));
     assert_eq!((out.code, out.stderr.as_str()), (0, ""));
-    let mut bound = before.clone();
-    bound["session_id"] = json!("s1");
-    assert_eq!(world.lane_record(), bound);
+    assert_eq!(world.lane_record(), before);
+    let bound = json!({"session_id": "s1",
+                       "launch": {"pid": std::process::id(), "start": start}});
+    assert_eq!(kept(), bound);
 
     // A session the record does not name, in the lane's own process, is
     // the lead: its turn end is handed the mail and marks it read.
@@ -1311,6 +1320,7 @@ fn a_new_session_in_the_lanes_own_harness_is_handed_its_mail_and_binds_the_recor
     let out = world.mail("claude", &row, &started("s3", "clear"));
     assert_eq!((out.code, out.stderr.as_str()), (0, ""));
     assert_eq!(world.lane_record(), moved);
+    assert_eq!(kept(), bound);
     let out = world.mail("claude", &[], &of_session("s3", json!({})));
     assert_eq!((out.code, out.stderr.as_str()), (0, ""));
     assert_eq!(world.cursor(), "1");
@@ -1322,6 +1332,7 @@ fn a_new_session_in_the_lanes_own_harness_is_handed_its_mail_and_binds_the_recor
     let out = world.mail("claude", &row, &started("s4", "clear"));
     assert_eq!((out.code, out.stderr.as_str()), (0, ""));
     assert_eq!(world.lane_record(), unbound);
+    assert_eq!(kept(), bound);
     let out = world.mail("claude", &[], &of_session("s4", json!({})));
     assert_eq!(out.first(), "lane-mail-check: unread=1", "{}", out.stderr);
     assert_eq!(world.cursor(), "2");

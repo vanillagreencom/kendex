@@ -32,6 +32,12 @@
 //! exits: the record is read where `workflow-state
 //! handoff-standing` reads it and is `handoff` once per record.
 //!
+//! A lane's own process writes only its item record, so the fleet writes its
+//! turn end owes are taken from that record here, once per fact: a cleared
+//! start's session bound, a replacement's first turn end reset, and a switch
+//! the turn end marked started recovered through the fleet's
+//! `recover-lane-model`.
+//!
 //! Hosted lanes are observed here by the capability line their host declares
 //! (`watch::hosted`): a kind with a local pane is read by that pane as a local
 //! lane is, a `status=verb` kind through the provider's status verb as well, a
@@ -51,6 +57,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use agent_runtime::clock;
+use agent_runtime::controller::model::{Check, Place, launch_of, record_model_check};
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, PANE_DEAD, Pane, PaneFields, PaneState};
 use agent_runtime::observe::{self, ProcessReading, State, WallAge, WallKind};
@@ -1056,6 +1063,7 @@ pub fn observe(pass: &Pass) -> Produced {
     }
     lane_long(pass, &hosts, &mut out);
     handoffs(pass, &hosts, &mut out);
+    model_facts(pass, &hosts, &mut out);
     if let Some(session) = pass.session {
         strays(session, pass, &mut out);
     }
@@ -2328,8 +2336,329 @@ fn lane_long(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     }
 }
 
-/// The `Step` line of a local lane's status file: `unread` where the read
-/// failed, `none`
+/// The row a lane's model facts were judged under, keyed by its item: the
+/// checksum of the facts its item record holds, so each is acted on, or
+/// refused, once.
+const FACTS_ROW: &str = "model-facts";
+
+/// What one lane's facts came to: applied (or nothing to apply), refused for
+/// good with the line said once, or unsettled with the line said and the
+/// facts judged again on the next pass.
+enum Facts {
+    Judged,
+    Refused(String),
+    Unsettled(String),
+}
+
+/// The fleet writes a lane's own process may not make, taken from what it
+/// kept on its item record: a cleared start's session bound on the fleet's
+/// lane, a replacement's first turn end resetting its switched check, and a
+/// switch the turn end marked started recovered through the fleet's
+/// `recover-lane-model`. Every value of the item record is the lane's to
+/// write, so each is taken as a fact alone, a session in its owner's form
+/// bound to the launch the fleet record runs, and everything a write or a
+/// relaunch composes is read from the fleet record. A local lane's alone:
+/// a hosted lane's switch is its host's.
+fn model_facts(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
+    let recorded: BTreeSet<&str> = pass.fleet.lanes.iter().map(|l| l.item.as_str()).collect();
+    for item in pass.baseline.identities(FACTS_ROW) {
+        if !recorded.contains(item.as_str()) {
+            out.changes.push(clear(FACTS_ROW, &item));
+        }
+    }
+    for lane in pass.fleet.lanes.iter().filter(|l| l.status.in_flight()) {
+        let files = hosts.of(lane).ok().map(|caps| caps.files);
+        if files != Some(Files::Local) {
+            continue;
+        }
+        let (_, doc, _) = lane_state(lane, files, pass.state_dir, pass.scripts, out);
+        let Reading::Live(doc) = doc else {
+            continue;
+        };
+        let held = [
+            "model_checks",
+            crate::ops::store::LANE_SESSION,
+            crate::ops::store::MODEL_RESET,
+        ]
+        .map(|member| doc.get(member).cloned().unwrap_or(Value::Null));
+        if held.iter().all(Value::is_null) {
+            continue;
+        }
+        let key = agent_runtime::record::cksum(json!(held).to_string().as_bytes()).to_string();
+        if pass.baseline.get(FACTS_ROW, &lane.item) == Some(key.as_str()) {
+            continue;
+        }
+        match lane_facts(pass, &lane.item, &held) {
+            Facts::Judged => out.changes.push(set(FACTS_ROW, &lane.item, key)),
+            Facts::Refused(line) => {
+                fail(out, line);
+                out.changes.push(set(FACTS_ROW, &lane.item, key));
+            }
+            Facts::Unsettled(line) => fail(out, line),
+        }
+    }
+}
+
+/// One lane's facts, `[model_checks, lane_session, model_reset]`, against
+/// its fleet lane read now.
+fn lane_facts(pass: &Pass, item: &str, held: &[Value; 3]) -> Facts {
+    let [checks, session, reset] = held;
+    let fleet = agent_runtime::record::fleet_path(pass.state_dir);
+    let unsettled = |cause: &dyn std::fmt::Display| {
+        Facts::Unsettled(format!("model-facts-unapplied item={item} cause={cause}"))
+    };
+    let entry = match fleet_lane(&fleet, item) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => return Facts::Judged,
+        Err(e) => return unsettled(&e),
+    };
+    let refused =
+        |cause: &str| Facts::Refused(format!("model-facts-refused item={item} cause={cause}"));
+    let word = |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+    let identity = launch_of(&Place::Lane(item.to_owned()), &entry);
+
+    // A cleared start's session, in the launch the fleet lane runs.
+    if !session.is_null() {
+        let Some(id) = bound(session) else {
+            return refused("session-form");
+        };
+        let launch = entry.get("launch");
+        let same = |key: &str| {
+            session["launch"].get(key).is_some()
+                && session["launch"].get(key) == launch.and_then(|l| l.get(key))
+        };
+        if same("pid") && same("start") && word(&entry, "session_id").as_deref() != Some(id) {
+            let Some(launch) = launch_identity(&entry) else {
+                return Facts::Judged;
+            };
+            if let Err(e) = rewrite_fleet(&fleet, |doc| {
+                Ok(crate::ops::lane::rebind_session(doc, item, id, &launch))
+            }) {
+                return unsettled(&e);
+            }
+        }
+    }
+
+    // A replacement's first turn end under the launch the fleet lane runs.
+    if !reset.is_null() {
+        let Some(id) = bound(reset) else {
+            return refused("session-form");
+        };
+        let check = &entry["model_check"];
+        let awaiting = check["outcome"] == "switched"
+            && check["recovery_started"] == true
+            && check["launch_identity"] != identity;
+        if awaiting
+            && reset.get("launch_identity") == Some(&identity)
+            && word(&entry, "session_id").as_deref() == Some(id)
+        {
+            let written = rewrite_fleet(&fleet, |doc| {
+                let env = agent_runtime::journal::Env::system()?;
+                crate::ops::store::model_reset(&fleet, doc, &env, item, id, &entry)
+            });
+            if let Err(e) = written {
+                return unsettled(&e);
+            }
+        }
+    }
+
+    // A switch the turn end marked started, bound to the launch the fleet
+    // lane runs, in the session it binds.
+    let Some(checks) = checks.as_object() else {
+        return Facts::Judged;
+    };
+    for (id, check) in checks {
+        let started = check["outcome"] == "switched" && check["recovery_started"] == true;
+        if !started {
+            continue;
+        }
+        if !agent_runtime::context::session_bound(id) {
+            return refused("session-form");
+        }
+        if check.get("launch_identity") != Some(&identity)
+            || word(&entry, "session_id").as_deref() != Some(id.as_str())
+        {
+            continue;
+        }
+        let model = word(&entry, "model").unwrap_or_default();
+        if word(check, "launched").as_deref() != Some(model.as_str()) {
+            return refused("model-unheld");
+        }
+        let Some(observed) =
+            word(check, "observed").filter(|o| agent_runtime::context::session_bound(o))
+        else {
+            return refused("observed-form");
+        };
+        let switch = Check {
+            session: id.clone(),
+            outcome: "switched".to_owned(),
+            cause: String::new(),
+            launched: model,
+            observed,
+        };
+        let recorded = rewrite_fleet(&fleet, |doc| {
+            let at = agent_runtime::journal::Env::system()?.iso();
+            Ok(record_model_check(
+                &fleet,
+                doc,
+                &at,
+                &Place::Lane(item.to_owned()),
+                &switch,
+                &entry,
+            )?)
+        });
+        match recorded {
+            Ok(report) if report["result"] == "acquired" => {}
+            Ok(_) => return Facts::Judged,
+            Err(e) => return unsettled(&e),
+        }
+        return recover(pass, item, id, &identity, &entry);
+    }
+    Facts::Judged
+}
+
+/// A fact's `session_id` where it is spelled in the form the session's
+/// reader names a path by.
+fn bound(fact: &Value) -> Option<&str> {
+    fact.get("session_id")
+        .and_then(Value::as_str)
+        .filter(|session| agent_runtime::context::session_bound(session))
+}
+
+/// The fleet record's first lane for `item`, as it stands now.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the lane pass's read of the fleet lane a lane's facts are judged against, read again before each pass's writes"
+)]
+fn fleet_lane(fleet: &Path, item: &str) -> crate::error::Result<Option<Value>> {
+    let Some(snapshot) = state::load(fleet)? else {
+        return Ok(None);
+    };
+    Ok(snapshot
+        .doc
+        .get("lanes")
+        .and_then(Value::as_array)
+        .and_then(|lanes| {
+            lanes
+                .iter()
+                .find(|l| l.get("item").and_then(Value::as_str) == Some(item))
+        })
+        .cloned())
+}
+
+/// The harness process the fleet lane's launch records.
+fn launch_identity(entry: &Value) -> Option<Identity> {
+    let launch = entry.get("launch")?;
+    Some(Identity {
+        pid: u32::try_from(launch.get("pid")?.as_u64()?).ok()?,
+        start: launch.get("start")?.as_str()?.to_owned(),
+    })
+}
+
+/// One transition of the fleet record, judged against the record it stores
+/// over and applied again where another writer moved it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the lane pass's fleet writes of what a lane's own process may not write, each a transition of the store's own"
+)]
+fn rewrite_fleet(
+    fleet: &Path,
+    change: impl Fn(&mut Document) -> crate::error::Result<Value>,
+) -> crate::error::Result<Value> {
+    agent_runtime::record::reread(
+        || {
+            let snapshot = state::load(fleet)?.ok_or_else(|| {
+                crate::error::Error::from(agent_runtime::Error::RecordMissing {
+                    path: fleet.to_path_buf(),
+                })
+            })?;
+            let mut doc = snapshot.doc.clone();
+            let reply = change(&mut doc)?;
+            agent_runtime::record::store(
+                fleet,
+                &snapshot.doc,
+                &doc,
+                agent_runtime::record::Locking::FLOCK,
+            )?;
+            Ok(reply)
+        },
+        crate::error::Error::key,
+    )
+}
+
+/// How long the recovery's claim, composition and job start are given.
+const RECOVERY_BOUND: Duration = Duration::from_secs(120);
+
+/// The fleet's `recover-lane-model` for the switch the pass recorded,
+/// through the runtime's entry from the lane's checkout, so its settings,
+/// its relaunch and its job are the ones the lane's own checkout names.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the lane pass's one start of a model recovery, the runtime's entry through the one runner"
+)]
+fn recover(pass: &Pass, item: &str, session: &str, identity: &Value, entry: &Value) -> Facts {
+    let request = json!({
+        "op": "recover-lane-model",
+        "item": item,
+        "session": session,
+        "launch_identity": identity,
+    })
+    .to_string();
+    let dir = pass.state_dir.display().to_string();
+    let cwd = entry
+        .get("mail_root")
+        .and_then(Value::as_str)
+        .filter(|root| !root.is_empty())
+        .map(Path::new);
+    let ran = agent_runtime::host::run_tagged_in(
+        "lanes",
+        hosted::ORCH_RUNTIME,
+        &pass.scripts.join(hosted::ORCH_RUNTIME),
+        "recover-lane-model",
+        &[
+            "--state-dir",
+            &dir,
+            "op",
+            "--fleet",
+            "--request-json",
+            &request,
+        ],
+        agent_runtime::host::Place { cwd, env: &[] },
+        RECOVERY_BOUND,
+    );
+    let unsettled = |cause: String| {
+        Facts::Unsettled(format!(
+            "model-recovery-unanswered item={item} cause={cause}"
+        ))
+    };
+    let out = match ran {
+        Ok(out) => out,
+        Err(e) => return unsettled(e.to_string()),
+    };
+    let Ok(reply) = serde_json::from_slice::<Value>(&out.stdout) else {
+        return unsettled(format!("{}", out.status));
+    };
+    if reply["ok"] == true {
+        return Facts::Judged;
+    }
+    let refusal = &reply["refusal"];
+    let fields: String = refusal["fields"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| {
+            Some(format!(
+                " {}={}",
+                pair.get(0)?.as_str()?,
+                pair.get(1)?.as_str()?
+            ))
+        })
+        .collect();
+    Facts::Refused(format!(
+        "model-recovery-refused key={}{fields}",
+        refusal["key"].as_str().unwrap_or_default()
+    ))
+}
 /// where the lane writes no file or its file names no step; the line bare
 /// or as a list item, its value after the colon.
 fn lane_step(lane: &Lane) -> String {

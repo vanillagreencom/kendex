@@ -31,7 +31,7 @@ pub mod boxes;
 pub mod copilot_wait;
 pub mod cycle;
 mod item;
-mod lane;
+pub(crate) mod lane;
 pub mod lane_model;
 pub mod mail;
 mod occupancy;

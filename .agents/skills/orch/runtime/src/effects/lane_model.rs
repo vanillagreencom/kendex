@@ -2,8 +2,8 @@
 //! relaunch composed from the lane's record, then a detached job that
 //! retires the predecessor through the close route and launches its
 //! replacement, marking the switch's row as it goes. The job runs apart
-//! from the caller's process group, since the caller is as often as not
-//! the turn end of the harness the close stops. Everything the caller is
+//! from the caller's process group, so it outlives the caller that started
+//! it. Everything the caller is
 //! told comes before anything stops: a refused claim, a record no relaunch
 //! can be composed from, a job the launcher refused.
 //!
@@ -53,28 +53,6 @@ const JOB_LINE: &str = r#"log=$1 cwd=$2 runtime=$3 state=$4; shift 4; exec >>"$l
 pub struct Started {
     pub job: job::Launch,
     pub log: PathBuf,
-}
-
-/// The turn end's recovery of the fleet lane its switch was acquired on,
-/// admitted under these settings as the command admits a request, then run
-/// as [`run`] runs the command's.
-pub fn start(
-    settings: &Settings,
-    fleet: &Path,
-    request: &RecoverLaneModel,
-    env: &Env,
-    locking: Locking,
-) -> Result<Started> {
-    let claim = RecoverLaneModel {
-        mark: None,
-        limit: None,
-        ..request.clone()
-    };
-    ops::admit(
-        &Request::RecoverLaneModel(Box::new(claim.clone())),
-        settings,
-    )?;
-    recover(settings, fleet, &claim, env, locking)
 }
 
 /// The command's entry for `request`, a recovery or its job's mark, on the

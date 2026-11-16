@@ -39,11 +39,11 @@ mkdir -p [MAIN_REPO_ROOT]/tmp
 **Stop routes.** Every `records [STOP_NAME]` branch below records against the `[STATE_KEY]` § 3 resolved for the PR it is stopping, renders into the one path this workflow uses, and posts that file on that PR:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name [STOP_NAME] --gate [GATE] --remaining "[REMAINING]" --comment-file [MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name [STOP_NAME] --gate [GATE] --remaining "[REMAINING]" --comment-file "$(dirname "$(.agents/skills/orch/scripts/orch-runtime state path --item [STATE_KEY] | jq -r .result.path)")/post-pr-stop-[STATE_KEY].md"
 ```
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$(dirname "$(.agents/skills/orch/scripts/orch-runtime state path --item [STATE_KEY] | jq -r .result.path)")/post-pr-stop-[STATE_KEY].md"
 ```
 
 ## 2. Cross-Check (batch merges only)

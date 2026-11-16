@@ -12,7 +12,7 @@ use agent_runtime::host::{self, Place};
 use agent_runtime::journal::Env;
 use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
-use agent_runtime::record::{self, Locking};
+use agent_runtime::record::Locking;
 
 use super::answer::Said;
 use super::marks;
@@ -204,7 +204,8 @@ impl Lane {
     /// session is a relaunch in flight, whose mail waits for its confirm. A
     /// process table that cannot be read leaves the call the lead's, noted,
     /// so a host fault never silences the lane. The lead's own session start
-    /// from a cleared session binds the record to it.
+    /// from a cleared session is kept on the item record for the watch to
+    /// bind the lane record to.
     pub(super) fn seat(&self, turn: &mut Turn, vars: &Vars, payload: &Payload) -> Flow<Seat> {
         let Some(item) = &self.item else {
             return Ok(Seat::Lead);
@@ -243,7 +244,7 @@ impl Lane {
             }
         };
         if cleared_start(turn, payload) && !payload.session.is_empty() {
-            rebind(turn, &settings, item, &payload.session, launch);
+            rebind(turn, &settings, &self.root, item, &payload.session, &launch);
         }
         Ok(Seat::Lead)
     }
@@ -344,20 +345,32 @@ pub(super) fn cleared_start(turn: &Turn, payload: &Payload) -> bool {
     start && payload.field("source").and_then(|s| s.as_str()) == Some("clear")
 }
 
-/// The lane record of `item` bound to `session`, the lead's new session in
-/// the process `launch` names. A write that fails is noted and the call
-/// goes on as the lead's; one that binds nothing found the launch moved.
-fn rebind(turn: &mut Turn, settings: &Settings, item: &str, session: &str, launch: Identity) {
-    let fleet = record::fleet_path(&settings.state_dir);
-    let write = Write::LaneSession {
-        lane: item.to_owned(),
-        session: session.to_owned(),
-        launch,
+/// The lead's new session `session` in the process `launch` names, kept on
+/// the item's own record, which its lane may write, for the watch to bind
+/// the fleet's lane record to. A write that fails is noted and the call
+/// goes on as the lead's.
+fn rebind(
+    turn: &mut Turn,
+    settings: &Settings,
+    root: &Path,
+    item: &str,
+    session: &str,
+    launch: &Identity,
+) {
+    let path = crate::state::item_path(&settings.state_dir, item);
+    let write = Write::Set {
+        pointer: format!("/{}", store::LANE_SESSION),
+        value: serde_json::json!({
+            "session_id": session,
+            "launch": {"pid": launch.pid, "start": launch.start},
+        }),
     };
-    let written = Env::system().map_err(|e| e.to_string()).and_then(|env| {
-        store::run_write(&fleet, Locking::FLOCK, &settings.store, &env, &write)
-            .map_err(|e| e.to_string())
-    });
+    let written = super::model::item_record(&path, root)
+        .and_then(|()| {
+            let env = Env::system()?;
+            store::run_write(&path, Locking::FLOCK, &settings.store, &env, &write)
+        })
+        .map_err(|e| e.to_string());
     if let Err(cause) = written {
         turn.note(&Said::LaneSessionUnbound, &cause);
     }

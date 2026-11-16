@@ -13,16 +13,9 @@
 #[path = "support.rs"]
 mod support;
 
-use std::ffi::OsString;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use agent_runtime::journal::Env;
-use agent_runtime::record::Locking;
-use agent_runtime::settings::Roots;
-use orch_runtime::effects::lane_model;
-use orch_runtime::ops::lane_model::RecoverLaneModel;
-use orch_runtime::settings;
 use serde_json::{Value, json};
 use support::*;
 
@@ -1104,12 +1097,12 @@ fn a_recorded_empty_account_names_no_account_on_the_relaunch() {
     }
 }
 
-/// The turn end's in-process start admits its request under its settings
-/// as the command does, before its claim: a setting the replacement's
-/// launch would refuse leaves the switch unspent. The limit of one would
-/// refuse the claim at once, so a start that claimed first spends it.
+/// The recovery the watch starts admits its request under its settings
+/// before its claim: a setting the replacement's launch would refuse leaves
+/// the switch unspent. The limit of one would refuse the claim at once, so
+/// a recovery that claimed first spends it.
 #[test]
-fn the_turn_ends_start_judges_its_settings_before_it_claims() {
+fn a_recovery_judges_its_settings_before_it_claims() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-record");
@@ -1118,51 +1111,14 @@ fn the_turn_ends_start_judges_its_settings_before_it_claims() {
     let mut fleet = planted_lane(&runner, &state);
     switched(&mut fleet, false, Vec::new());
     runner.write_fleet(&fleet);
-    let environment: Vec<(OsString, OsString)> = [
-        ("ORCH_LANE_OUTPUT", "loud"),
-        ("ORCH_MODEL_RECOVERY_LIMIT", "1"),
-        (
-            "AGENT_RUNTIME_ACCOUNT_STATE_DIR",
-            &*state.join("tmp/oversee-watch").display().to_string(),
-        ),
-    ]
-    .iter()
-    .map(|(k, v)| (OsString::from(k), OsString::from(v)))
-    .collect();
-    let settings = settings::load(
-        &Roots {
-            project: state.clone(),
-            common: state.clone(),
-        },
-        &environment,
-        &settings::Flags {
-            state_dir: Some(state.clone()),
-            private_env: false,
-        },
-    )
-    .unwrap();
-    let request = RecoverLaneModel {
-        item: ITEM.to_owned(),
-        session: "current".to_owned(),
-        launch_identity: identity(&fleet["lanes"][0]),
-        mark: None,
-        limit: None,
-    };
-    let env = Env {
-        now_secs: 1_800_000_000,
-        now_nanos: 1_800_000_000_u128 * 1_000_000_000,
-        nonce: 1,
-        owner: None,
-    };
-    let refused = lane_model::start(
-        &settings,
-        &state.join("workflow-state-oversee.json"),
-        &request,
-        &env,
-        Locking::FLOCK,
-    )
-    .unwrap_err();
-    assert_eq!(refused.key(), "setting-invalid", "{refused:?}");
+    let out = runner.op_fleet_env(
+        &recovery("current", &identity(&fleet["lanes"][0])),
+        &[
+            ("ORCH_LANE_OUTPUT", "loud"),
+            ("ORCH_MODEL_RECOVERY_LIMIT", "1"),
+        ],
+    );
+    assert_eq!(refusal(&out).0, "setting-invalid", "{}", stderr(&out));
     let after = runner.fleet();
     assert_eq!(
         after["lanes"][0]["model_check"]["recovery_started"], false,

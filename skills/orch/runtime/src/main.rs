@@ -2061,6 +2061,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::Lane { op } => lane_verb(op, &flags)?,
         Verb::ContainerClose { checkout, parent } => {
+            step_aside("container-close");
             let settings = resolve_settings(&flags)?;
             let answer =
                 ops::accept::container_close(&settings.reads.tracker_cli, &checkout, &parent);
@@ -2968,6 +2969,20 @@ fn init_state(path: &Path, fields: &state::InitFields) -> Result<state::Initiali
     state::init(path, fields)
 }
 
+/// An act the overseer's own route performs for a lane, left by a confined
+/// lane's process, which the wrapper marks and whose grants the act's locks
+/// and writes lie outside: its line, exit 0, before any lock or write. An
+/// unconfined caller, the overseer or a lane run with no wrapper, goes on.
+fn step_aside(act: &str) {
+    if std::env::var_os(agent_runtime::confine::CONFINED_VAR).is_some_and(|value| value == "1") {
+        let _ = writeln!(
+            std::io::stdout().lock(),
+            "{act}: left cause=confined owner=overseer"
+        );
+        std::process::exit(0);
+    }
+}
+
 /// The `state remove` verb: the item's close-out, then, where no fleet
 /// state stands to run a watch, one retention pass over the directory. A
 /// relative `--archive` path is the caller's working directory's.
@@ -3330,6 +3345,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             }
         },
         StateOp::Remove { item, archive } => {
+            step_aside("state-remove");
             let env = Env::system()?;
             remove_item(&settings, &item, &archive, locking, env.now_secs)
         }

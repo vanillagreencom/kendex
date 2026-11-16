@@ -17,8 +17,8 @@ The wait is the runtime's `verify-pr` operation over the pull request's current 
 ```bash
 jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
   '{op: "verify-pr", repo: $repo, pr: $pr, required_only: true}' \
-  > "[MAIN_REPO_ROOT]/tmp/verify-pr-request-[STATE_KEY].json"
-[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[MAIN_REPO_ROOT]/tmp/verify-pr-request-[STATE_KEY].json"
+  > "$(dirname "$([MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime state path --item [STATE_KEY] | jq -r .result.path)")/verify-pr-request-[STATE_KEY].json"
+[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "$(dirname "$([MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime state path --item [STATE_KEY] | jq -r .result.path)")/verify-pr-request-[STATE_KEY].json"
 ```
 
 The lane owns this approved-head wait. Read its completion file. `status=complete` with `verdict=pass` takes the direct attempt without overseer direction. A `pr-not-open` refusal says the pull request is closed or merged: stop and report its `state`.

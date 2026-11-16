@@ -493,6 +493,16 @@ pub struct Bucket {
     pub fields: Vec<(String, String)>,
 }
 
+/// The item record's fact of a cleared start: `{session_id, launch: {pid,
+/// start}}`, the session the lane's own harness process started, which the
+/// watch binds the fleet's lane to.
+pub const LANE_SESSION: &str = "lane_session";
+
+/// The item record's fact of a replacement's first turn end:
+/// `{session_id, launch_identity}`, from which the watch resets the fleet
+/// lane's switched check.
+pub const MODEL_RESET: &str = "model_reset";
+
 /// A model switch's check: the launch it is bound to is `expected`'s (the
 /// record the hook read), the outcome `switched` or `unavailable`.
 #[derive(Debug, Clone, PartialEq)]
@@ -1330,7 +1340,7 @@ pub(crate) fn check_model_checks(
 /// A replacement's first turn end resets the lane's switched check to
 /// `passed`, with its log row, where the lane still runs the launch, the
 /// session and the check `expected` holds.
-fn model_reset(
+pub(crate) fn model_reset(
     path: &Path,
     doc: &mut Document,
     env: &Env,

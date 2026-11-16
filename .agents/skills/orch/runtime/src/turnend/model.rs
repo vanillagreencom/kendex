@@ -5,11 +5,13 @@
 //! unavailable model is handed to the session once per session. The
 //! controller's acquired switch is marked started before its recovery, then
 //! recovered on its own launch's model: the successor, the handoff snapshot
-//! and the transfer's job. A fleet lane's acquired switch writes the handoff
-//! its replacement resumes from and starts its recovery in process. A
-//! hosted lane, which no fleet record names, is judged only where its turn
-//! end is its recorded process group's: the check, the start mark and the
-//! handoff on its item record, then its predecessor stop's job.
+//! and the transfer's job. A fleet lane's switch is kept on its own item
+//! record, which its lane may write: the check, the handoff its replacement
+//! resumes from and the start mark, from which the watch's lane pass starts
+//! the fleet's recovery. A hosted lane, which no fleet record names, is
+//! judged only where its turn end is its recorded process group's: the
+//! check, the start mark and the handoff on its item record, then its
+//! predecessor stop's job.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -33,7 +35,7 @@ use super::payload::Payload;
 use super::role::{Binding, Kind};
 use super::{Answer, Flow, Turn, Vars};
 use crate::marker;
-use crate::ops::lane_model::{RecoverLaneModel, StopModelPredecessor};
+use crate::ops::lane_model::StopModelPredecessor;
 use crate::ops::store::{self, ModelCheck, Write};
 use crate::ops::successor;
 use crate::ops::{self, Request};
@@ -144,7 +146,8 @@ pub(super) fn reset(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload
     }
 }
 
-/// The reset's reads and its one write, the cause and the words of the
+/// The reset's reads and its one write, the fact on the lane's item record
+/// the watch resets the fleet's check from; the cause and the words of the
 /// step that failed where one did.
 fn reset_lane(
     turn: &mut Turn,
@@ -171,15 +174,17 @@ fn reset_lane(
         return Ok(());
     }
     let unwritten = |e: &dyn std::fmt::Display| ("reset-record-unwritten", e.to_string());
-    let expected = Scratch::create(&settings.state_dir, "model-expected", &entry.to_string())
-        .map_err(|e| unwritten(&e))?;
+    let path = state::item_path(&settings.state_dir, item);
+    item_record(&path, &lane.root).map_err(|e| unwritten(&e))?;
     let env = Env::system().map_err(|e| unwritten(&e))?;
-    let write = Write::ModelReset {
-        lane: item.to_owned(),
-        session: session.to_owned(),
-        expected: expected.0.clone(),
+    let write = Write::Set {
+        pointer: format!("/{}", store::MODEL_RESET),
+        value: json!({
+            "session_id": session,
+            "launch_identity": rule::launch_of(&Place::Lane(item.to_owned()), &entry),
+        }),
     };
-    store::run_write(&fleet, Locking::FLOCK, &settings.store, &env, &write)
+    store::run_write(&path, Locking::FLOCK, &settings.store, &env, &write)
         .map_err(|e| unwritten(&e))?;
     Ok(())
 }
@@ -536,6 +541,14 @@ impl Switch<'_> {
         record::fleet_path(&self.settings.state_dir)
     }
 
+    /// The folder a lane's check input is made in: the checkout's own
+    /// `tmp`, which a confined lane may write and the state directory it may
+    /// not. The controller's recovery, unconfined, keeps its files beside
+    /// the fleet record.
+    fn scratch_dir(&self) -> PathBuf {
+        self.root.join("tmp")
+    }
+
     fn judge(
         &self,
         turn: &mut Turn,
@@ -578,7 +591,13 @@ impl Switch<'_> {
                 let Some(entry) = entry else {
                     return self.unavailable(turn, "launch-missing", "");
                 };
-                (entry, place, fleet.clone(), None)
+                // A lane's check is kept on its own item record, which its
+                // lane may write; the fleet's is the watch's to take from it.
+                let record = match &place {
+                    Place::Lane(item) => state::item_path(&self.settings.state_dir, item),
+                    Place::Controller | Place::Item => fleet.clone(),
+                };
+                (entry, place, record, None)
             };
         if let Place::Lane(_) = place {
             let server = match vars.tmux_pane {
@@ -629,15 +648,16 @@ impl Switch<'_> {
             })
             .map_err(|e| e.to_string()),
             Place::Lane(_) | Place::Item => {
-                let Ok(expected) = Scratch::create(
-                    &self.settings.state_dir,
-                    "model-expected",
-                    &entry.to_string(),
-                ) else {
+                if let Err(e) = item_record(&record, self.root) {
+                    return self.unavailable(turn, "record-unwritten", &e.to_string());
+                }
+                let Ok(expected) =
+                    Scratch::create(&self.scratch_dir(), "model-expected", &entry.to_string())
+                else {
                     return self.unavailable(turn, "record-unwritten", "");
                 };
                 let write = Write::ModelCheck(ModelCheck {
-                    place: place.clone(),
+                    place: Place::Item,
                     check: check.clone(),
                     expected: expected.0.clone(),
                 });
@@ -657,9 +677,7 @@ impl Switch<'_> {
         }
         match place {
             Place::Controller => self.recover(turn, payload, &entry, &check, &env),
-            Place::Lane(item) => {
-                self.recover_lane(turn, lane, payload, &item, &entry, &check, &env)
-            }
+            Place::Lane(_) => self.recover_lane(turn, lane, payload, &record, &check, &env),
             Place::Item => match hosting {
                 Some(hosting) => self.recover_item(turn, lane, payload, hosting, &check, &env),
                 None => unreachable!("a check at the item place is a hosted switch's"),
@@ -667,24 +685,20 @@ impl Switch<'_> {
         }
     }
 
-    /// A fleet lane's acquired switch: the handoff its replacement resumes
-    /// from, then its recovery started in process, once whatever it answers.
-    /// A handoff that cannot be written is told and the recovery still
-    /// starts, since the replacement resumes the item's workflow state either
-    /// way; a recovery that refuses is told in one form with its key line,
-    /// under the handoff's notice where both failed. Each is told once per
-    /// session through the item's slot.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the switch's own judgement and the turn, lane, payload, check and environment it was taken under"
-    )]
+    /// A fleet lane's acquired switch, after its check on its item record:
+    /// the handoff its replacement resumes from, then the start mark the
+    /// watch's lane pass starts the fleet's recovery on. A handoff that
+    /// cannot be written is told and the mark still written, since the
+    /// replacement resumes the item's workflow state either way; a mark
+    /// that cannot be written leaves the check unstarted, so the next switch
+    /// is acquired again. Each failure is told once per session through the
+    /// item's slot.
     fn recover_lane(
         &self,
         turn: &mut Turn,
         lane: &Lane,
         payload: &Payload,
-        item: &str,
-        entry: &Value,
+        record: &Path,
         check: &Check,
         env: &Env,
     ) -> Flow {
@@ -694,35 +708,34 @@ impl Switch<'_> {
                 .and_then(|request| apply_handoff(&path, self.root, &self.settings, &request, env)),
             Err(words) => Err(words),
         };
-        let request = RecoverLaneModel {
-            item: item.to_owned(),
+        let mark = Write::ModelStart {
+            place: Place::Item,
             session: self.session.to_owned(),
-            launch_identity: rule::launch_of(&Place::Lane(item.to_owned()), entry),
-            mark: None,
-            limit: None,
         };
-        let started = crate::effects::lane_model::start(
-            &self.settings,
-            &self.fleet(),
-            &request,
-            env,
-            Locking::FLOCK,
-        );
-        let refused = match started {
+        let marked = store::run_write(record, Locking::FLOCK, &self.settings.store, env, &mark);
+        let unmarked = match marked {
             Ok(_) => {
                 turn.note(&switched(check, Recovered::Lane), "");
                 None
             }
             Err(e) => Some(key_line(&e)),
         };
-        match (handoff, refused) {
+        match (handoff, unmarked) {
             (Ok(()), None) => Ok(()),
-            (Ok(()), Some(line)) => self.unavailable(turn, "recovery-unstarted", &line),
-            (Err(words), refused) => {
-                if let Some(line) = refused {
+            (Ok(()), Some(line)) => Err(handed(
+                turn,
+                &Said::ModelUnavailable("recovery-unstarted"),
+                &line,
+            )),
+            (Err(words), unmarked) => {
+                if let Some(line) = unmarked {
                     turn.note(&Said::ModelUnavailable("recovery-unstarted"), &line);
                 }
-                self.unavailable(turn, "handoff-unwritten", &words)
+                Err(handed(
+                    turn,
+                    &Said::ModelUnavailable("handoff-unwritten"),
+                    &words,
+                ))
             }
         }
     }
@@ -1155,7 +1168,7 @@ fn apply_handoff(
     clippy::disallowed_methods,
     reason = "the notice slot's item record where a launch predates it: the same creation the `state init` command makes, so the slot is kept in a record of the item's own"
 )]
-fn item_record(path: &Path, root: &Path) -> crate::Result<()> {
+pub(super) fn item_record(path: &Path, root: &Path) -> crate::Result<()> {
     if std::fs::symlink_metadata(path).is_ok() {
         return Ok(());
     }
@@ -1236,9 +1249,8 @@ fn handed(turn: &mut Turn, said: &Said, cause: &str) -> Answer {
     }
 }
 
-/// A file of the switch's own beside the records, made exclusively and
-/// removed when dropped: the record a check is bound to, a handoff body, a
-/// transfer request.
+/// A file of the switch's own, made exclusively and removed when dropped:
+/// the record a check is bound to, a handoff body, a transfer request.
 struct Scratch(PathBuf);
 
 impl Scratch {

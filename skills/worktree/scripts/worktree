@@ -3716,6 +3716,13 @@ case "${1:-}" in
       worktree_message remove-target-required "target" "Error: remove requires an issue ID or path" >&2
       exit 1
     fi
+    # A confined lane's process may write its own worktree but not the
+    # folders that hold it: git would delete the content and then fail on
+    # the folder. The overseer's close of the lane removes it.
+    if [[ "${AGENT_RUNTIME_CONFINED:-}" == "1" ]]; then
+      echo "worktree-remove: left cause=confined owner=overseer"
+      exit 0
+    fi
     # A path-addressed close-out gets its issue from the private Git record,
     # so a relaunched session does not need its predecessor's environment.
     REMOVE_ISSUE_OWNER=""

@@ -3516,6 +3516,287 @@ fn a_refused_handoff_read_is_the_pass_s_failure_and_the_other_lanes_news_stands(
     );
 }
 
+const SWITCHED: &str = "KEN-1";
+const NATIVE: &str = "native-1";
+
+/// A switched lane's checkout under `dir`: a repository whose own `tmp`
+/// holds its item record, with the runtime's entry its recovery's job runs
+/// held until `release` exists (bounded at 30 seconds), so the job runs
+/// nothing of a real close or launch.
+fn switched_root(dir: &Path, release: &Path) -> PathBuf {
+    let root = dir.join("root-KEN-1");
+    std::fs::create_dir_all(&root).unwrap();
+    let init = program("git")
+        .args(["init", "-q"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "git init: {}", stderr(&init));
+    let scripts = root.join(".agents/skills/orch/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    write_executable(
+        &scripts.join("orch-runtime"),
+        format!(
+            "#!/bin/sh\ni=0\nwhile [ ! -e '{}' ] && [ \"$i\" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n",
+            release.display()
+        ),
+    );
+    root
+}
+
+/// The switched lane's fleet record: launched on `opus` for the session
+/// `NATIVE` by a harness process that is gone, with what a relaunch is
+/// composed from.
+fn switched_lane(server: &Server, root: &Path) -> Value {
+    let gone = Identity {
+        pid: u32::try_from(GONE_PID).unwrap(),
+        start: "ticks:1".to_owned(),
+    };
+    let mut lane = lane_record(
+        SWITCHED,
+        "gh-1",
+        "claude",
+        server,
+        "%999",
+        Some(&gone),
+        root,
+    );
+    for (key, value) in [
+        ("model", "opus"),
+        ("session_id", NATIVE),
+        ("launched_at", "2026-11-12T10:00:00Z"),
+        ("class", CLASS),
+        ("class_reason", CLASS_REASON),
+    ] {
+        lane[key] = json!(value);
+    }
+    lane
+}
+
+/// The launch a check on `lane` is bound to.
+fn bound_launch(lane: &Value) -> Value {
+    json!({"launch": lane["launch"], "launched_at": lane["launched_at"]})
+}
+
+/// The check a lane's turn end keeps on its item record for its switch of
+/// `session` from `launched`, marked started.
+fn kept_switch(lane: &Value, session: &str, launched: &str) -> Value {
+    json!({"model_checks": {session: {
+        "outcome": "switched", "session_id": session, "launch_identity": bound_launch(lane),
+        "launched": launched, "observed": "claude-sonnet-4-5", "cause": "",
+        "at": "2026-11-12T10:05:00Z", "recovery_started": true,
+    }}})
+}
+
+/// The runtime's entry the pass's recovery runs, the built binary on the
+/// isolated tools' path, so the recovery's job reads the planted `loginctl`
+/// and starts under `setsid`, never as a unit of the host's user manager.
+fn entry_scripts(dir: &Path) -> PathBuf {
+    let scripts = dir.join("watch-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    write_executable(
+        &scripts.join("orch-runtime"),
+        format!(
+            "#!/bin/bash\nexport PATH='{}'\nexec '{}' --no-private-env \"$@\"\n",
+            tool_path(&[]),
+            binary().display()
+        ),
+    );
+    scripts
+}
+
+/// A switch a lane's turn end kept on its item record, marked started on
+/// the session and launch the fleet record runs, is recovered once by the
+/// lane pass: the fleet lane's check recorded with its one log row, then
+/// the fleet's `recover-lane-model` claims it and starts its job. A
+/// recovery the claim refuses at the limit since the lane's last reset is
+/// said once with its refusal's key line, the switch spent. The same facts
+/// on the next pass act and say nothing.
+#[test]
+fn a_switch_kept_on_a_lanes_item_record_is_recovered_once_by_the_lane_pass() {
+    let replaced = |session: &str| {
+        json!({"kind": "model-switched", "item": SWITCHED, "session_id": session,
+               "recovery": "replaced", "launch_identity": {"launch": {"pane": "%2"}}})
+    };
+    for (case, log, said) in [
+        ("recovered", json!([]), None),
+        (
+            "limit",
+            json!([replaced("earlier"), replaced("before")]),
+            Some("model-recovery-refused key=model-recovery-limit item=KEN-1 recoveries=2 limit=3"),
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let release = dir.path().join("entry-release");
+        let root = switched_root(dir.path(), &release);
+        let lane = switched_lane(&server, &root);
+        fleet.set_lanes(vec![lane.clone()]);
+        let mut record = fleet.runner.fleet();
+        record["fleet_log"] = log;
+        fleet.runner.write_fleet(&record);
+        std::fs::write(
+            support::item_record(&root.join("tmp"), SWITCHED),
+            kept_switch(&lane, NATIVE, "opus").to_string(),
+        )
+        .unwrap();
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = entry_scripts(dir.path());
+        let job = driver
+            .state_dir
+            .join(format!("model-recovery-{SWITCHED}.unit"));
+        let first = driver.pass(&state);
+        let after = fleet.runner.fleet();
+        let check = &after["lanes"][0]["model_check"];
+        assert_eq!(check["outcome"], "switched", "{case}: {after}");
+        assert_eq!(check["recovery_started"], true, "{case}: {after}");
+        assert_eq!(check["launch_identity"], bound_launch(&lane), "{case}");
+        let switched_rows = |fleet: &Value| {
+            fleet["fleet_log"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| {
+                    row["kind"] == "model-switched"
+                        && row["item"] == SWITCHED
+                        && row["session_id"] == NATIVE
+                })
+                .count()
+        };
+        assert_eq!(switched_rows(&after), 1, "{case}: {after}");
+        assert_eq!(first.failed.as_deref(), said, "{case}");
+        assert_eq!(job.exists(), said.is_none(), "{case}: the job");
+        let second = driver.pass(&state);
+        std::fs::write(&release, "").unwrap();
+        assert_eq!(second.failed, None, "{case}: said again");
+        assert_eq!(fleet.runner.fleet(), after, "{case}: acted again");
+    }
+}
+
+/// Every value of a lane's item record is the lane's to write, so a fact
+/// naming a session in a form its reader would not name a path by, or a
+/// switch from a model the fleet record does not hold, writes nothing on
+/// the fleet record and starts nothing: it is the pass's line once.
+#[test]
+fn an_item_records_fact_of_a_wrong_session_form_or_an_unheld_model_changes_nothing_and_is_said_once()
+ {
+    for (case, fact, cause) in [
+        ("switch's session", "switch-session", "session-form"),
+        ("switch's model", "switch-model", "model-unheld"),
+        ("cleared start's session", "cleared", "session-form"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let release = dir.path().join("entry-release");
+        let root = switched_root(dir.path(), &release);
+        let lane = switched_lane(&server, &root);
+        fleet.set_lanes(vec![lane.clone()]);
+        let record = match fact {
+            "switch-session" => kept_switch(&lane, "../native-1", "opus"),
+            "switch-model" => kept_switch(&lane, NATIVE, "claude-fable-5-2"),
+            _ => json!({"lane_session": {"session_id": "native/2", "launch": lane["launch"]}}),
+        };
+        std::fs::write(
+            support::item_record(&root.join("tmp"), SWITCHED),
+            record.to_string(),
+        )
+        .unwrap();
+        let before = fleet.runner.fleet();
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = entry_scripts(dir.path());
+        let first = driver.pass(&state);
+        let second = driver.pass(&state);
+        std::fs::write(&release, "").unwrap();
+        assert_eq!(
+            first.failed.as_deref(),
+            Some(format!("model-facts-refused item={SWITCHED} cause={cause}").as_str()),
+            "{case}"
+        );
+        assert_eq!(second.failed, None, "{case}: said again");
+        assert_eq!(
+            fleet.runner.fleet(),
+            before,
+            "{case}: the fleet record moved"
+        );
+        assert!(
+            !driver
+                .state_dir
+                .join(format!("model-recovery-{SWITCHED}.unit"))
+                .exists(),
+            "{case}: a job started"
+        );
+    }
+}
+
+/// A cleared start's session a lane kept on its item record, in the launch
+/// the fleet lane runs, binds the fleet lane to it; a replacement's first
+/// turn end kept there, in the session and launch the fleet lane now runs,
+/// resets the switched check its recovery started under the earlier launch
+/// with one log row. A fact under another launch moves nothing.
+#[test]
+fn a_cleared_start_and_a_first_turn_end_kept_on_an_item_record_are_applied_by_the_lane_pass() {
+    for (case, current) in [("this launch", true), ("another launch", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let release = dir.path().join("entry-release");
+        let root = switched_root(dir.path(), &release);
+        let mut lane = switched_lane(&server, &root);
+        lane["model_check"] = json!({
+            "outcome": "switched", "session_id": NATIVE, "recovery_started": true,
+            "launch_identity": {"launch": {"pid": 7, "start": "ticks:7"},
+                                "launched_at": "2026-11-11T00:00:00Z"},
+        });
+        fleet.set_lanes(vec![lane.clone()]);
+        let mut launch = lane["launch"].clone();
+        let mut identity = bound_launch(&lane);
+        if !current {
+            launch["start"] = json!("ticks:9");
+            identity["launched_at"] = json!("2026-11-13T00:00:00Z");
+        }
+        std::fs::write(
+            support::item_record(&root.join("tmp"), SWITCHED),
+            json!({"model_reset": {"session_id": NATIVE, "launch_identity": identity}}).to_string(),
+        )
+        .unwrap();
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = entry_scripts(dir.path());
+        let first = driver.pass(&state);
+        assert_eq!(first.failed, None, "{case}");
+        let reset = fleet.runner.fleet();
+        let resets = |fleet: &Value| {
+            fleet["fleet_log"].as_array().map_or(0, |rows| {
+                rows.iter()
+                    .filter(|row| row["kind"] == "model-recovery-reset")
+                    .count()
+            })
+        };
+        let outcome = if current { "passed" } else { "switched" };
+        assert_eq!(
+            reset["lanes"][0]["model_check"]["outcome"], outcome,
+            "{case}: {reset}"
+        );
+        assert_eq!(resets(&reset), usize::from(current), "{case}: {reset}");
+
+        std::fs::write(
+            support::item_record(&root.join("tmp"), SWITCHED),
+            json!({"lane_session": {"session_id": "native-2", "launch": launch}}).to_string(),
+        )
+        .unwrap();
+        driver.pass(&state);
+        let bound = fleet.runner.fleet();
+        let session = if current { "native-2" } else { NATIVE };
+        assert_eq!(bound["lanes"][0]["session_id"], session, "{case}: {bound}");
+        assert_eq!(resets(&bound), usize::from(current), "{case}: {bound}");
+        std::fs::write(&release, "").unwrap();
+    }
+}
+
 /// One outcomes pass over the markers under `dir`, the changes applied as
 /// the runner commits them; the prepare bound its default, 1800 s, over a
 /// fleet holding no intent.

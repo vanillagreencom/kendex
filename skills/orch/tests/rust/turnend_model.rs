@@ -143,22 +143,6 @@ fn recovery_job(lane: &Path) -> PathBuf {
     lane.join("tmp").join(format!("model-recovery-{ITEM}.unit"))
 }
 
-/// A stand-in for the runtime's entry the recovery's job runs, held until
-/// `release` exists (bounded at 30 seconds): the job then outlives the
-/// launch's read of it on any load. With no entry the job ends within
-/// milliseconds, and a loaded launch reads it gone and answers it refused.
-fn held_entry(lane: &Path, release: &Path) {
-    let scripts = lane.join(".agents/skills/orch/scripts");
-    fs::create_dir_all(&scripts).unwrap();
-    write_executable(
-        &scripts.join("orch-runtime"),
-        format!(
-            "#!/bin/sh\ni=0\nwhile [ ! -e '{}' ] && [ \"$i\" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n",
-            release.display()
-        ),
-    );
-}
-
 /// The keyed lines of the switch's answer: its stderr and the context it
 /// handed the session.
 fn told(out: &TurnOut) -> Vec<String> {
@@ -178,18 +162,30 @@ fn told(out: &TurnOut) -> Vec<String> {
     lines
 }
 
-/// A lane's switch on the pane and session its launch recorded is recorded
-/// once for that launch and its recovery started once: the handoff its
-/// replacement resumes from superseding a record a resume consumed, the
-/// recovery's job started and the switch told; the same switch told again
-/// starts and tells nothing, its log row kept single. A switch inside the
+/// The fleet record's lock taken as a directory, so every write of the
+/// fleet record is refused as a confined lane's is.
+fn refuse_fleet_writes(lane: &Path) {
+    let mut lock = fleet_path(lane).into_os_string();
+    lock.push(".lock");
+    fs::create_dir(lock).unwrap();
+}
+
+/// A lane's switch on the pane and session its launch recorded, with every
+/// fleet write refused as a confined lane's is, is kept once for that
+/// launch on its own item record: the check bound to the launch, the
+/// handoff its replacement resumes from superseding a record a resume
+/// consumed, then the start mark the watch recovers it from, and the switch
+/// told; the fleet record is left as it was and no job starts. The same
+/// switch told again records and tells nothing. A switch inside the
 /// launch's own family, and one told by a session or a pane the launch does
 /// not run, record nothing.
 #[test]
-fn a_lanes_switch_is_recovered_once_per_launch_and_a_repeat_or_a_moved_launch_records_nothing() {
+fn a_lanes_switch_is_kept_once_per_launch_on_its_item_record_and_a_repeat_or_a_moved_launch_records_nothing()
+ {
     let world = TurnWorld::new();
     let lane = lane_in(&world);
-    plant_lanes(&lane, json!([launched_entry(&world, "opus", &lane)]));
+    let entry = launched_entry(&world, "opus", &lane);
+    plant_lanes(&lane, json!([entry]));
     let init = isolated()
         .args(["--state-dir", &lane.join("tmp").display().to_string()])
         .args(["state", "init", "--item", ITEM])
@@ -201,6 +197,8 @@ fn a_lanes_switch_is_recovered_once_per_launch_and_a_repeat_or_a_moved_launch_re
     record["handoff"] = json!({"remaining": ["old"], "merged": [], "open_pr": null,
                                "traps": [], "resumed_at": "2026-11-11T09:00:00Z"});
     fs::write(item_path(&lane), record.to_string()).unwrap();
+    refuse_fleet_writes(&lane);
+    let fleet_before = fs::read(fleet_path(&lane)).unwrap();
     let payload = switched(SESSION, Some("claude-sonnet-4-5"));
     for (told_now, recovered) in [("first", true), ("again", false)] {
         let out = lane_turn(&world, &lane, "claude", &payload, PANE);
@@ -216,20 +214,24 @@ fn a_lanes_switch_is_recovered_once_per_launch_and_a_repeat_or_a_moved_launch_re
             Vec::new()
         };
         assert_eq!(said, want, "{told_now}: {}", out.stderr);
-        let fleet = read(&fleet_path(&lane));
-        let check = &fleet["lanes"][0]["model_check"];
-        assert_eq!(check["outcome"], "switched", "{told_now}: {fleet}");
-        assert_eq!(check["recovery_started"], true, "{told_now}: {fleet}");
+        assert_eq!(
+            fs::read(fleet_path(&lane)).unwrap(),
+            fleet_before,
+            "{told_now}: the fleet record moved"
+        );
+        assert!(!recovery_job(&lane).exists(), "{told_now}: a job started");
+        let item = read(&item_path(&lane));
+        let check = &item["model_checks"][SESSION];
+        assert_eq!(check["outcome"], "switched", "{told_now}: {item}");
+        assert_eq!(check["recovery_started"], true, "{told_now}: {item}");
+        assert_eq!(check["launched"], "opus", "{told_now}");
         assert_eq!(check["observed"], "claude-sonnet-4-5", "{told_now}");
-        let rows: Vec<&Value> = fleet["fleet_log"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|row| row["kind"] == "model-switched")
-            .collect();
-        assert_eq!(rows.len(), 1, "{told_now}: {fleet}");
-        assert!(recovery_job(&lane).exists(), "{told_now}: no job started");
-        let handoff = &read(&item_path(&lane))["handoff"];
+        assert_eq!(
+            check["launch_identity"],
+            json!({"launch": entry["launch"], "launched_at": entry["launched_at"]}),
+            "{told_now}"
+        );
+        let handoff = &item["handoff"];
         assert_eq!(handoff["cause"], "model-switched", "{told_now}: {handoff}");
         assert_eq!(handoff["session_id"], SESSION, "{told_now}");
         assert_eq!(handoff["model"], "opus", "{told_now}");
@@ -261,93 +263,8 @@ fn a_lanes_switch_is_recovered_once_per_launch_and_a_repeat_or_a_moved_launch_re
         let out = lane_turn(&world, &lane, "claude", &switched(session, Some(to)), pane);
         assert_eq!(out.code, 0, "{case}: {}", out.stderr);
         assert_eq!(out.stdout, "", "{case}: handed");
-        let fleet = read(&fleet_path(&lane));
-        assert!(
-            fleet["lanes"][0]["model_check"].is_null(),
-            "{case}: {fleet}"
-        );
-        assert!(fleet["fleet_log"].is_null(), "{case}: {fleet}");
+        assert!(!item_path(&lane).exists(), "{case}: an item record written");
         assert!(!recovery_job(&lane).exists(), "{case}: a job started");
-    }
-}
-
-/// A lane's acquired switch whose recovery refuses, on a record no
-/// relaunch can be composed from or a limit the lane has reached, is handed
-/// to the session once in one form with the refusal's key line, and the
-/// same switch told again hands nothing; a handoff that cannot be written
-/// is handed and the recovery still starts.
-#[test]
-fn a_lanes_acquired_switch_tells_a_refused_recovery_once_with_its_key_line() {
-    let replaced = |session: &str| {
-        json!({"kind": "model-switched", "item": ITEM, "session_id": session,
-               "recovery": "replaced", "launch_identity": {"launch": {"pane": "%2"}}})
-    };
-    type Plant = fn(&Path, &mut Value);
-    let cases: [(&str, Plant, &str, Option<&str>, bool); 3] = [
-        (
-            "unprepared",
-            |_, entry| {
-                entry.as_object_mut().unwrap().remove("harness");
-            },
-            "recovery-unstarted",
-            Some("model-recovery-unprepared item=ken-1 cause=harness-unrecorded"),
-            false,
-        ),
-        (
-            "limit",
-            |_, _| {},
-            "recovery-unstarted",
-            Some("model-recovery-limit item=ken-1 recoveries=2 limit=3"),
-            false,
-        ),
-        (
-            "handoff unwritten",
-            |lane, _| fs::write(item_path(lane), "{").unwrap(),
-            "handoff-unwritten",
-            None,
-            true,
-        ),
-    ];
-    for (case, plant, cause, line, started) in cases {
-        let world = TurnWorld::new();
-        let lane = lane_in(&world);
-        let release = world.root.join("entry-release");
-        if started {
-            held_entry(&lane, &release);
-        }
-        let mut entry = launched_entry(&world, "opus", &lane);
-        plant(&lane, &mut entry);
-        let mut fleet = json!({ "lanes": [entry] });
-        if case == "limit" {
-            fleet["fleet_log"] = json!([replaced("earlier"), replaced("before")]);
-        }
-        fs::write(fleet_path(&lane), fleet.to_string()).unwrap();
-        let payload = switched(SESSION, Some("claude-sonnet-4-5"));
-        let out = lane_turn(&world, &lane, "claude", &payload, PANE);
-        fs::write(&release, "").unwrap();
-        assert_eq!(out.code, 0, "{case}: {}", out.stderr);
-        assert_eq!(
-            handed(&out),
-            format!("lane-mail-check: model-unavailable={cause}"),
-            "{case}: {}",
-            out.stderr
-        );
-        let answer: Value = serde_json::from_str(out.stdout.trim_end()).unwrap();
-        let context = answer["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-        if let Some(line) = line {
-            assert!(context.lines().any(|l| l == line), "{case}: {context}");
-        }
-        let switched_told = told(&out).iter().any(|l| l.starts_with("model-switched="));
-        assert_eq!(switched_told, started, "{case}: {}", out.stderr);
-        assert_eq!(recovery_job(&lane).exists(), started, "{case}");
-        let again = lane_turn(&world, &lane, "claude", &payload, PANE);
-        assert_eq!(again.code, 0, "{case} again: {}", again.stderr);
-        assert_eq!(handed(&again), "", "{case} again: handed twice");
-        let check = &read(&fleet_path(&lane))["lanes"][0]["model_check"];
-        assert_eq!(check["recovery_started"], true, "{case}: {check}");
     }
 }
 
@@ -424,30 +341,42 @@ fn replaced(world: &TurnWorld) -> Value {
     replaced
 }
 
-/// A replacement's first Stop on the launch its record now names resets
-/// the switched check whose recovery started under the earlier launch, with
-/// one log row however often it stops; a Stop from a pane the launch does
-/// not run resets nothing.
+/// A replacement's first Stop on the launch its record now names, with
+/// every fleet write refused as a confined lane's is, keeps the fact the
+/// watch resets the switched check from on the lane's item record: this
+/// session under the launch the record runs, however often it stops; a
+/// Stop from a pane the launch does not run keeps nothing.
 #[test]
-fn a_replacements_first_stop_resets_its_lanes_switched_check_once() {
+fn a_replacements_first_stop_keeps_its_reset_on_its_item_record() {
     for (case, pane, reset) in [("replaced", PANE, true), ("another pane", "%6", false)] {
         let world = TurnWorld::new();
         let lane = lane_in(&world);
-        plant_lanes(&lane, json!([replaced(&world)]));
+        let entry = replaced(&world);
+        plant_lanes(&lane, json!([entry]));
+        refuse_fleet_writes(&lane);
+        let fleet_before = fs::read(fleet_path(&lane)).unwrap();
         let payload = json!({ "hook_event_name": "Stop", "session_id": SESSION }).to_string();
         for told in ["first", "again"] {
             let out = lane_turn(&world, &lane, "claude", &payload, pane);
             assert_eq!(out.code, 0, "{case} {told}: {}", out.stderr);
-            let fleet = read(&fleet_path(&lane));
-            let outcome = &fleet["lanes"][0]["model_check"]["outcome"];
-            let rows = fleet["fleet_log"].as_array().map_or(0, |rows| {
-                rows.iter()
-                    .filter(|row| row["kind"] == "model-recovery-reset")
-                    .count()
-            });
-            let want = if reset { "passed" } else { "switched" };
-            assert_eq!(outcome, want, "{case} {told}: {fleet}");
-            assert_eq!(rows, usize::from(reset), "{case} {told}: {fleet}");
+            assert!(
+                !out.keyed().iter().any(|l| l.starts_with("model-")),
+                "{case} {told}: {}",
+                out.stderr
+            );
+            assert_eq!(fs::read(fleet_path(&lane)).unwrap(), fleet_before);
+            let fact = if item_path(&lane).exists() {
+                read(&item_path(&lane))["model_reset"].clone()
+            } else {
+                Value::Null
+            };
+            let want = if reset {
+                json!({"session_id": SESSION,
+                       "launch_identity": {"launch": entry["launch"], "launched_at": entry["launched_at"]}})
+            } else {
+                Value::Null
+            };
+            assert_eq!(fact, want, "{case} {told}");
         }
     }
 }
@@ -471,7 +400,9 @@ fn a_replacements_reset_that_cannot_read_bind_or_write_tells_its_cause() {
             "record unread" => fs::write(&fleet, "{").unwrap(),
             "server unread" => env.retain(|(name, _)| name != "TMUX"),
             _ => {
-                let mut lock = fleet.clone().into_os_string();
+                let item = item_path(&lane);
+                fs::write(&item, "{}").unwrap();
+                let mut lock = item.into_os_string();
                 lock.push(".lock");
                 fs::create_dir(lock).unwrap();
             }
