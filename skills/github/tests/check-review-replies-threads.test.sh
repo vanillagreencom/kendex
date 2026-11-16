@@ -58,7 +58,7 @@ esac
 # reading identity is an account neither writes. Whose replies count is
 # check-review-replies.test.sh's.
 page_with() { # page_with PROGRAM THREAD_JSON… -> "truncated untracked unreasoned"
-  jq -r --argjson author '{"id":1,"login":"author"}' --argjson viewer '{"id":2,"login":"lanes-app[bot]"}' "$1" <<<"[$2]"
+  jq -r --argjson author '{"id":1,"login":"author"}' --argjson viewer '{"id":2,"login":"lanes-app[bot]"}' --argjson automation '[]' "$1" <<<"[$2]"
 }
 page() { page_with "$prog" "$1"; }
 

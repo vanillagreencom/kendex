@@ -126,6 +126,7 @@ VIEWER_APP='{"login":"lanes-app[bot]","databaseId":2002}'
 # A clean pull request: head HEAD by ACCOUNT (default author), read as the
 # app, no thread, no review, no comment. A case restages what it is about.
 world() { # [ACCOUNT]
+  REPLY_ACCOUNT_IDS=""
   gh_stub_reset
   gh_stub_answer "$PR_PATH" "$(jq -cn --argjson u "$(rest_actor "${1:-author}")" --arg h "$HEAD" '{user: $u.user, head: {sha: $h}}')"
   viewer_set "$VIEWER_APP"
@@ -142,7 +143,7 @@ run() { # [SUBJECT...]
   local rc=0
   [ "$#" -gt 0 ] || set -- "$CHECKER"
   (cd "$TMP_ROOT/repo" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u GH_CONFIG_DIR -u KENDEX_ENV_FILE \
-    PATH="$TMP_ROOT/bin:$PATH" "$@" 7 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
+    GH_REVIEW_REPLY_ACCOUNT_IDS="$REPLY_ACCOUNT_IDS" PATH="$TMP_ROOT/bin:$PATH" "$@" 7 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   # `rc=<n> <stdout lines joined by ` | `>`, the head written as {head} so a
   # row pins which head the verdict was for without spelling the sha.
   printf 'rc=%s %s' "$rc" "$(sed "s/$HEAD/{head}/g" "$TMP_ROOT/stdout" | paste -s -d '|' - | sed 's/|/ | /g')"
@@ -482,6 +483,44 @@ a reply under a maintainer's finding is judged|author|rooted_node maintainer 'Is
 a thread holding more comments than one read returns fails|author|jq -cn '{comments: {totalCount: 101, nodes: [{author: {login: "pr-author", __typename: "User"}, body: "Tracked: KEN-1"}]}}'|$FAILED | thread-replies state=truncated threads=1
 ROWS
 
+# A take-over app's answers must count for the app and for a third viewer;
+# a different User with the app's slug must never acquire that standing.
+# Both surfaces carry real finding answers so ignoring either one fails.
+automation_answers() { # ACCOUNT
+  threads_set "$(thread_node author 'Tracked separately' "$1" "Fixed in $HEAD")"
+  at_head "$(body_of heading)"
+  comments_set "$(comment "$1" "$(printf 'Dispositions at %s:\n%s - Fixed in %s\n%s - Fixed in %s' "$H7" "$SUPP_FIRST" "$HEAD" "$SUPP_SECOND" "$HEAD")")"
+}
+while IFS='|' read -r label ids actor want; do
+  [ -n "$label" ] || continue
+  for viewer in "$VIEWER_APP" '{"login":"third-checker","databaseId":7007}'; do
+    world
+    REPLY_ACCOUNT_IDS="$ids"
+    viewer_set "$viewer"
+    automation_answers "$actor"
+    assert_eq "$(run)" "$(eval "printf '%s' \"$want\"")" "$label viewer=$viewer"
+  done
+done <<'ROWS'
+declared automation answers count|2002|app|$PASSED
+multiple declared ids match by number|8008 2002|app|$PASSED
+an outside account's answers count for nothing|2002|impostor|$FAILED | untracked-claim count=1 | suppressed-findings count=2 | suppressed-entry $SUPP_FIRST | suppressed-entry $SUPP_SECOND
+an empty declaration grants no outside standing||impostor|$FAILED | untracked-claim count=1 | suppressed-findings count=2 | suppressed-entry $SUPP_FIRST | suppressed-entry $SUPP_SECOND
+ROWS
+
+# Restore the pre-fix predicate on a disposable copy: the same declared app
+# answers now fail when a third account checks them.
+mutant_copy_edit "$TMP_ROOT/automation" \
+  '  def reply_source($author; $viewer): same_account($author) or same_account($viewer) or member or (.id as $id | $automation | index($id) != null);' \
+  '  def reply_source($author; $viewer): same_account($author) or same_account($viewer) or member;' \
+  commands/check-review-replies.sh >/dev/null
+world
+REPLY_ACCOUNT_IDS=2002
+viewer_set '{"login":"third-checker","databaseId":7007}'
+automation_answers app
+assert_eq "$(run "$TMP_ROOT/automation/skills/github/scripts/commands/check-review-replies.sh")" \
+  "$FAILED | untracked-claim count=1 | suppressed-findings count=2 | suppressed-entry $SUPP_FIRST | suppressed-entry $SUPP_SECOND" \
+  "must-fail: the original trust predicate ignores declared take-over answers"
+
 # Every failing rule reports, each on its own line, in a fixed order.
 world
 threads_set "$(thread_node author 'Out of scope, tracked.')" "$(thread_node author 'Declined: frozen')"
@@ -525,6 +564,14 @@ a reviews read producing zero bytes|gh_stub_answer "$REVIEWS_PATH" ''|check-revi
 a reviews page that is not an array|gh_stub_answer "$REVIEWS_PATH" '{"message":"Server Error"}'|check-review-replies: read-malformed pr=7
 a comments read that fails while findings stand|gh_stub_fail "$COMMENTS_PATH" 1 'gh: Not Found (HTTP 404)'|check-review-replies: read-failed pr=7
 ROWS
+
+for ids in 'lanes-app' '0' '-2002' '2002,7007'; do
+  world
+  REPLY_ACCOUNT_IDS="$ids"
+  out=$(run)
+  assert_eq "$out $(first_err)" 'rc=2  check-review-replies: invalid-reply-account-ids pr=7' \
+    "an invalid declared id reaches no verdict: $ids"
+done
 
 echo "=== arguments ==="
 while IFS='|' read -r label args want; do
