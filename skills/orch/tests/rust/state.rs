@@ -92,6 +92,14 @@ impl Store {
         self.ok(&["state", "init", "--fleet"]);
     }
 
+    /// A fleet record whose one lane is `lane`.
+    fn plant_lane(&self, lane: Value) {
+        self.init_fleet();
+        let mut doc = self.doc(&self.fleet_path());
+        doc["lanes"] = json!([lane]);
+        fs::write(self.fleet_path(), doc.to_string()).unwrap();
+    }
+
     fn doc(&self, path: &Path) -> Value {
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
     }
@@ -3168,13 +3176,182 @@ fn the_reviewer_set_lists_only_its_agents_and_a_return_lands_once() {
     })));
     assert_eq!(
         store.doc(&store.item_path(ITEM))["child_sessions"]["backend"],
-        json!({"status": "active", "agent_id": "a1", "runtime_agent_type": "dev-backend", "agent_type_fallback": null})
+        json!({"status": "active", "agent_id": "a1", "runtime_agent_type": "dev-backend", "agent_type_fallback": null, "holder": "unproved", "cause": "no-lane"})
     );
     store.op_ok(&step(json!({"step": "children-closed"})));
     assert_eq!(
         store.doc(&store.item_path(ITEM))["child_sessions"]["backend"]["status"],
         "closed"
     );
+}
+
+/// A child's entry names the lane lead that opened it only where the call
+/// runs under the lane's recorded process, and where the child runs by the
+/// lane's harness; under any other process its opener is unproved.
+#[test]
+fn a_child_names_its_opener_only_where_the_call_runs_under_the_lanes_lead() {
+    let own = live(std::process::id());
+    let other = Held::sleep();
+    let open = json!({
+        "op": "record-agents",
+        "step": "child-open",
+        "agent_type": "backend",
+        "agent_id": "a1",
+        "runtime_agent_type": "dev-backend",
+        "agent_type_fallback": null
+    });
+    for (harness, launch, runs_in, proved) in [
+        ("claude", own.clone(), "lead", true),
+        ("pi", own.clone(), "own", true),
+        ("claude", other.identity(), "lead", false),
+    ] {
+        let store = Store::new();
+        store.init(ITEM);
+        store.plant_lane(json!({
+            "item": ITEM,
+            "status": "running",
+            "harness": harness,
+            "session_id": "s-1",
+            "session_since": "2026-11-15T10:00:00Z",
+            "launch": {"pane": "%1", "server": 1, "pid": launch.pid, "start": launch.start},
+        }));
+        let session = store.op_ok(&open)["session"].take();
+        assert_eq!(
+            session,
+            store.doc(&store.item_path(ITEM))["child_sessions"]["backend"]
+        );
+        assert_eq!(session["runs_in"], runs_in, "{harness}");
+        if proved {
+            assert_eq!(
+                session["opened_by"],
+                json!({"session_id": "s-1", "session_since": "2026-11-15T10:00:00Z", "pid": own.pid, "start": own.start}),
+                "{harness}"
+            );
+            assert_eq!(session.get("holder"), None, "{harness}");
+        } else {
+            assert_eq!(session.get("opened_by"), None);
+            assert_eq!(session["holder"], "unproved");
+            assert_eq!(session["cause"], "not-served");
+        }
+    }
+}
+
+/// The slot count closes an open child that ran inside its lead once the
+/// lead process that opened it is gone, even where the relaunched lane
+/// kept its session id, and keeps every other open child's slot with its
+/// cause: a live or unreadable opener, a child of its own process, an
+/// entry with no opener or no status.
+#[test]
+fn a_child_whose_lead_process_is_gone_frees_its_slot_and_every_other_keeps_it() {
+    let store = Store::new();
+    store.init(ITEM);
+    let own = live(std::process::id());
+    let mut ended = Held::sleep();
+    let gone = ended.identity();
+    ended.end();
+    store.plant_lane(json!({
+        "item": ITEM,
+        "status": "running",
+        "harness": "claude",
+        "session_id": "s-1",
+        "session_since": "2026-11-15T11:00:00Z",
+        "launch": {"pane": "%1", "server": 1, "pid": own.pid, "start": own.start},
+    }));
+    let opened = |pid: u32, start: &str, runs_in: &str| {
+        json!({
+            "status": "active",
+            "agent_id": "a",
+            "opened_by": {"session_id": "s-1", "session_since": "2026-11-15T10:00:00Z", "pid": pid, "start": start},
+            "runs_in": runs_in,
+        })
+    };
+    let path = store.item_path(ITEM);
+    let mut doc = store.doc(&path);
+    doc["reviewer_slots_observed"] = json!(3);
+    doc["child_sessions"] = json!({
+        "dev-gone": opened(gone.pid, &gone.start, "lead"),
+        "dev-live": opened(own.pid, &own.start, "lead"),
+        "dev-unread": opened(own.pid, "start-in-no-form", "lead"),
+        "pi-gone": opened(gone.pid, &gone.start, "own"),
+        "released": {"agent_id": "a"},
+        "retired": {"status": "closed", "agent_id": "a"},
+    });
+    fs::write(&path, doc.to_string()).unwrap();
+
+    let reply = store.op_ok(&json!({"op": "record-agents", "step": "slots"}));
+    let kept: std::collections::BTreeMap<&str, &str> = reply["kept"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| (k["agent"].as_str().unwrap(), k["cause"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("dev-live", "holder-live"),
+            ("dev-unread", "holder-unreadable"),
+            ("pi-gone", "own-process"),
+            ("released", "no-holder"),
+        ]
+        .into()
+    );
+    assert_eq!(reply["ended"], json!(["dev-gone"]));
+    assert_eq!(reply["live"], 4);
+    assert_eq!(reply["observed"], 3);
+    let sessions = &store.doc(&path)["child_sessions"];
+    assert_eq!(sessions["dev-gone"]["status"], "closed");
+    assert_eq!(sessions["dev-gone"]["ended"], "holder-gone");
+    for agent in kept.keys() {
+        assert_eq!(sessions[agent], doc["child_sessions"][agent], "{agent}");
+    }
+}
+
+/// The identity of the live process `pid`.
+fn live(pid: u32) -> agent_runtime::process::Identity {
+    match agent_runtime::process::identity(pid) {
+        agent_runtime::reading::Reading::Live(id) => id,
+        other => panic!("{pid} reads live: {other:?}"),
+    }
+}
+
+/// A `sleep` this test started and holds unreaped: its pid is nobody else's
+/// while it is held, ended or not.
+struct Held(std::process::Child);
+
+impl Held {
+    fn sleep() -> Held {
+        Held(
+            std::process::Command::new("sleep")
+                .arg("60")
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    fn identity(&self) -> agent_runtime::process::Identity {
+        live(self.0.id())
+    }
+
+    /// Ended, and read until the kernel answers it gone.
+    fn end(&mut self) {
+        self.0.kill().unwrap();
+        for _ in 0..500 {
+            if agent_runtime::process::identity(self.0.id())
+                == agent_runtime::reading::Reading::Gone
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the ended child never read gone");
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 /// A disposition moves one finding out of the arrays it leaves and into the

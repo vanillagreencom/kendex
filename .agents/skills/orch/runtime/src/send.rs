@@ -11,8 +11,12 @@
 //! The mailbox writes no orch state; this
 //! module and that mark are the record's writers.
 
-use agent_runtime::effects::Reach;
+use agent_runtime::effects::{Reach, Target};
+use agent_runtime::harness::Harness;
+use agent_runtime::process::{self, Identity};
+use agent_runtime::reading::Reading;
 use agent_runtime::record::{self, Locking};
+use agent_runtime::rows;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -234,6 +238,41 @@ pub(crate) fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane
     };
     let fleet = FleetState::view(&fleet, &snapshot.doc)?;
     Ok(fleet.lanes.into_iter().find(|l| l.item == item))
+}
+
+/// Whether this call is `lane`'s lead: the harness process its launch names
+/// stands on the call's ancestor chain with no other harness process
+/// between, live under its recorded start. `Live` holds that identity;
+/// `None` is a launch that names no process. A job the lead's shell started
+/// under a harness of its own is not the lead.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one read of whether a call runs under its lane's recorded harness process, for the turn end's seat and a child's opener; it acts on nothing"
+)]
+pub(crate) fn lead_call(settings: &Settings, lane: &Lane) -> Option<Reading<Identity>> {
+    let launch = lane.launch.as_ref()?;
+    let launch = Identity {
+        pid: u32::try_from(launch.pid?).ok()?,
+        start: launch.start.clone()?,
+    };
+    let target = lane
+        .harness
+        .as_deref()
+        .and_then(Harness::parse)
+        .and_then(|harness| Target::new(&settings.engine.harness_binaries, harness).ok());
+    let is_harness = |name: &str| {
+        Harness::ALL
+            .iter()
+            .any(|harness| harness.owns_process(name))
+            || target.as_ref().is_some_and(|target| target.owns(name))
+    };
+    Some(match rows::served_by_here(launch.pid, &is_harness) {
+        Ok(true) => process::still_runs(&launch),
+        Ok(false) => Reading::Gone,
+        Err(unread) => Reading::Unreadable {
+            cause: unread.cause,
+        },
+    })
 }
 
 /// The mailbox's outbound directive to a non-session lane by `route`, keyed

@@ -36,7 +36,7 @@ use super::progress::RecordPrProgress;
 use super::records::{self, Record};
 use super::{Request, Verdict as CiVerdict, VerifyPr, verify_pr};
 use crate::error::{Error, Result};
-use crate::settings::{Settings, StoreSettings};
+use crate::settings::Settings;
 use crate::state::{self, Stage, StageKind};
 use crate::validate::files::RunFile;
 use crate::verify::wire::{
@@ -692,7 +692,7 @@ struct Wait<'a> {
     project: &'a Path,
     clock: &'a dyn Clock,
     env: &'a Env,
-    store: &'a StoreSettings,
+    settings: &'a Settings,
     locking: Locking,
     owner: String,
     name: String,
@@ -1092,7 +1092,7 @@ impl<'a> Wait<'a> {
                 records::apply_record(
                     self.path,
                     &Record::RecordPrProgress(RecordPrProgress::MergeAsked {}),
-                    self.store,
+                    self.settings,
                     self.env,
                     self.locking,
                 )?;
@@ -1878,7 +1878,7 @@ pub fn run(
     env: &Env,
     locking: Locking,
 ) -> Result<Reply> {
-    let (project, store) = (settings.roots.project.as_path(), &settings.store);
+    let project = settings.roots.project.as_path();
     verify::validate_repo(&r.repo)?;
     if r.pr == 0 {
         return Err(Error::VerifyRequestInvalid {
@@ -1923,7 +1923,7 @@ pub fn run(
         project,
         clock,
         env,
-        store,
+        settings,
         locking,
         owner,
         name,

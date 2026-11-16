@@ -106,7 +106,7 @@ For attached review only, resolve the reviewer mode per [references/skill-rules.
 Check for a recorded runtime demotion before choosing persistent mode:
 
 ```bash
-STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {observed: (.reviewer_slots_observed // 0), live: (.child_sessions // {} | [to_entries[] | select((.value.status // "active") == "active")] | length)}' <<<"$STATE_READ"
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"slots"}'
 ```
 
 On Codex MultiAgentV2, [skill-rules.md § Codex thread reuse](../references/skill-rules.md#codex-thread-reuse) replaces the active-only count above: read `spawn-adapter slots` and `list_agents`, counting every held thread and the primary once. Set `REVIEWER_SLOTS` to eligible finished reviewer threads plus `max(0, effective_cap - held threads)`. Bound the wave by a positive `reviewer_slots_observed` and by a nonzero configured budget after the primary and other active work. A zero-sized wave takes the held-thread wait in Codex thread reuse. Use wave mode when the panel exceeds this size; otherwise use persistent mode. Re-read before each spawn. On other surfaces, `observed > 0` → wave mode at that size. Otherwise a budget of `0` is persistent mode, and a budget above `0` gives `REVIEWER_SLOTS = budget - 1 - live` (minimum 1; the `1` is this primary session), with wave mode when `[AGENTS]` exceeds it. A `child_sessions` record with no `status` counts as active. Recompute at every § 2 entry.

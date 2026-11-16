@@ -20,7 +20,7 @@ use super::progress::{self, RecordDevReturn, RecordPrProgress, RecordRoute};
 use super::reviewers::{self, PanelKind, RecordAgents, RecordPanel};
 use super::{item, loaded, qa, store};
 use crate::error::{Error, Result};
-use crate::settings::StoreSettings;
+use crate::settings::Settings;
 use crate::state::Kind;
 use agent_runtime::journal::Env;
 
@@ -95,7 +95,8 @@ impl Record {
 }
 
 /// Apply `record` to the state file at `path` in one transition under the
-/// write check. A read the write records (a checkout's HEAD) comes first.
+/// write check. A read the write records (a checkout's HEAD, a child's
+/// opener) comes first.
 #[allow(
     clippy::disallowed_methods,
     reason = "the record writes' one store: the transition's document committed through the state module's write check"
@@ -103,10 +104,11 @@ impl Record {
 pub fn apply_record(
     path: &Path,
     record: &Record,
-    store: &StoreSettings,
+    settings: &Settings,
     env: &Env,
     locking: Locking,
 ) -> Result<Value> {
+    let store = &settings.store;
     let kind = Kind::of_path(path);
     if kind != record.record_kind() {
         return Err(Error::OpKind {
@@ -129,6 +131,21 @@ pub fn apply_record(
         | Record::RecordSurfaceLane(_)
         | Record::RecordOverseerLedger(_) => None,
     };
+    let opener = match record {
+        Record::RecordAgents(RecordAgents::ChildOpen { .. }) => {
+            Some(reviewers::Opener::read(path, settings))
+        }
+        Record::RecordAgents(_)
+        | Record::RecordRound(_)
+        | Record::RecordPanel(_)
+        | Record::RecordDisposition(_)
+        | Record::RecordCommentLedger(_)
+        | Record::RecordRoute(_)
+        | Record::RecordDevReturn(_)
+        | Record::RecordPrProgress(_)
+        | Record::RecordSurfaceLane(_)
+        | Record::RecordOverseerLedger(_) => None,
+    };
     record::reread(
         || {
             let snapshot = loaded(path)?;
@@ -138,7 +155,9 @@ pub fn apply_record(
                     item::record_round(path, &mut doc, r, env, head.as_deref())?
                 }
                 Record::RecordPanel(r) => reviewers::record_panel(path, &mut doc, store, r)?,
-                Record::RecordAgents(r) => reviewers::record_agents(path, &mut doc, r)?,
+                Record::RecordAgents(r) => {
+                    reviewers::record_agents(path, &mut doc, r, opener.as_ref())?
+                }
                 Record::RecordDisposition(r) => findings::record_disposition(path, &mut doc, r)?,
                 Record::RecordCommentLedger(r) => {
                     findings::record_comment_ledger(path, &mut doc, r)?

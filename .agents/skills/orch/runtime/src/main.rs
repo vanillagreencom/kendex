@@ -1691,7 +1691,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 return ops::records::apply_record(
                     &path,
                     &record,
-                    &settings.store,
+                    &settings,
                     &Env::system()?,
                     locking,
                 );

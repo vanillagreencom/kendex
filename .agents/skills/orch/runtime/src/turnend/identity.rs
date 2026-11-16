@@ -8,14 +8,11 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::effects::Target;
-use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
 use agent_runtime::journal::Env;
-use agent_runtime::process::{self, Identity};
+use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
 use agent_runtime::record::{self, Locking};
-use agent_runtime::rows;
 
 use super::answer::Said;
 use super::marks;
@@ -224,40 +221,27 @@ impl Lane {
             Ok(None) => return Ok(Seat::Lead),
             Err(e) => return Ok(Seat::Unread(e.to_string())),
         };
-        let Some(bound) = record.session_id.filter(|bound| !bound.is_empty()) else {
+        let Some(bound) = record
+            .session_id
+            .as_deref()
+            .filter(|bound| !bound.is_empty())
+        else {
             return Ok(Seat::Lead);
         };
         if bound == payload.session {
             return Ok(Seat::Lead);
         }
-        let launch = record.launch.as_ref().and_then(|launch| {
-            Some(Identity {
-                pid: u32::try_from(launch.pid?).ok()?,
-                start: launch.start.clone()?,
-            })
-        });
-        let Some(launch) = launch else {
+        let Some(served) = send::lead_call(&settings, &record) else {
             return Ok(Seat::Elsewhere);
         };
-        let target = record
-            .harness
-            .as_deref()
-            .and_then(Harness::parse)
-            .and_then(|harness| Target::new(&settings.engine.harness_binaries, harness).ok());
-        let is_harness = |name: &str| {
-            Harness::ALL
-                .iter()
-                .any(|harness| harness.owns_process(name))
-                || target.as_ref().is_some_and(|target| target.owns(name))
-        };
-        match served(&launch, &is_harness) {
-            Reading::Live(_) => {}
+        let launch = match served {
+            Reading::Live(launch) => launch,
             Reading::Gone => return Ok(Seat::Elsewhere),
             Reading::Unreadable { cause } => {
                 turn.note(&Said::LaneProcess(cause), "");
                 return Ok(Seat::Lead);
             }
-        }
+        };
         if cleared_start(turn, payload) && !payload.session.is_empty() {
             rebind(turn, &settings, item, &payload.session, launch);
         }
@@ -345,22 +329,6 @@ fn bound_root(turn: &mut Turn, common: Option<&Path>, item: &str) -> Flow<Option
         Reading::Unreadable { .. } => {
             Err(turn.stall(Said::Marker(marker::marker_path(common, item)), ""))
         }
-    }
-}
-
-/// Whether this call runs under the harness process `launch` names, live
-/// under its recorded start: `Gone` where it does not.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the turn end's one read of the lane's recorded harness process, which tells its lead from a job in its checkout; it acts on nothing"
-)]
-fn served(launch: &Identity, is_harness: &dyn Fn(&str) -> bool) -> Reading<Identity> {
-    match rows::served_by_here(launch.pid, is_harness) {
-        Ok(true) => process::still_runs(launch),
-        Ok(false) => Reading::Gone,
-        Err(unread) => Reading::Unreadable {
-            cause: unread.cause,
-        },
     }
 }
 
