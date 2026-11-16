@@ -55,7 +55,7 @@ BULK_GET = ["issues", "bulk-get", "--stdin", "--format=compact"]
 
 def state_handoff(state):
     """A handoff whose State section holds state from line 5."""
-    return ("# Handoff\n\n## State\n\n" + state + "\n## Sub-agents\n\nnone\n\n## Instructions in force\n\nnone\n\n"
+    return ("# Handoff\n\n## State\n\n" + state + "Checkpoint: checked 2000-01-01; session control; log none\n\n## Sub-agents\n\nnone\n\n## Instructions in force\n\nnone\n\n"
             "## Progress log\n\n")
 
 
@@ -91,7 +91,7 @@ class ProgressLog(MailWorld):
         note = memory / "facts.md"
         fields = "- Source: owner statement\n- Date: 2000-01-01\n- Supersedes: none\n"
         good = "# Facts\n\n### Access\nThe folder opens.\n" + fields
-        states = "- KEN-1: next\n- session=control: hold\n- wake=mail: wait\n- ask=owner: await reply\n"
+        states = "- KEN-1: next\n- session=control hold\n- wake=mail: wait\n- ask=owner: await reply\n"
         rows = []
         values = (("Source", "owner statement"), ("Date", "2000-01-01"), ("Supersedes", "none"))
         for shape in ("{field}:", "**{field}:**", "**{field}**:"):
@@ -165,7 +165,7 @@ class ProgressLog(MailWorld):
         memory.mkdir()
         old = "### Prior\nSource: owner · Date: 2000-01-01 · Supersedes: none\n"
         new = "### Current\nSource: owner · Date: 2000-01-01 · Supersedes: [Prior](facts.md#prior)\n"
-        good = old + "Superseded by Current.\n" + new
+        good = old + "Replaced by: note=Current\n" + new
         rows = (
             ("retained", good, state_handoff("- KEN-1: next\n"), []),
             ("missing prior", new, state_handoff("- KEN-1: next\n"),
@@ -174,9 +174,10 @@ class ProgressLog(MailWorld):
              [("memory/facts.md", "1", "memory-supersedes")]),
             ("free-form prior", good.replace("[Prior](facts.md#prior)", "Prior in facts.md"),
              state_handoff("- KEN-1: next\n"), []),
-            ("split historical marking", old + "Superseded.\nReplacement: Current.\n" + new,
+            ("split legacy marking", old + "Superseded.\nReplacement: Current.\n" + new.replace("[Prior](facts.md#prior)", "Prior in facts.md"),
              state_handoff("- KEN-1: next\n"), []),
-            ("historical marking not parsed", old + new, state_handoff("- KEN-1: next\n"), []),
+            ("historical marking required", old + new, state_handoff("- KEN-1: next\n"),
+             [("memory/facts.md", "3", "memory-replaced-current")]),
             ("file link", good.replace("[Prior](facts.md#prior)", "[old subject](facts.md)"),
              state_handoff("- KEN-1: next\n"), []),
             ("optional link title", good.replace("[Prior](facts.md#prior)", '[Prior](facts.md#prior "Historical note")'),
@@ -197,9 +198,73 @@ class ProgressLog(MailWorld):
                 self.assertEqual(self.command(["git", "add", "memory", "state/handoff.md"], self.home).returncode, 0)
                 self.assert_home_check(expected)
 
+    def test_recovery_contract(self):
+        self.assert_home_check([])  # No committed recovery entry points in a new home.
+        # Synthetic controls from KEN-5209's approved package/consumer table.
+        current = "### Alpha\nSource: owner. Date: 2000-01-02. Supersedes: none.\n"
+        checkpoint = "Checkpoint: 2000-01-02T00:00:00Z, session 2, log none\n"
+        handoff = state_handoff("- SESSION 2 session=2 pane=current\n").replace(
+            "Checkpoint: checked 2000-01-01; session control; log none\n", checkpoint)
+        index = "# Memory\n\n| Location | Read when |\n|---|---|\n| [Facts](facts.md) | Before matching work |\n"
+        base = {"memory/facts.md": current, "memory/MEMORY.md": index, "state/handoff.md": handoff}
+        for name, text in base.items():
+            path = self.home / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
+        self.assertEqual(self.command(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                                       "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                       "commit", "-qm", "established recovery"], self.home).returncode, 0)
+        replaced = current + "Replaced by: note=Beta\n" + current.replace("Alpha", "Beta").replace("none.", "note=Alpha.")
+        rows = [
+            ("metadata history", {"memory/facts.md": "### Alpha\n#### History\n" + current.split("\n", 1)[1]}, "memory-field-source"),
+            ("ambiguous heading", {"memory/facts.md": replaced + current}, "memory-supersedes"),
+            ("unknown heading", {"memory/facts.md": current.replace("none.", "note=Unknown note.")}, "memory-supersedes"),
+            ("undated self", {"memory/facts.md": current.replace("none.", "prior-version: undated.")}, "memory-self-date"),
+            ("still current", {"memory/facts.md": replaced.replace("Replaced by: note=Beta\n", "")}, "memory-replaced-current"),
+            ("index subject", {"memory/MEMORY.md": index + "\n### Unsourced\n"}, "memory-field-source"),
+            ("established index", {"memory/MEMORY.md": None}, "recovery-entry-missing"),
+            ("established store", {"memory/MEMORY.md": None, "memory/facts.md": None}, "recovery-entry-missing"),
+            ("copied session", {"state/handoff.md": handoff.replace("SESSION 2 session=2", "SESSION 0 session=0")}, "session-checkpoint"),
+            ("duplicate session", {"state/handoff.md": handoff.replace("## Sub-agents", "- SESSION 2 ask=second\n\n## Sub-agents")}, "session-ambiguous"),
+            ("missing session checkpoint", {"state/handoff.md": handoff.replace("session 2", "no session")}, "session-checkpoint"),
+            ("established handoff", {"state/handoff.md": None}, "recovery-entry-missing"),
+            ("duplicate section", {"state/handoff.md": handoff + "\n## Instructions in force\n"}, "handoff-section"),
+        ]
+        accepted = [
+            ("explicit replacement", {"memory/facts.md": replaced}),
+            ("dated self", {"memory/facts.md": current.replace("none.", "prior-version: 2000-01-01.")}),
+            ("qualified duplicate across files", {"memory/other.md": current,
+                "memory/facts.md": replaced.replace("note=Alpha.", "[Alpha](facts.md#alpha).")}),
+            ("consumer legacy identity", {"memory/facts.md": current.replace("none.", "Alpha in old records.")}),
+            ("routing layout", {"memory/MEMORY.md": index.replace("| Read when |", "| Read when | Extra |")}),
+            ("empty State", {"state/handoff.md": state_handoff("")}),
+        ]
+        # Each rule retains its own plain-current acceptance paired with refusal.
+        cases = [(name + " plain current", {}, None) for name, _, _ in rows] + rows
+        cases += [(name, changes, None) for name, changes in accepted]
+        for name, changes, refusal in cases:
+            with self.subTest(row=name):
+                contents = dict(base, **changes)
+                for path in (self.home / "memory").glob("*.md"):
+                    path.unlink()
+                if self.handoff.exists():
+                    self.handoff.unlink()
+                for relative, text in contents.items():
+                    if text is not None:
+                        (self.home / relative).write_text(text)
+                self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
+                result = self.command([sys.executable, "-B", self.scripts / "progress-log"], self.home)
+                kinds = [line.split("rule=", 1)[1].split()[0] for line in result.stderr.splitlines() if "rule=" in line]
+                self.assertEqual(result.returncode, 1 if refusal else 0, result.stderr)
+                if refusal:
+                    self.assertIn(refusal, kinds, result.stderr)
+                else:
+                    self.assertEqual(kinds, [])
+
     def test_home_structure_control(self):
         mutations = (
-            ('for field in ("Source", "Date", "Supersedes"):', 'for field in ():', "test_home_structure"),
+            ('for field in ("Source", "Date", "Supersedes", "Replaced by"):', 'for field in ():', "test_home_structure"),
             ('        if sys.argv[1:]:', '        if False:', "test_home_structure"),
             ('if not tracked_archive(home, target, tracked):', 'if target not in tracked:',
              "test_predecessor_tracked_symlinks"),
