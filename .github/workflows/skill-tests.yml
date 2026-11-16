@@ -606,6 +606,48 @@ jobs:
           echo "RUN_ALL_SUITE_SECS=$((CEILING_MINUTES * 60))" >>"$GITHUB_ENV"
           echo "RUN_ALL_DEADLINE_EPOCH=$((started + CEILING_MINUTES * 60 - 60))" >>"$GITHUB_ENV"
 
+      # What this runner image gives a lane's confinement, `bwrap` on Linux
+      # and `sandbox-exec` on macOS, one `confine-read: key=value` line per
+      # fact, on the legs whose suites run the package runtimes: the build
+      # step's own `if:`. The trial is the lane line's head with no grant. It
+      # installs nothing, changes no setting and never fails the leg.
+      # cargo-linux runs the same name and text, through the anchors, because
+      # a manual run starts no Linux shard leg and does start that job on
+      # this image; its matrix has no `shard`, so the `if:` stays here.
+      - name: &confine-read-name Read what the runner gives the lane confinement
+        if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'guards-tools' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack'
+        continue-on-error: true
+        timeout-minutes: 1
+        run: &confine-read |
+          set +e
+          say() { printf 'confine-read: %s=%s\n' "$1" "$2"; }
+          say runner_os "$RUNNER_OS"
+          say image_os "${ImageOS:-unset}"
+          say image_version "${ImageVersion:-unset}"
+          say kernel "$(uname -r)"
+          if [ "$RUNNER_OS" = macOS ]; then
+            say product_name "$(sw_vers -productName)"
+            say product_version "$(sw_vers -productVersion)"
+            say build_version "$(sw_vers -buildVersion)"
+            say sandbox_exec "$(command -v sandbox-exec || echo absent)"
+            exit 0
+          fi
+          for key in kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns user.max_user_namespaces; do
+            file="/proc/sys/${key//.//}"
+            if [ -r "$file" ]; then say "$key" "$(cat "$file")"; else say "$key" absent; fi
+          done
+          if ! command -v bwrap >/dev/null; then
+            say bwrap absent
+            say trial "not-run cause=bwrap-absent"
+            exit 0
+          fi
+          say bwrap "$(command -v bwrap)"
+          say bwrap_version "$(bwrap --version 2>&1 | head -n 1)"
+          error="$(bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- /bin/true 2>&1 >/dev/null)"
+          say trial_exit "$?"
+          say trial_error "$(printf '%s\n' "${error:-none}" | head -n 1)"
+          exit 0
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -1950,6 +1992,12 @@ jobs:
       RUSTFLAGS: -C debuginfo=0
       CARGO_INCREMENTAL: '0'
     steps:
+      # The skill-suite legs' confinement read, on the Linux image a manual
+      # run starts.
+      - name: *confine-read-name
+        continue-on-error: true
+        timeout-minutes: 1
+        run: *confine-read
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
