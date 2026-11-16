@@ -220,7 +220,9 @@ else
     "$ORCH/orch-runtime" state set-git-head --item "$ITEM" /pre_delegate_sha --worktree "$WT" || fail pre-delegate-sha
     begun="$(op --item '{"op": "begin-round", "kind": "dev"}')" || fail begin-round
     RID="$(jq -er '.round_id' <<<"$begun")" || fail begin-round-id
-    op_reply --item '{"op": "prune-round", "field": "dev"}' >/dev/null || fail round-prune
+    printf '%s\n' '{"op": "prune-round", "field": "dev"}' > "$WT/tmp/op-request.json"
+    pruned="$("$ORCH/orch-runtime" op --item "$ITEM" --request "$WT/tmp/op-request.json")" && jq -e '.ok == true' <<<"$pruned" >/dev/null \
+      || { printf 'round-prune action=%s\n' "$(jq -r '.result.action // empty' <<<"$pruned" 2>/dev/null)" >&2; fail round-prune; }
     "$ORCH/orch-runtime" state set-now --item "$ITEM" /dev_delegated_at || fail dev-delegated-at
     "$ORCH/orch-runtime" state get --item "$ITEM" /near_ceiling || fail near-ceiling-read
     "$ORCH/orch-runtime" state set --item "$ITEM" /child_sessions/dev \

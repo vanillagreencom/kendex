@@ -1550,8 +1550,9 @@ check "must-fail: a build step dropping jarvis names the leg whose picker rows w
 # hook's world) and its forward, owner-unanswered and watch-loop suites
 # (`lane-mail compact`), and Slack's mailbox-read.test.sh and notice.test.sh
 # (`lane-mail compact` too), tools' guard-selection and validation-routing
-# (`orch-runtime validate entry`) and Jarvis's session, succession and task
-# suites run it, so a leg owning one of those suites on either
+# (`orch-runtime validate entry`) and Jarvis's session, succession, task,
+# controls, succession-controls and owner-note suites run it, so a leg
+# owning one of those suites on either
 # runner builds both runtimes first, read from that step's real `if:`. The runtimes' own Rust targets run in one step, the
 # orch-rest Linux leg's, wherever the changes job's `rust_targets` list is
 # not empty.
@@ -1585,7 +1586,8 @@ runtime_suites() { # OWNERS OUT ; the `shard<tab>path` rows of OWNERS whose suit
       skills/jarvis/tests/owner-unanswered.test.sh | skills/jarvis/tests/watch-loop.test.sh | \
       skills/slack/tests/mailbox-read.test.sh | skills/slack/tests/notice.test.sh | \
       tools/tests/guard-selection.test.sh | tools/tests/validation-routing.test.sh | \
-      skills/jarvis/tests/session.test.sh | skills/jarvis/tests/succession.test.sh | skills/jarvis/tests/task.test.sh)
+      skills/jarvis/tests/session.test.sh | skills/jarvis/tests/succession.test.sh | skills/jarvis/tests/task.test.sh | \
+      skills/jarvis/tests/controls.test.sh | skills/jarvis/tests/succession-controls.test.sh | skills/jarvis/tests/owner-note.test.sh)
         printf '%s\t%s\n' "$shard" "$path" >> "$2" ;;
     esac
   done < "$1"
@@ -1615,6 +1617,12 @@ plant "$WORKFLOW" " || matrix.shard == 'rest' || matrix.shard == 'jarvis'" " || 
   "$TMP/runtime-rest-linux.yml" "skill-suites-shard/$RUNTIME_STEP"
 check "must-fail: a build step keeping rest to Linux names the macOS leg whose presence suite would refuse" "macOS rest" \
   "$(unbuilt_runtime_legs "$TMP/runtime-rest-linux.yml" macOS "$TMP/runtime-suites-macos")"
+printf '%s\t%s\n' node skills/jarvis/tests/controls.test.sh linear skills/jarvis/tests/succession-controls.test.sh \
+  worktree skills/jarvis/tests/owner-note.test.sh > "$TMP/runtime-jarvis-owners"
+runtime_suites "$TMP/runtime-jarvis-owners" "$TMP/runtime-jarvis-suites"
+check "must-fail: Jarvis's controls, succession-controls and owner-note suites on legs that build nothing name each leg" \
+  "$(printf '%s\n' 'Linux linear' 'Linux node' 'Linux worktree')" \
+  "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-jarvis-suites")"
 TARGETS_STEP="the package runtimes' Rust targets"
 targets_runs() { # WORKFLOW SHARD OS RUST_TARGETS ; whether the targets step runs on that leg
   gh_eval value "$(jq -cn --arg shard "$2" --arg os "$3" --arg targets "$4" \

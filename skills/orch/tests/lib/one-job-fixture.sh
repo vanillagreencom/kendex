@@ -113,6 +113,8 @@ SH
 mkdir -p tmp && printf 'hook\n' >> tmp/hook-count
 SH
   chmod +x "$main/.git/hooks/pre-commit"
+  # The round prune's mark at 100, where no volume short of full reaches
+  # it, so the host's disk never changes the job's answer.
   cat > "$main/kendex.settings.toml" <<TOML
 [env]
 WORKTREE_DEFAULT_BRANCH = "main"
@@ -125,6 +127,7 @@ DEV_VALIDATE_TIMEOUT_SECS = "120"
 AGENT_RUNTIME_TMUX_SESSION = "fleet"
 AGENT_RUNTIME_TMUX_VERIFY_SECS = "20"
 AGENT_RUNTIME_HARNESS_BINARIES = "claude=$stub"
+ORCH_ROUND_PRUNE_DISK_PCT = "100"
 TOML
   git -C "$main" add .
   git -C "$main" commit -qm 'chore: consumer base'
