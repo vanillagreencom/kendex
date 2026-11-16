@@ -5,8 +5,9 @@
 #   change-class --event EVENT [--base REF] [--head REF] [--repo DIR]
 #                [--output FILE] [--lanes-from DIR] [--queue-only-default BOOL]
 #
-# --output appends lanes=true|false, lanes_cause and a lane_verdicts multiline
-# value with lane_<name>=true|false beside the class and queue verdicts.
+# --output appends lanes=true|false and lanes_cause beside the class and queue
+# verdicts. With --lanes-from it also appends a lane_verdicts multiline value
+# with lane_<name>=true|false.
 # stderr carries each `lane: name=<name> verdict=true|false cause=<cause>`
 # record, as the composite action's class log does. The lane rules are
 # ../references/wiring.md § Per-lane verdicts.
@@ -606,13 +607,15 @@ answer() { # CLASS FIELDS [measured]
     if ! { printf 'change_class=%s\nqueue_only=%s\n' "$1" "$QUEUE_ONLY"
       if [ "$output" != /dev/null ]; then
         printf 'lanes=%s\nlanes_cause=%s\n' "$lanes" "$lanes_cause"
-        printf 'lane_verdicts<<__change_class_lane_verdicts_end__\n'
-        local index=0
-        while [ "$index" -lt "$lane_count" ]; do
-          printf 'lane_%s=%s\n' "${lane_names[$index]}" "${lane_values[$index]}"
-          index=$((index + 1))
-        done
-        printf '__change_class_lane_verdicts_end__\n'
+        if [ -n "$lanes_from" ]; then
+          printf 'lane_verdicts<<__change_class_lane_verdicts_end__\n'
+          local index=0
+          while [ "$index" -lt "$lane_count" ]; do
+            printf 'lane_%s=%s\n' "${lane_names[$index]}" "${lane_values[$index]}"
+            index=$((index + 1))
+          done
+          printf '__change_class_lane_verdicts_end__\n'
+        fi
       fi
     } >>"$output" 2>/dev/null; then
       die "cause=output-write-failed" \
