@@ -9,7 +9,7 @@ metadata:
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
 repo-effects:
-  summary: "Arms git pre-commit, commit-msg and pre-push hooks, so every commit in this repository runs the guard chain and every push runs it over the branch, for everyone who commits or pushes here, not only for kendex."
+  summary: "Arms git pre-commit, commit-msg and pre-push hooks, so every commit in this repository runs the guard chain and every push retains enabled destination binary-growth checks, for everyone who commits or pushes here, not only for kendex."
   writes:
     - ".git/hooks/kendex-guards"
     - ".git/hooks/pre-commit"
@@ -28,7 +28,7 @@ repo-effects:
   notes:
     - "Pre-commit skips a missing companion silently. Preflight is skipped on a first commit. A companion installed with its script missing or not executable is named unrun and blocks nothing, except the selected github-repository-settings owner, which blocks with exit 2. The selected review-file check's `unconfigured` record with its `renders=none` attestation at exit 0 or the older exit 2 is named not adopted and blocks nothing; every other companion or guard failure blocks the commit, a stale review-file render included."
     - "Every hook blocks on a nonzero result; Git's no-verify flag bypasses the commit hooks for one commit and the pre-push hook for one push."
-    - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; the pre-push hook is where that branch is judged, and CI where its credential scan is."
+    - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; CI judges replayed content and the pre-push hook retains only enabled destination binary-growth checks."
     - "Git does not clone hooks; arm every clone once."
 ---
 

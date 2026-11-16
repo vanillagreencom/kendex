@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# Pins for the doc-limits lane the commit-guards pre-push chain runs.
-#
-# Git runs no hook when it REPLAYS a commit, so a rebase can put a branch in a
-# state no commit hook ever saw: two commits that each passed at authoring
-# time combine into one document over its class ceiling, and nothing reports
-# it until somebody happens to author the next commit on that branch. Push is
-# the last moment a guard can still refuse, and the pre-push lane runs this
-# gate there over the pushed tree — which its own index-drift refusal has
-# already held equal to HEAD, so --staged measures exactly what is leaving.
-#
-# What doc-limits measures is the other suites in this directory; this one
-# asks only whether the push lane runs it and folds its verdict.
+# A replay can combine two documents that each passed armed pre-commit.
+# Push leaves that content-only judgment to CI instead of repeating it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -151,29 +141,9 @@ printf '%s\n' "doc-limits-push-scope"
 
 REBASED=""
 scenario REBASED rebased
-assert_eq "a branch rebased into a document-ceiling breach is refused at push, naming the lane and the document" \
-  "rc=1 pre-push: step=doc-limits;notice=document-over-limit path=AGENTS.md;notice=documents-over-limit count=1;pre-push: step=base:<oid>;pre-push: result=1" \
-  "$(push_topic "$REBASED")"
-
-# The must-fail control: the same rebased state pushed by a copy of the chain
-# whose pre-push lane no longer calls this gate. Nothing else changes, and the
-# breach leaves the machine under a clean verdict.
-MUTANT="$TMP/.mutant"
-mkdir -p "$MUTANT"
-cp -R "$TEMPLATE/commit-guards" "$MUTANT/commit-guards"
-cp -R "$TEMPLATE/doc-limits" "$MUTANT/doc-limits"
-MUTANT_LANE="$MUTANT/commit-guards/scripts/pre-push"
-MUTANT_BEFORE="$(cat -- "$MUTANT_LANE")"
-sed -i.bak 's/^  doc_limits_once$/  :/' "$MUTANT_LANE"
-rm -f -- "$MUTANT_LANE.bak"
-assert_eq "the dropped-call edit took" "rewritten" \
-  "$(if [ "$MUTANT_BEFORE" = "$(cat -- "$MUTANT_LANE")" ]; then echo unchanged; else echo rewritten; fi)"
-
-MUTATED=""
-scenario MUTATED mutated "$MUTANT"
-assert_eq "must-fail: with the doc-limits call dropped from the push lane, the same breach pushes clean" \
+assert_eq "push leaves replayed document content to CI without repeating doc-limits" \
   "rc=0 pre-push: step=base:<oid>;pre-push: result=0" \
-  "$(push_topic "$MUTATED")"
+  "$(push_topic "$REBASED")"
 
 printf '\n%s: %s passed, %s failed\n' "doc-limits-push-scope" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

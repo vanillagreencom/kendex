@@ -1,0 +1,1 @@
+- Pushes repeat no content checks from pre-commit or range checks owned by merge-group CI; only explicitly enabled binary growth checks remain at pre-push.

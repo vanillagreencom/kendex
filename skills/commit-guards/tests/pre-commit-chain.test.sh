@@ -400,9 +400,9 @@ python3 - "$TMP/$BARE/commit-guards/scripts/lib/siblings.sh" <<'EDIT'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
-needle = '    [ "$GG_CHECK" = "pre-commit" ] && return 0'
+needle = '  if ! skill="$(gg_resolve_sibling "$scripts" doc-limits)"; then\n    return 0\n  fi'
 assert s.count(needle) == 1
-p.write_text(s.replace(needle, '    if [ "$GG_CHECK" = "pre-commit" ]; then gg_message lane-absent doc-limits ""; return 0; fi'))
+p.write_text(s.replace(needle, '  if ! skill="$(gg_resolve_sibling "$scripts" doc-limits)"; then\n    gg_message lane-absent doc-limits ""\n    return 0\n  fi'))
 EDIT
 repo absent-control
 control_output="$(run "" "$BARE" "")"

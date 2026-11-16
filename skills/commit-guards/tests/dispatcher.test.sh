@@ -188,45 +188,25 @@ run_rows() { # label | fixture | envs | args | expect — through `batch`
   done
 }
 
-echo "=== a scope that stages nothing withholds the checks that read only that ==="
-# The lanes are named rather than counted clean, and which lanes those are is
-# read off their own scripts, so this row moves if the library does.
-MD_ONLY=COMMIT_GUARDS_CHECKS=md-type
-REFS_ONLY=COMMIT_GUARDS_CHECKS=md-refs
-MD_AND_CONFLICTS='COMMIT_GUARDS_CHECKS=conflict-markers md-type'
-SECRETS_ONLY=COMMIT_GUARDS_CHECKS=secrets
-SECRETS_WITHHELD="rc=0 commit-guards: unscoped=secrets;commit-guards: withheld-all=secrets"
-run_rows \
-  "must-fail: without the flag the batch reports a document it never opened as clean|fx_committed_md md-folded|$MD_ONLY||rc=0 commit-guards: step=md-type;$(ok md-type)" \
-  "control: the document really is malformed, which --all over the same tree finds|fx_committed_md md-really|$MD_ONLY|md-type --all|rc=1" \
-  "with the flag the lane is named as unscoped, and every enabled check being one is said outright|fx_committed_md md-withheld|$MD_ONLY|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
-  "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_CONFLICTS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: step=conflict-markers;$(ok conflict-markers)" \
-  "--skip-unscoped under --staged is a contradiction, since that is the scope those checks read|fx_committed_md md-contradiction|$MD_ONLY|all --staged --skip-unscoped|rc=2 ${ERR}scope-contradiction=--staged,--skip-unscoped" \
-  "a project that configured the lane to sweep the tree gets it run, since that scope stages nothing either|fx_committed_refs md-scope-all|$REFS_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=1 commit-guards: step=md-refs;$VIOLATIONS" \
-  "a change-scoped lane handed no range is withheld under the sweep setting too, never a clean run against HEAD|fx_committed_table md-type-all|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
-  "an unusable scope setting is the configuration error it is, not a lane quietly withheld|fx_committed_md md-scope-bogus|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=bogus|all --skip-unscoped|rc=2 ${ERR}scope=bogus" \
-  "secrets takes no range from a caller that stages nothing, the push hook, and is withheld|grown secrets-range|$SECRETS_ONLY|all --skip-unscoped --base base|$SECRETS_WITHHELD" \
-  "nor the whole tree|grown secrets-all|$SECRETS_ONLY|all --skip-unscoped|$SECRETS_WITHHELD"
-
-# The must-fail control for that pair: a copy of the dispatcher that withholds
-# on the lane merely deferring to the shared selector, which is what deciding
-# from the library rather than from the configured scope comes to. The project
-# asked for the sweep and the copy withholds it anyway.
-gg_mutant INFERRED_GG commit-guards '[ "$MD_BARE_SCOPE" = touched ] && defers_to_md_selector "$1"' 'defers_to_md_selector "$1"'
-fx_committed_refs md-scope-all-inferred
-assert_eq "must-fail: deciding from the library withholds the sweep the project asked for" \
-  "rc=0 commit-guards: unscoped=md-refs;commit-guards: withheld-all=md-refs" \
-  "$(GG="$INFERRED_GG" batch "$REFS_ONLY,COMMIT_GUARDS_MD_SCOPE=all" "all --skip-unscoped")"
-gg_mutant UNWITHHELD_GG commit-guards 'case " $CHANGE_SCOPED_CHECKS " in *" $1 "*) return 0 ;; esac' ':'
-fx_committed_table md-type-all-unwithheld
-assert_eq "must-fail: without withholding a change-scoped lane its sweep against HEAD counts clean" \
-  "rc=0 commit-guards: step=md-type;$(ok md-type)" \
-  "$(GG="$UNWITHHELD_GG" batch "$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all" "all --skip-unscoped")"
-gg_mutant PUSHED_GG commit-guards 'PUSH_WITHHELD_CHECKS="secrets"' 'PUSH_WITHHELD_CHECKS=""'
-grown secrets-pushed
-assert_eq "must-fail: a batch that withholds nothing from the push hook hands secrets the range" \
-  "rc=0 commit-guards: step=secrets --base base;$(ok secrets)" \
-  "$(GG="$PUSHED_GG" batch "$SECRETS_ONLY" "all --skip-unscoped --base base")"
+echo "=== push withholds content checks under every scope and setting ==="
+for mode in touched all bogus; do
+  for scope in '' '--base base' '--against base'; do
+    clean "push-$mode-${scope// /-}"
+    commit
+    git -C "$R" tag base
+    expected=""
+    for check in $DEFAULT; do
+      expected="${expected}commit-guards: unscoped=$check;"
+    done
+    assert_eq "push scope=$scope markdown=$mode repeats no default check" \
+      "rc=0 ${expected}commit-guards: withheld-all=$DEFAULT" \
+      "$(batch "COMMIT_GUARDS_MD_SCOPE=$mode" "all --skip-unscoped $scope")"
+  done
+done
+clean push-contradiction
+assert_eq "staged and push withholding are contradictory" \
+  'rc=2 commit-guards: scope-contradiction=--staged,--skip-unscoped' \
+  "$(batch '' 'all --staged --skip-unscoped')"
 
 echo "=== the batch runs the enabled checks in order and aggregates fail-closed ==="
 BC=COMMIT_GUARDS_BYTE_CEILING_KB
