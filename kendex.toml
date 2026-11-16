@@ -82,6 +82,7 @@ hooks = [
   "lane-mail-compact",
   "critical-path-deny",
   "docs-writing-note",
+  "docs-writing-bash-note",
 ]
 
 [bundles.orchestration]
@@ -162,6 +163,7 @@ hooks = [
   "session-drift-check",
   "task-completed-check",
   "docs-writing-note",
+  "docs-writing-bash-note",
 ]
 skills = [
   "commit-guards",
