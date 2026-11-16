@@ -6082,7 +6082,10 @@ impl Launch {
         args.extend(["--request", &file]);
         let op = self
             .runtime(&args)
-            .env("AGENT_RUNTIME_TMUX_VERIFY_SECS", self.wait_secs.to_string())
+            .env(
+                "AGENT_RUNTIME_TMUX_VERIFY_SECS",
+                confirm_secs(self.wait_secs).to_string(),
+            )
             .output()
             .unwrap();
         Launched { verb, op: Some(op) }

@@ -6,7 +6,7 @@
 # skills/jarvis/scripts/lib/watch.py, skills/jarvis/scripts/lib/jarvis-env.sh,
 # skills/jarvis/tests/forward_test.py, skills/jarvis/tests/mail_world.py,
 # skills/mailbox/scripts/, skills/orch/scripts/, skills/orch/runtime/,
-# skills/agent-runtime/runtime/.
+# skills/agent-runtime/scripts/, skills/agent-runtime/runtime/.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 export JARVIS_TEST_BASH="$BASH"

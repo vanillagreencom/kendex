@@ -3,7 +3,7 @@
 # Surface: jarvis-session succeed's must-fail controls.
 # Inputs: skills/jarvis/scripts/, skills/jarvis/tests/, skills/orch/scripts/,
 # skills/mailbox/scripts/, skills/orch/tests/fixtures/oversee-watch/, rust-toolchain.toml,
-# skills/orch/runtime/, skills/agent-runtime/runtime/.
+# skills/orch/runtime/, skills/agent-runtime/scripts/, skills/agent-runtime/runtime/.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 export JARVIS_TEST_BASH="$BASH"

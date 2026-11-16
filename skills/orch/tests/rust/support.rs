@@ -993,6 +993,21 @@ pub fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// The word a slowed run (a row under a tracer) sets to give every launch a
+/// row waits on that many whole seconds to confirm in place of the row's own.
+const CONFIRM_SECS: &str = "ORCH_TEST_CONFIRM_SECS";
+
+/// A launch's confirm window: the row's own `secs`, or the whole seconds
+/// [`CONFIRM_SECS`] names where it is set.
+pub fn confirm_secs(secs: u64) -> u64 {
+    match std::env::var(CONFIRM_SECS) {
+        Ok(word) => word
+            .parse()
+            .unwrap_or_else(|_| panic!("{CONFIRM_SECS}={word}: not whole seconds")),
+        Err(_) => secs,
+    }
+}
+
 /// The binary run with the fleet server in `$TMUX`, the session named and a
 /// stub selected as `claude`. `verify` bounds the launch wait, the job's
 /// claim and the successor's readiness; `None` leaves the binary's own
@@ -1035,6 +1050,7 @@ impl Runner {
             "ORCH_STATE_DIR=".to_owned(),
         ];
         if let Some(verify) = self.verify {
+            let verify = confirm_secs(verify);
             words.push(format!("AGENT_RUNTIME_TMUX_VERIFY_SECS={verify}"));
         }
         for (name, value) in &self.env {
@@ -1144,7 +1160,10 @@ impl Runner {
                 self.state_dir().join("tmp/oversee-watch"),
             );
         if let Some(verify) = self.verify {
-            command.env("AGENT_RUNTIME_TMUX_VERIFY_SECS", verify.to_string());
+            command.env(
+                "AGENT_RUNTIME_TMUX_VERIFY_SECS",
+                confirm_secs(verify).to_string(),
+            );
         }
         if let Some(tools) = &self.tools {
             command.env("PATH", tool_path(&[tools.as_path()]));
@@ -1183,7 +1202,10 @@ impl Runner {
             .stderr(Stdio::piped())
             .current_dir(self.state_dir());
         if let Some(verify) = self.verify {
-            command.env("AGENT_RUNTIME_TMUX_VERIFY_SECS", verify.to_string());
+            command.env(
+                "AGENT_RUNTIME_TMUX_VERIFY_SECS",
+                confirm_secs(verify).to_string(),
+            );
         }
         for (name, value) in extra {
             command.env(name, value);
