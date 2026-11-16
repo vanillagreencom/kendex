@@ -553,8 +553,9 @@ pub fn cadence(ctx: &Context, now: u64, session: Option<&Session>) -> Result<Cad
     }))
 }
 
-/// The landed-item count: distinct items landed in the window, one recent
-/// item enough where the lookback cut an older window.
+/// The landed-item count: distinct items landed in the window, each
+/// landing's item and the items joined to its lane, one recent item enough
+/// where the lookback cut an older window.
 pub fn landed(ctx: &Context, now: u64, owed: Count) -> Result<Option<String>> {
     let Count {
         policy,
@@ -563,7 +564,18 @@ pub fn landed(ctx: &Context, now: u64, owed: Count) -> Result<Option<String>> {
         floor,
     } = owed;
     let rows = completions(ctx, &doc, floor, now)?;
-    let count = rows.iter().map(|r| &r.item).collect::<BTreeSet<_>>().len() as u64;
+    let lanes = lanes(&doc)?;
+    let count = rows
+        .iter()
+        .flat_map(|r| {
+            let joined = lanes
+                .iter()
+                .filter(|l| l.item == r.item)
+                .flat_map(|l| l.carried.iter().map(|c| c.item.as_str()));
+            std::iter::once(r.item.as_str()).chain(joined)
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64;
     Ok(
         (count >= policy.issues || (floor > marker && count > 0)).then(|| {
             format!(

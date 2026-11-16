@@ -8,9 +8,10 @@
 //!
 //! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
 //! |---|---|
-//! | `live`, `wake` or `preparing` | blocks: `launch-overlap holder=<item>` |
+//! | `live`, `wake` or `preparing`, before its review | a first launch joins it ([`join`]); a running lane's added path blocks: `launch-overlap holder=<item>` |
+//! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
-//! | `reservation`, or no charge: a stopped, parked or gone holder | yields: a [`RebaseObligation`] naming it is recorded on the launching item's lane record |
+//! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
 //! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's) |
 //! | `done` | no holder |
 //!
@@ -21,28 +22,21 @@
 //! read=touched`. `changelog.d/` paths never count, and a path the request
 //! names in scope is left out of the comparison.
 //!
-//! An open pull request of the item's repository is a holder of the paths
-//! it changes: its liveness is
-//! its state, read from GitHub by number through the one `gh api`
-//! transport (`verify::Gh`, the `gh` on `PATH`). Open yields, a
-//! [`RebaseObligation`] naming `#N` and its head branch; closed, merged, a
-//! fork's or a deleted fork's holds nothing. A list, object or files read
-//! that fails, answers nothing, decodes to no member or falls short of the
-//! object's `changed_files` blocks `holders-unreadable`: an unread
-//! inventory is never an empty one. A pull request
-//! a lane record of this fleet names, by its `pending_pr` or `parked`
-//! number or by its head branch (the lane's recorded branch, or its item
-//! key), is that lane's work and judged once, as the lane; a record
-//! reading `done` names none, so its open pull request is a holder as a
-//! pull request; the item's own branch holds nothing against it. The pull
-//! requests are read once per admission, after the lanes, only where the
-//! candidate set is not empty, of the repository the request names, else
-//! of the checkout it names (`repo_dir`, the fleet's own repository, whose
-//! lane records name none): the slug `gh repo view` answers in the
-//! checkout, else the one its `origin` remote names on github.com; a
-//! checkout naming no GitHub repository
-//! blocks `holders-unreadable read=repo`. A request naming neither reads
-//! none.
+//! A holder a first launch would join is in its review where it owns an
+//! open pull request of the item's repository: one its record names by its
+//! `pending_pr` or `parked` number, or by its head branch (the lane's
+//! recorded branch, or its item key); the join then refuses by its tie.
+//! The open pull requests are read for that alone, once per admission,
+//! after the lanes, only where a join stands, from GitHub through the one
+//! `gh api` transport (`verify::Gh`, the `gh` on `PATH`); closed, merged, a
+//! fork's or a deleted fork's are none. A list or object read that fails,
+//! answers nothing or decodes to no member blocks `holders-unreadable`: an
+//! unread inventory is never an empty one. They are read of the repository
+//! the request names, else of the checkout it names (`repo_dir`, the
+//! fleet's own repository, whose lane records name none): the slug `gh repo
+//! view` answers in the checkout, else the one its `origin` remote names on
+//! github.com; a checkout naming no GitHub repository blocks
+//! `holders-unreadable read=repo`. A request naming neither reads none.
 //!
 //! The item's body is read only where the request names its tracker: a
 //! launch that names none is judged on the sources it does name. A
@@ -67,7 +61,7 @@
 //! team that cannot be resolved `item-repo-unresolved`.
 
 use agent_runtime::record::{self, Document};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -78,9 +72,9 @@ use serde_json::Value;
 use super::occupancy::{self, ChargeReason, Host};
 use super::{lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
-use crate::settings::Settings;
-use crate::state::{self, Lane, LaneStatus, RebaseObligation};
-use crate::verify::wire::{Nullable, Optional, Pull, PullFile};
+use crate::settings::{Delivery, Settings};
+use crate::state::{self, Carried, Lane, LaneStatus, StageKind};
+use crate::verify::wire::{Nullable, Pull};
 use crate::verify::{Answer, Gh};
 use agent_runtime::intent::Intent;
 use agent_runtime::journal::{Env, intents};
@@ -129,14 +123,12 @@ pub struct Clis {
 /// Why a read answered nothing: the cause the refusal carries.
 pub type ReadFailure = String;
 
-/// One open same-repository pull request and the paths it changes, a
-/// holder of them.
+/// One open same-repository pull request: what names it a lane's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct OpenPull {
     pub number: u64,
     /// Its head branch, `head.ref`.
     pub branch: String,
-    pub files: Vec<String>,
 }
 
 /// The open pull requests of one repository, with the `owner/name` they
@@ -147,7 +139,7 @@ pub(super) struct OpenPulls {
 }
 
 /// Why the pull requests could not be read: which read (`repo`, `pulls`,
-/// `pull`, `files`), the repository as named (the slug, or the checkout it
+/// `pull`), the repository as named (the slug, or the checkout it
 /// was to be read from) and the cause.
 pub(super) struct PullsFailure {
     pub read: &'static str,
@@ -261,8 +253,33 @@ pub(super) fn tier_judged(
     dir: &Path,
     host: &Host,
 ) -> Result<()> {
-    if touched.is_empty() || requested == super::tier::Cycle::Standard.word() {
+    let Some(judged) = wider_cycle(item, requested, touched, dir, host)? else {
         return Ok(());
+    };
+    let cause = judged.cause.split(' ').next().unwrap_or_default();
+    Err(Error::from(agent_runtime::Error::refused(
+        "tier-narrower",
+        &[
+            ("item", item),
+            ("requested", requested),
+            ("judged", judged.cycle.word()),
+            ("cause", cause),
+        ],
+    )))
+}
+
+/// The cycle the tier arm judges over `touched` where it is wider than
+/// `requested`, `None` where `requested` stands; an arm that could not
+/// answer refuses `tier-unjudged`.
+fn wider_cycle(
+    item: &str,
+    requested: &str,
+    touched: &[String],
+    dir: &Path,
+    host: &Host,
+) -> Result<Option<super::tier::Classified>> {
+    if touched.is_empty() || requested == super::tier::Cycle::Standard.word() {
+        return Ok(None);
     }
     let unjudged = |cause: &str| {
         Error::from(agent_runtime::Error::refused(
@@ -276,26 +293,14 @@ pub(super) fn tier_judged(
         .ok_or_else(|| unjudged("admission-reads-unavailable"))?;
     let judged =
         (reads.tier)(&reads.clis, requested, touched, dir).map_err(|r| unjudged(&r.cause))?;
-    if judged.cycle.word() == requested {
-        return Ok(());
-    }
-    let cause = judged.cause.split(' ').next().unwrap_or_default();
-    Err(Error::from(agent_runtime::Error::refused(
-        "tier-narrower",
-        &[
-            ("item", item),
-            ("requested", requested),
-            ("judged", judged.cycle.word()),
-            ("cause", cause),
-        ],
-    )))
+    Ok((judged.cycle.word() != requested).then_some(judged))
 }
 
 /// Judge the paths a lane adds within its item's outcome, or a launch
 /// before any record stands. The
 /// touched set judged is the union of the sources the request names and
-/// `paths`; where a lane record stands, it is widened by that set and the
-/// obligations found, and a lane record reading `done` refuses.
+/// `paths`; where a lane record stands, it is widened by that set, and a
+/// lane record reading `done` refuses.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdmitPaths {
     pub item: String,
@@ -326,7 +331,6 @@ pub struct PathsAdmitted {
     /// where a record stands.
     pub touched: Vec<String>,
     pub in_scope: Vec<String>,
-    pub rebase: Vec<RebaseObligation>,
     /// Whether a lane record was widened.
     pub recorded: bool,
 }
@@ -353,7 +357,40 @@ pub(super) struct Admission<'r> {
 pub(super) struct Judged {
     pub touched: Vec<String>,
     pub in_scope: Vec<String>,
-    pub rebase: Vec<RebaseObligation>,
+    /// The running lane a first launch joins in place of opening its own.
+    pub join: Option<Join>,
+}
+
+/// A live holder before its review that a first launch ships with, at its
+/// index among the judged lanes, and what tied them: a shared path, or the
+/// candidate's launch blockers the holder carries. The tie is the refusal
+/// the launch answers where the holder turns out to own a pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Join {
+    pub holder: usize,
+    tie: Tie,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Tie {
+    File(String),
+    Blockers(Vec<String>),
+}
+
+impl Join {
+    fn refusal(&self, item: &str, holder: &str) -> Error {
+        match &self.tie {
+            Tie::File(file) => Error::LaunchOverlap {
+                item: item.to_owned(),
+                file: file.clone(),
+                holder: holder.to_owned(),
+            },
+            Tie::Blockers(blockers) => Error::LaunchBlocked {
+                item: item.to_owned(),
+                blockers: blockers.clone(),
+            },
+        }
+    }
 }
 
 /// Paths the overlap never counts: the changelog fragments every lane
@@ -618,6 +655,74 @@ fn holder_branch(fleet: &Path, holder: &str) -> Result<Option<String>> {
         .map(str::to_owned))
 }
 
+/// The one lane of the request's repository, not `done`, that carries every
+/// launch blocker, as its item or a joined one: the lane a blocked candidate
+/// ships with. None, or two, is no such lane.
+fn carrier(lanes: &[Lane], blockers: &[String], repo: Option<&str>) -> Option<usize> {
+    let mut found = lanes.iter().enumerate().filter(|(_, lane)| {
+        lane.status != LaneStatus::Done
+            && same_repo(lane, repo)
+            && blockers.iter().all(|b| lane.carries(b))
+    });
+    match (found.next(), found.next()) {
+        (Some((index, _)), None) => Some(index),
+        _ => None,
+    }
+}
+
+/// Whether a live holder is before its review, the one state a launch joins:
+/// no pull request its record names (`pending_pr`, `parked`) and no `review`
+/// stage, open or ended, in its current session, read from its item state on
+/// this disk (`watch::lanes::local_held`): a lane fixing after its review
+/// would take work no review round read. A state that cannot be read refuses
+/// `holder-unreadable read=stage`. A hosted or cloud holder refuses
+/// `join-unreachable`: its stage and its mailbox are on its host, and a
+/// join tells its lane itself.
+fn before_review(path: &Path, lane: &Lane, item: &str) -> Result<bool> {
+    let route = if lane.session_channel() {
+        Some("session")
+    } else if lane.host.is_some() {
+        Some("hosted")
+    } else {
+        None
+    };
+    if let Some(route) = route {
+        return Err(Error::from(agent_runtime::Error::refused(
+            "join-unreachable",
+            &[("item", item), ("holder", &lane.item), ("route", route)],
+        )));
+    }
+    if ["pending_pr", "parked"]
+        .iter()
+        .any(|key| lane.extra.get(*key).is_some_and(|v| !v.is_null()))
+    {
+        return Ok(false);
+    }
+    match crate::watch::lanes::local_held(
+        lane,
+        path.parent().unwrap_or(Path::new("")),
+        StageKind::Review.word(),
+    ) {
+        Ok(reviewed) => Ok(!reviewed),
+        Err(cause) => Err(Error::HolderUnreadable {
+            item: item.to_owned(),
+            holder: lane.item.clone(),
+            read: "stage",
+            cause,
+        }),
+    }
+}
+
+/// Whether the fleet delivers straight onto its base (`ORCH_DELIVERY`), the
+/// publication then taking the landing order; a host with no settings is
+/// judged as a pull-request fleet, whose order the refusal keeps.
+fn direct(host: &Host) -> Result<bool> {
+    match host.accounts {
+        Some(settings) => Ok(settings.validate.delivery()? == Delivery::PushBase),
+        None => Ok(false),
+    }
+}
+
 /// How a launch's checkout stands to the fleet's repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Binding {
@@ -735,7 +840,7 @@ fn bind(
 
 /// The binding alone (the module's binding paragraph): a first launch's,
 /// inside the judgement, and a relaunch's, whose touched set, Ancestor gate
-/// and rebase set were judged when it was first admitted but whose checkout,
+/// and holders were judged when it was first admitted but whose checkout,
 /// tracker and repository the request may change.
 pub(super) fn bound(
     path: &Path,
@@ -787,6 +892,7 @@ pub(super) fn judge(
         bound(path, a.item, a.tracker, a.repo, checkout, host)?;
     }
     let mut body = None;
+    let mut blocked = None;
     if let Some(tracker) = a.tracker {
         let reads = reads("item")?;
         let item = (reads.item)(&reads.clis, tracker, a.item, a.repo)
@@ -798,9 +904,19 @@ pub(super) fn judge(
             });
         }
         if tracker == "linear" {
-            launch_blockers(a.item, &item, |parent| {
+            // A first launch whose every blocker one lane carries ships
+            // with that lane where it stands live before its review.
+            match launch_blockers(a.item, &item, |parent| {
                 (reads.item)(&reads.clis, tracker, parent, a.repo)
-            })?;
+            }) {
+                Err(Error::LaunchBlocked { item, blockers }) if a.checkout.is_some() => {
+                    match carrier(lanes, &blockers, a.repo) {
+                        Some(index) => blocked = Some((index, blockers)),
+                        None => return Err(Error::LaunchBlocked { item, blockers }),
+                    }
+                }
+                other => other?,
+            }
         }
         location_paths(&item.body).map_err(|c| unreadable("location", c.into()))?;
         body = Some(item.body);
@@ -827,12 +943,27 @@ pub(super) fn judge(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let mut rebase = Vec::new();
+    let mut join = None;
+    if let Some((index, blockers)) = blocked {
+        let holder = &lanes[index];
+        let joins = matches!(holding(holder, intents, env, host), Holding::Live)
+            && before_review(path, holder, a.item)?;
+        if !joins {
+            return Err(Error::LaunchBlocked {
+                item: a.item.to_owned(),
+                blockers,
+            });
+        }
+        join = Some(Join {
+            holder: index,
+            tie: Tie::Blockers(blockers),
+        });
+    }
     if touched.is_empty() {
         return Ok(Judged {
             touched,
             in_scope,
-            rebase,
+            join,
         });
     }
     let holder_unreadable =
@@ -842,7 +973,7 @@ pub(super) fn judge(
             read,
             cause,
         };
-    for lane in lanes {
+    for (index, lane) in lanes.iter().enumerate() {
         if lane.item == a.item || lane.status == LaneStatus::Done || !same_repo(lane, a.repo) {
             continue;
         }
@@ -872,25 +1003,46 @@ pub(super) fn judge(
             continue;
         };
         match holding(lane, intents, env, host) {
+            // A first launch joins one live holder before its review, and
+            // under direct delivery passes one in its review, the publication
+            // taking the order; the paths a running lane adds never merge two
+            // lanes.
             Holding::Live => {
-                return Err(Error::LaunchOverlap {
-                    item: a.item.to_owned(),
-                    file: file.clone(),
-                    holder: lane.item.clone(),
-                });
+                let first = a.checkout.is_some();
+                let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
+                let direct = first && direct(host)?;
+                let before = if joinable || direct {
+                    Some(before_review(path, lane, a.item)?)
+                } else {
+                    None
+                };
+                match before {
+                    Some(true) if joinable => {
+                        join.get_or_insert(Join {
+                            holder: index,
+                            tie: Tie::File(file.clone()),
+                        });
+                    }
+                    Some(false) if direct => {}
+                    _ => {
+                        return Err(Error::LaunchOverlap {
+                            item: a.item.to_owned(),
+                            file: file.clone(),
+                            holder: lane.item.clone(),
+                        });
+                    }
+                }
             }
             Holding::Unknown(cause) => {
                 return Err(holder_unreadable(&lane.item, "identity", cause));
             }
-            Holding::Yields => rebase.push(RebaseObligation {
-                holder: lane.item.clone(),
-                branch: holder_branch(path, &lane.item)?,
-                paths,
-                at: env.iso(),
-            }),
+            Holding::Yields => {}
         }
     }
-    if a.repo.is_some() || a.repo_dir.is_some() {
+    // A holder that owns an open pull request is in its review.
+    if let Some(join) = &join
+        && (a.repo.is_some() || a.repo_dir.is_some())
+    {
         let reads = host
             .admission
             .as_ref()
@@ -912,50 +1064,21 @@ pub(super) fn judge(
                 cause: failure.cause,
             }
         })?;
-        if let Some(OpenPulls { repo, pulls }) = read
-            && !pulls.is_empty()
-        {
-            let own_branch = holder_branch(path, a.item)?;
-            // A `done` record names no pull request: its lane is no holder
-            // (the module table), so an open pull request it left is judged
-            // as a pull request.
-            let named: Vec<(&Lane, Option<String>)> = lanes
+        if let Some(OpenPulls { repo, pulls }) = read {
+            let holder = &lanes[join.holder];
+            let branch = holder_branch(path, &holder.item)?;
+            if pulls
                 .iter()
-                .filter(|lane| lane.status != LaneStatus::Done && same_repo(lane, a.repo))
-                .map(|lane| Ok((lane, holder_branch(path, &lane.item)?)))
-                .collect::<Result<_>>()?;
-            for pull in pulls {
-                // A `github` item's own pull request: issue and pull request
-                // numbers share one sequence per repository, so the pull
-                // request numbered as the item is the item (a review lane).
-                let own = pull.branch.eq_ignore_ascii_case(a.item)
-                    || own_branch.as_deref() == Some(pull.branch.as_str())
-                    || (a.tracker == Some("github")
-                        && a.item.strip_prefix("issue-") == Some(pull.number.to_string().as_str()));
-                if own
-                    || named
-                        .iter()
-                        .any(|(lane, branch)| names_pull(lane, branch.as_deref(), &pull, &repo))
-                {
-                    continue;
-                }
-                let paths = shared(&touched, &pull.files, &in_scope);
-                if paths.is_empty() {
-                    continue;
-                }
-                rebase.push(RebaseObligation {
-                    holder: format!("#{}", pull.number),
-                    branch: Some(pull.branch),
-                    paths,
-                    at: env.iso(),
-                });
+                .any(|pull| names_pull(holder, branch.as_deref(), pull, &repo))
+            {
+                return Err(join.refusal(a.item, &holder.item));
             }
         }
     }
     Ok(Judged {
         touched,
         in_scope,
-        rebase,
+        join,
     })
 }
 
@@ -979,33 +1102,6 @@ fn names_pull(lane: &Lane, branch: Option<&str>, pull: &OpenPull, repo: &str) ->
     numbered || branch == Some(pull.branch.as_str()) || pull.branch.eq_ignore_ascii_case(&lane.item)
 }
 
-/// `standing` joined by `added`, each holder once: a holder already
-/// recorded keeps its stamp and gains the paths.
-fn merged(standing: &[RebaseObligation], added: Vec<RebaseObligation>) -> Vec<RebaseObligation> {
-    let mut by_holder: BTreeMap<String, RebaseObligation> = BTreeMap::new();
-    let mut order = Vec::new();
-    for obligation in standing.iter().cloned().chain(added) {
-        match by_holder.get_mut(&obligation.holder) {
-            Some(held) => {
-                for path in obligation.paths {
-                    if !held.paths.contains(&path) {
-                        held.paths.push(path);
-                    }
-                }
-                held.paths.sort();
-            }
-            None => {
-                order.push(obligation.holder.clone());
-                by_holder.insert(obligation.holder.clone(), obligation);
-            }
-        }
-    }
-    order
-        .into_iter()
-        .filter_map(|holder| by_holder.remove(&holder))
-        .collect()
-}
-
 /// `a` and `b` as one sorted set.
 fn union(a: &[String], b: &[String]) -> Vec<String> {
     a.iter()
@@ -1021,12 +1117,126 @@ pub(super) fn record(path: &Path, doc: &mut Document, index: usize, judged: &Jud
     let lane = lane_doc_mut(path, doc, index)?;
     record::set(lane, "touched", serde_json::to_value(&judged.touched)?);
     record::set(lane, "in_scope", serde_json::to_value(&judged.in_scope)?);
-    if judged.rebase.is_empty() {
-        record::delete(lane, "rebase");
-    } else {
-        record::set(lane, "rebase", serde_json::to_value(&judged.rebase)?);
-    }
     Ok(())
+}
+
+/// The join's one writer, under the launch lock: the widened touched set is
+/// judged first by the one tier function at the holder's recorded tier, a
+/// set that needs a wider cycle refusing `join-tier-narrower`; then the
+/// holder's record carries the candidate once, its touched set and scope
+/// widened by the candidate's, and the candidate's brief reaches the
+/// holder's own mailbox ([`tell`]). Answers the holder's record as written.
+pub(super) fn join(
+    path: &Path,
+    doc: &mut Document,
+    a: &Admission,
+    judged: &Judged,
+    index: usize,
+    env: &Env,
+    host: &Host,
+) -> Result<Lane> {
+    let holder = lane_at(path, doc, index)?;
+    let touched = union(
+        holder.touched.as_deref().unwrap_or_default(),
+        &judged.touched,
+    );
+    if let Some(tier) = holder.extra.get("tier").and_then(Value::as_str) {
+        let dir = a.checkout.unwrap_or(Path::new(""));
+        if let Some(needs) = wider_cycle(a.item, tier, &touched, dir, host)? {
+            return Err(Error::from(agent_runtime::Error::refused(
+                "join-tier-narrower",
+                &[
+                    ("item", a.item),
+                    ("holder", &holder.item),
+                    ("tier", tier),
+                    ("needs", needs.cycle.word()),
+                ],
+            )));
+        }
+    }
+    let mut carried = holder.carried.clone();
+    if !carried.iter().any(|c| c.item == a.item) {
+        carried.push(Carried {
+            item: a.item.to_owned(),
+            tracker: a.tracker.map(str::to_owned),
+            repo: a.repo.map(str::to_owned),
+            at: env.iso(),
+        });
+    }
+    let in_scope = union(
+        holder.in_scope.as_deref().unwrap_or_default(),
+        &judged.in_scope,
+    );
+    let lane = lane_doc_mut(path, doc, index)?;
+    record::set(lane, "touched", serde_json::to_value(&touched)?);
+    record::set(lane, "in_scope", serde_json::to_value(&in_scope)?);
+    record::set(lane, "carried", serde_json::to_value(&carried)?);
+    tell(path, a, &holder, env, host)?;
+    lane_at(path, doc, index)
+}
+
+/// The candidate's brief written to the holder's own inbox through the
+/// mailbox program its turn end reads, `lane-mail send --directive` on the
+/// holder's recorded root, under the delivery `join-<item>`: a repeated join
+/// lands once. The directive opens with `joined item=<item> holder=<holder>`.
+/// A send that does not answer delivered refuses `join-unsent` with its
+/// cause, and the launch lock's transition then writes nothing.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the join's directive file, created exclusively under the fleet's state directory for the mailbox program to read and removed after its send"
+)]
+fn tell(path: &Path, a: &Admission, holder: &Lane, env: &Env, host: &Host) -> Result<()> {
+    use std::io::Write;
+    let unsent = |cause: String| {
+        Error::from(agent_runtime::Error::refused(
+            "join-unsent",
+            &[
+                ("item", a.item),
+                ("holder", &holder.item),
+                ("cause", &cause),
+            ],
+        ))
+    };
+    let settings = host
+        .accounts
+        .ok_or_else(|| unsent("settings-unavailable".to_owned()))?;
+    let root = holder
+        .mail_root
+        .as_deref()
+        .map(Path::new)
+        .ok_or_else(|| unsent("mail-root-unrecorded".to_owned()))?;
+    let brief = match a.brief_file {
+        Some(file) => std::fs::read_to_string(file)
+            .map_err(|e| unsent(format!("brief-unreadable:{:?}", e.kind())))?,
+        None => String::new(),
+    };
+    let dir = path.parent().unwrap_or(Path::new("")).join("join");
+    std::fs::create_dir_all(&dir).map_err(|e| unsent(format!("dir:{:?}", e.kind())))?;
+    let file = dir.join(format!("{}.{}.directive", a.item, env.round_id()));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file)
+        .and_then(|mut f| {
+            writeln!(
+                f,
+                "joined item={} holder={}\n\n{brief}",
+                a.item, holder.item
+            )
+        })
+        .map_err(|e| unsent(format!("write:{:?}", e.kind())))?;
+    let sent = crate::mailbox::Mailbox::new(crate::effects::fleet_mailbox(settings).mail_program)
+        .bounded(crate::mailbox::BOUND)
+        .send_directive(
+            &holder.item,
+            crate::mailbox::Route::Local { root: Some(root) },
+            &file,
+            Some(&format!("join-{}", a.item)),
+            Some(root),
+        );
+    let _ = std::fs::remove_file(&file);
+    sent.map(drop)
+        .map_err(|refusal| unsent(refusal.to_string()))
 }
 
 /// The `admit-paths` transition: the judgement of the request's sources
@@ -1077,7 +1287,6 @@ pub(super) fn admit_paths(
             lane: None,
             touched: judged.touched,
             in_scope: judged.in_scope,
-            rebase: judged.rebase,
             recorded: false,
         });
     };
@@ -1088,14 +1297,13 @@ pub(super) fn admit_paths(
             &judged.touched,
         ),
         in_scope: judged.in_scope,
-        rebase: merged(&standing.rebase, judged.rebase),
+        join: None,
     };
     record(path, doc, index, &widened)?;
     Ok(PathsAdmitted {
         lane: Some(Box::new(lane_at(path, doc, index)?)),
         touched: widened.touched,
         in_scope: widened.in_scope,
-        rebase: widened.rebase,
         recorded: true,
     })
 }
@@ -1372,16 +1580,12 @@ fn read_team_key(clis: &Clis, team: &str) -> std::result::Result<String, ReadFai
 
 /// The production pull-request read: the open same-repository pull
 /// requests of the repository the request names, else of the checkout it
-/// names ([`crate::repo::of`]), `None` where it names neither; their files
-/// through the one `gh api` transport: the open list paged to a short
-/// page, each pull request read by number for its state, head and
-/// `changed_files`, and an open one's files paged to a short page and held
-/// to that count, the files endpoint serving at most 3000 files and
-/// carrying no total of its own. A closed one, a fork's and a deleted
-/// fork's hold nothing and their files are not read. A repository that
-/// cannot be named, a failed call, a 404, a member the documented shapes
-/// do not decode, a state outside the documented pair or a files list
-/// short of its count is the failure, named by read.
+/// names ([`crate::repo::of`]), `None` where it names neither, through the
+/// one `gh api` transport: the open list paged to a short page, each pull
+/// request read by number for its state and head. A closed one, a fork's
+/// and a deleted fork's are left out. A repository that cannot be named, a
+/// failed call, a 404, a member the documented shapes do not decode or a
+/// state outside the documented pair is the failure, named by read.
 fn read_open_pulls(
     clis: &Clis,
     repo: Option<&str>,
@@ -1422,11 +1626,6 @@ fn read_open_pulls(
             .object(PULLS_READ, &format!("repos/{repo}/pulls/{number}"))
             .map_err(|e| failed("pull", format!("#{number}: {e}")))?
             .ok_or_else(|| failed("pull", format!("#{number}: not-found")))?;
-        // The got form documents its file count; a pull without one cannot
-        // prove its files whole.
-        let Optional::Present(changed_files) = pull.changed_files else {
-            return Err(failed("pull", format!("#{number}: changed_files absent")));
-        };
         let same_repo = match &pull.head.repo {
             Nullable::Present(head) => head.full_name.eq_ignore_ascii_case(&repo),
             Nullable::Absent | Nullable::Null => false,
@@ -1436,28 +1635,9 @@ fn read_open_pulls(
             "open" | "closed" => continue,
             other => return Err(failed("pull", format!("#{number}: state {other:?}"))),
         }
-        let files: Vec<PullFile> = gh
-            .list(PULLS_READ, &format!("repos/{repo}/pulls/{number}/files"))
-            .map_err(|e| failed("files", format!("#{number}: {e}")))?
-            .ok_or_else(|| failed("files", format!("#{number}: not-found")))?;
-        if files.len() as u64 != changed_files {
-            return Err(failed(
-                "files",
-                format!("#{number}: {} of {changed_files} files", files.len()),
-            ));
-        }
-        let mut names = Vec::with_capacity(files.len());
-        for file in files {
-            names.push(file.filename);
-            match file.previous_filename {
-                Optional::Present(previous) => names.push(previous),
-                Optional::Absent => {}
-            }
-        }
         out.push(OpenPull {
             number,
             branch: pull.head.branch,
-            files: names,
         });
     }
     Ok(Some(OpenPulls {
@@ -1473,6 +1653,7 @@ fn read_open_pulls(
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
 
     use agent_runtime::process::Identity;
     use agent_runtime::reading::Reading;
@@ -1674,7 +1855,6 @@ mod tests {
         let pull = |number: u64, branch: &str| OpenPull {
             number,
             branch: branch.to_owned(),
-            files: vec!["src/a.sh".to_owned()],
         };
         let lane = |record: Value| -> Lane {
             let mut doc = json!({"item": "KEN-S", "status": "stopped"});
@@ -1778,10 +1958,6 @@ mod tests {
             match (judged, expected) {
                 (Ok(j), Ok(_)) => {
                     assert_eq!(j.touched, ["src/a.sh"], "{status} {pid}");
-                    assert_eq!(j.rebase.len(), 1, "{status} {pid}");
-                    assert_eq!(j.rebase[0].holder, "KEN-H");
-                    assert_eq!(j.rebase[0].paths, ["src/a.sh"]);
-                    assert_eq!(j.rebase[0].branch, None, "no item state stands");
                 }
                 (Err(e), Err((key, field))) => {
                     assert_eq!(e.key(), key, "{status} {pid}: {e}");
@@ -1802,9 +1978,8 @@ mod tests {
             &admission("KEN-L", &[]),
             &env(),
             &planted.host(&planted.still_runs()),
-        )
-        .unwrap();
-        assert!(judged.rebase.is_empty(), "a done lane holds nothing");
+        );
+        assert!(judged.is_ok(), "a done lane holds nothing: {judged:?}");
     }
 
     /// A holder with no recorded set is read from its item, once, and one
@@ -1830,7 +2005,7 @@ mod tests {
         let mut other = holder("KEN-O", "running", 12, None);
         other.repo = Some("o/other".into());
         let lanes = vec![holder("KEN-H", "running", 12, None), other];
-        let judged = judge(
+        judge(
             &fleet_path(),
             &lanes,
             &[],
@@ -1839,7 +2014,6 @@ mod tests {
             &planted.host(&planted.still_runs()),
         )
         .unwrap();
-        assert_eq!(judged.rebase[0].holder, "KEN-H");
         assert_eq!(
             *planted.reads.borrow(),
             ["linear:KEN-L", "linear:KEN-H"],
@@ -1879,7 +2053,14 @@ mod tests {
         std::fs::write(&brief, "Change `src/b.sh` under `tools/`.\n").unwrap();
         let planted = Planted {
             items: [("KEN-L".to_owned(), body("`src/a.sh`"))].into(),
-            readings: BTreeMap::new(),
+            readings: [(
+                11,
+                Reading::Live(Identity {
+                    pid: 11,
+                    start: "ticks:1".into(),
+                }),
+            )]
+            .into(),
             ranges: vec!["src/c.sh".to_owned(), "changelog.d/orch/x.md".to_owned()],
             reads: RefCell::new(Vec::new()),
         };
@@ -1909,8 +2090,8 @@ mod tests {
             ["src/a.sh", "src/b.sh", "src/c.sh", "src/d.sh", "tools/"]
         );
         for held in ["src/a.sh", "src/b.sh", "src/c.sh", "src/d.sh", "tools/x"] {
-            let lanes = vec![holder("KEN-H", "running", 12, Some(vec![held]))];
-            let judged = judge(
+            let lanes = vec![holder("KEN-H", "running", 11, Some(vec![held]))];
+            let err = judge(
                 &fleet_path(),
                 &lanes,
                 &[],
@@ -1918,8 +2099,8 @@ mod tests {
                 &env(),
                 &planted.host(&planted.still_runs()),
             )
-            .unwrap();
-            assert_eq!(judged.rebase.len(), 1, "{held} overlaps");
+            .unwrap_err();
+            assert_eq!(err.key(), "launch-overlap", "{held} overlaps");
         }
         let no_range = Admission {
             scope_range: Some(&range),

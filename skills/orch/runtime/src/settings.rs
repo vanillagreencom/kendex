@@ -494,6 +494,33 @@ pub struct ValidateSettings {
     pub order_unread: Vec<String>,
 }
 
+/// How a change is delivered: through a pull request, or straight onto the
+/// base, where the publication takes the landing order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    Pr,
+    PushBase,
+}
+
+impl ValidateSettings {
+    /// `ORCH_DELIVERY` as every verb that reads it judges it: `pr` where
+    /// unset; a value only a shell reads refuses `setting-unread` and any
+    /// other word `setting-invalid`, in the verb that reads it, never the
+    /// load: a consumer's choice is never replaced by a default.
+    pub fn delivery(&self) -> Result<Delivery> {
+        if self.order_unread.iter().any(|k| k == DELIVERY_KEY) {
+            return Err(
+                agent_runtime::Error::refused("setting-unread", &[("key", DELIVERY_KEY)]).into(),
+            );
+        }
+        match self.delivery.as_deref() {
+            None | Some("pr") => Ok(Delivery::Pr),
+            Some("push-base") => Ok(Delivery::PushBase),
+            Some(other) => Err(agent_runtime::settings::value_refusal(DELIVERY_KEY, other).into()),
+        }
+    }
+}
+
 /// What `queue-watch` reads beside its request: the arming grace, the
 /// confirmation count and the probe interval, each a whole number above
 /// zero, and the reach command, a blank value no declaration.

@@ -725,7 +725,7 @@ fn checkout_gh<'a>(gh: &Gh<'a>) -> Gh<'a> {
 /// `ORCH_PR_ORDER` wins with no GitHub read; unset, a private repository
 /// opens first and any other reviews first, as does a repository or
 /// visibility that cannot be read, its cause in the log. A delivery or
-/// order key the load could not read, or an order outside the three
+/// order key the load could not read, or a delivery or order outside its
 /// words, refuses: a consumer's choice is never replaced by a default.
 pub fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Result<&'static str> {
     let validate = &settings.validate;
@@ -735,8 +735,7 @@ pub fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Resul
             false => Ok(()),
         }
     };
-    unread(crate::settings::DELIVERY_KEY)?;
-    if validate.delivery.as_deref() == Some("push-base") {
+    if validate.delivery()? == crate::settings::Delivery::PushBase {
         return Ok("review-first");
     }
     unread(crate::settings::PR_ORDER_KEY)?;
@@ -876,7 +875,7 @@ fn ci_admission(
     order: &str,
     log: &mut String,
 ) -> Result<CiAdmission> {
-    if delivery(&settings.validate)? == Delivery::PushBase {
+    if settings.validate.delivery()? == crate::settings::Delivery::PushBase {
         return Ok(CiAdmission::Fallback("push-base".to_owned()));
     }
     let Some(context) = &settings.validate.ci_context else {
@@ -1000,26 +999,6 @@ fn timeout_secs(settings: &crate::settings::ValidateSettings) -> Result<u64> {
         Ok(_) | Err(_) => Err(crate::Error::from(agent_runtime::settings::value_refusal(
             crate::settings::DEV_VALIDATE_TIMEOUT_SECS_KEY,
             text,
-        ))),
-    }
-}
-
-/// How a change is delivered, which decides whether a ci request may defer
-/// to the pull request's required CI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Delivery {
-    Pr,
-    PushBase,
-}
-
-/// `ORCH_DELIVERY` as the CI admission reads it: `pr` where unset.
-fn delivery(settings: &crate::settings::ValidateSettings) -> Result<Delivery> {
-    match settings.delivery.as_deref() {
-        None | Some("pr") => Ok(Delivery::Pr),
-        Some("push-base") => Ok(Delivery::PushBase),
-        Some(other) => Err(crate::Error::from(agent_runtime::settings::value_refusal(
-            crate::settings::DELIVERY_KEY,
-            other,
         ))),
     }
 }

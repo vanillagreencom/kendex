@@ -539,20 +539,17 @@ pub struct Reservation {
     pub until: String,
 }
 
-/// A rebase obligation the admission recorded on the launching item's lane
-/// record: a holder of a path the item touches whose
-/// lane read stopped or held yielded the path, and the lane rebases onto
-/// the holder's branch, or after it merges, before it publishes.
+/// An item a running lane carries beside its own: a candidate whose launch
+/// the admission joined to the lane before its review, written with the
+/// candidate's tracker and repository as its launch named them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RebaseObligation {
-    /// The holder's item.
-    pub holder: String,
-    /// The holder's branch, where its item state records one.
+pub struct Carried {
+    pub item: String,
     #[serde(default)]
-    pub branch: Option<String>,
-    /// The paths both touch, the longer of each overlapping pair.
-    pub paths: Vec<String>,
-    /// When the obligation was recorded.
+    pub tracker: Option<String>,
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// When the join was recorded.
     pub at: String,
 }
 
@@ -634,15 +631,21 @@ pub struct Lane {
     /// append-only addition, left out of the overlap judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_scope: Option<Vec<String>>,
-    /// The rebase obligations the admission recorded.
+    /// The items the admission joined to this running lane, each delivered
+    /// with the lane's branch beside `item`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rebase: Vec<RebaseObligation>,
+    pub carried: Vec<Carried>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 // The one reading of a lane's channel the runtime makes.
 impl Lane {
+    /// Whether the lane delivers `item`: its own, or one joined to it.
+    pub fn carries(&self, item: &str) -> bool {
+        self.item == item || self.carried.iter().any(|c| c.item == item)
+    }
+
     /// Whether the lane runs in a Claude cloud session, reached through a
     /// directive send and no mailbox: its kind or host is the cloud kind.
     pub fn session_channel(&self) -> bool {

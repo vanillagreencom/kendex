@@ -2272,7 +2272,7 @@ mod tests {
             reservation: None,
             touched: None,
             in_scope: None,
-            rebase: Vec::new(),
+            carried: Vec::new(),
             extra: Default::default(),
         }
     }

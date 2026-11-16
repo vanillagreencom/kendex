@@ -500,12 +500,27 @@ fn invalid(read: &'static str, field: &str, value: &str) -> Error {
     )
 }
 
-fn tracker_of(lane: &Lane) -> &str {
-    match lane.tracker.as_deref() {
+/// The tracker an item is read from: the one recorded, else `linear` for a
+/// key that is no `issue-N`.
+fn tracker_of<'a>(tracker: Option<&'a str>, item: &str) -> &'a str {
+    match tracker {
         Some(tracker) => tracker,
-        None if lane.item.starts_with("issue-") => "",
+        None if item.starts_with("issue-") => "",
         None => "linear",
     }
+}
+
+/// The items a parked or stopped lane delivers that its terminal close
+/// reads from the tracker: its own and each joined to it, `linear` ones.
+fn terminal_items(lane: &Lane) -> impl Iterator<Item = &str> {
+    std::iter::once((lane.tracker.as_deref(), lane.item.as_str()))
+        .chain(
+            lane.carried
+                .iter()
+                .map(|c| (c.tracker.as_deref(), c.item.as_str())),
+        )
+        .filter(|(tracker, item)| tracker_of(*tracker, item) == "linear")
+        .map(|(_, item)| item)
 }
 
 /// What the tracker says of a lane's item (`close-lane`'s `terminal-state`).
@@ -934,13 +949,13 @@ fn read_tracker(
 ) -> Result<Answered<TrackerRead>> {
     let (items, inventory) = quota!(read_list(linear, team, fleet, tick.wall)?);
     // The lane items' terminal states, one batch (`close-lane`'s
-    // `terminal-state`), for every parked or stopped linear-tracked lane.
+    // `terminal-state`), for every parked or stopped lane's linear-tracked
+    // items, its own and those joined to it.
     let lane_items: Vec<&str> = fleet
         .lanes
         .iter()
         .filter(|l| matches!(l.status, LaneStatus::Parked | LaneStatus::Stopped))
-        .filter(|l| tracker_of(l) == "linear")
-        .map(|l| l.item.as_str())
+        .flat_map(terminal_items)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -1171,14 +1186,15 @@ fn priority_word(priority: &Nullable<u64>) -> String {
 
 /// The inventory the heartbeat and verification read, from the open items
 /// and the fleet: the owed rows (`LANE_RUNNING_JQ`), the Verifying items
-/// and containers, the open unblocked items no lane holds.
+/// and containers, the open unblocked items no lane holds. An item joined to
+/// a lane is that lane's, as its own item is.
 fn inventory_of(
     items: &[OpenItem],
     containers: &BTreeSet<String>,
     fleet: &FleetState,
     read_at: u64,
 ) -> TrackerInventory {
-    let last_lane = |item: &str| fleet.lanes.iter().rfind(|l| l.item == item);
+    let last_lane = |item: &str| fleet.lanes.iter().rfind(|l| l.carries(item));
     let mut owed = Vec::new();
     let mut verifying = Vec::new();
     for item in items {
@@ -1244,7 +1260,8 @@ fn inventory_of(
         .lanes
         .iter()
         .filter(|l| l.status != LaneStatus::Done)
-        .map(|l| l.item.as_str())
+        .flat_map(|l| std::iter::once(&l.item).chain(l.carried.iter().map(|c| &c.item)))
+        .map(String::as_str)
         .chain(fleet.launch_queue.iter().map(String::as_str))
         .collect();
     // The rows sorted by id.
@@ -1969,7 +1986,14 @@ fn close_terminal_lanes(
         let Some(state) = terminal.get(&lane.item) else {
             continue;
         };
-        let Some(verdict) = state.verdict() else {
+        // A lane delivers every item joined to it: it ends with the last of
+        // them, and one this batch did not read ended holds it open.
+        let carried_ended = lane.carried.iter().all(|c| {
+            terminal
+                .get(&c.item)
+                .is_some_and(|state| state.verdict().is_some())
+        });
+        let Some(verdict) = state.verdict().filter(|_| carried_ended) else {
             produced.changes.push(Change::Clear {
                 kind: TERMINAL_CLOSE_ROW.to_owned(),
                 identity: lane.item.clone(),

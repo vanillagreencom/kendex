@@ -4387,6 +4387,14 @@ fn report_due_counts_distinct_direct_push_items_and_preserves_a_capped_old_windo
         world.write_fleet(&fleet("2026-10-02T06:00:00Z", rows));
         assert_eq!(report::due(&ctx, now, None).unwrap().as_deref(), want);
     }
+    // One landing of a lane carrying a joined item lands both items.
+    let mut joined = fleet("2026-10-02T06:00:00Z", vec![cycle("KEN-1", now - 1)]);
+    joined["lanes"][0]["carried"] = json!([{"item": "KEN-9", "at": "2026-10-02T07:00:00Z"}]);
+    world.write_fleet(&joined);
+    assert_eq!(
+        report::due(&ctx, now, None).unwrap().as_deref(),
+        Some("report-due reason=issues since=2026-10-02T06:00:00Z landed=2")
+    );
     world.write_fleet(&fleet(
         "2026-09-01T06:00:00Z",
         vec![cycle("KEN-1", now - 1)],

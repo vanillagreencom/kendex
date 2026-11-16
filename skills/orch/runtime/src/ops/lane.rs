@@ -30,7 +30,8 @@ use super::accounts;
 use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, CLOUD_KIND, Host, Identities, Occupancy, Read};
 use super::{
-    Effect, Standing, TargetMoved, lane_at, lane_doc_mut, lanes, open_intent, string_or_null,
+    Effect, Report, Standing, TargetMoved, lane_at, lane_doc_mut, lanes, open_intent,
+    string_or_null,
 };
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
@@ -581,6 +582,16 @@ pub struct LaneLaunched {
     pub admission: Occupancy,
 }
 
+/// A first launch the admission joined to a running lane before its review
+/// (`joined holder=<item>`): no record, no intent and no slot of its own;
+/// `lane` is the holder's record as the join wrote it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LaneJoined {
+    pub item: String,
+    pub holder: String,
+    pub lane: Lane,
+}
+
 /// A close asked for, with the lane as it stands until the stop confirms.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CloseRequested {
@@ -1103,7 +1114,7 @@ pub(super) fn launch_lane(
     r: &LaunchLane,
     env: &Env,
     host: &Host,
-) -> Result<LaneLaunched> {
+) -> Result<Report> {
     // A lane runs in a tmux window, on this machine or over ssh, or as a
     // cloud session; a kind nothing builds or another surface is refused
     // before any intent persists.
@@ -1191,11 +1202,11 @@ pub(super) fn launch_lane(
         let index = position.ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
         })?;
-        return Ok(LaneLaunched {
+        return Ok(Report::LaunchLane(Box::new(LaneLaunched {
             lane: lane_at(path, doc, index)?,
             effect: Effect::Reconciled { intent },
             admission,
-        });
+        })));
     }
     // The account boundary: the one thing this op refuses of the account is
     // the one the
@@ -1236,8 +1247,42 @@ pub(super) fn launch_lane(
         // a relaunch over one would make a second.
         no_live_harness(previous, ids)?;
     }
-    // The account's room, judged before the admission and the cap; a
-    // relaunch is judged with its own record's charge left out.
+    // The admission judgement, under the same launch lock and before the
+    // account's room and the cap, so one transition admits, joins or
+    // refuses with one cause: a first launch is judged on its item, its
+    // brief and the range it names; a relaunch keeps the record's sets,
+    // since a recorded lane's relaunch was judged when it was admitted.
+    let candidate = Admission {
+        item: &r.item,
+        tracker: r.tracker.as_deref(),
+        repo: r.repo.as_deref(),
+        brief_file: r.brief_file.as_deref(),
+        repo_dir: r.repo_dir.as_deref(),
+        scope_range: r.scope_range.as_ref(),
+        in_scope: &r.in_scope,
+        paths: &[],
+        checkout: Some(Path::new(&r.mail_root)),
+    };
+    let judged = match relaunch {
+        Some(_) => None,
+        None => Some(admission::judge(
+            path, &lanes, &intents, &candidate, env, host,
+        )?),
+    };
+    // A launch joined to a running lane opens none: no record, no intent,
+    // no slot and no account.
+    if let Some(judged) = &judged
+        && let Some(join) = &judged.join
+    {
+        let lane = admission::join(path, doc, &candidate, judged, join.holder, env, host)?;
+        return Ok(Report::Joined(Box::new(LaneJoined {
+            item: r.item.clone(),
+            holder: lane.item.clone(),
+            lane,
+        })));
+    }
+    // The account's room, judged before the cap; a relaunch is judged with
+    // its own record's charge left out.
     room(
         path,
         r,
@@ -1246,46 +1291,20 @@ pub(super) fn launch_lane(
         env,
         host,
     )?;
-    // The admission judgement, under the
-    // same launch lock and before the cap, so one transition admits or
-    // refuses with one cause: a first launch is judged on its item, its
-    // brief and the range it names; a relaunch keeps the record's sets,
-    // since a recorded lane's relaunch was judged when it was admitted.
-    let judged = match relaunch {
-        // A relaunch was judged when first admitted, bar where it runs and
-        // whose item it is: the binding, on its effective tracker and
-        // repository, before the patch writes them.
-        Some(index) => {
-            let record = &lanes[index];
-            admission::bound(
-                path,
-                &r.item,
-                r.tracker.as_deref().or(record.tracker.as_deref()),
-                r.repo.as_deref().or(record.repo.as_deref()),
-                Path::new(&r.mail_root),
-                host,
-            )?;
-            None
-        }
-        None => Some(admission::judge(
+    // A relaunch was judged when first admitted, bar where it runs and
+    // whose item it is: the binding, on its effective tracker and
+    // repository, before the patch writes them.
+    if let Some(index) = relaunch {
+        let record = &lanes[index];
+        admission::bound(
             path,
-            &lanes,
-            &intents,
-            &Admission {
-                item: &r.item,
-                tracker: r.tracker.as_deref(),
-                repo: r.repo.as_deref(),
-                brief_file: r.brief_file.as_deref(),
-                repo_dir: r.repo_dir.as_deref(),
-                scope_range: r.scope_range.as_ref(),
-                in_scope: &r.in_scope,
-                paths: &[],
-                checkout: Some(Path::new(&r.mail_root)),
-            },
-            env,
+            &r.item,
+            r.tracker.as_deref().or(record.tracker.as_deref()),
+            r.repo.as_deref().or(record.repo.as_deref()),
+            Path::new(&r.mail_root),
             host,
-        )?),
-    };
+        )?;
+    }
     if admission.occupancy >= cap && r.over_cap.is_none() {
         let lanes = admission
             .charges
@@ -1439,11 +1458,11 @@ pub(super) fn launch_lane(
     }
     .write(&mut intent.extra)?;
     push_intent(path, doc, &intent)?;
-    Ok(LaneLaunched {
+    Ok(Report::LaunchLane(Box::new(LaneLaunched {
         lane: lane_at(path, doc, index)?,
         effect: Effect::Persisted { intent },
         admission,
-    })
+    })))
 }
 
 /// The ground a close request stands on, judged on the
@@ -2574,11 +2593,9 @@ mod tests {
         assert_eq!(record["kind"], Value::from("local"));
         assert_eq!(record["surface"], Value::from("tmux"));
         assert_eq!(record["repo"], Value::Null);
-        // The admission's sets, judged on an item naming no Location: empty,
-        // and no obligation key where none was recorded.
+        // The admission's sets, judged on an item naming no Location: empty.
         assert_eq!(record["touched"], json!([]));
         assert_eq!(record["in_scope"], json!([]));
-        assert!(record.get("rebase").is_none());
         let body = fleet(&path);
         assert_eq!(body.lanes.len(), 2);
         assert_eq!(body.intents.len(), 1);

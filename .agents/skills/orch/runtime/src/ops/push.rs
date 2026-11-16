@@ -1022,18 +1022,13 @@ pub fn run(
         bound = Some((current.clone(), Some(dir)));
     }
     let at_worktree = crate::validate::entry::resolve_at(&worktree, flags)?;
-    let delivery = at_worktree
-        .validate
-        .delivery
-        .clone()
-        .unwrap_or_else(|| "pr".into());
-    let base_delivery = delivery == "push-base";
+    let base_delivery = at_worktree.validate.delivery()? == crate::settings::Delivery::PushBase;
     match r {
         RecordPush::Branch { .. } if base_delivery => {
             return Err(refuse("delivery-phase", &[("phase", "missing")]));
         }
         RecordPush::Prepare { .. } | RecordPush::Publish { .. } if !base_delivery => {
-            return Err(refuse("delivery-phase", &[("delivery", &delivery)]));
+            return Err(refuse("delivery-phase", &[("delivery", "pr")]));
         }
         _ => {}
     }

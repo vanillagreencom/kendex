@@ -1274,8 +1274,10 @@ fn merged(
             parked_merged(&entry.item, parked_key, produced);
         }
     }
-    // A Verifying item no live lane carries has its landing in the index the
-    // verification pass reads, with no line and no row: no lane waits on it.
+    // A Verifying item no live lane carries as its own has its landing in the
+    // index the verification pass reads, with no line and no row: no lane
+    // waits on it. An item joined to a lane lands with that lane's pull
+    // request, which its record names.
     let carried: BTreeSet<&str> = items.iter().map(|e| e.item.as_str()).collect();
     let uncarried: Vec<Landing> = inputs
         .verifying
@@ -1287,7 +1289,7 @@ fn merged(
             recorded: inputs
                 .lanes
                 .iter()
-                .rfind(|l| l.item == v.id)
+                .rfind(|l| l.carries(&v.id))
                 .and_then(recorded),
         })
         .collect();

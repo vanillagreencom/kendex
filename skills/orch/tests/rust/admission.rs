@@ -19,7 +19,7 @@
 mod support;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -192,11 +192,17 @@ impl Fleet {
         assert!(out.status.success(), "init: {}", stderr(&out));
     }
 
-    /// An item state for `item` naming `branch`: what a holder's rebase
-    /// obligation reads its branch from.
+    /// An item state for `item` naming `branch`, the branch a holder's own
+    /// pull request is named by.
     fn init_item(&self, item: &str, branch: &str) {
         let out = self.run(&["state", "init", "--item", item, "--branch", branch]);
         assert!(out.status.success(), "init {item}: {}", stderr(&out));
+    }
+
+    /// An open `review` stage in the current session of `item`, whose item
+    /// state stands in the fleet's state directory: a holder in its review.
+    fn review(&self, item: &str) {
+        stage(&self.state_dir(), item, "review");
     }
 
     /// The tracker's GraphQL answer for `item` as `issues get` receives it
@@ -346,6 +352,51 @@ fn holder(item: &str, status: &str, process: Option<&Owned>, touched: Option<&[&
     record
 }
 
+/// The epoch second of a [`holder`]'s `session_since`, plus one minute: a
+/// stage that opened in the holder's current session.
+const IN_SESSION: u64 = 1_769_698_860;
+
+/// An open stage of `kind` in the current session of `item`, written into
+/// its item state under `dir`, over a state that stands there or a new one.
+fn stage(dir: &Path, item: &str, kind: &str) {
+    stages(
+        dir,
+        item,
+        json!([{"kind": kind, "round_id": "r1", "start": IN_SESSION}]),
+    );
+}
+
+/// The stages `list` as the item state of `item` under `dir` records them,
+/// over a state that stands there or a new one.
+fn stages(dir: &Path, item: &str, list: Value) {
+    let path = dir.join(format!("workflow-state-{item}.json"));
+    let mut doc: Value = std::fs::read_to_string(&path)
+        .map(|text| serde_json::from_str(&text).unwrap())
+        .unwrap_or_else(|_| json!({}));
+    doc["stages"] = list;
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+}
+
+/// The directives `item`'s lane inbox under the checkout `root` holds, one
+/// envelope each.
+fn inbox(root: &Path, item: &str) -> Vec<Value> {
+    std::fs::read_to_string(root.join(format!("tmp/lane-mail/{item}/to-lane.jsonl")))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// The report of a launch reply: a join's, which runs no effect, or a
+/// persisted launch's.
+fn joined_or_launched(answer: &Value) -> &Value {
+    match &answer["result"]["persisted"] {
+        Value::Null => &answer["result"]["report"],
+        persisted => &persisted["report"],
+    }
+}
+
 fn launch(item: &str, mail_root: &Path) -> Value {
     json!({
         "op": "launch-lane",
@@ -477,17 +528,17 @@ fn pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// At the holder: a holder whose recorded harness is a live process blocks
-/// the launch with its id and nothing is written; the same holder ended,
-/// its record still reading `running`, yields: the launch is admitted, its
-/// record carries the touched set and a rebase obligation naming the holder
-/// and the branch its item state records, and the holder's record keeps
-/// every field.
+/// At the holder: a holder in its review whose recorded harness is a live
+/// process blocks the launch with its id and nothing is written; the same
+/// holder ended, its record still reading `running`, yields: the launch is
+/// admitted, its record carries the touched set and no order, and the
+/// holder's record keeps every field.
 #[test]
-fn a_live_holder_blocks_the_launch_and_a_gone_one_yields_with_a_rebase_obligation() {
+fn a_live_holder_in_review_blocks_the_launch_and_a_gone_one_yields() {
     let fleet = Fleet::new();
     fleet.init_fleet();
     fleet.init_item("KEN-H", "ken-h");
+    fleet.review("KEN-H");
     fleet.item("KEN-L", "`src/a.sh`, `docs/x.md`", 0, &[]);
     let mut harness = Owned::sleep();
     fleet.write_lanes(vec![holder(
@@ -514,6 +565,34 @@ fn a_live_holder_blocks_the_launch_and_a_gone_one_yields_with_a_rebase_obligatio
     assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
     assert!(live(harness.pid()), "a refused launch signals nothing");
 
+    // Under direct delivery the publication takes the order: the holder in
+    // its review lets a first launch on its path pass, no order and no join
+    // written; a delivery word outside the two refuses the launch.
+    fleet.item("KEN-D", "`src/a.sh`", 0, &[]);
+    let direct = |word: &str| {
+        fleet.op_with(
+            &launch("KEN-D", fleet.state_dir().as_path()),
+            &[("ORCH_DELIVERY", word)],
+        )
+    };
+    let (key, fields) = refusal(&direct("push_base"));
+    assert_eq!(key, "setting-invalid");
+    assert_eq!(
+        fields,
+        pairs(&[("key", "ORCH_DELIVERY"), ("value", "push_base")])
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+    let out = direct("push-base");
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let lane = fleet.lane("KEN-D");
+    assert_eq!(lane["touched"], json!(["src/a.sh"]));
+    assert_eq!(lane.get("rebase"), None, "no order is recorded");
+    assert_eq!(
+        fleet.lane("KEN-H"),
+        before["lanes"][0],
+        "the holder in its review is not joined"
+    );
+
     end(&mut harness);
     let out = fleet.op(&launch("KEN-L", fleet.state_dir().as_path()));
     let answer = reply(&out);
@@ -521,14 +600,9 @@ fn a_live_holder_blocks_the_launch_and_a_gone_one_yields_with_a_rebase_obligatio
     let lane = fleet.lane("KEN-L");
     assert_eq!(lane["touched"], json!(["docs/x.md", "src/a.sh"]));
     assert_eq!(lane["in_scope"], json!([]));
-    let rebase = lane["rebase"].as_array().unwrap();
-    assert_eq!(rebase.len(), 1);
-    assert_eq!(rebase[0]["holder"], "KEN-H");
-    assert_eq!(rebase[0]["branch"], "ken-h");
-    assert_eq!(rebase[0]["paths"], json!(["src/a.sh"]));
-    assert!(rebase[0]["at"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(lane.get("rebase"), None, "no order is recorded");
     assert_eq!(
-        answer["result"]["persisted"]["report"]["lane"]["rebase"][0]["holder"], "KEN-H",
+        answer["result"]["persisted"]["report"]["lane"]["touched"], lane["touched"],
         "the reply carries the judgement"
     );
     assert_eq!(
@@ -544,15 +618,15 @@ fn a_live_holder_blocks_the_launch_and_a_gone_one_yields_with_a_rebase_obligatio
 /// A record reading `done`: the item's next phase is
 /// judged as a first launch, on its item, its brief and the range it
 /// names, over the record's slot. KEN-L's done record keeps its earlier
-/// sets; a live holder of a path the item now names refuses
-/// `launch-overlap`, and with the holder gone and an open pull request on
-/// the path the launch is admitted with both obligations on the record,
-/// its touched set the item's.
+/// sets; a live holder in its review of a path the item now names refuses
+/// `launch-overlap`, and with the holder gone, an open pull request on the
+/// path beside it, the launch is admitted, its touched set the item's.
 #[test]
 fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
     fleet.init_item("KEN-H", "ken-h");
+    fleet.review("KEN-H");
     fleet.item("KEN-L", "`src/a.sh`, `docs/x.md`", 0, &[]);
     let mut harness = Owned::sleep();
     let mut live = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
@@ -587,13 +661,6 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
         json!(["docs/x.md", "src/a.sh"]),
         "the item's set, never the done record's"
     );
-    let holders: Vec<&str> = lane["rebase"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|o| o["holder"].as_str().unwrap())
-        .collect();
-    assert_eq!(holders, ["KEN-H", "#7"], "{lane}");
     assert_eq!(fleet.lane_count(), 2, "the record's slot is taken");
     assert_eq!(fleet.lane("KEN-H"), before["lanes"][0]);
 }
@@ -711,6 +778,8 @@ fn an_unreadable_holder_blocks_the_launch_and_never_admits() {
 fn a_path_only_one_source_names_overlaps_the_holder() {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
+    fleet.init_item("KEN-H", "ken-h");
+    fleet.review("KEN-H");
     let mut harness = Owned::sleep();
     fleet.write_lanes(vec![holder(
         "KEN-H",
@@ -787,11 +856,6 @@ fn a_path_only_one_source_names_overlaps_the_holder() {
         json!(["docs/only.md", "src/b.sh", "src/c.sh"])
     );
     assert_eq!(lane["in_scope"], json!(["src/b.sh"]));
-    assert_eq!(
-        lane["rebase"][0]["paths"],
-        json!(["src/c.sh"]),
-        "the in-scope path is left out of the obligation"
-    );
 }
 
 /// A container, by children or by the `agent:multi` label, is refused from
@@ -857,15 +921,13 @@ fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
 }
 
 /// A running lane's added path is judged against the holders through
-/// `admit` and widens its record with the touched set and the obligation a
-/// stopped holder yields, a holder already recorded keeping its first stamp
-/// and gaining the paths, the standing scope kept; a live holder refuses it
-/// with its id and the record stays as it was; a done lane refuses.
+/// `admit` and widens its record's touched set past a stopped holder, which
+/// yields, the standing scope kept; a live holder refuses it with its id
+/// and the record stays as it was; a done lane refuses.
 #[test]
 fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder() {
     let fleet = Fleet::new();
     fleet.init_fleet();
-    fleet.init_item("KEN-S", "ken-s");
     let live_holder = Owned::sleep();
     let mut ended = Owned::sleep();
     end(&mut ended);
@@ -873,7 +935,6 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
         json!({
             "item": "KEN-L", "tracker": "linear", "harness": "claude", "status": "running",
             "mail_root": "/w/l", "touched": ["src/a.sh"], "in_scope": ["docs/"],
-            "rebase": [{"holder": "KEN-S", "branch": "ken-s", "paths": ["src/a.sh"], "at": "2026-01-01T00:00:00Z"}],
             "launch": {"pane": "%1", "server": 41020, "pid": 1, "start": "ticks:1"},
         }),
         json!({
@@ -896,16 +957,12 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
         answer["result"]["touched"],
         json!(["src/a.sh", "src/b.sh", "src/new.sh"])
     );
-    assert_eq!(answer["result"]["rebase"][0]["holder"], "KEN-S");
-    assert_eq!(answer["result"]["rebase"][0]["branch"], "ken-s");
     assert_eq!(answer["result"]["in_scope"], json!(["docs/"]));
     let lane = fleet.lane("KEN-L");
     assert_eq!(
         lane["touched"],
         json!(["src/a.sh", "src/b.sh", "src/new.sh"])
     );
-    assert_eq!(lane["rebase"][0]["paths"], json!(["src/a.sh", "src/b.sh"]));
-    assert_eq!(lane["rebase"][0]["at"], "2026-01-01T00:00:00Z");
     assert_eq!(
         lane["status"], "running",
         "the record moves in nothing else"
@@ -929,13 +986,6 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     assert_eq!(answer["ok"], true, "{}", stderr(&out));
     assert_eq!(answer["result"]["recorded"], false);
     assert_eq!(answer["result"]["touched"], json!(["src/s.sh"]));
-    assert_eq!(
-        answer["result"]["rebase"],
-        json!([{
-            "holder": "KEN-S", "branch": "ken-s", "paths": ["src/s.sh"],
-            "at": answer["result"]["rebase"][0]["at"],
-        }])
-    );
     assert_eq!(fleet.fleet(), before);
 
     let out = fleet.admit(&json!({"item": "KEN-D", "paths": ["src/z.sh"]}));
@@ -943,163 +993,89 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     assert_eq!(fleet.fleet(), before);
 }
 
-/// An open same-repository pull request touching a candidate path is a
-/// holder with no lane: the launch yields, its record carrying a rebase
-/// obligation naming `#N` and the head branch, a rename's old path among
-/// the shared paths; one touching no candidate path, a fork's and a merged
-/// one (listed open, read closed by number) hold nothing. The open list is
-/// read once, each pull request by number, and the files of the open
-/// same-repository ones alone.
+/// A live holder before its review stage that owns an open pull request,
+/// one on its head branch (its item key), is in its review: the candidate
+/// sharing its path is refused `launch-overlap` with nothing written and
+/// the holder told nothing; a pull request on another branch, a fork's or
+/// a closed one is not the holder's, and the candidate joins it.
 #[test]
-fn an_open_pull_request_on_a_candidate_path_yields_with_a_rebase_obligation_naming_its_branch_and_number()
- {
+fn a_holder_owning_an_open_pull_request_is_in_its_review_and_never_joined() {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
-    fleet.item("KEN-L", "`src/a.sh`, `docs/x.md`", 0, &[]);
-    let mut renamed = fake_pull(7, "feature/x", &["src/a.sh"]);
-    renamed
-        .files
-        .push(json!({"filename": "src/moved.sh", "previous_filename": "docs/x.md"}));
-    let mut fork = fake_pull(9, "fork-work", &["src/a.sh"]);
+    fleet.item("KEN-N", "`docs/x.md`", 0, &[]);
+    let root = fleet.checkout("t", None);
+    let harness = Owned::sleep();
+    let mut t = holder("KEN-T", "running", Some(&harness), Some(&["docs/x.md"]));
+    t["repo"] = json!("o/r");
+    t["mail_root"] = json!(root.display().to_string());
+    fleet.write_lanes(vec![t]);
+    let mut request = launch("KEN-N", &fleet.checkout("n", None));
+    request["repo"] = json!("o/r");
+    fleet.gh_api(&gh_map(&[fake_pull(8, "KEN-T", &["docs/x.md"])]));
+    let before = fleet.fleet();
+
+    let (key, fields) = refusal(&fleet.op(&request));
+    assert_eq!(key, "launch-overlap");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-N"),
+            ("file", "docs/x.md"),
+            ("holder", "KEN-T")
+        ])
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+    assert!(inbox(&root, "KEN-T").is_empty());
+    let (key, _) = refusal(&fleet.op_with(&request, &[("ORCH_DELIVERY", "push-base")]));
+    assert_eq!(key, "launch-overlap", "its pull request keeps the order");
+    assert_eq!(fleet.fleet(), before);
+
+    let mut fork = fake_pull(9, "KEN-T", &["docs/x.md"]);
     fork.head_repo = Some("fork/r");
-    let mut merged = fake_pull(10, "merged-work", &["docs/x.md"]);
+    let mut merged = fake_pull(10, "KEN-T", &["docs/x.md"]);
     merged.state = "closed";
     fleet.gh_api(&gh_map(&[
-        renamed,
-        fake_pull(8, "docs-only", &["README.md"]),
+        fake_pull(8, "other-work", &["docs/x.md"]),
         fork,
         merged,
     ]));
-    let mut request = launch("KEN-L", fleet.state_dir().as_path());
-    request["repo"] = json!("o/r");
     let out = fleet.op(&request);
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    let lane = fleet.lane("KEN-L");
-    assert_eq!(lane["touched"], json!(["docs/x.md", "src/a.sh"]));
-    let rebase = lane["rebase"].as_array().unwrap();
-    assert_eq!(
-        rebase.len(),
-        1,
-        "one holder, the open same-repository pull request on a candidate path: {rebase:?}"
-    );
-    assert_eq!(rebase[0]["holder"], "#7");
-    assert_eq!(rebase[0]["branch"], "feature/x");
-    assert_eq!(rebase[0]["paths"], json!(["docs/x.md", "src/a.sh"]));
-    assert!(rebase[0]["at"].as_str().unwrap().ends_with('Z'));
-    assert_eq!(
-        fleet.gh_log(),
-        [
-            format!("api {PULLS_LIST}"),
-            "api repos/o/r/pulls/7".to_owned(),
-            "api repos/o/r/pulls/7/files?per_page=100&page=1".to_owned(),
-            "api repos/o/r/pulls/8".to_owned(),
-            "api repos/o/r/pulls/8/files?per_page=100&page=1".to_owned(),
-            "api repos/o/r/pulls/9".to_owned(),
-            "api repos/o/r/pulls/10".to_owned(),
-        ],
-        "the list once, each pull request by number, the files of the open same-repository ones alone"
-    );
-}
-
-/// With the lanes of this fleet, a pull request a lane record names, by its
-/// `pending_pr` number or by its head branch (the lane's item key), is
-/// judged as that lane, once; a `done` record names none, so the open pull
-/// request it left is a holder as a pull request; and the item's own pull
-/// request, on its branch, is no holder against a path the running lane
-/// adds.
-#[test]
-fn a_pull_request_a_lane_record_of_this_fleet_names_is_judged_once_as_that_lane() {
-    let mut fleet = Fleet::new();
-    fleet.init_fleet();
-    fleet.init_item("KEN-S", "ken-s");
-    fleet.item("KEN-N", "`src/a.sh`, `docs/x.md`", 0, &[]);
-    let mut ended_s = Owned::sleep();
-    end(&mut ended_s);
-    let mut ended_t = Owned::sleep();
-    end(&mut ended_t);
-    let mut s = holder("KEN-S", "running", Some(&ended_s), Some(&["src/a.sh"]));
-    s["repo"] = json!("o/r");
-    s["pending_pr"] = json!({"repo": "o/r", "pr": 7});
-    let mut t = holder("KEN-T", "running", Some(&ended_t), Some(&["docs/x.md"]));
-    t["repo"] = json!("o/r");
-    let mut d = holder("KEN-D", "done", None, Some(&["src/a.sh"]));
-    d["repo"] = json!("o/r");
-    d["pending_pr"] = json!({"repo": "o/r", "pr": 11});
-    let l = json!({
-        "item": "KEN-L", "tracker": "linear", "repo": "o/r", "harness": "claude",
-        "status": "running", "mail_root": "/w/l", "touched": ["src/l.sh"], "in_scope": [],
-        "launch": {"pane": "%1", "server": 41020, "pid": 1, "start": "ticks:1"},
-    });
-    fleet.write_lanes(vec![s, t, d, l]);
-    fleet.gh_api(&gh_map(&[
-        fake_pull(7, "ken-s-work", &["src/a.sh"]),
-        fake_pull(8, "KEN-T", &["docs/x.md"]),
-        fake_pull(11, "ken-d-work", &["src/a.sh"]),
-        fake_pull(12, "ken-l", &["src/new.sh"]),
-    ]));
-    let out = fleet.admit(&json!({"item": "KEN-N", "tracker": "linear", "repo": "o/r"}));
-    let answer = reply(&out);
-    assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    let rebase = answer["result"]["rebase"].as_array().unwrap();
-    let holders: Vec<&str> = rebase
-        .iter()
-        .map(|o| o["holder"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        holders,
-        ["KEN-S", "KEN-T", "#11"],
-        "each lane holder once, as its lane; the done record's pull request as a pull request: {rebase:?}"
-    );
-    assert_eq!(rebase[0]["branch"], "ken-s", "the lane's recorded branch");
-    assert_eq!(rebase[0]["paths"], json!(["src/a.sh"]));
-    assert!(
-        rebase[1]["branch"].is_null(),
-        "no item state names a branch"
-    );
-    assert_eq!(rebase[1]["paths"], json!(["docs/x.md"]));
-    assert_eq!(rebase[2]["branch"], "ken-d-work", "the pull request's head");
-    assert_eq!(rebase[2]["paths"], json!(["src/a.sh"]));
-
-    let out = fleet.admit(&json!({"item": "KEN-L", "repo": "o/r", "paths": ["src/new.sh"]}));
-    let answer = reply(&out);
-    assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    assert_eq!(answer["result"]["recorded"], true);
-    assert_eq!(
-        answer["result"]["rebase"],
-        json!([]),
-        "the lane's own pull request holds nothing against it"
-    );
-    assert_eq!(
-        fleet.lane("KEN-L")["touched"],
-        json!(["src/l.sh", "src/new.sh"])
-    );
+    assert_eq!(joined_or_launched(&answer)["holder"], "KEN-T");
+    assert_eq!(inbox(&root, "KEN-T").len(), 1);
 }
 
 /// The fleet's own repository, which a request names by its checkout alone
-/// (`repo_dir`; its lane records name none): the repository is what `gh
-/// repo view` answers in the checkout, else what its `origin` remote names
-/// on github.com, and that repository's open pull requests hold their
-/// files; a checkout naming no GitHub repository refuses
-/// `holders-unreadable read=repo` with nothing written, never admitted past
-/// unread holders.
+/// (`repo_dir`; its lane records name none): the pull requests a join reads
+/// are that repository's, what `gh repo view` answers in the checkout, else
+/// what its `origin` remote names on github.com; a checkout naming no GitHub
+/// repository refuses `holders-unreadable read=repo` with nothing written,
+/// never joined past unread pull requests.
 #[test]
 fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin() {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
     fleet.item("KEN-L", "`src/a.sh`", 0, &[]);
     fleet.item("KEN-M", "`src/m.sh`", 0, &[]);
+    let root = fleet.checkout("h", None);
+    let harness = Owned::sleep();
+    let mut held = holder(
+        "KEN-H",
+        "running",
+        Some(&harness),
+        Some(&["src/a.sh", "src/m.sh"]),
+    );
+    held["mail_root"] = json!(root.display().to_string());
+    fleet.write_lanes(vec![held]);
     let repo = fleet.dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main", "."]);
-    let mut map = gh_map(&[
-        fake_pull(7, "feat-a", &["src/a.sh"]),
-        fake_pull(8, "feat-m", &["src/m.sh"]),
-    ]);
+    let mut map = gh_map(&[fake_pull(7, "feat-a", &["src/a.sh"])]);
     fleet.gh_api(&map);
-    let mut launch_l = launch("KEN-L", fleet.state_dir().as_path());
+    let mut launch_l = launch("KEN-L", &fleet.checkout("l", None));
     launch_l["repo_dir"] = json!(repo.display().to_string());
-    let mut launch_m = launch("KEN-M", fleet.state_dir().as_path());
+    let mut launch_m = launch("KEN-M", &fleet.checkout("m", None));
     launch_m["repo_dir"] = json!(repo.display().to_string());
     let before = fleet.fleet();
     // No origin, and gh naming none: the repository cannot be named.
@@ -1115,9 +1091,9 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
         ])
     );
     assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
-    // The origin names github.com, gh still naming none: #7 holds src/a.sh.
-    // A repository the environment names for other commands is not the
-    // checkout's.
+    // The origin names github.com, gh still naming none: `o/r`'s pull
+    // requests are read and none is the holder's. A repository the
+    // environment names for other commands is not the checkout's.
     git(
         &repo,
         &["remote", "add", "origin", "git@github.com:O/r.git"],
@@ -1126,13 +1102,10 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
         &launch_l,
         &[("GH_REPO", "o/other"), ("GITHUB_REPOSITORY", "o/other")],
     );
-    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    let rebase = fleet.lane("KEN-L")["rebase"].clone();
-    assert_eq!(rebase.as_array().map(Vec::len), Some(1), "{rebase:?}");
-    assert_eq!(rebase[0]["holder"], "#7");
-    assert_eq!(rebase[0]["branch"], "feat-a");
-    // gh answers, ahead of an origin naming no GitHub host: #8 holds
-    // src/m.sh.
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert_eq!(joined_or_launched(&answer)["op"], "joined");
+    // gh answers, ahead of an origin naming no GitHub host.
     map["repo view"] = json!({"text": "O/r\n"});
     fleet.gh_api(&map);
     git(
@@ -1145,11 +1118,9 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
         ],
     );
     let out = fleet.op(&launch_m);
-    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    let rebase = fleet.lane("KEN-M")["rebase"].clone();
-    assert_eq!(rebase.as_array().map(Vec::len), Some(1), "{rebase:?}");
-    assert_eq!(rebase[0]["holder"], "#8");
-    assert_eq!(rebase[0]["branch"], "feat-m");
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert_eq!(joined_or_launched(&answer)["op"], "joined");
     let log = fleet.gh_log();
     let view = "repo view --json nameWithOwner -q .nameWithOwner";
     assert_eq!(
@@ -1166,36 +1137,32 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
     );
 }
 
-/// At the pull requests: a failed list, a member the documented shape does
-/// not decode, a pull request answering nothing, a state outside the
-/// documented pair, a files list short of the pull request's count and a
-/// file with no name each refuse `holders-unreadable` naming the read, with
-/// nothing written, although a lane holder stood ready to yield; an item
-/// touching nothing reads no pull request.
+/// At the pull requests a join reads: a failed list, a member the
+/// documented shape does not decode, a pull request answering nothing and a
+/// state outside the documented pair each refuse `holders-unreadable`
+/// naming the read, with nothing written and the holder told nothing,
+/// although a live holder before its review stood ready to be joined; a
+/// candidate beside a holder that yields reads no pull request.
 #[test]
-fn a_gh_failure_a_short_files_list_and_a_malformed_member_each_refuse_holders_unreadable_with_nothing_written()
- {
+fn a_gh_failure_or_a_malformed_member_refuses_a_join_holders_unreadable_with_nothing_written() {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
     fleet.item("KEN-L", "`src/a.sh`", 0, &[]);
-    let mut ended = Owned::sleep();
-    end(&mut ended);
-    let mut yielding = holder("KEN-S", "running", Some(&ended), Some(&["src/a.sh"]));
-    yielding["repo"] = json!("o/r");
-    fleet.write_lanes(vec![yielding]);
+    let root = fleet.checkout("s", None);
+    let mut harness = Owned::sleep();
+    let mut joinable = holder("KEN-S", "running", Some(&harness), Some(&["src/a.sh"]));
+    joinable["repo"] = json!("o/r");
+    joinable["mail_root"] = json!(root.display().to_string());
+    fleet.write_lanes(vec![joinable]);
     let before = fleet.fleet();
-    let mut short = fake_pull(7, "feat", &["src/a.sh", "src/b.sh"]);
-    short.changed = Some(3);
     let mut weird = fake_pull(7, "feat", &["src/a.sh"]);
     weird.state = "weird";
-    let mut nameless = fake_pull(7, "feat", &[]);
-    nameless.files = vec![json!({"status": "modified"})];
     let mut unanswered = gh_map(&[fake_pull(7, "feat", &["src/a.sh"])]);
     unanswered
         .as_object_mut()
         .unwrap()
         .remove("repos/o/r/pulls/7");
-    let rows: [(&str, Value, &str); 6] = [
+    let rows: [(&str, Value, &str); 4] = [
         (
             "a failed list",
             json!({PULLS_LIST: {"exit": 1, "stderr": "gh: HTTP 500: boom"}}),
@@ -1212,10 +1179,8 @@ fn a_gh_failure_a_short_files_list_and_a_malformed_member_each_refuse_holders_un
             gh_map(&[weird]),
             "pull",
         ),
-        ("a files list short of its count", gh_map(&[short]), "files"),
-        ("a file with no name", gh_map(&[nameless]), "files"),
     ];
-    let mut request = launch("KEN-L", fleet.state_dir().as_path());
+    let mut request = launch("KEN-L", &fleet.checkout("l", None));
     request["repo"] = json!("o/r");
     for (defect, map, read) in rows {
         fleet.gh_api(&map);
@@ -1235,92 +1200,232 @@ fn a_gh_failure_a_short_files_list_and_a_malformed_member_each_refuse_holders_un
             stderr(&out)
         );
         assert_eq!(fleet.fleet(), before, "{defect}: a refusal writes nothing");
+        assert!(inbox(&root, "KEN-S").is_empty(), "{defect}");
     }
-    // An item whose body names no path has nothing to hold: no pull request
-    // is read, and the failing map above is never reached.
+    // The holder gone, the candidate joins nothing: no pull request is read,
+    // and the failing map above is never reached.
+    end(&mut harness);
     let reads = fleet.gh_log().len();
-    fleet.plant("KEN-E", json!({"description": "Touches nothing."}));
-    let mut request = launch("KEN-E", fleet.state_dir().as_path());
-    request["repo"] = json!("o/r");
     let out = fleet.op(&request);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
     assert_eq!(
         fleet.gh_log().len(),
         reads,
-        "an empty candidate set reads no pull request"
+        "a launch that joins no lane reads no pull request"
     );
 }
 
-/// The judgement runs inside the fleet launch lock, so two contenders on
-/// one path are judged one after the other: the second reads the first's
-/// committed record, as a live holder (its preparing row under its open
-/// launch intent) or, once the first's launch ended, as a yielding one;
-/// never does each admit the other's path unseen.
+/// A first launch sharing a path with a running lane on this disk whose
+/// current session holds no review stage joins that lane: the reply is
+/// `joined` naming the holder, the holder's record carries the item with
+/// its touched set widened, no record, intent or slot is the candidate's
+/// (the cap of one the holder fills admits it), and the holder's own inbox
+/// holds the item's brief, which a repeated launch delivers once. The
+/// holder's recorded `micro` tier is judged over the widened set: a
+/// candidate whose brief names an instruction file needs `small` and is
+/// refused `join-tier-narrower`. Once the holder's session holds a review
+/// stage, ended with a fix round open after it, the next candidate is
+/// refused `launch-overlap`.
 #[test]
-fn two_contenders_on_one_path_are_judged_one_after_the_other() {
+fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_told() {
     let fleet = Fleet::new();
     fleet.init_fleet();
-    fleet.item("KEN-X", "`src/a.sh`", 0, &[]);
-    fleet.item("KEN-Y", "`src/a.sh`", 0, &[]);
-    let x = fleet.request_file("x", &launch("KEN-X", fleet.state_dir().as_path()));
-    let y = fleet.request_file("y", &launch("KEN-Y", fleet.state_dir().as_path()));
-    let spawn = |request: &Path| {
-        fleet
-            .command(&["op", "--fleet", "--request", &request.display().to_string()])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-    let mut children = vec![spawn(&x), spawn(&y)];
-    let outputs: Vec<Output> = children
-        .drain(..)
-        .map(|c| c.wait_with_output().unwrap())
-        .collect();
-    let replies: Vec<Value> = outputs.iter().map(reply).collect();
-    let unseen = replies
-        .iter()
-        .filter(|r| {
-            r["ok"] == true
-                && r["result"]["persisted"]["report"]["lane"]["rebase"]
-                    .as_array()
-                    .is_none_or(Vec::is_empty)
-        })
-        .count();
+    let root = fleet.checkout("h", None);
+    let harness = Owned::sleep();
+    let mut held = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
+    held["mail_root"] = json!(root.display().to_string());
+    held["tier"] = json!("micro");
+    fleet.write_lanes(vec![held]);
+    fleet.item("KEN-L", "`src/a.sh`", 0, &[]);
+    let brief = fleet.dir.path().join("brief.md");
+    std::fs::write(&brief, "Change `src/a.sh` for KEN-L.\n").unwrap();
+    let mut request = launch("KEN-L", &fleet.checkout("l", None));
+    request["brief_file"] = json!(brief.display().to_string());
+    let cap = [("ORCH_OVERSEER_LANES", "1")];
+
+    let out = fleet.op_with(&request, &cap);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    let report = joined_or_launched(&answer);
     assert_eq!(
-        unseen, 1,
-        "exactly one contender saw no holder: {replies:#?}"
+        (&report["op"], &report["item"], &report["holder"]),
+        (&json!("joined"), &json!("KEN-L"), &json!("KEN-H")),
+        "{report}"
     );
-    let first = replies
-        .iter()
-        .find(|r| {
-            r["ok"] == true
-                && r["result"]["persisted"]["report"]["lane"]["rebase"]
-                    .as_array()
-                    .is_none_or(Vec::is_empty)
-        })
-        .map(|r| r["result"]["persisted"]["report"]["lane"]["item"].clone())
-        .unwrap();
-    let other = replies
-        .iter()
-        .find(|r| r["result"]["persisted"]["report"]["lane"]["item"] != first)
-        .unwrap();
-    if other["ok"] == true {
-        assert_eq!(
-            other["result"]["persisted"]["report"]["lane"]["rebase"][0]["holder"], first,
-            "the second read the first's ended record and owes it a rebase"
-        );
-    } else {
-        assert_eq!(other["refusal"]["key"], "launch-overlap");
-        let holder = other["refusal"]["fields"]
-            .as_array()
+    assert_eq!(fleet.lane_count(), 1, "no record is the candidate's");
+    assert_eq!(fleet.fleet()["intents"], json!([]), "no intent");
+    let lane = fleet.lane("KEN-H");
+    assert_eq!(lane["carried"].as_array().unwrap().len(), 1, "{lane}");
+    assert_eq!(
+        (&lane["carried"][0]["item"], &lane["carried"][0]["tracker"]),
+        (&json!("KEN-L"), &json!("linear"))
+    );
+    assert_eq!(lane["touched"], json!(["src/a.sh"]));
+    let told = inbox(&root, "KEN-H");
+    assert_eq!(told.len(), 1, "{told:?}");
+    let text = told[0]["text"].as_str().unwrap();
+    assert!(
+        text.starts_with("joined item=KEN-L holder=KEN-H") && text.contains("for KEN-L."),
+        "{text}"
+    );
+
+    let out = fleet.op_with(&request, &cap);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(fleet.lane("KEN-H")["carried"], lane["carried"]);
+    assert_eq!(inbox(&root, "KEN-H").len(), 1, "a repeated join lands once");
+
+    fleet.item("KEN-T", "`src/a.sh`", 0, &[]);
+    std::fs::write(&brief, "Change `src/a.sh` and `skills/x/SKILL.md`.\n").unwrap();
+    let mut wider = launch("KEN-T", &fleet.checkout("t", None));
+    wider["brief_file"] = json!(brief.display().to_string());
+    let before = fleet.fleet();
+    let (key, fields) = refusal(&fleet.op_with(&wider, &cap));
+    assert_eq!(key, "join-tier-narrower");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-T"),
+            ("holder", "KEN-H"),
+            ("tier", "micro"),
+            ("needs", "small")
+        ])
+    );
+    assert_eq!(fleet.fleet(), before, "a refused join writes nothing");
+
+    // Its review ended and a fix round opened after it: the review ran in
+    // this session, so the lane is in review.
+    stages(
+        &root.join("tmp"),
+        "KEN-H",
+        json!([
+            {"kind": "review", "round_id": "r1", "start": IN_SESSION, "end": IN_SESSION + 60},
+            {"kind": "fix", "round_id": "r1", "start": IN_SESSION + 60},
+        ]),
+    );
+    fleet.item("KEN-M", "`src/a.sh`", 0, &[]);
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-M", &fleet.checkout("m", None))));
+    assert_eq!(key, "launch-overlap");
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-M"), ("file", "src/a.sh"), ("holder", "KEN-H")])
+    );
+    assert_eq!(inbox(&root, "KEN-H").len(), 1);
+}
+
+/// A holder the join cannot judge or reach keeps the candidate out by
+/// name, nothing written: a local holder whose item state is no object
+/// refuses `holder-unreadable read=stage`; a hosted holder in flight,
+/// whose stage and mailbox are on its host, refuses `join-unreachable
+/// route=hosted`.
+#[test]
+fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_joined() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let root = fleet.checkout("h", None);
+    let harness = Owned::sleep();
+    let mut held = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
+    held["mail_root"] = json!(root.display().to_string());
+    let mut hosted = holder("KEN-R", "running", None, Some(&["src/r.sh"]));
+    hosted["host"] = json!("/w/provider");
+    hosted["kind"] = json!("ssh");
+    fleet.write_lanes(vec![held, hosted]);
+    std::fs::create_dir_all(root.join("tmp")).unwrap();
+    std::fs::write(root.join("tmp/workflow-state-KEN-H.json"), "[]").unwrap();
+    fleet.item("KEN-L", "`src/a.sh`", 0, &[]);
+    fleet.item("KEN-S", "`src/r.sh`", 0, &[]);
+    let before = fleet.fleet();
+
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-L", &fleet.checkout("l", None))));
+    assert_eq!(key, "holder-unreadable");
+    assert_eq!(
+        fields[..3],
+        pairs(&[("item", "KEN-L"), ("holder", "KEN-H"), ("read", "stage")])[..]
+    );
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-S", &fleet.checkout("s", None))));
+    assert_eq!(key, "join-unreachable");
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-S"), ("holder", "KEN-R"), ("route", "hosted")])
+    );
+    assert_eq!(fleet.fleet(), before, "nothing written");
+    assert!(inbox(&root, "KEN-H").is_empty());
+}
+
+/// Two candidates of one pass sharing a path, launched one after the other:
+/// the first opens its window on the fleet's server and stays `preparing`
+/// (its harness never draws), and the second joins it in place of a launch
+/// of its own: no record, intent or window is the second's, and the first's
+/// lane, told in its own inbox, carries it.
+#[test]
+fn two_candidates_of_one_pass_ride_the_first_ones_lane() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-unconfirmed");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let root = runner.state_dir().to_path_buf();
+    let candidate = |item: &str| {
+        let brief = root.join(format!("{item}.md"));
+        std::fs::write(&brief, format!("Change `src/a.sh` for {item}.\n")).unwrap();
+        let mut request = launch_request(item, &root);
+        request["brief_file"] = json!(brief.display().to_string());
+        request
+    };
+
+    let first = effect_report(&runner.op_fleet(&candidate("KEN-X")));
+    assert_eq!(first["intent"]["outcome"], "unconfirmed", "{first}");
+    let panes = server.panes();
+
+    let out = runner.op_fleet(&candidate("KEN-Y"));
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    let report = joined_or_launched(&answer);
+    assert_eq!(
+        (&report["op"], &report["item"], &report["holder"]),
+        (&json!("joined"), &json!("KEN-Y"), &json!("KEN-X")),
+        "{report}"
+    );
+    let fleet = runner.fleet();
+    let lanes = fleet["lanes"].as_array().unwrap();
+    assert_eq!(lanes.len(), 1, "no record is the second's: {fleet}");
+    assert_eq!(lanes[0]["status"], "preparing");
+    assert_eq!(lanes[0]["carried"][0]["item"], "KEN-Y");
+    assert_eq!(fleet["intents"].as_array().unwrap().len(), 1, "{fleet}");
+    assert_eq!(server.panes(), panes, "no window is the second's");
+    let told = inbox(&root, "KEN-X");
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0]["text"]
+            .as_str()
             .unwrap()
-            .iter()
-            .find(|p| p[0] == "holder")
-            .map(|p| p[1].clone())
-            .unwrap();
-        assert_eq!(holder, first, "the second read the first's preparing row");
-    }
+            .starts_with("joined item=KEN-Y holder=KEN-X")
+    );
+}
+
+/// A `linear` candidate whose one launch blocker is the item of a running
+/// lane before its review ships with that lane: it joins it in place of
+/// `launch-blocked`, its body naming no path.
+#[test]
+fn a_candidate_blocked_by_a_running_lanes_item_joins_that_lane() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let root = fleet.checkout("h", None);
+    let harness = Owned::sleep();
+    let mut held = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
+    held["mail_root"] = json!(root.display().to_string());
+    fleet.write_lanes(vec![held]);
+    fleet.item_under("CC-1", "", &["KEN-H"]);
+
+    let out = fleet.op(&launch("CC-1", &fleet.checkout("c", None)));
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    let report = joined_or_launched(&answer);
+    assert_eq!(
+        (&report["op"], &report["holder"]),
+        (&json!("joined"), &json!("KEN-H"))
+    );
+    assert_eq!(fleet.lane("KEN-H")["carried"][0]["item"], "CC-1");
+    assert_eq!(inbox(&root, "KEN-H").len(), 1);
 }
 
 /// With the fleet's state in its own repository (`o/fleet`): a checkout
@@ -1543,8 +1648,7 @@ fn an_item_of_another_repository_or_team_than_its_checkouts_is_refused() {
 /// answers the pull request's body and labels, the shape an issue's answer
 /// has. Through the real `launch-lane` over that answer: the lane is
 /// admitted after one `gh issue view` read, its touched set the body's
-/// Location; the pull request numbered as the item is the lane's own, never
-/// its holder, and another open pull request on the path is.
+/// Location.
 #[test]
 fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
     let mut fleet = Fleet::new();
@@ -1555,12 +1659,9 @@ fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
         br#"{"body": "Review the change.\n**Location**: `src/a.rs`\n", "labels": [{"name": "review"}]}"#,
     )
     .unwrap();
-    fleet.gh_api(&gh_map(&[
-        fake_pull(12, "feature/work", &["src/a.rs"]),
-        fake_pull(13, "feature/other", &["src/a.rs"]),
-    ]));
-    // One `gh` for both reads: the item through the issue fixture, the pull
-    // requests through the API fixture.
+    fleet.gh_api(&gh_map(&[]));
+    // One `gh` for every read: the item through the issue fixture, the rest
+    // through the API fixture.
     let bin = fleet.dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let dispatch = bin.join("gh");
@@ -1590,13 +1691,6 @@ fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
     let lane = fleet.lane("issue-12");
     assert_eq!(lane["touched"], json!(["src/a.rs"]));
-    let holders: Vec<&str> = lane["rebase"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|row| row["holder"].as_str())
-        .collect();
-    assert_eq!(holders, ["#13"], "{lane}");
     let reads: Vec<String> = fleet
         .gh_log()
         .into_iter()

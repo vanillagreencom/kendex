@@ -76,8 +76,8 @@ pub use item::{PruneRound, RoundField, RoundPruned, prune_round};
 pub(crate) use item::{job_ended, run_id_of};
 pub use lane::{
     CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, CloseRequested, Delivery, Ended,
-    LaneLaunched, LaneParked, LaneReleased, LaneReserved, LaunchLane, NoLanding, OwedPark,
-    ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane, Terminal,
+    LaneJoined, LaneLaunched, LaneParked, LaneReleased, LaneReserved, LaunchLane, NoLanding,
+    OwedPark, ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane, Terminal,
     identity_fills, lane_moved,
 };
 pub use lane::{
@@ -336,6 +336,8 @@ pub fn adoption_applied(adopted: ControllerAdopted) -> Applied {
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum Report {
     LaunchLane(Box<LaneLaunched>),
+    /// A `launch-lane` request joined to a running lane.
+    Joined(Box<LaneJoined>),
     BeginRound(RoundBegun),
     RecordValidationAdmission(ValidationAdmitted),
     RequestTransfer(Box<TransferRequested>),
@@ -731,13 +733,7 @@ pub fn fleet_transition(
     let host = || host.ok_or(Error::OpNotTransition { op: request.name() });
     match request {
         Request::CloseLane(_) => Err(Error::OpNotTransition { op: request.name() }),
-        Request::LaunchLane(r) => Ok(Report::LaunchLane(Box::new(lane::launch_lane(
-            path,
-            doc,
-            r,
-            env,
-            host()?,
-        )?))),
+        Request::LaunchLane(r) => lane::launch_lane(path, doc, r, env, host()?),
         Request::ParkLane(r) => Ok(Report::ParkLane(Box::new(lane::park_lane(
             path, doc, r, env,
         )?))),

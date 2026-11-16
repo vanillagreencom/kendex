@@ -2474,6 +2474,40 @@ pub(crate) fn session_stage(doc: &Document, since: u64) -> Option<(&str, u64)> {
         })
 }
 
+/// Whether the item state holds a stage of `kind` that started at or after
+/// `since`, the current session's start, whatever its end: an ended or
+/// superseded stage of the session still ran in it.
+fn session_held(doc: &Document, since: u64, kind: &str) -> bool {
+    doc.get("stages")
+        .and_then(Value::as_array)
+        .is_some_and(|stages| {
+            stages.iter().any(|stage| {
+                stage.get("kind").and_then(Value::as_str) == Some(kind)
+                    && stage
+                        .get("start")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|start| start >= since)
+            })
+        })
+}
+
+/// Whether a lane on this disk recorded a stage of `kind` in its current
+/// session ([`session_held`]), read from the item state its checkout names
+/// as `lane status` reads it: `false` where no item state stands, the cause
+/// where the state or the session's start cannot be read.
+pub(crate) fn local_held(lane: &Lane, state_dir: &Path, kind: &str) -> Result<bool, String> {
+    let (_, doc) = lane_counters(lane, state_dir, &mut Produced::default());
+    match (
+        &doc,
+        lane.session_since.as_deref().and_then(clock::epoch_secs),
+    ) {
+        (Reading::Live(doc), Some(since)) => Ok(session_held(doc, since, kind)),
+        (Reading::Gone, _) => Ok(false),
+        (Reading::Live(_), None) => Err("session-since-unread".to_owned()),
+        (Reading::Unreadable { cause }, _) => Err((*cause).to_owned()),
+    }
+}
+
 /// The facts' stage and its start: `none` where the lane wrote no item state
 /// or no stage of the current session stands open, `unread` where the state
 /// or the session's start could not be read.

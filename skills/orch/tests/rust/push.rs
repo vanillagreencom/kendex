@@ -1179,6 +1179,15 @@ mod push {
             git(&repo.main, &["rev-parse", "HEAD"]),
             "no base publication"
         );
+        // A delivery word outside the two refuses the publication on either
+        // route, never read as a pull request.
+        let misspelt = Repo::new("KEN-1", "ORCH_DELIVERY = \"push_base\"\n");
+        misspelt.record(json!({}));
+        assert_eq!(
+            refusal(&misspelt.push("branch")),
+            "orch-runtime: setting-invalid key=ORCH_DELIVERY value=push_base"
+        );
+        assert_eq!(misspelt.remote("ken-1"), "", "no branch publication");
     }
 
     #[test]

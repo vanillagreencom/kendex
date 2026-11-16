@@ -1049,7 +1049,8 @@ fn the_merged_index_matches_the_released_recorded_lines() {
 /// named only by its parent pull request's indented `Closes` line is found
 /// by the key search floored at its creation, a prose mention passed over;
 /// an item whose lane closed is read by the number and repository its cycle
-/// recorded, with no search for it. Each joins the merged index with no
+/// recorded, with no search for it, and so is an item joined to that lane.
+/// Each joins the merged index with no
 /// `merged` line or row, and its box counts from that merge.
 #[test]
 fn a_verifying_item_no_live_lane_carries_reads_its_landing() {
@@ -1059,7 +1060,8 @@ fn a_verifying_item_no_live_lane_carries_reads_its_landing() {
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
         "lanes": [{"item": "KEN-3", "tracker": "linear", "repo": "owner/repo", "harness": "claude", "window": null, "host": null,
             "mail_root": "/w/KEN-3", "launched_at": "2026-09-20T00:00:00Z", "status": "done",
-            "cycle": {"pr": 7, "repo": "Owner/Repo"}}]}));
+            "cycle": {"pr": 7, "repo": "Owner/Repo"},
+            "carried": [{"item": "KEN-4", "tracker": "linear", "at": "2026-09-20T01:00:00Z"}]}]}));
     world.linear("statuses list", statuses());
     let verifying = |id: &str| {
         let mut item = item(
@@ -1075,13 +1077,14 @@ fn a_verifying_item_no_live_lane_carries_reads_its_landing() {
     };
     world.linear(
         "issues list",
-        json!({"body": [verifying("KEN-2"), verifying("KEN-3")]}),
+        json!({"body": [verifying("KEN-2"), verifying("KEN-3"), verifying("KEN-4")]}),
     );
     world.linear(
         "issues bulk-get",
         json!({"body": {"issues": {"nodes": [
             {"identifier": "KEN-2", "state": {"type": "started"}, "children": {"nodes": []}},
-            {"identifier": "KEN-3", "state": {"type": "started"}, "children": {"nodes": []}}
+            {"identifier": "KEN-3", "state": {"type": "started"}, "children": {"nodes": []}},
+            {"identifier": "KEN-4", "state": {"type": "started"}, "children": {"nodes": []}}
         ]}}}),
     );
     quiet_github(&mut world);
@@ -1151,12 +1154,17 @@ fn a_verifying_item_no_live_lane_carries_reads_its_landing() {
         .merged
         .clone();
     assert_eq!(
-        (merged.get("KEN-2"), merged.get("KEN-3")),
+        (
+            merged.get("KEN-2"),
+            merged.get("KEN-3"),
+            merged.get("KEN-4")
+        ),
         (
             Some(&vec!["owner/repo#9".to_owned()]),
+            Some(&vec!["owner/repo#7".to_owned()]),
             Some(&vec!["owner/repo#7".to_owned()])
         ),
-        "{merged:?}"
+        "the joined KEN-4 lands with its lane's pull request: {merged:?}"
     );
     let calls = world.gh_calls();
     assert_eq!(
@@ -1810,6 +1818,57 @@ fn a_terminal_close_whose_effect_fails_is_said_refused_not_closed() {
     assert!(live(harness.pid()), "the refused close stopped nothing");
 }
 
+/// A stopped lane whose own item ended while an item joined to it reads
+/// open is not closed: the batch reads the joined item, and the close is
+/// asked only once it ended too. The close runs under a bound outside its
+/// form, so its asking is seen as its refusal and no intent persists.
+#[test]
+fn a_lane_carrying_an_open_joined_item_is_not_closed_until_that_item_ends() {
+    let mut world = World::new();
+    world.write_fleet(
+        &json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [{"item": "KEN-3", "tracker": "linear", "repo": "owner/repo", "harness": "claude",
+            "window": null, "host": null, "mail_root": "/srv/lane/x", "status": "stopped",
+            "session_since": "2026-10-09T00:00:00Z",
+            "carried": [{"item": "KEN-7", "tracker": "linear", "at": "2026-10-09T01:00:00Z"}]}]}),
+    );
+    world.linear("statuses list", statuses());
+    world.linear("issues list", json!({"body": []}));
+    quiet_github(&mut world);
+    world.gh(
+        "repos/owner/repo/pulls?state=closed&head=owner%3Aken-3&per_page=100&page=1",
+        json!({"body": []}),
+    );
+    world.gh(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-3%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+        json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
+    );
+    let clock = FakeClock::new();
+    let batch = |joined: &str| {
+        json!({"body": {"issues": {"nodes": [
+            {"identifier": "KEN-3", "state": {"type": "canceled"}, "description": null, "children": {"nodes": []}},
+            {"identifier": "KEN-7", "state": {"type": joined}, "description": null, "children": {"nodes": []}}
+        ]}}})
+    };
+    for (joined, expected) in [
+        ("started", Vec::<&str>::new()),
+        ("canceled", vec!["EVENT lane-close-refused KEN-3"]),
+    ] {
+        world.linear("issues bulk-get", batch(joined));
+        let settings = world.settings(&[("ORCH_LANE_CLOSE_SECS", "0")]);
+        let mut body = tracker::body(world.context(settings, None));
+        let produced = pass(
+            &mut body,
+            &mut Baseline::default(),
+            &clock,
+            SINCE_EPOCH + 1000,
+        )
+        .unwrap();
+        assert_eq!(rendered(&produced), expected, "KEN-7 {joined}");
+    }
+    assert_eq!(world.fleet()["intents"], Value::Null, "no intent persisted");
+}
+
 #[test]
 fn an_open_terminal_close_the_watch_asked_is_settled_by_its_own_next_pass() {
     let harness = Owned::sleep();
@@ -1865,7 +1924,8 @@ fn an_open_terminal_close_the_watch_asked_is_settled_by_its_own_next_pass() {
 }
 
 /// The slot the heartbeat body reads names the open items with no open
-/// blocker that no lane holds and the queue does not name, sorted.
+/// blocker that no lane holds and the queue does not name, sorted; an item
+/// joined to a running lane is held by that lane, unblocked or owed alike.
 #[test]
 fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
     let mut world = World::new();
@@ -1883,7 +1943,11 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
     );
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": ["KEN-5"], "fleet_log": [],
         "lanes": [
-            {"item": "KEN-3", "tracker": "linear", "harness": "claude", "window": null, "host": null, "mail_root": "/w/KEN-3", "status": "running"},
+            {"item": "KEN-3", "tracker": "linear", "harness": "claude", "window": null, "host": null, "mail_root": "/w/KEN-3", "status": "running",
+             "carried": [
+                 {"item": "KEN-1", "tracker": "linear", "at": "2026-08-20T00:00:00Z"},
+                 {"item": "KEN-2", "tracker": "linear", "at": "2026-08-20T00:00:00Z"}
+             ]},
             {"item": "KEN-4", "tracker": "linear", "harness": "claude", "window": null, "host": null, "mail_root": "/w/KEN-4", "status": "done"}
         ]}));
     quiet_github(&mut world);
@@ -1903,10 +1967,16 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
     let mut baseline = Baseline::default();
     pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
     let latest = shared.lock().unwrap();
+    let inventory = latest.tracker.as_ref().unwrap();
     assert_eq!(
-        latest.tracker.as_ref().unwrap().open_unblocked,
-        vec!["KEN-1".to_owned(), "KEN-4".to_owned()],
-        "KEN-2 is blocked, KEN-3 held by a lane, KEN-5 queued; a done lane holds nothing"
+        inventory.open_unblocked,
+        vec!["KEN-4".to_owned()],
+        "KEN-1 joined to KEN-3's lane, KEN-2 blocked, KEN-3 held by a lane, KEN-5 queued; a done lane holds nothing"
+    );
+    assert!(
+        inventory.owed.iter().all(|row| row.id != "KEN-2"),
+        "KEN-2, in progress, is joined to a running lane: not owed: {:?}",
+        inventory.owed.iter().map(|row| &row.id).collect::<Vec<_>>()
     );
 }
 

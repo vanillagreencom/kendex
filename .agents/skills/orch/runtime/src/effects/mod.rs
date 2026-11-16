@@ -369,7 +369,8 @@ fn live_effect(report: &Report) -> Option<&Effect> {
         Report::RequestTransfer(t) => &t.effect,
         Report::StartController(s) => &s.effect,
         Report::StopController(s) => &s.effect,
-        Report::BeginRound(_)
+        Report::Joined(_)
+        | Report::BeginRound(_)
         | Report::RecordValidationAdmission(_)
         | Report::AdoptController(_)
         | Report::ClaimIntent(_)
