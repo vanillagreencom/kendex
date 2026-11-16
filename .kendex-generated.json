@@ -973,6 +973,7 @@
   ".claude/hooks/command-safety.sh",
   ".claude/hooks/critical-path-deny.sh",
   ".claude/hooks/dev-stop-check.sh",
+  ".claude/hooks/docs-writing-bash-note.sh",
   ".claude/hooks/docs-writing-note.sh",
   ".claude/hooks/jarvis-memory-note.sh",
   ".claude/hooks/lane-mail-check.sh",

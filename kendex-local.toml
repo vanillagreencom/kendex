@@ -1494,3 +1494,8 @@ A scratch directory removed by the test's EXIT trap is cleaned up. Do not report
 
 `${arr[@]+"${arr[@]}"}` is the quoted empty-array expansion used with Bash 3.2 and `set -u`. Do not report it as unquoted expansion or word splitting.
 '''
+
+[hooks.docs-writing-bash-note]
+source = "."
+harnesses = ["claude"]
+enabled = true
