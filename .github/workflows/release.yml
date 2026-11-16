@@ -65,12 +65,20 @@ jobs:
       mode: ${{ steps.source.outputs.mode }}
       source-commit: ${{ steps.source.outputs.source-commit }}
       release-tag: ${{ steps.source.outputs.release-tag }}
+      build: ${{ steps.inputs.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Check release inputs
+        id: inputs
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: tools/release-inputs "$EVENT_NAME" "$PUSH_BEFORE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       - name: Select the release source
         id: source
         shell: bash
@@ -146,6 +154,7 @@ jobs:
 
   build:
     needs: prepare
+    if: needs.prepare.outputs.build == 'true'
     concurrency:
       group: release-build-${{ needs.prepare.outputs.mode == 'main' && github.ref || github.run_id }}-${{ matrix.target }}
       cancel-in-progress: false
