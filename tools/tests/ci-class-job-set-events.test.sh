@@ -11,20 +11,18 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/ci-job-set-world.sh
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 
-# An event the workflow does not classify on is refused, with the parity
-# call or without: the nightly run (its schedule and its manual dispatch)
-# runs its fixed jobs with no selection, and a selection asked for one would
-# stand lanes down on no diff. The main push takes the push route below.
+# Schedule uses its own no-diff decision. Dispatch stays full in the workflow
+# and has no standalone class selection. Main uses actual push endpoints.
 # ARGUMENT|EVENT|EXPECTED
 refused_rows=0
 while IFS='|' read -r arg event expected; do
   refused_rows=$((refused_rows + 1))
-  check "the ${event:-unset} event is refused, called with ${arg:-no argument}" "$expected" \
+  check "event ${event:-unset}, called with ${arg:-no argument}" "$expected" \
     "$(SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/SKILL.md)"
 done <<ROWS
-|schedule|exit=2 unsupported-event event=schedule
+|schedule|nightly=true
 |workflow_dispatch|exit=2 unsupported-event event=workflow_dispatch
---event-parity|schedule|exit=2 unsupported-event event=schedule
+--event-parity|schedule|nightly=true
 ||exit=2 unsupported-event event=
 ROWS
 [ "$refused_rows" -eq 4 ] || { echo "the refused-event table read $refused_rows rows" >&2; exit 1; }
@@ -87,6 +85,23 @@ for event in pull_request merge_group; do
     "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false skills/orch/scripts/lanes)"
 done
 
+# Actual push ranges in a disposable repository, independent of the proof head.
+PUSH_REPO="$TMP/push-repo"
+mkdir -p "$PUSH_REPO"
+# Include this suite's own new path references before commit as CI does.
+PUSH_TREE="$(git -C "$ROOT" write-tree)"
+git -C "$ROOT" archive "$PUSH_TREE" | tar -x -C "$PUSH_REPO"
+git -C "$PUSH_REPO" init -q
+git -C "$PUSH_REPO" add -A
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm base
+PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+# The workflow path selects the full requested area for the proof recordings.
+printf '\n' >>"$PUSH_REPO/.github/workflows/skill-tests.yml"
+git -C "$PUSH_REPO" add -A
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm push
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+MAIN_ONLY_SUITES="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$ROOT/.github/workflows/skill-tests.yml")"
+export PUSH_BEFORE PUSH_AFTER MAIN_ONLY_SUITES
 # THE PUSH ROUTE: a main push owes the shards its same-head merge group did
 # not prove. A stub on PATH answers `gh api` from a world directory built out
 # of the recorded responses in data/: merge-group run 41306604685 and its
@@ -175,11 +190,11 @@ push_world() { # NAME
 push_select() { # WORLD [SELECTOR]
   local out="$TMP/push-out" status=0
   : >"$out"
-  (cd "$ROOT" && PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/$1" GITHUB_REPOSITORY=vanillagreencom/kendex \
+  (cd "$PUSH_REPO" && PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/$1" GITHUB_REPOSITORY=vanillagreencom/kendex \
     GITHUB_SHA="$PUSH_SHA" EVENT=push CHANGE_CLASS='' DOCS_ONLY='' CHANGED_PATHS='' GITHUB_OUTPUT="$out" \
     "${2:-$JOB_SET}" --event-parity >"$TMP/push-stdout" 2>"$TMP/push-err") || status=$?
   [ "$status" -eq 0 ] || { printf 'exit=%s' "$status"; return 0; }
-  printf '%s %s warned=%s' "$(tr '\n' ' ' <"$out" | sed 's/ $//')" \
+  printf '%s %s warned=%s' "$(sed '/^main_suites=/d; /^cache_compile=/d' "$out" | tr '\n' ' ' | sed 's/ $//')" \
     "$(sed -n 's/^ci-job-set: \(main-proof=[a-z]*\) runs=[^ ]* \(proved-linux=[0-9]* proved-macos=[0-9]*\).*/\1 \2/p' "$TMP/push-err")" \
     "$(grep -q '^::warning ' "$TMP/push-stdout" && echo yes || echo no)"
 }
@@ -221,7 +236,8 @@ ROWS
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
 mkdir -p "$TMP/trusting/tools"
-cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/trusting/tools/"
+cp -R "$ROOT/tools/lib" "$TMP/trusting/tools/lib"
+cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/trusting/tools/"
 awk '{ n += gsub(/select\(\.head_sha == \$sha and \.run_id == \$id\)/, "select(.run_id == $id)") } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/trusting/tools/ci-job-set" ||
   { echo "the job head check is no longer one select in $JOB_SET" >&2; exit 1; }
@@ -230,6 +246,71 @@ case "$(push_select foreign-head-job "$TMP/trusting/tools/ci-job-set")" in
   *"queue_macos_shards=[] "*) ok "control: a selector skipping the job head check proves the foreign head's mailbox leg" ;;
   *) bad "control: the head-check mutant did not prove the foreign head's leg" ;;
 esac
+
+# Path selection precedes proof subtraction, including a narrowed whole leg.
+PUSH_BASE="$PUSH_BEFORE"
+while IFS='|' read -r path required forbidden build dedicated; do
+  git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
+  mkdir -p "$PUSH_REPO/$(dirname "$path")"
+  printf '\nchanged\n' >>"$PUSH_REPO/$path"
+  git -C "$PUSH_REPO" add -A
+  git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm path
+  PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+  push_select no-run >/dev/null
+  check "main build reach: $path" "cache_compile=$build" "$(grep '^cache_compile=' "$TMP/push-out")"
+  got="$(sed -n 's/^shards=//p' "$TMP/push-out")"
+  if jq -e --arg req "$required" --arg forbid "$forbidden" '(($req == "" or index($req) != null) and ($forbid == "" or index($forbid) == null))' <<<"$got" >/dev/null; then
+    ok "main path reach: $path"
+  else bad "main path reach: $path ($got)"; fi
+  check "main dedicated reach: $path" "$dedicated" "$(sed -n 's/^main_suites=//p' "$TMP/push-out" | jq -c '[.[].suite]')"
+done <<'ROWS'
+.kendex-lock.json||rest|false|[]
+crates/core/src/lib.rs|rest|node|true|["orch-shard-partition.test","adopt-refresh.test"]
+pi-extensions/pi-agents-tmux/index.ts|node|linear|false|["orch-shard-partition.test","pi-agents-tmux"]
+ROWS
+saved_after="$PUSH_AFTER"
+PUSH_AFTER=0000000000000000000000000000000000000000
+check "unread push range refuses selection" exit=2 "$(push_select all-proved)"
+PUSH_AFTER="$saved_after"
+# Must-fail: retain matched path logic but force every shard selected on main.
+mkdir -p "$TMP/main-control/tools"
+cp -R "$ROOT/tools/lib" "$TMP/main-control/tools/lib"
+cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/main-control/tools/"
+awk '/^  main_linux=/ { print "  want_shard $SHARDS"; n++ } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
+chmod +x "$TMP/main-control/tools/ci-job-set"
+git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
+printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+git -C "$PUSH_REPO" add -A
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm lock
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+push_select no-run >/dev/null
+check "lock-only push runs no shard" 'shards=[]' "$(grep '^shards=' "$TMP/push-out")"
+push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
+if grep -qxF 'shards=[]' "$TMP/push-out"; then bad 'must-fail: main selection mutant escaped'; else ok 'must-fail: main selection mutant runs forbidden lock-only shards'; fi
+
+# Only the latest successful scheduled main run can stand a night down.
+# A history with competing heads must reject an older matching success.
+awk '{ n += sub(/sort_by\(\.created_at\) \| last \|/, "sort_by(.created_at) | first |") } { print } END { exit n != 1 }' \
+  "$JOB_SET" >"$TMP/trusting/tools/ci-job-set"
+while IFS='|' read -r row mutation expected; do
+  jq "$mutation" "$DATA/main-proof-runs.json" >"$TMP/push/no-run/runs.json"
+  : >"$TMP/nightly-out"
+  PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-out" "$JOB_SET"
+  check "nightly $row" "nightly=$expected" "$(cat "$TMP/nightly-out")"
+  if [ "$row" = older-match-newest-different ]; then
+    : >"$TMP/nightly-control-out"
+    PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-control-out" "$TMP/trusting/tools/ci-job-set"
+    check "must-fail: oldest successful night skips a head the latest night did not test" nightly=false "$(cat "$TMP/nightly-control-out")"
+  fi
+done <<'ROWS'
+equal|.workflow_runs[0] += {event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z"}|false
+different|.workflow_runs[0] += {event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z",head_sha:"other"}|true
+older-match-newest-different|.workflow_runs = [(.workflow_runs[0] + {id:1,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-14T02:00:00Z"}),(.workflow_runs[0] + {id:2,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z",head_sha:"other"})]|true
+newest-match-older-different|.workflow_runs = [(.workflow_runs[0] + {id:2,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z"}),(.workflow_runs[0] + {id:1,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-14T02:00:00Z",head_sha:"other"})]|false
+push-success|.workflow_runs[0].event = "push"|true
+no-success|.workflow_runs = []|true
+unread|del(.workflow_runs)|true
+ROWS
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -31,13 +31,16 @@
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
 #                  for the same diff
 #   CHANGED_PATHS  the changed paths, one per line
-#   EVENT          pull_request|merge_group|push, the event the selection is
+#   EVENT          pull_request|merge_group|push|schedule, the event the selection is
 #                  for. The first two select the same lanes and shards for
 #                  the same class, docs verdict and paths, which
 #                  --event-parity checks. The workflow classifies on
 #                  merge_group alone; tools/guard --full asks at
-#                  pull_request. `push` takes the push route, which reads
-#                  none of the three variables above.
+#                  pull_request. `push` reads PUSH_BEFORE/PUSH_AFTER from the event instead.
+#   MAIN_ONLY_SUITES  workflow-owned dedicated suite declarations (JSON).
+#   PUSH_BEFORE, PUSH_AFTER  actual main push endpoints; unread ranges refuse.
+#   schedule compares GITHUB_SHA to the latest successful scheduled main run
+#                  and publishes nightly=true|false.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #
 # THE PUSH ROUTE, for EVENT=push, which the workflow runs on main alone. A
@@ -47,16 +50,16 @@
 # runs for GITHUB_SHA and each run's latest jobs through `gh api`, as
 # GITHUB_REPOSITORY and GH_TOKEN allow, and emits `shards=` and
 # `queue_macos_shards=`, the Linux roster and the macOS-capable roster, each
-# less the shards proved on that runner, with `shell_shards=` and `shell_os=`
-# as emit() derives them, and no other lane. A shard is proved on a runner
+# selected by the push range, less the shards proved on that runner, with `shell_shards=` and `shell_os=`
+# as emit() derives them, plus main_suites and cache_compile. A shard is proved on a runner
 # where at least one job named `Skill suites shard (<shard>, <runner>)`
 # exists across those runs and every such job completed with success; each
 # run and job is checked for the event, head and run it claims, because
 # GitHub ignores a query filter it does not recognise. A failed, pending or
 # absent job proves nothing, and a read that fails or finds no run proves
-# nothing either: the step warns, emits the whole rosters and exits 0, since
+# nothing either: the step warns, emits the selected rosters and exits 0, since
 # a red step on main would report a push failure for an API outage while the
-# whole roster is the safe answer. Its one diagnostic line starts
+# selected roster is the safe answer. Its one diagnostic line starts
 # `ci-job-set: main-proof=read|none|unread`. A merge-group shard job whose
 # suite list left out one of its own candidates ran a step named
 # NARROWED_STEP, which --suite-list arms, and proves nothing: the push runs
@@ -302,7 +305,7 @@ esac
 # and the macOS shard list, JSON in roster order; shell_os names each runner
 # whose list is non-empty and shell_shards is true where it names one, so a
 # merge group and a main push read alike. The JOB=VALUE words of a class row
-# follow; the push route selects no job and skips no suite.
+# follow; the push route skips no suite.
 emit() { # SHARDS QUEUE SKIPPED [JOB=VALUE ...]
   local shards="$1" queue="$2" skipped="$3" legs="" shell=false
   shift 3
@@ -347,34 +350,30 @@ main_proof() {
   [ "$state" = read ] || jobs=""
   # Each roster less the shards proved on its runner, with the proved
   # counts: `<linux> <macos> <linux proved> <macos proved>`.
-  owed="$(jq -rs --arg linux "$SHARDS" --arg macos "$MACOS_SHARDS" --arg narrowed "$NARROWED_STEP" '
+  owed="$(jq -rs --argjson linux "$main_linux" --argjson macos "$main_macos" --arg narrowed "$NARROWED_STEP" '
     (add // []) as $jobs
     | def owed($roster; $os):
-        [$roster | split(" ")[] | select(. as $shard
+        [$roster[] | select(. as $shard
           | [$jobs[] | select(.name == "Skill suites shard (\($shard), \($os))")]
           | length == 0 or any(.[]; .status != "completed" or .conclusion != "success"
               or (.steps | type) != "array" or any(.steps[]; .name == $narrowed and .conclusion != "skipped")))];
     owed($linux; "ubuntu-latest") as $l | owed($macos; "macos-latest") as $m
-    | "\($l | tojson) \($m | tojson) \(($linux | split(" ") | length) - ($l | length)) \(($macos | split(" ") | length) - ($m | length))"' <<<"$jobs")" ||
+    | "\($l | tojson) \($m | tojson) \(($linux | length) - ($l | length)) \(($macos | length) - ($m | length))"' <<<"$jobs")" ||
     die main-proof-unevaluated "jq could not subtract the proved shards from the rosters"
   read -r linux macos linux_n macos_n <<<"$owed"
-  emit "$linux" "$macos" '[]'
+  emit "$linux" "$macos" '[]' "main_suites=$main_suites" "cache_compile=$main_build"
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
   printf 'ci-job-set: main-proof=%s runs=%s proved-linux=%d proved-macos=%d%s\n' \
     "$state" "${ids:-none}" "$linux_n" "$macos_n" "${cause:+ cause=$cause}" >&2
-  [ -z "$cause" ] || printf '::warning title=main push runs its whole shell roster::ci-job-set: main-proof=%s cause=%s\n' \
+  [ -z "$cause" ] || printf '::warning title=main push runs its selected shell roster::ci-job-set: main-proof=%s cause=%s\n' \
     "$state" "$cause"
 }
-if [ -z "$suite_path" ] && [ "${EVENT:-}" = push ]; then
-  main_proof
-  exit 0
-fi
 
-[ -n "$suite_path" ] || [ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
+[ -n "$suite_path" ] || [ "${EVENT:-}" = push ] || [ "${EVENT:-}" = schedule ] || [ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
 
 # Present-but-empty is a state of its own, and not the same as absent.
 paths="${CHANGED_PATHS-__unset__}"
-[ -n "$suite_path" ] || [ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
+[ -n "$suite_path" ] || [ "${EVENT:-}" = push ] || [ "${EVENT:-}" = schedule ] || [ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
 
 # The value SELECTION holds for NAME. A selection naming no value for a lane
 # ends the step, before any lane has read a selection with it missing.
@@ -642,6 +641,9 @@ select_shards() { # BUILD(true|false)
   local build="$1" path skill batch found package list="" shard cited
   set --
   while IFS= read -r path; do
+    # The install record changes installed revisions, not suite inputs.
+    # Suites naming it construct private records in their fixture trees.
+    [ "$path" != .kendex-lock.json ] || continue
     case "$path" in
       .bun-version) want_shard node ;;
       skills/*/* | .agents/skills/*/*)
@@ -809,6 +811,46 @@ select_row() { # CLASS DOCS PATHS EVENT
       ;;
   esac
 }
+
+# GitHub REST workflow-runs supplies event, branch, path and immutable head:
+# https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow
+# Only a successful scheduled run proves a night. API failure retains work.
+if [ "${EVENT:-}" = schedule ]; then
+  nightly=true
+  if runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=schedule&branch=main&status=success&per_page=100")"; then
+    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "$GITHUB_RUN_ID" '
+      [.[].workflow_runs[] | select(.event == "schedule" and .head_branch == "main" and .path == $path
+        and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
+      | sort_by(.created_at) | last | .head_sha | select(type == "string" and length > 0)' <<<"$runs")"; then
+      [ "$previous" != "$GITHUB_SHA" ] || nightly=false
+    fi
+  fi
+  printf 'nightly=%s\n' "$nightly" >>"$GITHUB_OUTPUT"
+  exit 0
+fi
+
+# Select main's actual push range before subtracting whole-leg proof. A
+# failed read never becomes an empty diff; refusal makes the workflow run
+# its full fallback. Main always runs a selected shard whole.
+if [ "${EVENT:-}" = push ]; then
+  [[ ${PUSH_BEFORE:-} =~ ^[0-9a-f]{40}$ && ${PUSH_AFTER:-} =~ ^[0-9a-f]{40}$ ]] ||
+    die push-range-unread "the push event endpoints are missing or invalid"
+  paths="$(git diff --name-only --no-renames "$PUSH_BEFORE" "$PUSH_AFTER" --)" ||
+    die push-range-unread "the push event range could not be read"
+  read_lines="$(reads)" || exit 2
+  main_build=false
+  case "$read_lines" in *build=1*) main_build=true ;; esac
+  main_linux="$(select_shards "$main_build")" || exit 2
+  main_macos="$(jq -c --arg roster "$MACOS_SHARDS" '[.[] | select(. as $s | $roster | split(" ") | index($s))]' <<<"$main_linux")" || exit 2
+  # The workflow owns the four declarations and their native eligibility.
+  # Package reach selects them before ordinary proof, which excludes them.
+  main_suites="$(jq -ce --argjson selected "$main_linux" '
+    if type != "array" or length == 0 then error("missing main declarations") else
+      [.[] | select(.shard as $s | $selected | index($s))] end' <<<"${MAIN_ONLY_SUITES:-}")" ||
+    die main-suites-unread "the workflow main-only declarations could not be read"
+  main_proof
+  exit 0
+fi
 
 # The narrowed row's skips, read once for every event's selection, and for
 # a measured class alone: any other class reaches select_row without them.

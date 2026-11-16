@@ -6,53 +6,6 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# A PULL REQUEST RUNS NO LANE. Its run reports the required `CI` context
-# alone, which GitHub needs before it admits the pull request to the merge
-# queue. The merge-group run is the only proof of a head; a red group returns
-# the change to its lane, which pushes a fix before it queues again.
-#
-# WHAT A MERGE GROUP RUNS IS KEYED TO THE CHANGE CLASS AND THE PATHS BEHIND
-# IT. The `changes` job below reads the class once through the change-class
-# composite action, `tools/ci-job-set` turns it and the changed paths into
-# one `<lane>=true|false` line per gated lane and the list of shell shards
-# the changed packages select, and every gated `if:` in this file reads one
-# of those lines. Of the gated jobs, a `render` or `trivial` diff runs the
-# bot-instructions job alone, whose steps the bot_instructions lane entry in
-# `tools/ci-job-set` lists. Every other diff, and a `trivial` one changing a
-# path tools/rust-reads names, runs that job, the shell shards its packages
-# select and each other lane as `tools/ci-job-set` selects it; the invariant
-# comment there is the one statement of what each lane runs. A diff of skill
-# Markdown alone narrows inside its shards: the changes job publishes the
-# suites whose own input notes cover none of it as `skipped_suites`, each
-# shell suite step leaves those out of its own, and a leg whose list left
-# out one of its suites runs its `narrowed by the suite list` step, so the
-# main push runs that shard whole. The selected
-# macOS cargo and shell legs run in the group. The two diff checks,
-# preflight and Markdown, run on every group against its base.
-# `tools/ci-job-set --event-parity` holds the pull-request selection, which
-# local validation (`tools/guard --full`) reads, equal to the group's. The required
-# checks retain their names. The last job, `CI`, accepts only the skips the
-# selection authorized. Every other job reports into it except the nightly
-# macOS skill suites. GitHub enforces approval and thread resolution
-# independently of CI job selection.
-#
-# A PUSH TO MAIN carries the tree its merge group proved, so its cargo lanes
-# run only the compile steps, which save the compile cache under the merged
-# lockfile for each platform, and the catalog and smoke checks run as on
-# every main run. Its Linux and macOS shell shards run only where the
-# same-head merge group did not prove them: the `changes` job reads that
-# group's shard jobs through `tools/ci-job-set`, whose push route states the
-# proof, and an unread, failed, pending or absent proof runs the shard. The
-# temporary main-only suites run on every push. THE NIGHTLY RUN, the daily schedule on main, also runs the
-# full macOS shell roster, the macOS cargo tests and the Windows tests; a
-# manual dispatch runs the same jobs on demand. A macOS or Windows failure
-# that independently passing changes cause only in combination, or that no
-# group's selection reached, surfaces there, and the overseer's watch
-# reports a red scheduled run.
-# Whatever else does NOT run on every event carries its own `if:` saying
-# why. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
-# groups and every shard does each night.
-#
 # Every job names its GitHub-hosted runner in `runs-on:`, directly or through
 # its matrix's `os` list, the same label on every event. The repository is
 # public, so those runners are free, and shard durations compare across
@@ -104,8 +57,6 @@ name: Skill Tests
 # the list of legs held to 30 minutes, every macOS leg among them; every
 # other leg takes 15. The per-shard figures behind each budget are in the
 # comment above it.
-# Every merge group runs its selected Linux and macOS shards; the nightly
-# run runs the whole macOS roster.
 
 "on":
   # Kept for the required `CI` context alone: a pull request runs no lane.
@@ -119,8 +70,6 @@ name: Skill Tests
   merge_group:
   push:
     branches: [main]
-  # The nightly platform roster. GitHub starts a schedule only on the default
-  # branch; a manual dispatch runs the same jobs.
   schedule:
     - cron: '17 9 * * *'
   workflow_dispatch:
@@ -154,15 +103,9 @@ jobs:
   # create none of the required contexts, and a merge queue waits forever on a
   # check nothing will report.
   #
-  # The class is read on merge_group alone. A pull request runs no lane, and
-  # the nightly run runs its fixed jobs without a class. On a push to main
-  # only the root checkout and the select step run: tools/ci-job-set reads
-  # the same-head merge group's shard jobs, which `actions: read` admits,
-  # and publishes the shards that group left unproved. The root checkout
-  # there is main itself.
   changes:
     name: Classify the diff
-    if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -189,6 +132,9 @@ jobs:
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
       skipped_suites: ${{ steps.select.outputs.skipped_suites }}
+      cache_compile: ${{ steps.select.outputs.cache_compile }}
+      main_suites: ${{ steps.select.outputs.main_suites }}
+      nightly: ${{ steps.select.outputs.nightly }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
     # tools/ci-aggregate run from the group's tree, held by review.
@@ -198,6 +144,9 @@ jobs:
       EVENT: ${{ github.event_name }}
       BASE: ${{ github.event.merge_group.base_sha }}
       HEAD: ${{ github.event.merge_group.head_sha }}
+      PUSH_BEFORE: ${{ github.event.before }}
+      PUSH_AFTER: ${{ github.event.after }}
+      MAIN_ONLY_SUITES: '[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"},{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"},{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]'
     steps:
       # THREE CHECKOUTS, and the split is the point. The classifier is the
       # DEFAULT BRANCH's copy, where the change's author cannot change
@@ -214,6 +163,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: the classifier, from the default branch
         if: github.event_name == 'merge_group'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -344,7 +294,6 @@ jobs:
       # Scan before candidate scripts: they can change the scanner executable
       # in the shared runner directory. Trusted code and policy alone cannot
       # protect a scan that runs after candidate code.
-      # This content-check job runs on every merge group, and CI holds its result.
       # This catalog repository keeps source scripts under skills/, not .agents/.
       - name: the credential guards, from the default branch
         if: always()
@@ -489,13 +438,7 @@ jobs:
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    # Merge groups run Linux shards when classification is missing or
-    # selects shell work with a remaining Linux runner; main pushes run the
-    # Linux shards their same-head merge group left unproved, read from the
-    # same lines. Where the changes job did not succeed the full fallback
-    # roster runs; an empty list stands the job down, since an empty matrix
-    # fails the run. The status function lifts implicit success after a
-    # changes failure.
+    # GitHub rejects an empty matrix; !cancelled() permits the failure fallback.
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
     strategy:
       fail-fast: false
@@ -546,10 +489,6 @@ jobs:
       # This workflow owns the temporary roster; evidence tables are never inputs.
       TEMPORARY_SUITE: ${{ matrix.suite || '' }}
       MAIN_ONLY_FILTERS: ${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push') && '!=critical-path-deny.test !=orch-shard-partition.test !=adopt-refresh.test' || '' }}
-      # The suites the changes job skips, which each shell suite step's
-      # `tools/ci-job-set --suite-list` leaves out of its candidates; none
-      # where that job did not succeed or does not run, the nightly and
-      # main-only legs among them.
       SKIPPED_SUITES: ${{ needs.changes.result == 'success' && needs.changes.outputs.skipped_suites || '[]' }}
     steps: &skill-suite-steps
       # run-all.sh stops every suite still running at this Unix time and names
@@ -800,8 +739,8 @@ jobs:
       # 901-1061s on the macOS leg against roughly a third of that on Linux.
       # `guards-scans` is the scans below, each one pass over a tracked-file
       # roster or the shell roster; the document-set scan runs
-      # in the bot-instructions job instead, which every class runs, on a pull
-      # request. The ruff install rides with the two shards that run a suite
+      # in the bot-instructions job instead. The ruff install rides with the
+      # two shards that run a suite
       # needing it: commit-guards' own py-names.test.sh in `guards-commit`,
       # and its install-git-hooks.test.sh in `guards-hooks`.
       #
@@ -1569,19 +1508,16 @@ jobs:
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
 
-  # The full nightly macOS roster. changes is skipped there, so the shared
-  # matrix expression uses its full-roster fallback. The suite steps and
-  # budgets have one owner. A main push runs its macOS legs in the queue job
-  # below, because changes runs there and the shared alias would read its
-  # Linux list.
+  # Keep this matrix fixed: scheduled selection publishes a nightly decision
+  # without a shard list. Shared steps and budgets retain one owner.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && ((github.event_name == 'schedule' && (needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false')) || github.event_name == 'workflow_dispatch') }}
     strategy:
       fail-fast: false
       matrix:
-        shard: *skill-suite-shards
+        shard: [review-gate, refresh, guards-scans, guards-commit, guards-commit-tail, guards-hooks, guards-hooks-tail, guards-tools, guards-tools-tail, linear, linear-controls, worktree, worktree-restack, rest, jarvis, slack, mailbox, node, pi-claude-bridge]
         os: [macos-latest]
         # The native eligibility owner declares unsupported and empty shards,
         # and those whose families another macOS job retains. The partition
@@ -1608,13 +1544,6 @@ jobs:
     env: *skill-suite-env
     steps: *skill-suite-steps
 
-  # THE PATCH'S macOS LEGS: merge groups run the shards the changes job's
-  # `queue_macos_shards` list names; tools/ci-job-set's header states when
-  # it is empty. A main push runs the macOS shards its same-head merge group
-  # left unproved, through the same list. Where the changes job published
-  # nothing the nightly roster less its Linux-only shards runs. CI holds
-  # this job to the same list on a merge group, so a failed or cancelled leg
-  # ejects the entry and an unselected one does not.
   skill-suites-macos-queue:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
@@ -1634,30 +1563,17 @@ jobs:
   # Real failures stay red here. This family is deliberately absent from CI's needs.
   skill-suites-main-only:
     name: Temporary main suite (${{ matrix.suite }}, ${{ matrix.os }})
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.changes.result != 'success' || needs.changes.outputs.main_suites != '[]') }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suite: critical-path-deny.test
-            shard: guards-hooks
-            os: ubuntu-latest
-          - suite: orch-shard-partition.test
-            shard: guards-tools-tail
-            os: ubuntu-latest
-          - suite: pi-agents-tmux
-            shard: node
-            os: ubuntu-latest
-          - suite: adopt-refresh.test
-            shard: refresh
-            os: ubuntu-latest
+        include: ${{ fromJSON(needs.changes.result != 'success' && '[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"},{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"},{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]' || needs.changes.outputs.main_suites) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
     steps: *skill-suite-steps
 
-  # Full UI validation reaches the required aggregator on every merge group
-  # that selects it.
   ui-tests:
     name: UI (vitest, tsc, biome)
     needs: changes
@@ -1739,26 +1655,16 @@ jobs:
   # passed five minutes: Linux at 329s and macOS at 631s, means of the last
   # ten runs. Windows, at 230s, stays one job below. On macOS the kendex-cli
   # package is sharded again, by `--test` target, for the reasons the roster
-  # step in that job gives. Every lane compiles in a step of its own
-  # (`--no-run`) so a compile failure reads as one, and on the push to main
-  # that step is the whole job on every platform: it saves the compile cache
-  # under the merged lockfile, the entry the next group and night restore.
-  # The nightly run compiles on every platform and tests on macOS and
-  # Windows, which catches a failure that changes passing alone cause in
-  # combination. Splitting a lane adds legs under `CI` and changes no
-  # required context name.
+  # step in that job gives.
   #
   # One compile cache per shard, keyed by the action on the lockfile, the
   # toolchain and RUSTFLAGS, plus the crate — and on macOS the leg — through
-  # `key:` so parallel shards never race one entry. A pull request runs no
-  # lane and saves none; the main and nightly runs save the entries every
-  # other ref restores, and a change to the lockfile restores the nearest
-  # older entry.
+  # `key:` so parallel shards never race one entry.
   cargo-linux:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_linux.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1829,8 +1735,7 @@ jobs:
       # (catalog_render_lint 103s and guard_hooks 25s of it), kendex-core
       # ~20s, kendex-app ~10s. This leg is not split: 150s sits inside the
       # five-minute Linux trigger the header sets, and the test that costs
-      # the macOS leg its own leg costs 103s here. The merge group runs the
-      # Linux tests; the main and nightly runs compile only.
+      # the macOS leg its own leg costs 103s here.
       - name: test
         if: github.event_name == 'merge_group'
         timeout-minutes: 10
@@ -1846,7 +1751,7 @@ jobs:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_macos.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2028,8 +1933,6 @@ jobs:
       # 0 tests and half a second today, well inside the bound above.
       # Integration filters get their own invocation: passing them alongside
       # --lib, --bins or cli_smoke would also filter those unrelated tests.
-      # The push to main compiles for the cache alone; the merge group and
-      # the nightly run test.
       - name: test
         if: github.event_name != 'push'
         timeout-minutes: ${{ matrix.leg == 'render-lint' && 8 || matrix.leg == 'rest' && 13 || matrix.leg == 'verify-lock' && 12 || matrix.leg == 'apply-locked' && 13 || 12 }}
@@ -2121,7 +2024,7 @@ jobs:
     name: Windows cargo (core and CLI targets compile)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_windows_check.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -2151,7 +2054,7 @@ jobs:
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -2181,16 +2084,13 @@ jobs:
           printf '%s\n' "$gated"
           echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
 
-  # The main and nightly runs run both checks whatever the paths: external
-  # releases can change without a repository path changing.
+  # External releases can change without a repository path changing.
   # The default catalog must pass the released engine's strict validation.
   catalog:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     permissions:
       contents: read
-    # Each merge-group part renders the catalog and runs its share of the
-    # surviving released-package suites; other events run one render.
     strategy:
       fail-fast: false
       matrix:
@@ -2221,7 +2121,7 @@ jobs:
   # and does not test these renderer binaries.
   smoke:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     name: real-CLI round trip
     permissions:
       contents: read
@@ -2262,18 +2162,8 @@ jobs:
           KENDEX_CLI_SMOKE: "1"
         run: cargo test -p kendex-cli --test cli_smoke -- --nocapture
 
-  # The aggregate CI context follows the repository required-checks ruleset.
-  # Every other job reports into it except the nightly macOS skill suites.
-  # GitHub counts a skipped required context as satisfied. `always()` keeps
-  # a failed or skipped need from skipping this context on pull_request and
-  # merge_group. It does not run on the main or nightly runs, where nothing
-  # requires it.
-  #
-  # On a pull request every other job is skipped and this context passes:
-  # GitHub admits the pull request to the queue on it, and the merge group
-  # proves the head. On a merge group tools/ci-aggregate accepts a skipped
-  # lane only where the changes job selected it `false`; every job it needs
-  # that no lane names must succeed.
+  # GitHub accepts a skipped required context. always() prevents a failed need
+  # from skipping the context that must report that failure.
   ci:
     name: CI
     needs: [changes, bot-instructions, skill-suites-shard, skill-suites-macos-queue, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows, catalog, smoke]
