@@ -341,10 +341,13 @@ if [[ -n "$rolling" && -n "$number" ]]; then
     git -C "$repo" reset -q --hard HEAD
     say rolling-current "$rolling pull-request=$number" \
       "pull request $number's commit, merged onto $head, is the record this tree writes; the queue merges it, so nothing was pushed"
-    if [[ "$armed" == true ]]; then
-      say armed already
-    else
-      arm "$number" "$rolling"
+    land_check_run
+    if [[ "$land_check" != skipped:queued ]]; then
+      if [[ "$armed" == true ]]; then
+        say armed already
+      else
+        arm "$number" "$rolling"
+      fi
     fi
     exit 0
   fi

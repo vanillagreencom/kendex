@@ -1139,6 +1139,8 @@ fn the_rolling_entry_does_not_block_landing_and_busy_updates_arm() {
         assert!(output.contains("lock-record: armed=41\n"), "{output}");
         assert!(world.gh_state.join("armed").exists(), "{output}");
         assert_eq!(world.origin_main(), head, "{output}");
+        // A removed arm on an unchanged record stays removed while the queue is busy.
+        fs::remove_file(world.gh_state.join("armed")).expect("remove fixture arm");
         let before = world.gh_log();
         git_ok(&world.home, &world.main, &["checkout", "-q", "main"]);
         let repeated = world.lock_record_with("", &busy);
@@ -1147,15 +1149,12 @@ fn the_rolling_entry_does_not_block_landing_and_busy_updates_arm() {
         assert!(output.contains("lock-record: rolling-current="), "{output}");
         let log = world.gh_log();
         let asked = log.strip_prefix(&before).expect("log prefix");
-        assert!(!asked.contains("mergeQueue(branch:"), "{asked}");
+        let verified = asked.rfind("kendex verify ").expect("final verification");
+        assert!(verified < at(asked, "mergeQueue(branch:"), "{asked}");
+        assert_eq!(asked.matches("mergeQueue(branch:").count(), 1, "{asked}");
         assert!(!asked.contains("pr merge"), "{asked}");
         assert!(!asked.contains("pr edit"), "{asked}");
-        assert!(world.gh_state.join("armed").exists(), "{output}");
-        // A cancelled arm on a current record must also be restored behind a busy queue.
-        fs::remove_file(world.gh_state.join("armed")).expect("remove fixture arm");
-        let repeated = world.lock_record_with("", &busy);
-        assert!(repeated.status.success(), "{}", said(&repeated));
-        assert!(said(&repeated).contains("lock-record: armed=41\n"));
+        assert!(!world.gh_state.join("armed").exists(), "{output}");
         world.branch("c", "ship");
         assert!(world.queue_merge("c").status.success());
         let head = world.main_head();
