@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.6
+
+- Turning off a skill discovered under `~/.agents/skills` now stops Pi from loading it in new sessions.
+
 ### 2.0.5
 
 - Pi loads the skills manager's dialog, inventory, toggles, and generation code only when `/skill` opens it. Disabled startup-list hiding and a disabled manager also avoid loading the host startup patch.
