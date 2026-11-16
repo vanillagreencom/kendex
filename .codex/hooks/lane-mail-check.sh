@@ -53,6 +53,11 @@ if [ -z "$reader" ]; then
 fi
 export LANE_MAIL_CLI=$reader
 scripts=${reader%/mailbox/scripts/lane-mail}/orch/scripts
+# A launcher this install lacks is reported and passed on every arm, as a
+# missing reader is: the shell's 127 for it would refuse every tool call on
+# Copilot and Pi, which refuse a call on any nonzero status.
+[ -x "$scripts/orch-runtime" ] ||
+  { printf 'lane-mail-check: runtime=unlocatable path=%s\n' "$scripts/orch-runtime" >&2; exit 0; }
 
 # stdout passes straight through; stderr is held so that the wrapper's own
 # line for an unbuilt runtime never stands ahead of the answer given here.

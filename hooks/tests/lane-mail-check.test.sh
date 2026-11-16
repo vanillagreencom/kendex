@@ -146,6 +146,7 @@ unbuilt() { # NAME [HOLD|-] [FAIL]
   CACHE="$TMP_ROOT/cache-$1"
   mkdir -p "$CACHE"
   ROW_PATH="$PLANTED:$BASE_PATH"
+  ROW_HOME="$TMP_ROOT/home"
   ROW_ENV=("FAKE_CARGO_LOG=$TMP_ROOT/cargo-$1.log")
   if [ -n "${2:-}" ] && [ "$2" != - ]; then
     : > "$2"
@@ -221,6 +222,32 @@ row_unlocatable() {
     "an install whose walk finds no mailbox reader is reported and passes, never held"
 }
 
+row_launcherless() {
+  built
+  lane launcherless
+  rm -f -- "$LANE/.agents/skills/mailbox" "$LANE/.agents/skills/orch" "$LANE/.agents/skills/agent-runtime"
+  direct "rebase onto main"
+  ROW_HOME="$TMP_ROOT/launcherless-home"
+  mkdir -p "$ROW_HOME/.agents/skills" "$ROW_HOME/.claude/hooks"
+  ln -s "$REPO_ROOT/skills/mailbox" "$ROW_HOME/.agents/skills/mailbox"
+  cp -- "$HOOK" "$ROW_HOME/.claude/hooks/lane-mail-check.sh"
+  ROW_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+  local hook="$ROW_HOME/.claude/hooks/lane-mail-check.sh" launcher="$ROW_HOME/.agents/skills/orch/scripts/orch-runtime"
+  local passed="RC=0 first=lane-mail-check: runtime=unlocatable path=$launcher stdout="
+  run "$hook" "$LANE" "$BUILT_CACHE"
+  assert_eq "RC=$RC first=$(first_line) stdout=$(cat "$OUT_FILE")" "$passed" \
+    "a turn end whose install has the mailbox and no orch launcher is reported and passes, its mail left unread"
+  run "$hook" "$LANE" "$BUILT_CACHE" halt
+  assert_eq "RC=$RC first=$(first_line) stdout=$(cat "$OUT_FILE")" "$passed" \
+    "a tool call whose install has no orch launcher is reported and passes"
+  mkdir -p "${launcher%/*}"
+  : > "$launcher"
+  chmod 644 "$launcher"
+  run "$hook" "$LANE" "$BUILT_CACHE" halt
+  assert_eq "RC=$RC first=$(first_line) stdout=$(cat "$OUT_FILE")" "$passed" \
+    "a launcher that stands but cannot be run is reported and passes"
+}
+
 row_building() {
   lane building
   mkdir -p "$LANE/.github/hooks" "$LANE/sub"
@@ -268,7 +295,7 @@ row_boxless() {
   builds_done "$CACHE"
 }
 
-ROWS="mail arm copilot global unlocatable building failed boxless"
+ROWS="mail arm copilot global unlocatable launcherless building failed boxless"
 for name in ${ENTRY_ROW:-$ROWS}; do "row_$name"; done
 
 # The must-fail controls, each a copy of the entry with one whole line
@@ -297,6 +324,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   control unlocatable-held unlocatable \
     "  printf 'lane-mail-check: reader=unlocatable hook=%s\\n' \"\$dir\" >&2" \
     "  printf 'lane-mail-check: reader=unlocatable hook=%s\\n' \"\$dir\" >&2; exit 2"
+  control launcher-ran launcherless \
+    "  { printf 'lane-mail-check: runtime=unlocatable path=%s\\n' \"\$scripts/orch-runtime\" >&2; exit 0; }" \
+    "  { printf 'lane-mail-check: runtime=unlocatable path=%s\\n' \"\$scripts/orch-runtime\" >&2; :; }"
   control root-cwd building \
     'root=$(git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null) || root=""' \
     'root=${CLAUDE_PROJECT_DIR:-$PWD}'
