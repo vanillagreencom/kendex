@@ -76,7 +76,7 @@ lane_answer() { sed -n '/^queue_only=/p; /^lanes=/p; /^lanes_cause=/p' "$1"; }
 # The action's lane_verdicts value, its lines joined with commas.
 verdicts() {
   awk '$0 == "lane_verdicts<<__change_class_lane_verdicts_end__" { on = 1; next }
-    $0 == "__change_class_lane_verdicts_end__" { on = 0 } on' "$SANDBOX/action-output" |
+    $0 == "__change_class_lane_verdicts_end__" { on = 0 } on' "${1:-$SANDBOX/action-output}" |
     tr '\n' ',' | sed 's/,$//'
 }
 
@@ -119,6 +119,11 @@ while IFS='|' read -r name event base_name paths lines declaration default expec
     "$(lane_answer "$SANDBOX/local-output")"
   assert_eq "$name: local and action agree" "$(lane_answer "$SANDBOX/action-output")" \
     "$(lane_answer "$SANDBOX/local-output")"
+  assert_eq "$name: local and action per-lane verdicts agree" "$(verdicts)" \
+    "$(verdicts "$SANDBOX/local-output")"
+  assert_eq "$name: local and action per-lane causes agree" \
+    "$(sed -n '/^lane: /p' "$SANDBOX/action-stderr")" \
+    "$(sed -n '/^lane: /p' "$SANDBOX/local-stderr")"
   [ "$lane_verdicts" = - ] ||
     assert_eq "$name: lane verdicts" "$lane_verdicts" "$(verdicts)"
   assert_eq "$name: stdout keeps its class contract" \
@@ -349,7 +354,7 @@ unread-ci-input|unreadwide|.github/dependabot.yml .github/workflows/ci.yml|-|lan
 unread-quoted|unreadquote|.github/workflows/a"b.yml|-|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=".github/workflows/a\"b.yml" claim=none
 ROWS
 }
-unread_case() { # ROW, through the action at ACTION_ROOT
+unread_case() { # ROW [LOCAL COMMAND], through the action at ACTION_ROOT
   local name base_name paths environment expected other base_var base
   IFS='|' read -r name base_name paths environment expected other <<<"$1"
   base_var="base_$base_name"
@@ -357,10 +362,17 @@ unread_case() { # ROW, through the action at ACTION_ROOT
   write_row "$name" "$base" "$paths" 3
   [ "$environment" = - ] || export HARNESS_CI_UNREAD_PATHS="$environment"
   run_action merge_group "$base" "$SANDBOX/default" true
+  run_local "${2:-$CHANGE_CLASS}" merge_group "$base" "$SANDBOX/default" true
   unset HARNESS_CI_UNREAD_PATHS
   assert_eq "$name: lane verdicts" "$expected" "$(verdicts)"
   assert_eq "$name: other lane's cause" "lane: name=other $other" \
     "$(sed -n '/^lane: name=other /p' "$SANDBOX/action-stderr")"
+  assert_eq "$name: local lane verdicts" "$expected" "$(verdicts "$SANDBOX/local-output")"
+  assert_eq "$name: local other lane's cause" "lane: name=other $other" \
+    "$(sed -n '/^lane: name=other /p' "$SANDBOX/local-stderr")"
+  assert_eq "$name: local authoritative unread declaration" \
+    "$(sed -n '/^unread-paths:/p' "$SANDBOX/action-stderr" | tail -n 1)" \
+    "$(sed -n '/^unread-paths:/p' "$SANDBOX/local-stderr" | tail -n 1)"
 }
 rows=0
 while IFS= read -r row; do
@@ -368,6 +380,19 @@ while IFS= read -r row; do
   unread_case "$row"
 done < <(unread_rows)
 require_rows unread-paths "$rows"
+# Restoring the local log's omission must turn the unread path into an
+# unclaimed path, even though the action still honors the declaration.
+local_unread_mutant="$(mutant local-unread-omitted change-class \
+  '      printf '\''%s\n'\'' "$unread_line"; } >"$work/class-log"' \
+  '      :; } >"$work/class-log"')"
+control_status=0
+(PASS=0; FAIL=0
+  unread_case "$(unread_rows | sed -n '/^only-unread|/p')" "$local_unread_mutant"
+  [ "$FAIL" -eq 0 ]) >"$SANDBOX/local-unread-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: the local unread row rejects the omitted declaration" 1 "$control_status"
+assert_eq "the local control reaches the unclaimed fallback" \
+  'lane: name=other verdict=true cause=unclaimed-path path=.github/dependabot.yml claim=none' \
+  "$(sed -n '/^lane: name=other /p' "$SANDBOX/local-stderr")"
 # The control ignores the declaration and must reach the unclaimed fallback.
 unread_mutant="$(mutant unread-ignored lib/change-class.sh \
   '  unread_list_match "$1" "$unread_globs" || return 0' '  return 0')"
