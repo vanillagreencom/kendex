@@ -263,15 +263,6 @@ gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdou
   done <"$GG_TMP/lane.z"
 }
 
-gg_count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot read it
-  # grep -c exits 1 on zero matches but still prints 0 — only exit >= 2
-  # (execution/read failure) means the count is unknown.
-  local n status=0
-  n="$(grep -c . -- "$1")" || status=$?
-  [ "$status" -le 1 ] || gg_fail lines-count "$1:$status" "could not count lines in $(gg_shown "$1") (grep exit $status)"
-  printf '%s\n' "$n"
-}
-
 # A tighten-only baseline's hygiene: rows are 'path<TAB>N' with N a positive
 # integer, LC_ALL=C sorted, unique paths. Enforced, never repaired.
 gg_validate_baseline() { # FILE LABEL — returns only when every row is well formed
