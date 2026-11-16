@@ -13,7 +13,7 @@ Review holds these rules when a consumer adopts or changes a workflow:
 - GitHub-owned and third-party actions use a full commit SHA with the release version in a trailing comment, such as `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`. A moved tag cannot change the code a pinned job runs. A harmful release still needs a reviewed pin update. Its likelihood depends on the publisher and its account security.
 - This organization's own actions use the default-branch ref, such as `vanillagreencom/kendex/.github/actions/change-class@main`. That ref has the same trust as the default-branch checkout. A harmful change needs an incorrect or compromised merge to that branch. The cost is accepting its reviewed updates before the consumer's next refresh.
 
-Enable GitHub's Dependabot `github-actions` ecosystem in the consumer's `.github/dependabot.yml`. Dependabot opens update pull requests for action tags and commit pins. Review those updates under the rules above. Add this entry to an existing `updates` list, or use this file when none exists:
+Enable GitHub's Dependabot `github-actions` ecosystem in the consumer's `.github/dependabot.yml`. Dependabot groups action tag and commit pin updates into one weekly pull request. Review those updates under the rules above. Each repository's overseer copies this entry by hand into its existing `updates` list, or uses this file when none exists:
 
 ```yaml
 version: 2
@@ -22,6 +22,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     ignore:
       - dependency-name: "vanillagreencom/kendex*"
 ```
