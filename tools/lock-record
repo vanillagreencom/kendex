@@ -34,16 +34,16 @@
 # pull request the merge queue takes; a pull request already open on the
 # branch is disarmed and dequeued before the push, as
 # skills/orch/workflows/merge-pr-restack.md step 1 does, armed again after
-# it only while no other entry holds the queue, and its title and body then rewritten to the head just recorded. The
+# it, and its title and body then rewritten to the head just recorded. The
 # arm passes the merge method the base branch allows, read from GitHub like
 # the default branch. GitHub shows a force push on the pull request's head a
 # moment after the push lands, and refuses an arm whose --match-head-commit
 # names a head it does not show yet: every arm, on the stand-down and after
 # the push, first reads the pull request's head until it is the revision
 # armed, and a head GitHub never shows within those reads leaves the pull
-# request unarmed, which the next run arms; the run also prints a warning
+# request unarmed and fails the run; it also prints a warning
 # annotation, so under GitHub Actions the unarmed pull request shows on a
-# green run.
+# failed run.
 #
 # The record goes to the base with no pull request where KENDEX_LAND_TOKEN
 # holds the landing app's token and the base's merge queue holds no entry,
@@ -118,8 +118,8 @@
 #   armed=<n|already>           auto-merge enabled on it for its head, or found enabled on a stand-down
 #   head-read=<n>               gh could not read the pull request's head after the push or on the stand-down, so it was not armed (exit 1)
 #   unarmed=<n> pushed=<sha> head=<sha>
-#                               GitHub still showed the other head on the pull request after every read, so it was not armed; the record landed, and the next run arms it;
-#                               a `::warning title=lock-record unarmed::` workflow command on stdout names both revisions too
+#                               GitHub showed another head after every read, or refused the arm; the record is on the branch (exit 1);
+#                               a head mismatch also prints a `::warning title=lock-record unarmed::` workflow command naming both revisions
 set -euo pipefail
 
 say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
@@ -150,13 +150,14 @@ arm() { # NUMBER REVISION
   if [[ "$seen" != "$revision" ]]; then
     say unarmed "$number pushed=$revision head=$seen" \
       "GitHub still showed $seen as pull request $number's head after $reads reads, not the pushed $revision, so it was not armed; the record is on the branch, and the next run arms it" >&2
-    # The run stays green, and nobody opens a green run's log: the
-    # annotation puts the unarmed pull request on the run summary and on
-    # the commit's checks.
+    # Keep both revisions visible in the Actions annotation as well as the log.
     printf '::warning title=lock-record unarmed::pull request %s left unarmed: GitHub showed %s, pushed %s\n' "$number" "$seen" "$revision"
-    return 0
+    return 1
   fi
-  (cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$revision")
+  if ! (cd -- "$repo" && gh pr merge "$number" "--$method" --auto --match-head-commit "$revision"); then
+    say unarmed "$number pushed=$revision head=$seen" "gh refused to arm pull request $number on $revision; its output is above" >&2
+    return 1
+  fi
   armed_on="$revision"
   say armed "$number"
 }
@@ -385,7 +386,7 @@ body="tools/lock-record re-recorded .kendex-lock.json on $base after the merges 
 
 # An armed pull request re-enters the queue the moment its checks pass,
 # and a push onto a queued one ejects it: disarm first, then dequeue, then
-# push, then arm the pushed head only if no other entry holds the queue.
+# push, then arm the pushed head for the merge queue.
 if [[ "$armed" == true ]]; then
   if ! reason="$(cd -- "$repo" && kendex_merge_queue_mutation disablePullRequestAutoMerge "$node_id")"; then
     say disarm "$number" "auto-merge could not be disabled on pull request $number, so a push would let it re-enter the queue: $reason" >&2
@@ -462,7 +463,9 @@ else
 fi
 say pull-request "$number action=$action"
 
-if [[ "$land_check" != skipped:queued ]]; then arm "$number" "$recorded"; fi
+# A busy queue prevents a direct landing, but must still receive this head.
+arm_status=0
+arm "$number" "$recorded" || arm_status=$?
 
 # The title and body follow the arm decision, so a failed edit leaves its
 # outcome as it was with only the description stale.
@@ -472,9 +475,11 @@ if [[ "$action" == updated ]] && ! (cd -- "$repo" && gh pr edit "$number" --titl
     arm_note="it is armed on the record"
   else
     arm_state=unarmed
-    arm_note="it was left unarmed, and a run with no other queued entry can arm it"
+    arm_note="it was left unarmed"
   fi
   say pull-request-edit "$number arm=$arm_state" \
     "gh could not rewrite pull request $number's title and body to $head; $arm_note; the next re-record rewrites them" >&2
   exit 1
 fi
+
+exit "$arm_status"
