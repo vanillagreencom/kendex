@@ -4086,6 +4086,83 @@ fn a_launched_job_runs_as_its_recorded_group_and_stop_job_ends_it_by_that_record
     assert_eq!(refusal_key(&stop("unread.runner")), "stop-unreadable");
 }
 
+/// A job a confined lane starts stays inside the lane's wrapper: under the
+/// wrapper's words `launch-job` takes `setsid` for the reason `confined`
+/// before asking any manager, and the job's write to the home is refused.
+/// The row's own `loginctl` answers that no manager lingers, so no row
+/// path reaches the operator's manager. Its root is outside `/tmp`, which
+/// the wrapper replaces with a private one.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_job_launched_inside_the_wrapper_stays_inside_and_says_confined() {
+    use agent_runtime::confine::{Grants, Word, linux_words};
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    assert!(!root.starts_with("/tmp"), "{}", root.display());
+    let [home, wt, bin] = ["home", "wt", "bin"].map(|n| root.join(n));
+    for dir in [&home, &wt, &bin] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    write_executable(&bin.join("loginctl"), "#!/bin/sh\necho no\n");
+    write_executable(
+        &bin.join("systemd-run"),
+        "#!/bin/sh\necho 'systemd-run: planted refusal' >&2\nexit 1\n",
+    );
+    let harness = bin.join("harness");
+    write_executable(
+        &harness,
+        format!(
+            r#"#!/bin/sh
+exec '{orch}' --no-private-env launch-job --name confined-row --run '{wt}/job' -- sh -c 'touch "$HOME/x" 2>/dev/null && echo home=written || echo home=refused' > '{wt}/reply.json'
+"#,
+            orch = binary().display(),
+            wt = wt.display(),
+        ),
+    );
+    let words: Vec<String> = linux_words(&Grants {
+        writable: vec![wt.clone()],
+        seats: Vec::new(),
+        read_only: Vec::new(),
+        runtime_dir: None,
+        sockets: Vec::new(),
+        desktop: false,
+        file: root.join("grants.json"),
+    })
+    .into_iter()
+    .map(|word| match word {
+        Word::Plain(word) => word,
+        Word::Display(_) => panic!("a display word without a desktop grant"),
+    })
+    .collect();
+    let out = program("bwrap")
+        .args(&words)
+        .arg(&harness)
+        .env("HOME", &home)
+        .env("PATH", tool_path(&[&bin]))
+        .current_dir(&wt)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let launched: Value =
+        serde_json::from_str(&std::fs::read_to_string(wt.join("reply.json")).unwrap()).unwrap();
+    assert_eq!(launched["result"]["runner"], "setsid", "{launched}");
+    wait_until("the job's exit", secs(30), || wt.join("job.exit").exists());
+    let record = std::fs::read_to_string(wt.join("job.runner")).unwrap();
+    assert!(
+        record
+            .lines()
+            .filter_map(|l| l.strip_prefix("line="))
+            .any(|l| l
+                .split(' ')
+                .take(2)
+                .eq(["runner=setsid", "reason=confined"])),
+        "{record}"
+    );
+    let log = std::fs::read_to_string(wt.join("job.log")).unwrap();
+    assert!(log.lines().any(|l| l == "home=refused"), "{log}");
+    assert!(!home.join("x").exists());
+}
+
 /// Under a lingering manager `launch-job` starts a unit and answers 0 with
 /// the unit its record names, which `stop-job` stops; a start whose answer
 /// is lost while the manager cannot say whether it holds the unit answers

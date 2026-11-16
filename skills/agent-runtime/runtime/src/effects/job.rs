@@ -1505,9 +1505,14 @@ fn status_read(status: String) -> SidecarRead {
 /// the user manager lingers and a probe unit starts; `setsid` otherwise,
 /// with the reason. A `Linger` that cannot be read is no linger. The probe
 /// starts a unit, since that is the question: `systemctl is-system-running`
-/// exits non-zero on a degraded manager that still runs units.
+/// exits non-zero on a degraded manager that still runs units. A process
+/// inside a lane's wrapper takes `setsid` before any probe: a unit would
+/// run the job outside the wrapper, under the user's manager.
 fn probe_manager() -> Runner {
     let setsid = |reason: String| Runner::Setsid { reason };
+    if std::env::var_os(crate::confine::CONFINED_VAR).is_some_and(|v| v == "1") {
+        return setsid("confined".to_owned());
+    }
     if !on_path("systemd-run") {
         return setsid("no-systemd-run".to_owned());
     }
