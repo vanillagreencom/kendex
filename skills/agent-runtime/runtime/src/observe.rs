@@ -384,8 +384,11 @@ pub fn pi_working(slice: &str) -> bool {
     slice.lines().any(|l| PI_WORKING_BORDER.is_match(l))
 }
 
-/// Whether Pi's default composer is drawn and open: the last three drawn
-/// lines are the editor's bottom rule, the prompt line and the footer.
+/// Whether Pi's default composer is drawn and open: the editor's bottom
+/// rule is the last rule drawn, with the prompt line and the footer
+/// directly under it. Pi draws its extensions' status lines below the
+/// footer, `pi-session-bridge`'s `bridge:<pid>` in every lane among them,
+/// so whatever stands under the footer is not read.
 ///
 /// Pi's native interface for turn state is its session file, which ends a
 /// turn with an assistant row whose `stopReason` is `stop`. That file cannot
@@ -395,11 +398,13 @@ pub fn pi_working(slice: &str) -> bool {
 /// other harnesses use never fires here.
 pub fn pi_composer_drawn(slice: &str) -> bool {
     let drawn: Vec<&str> = slice.lines().filter(|l| !l.trim().is_empty()).collect();
-    let n = drawn.len();
-    n >= 3
-        && FRAME_RULE.is_match(drawn[n - 3])
-        && PI_PROMPT.is_match(drawn[n - 2])
-        && PI_FOOTER.is_match(drawn[n - 1])
+    let Some(rule) = drawn.iter().rposition(|l| FRAME_RULE.is_match(l)) else {
+        return false;
+    };
+    matches!(
+        drawn.get(rule + 1..rule + 3),
+        Some([prompt, footer]) if PI_PROMPT.is_match(prompt) && PI_FOOTER.is_match(footer)
+    )
 }
 
 /// Whether the harness's own composer is drawn in the slice. Each rule is

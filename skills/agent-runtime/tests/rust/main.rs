@@ -193,6 +193,44 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
     assert_eq!(code, Some(1), "{reply}");
 }
 
+/// Pi 1.5.2's foot in a lane: `pi-session-bridge` draws its status line
+/// `bridge:<pid>` under the footer, at rest and mid-turn. The close guard
+/// and delivery read idle from this screen alone, so an idle lane that
+/// carries the bridge must read idle; the same foot with no status line
+/// reads as before.
+#[test]
+fn a_pi_foot_with_an_extension_s_status_line_under_the_footer_reads_idle_at_rest_and_working_mid_turn()
+ {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/rust/fixtures");
+    let idle = fixtures.join("pi-status-idle.txt");
+    let text = std::fs::read_to_string(&idle).unwrap();
+    let (foot, status) = text.trim_end().rsplit_once('\n').unwrap();
+    assert!(status.starts_with("bridge:"), "{status}");
+    let dir = tempfile::tempdir().unwrap();
+    let bare = dir.path().join("pi-no-status.txt");
+    std::fs::write(&bare, format!("{foot}\n")).unwrap();
+    for (screen, want) in [
+        (idle, "idle"),
+        (fixtures.join("pi-status-working.txt"), "working"),
+        (bare, "idle"),
+    ] {
+        let (code, reply) = reply_of(&[
+            "judge".as_ref(),
+            "--screen".as_ref(),
+            screen.as_os_str(),
+            "--harness".as_ref(),
+            "pi".as_ref(),
+        ]);
+        assert_eq!(
+            reply["result"]["state"],
+            want,
+            "{}: {reply}",
+            screen.display()
+        );
+        assert_eq!(code, Some(0), "{reply}");
+    }
+}
+
 /// The three marker-drawing harnesses at rest, as the native probe's
 /// `inspect` captured them after the first turn: each reads
 /// idle under its own composer rule. Codex's `›` line is no other
