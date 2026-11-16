@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: docs-writing-note.sh. Inputs: that hook, tests/lib/assert.sh, and
+# Surface: docs-writing-note.sh. Inputs: that hook, docs-writing-bash-note.sh, tests/lib/assert.sh, and
 # the commit-guards and docs-writing skills it runs and routes to.
 set -euo pipefail
 TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
@@ -24,6 +24,8 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/.agents/skills/commit-guards/scripts"
 git -C "$REPO" -c init.defaultBranch=main init -q
+git -C "$REPO" config gc.auto 0
+git -C "$REPO" config maintenance.auto false
 printf 'tmp/\n' >"$REPO/.gitignore"
 printf '#!/bin/sh\n: >"%s/sentinel"\n' "$TMP_ROOT" >"$REPO/.agents/skills/commit-guards/scripts/md-type"
 chmod +x "$REPO/.agents/skills/commit-guards/scripts/md-type"
@@ -41,6 +43,7 @@ scope() { # NAME HARNESS PARTS — the hook's path on stdout
   rm -rf -- "$dir"
   mkdir -p "$hooks" "$dir/.agents/skills"
   cp -- "$HOOK" "$hooks/docs-writing-note.sh"
+  cp -- "$TEST_DIR/../docs-writing-bash-note.sh" "$hooks/docs-writing-bash-note.sh"
   for part in $3; do cp -R -- "$CATALOG/skills/$part" "$dir/.agents/skills/$part"; done
   printf '%s\n' "$hooks/docs-writing-note.sh"
 }
@@ -65,11 +68,11 @@ mkdir -p "$FIRE_HOME"
 fire() { # HOOK-PATH PAYLOAD [PATH] [STATE-HOME]
   STATUS=0
   printf '%s' "$2" >"$TMP_ROOT/input"
-  (cd -- "$REPO" && HOME="$FIRE_HOME" PATH="${3:-$PATH}" XDG_STATE_HOME="${4:-$STATE}" "$BASH_BIN" "$1" <"$TMP_ROOT/input") \
+  (cd -- "$REPO" && HOME="$FIRE_HOME" XDG_CONFIG_HOME="$FIRE_HOME/config" XDG_DATA_HOME="$FIRE_HOME/data" XDG_CACHE_HOME="$FIRE_HOME/cache" PATH="${3:-$PATH}" XDG_STATE_HOME="${4:-$STATE}" "$BASH_BIN" "$1" <"$TMP_ROOT/input") \
     >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || STATUS=$?
   CONTEXT=""
   if [ -s "$TMP_ROOT/stdout" ]; then
-    CONTEXT=$("$JQ_BIN" -er '.hookSpecificOutput | select(.hookEventName == "PreToolUse") | .additionalContext | strings' "$TMP_ROOT/stdout") ||
+    CONTEXT=$("$JQ_BIN" -er '.hookSpecificOutput | select(.hookEventName == "PreToolUse" or .hookEventName == "PostToolUse") | .additionalContext | strings' "$TMP_ROOT/stdout") ||
       CONTEXT="invalid-envelope"
   fi
   FIRST=${CONTEXT%%$'\n'*}
@@ -118,6 +121,50 @@ delivery_rows() {
 }
 delivery_rows
 
+# Claude reports a command rather than written paths. Exercise the actual
+# PostToolUse companion after a Bash python write, with git as the producer.
+bash_rows() {
+  local hook cwd payload path mode
+  rm -rf -- "$STATE"
+  hook=$(scope bash-claude claude "commit-guards docs-writing")
+  hook=${hook%/*}/docs-writing-bash-note.sh
+  local REPO
+  REPO=$(mktemp -d "$TMP_ROOT/bash-repo.XXXXXX") || return 1
+  mkdir -p "$REPO/docs/architecture" "$REPO/tmp"
+  git -C "$REPO" -c init.defaultBranch=main init -q
+  git -C "$REPO" config gc.auto 0
+  git -C "$REPO" config maintenance.auto false
+  printf 'tmp/\n' >"$REPO/.gitignore"
+  path="$REPO/docs/architecture/bash file.md"
+  printf '# Initial\n' >"$path"
+  git -C "$REPO" add .gitignore docs/architecture
+  git -C "$REPO" -c user.name=Test -c user.email=test@example.org commit -qm initial
+  for mode in clean ignored untracked modified staged deleted outside; do
+    git -C "$REPO" checkout HEAD -- .
+    cwd="$REPO/docs"
+    case "$mode" in
+      ignored) printf '# Ignored\n' >"$REPO/tmp/ignored.md" ;;
+      untracked) printf '# New\n' >"$REPO/docs/untracked.md" ;;
+      modified | staged)
+        python3 -c 'from pathlib import Path; import sys; Path(sys.argv[1]).write_text("# Changed\n")' "$path"
+        [ "$mode" != staged ] || git -C "$REPO" add docs/architecture
+        ;;
+      deleted) python3 -c 'from pathlib import Path; import sys; Path(sys.argv[1]).unlink()' "$path" ;;
+      outside) cwd="$TMP_ROOT/home" ;;
+    esac
+    payload=$(jq -cn --arg cwd "$cwd" --arg s "bash-$mode" '{tool_name:"Bash",hook_event_name:"PostToolUse",session_id:$s,cwd:$cwd,tool_input:{command:"python3 write.py"},tool_response:{stdout:"",stderr:"",interrupted:false}}')
+    case "$mode" in
+      modified | staged)
+        check "Bash $mode" "$hook" "$payload" "docs-writing-note: path=$path type=architecture" "bash-$mode" "harness=claude session=bash-$mode path=$path"
+        assert_eq "$(jq -r .hookSpecificOutput.hookEventName "$TMP_ROOT/stdout")" PostToolUse "Bash $mode: context event"
+        check "Bash later $mode" "$hook" "$payload" "" "bash-$mode" "harness=claude session=bash-$mode path=$path"
+        ;;
+      *) check "Bash $mode" "$hook" "$payload" "" "bash-$mode" none ;;
+    esac
+  done
+}
+bash_rows
+
 # Codex Delete headers name files, but only surviving Markdown edits route.
 deletion_rows() {
   local codex path key rf=$REPO/README.md
@@ -160,6 +207,8 @@ project_rows() {
   rm -rf -- "$STATE" "${TMP_ROOT:?}/project" "${TMP_ROOT:?}/project-home" "${TMP_ROOT:?}/home-sentinel"
   mkdir -p "$REPO/.agents/skills" "$home/.agents/skills/commit-guards/scripts"
   git -C "$REPO" -c init.defaultBranch=main init -q
+  git -C "$REPO" config gc.auto 0
+  git -C "$REPO" config maintenance.auto false
   cp -R -- "$CATALOG/skills/commit-guards" "$CATALOG/skills/docs-writing" "$REPO/.agents/skills/"
   printf '#!/bin/sh\n: >"%s/home-sentinel"\n' "$TMP_ROOT" >"$home/.agents/skills/commit-guards/scripts/md-type"
   chmod +x "$home/.agents/skills/commit-guards/scripts/md-type"
@@ -194,6 +243,8 @@ catalog_rows() {
   rm -rf -- "$STATE" "${TMP_ROOT:?}/catalog" "${TMP_ROOT:?}/catalog-sentinel"
   mkdir -p "$REPO/.agents/skills" "$REPO/skills/commit-guards/scripts" "$REPO/.claude/hooks"
   git -C "$REPO" -c init.defaultBranch=main init -q
+  git -C "$REPO" config gc.auto 0
+  git -C "$REPO" config maintenance.auto false
   cp -R -- "$CATALOG/skills/commit-guards" "$CATALOG/skills/docs-writing" "$REPO/.agents/skills/"
   printf '#!/bin/sh\n: >"%s/catalog-sentinel"\n' "$TMP_ROOT" >"$REPO/skills/commit-guards/scripts/md-type"
   chmod +x "$REPO/skills/commit-guards/scripts/md-type"
@@ -213,7 +264,7 @@ failure_rows() {
   nodocs=$(scope nodocs claude "commit-guards")
   check "invalid payload" "$claude" '{' "docs-writing-note: reader=tool-name" "" ""
   check "missing tool name" "$claude" '{}' "docs-writing-note: payload=invalid-json" "" ""
-  check "unknown tool" "$claude" '{"tool_name":"Bash","tool_input":{"command":"true"}}' "docs-writing-note: payload=unknown-tool" "" ""
+  check "unknown tool" "$claude" '{"tool_name":"Other","tool_input":{"command":"true"}}' "docs-writing-note: payload=unknown-tool" "" ""
   check "missing file path" "$claude" '{"tool_name":"Edit","tool_input":{}}' "docs-writing-note: payload=no-file-path" "" ""
   check "patch with no header" "$claude" '{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** End Patch"}}' "docs-writing-note: payload=no-file-path" "" ""
   check "no session id" "$claude" "$(jq -cn --arg p "$rf" '{tool_name:"Edit",tool_input:{file_path:$p}}')" "docs-writing-note: payload=no-session-id" "" ""
@@ -239,6 +290,9 @@ for missing in jq cat; do
   fire "$(scope "tools-$missing" claude "commit-guards docs-writing")" "$(edit Edit "$REPO/README.md" t1)" "$TMP_ROOT/bin-$missing"
   assert_eq "$STATUS:$FIRST" "0:docs-writing-note: missing-tools=$missing" "missing $missing"
 done
+
+skill_load_control bash-status "$HOOK" '    # Porcelain -z preserves spaces/quoting; --no-renames leaves one record' '    exit 0' HOOK bash_rows \
+  'Bash modified: keyed first line' 'Bash staged: keyed first line'
 
 skill_load_control delete-headers "$HOOK" 'function flush() { if (held != "") { print held; edited = 1 }; held = "" }' '/^\*\*\* Delete File: / { next }' HOOK deletion_rows \
   'codex delete README.md: whole stdout is empty' 'codex delete src/main.rs: whole stdout is empty'

@@ -3,12 +3,14 @@
 # name: docs-writing-note
 # event: PreToolUse
 # matcher: Edit|MultiEdit|Write
-# description: On the first Markdown edit of a session, hands the session the edited file's docs-writing type and the paths of that type's reference and example, as the commit-guards md-type lane installed in this hook's own scope routes them, once per session. The first line is `docs-writing-note: path=<file> type=<type>`, or `type=unclassified` naming the route table in docs-writing's SKILL.md. Later Markdown edits of the session, any other edit, a git-ignored file and a file outside a repository get nothing. A Claude Code subagent counts as its own session. Codex reports the edit as apply_patch, and the hook reads the patch's Add, Update, Move and Delete headers, excluding deleted files and taking a moved file by its destination; a Codex subagent shares its lead's session. Not run on copilot: preToolUse has no measured additionalContext delivery to the model. Not run on gemini: the BeforeTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it reads hooks as advisory prose and executes no edit event. Not run on antigravity: its toolCall.args payload has no tool_input.file_path reader here.
+# description: On the first Markdown edit of a session, hands the session the edited file's docs-writing type and the paths of that type's reference and example, as the commit-guards md-type lane installed in this hook's own scope routes them, once per session. The first line is `docs-writing-note: path=<file> type=<type>`, or `type=unclassified` naming the route table in docs-writing's SKILL.md. Later Markdown edits of the session, any other edit, a git-ignored file and a file outside a repository get nothing. Claude Code Bash edits are detected after successful tool calls by the companion docs-writing-bash-note, from tracked Markdown changes in git, including changes already dirty when the call began. A Claude Code subagent counts as its own session. Codex reports the edit as apply_patch, and the hook reads the patch's Add, Update, Move and Delete headers, excluding deleted files and taking a moved file by its destination; a Codex subagent shares its lead's session. Not run on copilot: preToolUse has no measured additionalContext delivery to the model. Not run on gemini: the BeforeTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it reads hooks as advisory prose and executes no edit event. Not run on antigravity: its toolCall.args payload has no tool_input.file_path reader here.
 # summary: Points the assistant at the docs-writing rules and example for the first Markdown file it edits in a session. Deleted files need no reminder, and every edit remains allowed.
-# safety: Advisory reader. Reads the tool payload. Runs `git rev-parse` in the session's directory to bound its install walk. Runs only the commit-guards md-type installed with this hook, never one found from the edited path; md-type reads the edited repository's installed docs-writing files as data and runs `git rev-parse` and `git check-ignore` there. Writes one marker file per session under the XDG state directory, and prunes markers older than 30 days. Missing tools, an unreadable payload, a missing judge or an unwritable marker produce a keyed notice at exit 0. Uses additionalContext on stdout because successful stderr does not reach the Claude Code model.
+# safety: Advisory reader. Reads the tool payload. After Bash, reads tracked Markdown status from git; a call with none costs one git read, and an existing session marker costs none. Runs `git rev-parse` in the session's directory to bound its install walk. Runs only the commit-guards md-type installed with this hook, never one found from the edited path; md-type reads the edited repository's installed docs-writing files as data and runs `git rev-parse` and `git check-ignore` there. Writes one marker file per session under the XDG state directory, and prunes markers older than 30 days. Missing tools, an unreadable payload, a missing judge or an unwritable marker produce a keyed notice at exit 0. Uses additionalContext on stdout because successful stderr does not reach the Claude Code model.
 # timeout: 10
 # harnesses: [claude, codex, pi]
 # requires-skills: [docs-writing]
+# requires: [docs-writing-bash-note]
+# requires-on: [claude]
 # ---
 
 set -euo pipefail
@@ -16,6 +18,8 @@ set -euo pipefail
 # A reader failure must never refuse the edit, including an unexpected status.
 trap 'status=$?; trap - EXIT; if [ "$status" -ne 0 ]; then notice payload reader-failed; fi; exit 0' EXIT
 
+EVENT=PreToolUse
+[ "${1:-}" != post-bash ] || EVENT=PostToolUse
 NOTICE_PREFIX=""
 notice() { # KEY VALUE [DETAIL]
   local text encoded bs=\\ q='"' octal char escaped
@@ -31,7 +35,7 @@ notice() { # KEY VALUE [DETAIL]
     printf -v escaped '\\u%04x' "0$octal"
     encoded=${encoded//"$char"/$escaped}
   done
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$encoded"
+  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$EVENT" "$encoded"
 }
 
 MISSING=""
@@ -44,12 +48,45 @@ TOOL=$(jq -r '.tool_name | strings | select(length > 0)' 2>&1 <<<"$INPUT") ||
   { notice reader tool-name "$TOOL"; exit 0; }
 [ -n "$TOOL" ] || { notice payload invalid-json; exit 0; }
 
+# One reminder per session: a Claude Code subagent carries its own agent_id
+# and counts apart; a Codex subagent carries its lead's session_id.
+KEY=$(jq -r '[.session_id, .agent_id] | map(strings | select(length > 0)) | join(".")' 2>/dev/null <<<"$INPUT") || KEY=""
+KEY_STATE=ok
+case "$KEY" in
+  "") KEY_STATE=no-session-id ;;
+  .* | *[!A-Za-z0-9._-]*) KEY_STATE=session-id-invalid ;;
+esac
+STATE_DIR="${XDG_STATE_HOME:-${HOME:-}/.local/state}/kendex/docs-writing-note"
+if [ "$KEY_STATE" = ok ] && [ -e "$STATE_DIR/$KEY" ]; then exit 0; fi
+
 # The edited files, one per line. apply_patch names them in its patch
 # headers: Codex writes absolute paths there, and a relative one is read
 # against the session's directory. A rename is an Update header followed at
 # once by a Move header, and the file it leaves is the destination, so the
 # pair yields that path alone.
+BASE=$(jq -r '.cwd | strings | select(length > 0)' 2>/dev/null <<<"$INPUT") || BASE=""
+[ -n "$BASE" ] || BASE=$PWD
+ROOT=""
 case "$TOOL" in
+  Bash)
+    [ "$EVENT" = PostToolUse ] || { notice payload unknown-tool; exit 0; }
+    # Claude's PostToolUse payload names the command, not its outputs:
+    # https://code.claude.com/docs/en/hooks#posttooluse-input
+    # Porcelain -z preserves spaces/quoting; --no-renames leaves one record
+    # per path. No changed Markdown costs one git read, including on unborn
+    # branches. Existing dirty tracked docs also qualify for this reminder.
+    TARGETS=$(git -C "$BASE" status --porcelain=v1 -z --untracked-files=no --no-renames -- ':(top)*.md' 2>&1 |
+      jq -Rs '.') || {
+      case "$TARGETS" in *"not a git repository"*) exit 0 ;; esac
+      notice reader git-status "$TARGETS"; exit 0;
+    }
+    TARGETS=$(jq -r 'split("\u0000")[] | select(length > 3) | select(.[0:2] | contains("D") | not) | .[3:]' <<<"$TARGETS" 2>&1) ||
+      { notice reader git-status "$TARGETS"; exit 0; }
+    [ -n "$TARGETS" ] || exit 0
+    ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>&1) ||
+      { notice reader git-root "$ROOT"; exit 0; }
+    BASE=$ROOT
+    ;;
   Edit | MultiEdit | Write)
     TARGETS=$(jq -r '.tool_input.file_path | strings | select(length > 0)' 2>&1 <<<"$INPUT") ||
       { notice reader target "$TARGETS"; exit 0; }
@@ -70,8 +107,6 @@ case "$TOOL" in
   *) notice payload unknown-tool; exit 0 ;;
 esac
 [ -n "$TARGETS" ] || { notice payload no-file-path; exit 0; }
-BASE=$(jq -r '.cwd | strings | select(length > 0)' 2>/dev/null <<<"$INPUT") || BASE=""
-[ -n "$BASE" ] || BASE=$PWD
 TARGET=""
 while IFS= read -r candidate; do
   case "$candidate" in
@@ -83,17 +118,6 @@ while IFS= read -r candidate; do
   esac
 done <<<"$TARGETS"
 [ -n "$TARGET" ] || exit 0
-
-# One reminder per session: a Claude Code subagent carries its own agent_id
-# and counts apart; a Codex subagent carries its lead's session_id.
-KEY=$(jq -r '[.session_id, .agent_id] | map(strings | select(length > 0)) | join(".")' 2>/dev/null <<<"$INPUT") || KEY=""
-KEY_STATE=ok
-case "$KEY" in
-  "") KEY_STATE=no-session-id ;;
-  .* | *[!A-Za-z0-9._-]*) KEY_STATE=session-id-invalid ;;
-esac
-STATE_DIR="${XDG_STATE_HOME:-${HOME:-}/.local/state}/kendex/docs-writing-note"
-if [ "$KEY_STATE" = ok ] && [ -e "$STATE_DIR/$KEY" ]; then exit 0; fi
 
 # The harness this copy was installed for, from where kendex renders it,
 # for the marker.
@@ -119,7 +143,7 @@ esac
 # installed in the repository takes the repository's install before any
 # global one, while a global hook never reaches that root.
 HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
-ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
+[ -n "$ROOT" ] || ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
 in_scope() { # SKILL — the skill's directory in this hook's install; 1 when none
   local at="$HOOK_DIR" levels=0 candidate
   [ -n "$at" ] || return 1
