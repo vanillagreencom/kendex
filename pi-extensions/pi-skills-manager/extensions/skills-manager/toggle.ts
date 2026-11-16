@@ -14,7 +14,7 @@ function updatePatterns(current: string[], pattern: string, enabled: boolean): s
 }
 
 function getTopLevelPattern(skill: SkillEntry, cwd: string): string {
-	const baseDir = skill.scope === "project" ? findProjectPiDir(cwd) : getAgentDir();
+	const baseDir = skill.baseDir ?? (skill.scope === "project" ? findProjectPiDir(cwd) : getAgentDir());
 	return relative(baseDir, skill.path);
 }
 
