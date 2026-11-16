@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::{ProcessReading, State};
+use crate::confine::Confinement;
 use crate::error::{Error, Result};
 use crate::harness::Harness;
 use crate::host::{self, Place};
@@ -361,10 +362,11 @@ fn named_home(
 /// (`accountless_kept` decides which). A launch whose line runs at full
 /// bypass (`bypass`) gets the account's consent to it beside the trust
 /// record. The harness gate then judges what the harness needs beyond its
-/// trust record under the home its sessions are read from, and the runtimes
-/// of `cwd`'s install are built last through the setups `inherited` names
-/// (`build_runtimes`): a lane's launch and relaunch and a controller's start
-/// all pass here before their window.
+/// trust record under the home its sessions are read from: a lane's launch
+/// and relaunch and a controller's start all pass here before their
+/// window. The runtimes of `cwd`'s install are built once the command
+/// stands ([`build_runtimes`]), since the command says whether the tree's
+/// setup runs confined.
 pub fn launch_home(
     inherited: &Inherited,
     harness: Harness,
@@ -392,7 +394,6 @@ pub fn launch_home(
     }
     let sessions = named.clone().or_else(|| super::default_home(harness));
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
-    build_runtimes(cwd, inherited.setups)?;
     Ok(LaunchHome {
         sessions,
         named,
@@ -421,38 +422,62 @@ pub fn opener_home(
     prepare_trust(harness, account, cwd, bypass).map(|trusted| Some(trusted.home))
 }
 
-/// The runtimes of `cwd`'s own install, built through the `setups` the
-/// opener names before the window opens, so the harness's first turn end,
-/// which reads its mail through them, never meets the sources unbuilt; a
-/// key already built builds nothing. A directory where the first setup does
-/// not stand builds nothing here: the install its harness runs is not this
-/// launch's. A setup that refuses, or gives no answer within its bound,
-/// refuses the launch `runtime-unbuilt` with the setup's last line.
+/// The shell a confined setup's line runs in, as the pane's does.
+const SHELL: &str = "/bin/sh";
+
+/// The runtimes of the command's directory's own install, built through
+/// the `setups` the opener names before the window opens, so the harness's
+/// first turn end, which reads its mail through them, never meets the
+/// sources unbuilt; a key already built builds nothing. A directory where
+/// the first setup does not stand builds nothing here: the install its
+/// harness runs is not this launch's. The setups are the tree's code, so a
+/// confined command runs each by its own line, under the wrapper's words
+/// and with the command's environment: the setup reaches what the harness
+/// will and nothing more. An unconfined command runs each as the launcher.
+/// A setup that refuses, or gives no answer within its bound, refuses the
+/// launch `runtime-unbuilt` with the setup's last line.
 #[allow(
     clippy::disallowed_methods,
     reason = "each package's own setup, through the one runner, before the window it serves opens"
 )]
-fn build_runtimes(cwd: &Path, setups: &[&str]) -> Result<()> {
+pub fn build_runtimes(setups: &[&str], command: &LaunchCommand) -> Result<()> {
+    let cwd = command.cwd.as_path();
     if !setups
         .first()
         .is_some_and(|first| cwd.join(first).is_file())
     {
         return Ok(());
     }
+    let place = Place {
+        cwd: Some(cwd),
+        env: &[],
+    };
     for setup in setups.iter().map(|setup| cwd.join(setup)) {
         let at = setup.display().to_string();
-        let out = host::run_tagged_in(
-            "launch",
-            "setup",
-            &setup,
-            "build",
-            &[],
-            Place {
-                cwd: Some(cwd),
-                env: &[],
-            },
-            SETUP_BOUND,
-        )
+        let out = match &command.confinement {
+            Some(Confinement::Confined { .. }) => {
+                let line = LaunchCommand {
+                    program: at.clone(),
+                    args: Vec::new(),
+                    brief_arg: None,
+                    brief_path: None,
+                    ..command.clone()
+                }
+                .shell_line();
+                host::run_tagged_in(
+                    "launch",
+                    "setup",
+                    Path::new(SHELL),
+                    "build",
+                    &["-c", &line],
+                    place,
+                    SETUP_BOUND,
+                )
+            }
+            Some(Confinement::Unconfined { .. }) | None => {
+                host::run_tagged_in("launch", "setup", &setup, "build", &[], place, SETUP_BOUND)
+            }
+        }
         .map_err(|e| {
             refused(
                 "runtime-unbuilt",
@@ -509,7 +534,17 @@ mod tests {
         let ran = dir.path().join("ran");
         let setup = scripts.join("setup");
         crate::host::write_executable(&setup, format!("#!/bin/sh\n: > '{}'\n", ran.display()));
-        let built = build_runtimes(dir.path(), &[]);
+        let command = LaunchCommand {
+            program: "claude".to_owned(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
+            cwd: dir.path().to_path_buf(),
+            brief_arg: None,
+            brief_path: None,
+            confinement: None,
+        };
+        let built = build_runtimes(&[], &command);
         assert!(!ran.exists(), "a setup ran that the opener did not name");
         built.unwrap();
     }

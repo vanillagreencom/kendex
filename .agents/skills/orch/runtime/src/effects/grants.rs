@@ -47,6 +47,16 @@ const RUNTIME_CACHE_VAR: &str = "AGENT_RUNTIME_CACHE";
 /// kendex's folder under the cache folder.
 const KENDEX_CACHE: &str = "kendex";
 
+/// agent-runtime's build cache under kendex's folder where
+/// `AGENT_RUNTIME_CACHE` names none (`skills/agent-runtime/scripts/lib/key.sh`
+/// `agent_runtime_cache`).
+const RUNTIME_CACHE_DEFAULT: &str = "agent-runtime";
+
+/// A confined lane's own runtime cache under its checkout's `tmp`: outside
+/// its mailbox, which a close can archive, since a build there holds a
+/// cargo target folder per key.
+const OWN_RUNTIME_CACHE: &str = "runtime-cache";
+
 /// How long `gh auth token` may take.
 const GH_BOUND: Duration = Duration::from_secs(30);
 
@@ -81,6 +91,13 @@ pub(super) struct Granted {
     kept: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
+    /// A confined lane's own runtime cache, which its line names as
+    /// `AGENT_RUNTIME_CACHE`: the pre-window build and the lane's own
+    /// runtime calls build there what the shared cache, read-only inside,
+    /// does not hold.
+    own_cache: Option<PathBuf>,
+    /// The shared runtime cache whose binaries the own cache links.
+    shared_cache: Option<PathBuf>,
     token: Option<String>,
     pi_bridge: Option<PathBuf>,
 }
@@ -133,10 +150,11 @@ fn resolved(path: &Path) -> Option<PathBuf> {
 /// the room pick's usage records; the seats its own launch runs under and every
 /// configured account of a harness its second opinion can run on, each
 /// with its settings file read-only; the build caches under the home and
-/// the folders `ORCH_LANE_WRITABLE` names; the user's runtime folder
+/// the folders `ORCH_LANE_WRITABLE` names, the shared runtime cache
+/// read-only wherever they would hold it; the user's runtime folder
 /// hidden; the display where the record holds `desktop`. A confined launch also
 /// takes the `gh` token the operator's login answers now, handed through
-/// the lane's private folder. A confined launch whose worktree's `tmp`
+/// the lane's private folder, and a runtime cache of its own in its tree. A confined launch whose worktree's `tmp`
 /// leads outside it is refused `grant-tmp-linked`: the link's target is
 /// shared, the state directory or another lane's folder among what it can
 /// hold.
@@ -260,6 +278,20 @@ pub(super) fn of(
         &seat_paths,
     )?;
     writable.extend(lane_writable.iter().cloned());
+    // The shared runtime cache holds the binaries the overseer, the hooks
+    // and every other lane run: read-only wherever a writable grant would
+    // hold it, and made where absent so a lane cannot plant it.
+    let shared_cache = shared_runtime_cache(home.as_deref());
+    if let Some(shared) = &shared_cache
+        && writable
+            .iter()
+            .chain(&seat_paths)
+            .any(|grant| shared.starts_with(grant))
+    {
+        read_only.push(shared.clone());
+        kept.push(shared.clone());
+    }
+    let own_cache = (answer == Answer::Confined).then(|| root.join("tmp").join(OWN_RUNTIME_CACHE));
     let private = folder(&root, item);
     let token = match answer {
         Answer::Confined => gh_token(),
@@ -285,6 +317,8 @@ pub(super) fn of(
         item_dir,
         kept,
         lane_writable,
+        own_cache,
+        shared_cache,
         token,
         pi_bridge: (harness == Harness::Pi).then(|| private.join(PI_BRIDGE_FOLDER)),
     })
@@ -300,20 +334,17 @@ fn env_dir(name: &str) -> Option<PathBuf> {
 /// The build caches a lane's validation writes under the home, shared with
 /// the operator, each where it stands: cargo's registry and git checkouts
 /// (never its `bin`, which the operator's shell runs), npm's, and the cache
-/// folder. Beside them the folders under the cache folder that this
-/// repository's programs keep for a controller or the operator to run or
-/// install from, read-only and made where absent so a lane cannot plant
-/// one: kendex's (`crates/core/src/env.rs` `source_cache_dir`,
-/// `registry_cache_dir`, the app update; agent-runtime's built runtimes by
-/// default, `skills/agent-runtime/scripts/lib/key.sh`), and agent-runtime's
-/// cache where `AGENT_RUNTIME_CACHE` names one under it.
+/// folder. Beside them kendex's folder under the cache folder, which holds
+/// what a controller or the operator installs from (`crates/core/src/env.rs`
+/// `source_cache_dir`, `registry_cache_dir`, the app update), read-only and
+/// made where absent so a lane cannot plant one.
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch reads which cache folders stand before the window; it writes nothing"
 )]
 fn build_caches(home: Option<&Path>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let cargo = env_dir(CARGO_HOME_VAR).or_else(|| home.map(|h| h.join(".cargo")));
-    let cache = env_dir(CACHE_HOME_VAR).or_else(|| home.map(|h| h.join(".cache")));
+    let cache = cache_folder(home);
     let mut caches: Vec<PathBuf> = Vec::new();
     if let Some(cargo) = &cargo {
         caches.extend([cargo.join("registry"), cargo.join("git")]);
@@ -321,19 +352,28 @@ fn build_caches(home: Option<&Path>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     caches.extend(home.map(|h| h.join(".npm")));
     caches.extend(cache.clone());
     let caches: Vec<PathBuf> = caches.iter().filter_map(|dir| resolved(dir)).collect();
-    let mut kept = Vec::new();
-    if let Some(cache) = cache.as_deref().and_then(resolved) {
-        for dir in [Some(cache.join(KENDEX_CACHE)), env_dir(RUNTIME_CACHE_VAR)]
-            .into_iter()
-            .flatten()
-        {
-            let dir = resolved(&dir).unwrap_or(dir);
-            if dir.starts_with(&cache) && !kept.contains(&dir) {
-                kept.push(dir);
-            }
-        }
-    }
+    let kept = cache
+        .as_deref()
+        .and_then(resolved)
+        .map(|cache| cache.join(KENDEX_CACHE))
+        .into_iter()
+        .collect();
     (caches, kept)
+}
+
+/// The user's cache folder: `XDG_CACHE_HOME`, else `~/.cache`.
+fn cache_folder(home: Option<&Path>) -> Option<PathBuf> {
+    env_dir(CACHE_HOME_VAR).or_else(|| home.map(|h| h.join(".cache")))
+}
+
+/// The shared runtime cache the launcher's own runtime calls build into, as
+/// `skills/agent-runtime/scripts/lib/key.sh` `agent_runtime_cache` names it:
+/// `AGENT_RUNTIME_CACHE`, else `kendex/agent-runtime` under the cache folder.
+fn shared_runtime_cache(home: Option<&Path>) -> Option<PathBuf> {
+    let dir = env_dir(RUNTIME_CACHE_VAR).or_else(|| {
+        cache_folder(home).map(|cache| cache.join(KENDEX_CACHE).join(RUNTIME_CACHE_DEFAULT))
+    })?;
+    Some(resolved(&dir).unwrap_or(dir))
 }
 
 /// `ORCH_LANE_WRITABLE`'s folders, as the overseer's settings name them
@@ -396,11 +436,18 @@ fn gh_token() -> Option<String> {
 
 impl Granted {
     /// The variables the lane's launch line sets for its grants: the Pi
-    /// bridge's folder.
-    pub fn env(&self) -> Option<(String, String)> {
-        self.pi_bridge
-            .as_ref()
-            .map(|dir| (PI_BRIDGE_VAR.to_owned(), dir.display().to_string()))
+    /// bridge's folder and the lane's own runtime cache.
+    pub fn env(&self) -> Vec<(String, String)> {
+        [
+            (PI_BRIDGE_VAR, &self.pi_bridge),
+            (RUNTIME_CACHE_VAR, &self.own_cache),
+        ]
+        .into_iter()
+        .filter_map(|(name, dir)| {
+            dir.as_ref()
+                .map(|dir| (name.to_owned(), dir.display().to_string()))
+        })
+        .collect()
     }
 
     /// What the launch record says of the grants: the answer, the seats
@@ -430,8 +477,8 @@ impl Granted {
 
     /// Write what the grants stand on before the window: the usage folder,
     /// the item's own folder, the read-only folders, each absent settings
-    /// file in its empty form, and the token at mode 0600 in the lane's
-    /// private folder, which the marker made.
+    /// file in its empty form, the lane's own runtime cache, and the token
+    /// at mode 0600 in the lane's private folder, which the marker made.
     #[allow(
         clippy::disallowed_methods,
         reason = "the launch writes the files its grants bind before the window opens; the token's file is the lane's own, at mode 0600"
@@ -469,6 +516,9 @@ impl Granted {
                 Err(e) => return Err(failed(file, e)),
             }
         }
+        if let Some(own) = &self.own_cache {
+            own_runtime_cache(own, self.shared_cache.as_deref())?;
+        }
         if let (Some(token), Some(path)) = (&self.token, &self.grants.gh_token) {
             remove_token(path)?;
             let mut f = std::fs::OpenOptions::new()
@@ -481,6 +531,62 @@ impl Granted {
         }
         Ok(())
     }
+}
+
+/// The lane's own runtime cache made before the window, with each binary of
+/// the shared cache's `bin` linked into its own `bin` where it holds none of
+/// that name: setup, run once under the lane's words, then finds a key the
+/// shared cache holds and builds nothing, and builds one it lacks here. The
+/// launcher names no key, so the key's one rule stays `key.sh`'s. A folder
+/// that stands as a link is refused: the lane can plant one in its tree,
+/// and the launcher writes through none.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the launcher makes the lane's own cache and its links to the shared binaries before the window"
+)]
+fn own_runtime_cache(own: &Path, shared: Option<&Path>) -> Result<()> {
+    let failed = |path: &Path, cause: &str| {
+        refused(
+            "grant-write-failed",
+            &[("path", &path.display().to_string()), ("cause", cause)],
+        )
+    };
+    let bin = own.join("bin");
+    for dir in [own, bin.as_path()] {
+        match std::fs::create_dir(dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(failed(dir, &e.to_string())),
+        }
+        if !std::fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_dir()) {
+            return Err(failed(dir, "not-a-folder"));
+        }
+    }
+    let Some(shared) = shared else {
+        return Ok(());
+    };
+    let shared_bin = shared.join("bin");
+    let entries = match std::fs::read_dir(&shared_bin) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(failed(&shared_bin, &e.to_string())),
+    };
+    for entry in entries {
+        let name = entry
+            .map_err(|e| failed(&shared_bin, &e.to_string()))?
+            .file_name();
+        // A dot name is setup's temporary copy, not yet a binary.
+        if name.as_encoded_bytes().starts_with(b".") {
+            continue;
+        }
+        let link = bin.join(&name);
+        match std::os::unix::fs::symlink(shared_bin.join(&name), &link) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(failed(&link, &e.to_string())),
+        }
+    }
+    Ok(())
 }
 
 /// Remove a lane's token file: at a launch before it writes a fresh one,

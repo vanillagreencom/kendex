@@ -5953,10 +5953,14 @@ fn a_launch_writes_its_marker_and_mailbox_before_the_window_and_a_crash_between_
 /// The launch directory's own install, its orch and agent-runtime packages
 /// linked where an apply puts them, prepared through orch's one real setup
 /// (agent-runtime's runtime, then orch's) over agent-runtime's planted
-/// cargo into the row's cache before the window opens, so the lane's first
-/// turn end can read its mail; a build that fails refuses the launch with no
-/// window and no marker.
+/// cargo before the window opens, so the lane's first turn end can read its
+/// mail. The lane is confined, so its setup runs under its words: a build
+/// that fails refuses the launch with no window; one that succeeds writes
+/// the lane's own cache while the shared cache, holding another tree's
+/// binary, stays as it was; a launch whose keys the shared cache holds
+/// builds nothing and runs the shared binaries through its own cache.
 #[test]
+#[cfg(target_os = "linux")]
 fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_opens_none() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -5977,15 +5981,33 @@ fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_op
     )
     .unwrap();
     runner.tools = Some(tools);
-    let cache = dir.path().join("cache");
-    let log = dir.path().join("cargo.log");
+    let shared = dir.path().join("cache");
+    std::fs::create_dir_all(shared.join("bin")).unwrap();
+    write_executable(&shared.join("bin/agent-runtime-other"), "#!/bin/sh\n");
+    // Inside the worktree: the planted cargo runs under the lane's words.
+    let log = root.join("cargo.log");
     runner.env.push((
         "AGENT_RUNTIME_CACHE".to_owned(),
-        cache.display().to_string(),
+        shared.display().to_string(),
     ));
     runner
         .env
         .push(("FAKE_CARGO_LOG".to_owned(), log.display().to_string()));
+    let shared_files = |dir: &Path| -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir.join("bin"))
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (
+                    entry.file_name().into_string().unwrap(),
+                    std::fs::read(entry.path()).unwrap(),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    };
+    let before = shared_files(&shared);
 
     let out = runner.op_fleet_env(
         &launch_request("KEN-B", runner.state_dir()),
@@ -6006,22 +6028,32 @@ fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_op
         "the setup's own refusal, its first build's: {report}"
     );
     assert_eq!(server.panes().len(), 1, "no window opened");
-    assert_eq!(marker_of(&root, "KEN-B"), None, "no marker written");
 
     let report = effect_report(&runner.op_fleet(&launch_request("KEN-C", runner.state_dir())));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let mut built: Vec<String> = std::fs::read_dir(cache.join("bin"))
-        .unwrap()
-        .map(|entry| {
-            let name = entry.unwrap().file_name().into_string().unwrap();
-            name.rsplit_once('-').unwrap().0.to_owned()
-        })
-        .collect();
-    built.sort();
+    let own = root.join("tmp/runtime-cache");
+    let built = |kind: fn(&std::fs::FileType) -> bool| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(own.join("bin"))
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| kind(&entry.file_type().unwrap()))
+            .map(|entry| entry.file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    };
+    let made = built(std::fs::FileType::is_file);
     assert_eq!(
-        built,
+        made.iter()
+            .map(|name| name.rsplit_once('-').unwrap().0)
+            .collect::<Vec<_>>(),
         ["agent-runtime", "orch-runtime"],
-        "both runtimes built"
+        "both runtimes built into the lane's own cache"
+    );
+    assert_eq!(
+        shared_files(&shared),
+        before,
+        "the shared cache is as it was"
     );
     let manifests: Vec<String> = std::fs::read_to_string(&log)
         .unwrap()
@@ -6039,6 +6071,100 @@ fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_op
         [canonical(&agent), canonical(&agent), canonical(&orch)],
         "the failed agent-runtime build, then each package's own runtime, agent-runtime first"
     );
+
+    // The shared cache now holds this tree's keys, as the operator's own
+    // build leaves them; a lane with a fresh cache of its own builds
+    // nothing and links them.
+    for name in &made {
+        copy_executable(&own.join("bin").join(name), &shared.join("bin").join(name));
+    }
+    std::fs::remove_dir_all(&own).unwrap();
+    let before = shared_files(&shared);
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-D", runner.state_dir())));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        3,
+        "nothing built"
+    );
+    assert!(
+        built(std::fs::FileType::is_file).is_empty(),
+        "the own cache holds no build"
+    );
+    for name in &made {
+        assert_eq!(
+            canonical(&own.join("bin").join(name)),
+            canonical(&shared.join("bin").join(name)),
+            "{name} runs from the shared cache"
+        );
+    }
+    assert_eq!(
+        shared_files(&shared),
+        before,
+        "the shared cache is as it was"
+    );
+}
+
+/// A confined lane's tree runs its setup under the lane's words: a setup
+/// that writes the home and the shared runtime cache is refused both, and
+/// the launch answers `runtime-unbuilt` with no window.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_confined_launch_s_setup_that_writes_the_home_or_the_shared_cache_is_refused_both_and_opens_no_window()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let root = std::fs::canonicalize(runner.state_dir()).unwrap();
+    let home = dir.path().join("home");
+    let cache = dir.path().join("cache");
+    let shared = cache.join("runtimes");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(shared.join("bin")).unwrap();
+    let binary = shared.join("bin/agent-runtime-k");
+    write_executable(&binary, "#!/bin/sh\n");
+    let setup = root.join(".agents/skills/orch/scripts/setup");
+    std::fs::create_dir_all(setup.parent().unwrap()).unwrap();
+    write_executable(
+        &setup,
+        format!(
+            "#!/bin/sh\nprintf tampered >> '{}'\n: > \"$HOME/y\"\n",
+            binary.display()
+        ),
+    );
+    for (name, value) in [
+        ("HOME", &home),
+        ("XDG_CACHE_HOME", &cache),
+        ("AGENT_RUNTIME_CACHE", &shared),
+    ] {
+        runner
+            .env
+            .push((name.to_owned(), value.display().to_string()));
+    }
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-Y", runner.state_dir())));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["cause"], "runtime-unbuilt", "{report}");
+    assert_eq!(
+        observation["setup"],
+        setup.display().to_string(),
+        "{report}"
+    );
+    assert!(
+        observation["status"].as_str().is_some_and(|s| s != "0"),
+        "{report}"
+    );
+    assert!(
+        std::fs::symlink_metadata(home.join("y")).is_err(),
+        "the setup wrote the home"
+    );
+    assert_eq!(
+        std::fs::read(&binary).unwrap(),
+        b"#!/bin/sh\n",
+        "the setup wrote the shared cache"
+    );
+    assert_eq!(server.panes().len(), 1, "no window opened");
 }
 
 /// A lane's launch on a computer with no `tmux` refuses `unready` naming
@@ -10034,7 +10160,7 @@ impl Confined {
         write_executable(
             &probe,
             format!(
-                "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  for file in ${{PROBE_FILES:-}}; do (: >> \"$file\") 2>/dev/null && echo \"file=${{file##*/}} written\" || echo \"file=${{file##*/}} refused\"; done\n  [ -z \"${{PROBE_RUN:-}}\" ] || eval \"$PROBE_RUN\"\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {stub} \"$@\" >&3 2>&3 3>&-\n",
+                "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  for file in ${{PROBE_FILES:-}}; do (: >> \"$file\") 2>/dev/null && echo \"file=${{file##*/}} written\" || echo \"file=${{file##*/}} refused\"; done\n  echo \"cache=${{AGENT_RUNTIME_CACHE:-none}}\"\n  [ -z \"${{PROBE_RUN:-}}\" ] || eval \"$PROBE_RUN\"\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {stub} \"$@\" >&3 2>&3 3>&-\n",
                 stub = stub("stub-confirm").display()
             ),
         );
@@ -10362,6 +10488,44 @@ fn a_lane_writes_a_build_cache_under_the_cache_folder_and_is_refused_the_runtime
     let probe = world.probe("KEN-K", 1);
     assert!(probe.contains("seat=go-build written"), "{probe}");
     assert!(probe.contains("seat=agent-runtime refused"), "{probe}");
+}
+
+/// A confined lane runs its runtimes from a cache of its own in its tree:
+/// its line names the folder, which links the shared cache's binaries, and
+/// the lane writes it while the shared cache, named under the cache folder
+/// outside kendex's, stays read-only.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_runs_its_runtimes_from_its_own_cache_which_links_the_shared_one_it_cannot_write() {
+    let mut world = Confined::new();
+    let cache = world.dir.path().join("cache");
+    let shared = cache.join("runtimes");
+    std::fs::create_dir_all(shared.join("bin")).unwrap();
+    write_executable(&shared.join("bin/agent-runtime-k"), "#!/bin/sh\n");
+    world.runner.env.extend([
+        ("XDG_CACHE_HOME".to_owned(), cache.display().to_string()),
+        (
+            "AGENT_RUNTIME_CACHE".to_owned(),
+            shared.display().to_string(),
+        ),
+    ]);
+    let own = std::fs::canonicalize(world.runner.state_dir())
+        .unwrap()
+        .join("tmp/runtime-cache");
+    world.seat_env(&format!("{} {}", own.display(), shared.display()));
+    world.launch(&launch_request("KEN-J", world.runner.state_dir()));
+    let probe = world.probe("KEN-J", 1);
+    assert!(
+        probe.contains(&format!("cache={}\n", own.display())),
+        "{probe}"
+    );
+    assert!(probe.contains("seat=runtime-cache written"), "{probe}");
+    assert!(probe.contains("seat=runtimes refused"), "{probe}");
+    assert_eq!(
+        std::fs::canonicalize(own.join("bin/agent-runtime-k")).unwrap(),
+        std::fs::canonicalize(shared.join("bin/agent-runtime-k")).unwrap(),
+        "the own cache links the shared binary"
+    );
 }
 
 /// A lane in a linked worktree writes its own item's folder of the

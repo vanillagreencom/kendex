@@ -33,8 +33,8 @@ use crate::settings::{LaneOutput, Settings};
 use crate::state::{self, Lane, LaneMembers, SANDBOX, STANDING};
 use crate::watch::hosted::{self, Launch, PaneKind};
 use agent_runtime::effects::prepare::{
-    Kept, Spec, Unready, accountless_kept, build_launch, check_directory, check_program, gate,
-    launch_home, pending_observation, read_brief, up,
+    Kept, Spec, Unready, accountless_kept, build_launch, build_runtimes, check_directory,
+    check_program, gate, launch_home, pending_observation, read_brief, up,
 };
 use agent_runtime::effects::{
     Binding, EffectOutcome, Foreground, Observed, OpenRefusal, Operation, Polled, ProcessRead,
@@ -524,7 +524,7 @@ fn prepare_launch(
         &homes,
         desktop,
     )?;
-    if let Some((name, value)) = granted.env() {
+    for (name, value) in granted.env() {
         intent.env.insert(name, value);
     }
     intent.grants = Some(granted.grants.clone());
@@ -883,6 +883,11 @@ fn local_launch(
     }
     if let Err(e) = prep.granted.write() {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
+    }
+    // The tree's setups run once what the grants bind stands: a confined
+    // lane's under its own words, before the window as every launch's.
+    if let Err(e) = build_runtimes(run.settings.inherited().setups, &prep.command) {
+        return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
     }
     let target = prep.target.clone();
     let mut outcome = open_and_confirm(

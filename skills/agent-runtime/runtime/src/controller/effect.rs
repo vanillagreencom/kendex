@@ -23,7 +23,8 @@ use super::transition::{RequestTransfer, StartController, overseer_target};
 use super::{Overseer, TransferCause};
 use crate::effects::prepare::{
     GATE_REFUSED, Inherited, Kept, LaunchHome, Spec, Unready, accountless_kept, build_launch,
-    check_directory, check_program, idle, launch_home, pending_observation, read_brief, up,
+    build_runtimes, check_directory, check_program, idle, launch_home, pending_observation,
+    read_brief, up,
 };
 use crate::effects::{
     Binding, Bootstrap, Claimant, Companion, EffectOutcome, Identity, Observed, OpenRefusal,
@@ -1006,6 +1007,9 @@ fn succeed(
     // session file is bound before the turn that proves it.
     let command = match successor
         .command(run.settings, floor.session_id())
+        .and_then(|command| {
+            build_runtimes(run.settings.inherited().setups, &command).map(|()| command)
+        })
         .and_then(|command| check_program(&command).map(|()| command))
     {
         Ok(command) => command,
