@@ -2342,13 +2342,14 @@ fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the
         runtime_dir: Some(rt.clone()),
         sockets: vec![rt.join("agent.sock")],
         desktop: false,
+        gh_token: None,
         file: root.join("grants.json"),
     };
     let words: Vec<String> = linux_words(&grants)
         .into_iter()
         .map(|word| match word {
             Word::Plain(word) => word,
-            Word::Display(_) => panic!("a display word without a desktop grant"),
+            Word::Display(_) | Word::Text(_) => panic!("a shell word without its grant"),
         })
         .collect();
     let script = r#"touch "$HOME/x" 2>/dev/null && echo home=written || echo home=refused

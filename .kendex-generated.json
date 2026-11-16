@@ -758,6 +758,7 @@
   ".agents/skills/orch/runtime/src/effects/close.rs",
   ".agents/skills/orch/runtime/src/effects/cloud-session.txt",
   ".agents/skills/orch/runtime/src/effects/coverage.rs",
+  ".agents/skills/orch/runtime/src/effects/grants.rs",
   ".agents/skills/orch/runtime/src/effects/lane-output-normal.txt",
   ".agents/skills/orch/runtime/src/effects/lane-output-quiet.txt",
   ".agents/skills/orch/runtime/src/effects/lane_model.rs",

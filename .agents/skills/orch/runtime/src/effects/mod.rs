@@ -54,6 +54,7 @@
 
 mod close;
 mod coverage;
+mod grants;
 pub mod lane_model;
 #[allow(
     clippy::disallowed_methods,
@@ -128,7 +129,21 @@ impl<'a> Run<'a> {
                 agent_runtime::effects::apply_outcome(&self.engine, outcome).map_err(Error::from)
             }
         }?;
-        ops::outcome_applied(written)
+        let applied = ops::outcome_applied(written)?;
+        // A local lane whose close confirmed holds no `gh` token: its next
+        // launch hands a fresh one.
+        if let Report::RecordOutcome(recorded) = &applied.report
+            && recorded.intent.op == EffectOp::CloseResources
+            && recorded.intent.outcome == Outcome::Confirmed
+            && let Some(lane) = &recorded.lane
+            && lane.host.is_none()
+            && let Some(root) = lane.mail_root.as_deref()
+        {
+            grants::remove_token(
+                &grants::folder(Path::new(root), &lane.item).join(grants::GH_TOKEN_FILE),
+            )?;
+        }
+        Ok(applied)
     }
 }
 

@@ -818,6 +818,31 @@ impl Server {
             .expect("pane pid")
     }
 
+    /// The harness a launched lane's pane runs: the one child of the pane's
+    /// process, the wrapper that confines it, bounded while the wrapper
+    /// starts it.
+    pub fn harness_pid(&self, pane: &str) -> u32 {
+        let wrapper = self.pane_pid(pane);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let children =
+                std::fs::read_to_string(format!("/proc/{wrapper}/task/{wrapper}/children"))
+                    .unwrap_or_default();
+            let children: Vec<u32> = children
+                .split_whitespace()
+                .filter_map(|p| p.parse().ok())
+                .collect();
+            if let [harness] = children.as_slice() {
+                return *harness;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "pane {pane}'s process {wrapper} runs no one harness: {children:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// Wait until a pane's capture shows the Claude composer marker, bounded.
     pub fn await_composer(&self, pane: &str) {
         let deadline = Instant::now() + Duration::from_secs(5);

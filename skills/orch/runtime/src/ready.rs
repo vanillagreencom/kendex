@@ -18,6 +18,8 @@
 
 use std::path::{Path, PathBuf};
 
+use agent_runtime::confine::{Answer, Host, WRAPPER, answer};
+use agent_runtime::harness::Harness;
 use agent_runtime::host;
 
 use crate::error::{Error, Result};
@@ -31,6 +33,10 @@ const INSTALL_PACKAGES: &str = "kendex-apply";
 
 /// The refusal's key: a duty on an installation that cannot serve it.
 const UNREADY: &str = "unready";
+
+/// The fix where the kernel refuses the wrapper an unprivileged user
+/// namespace.
+const USERNS_FIX: &str = "enable-unprivileged-user-namespaces";
 
 /// Whether a runtime's wrapper answered `status` for its key unbuilt.
 pub fn setup_required(status: Option<i32>) -> bool {
@@ -126,6 +132,10 @@ enum Need {
     Entry { name: &'static str, path: PathBuf },
     /// A program on `PATH`.
     OnPath(&'static str),
+    /// The wrapper a confined lane's harness runs under, as agent-runtime's
+    /// probe judges it on `PATH`: present, and the kernel lets it make an
+    /// unprivileged user namespace.
+    Confined,
 }
 
 /// What a duty lacks on this computer and the fix.
@@ -186,6 +196,7 @@ fn needs(duty: Duty, settings: &Settings) -> Vec<Need> {
             Need::OnPath("tmux"),
             Need::OnPath("git"),
             Need::OnPath("setsid"),
+            Need::Confined,
         ],
         Duty::Controller => vec![Need::OnPath("tmux"), Need::OnPath("setsid")],
         Duty::Job => vec![Need::OnPath("tmux"), Need::OnPath("setsid")],
@@ -216,6 +227,7 @@ pub fn judge(duty: Duty, settings: &Settings) -> Result<Vec<Unready>> {
             Need::OnPath(name) => on_path(name)
                 .is_none()
                 .then(|| (*name, "absent", format!("install-{name}"))),
+            Need::Confined => confinement_lacking(),
         };
         if let Some((program, cause, fix)) = found {
             lacking.push(Unready {
@@ -250,8 +262,49 @@ pub fn report(duties: &[Duty], settings: &Settings) -> Result<(Vec<String>, bool
         }
         ready &= lacking.is_empty();
         lines.extend(lacking.iter().map(Unready::line));
+        if duty == Duty::Launch {
+            lines.extend(unconfined_lines());
+        }
     }
     Ok((lines, ready))
+}
+
+/// What the confinement lacks on this computer, by agent-runtime's probe
+/// over this process's `PATH`: `bwrap` absent, or a trial the kernel
+/// refuses. A host other than Linux answers unconfined by name and lacks
+/// nothing.
+fn confinement_lacking() -> Option<(&'static str, &'static str, String)> {
+    let path = std::env::var_os("PATH");
+    let refusal = agent_runtime::confine::probe(Host::this(), path.as_deref()).err()?;
+    let missing = Error::from(refusal)
+        .fields()
+        .iter()
+        .any(|(field, value)| field == "cause" && value == "bwrap-missing");
+    Some(if missing {
+        (WRAPPER, "bwrap-missing", format!("install-{WRAPPER}"))
+    } else {
+        (WRAPPER, "userns-off", USERNS_FIX.to_owned())
+    })
+}
+
+/// The lanes a launch runs unconfined by name, said beside the launch
+/// duty's readiness, refusing nothing: `confinement=off harness=H cause=C`
+/// for each harness agent-runtime's answer leaves unconfined on this host.
+fn unconfined_lines() -> Vec<String> {
+    Harness::ALL
+        .into_iter()
+        .filter_map(|harness| match answer(Host::this(), harness) {
+            Answer::Confined => None,
+            Answer::Unconfined { cause } => Some(format!(
+                "confinement=off harness={} cause={}",
+                harness.name(),
+                serde_json::to_value(cause)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            )),
+        })
+        .collect()
 }
 
 /// The file `name` resolves to on this process's search path, a regular

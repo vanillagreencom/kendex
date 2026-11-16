@@ -109,6 +109,12 @@ pub struct LaunchLane {
     pub judge_account: bool,
     #[serde(default)]
     pub refresh: bool,
+    /// The overseer authorizes the owner's live display, which the brief
+    /// declares the task needs. Recorded as `desktop` and kept by every
+    /// later launch of the lane, a relaunch or a recovery that does not
+    /// name it included.
+    #[serde(default)]
+    pub desktop: bool,
     /// The opening instruction, read by the harness at its start. Not a
     /// record field: the effect carries it to the launch, and the
     /// admission reads the paths it names.
@@ -1353,8 +1359,8 @@ pub(super) fn launch_lane(
         Some(index) => {
             // The relaunch patch: what this launch knows, over a record that
             // keeps every other field (its first `launched_at` included, the
-            // fleet start the watch reads). `prepare` and `live_display`
-            // belong to the earlier session, and so does a reservation: the
+            // fleet start the watch reads), `desktop` among them. `prepare`
+            // belongs to the earlier session, and so does a reservation: the
             // new attempt takes the slot itself; `running_at` and `launch`
             // are written empty until the launch confirms, and the selection
             // (harness, account, model, effort) waits on the intent until
@@ -1392,6 +1398,9 @@ pub(super) fn launch_lane(
             } else {
                 record::delete(lane, "refresh");
             }
+            if r.desktop {
+                record::set(lane, "desktop", true);
+            }
             record::set(lane, "session_since", at.as_str());
             record::set(lane, "running_at", Value::Null);
             record::set(lane, "status", LaneStatus::Preparing.word());
@@ -1416,7 +1425,6 @@ pub(super) fn launch_lane(
             }
             record::set(lane, "launch", Value::Null);
             record::delete(lane, "prepare");
-            record::delete(lane, "live_display");
             record::delete(lane, "reservation");
             close_capacity_wait(path, lane, &at)?;
             unpark(path, lane, index, &at)?;
@@ -1430,6 +1438,9 @@ pub(super) fn launch_lane(
             let mut record = new_lane_record(r, &at, allow_all, &tier, (class.0, &class.1));
             if r.refresh {
                 record["refresh"] = Value::Bool(true);
+            }
+            if r.desktop {
+                record["desktop"] = Value::Bool(true);
             }
             if r.host().is_some() {
                 record["checkout"] = Value::String(r.mail_root.clone());
@@ -3275,8 +3286,8 @@ mod tests {
     }
 
     /// A relaunch keeps every field
-    /// it does not write, drops `prepare` and `live_display`, and keeps the
-    /// key sequence of what it keeps; its host and kind are its own, a
+    /// it does not write, `desktop` among them, drops `prepare`, and keeps
+    /// the key sequence of what it keeps; its host and kind are its own, a
     /// window here for a request naming no host. The harness, account,
     /// model and effort it was asked for reach the record when the launch
     /// confirms, not at `preparing`. The confirmation
@@ -3299,12 +3310,12 @@ mod tests {
             )
             .replacen(
                 "      \"launch\": {",
-                "      \"prepare\": {\"since\": \"2026-10-24T18:00:00Z\", \"log\": \"/tmp/p.log\", \"reason\": \"sandbox\", \"pid\": 4100},\n      \"live_display\": true,\n      \"launch\": {",
+                "      \"prepare\": {\"since\": \"2026-10-24T18:00:00Z\", \"log\": \"/tmp/p.log\", \"reason\": \"sandbox\", \"pid\": 4100},\n      \"desktop\": true,\n      \"launch\": {",
                 1,
             );
         fs::write(&path, &text).unwrap();
         let before = lane_doc(&path, "KEN-4437");
-        assert!(before.contains_key("prepare") && before.contains_key("live_display"));
+        assert!(before.contains_key("prepare") && before.contains_key("desktop"));
         let id = intend(&path, &launch("KEN-4437"));
         let after = lane_doc(&path, "KEN-4437");
         let view = lane(&path, "KEN-4437");
@@ -3330,10 +3341,10 @@ mod tests {
         assert_eq!(view.launch, None);
         assert_eq!(view.extra["tier"], Value::from("small"));
         assert!(!after.contains_key("prepare"));
-        assert!(!after.contains_key("live_display"));
+        assert_eq!(after.get("desktop"), Some(&Value::Bool(true)));
         let expected: Vec<String> = keys(&before)
             .into_iter()
-            .filter(|k| k != "prepare" && k != "live_display")
+            .filter(|k| k != "prepare")
             .collect();
         assert_eq!(keys(&after), expected, "kept keys keep their sequence");
         // The confirmed launch writes the whole selection: the harness and

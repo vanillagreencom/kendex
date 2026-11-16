@@ -222,36 +222,21 @@ const HARNESSES: [Harness; 3] = [Harness::Claude, Harness::Codex, Harness::Copil
 /// listing says so.
 fn discover(ctx: &mut Ctx, named: Option<(Harness, &str)>) -> Result<Vec<Found>, String> {
     let accounts = ctx.accounts;
-    let mut configured: Vec<Found> = Vec::new();
     if accounts.account_dirs.is_empty() {
         ctx.notes.push(format!(
             "accounts-unconfigured key={}",
             crate::settings::ACCOUNT_DIRS_KEY
         ));
     }
-    for entry in &accounts.account_dirs {
-        let relative = entry.strip_prefix("~/").unwrap_or(entry);
-        let dir = match (entry.starts_with('/'), &ctx.settings.home) {
-            (true, _) => entry.clone(),
-            (false, Some(home)) => Path::new(home).join(relative).display().to_string(),
-            (false, None) => {
-                ctx.notes.push(format!(
-                    "account-dir-unresolved entry={entry} cause=home-unset"
-                ));
-                continue;
-            }
-        };
-        if configured.iter().any(|f| f.dir == dir) {
-            continue;
-        }
-        let harness = kind_of(&dir)
-            .map_err(|cause| format!("account-dir-unreadable path={dir} cause={cause}"))?;
-        configured.push(Found {
-            harness,
-            dir,
-            configured: true,
-        });
-    }
+    let mut configured: Vec<Found> =
+        configured(&accounts.account_dirs, ctx.settings.home, &mut ctx.notes)?
+            .into_iter()
+            .map(|(harness, dir)| Found {
+                harness,
+                dir,
+                configured: true,
+            })
+            .collect();
     let mut found: Vec<Found> = Vec::new();
     for harness in HARNESSES {
         found.extend(configured.extract_if(.., |f| f.harness == harness));
@@ -291,6 +276,39 @@ fn discover(ctx: &mut Ctx, named: Option<(Harness, &str)>) -> Result<Vec<Found>,
         });
     }
     Ok(found)
+}
+
+/// The accounts the owner configured, `account_dirs` as the setting lists
+/// them, each with the harness its files name: an entry absolute or under
+/// `home`, one under no home said in `notes` and left out, each directory
+/// once. The chooser picks among these alone. A directory whose files
+/// cannot be read refuses.
+pub fn configured(
+    account_dirs: &[String],
+    home: Option<&str>,
+    notes: &mut Vec<String>,
+) -> Result<Vec<(Harness, String)>, String> {
+    let mut configured: Vec<(Harness, String)> = Vec::new();
+    for entry in account_dirs {
+        let relative = entry.strip_prefix("~/").unwrap_or(entry);
+        let dir = match (entry.starts_with('/'), home) {
+            (true, _) => entry.clone(),
+            (false, Some(home)) => Path::new(home).join(relative).display().to_string(),
+            (false, None) => {
+                notes.push(format!(
+                    "account-dir-unresolved entry={entry} cause=home-unset"
+                ));
+                continue;
+            }
+        };
+        if configured.iter().any(|(_, d)| *d == dir) {
+            continue;
+        }
+        let harness = kind_of(&dir)
+            .map_err(|cause| format!("account-dir-unreadable path={dir} cause={cause}"))?;
+        configured.push((harness, dir));
+    }
+    Ok(configured)
 }
 
 /// The harness whose account a configured directory holds, by its files:

@@ -234,6 +234,12 @@ pub const LANE_HOST_KEY: &str = "ORCH_LANE_HOST";
 pub const COPILOT_HOME_KEY: &str = "COPILOT_HOME";
 /// Pi's own root, where a Pi launch that names no account of Pi's runs.
 pub const PI_ROOT_KEY: &str = "PI_CODING_AGENT_DIR";
+/// The second-opinion roster a lane's review walks: the harnesses whose
+/// accounts a confined lane's grants bind.
+pub const REVIEW_TARGETS_KEY: &str = "SECOND_OPINION_MODELS";
+/// A repository's own tool folders a confined lane writes, `:`-separated
+/// absolute or `~/` paths, read from the overseer's settings alone.
+pub const LANE_WRITABLE_KEY: &str = "ORCH_LANE_WRITABLE";
 /// Seconds the provider's `accounts` verb may take; 0 asks for no bound.
 pub const HOST_ACCOUNTS_TIMEOUT_KEY: &str = "ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S";
 const DEFAULT_HOST_ACCOUNTS_TIMEOUT: u64 = 30;
@@ -347,6 +353,8 @@ const READ_KEYS: &[&str] = &[
     LANE_HOST_KEY,
     COPILOT_HOME_KEY,
     PI_ROOT_KEY,
+    REVIEW_TARGETS_KEY,
+    LANE_WRITABLE_KEY,
     HOST_ACCOUNTS_TIMEOUT_KEY,
     crate::provider::MAX_CALLS_KEY,
     crate::provider::BUSY_WAIT_KEY,
@@ -602,6 +610,11 @@ pub struct Settings {
     pub home: Option<String>,
     pub copilot_home: Option<String>,
     pub pi_root: Option<String>,
+    /// `SECOND_OPINION_MODELS` as written, an empty value kept: an empty
+    /// roster names no target.
+    pub review_targets: Option<String>,
+    /// `ORCH_LANE_WRITABLE` as written.
+    pub lane_writable: Option<String>,
     /// The provider calls' host and bound, judged at each call.
     pub dispatch: crate::provider::Dispatch,
     pub store: StoreSettings,
@@ -1138,6 +1151,8 @@ pub fn load(
         home: get(shared::HOME_KEY).map(str::to_owned),
         copilot_home: get(COPILOT_HOME_KEY).map(str::to_owned),
         pi_root: get(PI_ROOT_KEY).map(str::to_owned),
+        review_targets: get(REVIEW_TARGETS_KEY).map(str::to_owned),
+        lane_writable: get(LANE_WRITABLE_KEY).map(str::to_owned),
         dispatch: crate::provider::Dispatch::read(|key| get(key).map(str::to_owned)),
         lane_output: Judged::word(
             LANE_OUTPUT_KEY,

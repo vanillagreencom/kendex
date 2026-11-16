@@ -87,9 +87,17 @@ pub struct Grants {
     /// bound back and the display names kept.
     #[serde(default)]
     pub desktop: bool,
+    /// A file whose text the line hands the harness as `GH_TOKEN`: `gh`
+    /// reads its login over the session bus, which the wrapper hides. The
+    /// text is read as the line runs, so no record holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gh_token: Option<PathBuf>,
     /// Where the launch writes these grants for the lane to read.
     pub file: PathBuf,
 }
+
+/// The variable `gh` takes its token from before any stored login.
+pub const GH_TOKEN_VAR: &str = "GH_TOKEN";
 
 /// Why a harness runs unconfined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +161,8 @@ pub enum Word {
     /// `WAYLAND_DISPLAY` names, expanded by the pane's shell when the line
     /// runs: the display names a desktop grant keeps are the window's.
     Display(PathBuf),
+    /// This file's text, read by the pane's shell when the line runs.
+    Text(PathBuf),
 }
 
 impl Word {
@@ -162,6 +172,10 @@ impl Word {
             Word::Display(dir) => format!(
                 "{}/\"${{WAYLAND_DISPLAY:-{NO_DISPLAY}}}\"",
                 crate::launch::shell_quote(&dir.display().to_string())
+            ),
+            Word::Text(file) => format!(
+                "\"$(cat {})\"",
+                crate::launch::shell_quote(&file.display().to_string())
             ),
         }
     }
@@ -207,6 +221,7 @@ pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Conf
         .chain(&grants.read_only)
         .chain(&grants.runtime_dir)
         .chain(&grants.sockets)
+        .chain(&grants.gh_token)
         .chain([&grants.file]);
     for path in paths {
         if !path.is_absolute() {
@@ -263,6 +278,13 @@ pub fn linux_words(grants: &Grants) -> Vec<Word> {
         (GRANTS_VAR, grants.file.display().to_string()),
     ] {
         words.extend([plain("--setenv"), plain(name), Word::Plain(value)]);
+    }
+    if let Some(file) = &grants.gh_token {
+        words.extend([
+            plain("--setenv"),
+            plain(GH_TOKEN_VAR),
+            Word::Text(file.clone()),
+        ]);
     }
     for name in ["TMUX", "TMUX_PANE"] {
         words.extend([plain("--unsetenv"), plain(name)]);
@@ -348,6 +370,7 @@ mod tests {
             runtime_dir: None,
             sockets: Vec::new(),
             desktop: false,
+            gh_token: None,
             file: PathBuf::from("/x/grants.json"),
         }
     }

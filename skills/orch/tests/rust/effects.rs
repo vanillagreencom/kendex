@@ -51,12 +51,12 @@ fn a_launch_confirmed_records_the_running_lane_with_its_pane_identity() {
     let launch = &report["lane"]["launch"];
     assert!(launch["pane"].as_str().unwrap().starts_with('%'));
     assert_eq!(launch["server"], server.pid);
-    // The identity is the pane's foreground process, the stub itself, which
-    // the kernel names for the harness.
+    // The identity is the harness the pane's wrapper runs, the stub itself,
+    // which the kernel names for the harness.
     let pid = launch["pid"].as_u64().expect("the pane process pid") as u32;
     assert_eq!(launch["pane"].as_str().unwrap(), {
         let pane = launch["pane"].as_str().unwrap();
-        assert_eq!(server.pane_pid(pane), pid);
+        assert_eq!(server.harness_pid(pane), pid);
         pane
     });
     assert_eq!(
@@ -553,7 +553,7 @@ fn a_close_supersedes_a_launch_that_never_drew() {
         .as_str()
         .unwrap()
         .to_owned();
-    let harness_pid = server.pane_pid(&pane);
+    let harness_pid = server.harness_pid(&pane);
     assert!(live(harness_pid));
     let closed = effect_report(&runner.op_fleet(&terminal_close("KEN-P")));
     assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
@@ -602,7 +602,7 @@ fn a_superseding_close_stops_the_relaunched_harness_not_the_lane_s_earlier_word(
         .as_str()
         .unwrap()
         .to_owned();
-    let harness_pid = server.pane_pid(&pane);
+    let harness_pid = server.harness_pid(&pane);
     assert!(live(harness_pid));
     let closed = effect_report(&runner.op_fleet(&terminal_close("KEN-H")));
     assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
@@ -3181,7 +3181,8 @@ fn a_window_opened_record_before_its_identity_reads_the_written_receipt() {
 /// pane-field read until the pane's process is the stub, so the foreground
 /// read before the held capture sees the harness whatever the stub's start
 /// took, and the record at the capture barrier is judged, not the stub's
-/// startup.
+/// startup. The lane is a Copilot CLI lane's, whose harness runs
+/// unconfined and can outlive its pane.
 #[test]
 fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
     let dir = tempfile::tempdir().unwrap();
@@ -3197,18 +3198,20 @@ fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
     let fifo_s = fifo.display().to_string();
     let mark_s = mark.display().to_string();
     let opened_s = opened.display().to_string();
-    let mut child = runner.spawn_op_fleet(
-        &launch_request("KEN-C", runner.state_dir()),
-        &[
-            ("TMUX_REAL", real.as_str()),
-            ("TMUX_HOLD_FIFO", fifo_s.as_str()),
-            ("TMUX_HOLD_MARK", mark_s.as_str()),
-            ("TMUX_HOLD_VERB", "capture-pane"),
-            ("TMUX_HOLD_OPENED", opened_s.as_str()),
-            ("TMUX_HOLD_READY_COMM", "claude"),
-        ],
-        &fixtures().join("tmux-hold"),
-    );
+    let tools = dir.path().join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    runner.tools = Some(tools.clone());
+    let (request, env) = copilot_survivor(dir.path(), &runner, &tools, "KEN-C");
+    let mut held: Vec<(&str, &str)> = env.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+    held.extend([
+        ("TMUX_REAL", real.as_str()),
+        ("TMUX_HOLD_FIFO", fifo_s.as_str()),
+        ("TMUX_HOLD_MARK", mark_s.as_str()),
+        ("TMUX_HOLD_VERB", "capture-pane"),
+        ("TMUX_HOLD_OPENED", opened_s.as_str()),
+        ("TMUX_HOLD_READY_COMM", "copilot"),
+    ]);
+    let mut child = runner.spawn_op_fleet(&request, &held, &fixtures().join("tmux-hold"));
     wait_for_phase(&runner, "launch-session:", "window-opened");
     // The launch is at its first wait: the shim holds its first capture.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -3254,7 +3257,7 @@ fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
         std::fs::read_to_string(format!("/proc/{pid}/comm"))
             .map(|comm| comm.trim().to_owned())
             .unwrap_or_default(),
-        "claude",
+        "copilot",
         "the launch read the pane only once the stub held it"
     );
     let killed = tmux(&server.socket, &["kill-pane", "-t", &pane]);
@@ -3605,10 +3608,48 @@ fn a_close_whose_validation_root_is_unreadable_holds_the_validation_owed() {
     );
 }
 
+/// A Copilot CLI lane's launch world for a row whose harness must outlive
+/// its killed pane: only an unconfined harness can, since a confined one
+/// ends with its wrapper. The account with its lane-mail hooks, hooks
+/// switched off by no layer, a hangup-ignoring stub named `copilot`, the
+/// checkout's origin; the environment the launch runs under.
+fn copilot_survivor(
+    dir: &Path,
+    runner: &Runner,
+    tools: &Path,
+    item: &str,
+) -> (Value, Vec<(String, String)>) {
+    let account = dir.join("copilot-account");
+    plant_copilot_hooks(&account.join("hooks"));
+    plant_hooks_off(tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+    let bin = dir.join("copilot-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("copilot"),
+        std::fs::read_to_string(stub("stub-survivor")).unwrap(),
+    );
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    fleet_origin(&[runner.state_dir()]);
+    let mut request = launch_request(item, runner.state_dir());
+    request["harness"] = json!("copilot");
+    request["account"] = json!(account.display().to_string());
+    let env = vec![
+        (
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!("copilot={}", bin.join("copilot").display()),
+        ),
+        ("HOME".to_owned(), home.display().to_string()),
+    ];
+    (request, env)
+}
+
 /// A `send_line` reply reported failed may have run the line, which writes
 /// the receipt and execs the harness. The pane is closed and the receipt
 /// read, not assumed absent, so a live registered pid stands and the launch
 /// holds rather than settling `failed` over a running harness.
+/// A Copilot CLI lane's, whose harness runs unconfined and can outlive its
+/// pane.
 #[test]
 fn a_send_reply_reported_failed_that_ran_the_line_reads_the_receipt() {
     let dir = tempfile::tempdir().unwrap();
@@ -3629,8 +3670,10 @@ fn a_send_reply_reported_failed_that_ran_the_line_reads_the_receipt() {
             copy = copy.display(),
         ),
     );
-    runner.tools = Some(tools);
-    let report = effect_report(&runner.op_fleet(&launch_request("KEN-N", runner.state_dir())));
+    runner.tools = Some(tools.clone());
+    let (request, env) = copilot_survivor(dir.path(), &runner, &tools, "KEN-N");
+    let env: Vec<(&str, &str)> = env.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+    let report = effect_report(&runner.op_fleet_env(&request, &env));
     let receipt: Value =
         serde_json::from_str(&std::fs::read_to_string(&copy).unwrap_or_else(|_| "null".to_owned()))
             .unwrap_or(Value::Null);
@@ -7794,7 +7837,11 @@ fn a_bypassed_claude_launch_records_the_accounts_bypass_consent_and_honours_a_re
         "KEN-B4",
         &launch("KEN-B4", &narrower, Some("--permission-mode dontAsk")),
     );
-    assert_eq!(settings_of(&narrower), None, "no bypass, no consent");
+    assert_eq!(
+        settings_of(&narrower),
+        Some(json!({})),
+        "no bypass, no consent: the seat holds the empty settings its read-only carve-out binds"
+    );
 
     let refusing = home("refusing");
     let text = r#"{"skipDangerousModePermissionPrompt": false}"#;
@@ -9942,4 +9989,330 @@ fn launch_record_of(cwd: &Path) -> Value {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// A launch world for the confinement's rows: the fleet server, a runtime
+/// folder the launch hides (a socket standing for the session bus, a
+/// second private server at `wayland-1` standing for the display), a `gh`
+/// that answers the bus's login, `GH_TOKEN` before it, and a probe harness
+/// that writes what it reached into `probe-<item>.txt` in its worktree,
+/// then runs the confirming stub. Every planted program stands inside the
+/// worktree, which the lane's grants bind; the runtime folder and the
+/// seats stand outside it.
+#[cfg(target_os = "linux")]
+struct Confined {
+    dir: tempfile::TempDir,
+    server: Server,
+    runner: Runner,
+    display: PathBuf,
+    _bus: std::os::unix::net::UnixListener,
+}
+
+#[cfg(target_os = "linux")]
+impl Confined {
+    fn new() -> Confined {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-confirm");
+        runner.verify = Some(30);
+        runner.init_fleet();
+        let root = runner.state_dir().to_path_buf();
+        let runtime = dir.path().join("rt");
+        std::fs::create_dir_all(&runtime).unwrap();
+        let bus = std::os::unix::net::UnixListener::bind(runtime.join("bus")).unwrap();
+        let display = runtime.join("wayland-1");
+        let out = tmux(&display, &["new-session", "-d", "-s", "display"]);
+        assert!(out.status.success(), "the display: {}", stderr(&out));
+        let tools = root.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        write_executable(
+            &tools.join("gh"),
+            "#!/bin/sh\n# gh's token read: GH_TOKEN first, else the login on the session bus.\nif [ \"$1 $2\" = \"auth token\" ]; then\n  if [ -n \"${GH_TOKEN:-}\" ]; then printf '%s\\n' \"$GH_TOKEN\"; exit 0; fi\n  if [ -S \"${XDG_RUNTIME_DIR:-/none}/bus\" ]; then echo bus-login-token; exit 0; fi\n  echo 'no oauth token found for github.com' >&2; exit 1\nfi\nexit 4\n",
+        );
+        let probe = root.join("probe").join("claude");
+        std::fs::create_dir_all(probe.parent().unwrap()).unwrap();
+        write_executable(
+            &probe,
+            format!(
+                "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {stub} \"$@\" >&3 2>&3 3>&-\n",
+                stub = stub("stub-confirm").display()
+            ),
+        );
+        runner.stub = probe;
+        runner.tools = Some(tools.clone());
+        runner
+            .env
+            .push(("XDG_RUNTIME_DIR".to_owned(), runtime.display().to_string()));
+        let path = tmux(&server.socket, &["show-environment", "-g", "PATH"]);
+        let path = String::from_utf8_lossy(&path.stdout);
+        let path = path.trim().trim_start_matches("PATH=");
+        for (name, value) in [
+            ("PATH", format!("{}:{path}", tools.display())),
+            ("XDG_RUNTIME_DIR", runtime.display().to_string()),
+            ("WAYLAND_DISPLAY", "wayland-1".to_owned()),
+        ] {
+            // The session's own: tmux records a display name its creating
+            // client lacked as removed in the session, over the global one.
+            let out = tmux(
+                &server.socket,
+                &["set-environment", "-t", &server.session, name, &value],
+            );
+            assert!(out.status.success(), "{name}: {}", stderr(&out));
+        }
+        Confined {
+            dir,
+            server,
+            runner,
+            display,
+            _bus: bus,
+        }
+    }
+
+    /// Launch `request` and answer its report, refusing an unconfirmed one.
+    fn launch(&self, request: &Value) -> Value {
+        let report = effect_report(&self.runner.op_fleet(request));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+        report
+    }
+
+    /// The probe's lines for `item`, one file per launch, once `launches`
+    /// of them are whole, bounded: a resumed launch confirms by its
+    /// session, which can stand before the probe has run.
+    fn probe(&self, item: &str, launches: usize) -> String {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let mut text = String::new();
+            for entry in std::fs::read_dir(self.runner.state_dir()).unwrap() {
+                let entry = entry.unwrap();
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&format!("probe-{item}-"))
+                {
+                    text.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                }
+            }
+            if text.lines().filter(|l| l.starts_with("gh=")).count() >= launches {
+                return text;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "probe {launches} of {item}: {text} {:?}",
+                std::fs::read_dir(self.runner.state_dir())
+                    .unwrap()
+                    .map(|e| e.unwrap().file_name())
+                    .collect::<Vec<_>>()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn seat_env(&self, seats: &str) {
+        let out = tmux(
+            &self.server.socket,
+            &["set-environment", "-g", "PROBE_SEATS", seats],
+        );
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Confined {
+    fn drop(&mut self) {
+        let _ = tmux(&self.display, &["kill-server"]);
+    }
+}
+
+/// The display is the record's: a lane launched with `desktop` reaches the
+/// window's display socket, a stopped lane whose record holds it is
+/// relaunched by a request naming none and still does, and a lane launched
+/// without it is refused the socket, its runtime folder hidden.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_desktop_lane_reaches_the_display_its_relaunch_still_does_and_a_lane_without_it_is_refused() {
+    let world = Confined::new();
+    let mut request = launch_request("KEN-D", world.runner.state_dir());
+    request["desktop"] = json!(true);
+    let report = world.launch(&request);
+    assert_eq!(report["intent"]["observation"]["desktop"], true, "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["confinement"],
+        json!({"state": "confined"})
+    );
+    assert_eq!(report["lane"]["desktop"], true, "{}", report["lane"]);
+    let first = world.probe("KEN-D", 1);
+    assert!(first.contains("display=reached"), "{first}");
+    let mut fleet = world.runner.fleet();
+    let mut stopped = lane("KEN-R", "stopped", &world.runner, Value::Null);
+    stopped["desktop"] = json!(true);
+    fleet["lanes"].as_array_mut().unwrap().push(stopped);
+    world.runner.write_fleet(&fleet);
+    let relaunched = world.launch(&launch_request("KEN-R", world.runner.state_dir()));
+    assert_eq!(
+        relaunched["intent"]["observation"]["desktop"], true,
+        "{relaunched}"
+    );
+    let probe = world.probe("KEN-R", 1);
+    assert!(probe.contains("display=reached"), "{probe}");
+    world.launch(&launch_request("KEN-E", world.runner.state_dir()));
+    let probe = world.probe("KEN-E", 1);
+    assert!(probe.contains("display=refused"), "{probe}");
+    assert!(probe.contains("bus=hidden"), "{probe}");
+}
+
+/// A lane's second opinion runs on the accounts its configured targets can
+/// pick: a Claude lane whose roster names Codex writes the configured Codex
+/// account's seat, and is refused a Copilot account's and another Claude
+/// account's, which no target of it can pick.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harness_s() {
+    let mut world = Confined::new();
+    let seats = world.dir.path().join("seats");
+    let planted = [
+        ("codex1", "auth.json"),
+        ("copilot1", "config.json"),
+        ("claude2", ".credentials.json"),
+    ]
+    .map(|(name, file)| {
+        let seat = seats.join(name);
+        std::fs::create_dir_all(&seat).unwrap();
+        std::fs::write(seat.join(file), "{}").unwrap();
+        seat.display().to_string()
+    });
+    world.runner.env.extend([
+        ("AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(), planted.join(":")),
+        (
+            "SECOND_OPINION_MODELS".to_owned(),
+            "claude codex".to_owned(),
+        ),
+    ]);
+    world.seat_env(&planted.join(" "));
+    let report = world.launch(&launch_request("KEN-S", world.runner.state_dir()));
+    let probe = world.probe("KEN-S", 1);
+    assert!(probe.contains("seat=codex1 written"), "{probe}");
+    assert!(probe.contains("seat=copilot1 refused"), "{probe}");
+    assert!(probe.contains("seat=claude2 refused"), "{probe}");
+    let named: Vec<String> = report["intent"]["observation"]["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_owned())
+        .collect();
+    let codex = std::fs::canonicalize(&planted[0]).unwrap();
+    assert!(
+        named.contains(&codex.display().to_string()),
+        "the record names the review seat: {named:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(codex.join("config.toml")).unwrap(),
+        "",
+        "the seat's settings file stands for its read-only carve-out"
+    );
+}
+
+/// A confined lane's `gh` reads the token the launch handed it, the bus it
+/// would read a login over hidden; the token's file is the lane's alone and
+/// is gone after the close.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_s_gh_reads_the_handed_token_with_the_bus_hidden_and_the_close_removes_its_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = Confined::new();
+    let report = world.launch(&launch_request("KEN-G", world.runner.state_dir()));
+    assert_eq!(
+        report["intent"]["observation"]["gh_token"], "handed",
+        "{report}"
+    );
+    let probe = world.probe("KEN-G", 1);
+    assert!(probe.contains("bus=hidden"), "{probe}");
+    assert!(probe.contains("gh=bus-login-token"), "{probe}");
+    let token = world
+        .runner
+        .state_dir()
+        .join("tmp/lane-mail/KEN-G/gh-token");
+    let mode = std::fs::metadata(&token).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-G")));
+    assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
+    assert!(
+        std::fs::symlink_metadata(&token).is_err(),
+        "the token's file is gone after the close"
+    );
+}
+
+/// A repository's own tool folder the overseer's `ORCH_LANE_WRITABLE`
+/// names is written by the lane, its sibling refused; the launch record
+/// names what was granted.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_writes_the_folder_its_overseer_s_setting_names_and_is_refused_its_sibling() {
+    let mut world = Confined::new();
+    let tools = world.dir.path().join("repo-tools");
+    let [named, sibling] = ["go-mod", "gradle"].map(|name| tools.join(name));
+    for dir in [&named, &sibling] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    world
+        .runner
+        .env
+        .push(("ORCH_LANE_WRITABLE".to_owned(), named.display().to_string()));
+    world.seat_env(&format!("{} {}", named.display(), sibling.display()));
+    let report = world.launch(&launch_request("KEN-W", world.runner.state_dir()));
+    let probe = world.probe("KEN-W", 1);
+    assert!(probe.contains("seat=go-mod written"), "{probe}");
+    assert!(probe.contains("seat=gradle refused"), "{probe}");
+    assert_eq!(
+        report["intent"]["observation"]["lane_writable"],
+        json!([std::fs::canonicalize(&named).unwrap()]),
+        "{report}"
+    );
+}
+
+/// The home itself named in `ORCH_LANE_WRITABLE` would unconfine the lane:
+/// the launch refuses it by name before any window.
+#[test]
+#[cfg(target_os = "linux")]
+fn the_home_named_in_the_lane_writable_setting_refuses_the_launch() {
+    let mut world = Confined::new();
+    let home = world.dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    world.runner.env.extend([
+        ("HOME".to_owned(), home.display().to_string()),
+        ("ORCH_LANE_WRITABLE".to_owned(), home.display().to_string()),
+    ]);
+    let report = effect_report(
+        &world
+            .runner
+            .op_fleet(&launch_request("KEN-H", world.runner.state_dir())),
+    );
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["cause"], "lane-writable-home",
+        "{report}"
+    );
+    assert_eq!(world.server.panes().len(), 1, "no window opened");
+}
+
+/// The cache folder is a build cache the lane writes, a Go-style cache in
+/// it among them, while kendex's folder in it, which holds the runtimes a
+/// controller runs, stays read-only.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_writes_a_build_cache_under_the_cache_folder_and_is_refused_the_runtime_s() {
+    let mut world = Confined::new();
+    let cache = world.dir.path().join("cache");
+    let [go, runtime] = ["go-build", "kendex/agent-runtime"].map(|name| cache.join(name));
+    for dir in [&go, &runtime] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    world
+        .runner
+        .env
+        .push(("XDG_CACHE_HOME".to_owned(), cache.display().to_string()));
+    world.seat_env(&format!("{} {}", go.display(), runtime.display()));
+    world.launch(&launch_request("KEN-K", world.runner.state_dir()));
+    let probe = world.probe("KEN-K", 1);
+    assert!(probe.contains("seat=go-build written"), "{probe}");
+    assert!(probe.contains("seat=agent-runtime refused"), "{probe}");
 }

@@ -77,6 +77,64 @@ fn ready_in(root: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> (Ve
     (lines, out.status.code().unwrap_or(-1))
 }
 
+/// The lines `ready` says beside the launch duty: each harness a launch
+/// runs unconfined by name on this host, Copilot CLI's on every host and
+/// every harness's off Linux.
+fn unconfined() -> Vec<&'static str> {
+    if cfg!(target_os = "linux") {
+        vec!["confinement=off harness=copilot cause=token-on-session-bus"]
+    } else {
+        vec![
+            "confinement=off harness=claude cause=macos-profile-unbuilt",
+            "confinement=off harness=codex cause=macos-profile-unbuilt",
+            "confinement=off harness=copilot cause=token-on-session-bus",
+            "confinement=off harness=pi cause=macos-profile-unbuilt",
+        ]
+    }
+}
+
+/// A Linux host without the confinement cannot launch a confined lane:
+/// `ready` names `bwrap` absent with its install, or a wrapper whose trial
+/// the kernel refuses with the user-namespace fix, beside the Copilot CLI
+/// lanes it launches unconfined, and exits 1.
+#[test]
+#[cfg(target_os = "linux")]
+fn ready_names_a_host_without_the_confinement_and_its_fix() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let no_bwrap = std::ffi::OsString::from(support::path_without(&root.join("bin"), "bwrap"));
+    let (lines, code) = ready_in(&root, &["--duty", "launch"], &[("PATH", &no_bwrap)]);
+    assert_eq!(
+        (lines, code),
+        (
+            vec![
+                "unready duty=launch program=bwrap cause=bwrap-missing fix=install-bwrap"
+                    .to_owned(),
+                "confinement=off harness=copilot cause=token-on-session-bus".to_owned(),
+            ],
+            1
+        )
+    );
+    let refusing = root.join("refusing");
+    fs::create_dir_all(&refusing).unwrap();
+    support::write_executable(
+        &refusing.join("bwrap"),
+        "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n",
+    );
+    let path = std::ffi::OsString::from(support::tool_path(&[&refusing]));
+    let (lines, code) = ready_in(&root, &["--duty", "launch"], &[("PATH", &path)]);
+    assert_eq!(
+        (lines, code),
+        (
+            vec![
+                "unready duty=launch program=bwrap cause=userns-off fix=enable-unprivileged-user-namespaces".to_owned(),
+                "confinement=off harness=copilot cause=token-on-session-bus".to_owned(),
+            ],
+            1
+        )
+    );
+}
+
 /// `orch-runtime ready` judges every duty's programs on this computer:
 /// agent-runtime's real wrapper finding its key unbuilt names orch's setup,
 /// a mailbox program and a worktree program that are gone name the
@@ -113,20 +171,21 @@ fn ready_names_what_each_duty_lacks_and_its_fix() {
         setup.ends_with("/.agents/skills/orch/scripts/setup"),
         "the fix is orch's one setup: {setup}"
     );
-    assert_eq!(
-        lines[1..],
-        [
-            "unready duty=watch program=lane-mail cause=absent fix=kendex-apply",
-            "unready duty=watch program=tmux cause=absent fix=install-tmux",
-            "unready duty=launch program=tmux cause=absent fix=install-tmux",
-            "unready duty=controller program=tmux cause=absent fix=install-tmux",
-            "unready duty=job program=tmux cause=absent fix=install-tmux",
-            "unready duty=register program=tmux cause=absent fix=install-tmux",
-            "ready duty=ci-proof",
-            "ready duty=reconcile-items",
-            "unready duty=prune program=worktree cause=absent fix=kendex-apply",
-        ]
-    );
+    let mut expected = vec![
+        "unready duty=watch program=lane-mail cause=absent fix=kendex-apply",
+        "unready duty=watch program=tmux cause=absent fix=install-tmux",
+        "unready duty=launch program=tmux cause=absent fix=install-tmux",
+    ];
+    expected.extend(unconfined());
+    expected.extend([
+        "unready duty=controller program=tmux cause=absent fix=install-tmux",
+        "unready duty=job program=tmux cause=absent fix=install-tmux",
+        "unready duty=register program=tmux cause=absent fix=install-tmux",
+        "ready duty=ci-proof",
+        "ready duty=reconcile-items",
+        "unready duty=prune program=worktree cause=absent fix=kendex-apply",
+    ]);
+    assert_eq!(lines[1..], expected);
     let path = std::ffi::OsString::from(support::tool_path(&[]));
     let lane_mail = packages.join("mailbox/scripts/lane-mail");
     let worktree = packages.join("worktree/scripts/worktree");
@@ -138,19 +197,17 @@ fn ready_names_what_each_duty_lacks_and_its_fix() {
     ];
     let (lines, code) = ready_in(&root, &[], &ready_env);
     assert_eq!(code, 0, "{lines:?}");
-    assert_eq!(
-        lines,
-        [
-            "ready duty=watch",
-            "ready duty=launch",
-            "ready duty=controller",
-            "ready duty=job",
-            "ready duty=register",
-            "ready duty=ci-proof",
-            "ready duty=reconcile-items",
-            "ready duty=prune",
-        ]
-    );
+    let mut expected = vec!["ready duty=watch", "ready duty=launch"];
+    expected.extend(unconfined());
+    expected.extend([
+        "ready duty=controller",
+        "ready duty=job",
+        "ready duty=register",
+        "ready duty=ci-proof",
+        "ready duty=reconcile-items",
+        "ready duty=prune",
+    ]);
+    assert_eq!(lines, expected);
     let (lines, code) = ready_in(&root, &["--duty", "prune"], &ready_env);
     assert_eq!((lines, code), (vec!["ready duty=prune".to_owned()], 0));
 }
@@ -222,12 +279,13 @@ fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
     let no_runner = std::ffi::OsString::from(support::path_without(&bin, "setsid"));
     let _ = fs::remove_file(bin.join("systemd-run"));
     let no_setsid = |duty: &str| {
-        (
-            vec![format!(
-                "unready duty={duty} program=setsid cause=absent fix=install-setsid"
-            )],
-            1,
-        )
+        let mut lines = vec![format!(
+            "unready duty={duty} program=setsid cause=absent fix=install-setsid"
+        )];
+        if duty == "launch" {
+            lines.extend(unconfined().into_iter().map(str::to_owned));
+        }
+        (lines, 1)
     };
     for duty in ["launch", "controller", "job"] {
         let answer = ready_in(&root, &["--duty", duty], &[("PATH", &no_runner)]);

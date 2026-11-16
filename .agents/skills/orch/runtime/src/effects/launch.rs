@@ -408,6 +408,8 @@ struct LaunchPrep {
     /// How the launch directory came to be trusted, where a home was
     /// prepared.
     trust: Option<trust::Route>,
+    /// What the harness may reach inside its wrapper.
+    granted: super::grants::Granted,
 }
 
 /// Resolve everything a local launch can refuse before it opens a window:
@@ -506,9 +508,30 @@ fn prepare_launch(
             session_file: None,
         });
     }
+    // The display is the record's: a relaunch or a recovery keeps what the
+    // first launch was granted.
+    let desktop = lane
+        .extra
+        .get("desktop")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let granted = super::grants::of(
+        settings,
+        &r.item,
+        &cwd,
+        harness,
+        r.account.as_deref().map(Path::new),
+        &homes,
+        desktop,
+    )?;
+    if let Some((name, value)) = granted.env() {
+        intent.env.insert(name, value);
+    }
+    intent.grants = Some(granted.grants.clone());
     let command = agent_runtime::launch::build(&intent)?;
     check_program(&command)?;
     Ok(LaunchPrep {
+        granted,
         target: Target::new(&settings.engine.harness_binaries, harness)?,
         home: homes.sessions,
         home_implicit: homes.cleared,
@@ -858,6 +881,9 @@ fn local_launch(
     if let Err(e) = marker::write(&cwd, &r.item, r.refresh, resumed) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
+    if let Err(e) = prep.granted.write() {
+        return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
+    }
     let target = prep.target.clone();
     let mut outcome = open_and_confirm(
         operation,
@@ -876,6 +902,11 @@ fn local_launch(
     )?;
     if let Some(route) = prep.trust {
         outcome.annotate("trust", json!(route));
+    }
+    if let Value::Object(granted) = prep.granted.record() {
+        for (key, value) in granted {
+            outcome.annotate(&key, value);
+        }
     }
     Ok(outcome)
 }
@@ -2298,6 +2329,7 @@ mod tests {
             exclude_account: None,
             judge_account: false,
             refresh: false,
+            desktop: false,
             brief_file: None,
             repo_dir: None,
             scope_range: None,

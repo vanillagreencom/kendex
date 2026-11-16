@@ -4126,12 +4126,14 @@ exec '{orch}' --no-private-env launch-job --name confined-row --run '{wt}/job' -
         runtime_dir: None,
         sockets: Vec::new(),
         desktop: false,
+        gh_token: None,
         file: root.join("grants.json"),
     })
     .into_iter()
     .map(|word| match word {
         Word::Plain(word) => word,
         Word::Display(_) => panic!("a display word without a desktop grant"),
+        Word::Text(_) => panic!("a text word without a token grant"),
     })
     .collect();
     let out = program("bwrap")
