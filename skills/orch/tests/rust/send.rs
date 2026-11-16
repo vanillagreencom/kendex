@@ -780,7 +780,6 @@ impl World {
                 scripts.join("../../change-scope/scripts/harness-only"),
             )
             .env("DEV_VALIDATE_CMD", "echo full")
-            .env("DEV_VALIDATE_TIMEOUT_SECS", "20")
             .env("ORCH_PR_ORDER", "review-first")
             .env("ORCH_DELIVERY", "push-base")
             .env("VALIDATE_START_ANSWER", "record-only")

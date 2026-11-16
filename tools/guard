@@ -39,6 +39,49 @@ fail=0
 # offending lines the rule collected follow that. finding_text below is the
 # only place a key's English lives, so a key has one spelling and one
 # definition, and no caller carries message text of its own.
+# Each measured tools suite as "path seconds samples": the largest observed
+# maximum and the number of legs that recorded it. Fails where the notes
+# cannot be read whole.
+suite_timings() {
+  LC_ALL=C awk '
+    /# the merge groups of runs 36522803055, 36523768409, 36525040329,/ {
+      starts++
+      reading = 1
+    }
+    reading && /# suite sums over those legs, Linux then macOS:/ { ends++; reading = 0 }
+    reading { sub(/^[[:space:]]*# */, ""); text = text " " $0 }
+    END {
+      if (starts != 1 || ends != 1) exit 1
+      gsub(/[,.]/, " ", text)
+      n = split(text, words, /[[:space:]]+/)
+      for (i = 1; i <= n; i++) {
+        if (words[i] ~ /^[[:alnum:]_-]+$/ && words[i+1] == "at") {
+          path = "tools/tests/" words[i] ".test.sh"
+          if (path in named) exit 1
+          named[path] = 1
+        }
+        if (path != "" && words[i] ~ /^[0-9]+-[0-9]+s$/) {
+          samples[path]++
+          split(words[i], range, "-")
+          sub(/s$/, "", range[2])
+          if (range[1]+0 > range[2]+0 || range[2]+0 <= 0) exit 1
+          if (range[2]+0 > timings[path]) timings[path] = range[2]+0
+        }
+      }
+      for (path in timings) print path, timings[path], samples[path]
+    }
+  ' .github/workflows/skill-tests.yml 2>/dev/null
+}
+# The step a validation run names when it is slow or stalled: orch's
+# executor reads the newest such line from the run's log.
+step() { # NAME COMMAND [EXPECTED_SECS]
+  printf 'validate-step: name=%s command=%s%s\n' "$1" "$2" "${3:+ expected-secs=$3}"
+}
+# A measured tools suite's expected time, with the selection's 25% margin.
+suite_expected_secs() { # PATH
+  [ -n "${suite_timing_lines+set}" ] || suite_timing_lines=$(suite_timings) || suite_timing_lines=""
+  LC_ALL=C awk -v path="$1" '$1 == path && $3 == 2 { printf "%d\n", int(($2 * 125 + 99) / 100) }' <<<"$suite_timing_lines"
+}
 say() { # KEY VALUE
   printf 'guard: %s=%s\n' "$1" "$2"
   finding_text "$1" "$2"
@@ -385,6 +428,8 @@ case "${1:-}" in
       '  suites, then reports selection=subset and scoped=true.' \
       '  Emits expected-secs=N only with measured coverage of every selected suite,' \
       '  including a selector-owned 25% margin, rounded up.' \
+      'Each lane and suite a run starts opens with validate-step: name=N command=C' \
+      '  [expected-secs=E], the step a validation run names when slow or stalled.' \
       '--released-packages BINARY [--part K/N] --range BASE: in each changed shell package' \
       '        calling kendex, run the suites a Linux CI leg gives a kendex' \
       '        (run-all.sh --checkout-kendex) with BINARY first on PATH, without scans or' \
@@ -1434,12 +1479,14 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   if ! cargo clippy --version >/dev/null 2>&1; then
     unrun missing-tool cargo-clippy
   elif [ "$rust_all" -eq 1 ]; then
+    step clippy "cargo clippy --workspace"
     # Default native targets retain production and build-script length checks;
     # all targets retain the workspace's other denials, including test helpers.
     cargo clippy --workspace --quiet -- -D clippy::too_many_lines || say clippy workspace
     cargo clippy --workspace --all-targets --quiet || say clippy workspace
   else
     for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
+      step clippy "cargo clippy --manifest-path $manifest"
       cargo clippy --manifest-path "$manifest" --quiet -- -D clippy::too_many_lines || say clippy "$manifest"
       cargo clippy --manifest-path "$manifest" --all-targets --quiet || say clippy "$manifest"
     done
@@ -1457,6 +1504,7 @@ fi
 if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
   while IFS= read -r manifest; do
     [ -n "$manifest" ] || continue
+    step cargo-test "cargo test --manifest-path $manifest"
     cargo test --manifest-path "$manifest" --quiet || say cargo-test "$manifest"
   done <<<"$runtime_tests"
 fi
@@ -2847,6 +2895,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       npm_args=(test)
       [ "${suite_scripts[suite_index]}" != test:ci ] || npm_args=(run test:ci)
       suite_runs[suite_index]=""
+      step "$d" "npm ${npm_args[*]}"
       suite_out=$(cd "$d" && npm "${npm_args[@]}" 2>&1) || pi_suite_failed "$d" "$suite_out"
       [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
       continue
@@ -2879,6 +2928,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     if [ -f "$d/tests/run-all.sh" ]; then
       # Family aliases can expand these filters; the runner publishes its selection.
       echo "=== $d/tests/run-all.sh" ${filters[@]+"${filters[@]}"}
+      step "$d/tests" "$d/tests/run-all.sh --local"
       active_runner=1
       RUN_ALL_PENDING_SUITES="$run"$'\n'"$suite_later" bash "$d/tests/run-all.sh" --local ${filters[@]+"${filters[@]}"} || say suite "$d/tests/run-all.sh"
       suite_runs[suite_index]=""
@@ -2900,6 +2950,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       suite_runs[suite_index]=$direct_later
       [ -f "$t" ] || continue
       echo "=== $t"
+      step "$t" "run-all.sh --local --suite $t" "$(suite_expected_secs "$t")"
       bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" </dev/null || say suite "$t"
     done
   done
@@ -2919,33 +2970,12 @@ fi
 # exists. These observations cover suite-file changes alone: a full run or
 # other changed inputs can also launch untimed compiler and UI work.
 selection_expected_secs() {
-  local estimate
+  local estimate timings
   [ "$MODE" = range ] && [ "$preview_unmeasured" -eq 0 ] && [ -n "$preview_suites" ] || return 0
+  timings=$(suite_timings) || return 0
   estimate=$(LC_ALL=C awk -v suites="$preview_suites" -v touched="$touched" '
-    /# the merge groups of runs 36522803055, 36523768409, 36525040329,/ {
-      starts++
-      reading = 1
-    }
-    reading && /# suite sums over those legs, Linux then macOS:/ { ends++; reading = 0 }
-    reading { sub(/^[[:space:]]*# */, ""); text = text " " $0 }
+    NF == 3 { timings[$1] = $2; samples[$1] = $3 }
     END {
-      if (starts != 1 || ends != 1) exit 1
-      gsub(/[,.]/, " ", text)
-      n = split(text, words, /[[:space:]]+/)
-      for (i = 1; i <= n; i++) {
-        if (words[i] ~ /^[[:alnum:]_-]+$/ && words[i+1] == "at") {
-          path = "tools/tests/" words[i] ".test.sh"
-          if (path in named) exit 1
-          named[path] = 1
-        }
-        if (path != "" && words[i] ~ /^[0-9]+-[0-9]+s$/) {
-          samples[path]++
-          split(words[i], range, "-")
-          sub(/s$/, "", range[2])
-          if (range[1]+0 > range[2]+0 || range[2]+0 <= 0) exit 1
-          if (range[2]+0 > timings[path]) timings[path] = range[2]+0
-        }
-      }
       count = split(suites, selected, "\n")
       for (i = 1; i <= count; i++) {
         if (selected[i] == "" || selected[i] in seen) continue
@@ -2962,7 +2992,7 @@ selection_expected_secs() {
       if (total <= 0) exit 1
       printf "%.0f\n", int((total * 125 + 99) / 100)
     }
-  ' .github/workflows/skill-tests.yml 2>/dev/null) || return 0
+  ' <<<"$timings") || return 0
   printf 'expected-secs=%s\n' "$estimate"
 }
 if [ "$selection_only" -eq 1 ]; then
@@ -3031,6 +3061,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ]; then
           if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
             unrun missing-target "$cross_target"
           else
+            step cross-check "cargo check --target $cross_target"
             cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
               say cross-check "$cross_target"
           fi
@@ -3038,6 +3069,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ]; then
       fi
     fi
     if lane_on cargo_lint; then
+      step cargo-doc "cargo doc --workspace"
       cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
     fi
   fi
@@ -3051,6 +3083,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ] && la
   # same death line for a compiler or build script it launched, under
   # "could not compile" instead of "test failed"; only the runner's is one.
   tests_log=$(mktemp)
+  step cargo-test "cargo test --workspace"
   if ! cargo test --workspace --quiet 2>&1 | tee "$tests_log"; then
     death=""
     if grep -q "^error: test failed" "$tests_log"; then
@@ -3077,6 +3110,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ] && la
   fi
 fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
+  step ui-check "npm run --prefix ui check:types check:lint test"
   npm run --prefix ui check:types || say ui-check check:types
   npm run --prefix ui check:lint || say ui-check check:lint
   if [ "$MODE" != default ]; then

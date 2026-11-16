@@ -69,7 +69,7 @@ mkdir -p "$RUN_DIR" "$TMP_ROOT/home"
 plant_run() { # WORKTREE -> the run directory
   local dir="$1/tmp/dev-validate-planted"
   mkdir -p "$dir"
-  printf 'worktree=%s\ntimeout-bin=timeout\nstart=1769600000\ntimeout-secs=3600\npoll-secs=30\ncap-secs=3640\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead=%040d\n' "$1" 0 >"$dir/start"
+  printf 'worktree=%s\nstart=1769600000\nquiet-secs=660\npoll-secs=30\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead=%040d\n' "$1" 0 >"$dir/start"
   printf 'runner=setsid\nline=runner=setsid reason=no-linger\n' >"$dir/runner"
   printf '%s' "$dir"
 }
@@ -121,7 +121,7 @@ codex_call() { # WORKTREE — an exec_command call in a rollout
 }
 claude_wait() { # RUN-DIR — the --wait call a hold names
   recorded claude ".agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir $1"
-  printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"state=running elapsed-secs=540 cap-secs=3660 run-dir=%s"}]}}\n' "$1"
+  printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"state=running elapsed-secs=540 run-dir=%s"}]}}\n' "$1"
 }
 claude_hold() { # RUN-DIR — a stop this hook held, its text naming the --wait call
   printf '{"type":"user","message":{"role":"user","content":"Stop hook feedback:\\n[bash .claude/hooks/dev-stop-check.sh]: dev-stop-check: running=%s\\nthe validation run you started is still going.\\n%s/.claude/skills/orch/scripts/orch-runtime validate entry --wait --run-dir %s\\nthen finish the round from the verdict it prints.\\n"},"isMeta":true}\n' "$1" "$TMP_ROOT" "$1"

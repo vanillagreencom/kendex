@@ -60,8 +60,6 @@ pub const DEV_VALIDATE_SELECTION_CMD_KEY: &str = "DEV_VALIDATE_SELECTION_CMD";
 /// The prefix the project's commands print each finding with; empty is
 /// none recorded, and such a run is never reuse evidence.
 pub const DEV_VALIDATE_FINDING_PREFIX_KEY: &str = "DEV_VALIDATE_FINDING_PREFIX";
-/// The bound on the command, seconds.
-pub const DEV_VALIDATE_TIMEOUT_SECS_KEY: &str = "DEV_VALIDATE_TIMEOUT_SECS";
 /// The memory cap on a validation run's whole process tree; unset is none.
 pub const VALIDATE_MEMORY_MAX_KEY: &str = "ORCH_VALIDATE_MEMORY_MAX";
 /// `pr`, the default, or `push-base`: direct delivery keeps every ci
@@ -284,7 +282,6 @@ const READ_KEYS: &[&str] = &[
     DEV_VALIDATE_SELECTION_CMD_KEY,
     "DEV_VALIDATE_TEXT_CMD",
     DEV_VALIDATE_FINDING_PREFIX_KEY,
-    DEV_VALIDATE_TIMEOUT_SECS_KEY,
     VALIDATE_MEMORY_MAX_KEY,
     DELIVERY_KEY,
     PR_ORDER_KEY,
@@ -479,11 +476,10 @@ pub struct ValidateSettings {
     /// `DEV_VALIDATE_TEXT_CMD` as written, an empty value kept: the docs
     /// mode, its one reader, judges it.
     pub text_cmd: Option<String>,
-    /// The finding prefix, the bound, the delivery and the memory cap as
-    /// written: the validation start judges each, so a value outside its
-    /// form refuses no verb that never reads it.
+    /// The finding prefix, the delivery and the memory cap as written: the
+    /// validation start judges each, so a value outside its form refuses no
+    /// verb that never reads it.
     pub finding_prefix: Option<String>,
-    pub timeout: Option<String>,
     pub delivery: Option<String>,
     pub memory_max: Option<String>,
     /// `ORCH_PR_ORDER` as written; the publication order judges it.
@@ -894,7 +890,6 @@ pub fn load(
         selection_cmd: command(DEV_VALIDATE_SELECTION_CMD_KEY),
         text_cmd: get("DEV_VALIDATE_TEXT_CMD").map(str::to_owned),
         finding_prefix: get(DEV_VALIDATE_FINDING_PREFIX_KEY).map(str::to_owned),
-        timeout: get(DEV_VALIDATE_TIMEOUT_SECS_KEY).map(str::to_owned),
         delivery: get(DELIVERY_KEY).map(str::to_owned),
         memory_max: get(VALIDATE_MEMORY_MAX_KEY).map(str::to_owned),
         pr_order: get(PR_ORDER_KEY).map(str::to_owned),

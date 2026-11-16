@@ -1,6 +1,7 @@
 //! Validation execution, stage completion and completion notices.
 
 use agent_runtime::record::Locking;
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -110,11 +111,18 @@ pub fn execute(
     let fail = |read, cause: String| Error::ValidateUnreadable { read, cause };
     let start = super::files::fields(&run_dir.join("start"))?;
     let field = |key: &str| start.get(key).map(String::as_str).unwrap_or("");
-    let timeout = field("timeout-secs")
+    let quiet = field("quiet-secs")
         .parse::<u64>()
         .ok()
         .filter(|n| *n > 0)
-        .ok_or_else(|| fail("timeout-secs", field("timeout-secs").to_owned()))?;
+        .ok_or_else(|| fail("quiet-secs", field("quiet-secs").to_owned()))?;
+    let expected = match field("expected-secs") {
+        "" => None,
+        secs => Some(
+            secs.parse::<u64>()
+                .map_err(|_| fail("expected-secs", secs.to_owned()))?,
+        ),
+    };
     let command =
         fs::read_to_string(run_dir.join("cmd")).map_err(|e| fail("cmd", e.to_string()))?;
     match fs::read_to_string(run_dir.join("exit")) {
@@ -129,7 +137,13 @@ pub fn execute(
         .open(run_dir.join("execution"))
         .map_err(|e| fail("execution-unanswered", e.to_string()))?;
     execution_mark(&mut claim, "not-started")?;
-    let mut log = fs::File::create(run_dir.join("log")).map_err(|e| fail("log", e.to_string()))?;
+    // Every writer appends, so the executor's own warning lands after the
+    // command's output instead of over it.
+    let mut log = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(run_dir.join("log"))
+        .map_err(|e| fail("log", e.to_string()))?;
     let runner = super::files::fields(&run_dir.join("runner"))?;
     let line = runner
         .get("line")
@@ -147,7 +161,6 @@ pub fn execute(
             .ok_or("cgroup-unread")
             .and_then(Cap::of)
     });
-    let began = clock.now();
     let started = clock
         .wall()
         .duration_since(UNIX_EPOCH)
@@ -230,26 +243,38 @@ pub fn execute(
             return Err(fail("command-identity", cause.to_owned()));
         }
     }
-    let deadline = began + Duration::from_secs(timeout);
+    let run = Step {
+        name: "run".to_owned(),
+        command: command.split_whitespace().collect::<Vec<_>>().join(" "),
+        expected: None,
+        started: clock.now(),
+        warned: false,
+    };
+    let mut progress = Progress::open(run_dir, pid, Duration::from_secs(quiet), run, expected)?;
     // Keep the owned leader unreaped until its group is empty. Its kernel
     // number cannot be reused while cleanup reads the group's members.
-    let bounded = loop {
+    let stalled = loop {
         match agent_runtime::process::identity(pid) {
-            agent_runtime::reading::Reading::Gone => break false,
-            agent_runtime::reading::Reading::Live(_) if clock.now() >= deadline => break true,
-            agent_runtime::reading::Reading::Live(_) => clock.sleep(Duration::from_millis(100)),
+            agent_runtime::reading::Reading::Gone => break None,
+            agent_runtime::reading::Reading::Live(_) => {
+                progress.observe(clock)?;
+                if let Some(stalled) = progress.stalled(clock.now())? {
+                    break Some(stalled);
+                }
+                clock.sleep(Duration::from_millis(100));
+            }
             agent_runtime::reading::Reading::Unreadable { cause } => {
                 return Err(fail("command-status", cause.to_owned()));
             }
         }
     };
-    if !bounded {
+    if stalled.is_none() {
         atomic(run_dir, "own-exit", "")?;
     }
-    // The verdict is written before the command's group is ended: a teardown
+    // The verdict is written before the command's tree is ended: a teardown
     // the executor cannot confirm is its own error, and never takes back the
     // verdict the command already gave.
-    let status = if bounded {
+    let status = if stalled.is_some() {
         124
     } else {
         let status = group.reap_leader()?;
@@ -276,34 +301,369 @@ pub fn execute(
     atomic(
         run_dir,
         "exit",
-        &sentinel(status, &ended_at, bounded, memory.as_ref()),
+        &sentinel(status, &ended_at, stalled.as_ref(), memory.as_ref()),
     )?;
+    if stalled.is_some() {
+        stop_tree(pid)?;
+    }
     group.end()
+}
+
+/// Stop every process at or below the stalled command's leader, a member
+/// that left the leader's group included.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command owner ends every identity of the stalled tree it spawned"
+)]
+fn stop_tree(leader: u32) -> Result<()> {
+    use agent_runtime::process;
+    let members = process::tree(leader).map_err(|e| Error::ValidateUnreadable {
+        read: "command-tree",
+        cause: e.cause.to_owned(),
+    })?;
+    let identities: Vec<_> = members.into_iter().map(|member| member.id).collect();
+    match process::stop_identities(&identities, Duration::from_secs(KILL_GRACE))? {
+        process::Stop::AlreadyGone | process::Stop::Stopped { .. } => Ok(()),
+        other => Err(Error::ValidateUnreadable {
+            read: "command-tree-unconfirmed",
+            cause: format!("{other:?}"),
+        }),
+    }
 }
 
 /// The run's sentinel line: its exit and end, then what the memory cap
 /// says where the launcher set one, then the verdict's own suffix. A kill
 /// at the cap is the run's cause and replaces that suffix, since it decides
-/// the verdict (`ops::validate::sentinel_outcome`).
-fn sentinel(status: i32, ended_at: &str, bounded: bool, memory: Option<&MemoryEnd>) -> String {
-    let suffix = match memory {
-        Some(MemoryEnd::Killed { limit, peak }) => {
+/// the verdict (`ops::validate::sentinel_outcome`). A stall's last line is
+/// the line's last field, since it is the log's text.
+fn sentinel(
+    status: i32,
+    ended_at: &str,
+    stalled: Option<&Stalled>,
+    memory: Option<&MemoryEnd>,
+) -> String {
+    let suffix = match (memory, stalled) {
+        (Some(MemoryEnd::Killed { limit, peak }), _) => {
             let peak = peak.map_or_else(|| "unread".to_owned(), |peak| peak.to_string());
             format!(" cause=memory-cap limit={limit} peak={peak}")
         }
-        Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None if bounded => {
-            " verdict=no-verdict".to_owned()
-        }
-        Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None if status == 3 => {
+        (Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None, Some(stalled)) => format!(
+            " cause=stalled quiet-secs={} step={} last-line={}",
+            stalled.quiet_secs, stalled.step, stalled.last_line
+        ),
+        (Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None, None) if status == 3 => {
             " verdict=no-verdict cause=host".to_owned()
         }
-        Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None => String::new(),
+        (Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None, None) => String::new(),
     };
     let word = match memory {
         Some(MemoryEnd::Unstated(word)) => format!(" {word}"),
         Some(MemoryEnd::Within | MemoryEnd::Killed { .. }) | None => String::new(),
     };
     format!("guard-exit={status} at={ended_at}{word}{suffix}\n")
+}
+
+/// How often the executor reads whether its command still works.
+const PROGRESS_READ: Duration = Duration::from_secs(1);
+/// The least time between two lines of the run's `progress` record.
+const PROGRESS_LINE: Duration = Duration::from_secs(10);
+/// The rise of the command tree's CPU time that counts as work: a command
+/// blocked on a read or a lock accrues none, a spinning one a second a second.
+const CPU_WORK_MS: u64 = 1000;
+
+/// The executor's reading of whether its command still works: the run's log
+/// grew, a process identity the last reading did not hold appeared at or
+/// below the command's leader, or the tree's CPU time rose by
+/// [`CPU_WORK_MS`]. Each line of the `progress` record says how long the
+/// command has shown none of the three; a person and a wait read it, and only
+/// the executor judges it: a command quiet for the start's `quiet-secs` has
+/// stalled. A reading that cannot see the tree restarts the count, since a
+/// silent log alone is no sign of a stall: a compile prints nothing.
+struct Progress {
+    record: fs::File,
+    log: PathBuf,
+    leader: u32,
+    quiet: Duration,
+    log_bytes: u64,
+    members: HashSet<(u32, String)>,
+    /// The CPU time a rise is counted from: the reading at the last rise,
+    /// lowered to any smaller reading, since a member that exits unreaped or
+    /// leaves the tree takes its time out of the sum.
+    cpu_from: Option<u64>,
+    worked: Instant,
+    next_read: Instant,
+    next_line: Instant,
+    steps: Steps,
+}
+
+impl Progress {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the executor creates its run's progress record once, beside the claim it holds"
+    )]
+    fn open(
+        run_dir: &Path,
+        leader: u32,
+        quiet: Duration,
+        run: Step,
+        run_expected: Option<u64>,
+    ) -> Result<Progress> {
+        let record = fs::OpenOptions::new()
+            .append(true)
+            .create_new(true)
+            .open(run_dir.join("progress"))
+            .map_err(|e| super::files::unreadable("progress", e))?;
+        let now = run.started;
+        Ok(Progress {
+            record,
+            log: run_dir.join("log"),
+            leader,
+            quiet,
+            log_bytes: 0,
+            members: HashSet::new(),
+            cpu_from: None,
+            worked: now,
+            next_read: now,
+            next_line: now,
+            steps: Steps {
+                warnings: run_dir.join("warning"),
+                read_to: 0,
+                run_started: now,
+                run_expected,
+                run_warned: false,
+                current: run,
+            },
+        })
+    }
+
+    /// Read the command once its next reading is due, and append a line
+    /// once its next line is. A tree that cannot be read shows no work and
+    /// its line names the cause.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the executor's poll reads its injected clock and stamps the line it appends"
+    )]
+    fn observe(&mut self, clock: &dyn agent_runtime::clock::Clock) -> Result<()> {
+        use std::io::Write;
+        let now = clock.now();
+        if now < self.next_read {
+            return Ok(());
+        }
+        self.next_read = now + PROGRESS_READ;
+        let log_bytes = fs::metadata(&self.log)
+            .map_err(|e| super::files::unreadable("log", e))?
+            .len();
+        let mut worked = log_bytes > self.log_bytes;
+        if worked {
+            self.steps.read(&self.log, now)?;
+        }
+        // The executor's own warnings in the log are no work of the command.
+        self.log_bytes = log_bytes + self.steps.warn(&self.log, now)?;
+        let tree = match agent_runtime::process::tree(self.leader) {
+            Ok(members) => {
+                let cpu: u64 = members.iter().map(|m| m.cpu_ms).sum();
+                let ids: HashSet<(u32, String)> = members
+                    .into_iter()
+                    .map(|m| (m.id.pid, m.id.start))
+                    .collect();
+                worked |= !ids.is_subset(&self.members);
+                let line = format!("procs={} cpu-ms={cpu}", ids.len());
+                self.members = ids;
+                let from = self.cpu_from.map_or(cpu, |from| from.min(cpu));
+                if cpu >= from.saturating_add(CPU_WORK_MS) {
+                    worked = true;
+                    self.cpu_from = Some(cpu);
+                } else {
+                    self.cpu_from = Some(from);
+                }
+                line
+            }
+            Err(unread) => {
+                worked = true;
+                format!("tree=unread cause={}", unread.cause)
+            }
+        };
+        if worked {
+            self.worked = now;
+        }
+        if now < self.next_line {
+            return Ok(());
+        }
+        self.next_line = now + PROGRESS_LINE;
+        let at = agent_runtime::clock::iso_utc(
+            clock
+                .wall()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        writeln!(
+            self.record,
+            "at={at} quiet-for={} log-bytes={log_bytes} {tree}",
+            now.duration_since(self.worked).as_secs()
+        )
+        .map_err(|e| super::files::unreadable("progress", e))
+    }
+
+    /// The stall, once the command has shown no work for its quiet time:
+    /// the step and the last line the log names.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the quiet time is measured on the executor's injected clock"
+    )]
+    fn stalled(&self, now: Instant) -> Result<Option<Stalled>> {
+        if now.duration_since(self.worked) < self.quiet {
+            return Ok(None);
+        }
+        let log = fs::read(&self.log).map_err(|e| super::files::unreadable("log", e))?;
+        let log = String::from_utf8_lossy(&log);
+        let last_line = log
+            .lines()
+            .filter(|line| !line.starts_with(WARNING))
+            .filter_map(|line| line.rsplit('\r').map(str::trim).find(|s| !s.is_empty()))
+            .next_back()
+            .unwrap_or("")
+            .to_owned();
+        Ok(Some(Stalled {
+            quiet_secs: self.quiet.as_secs(),
+            step: self.steps.current.name.clone(),
+            last_line,
+        }))
+    }
+}
+
+/// A command the executor ended for showing no work for its quiet time.
+struct Stalled {
+    quiet_secs: u64,
+    step: String,
+    last_line: String,
+}
+
+/// The line a run's command may print to name the step it starts, its
+/// command and the time it is expected to take.
+const STEP: &str = "validate-step: ";
+/// The line the executor writes for a step or a run past its expected time.
+const WARNING: &str = "validate-warning: ";
+
+/// A step of a run: the newest `validate-step:` line its command printed, or
+/// the run itself before any.
+struct Step {
+    name: String,
+    command: String,
+    expected: Option<u64>,
+    started: Instant,
+    warned: bool,
+}
+
+impl Step {
+    /// The step a `validate-step: name=N command=C [expected-secs=E]` line
+    /// starts at `now`; none for a line of another form.
+    fn of(line: &str, now: Instant) -> Option<Step> {
+        let rest = line.strip_prefix(STEP)?.strip_prefix("name=")?;
+        let (name, rest) = rest.split_once(" command=")?;
+        if name.is_empty() || name.contains(char::is_whitespace) {
+            return None;
+        }
+        let (command, expected) = match rest.rsplit_once(" expected-secs=") {
+            Some((command, secs))
+                if !secs.is_empty() && secs.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                (command, secs.parse().ok())
+            }
+            Some(_) | None => (rest, None),
+        };
+        Some(Step {
+            name: name.to_owned(),
+            command: command.to_owned(),
+            expected,
+            started: now,
+            warned: false,
+        })
+    }
+}
+
+/// The step a run is in and the warnings it owes: once for a step past its
+/// own expected time, once for the run past the selector's, each into the
+/// log and the run directory's `warning` record. A warning ends nothing.
+struct Steps {
+    warnings: PathBuf,
+    /// The log offset the step lines are read from: the end of the last
+    /// whole line read.
+    read_to: u64,
+    current: Step,
+    run_started: Instant,
+    run_expected: Option<u64>,
+    run_warned: bool,
+}
+
+impl Steps {
+    /// Take the newest step line among the log's whole lines past the last
+    /// read.
+    fn read(&mut self, log: &Path, now: Instant) -> Result<()> {
+        use std::io::{Read, Seek, SeekFrom};
+        let unreadable = |e: std::io::Error| super::files::unreadable("log", e);
+        let mut file = fs::File::open(log).map_err(unreadable)?;
+        file.seek(SeekFrom::Start(self.read_to))
+            .map_err(unreadable)?;
+        let mut tail = Vec::new();
+        file.read_to_end(&mut tail).map_err(unreadable)?;
+        let Some(end) = tail.iter().rposition(|b| *b == b'\n') else {
+            return Ok(());
+        };
+        self.read_to += end as u64 + 1;
+        if let Some(step) = String::from_utf8_lossy(&tail[..end])
+            .lines()
+            .filter_map(|line| Step::of(line, now))
+            .next_back()
+        {
+            self.current = step;
+        }
+        Ok(())
+    }
+
+    /// Write each warning now owed; the bytes added to the log.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the executor's warnings are measured on its injected clock and appended to its run's own records"
+    )]
+    fn warn(&mut self, log: &Path, now: Instant) -> Result<u64> {
+        use std::io::Write;
+        let mut owed = Vec::new();
+        let step = &mut self.current;
+        if let Some(expected) = step.expected
+            && !step.warned
+            && now.duration_since(step.started).as_secs() > expected
+        {
+            step.warned = true;
+            owed.push((expected, now.duration_since(step.started).as_secs()));
+        }
+        if let Some(expected) = self.run_expected
+            && !self.run_warned
+            && now.duration_since(self.run_started).as_secs() > expected
+        {
+            self.run_warned = true;
+            owed.push((expected, now.duration_since(self.run_started).as_secs()));
+        }
+        let mut text = String::new();
+        for (expected, elapsed) in owed {
+            text.push_str(&format!(
+                "{WARNING}slow step={} command={} expected-secs={expected} elapsed-secs={elapsed}: the run goes on while it makes progress; no needed check is dropped to meet the expected time\n",
+                self.current.name, self.current.command
+            ));
+        }
+        if text.is_empty() {
+            return Ok(0);
+        }
+        for path in [log, self.warnings.as_path()] {
+            fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(path)
+                .and_then(|mut file| file.write_all(text.as_bytes()))
+                .map_err(|e| super::files::unreadable("warning", e))?;
+        }
+        Ok(text.len() as u64)
+    }
 }
 
 /// A cgroup v2 `memory.events` file's counts this run reads: the times the
@@ -1081,7 +1441,7 @@ mod tests {
         reason = "the row plants a cgroup's files and a run directory under its own temporary directories"
     )]
     fn a_kill_at_the_runs_own_memory_cap_fails_the_run_with_its_figures() {
-        // case | memory.max | events after | memory.peak | leader exit | bounded |
+        // case | memory.max | events after | memory.peak | leader exit | stalled |
         // the outcome | the cause the line ends with
         type Row<'a> = (
             &'a str,
@@ -1116,7 +1476,7 @@ mod tests {
                 killed,
             ),
             (
-                "killed at the bound",
+                "killed, then stalled",
                 "1073741824",
                 Some(events(3, 1)),
                 Some("1100000000"),
@@ -1156,13 +1516,13 @@ mod tests {
                 None,
             ),
             (
-                "no cap, bound",
+                "no cap, stalled",
                 "max",
                 Some(events(0, 0)),
                 None,
                 124,
                 true,
-                StageOutcome::NoVerdict,
+                StageOutcome::Fail,
                 None,
             ),
             (
@@ -1176,7 +1536,12 @@ mod tests {
                 None,
             ),
         ];
-        for (case, max, after, peak, status, bounded, outcome, cause) in rows {
+        let stall = Stalled {
+            quiet_secs: 660,
+            step: "run".to_owned(),
+            last_line: "cargo test: waiting on the build directory lock".to_owned(),
+        };
+        for (case, max, after, peak, status, stalled, outcome, cause) in rows {
             let dir = tempfile::tempdir().expect("tempdir");
             fs::write(dir.path().join("memory.max"), format!("{max}\n")).unwrap();
             fs::write(dir.path().join("memory.events"), events(0, 0)).unwrap();
@@ -1191,22 +1556,25 @@ mod tests {
             let line = sentinel(
                 status,
                 "2026-01-01T00:00:00Z",
-                bounded,
+                stalled.then_some(&stall),
                 Some(&MemoryEnd::of(&cap)),
             );
             let line = line.trim_end();
             assert_eq!(sentinel_outcome(line), Some(outcome), "{case}: {line}");
             assert_eq!(memory_cap_cause(line), cause, "{case}: {line}");
-            match (max, bounded) {
-                ("max", _) => assert!(
+            if max == "max" {
+                assert!(
                     line.contains(" memory-cap=unavailable cause=cgroup-uncapped"),
                     "{case}: {line}"
-                ),
-                (_, true) if cause.is_none() => {
-                    assert!(line.ends_with(" verdict=no-verdict"), "{case}: {line}")
-                }
-                _ => {}
+                );
             }
+            let cause = match (cause, stalled) {
+                (Some(cause), _) => Some(cause),
+                (None, true) => Some(
+                    "cause=stalled step=run last-line=cargo test: waiting on the build directory lock",
+                ),
+                (None, false) => None,
+            };
             if case == "counts gone after" {
                 assert!(line.contains(" memory-cap=unread"), "{case}: {line}");
             }
@@ -1217,7 +1585,7 @@ mod tests {
             fs::write(run.path().join("exit"), format!("{line}\n")).unwrap();
             fs::write(
                 run.path().join("start"),
-                "start=0\ncap-secs=1\npoll-secs=1\nvalidate-mode=full\n",
+                "start=0\npoll-secs=1\nvalidate-mode=full\n",
             )
             .unwrap();
             let notice = end_notice("x", &run_dir, outcome).text;
@@ -1233,7 +1601,7 @@ mod tests {
                         text.contains(&format!("{mark}{cause} run-dir=")),
                         "{case} {reader}: {text}"
                     ),
-                    None => assert!(!text.contains("memory-cap"), "{case} {reader}: {text}"),
+                    None => assert!(!text.contains(" cause="), "{case} {reader}: {text}"),
                 }
             }
         }

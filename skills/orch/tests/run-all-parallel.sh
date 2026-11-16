@@ -230,7 +230,7 @@ while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
       mutate_file "$B/run-all.sh" 'if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]]; then' \
         'if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]] || true; then'
     fi
-    run_battery "$B" 3 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+    run_battery "$B" 3 RUN_ALL_SUITE_SECS=900 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
       RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
       GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
     warnings="$(awk -v s="suite=$name" '/^::warning::run-all-budget / {for (i=1; i<=NF; i++) if ($i==s) n++} END {print n+0}' <<<"$OUT")"
@@ -662,7 +662,8 @@ edit_of() { # NAME
   case "$1" in
     suite-from-run) EDIT=('SLOT_DUE[k]=$((SECONDS + SUITE_SECS))' 'SLOT_DUE[k]=$((started + SUITE_SECS))') ;;
     deadline-from-suite) EDIT=('SLOT_DUE[k]=$DEADLINE' 'SLOT_DUE[k]=$((SECONDS + DEADLINE - started))' "$GATE" '{ :; }') ;;
-    deadline-always) EDIT=('if [ -n "$DEADLINE" ] && [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; then' 'if [ -n "$DEADLINE" ]; then') ;;
+    deadline-always) EDIT=('if [ -n "$DEADLINE" ] && { [ -z "${SLOT_DUE[k]}" ] || [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; }; then' 'if [ -n "$DEADLINE" ]; then') ;;
+    local-default) EDIT=('SUITE_SECS="${RUN_ALL_SUITE_SECS:-}"' 'SUITE_SECS="${RUN_ALL_SUITE_SECS:-1}"') ;;
     later-wins) EDIT=('[ "$DEADLINE" -le "${SLOT_DUE[k]}" ]' '[ "$DEADLINE" -ge "${SLOT_DUE[k]}" ]') ;;
     stop-skipped) EDIT=('      stop_overdue "$k"' '      :') ;;
     gate-removed) EDIT=("$GATE" '{ :; }') ;;
@@ -693,6 +694,7 @@ edit_of() { # NAME
 BOUND_ROWS='the suite bound counts from the suite own start, so a suite that starts late keeps its whole bound|suite-clock|RUN_ALL_SUITE_SECS=15|rc=0 red= stops= child=never-started mark=|suite-from-run|rc=1 red=c3 stops=c3:suite-timeout:seconds=15:none child=never-started mark=
 the deadline counts from the run start, so a suite that starts late gets only the time left|suite-clock|RUN_ALL_DEADLINE_EPOCH=+15|rc=1 red=c3 stops=c3:run-deadline:started=yes:none child=never-started mark=|deadline-from-suite|rc=0 red= stops= child=never-started mark=
 a suite still running at the deadline is stopped|suite-clock|RUN_ALL_DEADLINE_EPOCH=+15|rc=1 red=c3 stops=c3:run-deadline:started=yes:none child=never-started mark=|stop-skipped|rc=0 red= stops= child=never-started mark=
+with neither bound set, as on a local run, no suite is stopped|clock||rc=0 red= stops= child=never-started mark=|local-default|rc=1 red=c1 c2 c3 stops=c1:suite-timeout:seconds=1:none c2:suite-timeout:seconds=1:none c3:suite-timeout:seconds=1:none child=never-started mark=
 a suite still running at its bound is stopped|clock|RUN_ALL_SUITE_SECS=1|rc=1 red=c1 c2 c3 stops=c1:suite-timeout:seconds=1:none c2:suite-timeout:seconds=1:none c3:suite-timeout:seconds=1:none child=never-started mark=|stop-skipped|rc=0 red= stops= child=never-started mark=
 with both bounds set and the suite bound the earlier, the suite bound stops the suite|trapped|RUN_ALL_SUITE_SECS=2 RUN_ALL_DEADLINE_EPOCH=+5|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=|deadline-always|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=
 with both bounds set and the deadline the earlier, the deadline stops the suite|trapped|RUN_ALL_SUITE_SECS=6 RUN_ALL_DEADLINE_EPOCH=+3|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=|later-wins|rc=1 red=trapped stops=trapped:suite-timeout:seconds=6:ok-before-hang child=never-started mark=
@@ -829,13 +831,13 @@ done
 
 printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$B/slow.sh"
 mutate_file "$B/run-all.sh" 'report "$base" "$status" "$((SECONDS - SLOT_START[k]))"' 'report "$base" "$status" 721'
-run_battery "$B" 1 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+run_battery "$B" 1 RUN_ALL_SUITE_SECS=900 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
   RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
   GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
 assert_eq "rc=$RC $(awk '/^::warning::run-all-budget / { for (i=1; i<=NF; i++) if ($i ~ /^suite=/) print $i }' <<<"$OUT" | sort | tr '\n' ' ')" \
   'rc=0 suite=slow ' 'green battery warns only for its completed suite'
 mutate_file "$B/run-all.sh" 'budget_warning "$1" "$3" "$SUITE_SECS"' ': "$1" "$3" "$SUITE_SECS"'
-run_battery "$B" 1 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+run_battery "$B" 1 RUN_ALL_SUITE_SECS=900 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
   RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)"
 CONTROL_RC=0
 ( assert_eq "$(awk '/^::warning::run-all-budget .*suite=slow / { n++ } END { print n+0 }' <<<"$OUT")" 1 'runner annotation oracle'; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?

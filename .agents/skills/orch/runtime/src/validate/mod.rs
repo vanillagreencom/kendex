@@ -15,9 +15,7 @@ use agent_runtime::host::{self, Place};
 use serde::Serialize;
 
 use crate::error::{Error, Result};
-use crate::ops::validate::{
-    RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
-};
+use crate::ops::validate::{RecordEnd, RecordLaunch, RecordStart, Validate, Validated};
 use crate::ops::{self, Report, Request};
 use crate::settings::Settings;
 use crate::state::{
@@ -29,10 +27,14 @@ use agent_runtime::journal::Env;
 
 /// The poll interval a start records when the caller names none.
 pub const POLL_DEFAULT: u64 = 30;
-/// The seconds between the bound's SIGTERM and its SIGKILL, the job
-/// launcher's grace, which the cap carries so the sentinel lands inside a
-/// wait.
+/// The seconds between a stop's SIGTERM and its SIGKILL, the job
+/// launcher's grace.
 pub const KILL_GRACE: u64 = 10;
+/// How long a run may show no work before its executor ends it as stalled:
+/// ten times the longest quiet stretch measured over this repository's own
+/// full and range validation, in whole minutes. A working run is never
+/// ended, whatever its length.
+pub const QUIET_SECS: u64 = 660;
 /// How long a git read, a classifier read or a sibling script may take.
 const READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the selector's preview may take.
@@ -77,9 +79,7 @@ pub struct StartReply {
     pub run_dir: String,
     pub log: String,
     pub sentinel: String,
-    pub timeout_secs: u64,
     pub poll_secs: u64,
-    pub cap_secs: u64,
     pub class: String,
     pub docs_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -634,10 +634,9 @@ fn preview_selection(
         .collect();
     Ok(Preview {
         selection: (selections.len() == 1).then(|| selections[0].to_owned()),
-        expected_secs: if estimates.len() == 1 && estimates[0].bytes().all(|b| b.is_ascii_digit()) {
-            estimates[0].parse().ok()
-        } else {
-            None
+        expected_secs: match estimates[..] {
+            [secs] if secs.bytes().all(|b| b.is_ascii_digit()) => secs.parse().ok(),
+            _ => None,
         },
     })
 }
@@ -985,24 +984,6 @@ struct Settled {
     log: String,
 }
 
-/// The bound when `DEV_VALIDATE_TIMEOUT_SECS` is unset.
-const TIMEOUT_DEFAULT_SECS: u64 = 3600;
-
-/// `DEV_VALIDATE_TIMEOUT_SECS` as a start reads it: every byte a digit and
-/// the value above zero, a leading zero admitted.
-fn timeout_secs(settings: &crate::settings::ValidateSettings) -> Result<u64> {
-    let Some(text) = &settings.timeout else {
-        return Ok(TIMEOUT_DEFAULT_SECS);
-    };
-    match text.parse::<u64>() {
-        Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
-        Ok(_) | Err(_) => Err(crate::Error::from(agent_runtime::settings::value_refusal(
-            crate::settings::DEV_VALIDATE_TIMEOUT_SECS_KEY,
-            text,
-        ))),
-    }
-}
-
 /// Resolve the request's mode from the declaration and the worktree,
 /// reading everything and recording nothing.
 fn settle(
@@ -1323,7 +1304,6 @@ fn resolve(
         preview,
         mut log,
     } = settle(settings, scratch, worktree, req)?;
-    let timeout_secs = timeout_secs(&settings.validate)?;
     let finding_prefix = settings.validate.finding_prefix.clone().unwrap_or_default();
     let head = git(
         worktree,
@@ -1333,39 +1313,14 @@ fn resolve(
     )?
     .map(|s| s.trim().to_owned())
     .unwrap_or_default();
-    // A start reuses the item's earlier run that answers it, a pass over
-    // this tree or a bounded run over no fewer paths; a ci start, a fresh
-    // run, a reproduction and a change left unclassified run anew.
+    // A start reuses the item's earlier pass over this tree; a ci start, a
+    // fresh run, a reproduction and a change left unclassified run anew.
     let mut reused = None;
     if mode != ValidateMode::Ci && !req.fresh && !req.reproduce && class.fallback.is_none() {
-        let want = Want {
-            cmd: cmd.clone(),
-            class: class.class.clone(),
-            docs_only: class.docs_only,
-            base: base_sha.clone(),
-            finding_prefix: finding_prefix.clone(),
-            tree: class.tree.clone(),
-            paths: class.paths.clone(),
-            timeout_secs,
-        };
         let declaration = crate::ops::proof::Declaration::of(&settings.validate);
-        reused = match crate::ops::validate::reuse(stages, &want, &declaration) {
-            Reuse::Pass { run_dir } => Some((Reused::PassRun { run_dir }, 0)),
-            Reuse::Bound { run_dir, exit } => Some((Reused::BoundRun { run_dir }, exit)),
-            Reuse::None => None,
-        };
+        reused = crate::ops::validate::reuse(stages, &class.tree, &base_sha, &declaration)
+            .map(|run_dir| Reused::PassRun { run_dir });
     }
-    if reused.is_none()
-        && (mode != ValidateMode::Ci || scoped)
-        && let Some(expected) = preview.expected_secs
-        && expected > timeout_secs
-    {
-        return Err(Error::OverBound {
-            expected,
-            bound: timeout_secs,
-        });
-    }
-    let cap_secs = timeout_secs + KILL_GRACE + req.poll;
     let at = env.iso();
     let ran_nothing = match (&reused, mode, scoped) {
         (None, ValidateMode::Ci, false) => Some(RanNothing {
@@ -1375,13 +1330,7 @@ fn resolve(
             ),
             sentinel: format!("guard-exit=0 at={at}\n"),
         }),
-        (Some((Reused::BoundRun { run_dir }, exit)), _, _) => Some(RanNothing {
-            log: format!(
-                "runner=none bound-run={run_dir}: that run reached the {timeout_secs}s bound over every path this run reads\n"
-            ),
-            sentinel: format!("guard-exit={exit} at={at} verdict=no-verdict\n"),
-        }),
-        (Some((Reused::PassRun { run_dir }, _)), _, _) => {
+        (Some(Reused::PassRun { run_dir }), _, _) => {
             let last = fs::read_to_string(Path::new(run_dir).join("log"))
                 .ok()
                 .and_then(|log| files::selection_line(&log).map(str::to_owned));
@@ -1433,14 +1382,13 @@ fn resolve(
         scoped,
         selection,
         finding_prefix,
-        timeout_secs,
         poll_secs: req.poll,
-        cap_secs,
+        expected_secs: preview.expected_secs,
         class_base: (!class_base.is_empty()).then_some(class_base),
         ci_fallback: ci_fallback.filter(|_| mode != ValidateMode::Ci),
         ci_event: (mode == ValidateMode::Ci).then_some(ci_event),
         class_fallback: class.fallback.clone(),
-        reused: reused.map(|(r, _)| r),
+        reused,
     };
     Ok(Resolved {
         proof,
@@ -1452,6 +1400,15 @@ fn resolve(
 
 // --- The run directory ------------------------------------------------------------
 
+/// Why this host's process tree cannot be read, where it cannot: the
+/// executor then sees no stall, and the run is ended only by its stop and
+/// the round's close.
+fn quiet_clock_unavailable() -> Option<&'static str> {
+    agent_runtime::process::tree(std::process::id())
+        .err()
+        .map(|unread| unread.cause)
+}
+
 /// The run's `start` record, line for line in the form the executor reads.
 fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
     let mut text = String::new();
@@ -1460,11 +1417,15 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
         text.push('\n');
     };
     line(format!("worktree={}", worktree.display()));
-    line("timeout-bin=timeout".to_owned());
     line(format!("start={start}"));
-    line(format!("timeout-secs={}", proof.timeout_secs));
     line(format!("poll-secs={}", proof.poll_secs));
-    line(format!("cap-secs={}", proof.cap_secs));
+    line(format!("quiet-secs={QUIET_SECS}"));
+    if let Some(secs) = proof.expected_secs {
+        line(format!("expected-secs={secs}"));
+    }
+    if let Some(cause) = quiet_clock_unavailable() {
+        line(format!("quiet-clock=unavailable cause={cause}"));
+    }
     line(format!("class={}", proof.class));
     line(format!("docs-only={}", proof.docs_only));
     line(format!("validate-mode={}", proof.mode.word()));
@@ -1484,10 +1445,8 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
     if let Some(event) = &proof.ci_event {
         line(format!("ci-event={event}"));
     }
-    match &proof.reused {
-        Some(Reused::BoundRun { run_dir }) => line(format!("bound-run={run_dir}")),
-        Some(Reused::PassRun { run_dir }) => line(format!("pass-run={run_dir}")),
-        None => {}
+    if let Some(Reused::PassRun { run_dir }) = &proof.reused {
+        line(format!("pass-run={run_dir}"));
     }
     // A prefix holding a newline begins no log line: the record names none,
     // so the run is never reuse evidence.
@@ -1597,11 +1556,16 @@ fn started_line(run_dir: &Path, proof: &Proof) -> String {
         .as_ref()
         .map(|c| format!(" ci-fallback={c}"))
         .unwrap_or_default();
+    let quiet_clock = quiet_clock_unavailable()
+        .map(|cause| format!(" quiet-clock=unavailable cause={cause}"))
+        .unwrap_or_default();
+    let expected = proof
+        .expected_secs
+        .map(|secs| format!("expected-secs={secs} "))
+        .unwrap_or_default();
     format!(
-        "state=started run-dir={rd} log={rd}/log sentinel={rd}/exit timeout-secs={} poll-secs={} cap-secs={} class={} docs-only={}{class_fallback}{ci_fallback}",
-        proof.timeout_secs,
+        "state=started run-dir={rd} log={rd}/log sentinel={rd}/exit {expected}quiet-secs={QUIET_SECS}{quiet_clock} poll-secs={} class={} docs-only={}{class_fallback}{ci_fallback}",
         proof.poll_secs,
-        proof.cap_secs,
         proof.class,
         proof.docs_only,
         rd = run_dir.display(),
@@ -1853,10 +1817,7 @@ pub fn start(
                     &run_dir_path,
                     &item,
                     &round,
-                    agent_runtime::effects::job::Bounds {
-                        runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
-                        memory,
-                    },
+                    agent_runtime::effects::job::Bounds { memory },
                 ),
             },
         };
@@ -1925,9 +1886,7 @@ pub fn start(
             run_id,
             log: format!("{run_dir}/log"),
             sentinel: format!("{run_dir}/exit"),
-            timeout_secs: proof.timeout_secs,
             poll_secs: proof.poll_secs,
-            cap_secs: proof.cap_secs,
             class: proof.class.clone(),
             docs_only: proof.docs_only,
             class_fallback: proof.class_fallback.clone(),

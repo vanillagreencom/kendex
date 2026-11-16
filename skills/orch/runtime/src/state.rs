@@ -416,9 +416,11 @@ pub struct Proof {
     /// or the command's own `validate:` line reports it.
     pub selection: String,
     pub finding_prefix: String,
-    pub timeout_secs: u64,
     pub poll_secs: u64,
-    pub cap_secs: u64,
+    /// The selector's estimate of the run's time, which a warning compares
+    /// with and which ends nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_secs: Option<u64>,
     /// The class base a range or scoped run read its class from; absent
     /// for the whole branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,18 +435,17 @@ pub struct Proof {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class_fallback: Option<String>,
     /// An earlier row answered this run and it ran nothing: the run
-    /// directory of the pass it carries, or of the bound-ended run.
+    /// directory of the pass it carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reused: Option<Reused>,
 }
 
 /// The earlier run a start reused in place of running its command
-/// (the run log's `pass-run=` and `bound-run=` lines).
+/// (the run log's `pass-run=` line).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Reused {
     PassRun { run_dir: String },
-    BoundRun { run_dir: String },
 }
 
 /// The detached job a validation run runs in, as job-unit records it:

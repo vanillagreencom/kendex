@@ -830,7 +830,7 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
                 let row = json!({"kind":"validate", "start":run.start, "end":run.start,
                     "outcome": if run.verdict == "pass" { "pass" } else if run.verdict == "no-verdict" { "no-verdict" } else { "fail" },
                     "run_dir":r.validate_record,
-                    "proof":{"tree":"","head":run.head,"base":base,"mode":run.mode,"caller":"dev","cmd":cmd,"class":"standard","docs_only":false,"paths_hash":"","scoped":false,"selection":run.selection,"finding_prefix":declared.finding_prefix,"timeout_secs":0,"poll_secs":1,"cap_secs":0}});
+                    "proof":{"tree":"","head":run.head,"base":base,"mode":run.mode,"caller":"dev","cmd":cmd,"class":"standard","docs_only":false,"paths_hash":"","scoped":false,"selection":run.selection,"finding_prefix":declared.finding_prefix,"poll_secs":1}});
                 serde_json::from_value::<Stage>(row)?
             }
         };

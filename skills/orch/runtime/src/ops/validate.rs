@@ -23,9 +23,7 @@ use serde_json::json;
 use super::item::{self, AcceptResult, Attempt, RecordValidationAdmission};
 use super::proof;
 use crate::error::{Error, Result};
-use crate::state::{
-    ItemState, Proof, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob, ValidateMode,
-};
+use crate::state::{ItemState, Proof, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob};
 use agent_runtime::effects::job::Launch;
 use agent_runtime::journal::Env;
 
@@ -134,14 +132,14 @@ pub struct NoticeText {
 /// replay after a lost mark lands once and reads `duplicate` = delivered) and
 /// a text naming the run and its outcome. Both the job's own close and the
 /// reconcile that closes a gone job's stage build it, so a replay from either
-/// is the same line. A failure the run's memory cap caused carries that
-/// cause from the run's sentinel. `run_id` is the run directory's basename
+/// is the same line. A failure the run's memory cap or a stall caused
+/// carries that cause from the run's sentinel. `run_id` is the run directory's basename
 /// without the `dev-validate-` prefix.
 pub fn end_notice(run_id: &str, run_dir: &str, outcome: StageOutcome) -> NoticeText {
     let cause = match outcome {
         StageOutcome::Fail => run_sentinel(run_dir)
             .as_deref()
-            .and_then(memory_cap_cause)
+            .and_then(failure_cause)
             .map(|cause| format!(" {cause}"))
             .unwrap_or_default(),
         StageOutcome::Pass
@@ -499,6 +497,21 @@ pub fn memory_cap_cause(line: &str) -> Option<&str> {
     line.find(" cause=memory-cap ").map(|at| &line[at + 1..])
 }
 
+/// The cause a failed run's wait and end notice state from its sentinel:
+/// the memory cap's, or, for a run its executor ended as stalled, the step
+/// and the log's last line, the last line last.
+pub fn failure_cause(line: &str) -> Option<String> {
+    if let Some(cause) = memory_cap_cause(line) {
+        return Some(cause.to_owned());
+    }
+    let tail = &line[line.find(" cause=stalled ")? + 1..];
+    let (head, last_line) = tail.split_once(" last-line=")?;
+    let step = head
+        .split(' ')
+        .find_map(|word| word.strip_prefix("step="))?;
+    Some(format!("cause=stalled step={step} last-line={last_line}"))
+}
+
 /// The word a sentinel line names: the memory cap's cause is a failure
 /// whatever the leader's exit, since the leader of a tree can exit 0 after
 /// the kill took one of its members; `verdict=no-verdict` is no verdict,
@@ -552,31 +565,6 @@ fn mark(path: &Path, doc: &mut Document, r: &MarkNotice) -> Result<Marked> {
 
 // --- The reuse judge over the stages ---------------------------------------------
 
-/// What a run about to start would run: the key [`reuse`] judges the item's
-/// earlier rows against.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Want {
-    pub cmd: String,
-    pub class: String,
-    pub docs_only: bool,
-    pub base: String,
-    pub finding_prefix: String,
-    pub tree: String,
-    /// The changed paths this run reads, one per entry.
-    pub paths: Vec<String>,
-    pub timeout_secs: u64,
-}
-
-/// An earlier row that answers the run: a pass over the same tree, or a
-/// run the bound ended over no fewer paths, with the exit its sentinel
-/// carried. The pass wins where both stand.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reuse {
-    Pass { run_dir: String },
-    Bound { run_dir: String, exit: u32 },
-    None,
-}
-
 /// A stable digest of the changed paths, one per line, in the order the
 /// reader wrote them: FNV-1a over the joined text, as hex. The key names
 /// the selection; the paths themselves stay in the run directory's `paths`
@@ -590,13 +578,6 @@ pub fn paths_hash(paths: &[String]) -> String {
     format!("{hash:016x}")
 }
 
-/// The lines of a run directory's `paths` file; `None` where it cannot be
-/// read, which is never coverage.
-fn run_paths(run_dir: &str) -> Option<Vec<String>> {
-    let text = fs::read_to_string(Path::new(run_dir).join("paths")).ok()?;
-    Some(text.lines().map(str::to_owned).collect())
-}
-
 /// The sentinel line of a run directory, `None` where it is absent or
 /// unreadable.
 fn run_sentinel(run_dir: &str) -> Option<String> {
@@ -607,104 +588,36 @@ fn run_sentinel(run_dir: &str) -> Option<String> {
     }
 }
 
-/// Whether the run's log holds a finding line, the rule `run_has_finding`
-/// holds: a line past the runner line starting with the prefix its proof
-/// records. A run recording no prefix, or whose log cannot be read, holds
-/// one.
-fn has_finding(run_dir: &str, prefix: &str) -> bool {
-    if prefix.is_empty() {
-        return true;
-    }
-    let Ok(log) = fs::read_to_string(Path::new(run_dir).join("log")) else {
-        return true;
-    };
-    log.lines().skip(1).any(|line| line.starts_with(prefix))
-}
-
-/// Every entry of `inner` is among `outer`.
-fn covered(inner: &[String], outer: &[String]) -> bool {
-    inner.iter().all(|p| outer.contains(p))
-}
-
-/// The rows that answer `want` among the item's stages. The pass is the
-/// proof reader's `round` need over `want.tree` and
-/// `want.base` under `declaration`: a row of an admitted mode running that
-/// mode's declared command, covering the tree whole or from the start's
-/// own base, not voided by a later or same-second row at that tree that
-/// did not pass; the start's own need chains through no other base. Else
-/// the newest run the bound ended with no finding over no fewer paths
-/// under no smaller bound, the rule `find_bound_run` holds: the same
-/// command text, class, docs verdict, base and finding prefix. A `ci` row
-/// is never evidence.
-pub fn reuse(stages: &[Stage], want: &Want, declaration: &proof::Declaration) -> Reuse {
+/// The pass that answers a run about to start over `tree` from `base`: the
+/// proof reader's `round` need under `declaration`, a row of an admitted
+/// mode running that mode's declared command, covering the tree whole or
+/// from the start's own base, not voided by a later or same-second row at
+/// that tree that did not pass; the start's own need chains through no
+/// other base. A `ci` row is never evidence.
+pub fn reuse(
+    stages: &[Stage],
+    tree: &str,
+    base: &str,
+    declaration: &proof::Declaration,
+) -> Option<String> {
     let read = proof::read(
         stages,
         &[],
         &proof::ReadProof {
             need: proof::Need::Round,
-            tree: want.tree.clone(),
+            tree: tree.to_owned(),
             head: None,
-            base: (!want.base.is_empty()).then(|| want.base.clone()),
+            base: (!base.is_empty()).then(|| base.to_owned()),
             round: None,
             exception: None,
         },
         declaration,
         &mut |_| None,
     );
-    if read.proof == proof::Verdict::Complete
-        && let Some(row) = read.rows.into_iter().next()
-    {
-        return Reuse::Pass {
-            run_dir: row.run_dir,
-        };
+    if read.proof != proof::Verdict::Complete {
+        return None;
     }
-    let mut bound: Option<(String, u32, u64)> = None;
-    for stage in stages {
-        let (Some(proof), Some(run_dir), Some(outcome)) =
-            (&stage.proof, &stage.run_dir, stage.outcome)
-        else {
-            continue;
-        };
-        if stage.kind != StageKind::Validate
-            || stage.end.is_none()
-            || proof.mode == ValidateMode::Ci
-            || proof.reused.is_some()
-            || proof.cmd != want.cmd
-            || proof.class != want.class
-            || proof.docs_only != want.docs_only
-            || proof.base != want.base
-            || proof.finding_prefix != want.finding_prefix
-        {
-            continue;
-        }
-        if outcome != StageOutcome::NoVerdict || proof.timeout_secs < want.timeout_secs {
-            continue;
-        }
-        // A host no-verdict (exit 3) is no bound: the sentinel's match
-        // admits `verdict=no-verdict` alone.
-        let Some(exit) = run_sentinel(run_dir).and_then(|line| {
-            let rest = line.strip_prefix("guard-exit=")?;
-            let (exit, tail) = rest.split_once(' ')?;
-            tail.ends_with(" verdict=no-verdict")
-                .then(|| exit.parse::<u32>().ok())
-                .flatten()
-        }) else {
-            continue;
-        };
-        let Some(earlier) = run_paths(run_dir).filter(|p| !p.is_empty()) else {
-            continue;
-        };
-        if !covered(&earlier, &want.paths) || has_finding(run_dir, &proof.finding_prefix) {
-            continue;
-        }
-        if bound.as_ref().is_none_or(|(_, _, s)| stage.start > *s) {
-            bound = Some((run_dir.clone(), exit, stage.start));
-        }
-    }
-    match bound {
-        Some((run_dir, exit, _)) => Reuse::Bound { run_dir, exit },
-        None => Reuse::None,
-    }
+    read.rows.into_iter().next().map(|row| row.run_dir)
 }
 
 #[cfg(test)]

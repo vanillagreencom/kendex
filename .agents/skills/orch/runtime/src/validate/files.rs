@@ -166,24 +166,15 @@ impl RunFile {
             scoped: self.get("scoped") == "true",
             selection: self.selection()?.1,
             finding_prefix: self.get("finding-prefix").into(),
-            timeout_secs: self.get("timeout-secs").parse().unwrap_or(0),
             poll_secs: self.get("poll-secs").parse().unwrap_or(30),
-            cap_secs: self.get("cap-secs").parse().unwrap_or(0),
+            expected_secs: self.get("expected-secs").parse().ok(),
             class_base: (!self.get("class-base").is_empty()).then(|| self.get("class-base").into()),
             ci_fallback: None,
             ci_event: None,
             class_fallback: None,
-            reused: if !self.get("pass-run").is_empty() {
-                Some(Reused::PassRun {
-                    run_dir: self.get("pass-run").into(),
-                })
-            } else if !self.get("bound-run").is_empty() {
-                Some(Reused::BoundRun {
-                    run_dir: self.get("bound-run").into(),
-                })
-            } else {
-                None
-            },
+            reused: (!self.get("pass-run").is_empty()).then(|| Reused::PassRun {
+                run_dir: self.get("pass-run").into(),
+            }),
         })
     }
     pub fn stage(&self) -> Result<Stage> {
@@ -233,7 +224,28 @@ impl RunFile {
         if self.get("ci-event") == "merge_group" {
             self.append(&mut line, "ci-event");
         }
+        let mut slow: Vec<String> = Vec::new();
+        for warning in self.warnings()?.lines() {
+            if let Some(step) = warning
+                .split(' ')
+                .find_map(|word| word.strip_prefix("step="))
+                .filter(|step| !slow.iter().any(|seen| seen == step))
+            {
+                slow.push(step.to_owned());
+            }
+        }
+        if !slow.is_empty() {
+            line.push_str(&format!(" slow-step={}", slow.join(",")));
+        }
         Ok(line)
+    }
+    /// The executor's warnings for a step or the run past its expected time.
+    pub fn warnings(&self) -> Result<String> {
+        match fs::read_to_string(self.dir.join("warning")) {
+            Ok(text) => Ok(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(unreadable("warning-unreadable", e)),
+        }
     }
     /// The ended run's timing record; a run with no sentinel has none yet.
     pub fn timing(&self) -> Result<Option<Timing>> {
@@ -470,22 +482,24 @@ pub fn live(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
     Ok(None)
 }
 
+/// Follow the run for `budget` seconds: its state line, under the warnings
+/// the executor has written for a slow step or run.
+pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i32)> {
+    let (line, exit) = wait_state(run_dir, budget, clock)?;
+    let warnings = RunFile::read(run_dir)?.warnings()?;
+    Ok((format!("{warnings}{line}"), exit))
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "validation waits read the injected clock and never start work"
 )]
-pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i32)> {
+fn wait_state(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i32)> {
     let first = RunFile::read(run_dir)?;
     let start = first
         .get("start")
         .parse::<u64>()
         .map_err(|e| unreadable("no-run", e))?;
-    let cap = first
-        .get("cap-secs")
-        .parse::<u64>()
-        .ok()
-        .filter(|n| *n > 0)
-        .ok_or_else(|| unreadable("no-run", "cap-secs"))?;
     let poll = first
         .get("poll-secs")
         .parse::<u64>()
@@ -507,7 +521,7 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
                 .split_whitespace()
                 .find(|s| s.starts_with("at="))
                 .unwrap_or("");
-            let cause = crate::ops::validate::memory_cap_cause(s)
+            let cause = crate::ops::validate::failure_cause(s)
                 .filter(|_| verdict == "FAILING")
                 .map(|cause| format!(" {cause}"))
                 .unwrap_or_default();
@@ -532,9 +546,7 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
             String::new()
         };
         let unstarted = unstarted(&run)?;
-        let state = if elapsed >= cap {
-            Some("timeout")
-        } else if unstarted && elapsed >= poll.max(10) {
+        let state = if unstarted && elapsed >= poll.max(10) {
             Some("lost")
         } else if unstarted {
             None
@@ -560,7 +572,7 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
             }
             return Ok((
                 format!(
-                    "state={state} elapsed-secs={elapsed} cap-secs={cap} validate=FAILING run-dir={}{log}",
+                    "state={state} elapsed-secs={elapsed} validate=FAILING run-dir={}{log}",
                     run_dir.display()
                 ),
                 1,
@@ -569,15 +581,12 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
         if clock.now() >= call {
             return Ok((
                 format!(
-                    "state=running elapsed-secs={elapsed} cap-secs={cap} run-dir={}",
+                    "state=running elapsed-secs={elapsed} run-dir={}",
                     run_dir.display()
                 ),
                 3,
             ));
         }
-        clock.sleep(
-            Duration::from_secs(poll.min(cap - elapsed))
-                .min(call.saturating_duration_since(clock.now())),
-        );
+        clock.sleep(Duration::from_secs(poll).min(call.saturating_duration_since(clock.now())));
     }
 }

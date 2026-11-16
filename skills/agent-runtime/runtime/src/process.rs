@@ -62,11 +62,17 @@ pub struct Row {
     pub name: String,
 }
 
+/// `USER_HZ`, 100 on every Linux architecture (`include/asm-generic/
+/// param.h`): the unit of the `ticks:` start the identity reader records and
+/// of the CPU times `/proc/<pid>/stat` reports.
+pub(crate) const USER_HZ: u64 = 100;
+
 /// The fields of one `/proc/<pid>/stat` line this crate reads: the command
 /// name inside the parentheses, then, counted after them, the state (field
 /// 3), the parent pid (4), the process group (5), the foreground process
-/// group of the controlling terminal (8, `-1` without one) and the start in
-/// clock ticks since boot (22).
+/// group of the controlling terminal (8, `-1` without one), the CPU times in
+/// clock ticks (14 to 17: user and system, then those of the children it
+/// reaped) and the start in clock ticks since boot (22).
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 struct Stat {
@@ -75,6 +81,9 @@ struct Stat {
     ppid: u32,
     pgrp: u32,
     tpgid: i64,
+    /// `None` where a CPU field is no whole number: only the tree reader
+    /// needs them, so a line it cannot sum still answers every other read.
+    cpu_ticks: Option<u64>,
     start: String,
 }
 
@@ -89,12 +98,17 @@ fn parse_stat(stat: &str) -> Option<Stat> {
     let pgrp = fields.get(2)?.parse().ok()?;
     let tpgid = fields.get(5)?.parse().ok()?;
     let start = fields.get(19)?;
+    let cpu_ticks = fields
+        .get(11..15)?
+        .iter()
+        .try_fold(0u64, |sum, field| sum.checked_add(field.parse().ok()?));
     Some(Stat {
         name,
         state,
         ppid,
         pgrp,
         tpgid,
+        cpu_ticks,
         start: format!("ticks:{start}"),
     })
 }
@@ -452,22 +466,7 @@ pub fn still_runs(id: &Identity) -> Reading<Identity> {
 pub fn table() -> std::result::Result<Vec<Row>, Unreadable> {
     #[cfg(target_os = "linux")]
     {
-        let unreadable = Unreadable {
-            cause: "proc-unreadable",
-        };
-        let mut readings = Vec::new();
-        for entry in fs::read_dir("/proc").map_err(|_| unreadable)? {
-            let entry = entry.map_err(|_| unreadable)?;
-            let Some(pid) = entry
-                .file_name()
-                .to_str()
-                .and_then(|n| n.parse::<u32>().ok())
-            else {
-                continue;
-            };
-            readings.push((pid, stat_of(pid)));
-        }
-        table_of(readings)
+        table_of(proc_readings()?)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -540,6 +539,101 @@ fn table_of(readings: Vec<(u32, Reading<Stat>)>) -> std::result::Result<Vec<Row>
         }
     }
     Ok(rows)
+}
+
+/// Every numbered `/proc` entry's stat reading, from one listing.
+#[cfg(target_os = "linux")]
+fn proc_readings() -> std::result::Result<Vec<(u32, Reading<Stat>)>, Unreadable> {
+    let unreadable = Unreadable {
+        cause: "proc-unreadable",
+    };
+    let mut readings = Vec::new();
+    for entry in fs::read_dir("/proc").map_err(|_| unreadable)? {
+        let entry = entry.map_err(|_| unreadable)?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        readings.push((pid, stat_of(pid)));
+    }
+    Ok(readings)
+}
+
+/// A live process at or below a root, with the CPU time it used, user and
+/// system, the children it has reaped included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub id: Identity,
+    pub cpu_ms: u64,
+}
+
+/// The live processes at or below `root` by their parent links, from one read
+/// of the table, `root` first; empty where `root` no longer runs. Read whole
+/// or not at all, as [`table`] is. A reaped child's CPU time is in its
+/// parent's, so the members' sum falls only where a member exits unreaped
+/// or leaves the tree. Linux only: elsewhere `tree-unread-here`.
+pub fn tree(root: u32) -> std::result::Result<Vec<Member>, Unreadable> {
+    #[cfg(target_os = "linux")]
+    {
+        tree_of(proc_readings()?, root)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        Err(Unreadable {
+            cause: "tree-unread-here",
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn tree_of(
+    readings: Vec<(u32, Reading<Stat>)>,
+    root: u32,
+) -> std::result::Result<Vec<Member>, Unreadable> {
+    let mut live = Vec::new();
+    for (pid, reading) in readings {
+        match reading {
+            Reading::Live(stat) => live.push((pid, stat)),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => return Err(Unreadable { cause }),
+        }
+    }
+    let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (index, (_, stat)) in live.iter().enumerate() {
+        children.entry(stat.ppid).or_default().push(index);
+    }
+    // The entries are read one by one, so a pid freed and reused during the
+    // listing can link two entries as each other's parent: each is visited
+    // once.
+    let mut visited = vec![false; live.len()];
+    let mut queue: Vec<usize> = live
+        .iter()
+        .position(|(pid, _)| *pid == root)
+        .into_iter()
+        .collect();
+    let mut members = Vec::new();
+    while let Some(index) = queue.pop() {
+        if std::mem::replace(&mut visited[index], true) {
+            continue;
+        }
+        let (pid, stat) = &live[index];
+        let ticks = stat.cpu_ticks.ok_or(Unreadable {
+            cause: "cpu-unparsed",
+        })?;
+        members.push(Member {
+            id: Identity {
+                pid: *pid,
+                start: stat.start.clone(),
+            },
+            cpu_ms: ticks.saturating_mul(1000) / USER_HZ,
+        });
+        queue.extend(children.get(pid).into_iter().flatten());
+    }
+    Ok(members)
 }
 
 /// Every live process's argument words, by pid, from one read: on Linux the
@@ -973,7 +1067,12 @@ mod tests {
         assert_eq!(stat.ppid, 41);
         assert_eq!(stat.pgrp, 42);
         assert_eq!(stat.tpgid, 4567);
+        assert_eq!(stat.cpu_ticks, Some(14 + 15 + 16 + 17));
         assert_eq!(stat.start, "ticks:9912345");
+        // A CPU field that is no whole number leaves the line's other reads.
+        let line = stat_line("x", "S").replace(" 16 ", " -1 ");
+        let stat = parse_stat(&line).expect("parsed");
+        assert_eq!((stat.ppid, stat.cpu_ticks), (41, None));
         // No controlling terminal: the kernel writes -1, read as no group.
         let line = stat_line("x", "S").replace(" 4567 ", " -1 ");
         assert_eq!(parse_stat(&line).unwrap().tpgid, -1);
@@ -1053,6 +1152,62 @@ mod tests {
             ]),
             Err(Unreadable {
                 cause: "stat-unreadable"
+            })
+        );
+    }
+
+    /// A tree holds the root and every process whose parent links reach it,
+    /// each with its CPU time in milliseconds, and nothing outside it; an
+    /// exited entry is left out, two entries a reused pid links as each
+    /// other's parent are read once each, and one unreadable entry or CPU
+    /// field anywhere fails the reading.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_tree_holds_the_roots_descendants_with_their_cpu_and_is_read_whole() {
+        let entry = |pid: u32, ppid: u32, cpu: &str| {
+            let line = stat_line("x", "S")
+                .replacen("42 (x)", &format!("{pid} (x)"), 1)
+                .replace(" 41 42 ", &format!(" {ppid} 42 "))
+                .replace(" 14 15 16 17 ", &format!(" {cpu} 0 0 0 "));
+            (pid, stat_reading(Ok(line)))
+        };
+        let readings = || {
+            vec![
+                entry(1, 0, "5"),
+                entry(10, 1, "250"),
+                entry(11, 10, "3"),
+                entry(12, 11, "0"),
+                entry(20, 1, "9"),
+                (13, Reading::Gone),
+            ]
+        };
+        let mut members = tree_of(readings(), 10).expect("readable");
+        members.sort_by_key(|m| m.id.pid);
+        let read: Vec<(u32, u64)> = members.iter().map(|m| (m.id.pid, m.cpu_ms)).collect();
+        assert_eq!(read, vec![(10, 2500), (11, 30), (12, 0)]);
+        assert_eq!(members[0].id.start, "ticks:9912345");
+        assert!(tree_of(readings(), 99).expect("readable").is_empty());
+        let looped = vec![entry(10, 11, "1"), entry(11, 10, "1")];
+        assert_eq!(tree_of(looped, 10).expect("readable").len(), 2);
+        let mut unread = readings();
+        unread.push((
+            30,
+            Reading::Unreadable {
+                cause: "stat-unreadable",
+            },
+        ));
+        assert_eq!(
+            tree_of(unread, 10),
+            Err(Unreadable {
+                cause: "stat-unreadable"
+            })
+        );
+        let mut uncounted = readings();
+        uncounted.push(entry(14, 12, "x"));
+        assert_eq!(
+            tree_of(uncounted, 10),
+            Err(Unreadable {
+                cause: "cpu-unparsed"
             })
         );
     }

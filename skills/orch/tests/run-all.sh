@@ -102,9 +102,11 @@
 # is optional and defaults to the selected battery. skill-tests.yml supplies
 # its review and margin inputs; this package sets no defaults for those inputs.
 #
-# Two bounds hold a suite. RUN_ALL_SUITE_SECS (default 900) counts from the
-# suite's own start. RUN_ALL_DEADLINE_EPOCH, where set, is the Unix time in
-# seconds by which the whole run ends, whatever time each suite started, and
+# Two bounds can hold a suite, each only where set; a local run sets neither
+# and stops no suite. RUN_ALL_SUITE_SECS counts from the suite's own start;
+# CI sets it from the job's ceiling (skill-tests.yml). RUN_ALL_DEADLINE_EPOCH
+# is the Unix time in seconds by which the whole run ends, whatever time each
+# suite started, and
 # no suite starts once it has passed; CI's orch steps get it from the job's
 # first step, which sets it inside the job's ceiling (skill-tests.yml). A
 # suite still running at the earlier of the two is stopped: TERM to it and
@@ -530,14 +532,16 @@ case "$JOBS" in
   '' | *[!0-9]* | 0) echo "run-all.sh: nproc printed '$JOBS', not a worker count" >&2; exit 1 ;;
 esac
 
-# A suite's own bound, above the slowest suite's run. It is the only bound
-# where no deadline is set, as on tools/guard's runs, and on a 30-minute
-# leg it stops a suite hung early in time for the ALONE suites, which wait for
-# every other suite to end, to run before the deadline.
-SUITE_SECS="${RUN_ALL_SUITE_SECS:-900}"
-case "$SUITE_SECS" in
-  '' | *[!0-9]* | 0*) echo "run-all.sh: RUN_ALL_SUITE_SECS is '$SUITE_SECS', not a positive whole number of seconds" >&2; exit 1 ;;
-esac
+# A suite's own bound, where set: on a CI leg it stops a suite hung early in
+# time for the ALONE suites, which wait for every other suite to end, to run
+# before the deadline. A local run has none: a working suite is never
+# stopped there, and a run that stops working is the caller's to end.
+SUITE_SECS="${RUN_ALL_SUITE_SECS:-}"
+if [ -n "${RUN_ALL_SUITE_SECS+set}" ]; then
+  case "$SUITE_SECS" in
+    '' | *[!0-9]* | 0*) echo "run-all.sh: RUN_ALL_SUITE_SECS is '$SUITE_SECS', not a positive whole number of seconds" >&2; exit 1 ;;
+  esac
+fi
 # The run's deadline on the SECONDS clock, or empty for none. It is fixed at
 # the run's start, so a suite that starts late gets only the time left.
 DEADLINE=""
@@ -616,7 +620,7 @@ report() { # BASE STATUS SECONDS [STOP LAST]
   TOTAL_FAIL=$((TOTAL_FAIL + fail))
   printf 'suite=%s seconds=%s pass=%s fail=%s\n' "$1" "$3" "$pass" "$fail"
   if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]]; then
-    budget_warning "$1" "$3" "$SUITE_SECS"
+    [ -z "$SUITE_SECS" ] || budget_warning "$1" "$3" "$SUITE_SECS"
   fi
 }
 
@@ -648,7 +652,7 @@ SLOT_STOP=()
 SLOT_LAST=()
 k=0
 while [ "$k" -lt "$JOBS" ]; do
-  SLOT[k]=""; SLOT_PID[k]=""; SLOT_START[k]=0; SLOT_DUE[k]=0; SLOT_BOUND[k]=""; SLOT_STOP[k]=""; SLOT_LAST[k]=""
+  SLOT[k]=""; SLOT_PID[k]=""; SLOT_START[k]=0; SLOT_DUE[k]=""; SLOT_BOUND[k]=""; SLOT_STOP[k]=""; SLOT_LAST[k]=""
   k=$((k + 1))
 done
 started=$SECONDS
@@ -673,7 +677,7 @@ while [ "$finished" -lt "$RUN" ]; do
   while [ "$k" -lt "$JOBS" ]; do
     base="${SLOT[k]}"
     if [ -n "$base" ] && [ -z "${SLOT_STOP[k]}" ] &&
-      [ "$SECONDS" -ge "${SLOT_DUE[k]}" ] && kill -0 "${SLOT_PID[k]}" 2>/dev/null; then
+      [ -n "${SLOT_DUE[k]}" ] && [ "$SECONDS" -ge "${SLOT_DUE[k]}" ] && kill -0 "${SLOT_PID[k]}" 2>/dev/null; then
       stop_overdue "$k"
     fi
     if [ -n "$base" ] && ! kill -0 "${SLOT_PID[k]}" 2>/dev/null; then
@@ -699,9 +703,13 @@ while [ "$finished" -lt "$RUN" ]; do
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS
-      SLOT_DUE[k]=$((SECONDS + SUITE_SECS))
-      SLOT_BOUND[k]=suite-timeout
-      if [ -n "$DEADLINE" ] && [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; then
+      SLOT_DUE[k]=""
+      SLOT_BOUND[k]=""
+      if [ -n "$SUITE_SECS" ]; then
+        SLOT_DUE[k]=$((SECONDS + SUITE_SECS))
+        SLOT_BOUND[k]=suite-timeout
+      fi
+      if [ -n "$DEADLINE" ] && { [ -z "${SLOT_DUE[k]}" ] || [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; }; then
         SLOT_DUE[k]=$DEADLINE
         SLOT_BOUND[k]=run-deadline
       fi

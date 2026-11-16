@@ -398,9 +398,6 @@ impl Launcher<'_> {
             "-p".to_owned(),
             "IgnoreSIGPIPE=no".to_owned(),
         ];
-        if let Some(cap) = bounds.runtime {
-            words.extend(["-p".to_owned(), format!("RuntimeMaxSec={}", cap.as_secs())]);
-        }
         // The memory cap holds the job's whole tree, swap included, since a
         // swapped page is memory the cap would not count; the manager's own
         // policy stops the unit at its first OOM kill and so ends the job
@@ -774,11 +771,10 @@ impl Launcher<'_> {
     }
 }
 
-/// What a launch bounds its job by: its lifetime, and the memory of its
-/// whole process tree in bytes.
+/// What a launch bounds its job by: the memory of its whole process tree in
+/// bytes.
 #[derive(Clone, Copy, Default)]
 pub struct Bounds {
-    pub runtime: Option<Duration>,
     pub memory: Option<u64>,
 }
 

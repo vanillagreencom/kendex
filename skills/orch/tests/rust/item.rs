@@ -287,7 +287,6 @@ mod dev_artifacts {
                     "DEV_VALIDATE_CMD",
                     "printf 'validate: lanes=unit selection=battery\\n'",
                 )
-                .env("DEV_VALIDATE_TIMEOUT_SECS", "20")
                 .env("ORCH_PR_ORDER", "review-first")
                 .env("WORKTREE_DEFAULT_BRANCH", "main")
                 .env(

@@ -299,10 +299,6 @@ pub fn wall_age(first_seen: u64, started: &Reading<u64>) -> WallAge {
     }
 }
 
-/// `USER_HZ`, 100 on every Linux architecture (`include/asm-generic/
-/// param.h`): the unit of the `ticks:` start the identity reader records.
-const USER_HZ: u64 = 100;
-
 /// The epoch second the identity's process started, confirmed live first:
 /// Linux's boot time (`/proc/stat` `btime`) plus the recorded start ticks.
 /// Both are truncated to the second, so the moment is never later than the
@@ -338,7 +334,7 @@ pub fn start_epoch(identity: &Identity) -> Reading<u64> {
             cause: "boot-time-unreadable",
         };
     };
-    Reading::Live(btime + ticks / USER_HZ)
+    Reading::Live(btime + ticks / process::USER_HZ)
 }
 
 /// The StopFailure error kinds that refuse every turn on the account until

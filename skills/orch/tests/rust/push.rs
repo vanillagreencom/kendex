@@ -943,7 +943,7 @@ mod push {
             .to_owned()
     }
 
-    const RANGE: &str = "DEV_VALIDATE_RANGE_CMD = \"true\"\nDEV_VALIDATE_CMD = \"true\"\nDEV_VALIDATE_TIMEOUT_SECS = \"30\"\n";
+    const RANGE: &str = "DEV_VALIDATE_RANGE_CMD = \"true\"\nDEV_VALIDATE_CMD = \"true\"\n";
 
     #[test]
     fn the_restack_stage_records_the_newest_finished_run_for_its_head_once() {
@@ -1286,7 +1286,7 @@ mod push {
 
     #[test]
     fn publication_validates_the_exact_prepared_head_then_transports_it() {
-        let range = "DEV_VALIDATE_RANGE_CMD = \"test ! -e tmp/fail && git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\nDEV_VALIDATE_TIMEOUT_SECS = \"30\"\n";
+        let range = "DEV_VALIDATE_RANGE_CMD = \"test ! -e tmp/fail && git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\n";
         let repo = Repo::new("KEN-1", &format!("{BASE}{range}"));
         repo.link_agents();
         repo.record(json!({}));
@@ -1356,7 +1356,7 @@ mod push {
     /// nothing; a list outside its form refuses before any transport.
     #[test]
     fn a_micro_publication_validates_its_range_where_the_policy_runs_no_git_hooks() {
-        let range = "DEV_VALIDATE_RANGE_CMD = \"test ! -e tmp/fail && git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\nDEV_VALIDATE_TIMEOUT_SECS = \"30\"\n";
+        let range = "DEV_VALIDATE_RANGE_CMD = \"test ! -e tmp/fail && git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\n";
         let stages = "ORCH_STAGES = \"external-review local-review preflight doc-limits\"\n";
         let repo = Repo::new("KEN-1", &format!("{BASE}{stages}{range}"));
         repo.link_agents();

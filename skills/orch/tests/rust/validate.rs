@@ -102,7 +102,6 @@ impl World {
         vec![
             ("CHANGE_SCOPE_PATHS_CLI".into(), scope.display().to_string()),
             ("DEV_VALIDATE_CMD".into(), "echo full".into()),
-            ("DEV_VALIDATE_TIMEOUT_SECS".into(), "20".into()),
             ("ORCH_STATE_DIR".into(), self.state.display().to_string()),
             ("ORCH_PR_ORDER".into(), "review-first".into()),
             ("ORCH_DELIVERY".into(), "push-base".into()),
@@ -289,7 +288,7 @@ fn proof_row(
         "tree": tree, "head": head, "base": base, "mode": mode, "caller": "dev",
         "cmd": cmd, "class": "standard", "docs_only": false, "paths_hash": "",
         "scoped": scoped, "selection": selection, "finding_prefix": "",
-        "timeout_secs": 20, "poll_secs": 1, "cap_secs": 31,
+        "poll_secs": 1,
     });
     if mode == "range" {
         proof["class_base"] = json!(base);
@@ -989,13 +988,15 @@ fn the_started_and_done_lines_and_run_inventory_keep_the_reader_contract() {
     assert!(out.status.success(), "{}", stderr(&out));
     let dir = directory(&out);
     let first = text(&out).lines().next().unwrap().to_owned();
-    assert!(first.starts_with(&format!("state=started run-dir={dir} log={dir}/log sentinel={dir}/exit timeout-secs=20 poll-secs=1 cap-secs=31 class=")),"{first}");
-    // The cap a waiter reads is the start record's: the bound, the kill grace
-    // and one poll.
+    assert!(first.starts_with(&format!("state=started run-dir={dir} log={dir}/log sentinel={dir}/exit quiet-secs=660 poll-secs=1 class=")),"{first}");
+    // The quiet time the executor ends a stalled run at is the start
+    // record's, and the run has no other limit.
     let start = run_file(&dir, "start");
-    assert_eq!(field(&start, "timeout-secs"), "20", "{start}");
-    assert_eq!(field(&start, "cap-secs"), "31", "{start}");
+    assert_eq!(field(&start, "quiet-secs"), "660", "{start}");
     assert_eq!(field(&start, "poll-secs"), "1", "{start}");
+    for gone in ["timeout-bin", "timeout-secs", "cap-secs", "quiet-clock"] {
+        assert_eq!(field(&start, gone), "", "{start}");
+    }
     // The start second orders the run among the worktree's runs.
     let second: u64 = field(&start, "start").parse().unwrap();
     assert!(second.abs_diff(epoch_now()) < 600, "{start}");
@@ -1036,11 +1037,7 @@ fn record_reads_the_last_valid_selection_candidate_and_refuses_unreadable_eviden
         // A line of another form after the selection is no candidate: the
         // entry's own refusal or notice opens `validate:` too.
         ("validate:  lanes=one selection=all", "before", "all"),
-        (
-            "validate: over-bound expected-secs=21 bound=20",
-            "before",
-            "all",
-        ),
+        ("validate: run-live run-dir=/r pid=1", "before", "all"),
     ];
     for (line, lanes, selection) in rows {
         let w = World::new();
@@ -1327,19 +1324,16 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
     );
     let empty = records.join("empty").display().to_string();
     fs::create_dir_all(&empty).unwrap();
-    // A wait reads the start second, the cap and the poll its start
-    // recorded; a start that names none of one is no run.
+    // A wait reads the start second and the poll its start recorded; a
+    // start that names none of one is no run.
     let waited = |name: &str, start: &str| {
         let dir = records.join(name);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("start"), start).unwrap();
         dir.display().to_string()
     };
-    let no_second = waited(
-        "no-second",
-        "validate-mode=full\ncap-secs=31\npoll-secs=1\n",
-    );
-    let no_cap = waited("no-cap", "validate-mode=full\nstart=1\npoll-secs=1\n");
+    let no_second = waited("no-second", "validate-mode=full\npoll-secs=1\n");
+    let no_poll = waited("no-poll", "validate-mode=full\nstart=1\n");
     for (args, want) in [
         (vec!["--wait", "--stop"], "mode-conflict"),
         (
@@ -1446,8 +1440,8 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
             "no-run",
         ),
         (
-            vec!["--wait", "--run-dir", &no_cap, "--budget", "1"],
-            "no-run cause=cap-secs",
+            vec!["--wait", "--run-dir", &no_poll, "--budget", "1"],
+            "no-run cause=poll-secs",
         ),
         (
             vec!["--last-pass", "--worktree", &wt, "--fresh"],
@@ -1480,15 +1474,9 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
     );
     // A validation setting outside its form refuses the start that reads it
     // and no verb that never reads it.
-    for (key, value, args) in [
-        ("DEV_VALIDATE_TIMEOUT_SECS", "90m", vec![]),
-        ("DEV_VALIDATE_TIMEOUT_SECS", "0", vec![]),
-        (
-            "ORCH_DELIVERY",
-            "bogus",
-            vec!["--validate-mode", "ci", "--base", base.as_str()],
-        ),
-    ] {
+    {
+        let (key, value) = ("ORCH_DELIVERY", "bogus");
+        let args = ["--validate-mode", "ci", "--base", base.as_str()];
         let start = w.local(&args, &[(key, value)]);
         assert_eq!(start.status.code(), Some(2), "{key}: {}", text(&start));
         assert!(
@@ -1529,10 +1517,10 @@ fn until(mut predicate: impl FnMut() -> bool) {
     }
 }
 
-fn executor_dir(w: &World, command: &str, timeout: u64) -> PathBuf {
+fn executor_dir(w: &World, command: &str, quiet: u64) -> PathBuf {
     let dir = w.worktree.join("tmp/dev-validate-executor");
     fs::create_dir(&dir).unwrap();
-    fs::write(dir.join("start"),format!("worktree={}\nstart=1769700000\ntimeout-secs={timeout}\npoll-secs=1\ncap-secs={}\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead=H\ntree=T\n",w.worktree.display(),timeout+11)).unwrap();
+    fs::write(dir.join("start"),format!("worktree={}\nstart=1769700000\nquiet-secs={quiet}\npoll-secs=1\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead=H\ntree=T\n",w.worktree.display())).unwrap();
     fs::write(
         dir.join("runner"),
         "runner=attached\nline=runner=attached\n",
@@ -1543,16 +1531,32 @@ fn executor_dir(w: &World, command: &str, timeout: u64) -> PathBuf {
     dir
 }
 
+/// Stops a process a row's command started, by the identity read while it
+/// ran, whatever the row's answer.
+struct Started(Option<agent_runtime::process::Identity>);
+impl Drop for Started {
+    fn drop(&mut self) {
+        if let Some(id) = self.0.take() {
+            let _ = agent_runtime::process::stop_identities(&[id], Duration::from_secs(1));
+        }
+    }
+}
+
+/// A command tree that prints nothing, starts nothing and uses no CPU for
+/// its start's quiet time is ended as stalled, a member in a session of its
+/// own with it, and the wait names the step and the log's last line.
 #[test]
-fn a_hung_command_ends_at_the_injected_deadline_without_a_passing_verdict() {
+fn a_silent_idle_command_tree_is_ended_whole_as_stalled_at_its_quiet_time() {
     use std::sync::{Arc, mpsc};
     let w = World::new();
     let fifo = w.root.join("held");
     assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
     let ready = w.root.join("ready");
+    let kid = w.root.join("kid");
     let command = format!(
-        "exec 9<> '{}'; echo first; echo second; echo ready > '{}'; read -r -t 5 -u 9 answer; exit 77",
+        "exec 9<> '{}'; setsid sleep 60 & echo $! > '{}'; echo first; echo second; echo ready > '{}'; read -r -t 20 -u 9 answer; exit 77",
         fifo.display(),
+        kid.display(),
         ready.display()
     );
     let dir = executor_dir(&w, &command, 2);
@@ -1570,6 +1574,12 @@ fn a_hung_command_ends_at_the_injected_deadline_without_a_passing_verdict() {
         sent.send(answer).unwrap();
     });
     until(|| ready.exists());
+    let kid_pid: u32 = fs::read_to_string(&kid).unwrap().trim().parse().unwrap();
+    let agent_runtime::reading::Reading::Live(kid_id) = agent_runtime::process::identity(kid_pid)
+    else {
+        panic!("the command's own-session member is not running");
+    };
+    let _kid = Started(Some(kid_id.clone()));
     clock.await_sleepers(1);
     clock.release(Duration::from_secs(2));
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -1590,23 +1600,143 @@ fn a_hung_command_ends_at_the_injected_deadline_without_a_passing_verdict() {
     answer.unwrap();
     task.join().unwrap();
     let sentinel = fs::read_to_string(dir.join("exit")).unwrap();
-    assert_eq!(field(&sentinel, "guard-exit"), "124");
-    assert!(sentinel.contains("verdict=no-verdict"));
+    assert_eq!(field(&sentinel, "guard-exit"), "124", "{sentinel}");
+    assert!(
+        sentinel.ends_with(" cause=stalled quiet-secs=2 step=run last-line=second\n"),
+        "{sentinel}"
+    );
     assert!(!dir.join("own-exit").exists());
-    // What the command printed before its deadline stays in its log.
+    // What the command printed before it stalled stays in its log.
     let log = fs::read_to_string(dir.join("log")).unwrap();
     assert!(log.contains("\nfirst\nsecond\n"), "{log}");
     let id: agent_runtime::process::Identity =
         serde_json::from_slice(&fs::read(dir.join("command")).unwrap()).unwrap();
-    assert!(matches!(
-        agent_runtime::process::still_runs(&id),
-        agent_runtime::reading::Reading::Gone
-    ));
+    for id in [&id, &kid_id] {
+        assert!(matches!(
+            agent_runtime::process::still_runs(id),
+            agent_runtime::reading::Reading::Gone
+        ));
+    }
     assert!(clock.elapsed() >= Duration::from_secs(2));
+    let (waited, exit) = orch_runtime::validate::files::wait(&dir, 0, clock.as_ref()).unwrap();
+    assert_eq!(exit, 1, "{waited}");
+    assert!(
+        waited.contains(" validate=FAILING cause=stalled step=run last-line=second run-dir="),
+        "{waited}"
+    );
+}
+
+/// A step past its expected time and a run past the selector's each warn
+/// once, in the log, the run's `warning` record, the wait and the record's
+/// `slow-step=`, and the run goes on; the stall names the newest step, or
+/// `run` where the command named none.
+#[test]
+fn a_slow_step_and_a_slow_run_each_warn_once_and_a_stall_names_the_newest_step() {
+    use std::sync::{Arc, mpsc};
+    let tail = ": the run goes on while it makes progress; no needed check is dropped to meet the expected time";
+    for (case, step_line, step) in [
+        (
+            "named",
+            "echo 'validate-step: name=lint command=cargo clippy expected-secs=3'; ",
+            "lint",
+        ),
+        ("unnamed", "", "run"),
+    ] {
+        let w = World::new();
+        let fifo = w.root.join("held");
+        assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
+        let ready = w.root.join("ready");
+        let command = format!(
+            "exec 9<> '{}'; {step_line}echo checking a; : > '{}'; read -r -t 30 -u 9 w; exit 0",
+            fifo.display(),
+            ready.display()
+        );
+        let dir = executor_dir(&w, &command, 20);
+        let mut start = fs::read_to_string(dir.join("start")).unwrap();
+        start.push_str("expected-secs=5\n");
+        fs::write(dir.join("start"), start).unwrap();
+        let clock = Arc::new(support::FakeClock::new());
+        let c = clock.clone();
+        let d = dir.clone();
+        let (sent, received) = mpsc::channel();
+        let task = std::thread::spawn(move || {
+            let answer = orch_runtime::validate::run::execute(
+                &d,
+                c.as_ref(),
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../github/scripts/lib/group-leader.sh"),
+            );
+            sent.send(answer).unwrap();
+        });
+        until(|| ready.exists());
+        clock.await_sleepers(1);
+        for _ in 0..8 {
+            clock.pass(Duration::from_secs(1));
+        }
+        assert!(
+            !dir.join("exit").exists(),
+            "{case}: a warning ended the run"
+        );
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let answer = loop {
+            match received.try_recv() {
+                Ok(answer) => break answer,
+                Err(mpsc::TryRecvError::Disconnected) => panic!("executor ended without answer"),
+                Err(mpsc::TryRecvError::Empty) => {
+                    assert!(Instant::now() < deadline, "{case}: the run never stalled");
+                    clock.release(Duration::from_millis(100));
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
+        answer.unwrap();
+        task.join().unwrap();
+        let warnings = fs::read_to_string(dir.join("warning")).unwrap();
+        let mut want = Vec::new();
+        if case == "named" {
+            want.push(format!(
+                "validate-warning: slow step=lint command=cargo clippy expected-secs=3 elapsed-secs=4{tail}"
+            ));
+            want.push(format!(
+                "validate-warning: slow step=lint command=cargo clippy expected-secs=5 elapsed-secs=6{tail}"
+            ));
+        } else {
+            let command = command.split_whitespace().collect::<Vec<_>>().join(" ");
+            want.push(format!(
+                "validate-warning: slow step=run command={command} expected-secs=5 elapsed-secs=6{tail}"
+            ));
+        }
+        assert_eq!(warnings.lines().collect::<Vec<_>>(), want, "{case}");
+        let log = fs::read_to_string(dir.join("log")).unwrap();
+        for line in &want {
+            assert!(log.lines().any(|l| l == line), "{case}: {log}");
+        }
+        let sentinel = fs::read_to_string(dir.join("exit")).unwrap();
+        assert!(
+            sentinel.ends_with(&format!(
+                " cause=stalled quiet-secs=20 step={step} last-line=checking a\n"
+            )),
+            "{case}: {sentinel}"
+        );
+        let (waited, _) = orch_runtime::validate::files::wait(&dir, 0, clock.as_ref()).unwrap();
+        let lines: Vec<&str> = waited.lines().collect();
+        assert_eq!(lines[..want.len()], want, "{case}: {waited}");
+        assert!(
+            lines[want.len()].contains(&format!(
+                " validate=FAILING cause=stalled step={step} last-line=checking a run-dir="
+            )),
+            "{case}: {waited}"
+        );
+        let record = orch_runtime::validate::files::RunFile::read(&dir)
+            .unwrap()
+            .record()
+            .unwrap();
+        assert_eq!(field(&record, "slow-step"), step, "{case}: {record}");
+    }
 }
 
 #[test]
-fn a_command_that_ignores_term_is_killed_at_the_grace_after_its_deadline() {
+fn a_command_that_ignores_term_is_killed_at_the_grace_after_it_stalls() {
     use orch_runtime::validate::KILL_GRACE;
     use std::sync::{Arc, mpsc};
     let w = World::new();
@@ -1663,6 +1793,112 @@ fn a_command_that_ignores_term_is_killed_at_the_grace_after_its_deadline() {
     ));
 }
 
+/// The `progress` record counts the time a command shows no work, a line at
+/// most every ten seconds, and each kind of work restarts the count: output
+/// in the log, a process new at or below the leader, and CPU time; the work
+/// comes a second before the planted quiet time and spares the run. The
+/// command waits on a pipe the row writes, each wait bounded so a failed row
+/// leaves nothing running.
+#[test]
+fn the_progress_record_counts_quiet_time_until_output_a_new_process_or_cpu_work_which_spares_the_run()
+ {
+    use std::io::Write;
+    use std::sync::{Arc, mpsc};
+    for (work, kind) in [
+        ("echo worked", "output"),
+        ("sleep 60 &", "process"),
+        (
+            "while times > \"$t\" && read -r u s < \"$t\" && u=${u#0m} && [ \"${u%%.*}\" -lt 2 ]; do i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; done",
+            "cpu",
+        ),
+    ] {
+        let w = World::new();
+        let fifo = w.root.join("held");
+        assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
+        let ready = w.root.join("ready");
+        let done = w.root.join("done");
+        let command = format!(
+            "t='{}'; exec 9<> '{}'; : > '{}'; read -r -t 60 -u 9 w\n{work}\n: > '{}'; read -r -t 60 -u 9 w; exit 0",
+            w.root.join("times").display(),
+            fifo.display(),
+            ready.display(),
+            done.display()
+        );
+        let dir = executor_dir(&w, &command, 19);
+        let clock = Arc::new(support::FakeClock::new());
+        let c = clock.clone();
+        let d = dir.clone();
+        let (sent, received) = mpsc::channel();
+        let task = std::thread::spawn(move || {
+            let answer = orch_runtime::validate::run::execute(
+                &d,
+                c.as_ref(),
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../github/scripts/lib/group-leader.sh"),
+            );
+            sent.send(answer).unwrap();
+        });
+        until(|| ready.exists());
+        clock.await_sleepers(1);
+        let lines = || {
+            fs::read_to_string(dir.join("progress"))
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        for _ in 0..10 {
+            clock.pass(Duration::from_secs(1));
+        }
+        let quiet: u64 = field(&lines()[1], "quiet-for").parse().unwrap();
+        assert!(quiet >= 9, "{kind}: {:?}", lines());
+        for _ in 0..8 {
+            clock.pass(Duration::from_secs(1));
+        }
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&fifo)
+            .unwrap()
+            .write_all(b"work\n")
+            .unwrap();
+        until(|| done.exists());
+        clock.pass(Duration::from_secs(1));
+        clock.pass(Duration::from_secs(1));
+        let read = lines();
+        assert_eq!(read.len(), 3, "{kind}: {read:?}");
+        assert_eq!(field(&read[2], "quiet-for"), "1", "{kind}: {read:?}");
+        assert!(!field(&read[2], "procs").is_empty(), "{kind}: {read:?}");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&fifo)
+            .unwrap()
+            .write_all(b"end\n")
+            .unwrap();
+        let deadline =
+            Instant::now() + Duration::from_secs(orch_runtime::validate::KILL_GRACE + 15);
+        let answer = loop {
+            match received.try_recv() {
+                Ok(answer) => break answer,
+                Err(mpsc::TryRecvError::Disconnected) => panic!("executor ended without answer"),
+                Err(mpsc::TryRecvError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{kind}: the executor never ended"
+                    );
+                    clock.release(Duration::from_millis(100));
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
+        answer.unwrap();
+        task.join().unwrap();
+        assert_eq!(
+            field(&fs::read_to_string(dir.join("exit")).unwrap(), "guard-exit"),
+            "0"
+        );
+    }
+}
+
 #[test]
 fn a_sentinel_the_device_refuses_fails_the_executor_and_the_run_reads_failing() {
     if !Path::new("/dev/full").exists() {
@@ -1683,6 +1919,15 @@ fn a_sentinel_the_device_refuses_fails_the_executor_and_the_run_reads_failing() 
         field(&read_record(&w, dir.to_str().unwrap()), "verdict"),
         "unfinished"
     );
+    // The foreground caller that held the run has exited with its error.
+    let caller = Owned::sleep();
+    let runner = format!(
+        "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
+        caller.pid(),
+        caller.start()
+    );
+    drop(caller);
+    fs::write(dir.join("runner"), runner).unwrap();
     let out = w.entry(
         &[
             "--wait",
@@ -1693,7 +1938,8 @@ fn a_sentinel_the_device_refuses_fails_the_executor_and_the_run_reads_failing() 
         ],
         &[],
     );
-    // No sentinel, so the run past its cap reads failing, never done.
+    // No sentinel, and neither the command nor its caller runs, so the run
+    // reads failing, never done.
     assert_eq!(field(&text(&out), "validate"), "FAILING", "{}", text(&out));
     assert_ne!(field(&text(&out), "state"), "done");
 }
@@ -1738,13 +1984,10 @@ fn an_exited_command_does_not_leave_its_background_group_running() {
 #[test]
 fn wait_budgets_and_launch_grace_use_the_injected_clock_and_do_not_start_work() {
     use std::sync::{Arc, mpsc};
-    for (cap, budget, want) in [(100, 1, "running"), (100, 10, "lost"), (2, 10, "timeout")] {
+    for (budget, want) in [(1, "running"), (10, "lost")] {
         let w = World::new();
         let dir = executor_dir(&w, "touch must-not-run", 20);
         fs::remove_file(dir.join("runner")).unwrap();
-        let mut start = fs::read_to_string(dir.join("start")).unwrap();
-        start = start.replace("cap-secs=31", &format!("cap-secs={cap}"));
-        fs::write(dir.join("start"), start).unwrap();
         let clock = Arc::new(support::FakeClock::new());
         let c = clock.clone();
         let d = dir.clone();
@@ -1754,7 +1997,7 @@ fn wait_budgets_and_launch_grace_use_the_injected_clock_and_do_not_start_work() 
                 .unwrap()
         });
         clock.await_sleepers(1);
-        clock.release(Duration::from_secs(budget.min(cap)));
+        clock.release(Duration::from_secs(budget));
         let (line, exit) = received.recv_timeout(JOB_BOUND).unwrap().unwrap();
         task.join().unwrap();
         assert_eq!(field(&line, "state"), want);
@@ -1809,9 +2052,12 @@ fn a_unit_launch_hands_the_manager_the_callers_variables_and_open_file_limit() {
         limit.next().unwrap()
     );
     assert!(words.contains(&property.as_str()), "{argv}");
-    // The unit carries the run's cap, takes SIGPIPE at its default, and its
+    // The unit has no lifetime limit, takes SIGPIPE at its default, and its
     // record names it as the stop reads it.
-    assert!(words.contains(&"RuntimeMaxSec=31"), "{argv}");
+    assert!(
+        !words.iter().any(|w| w.starts_with("RuntimeMaxSec=")),
+        "{argv}"
+    );
     assert!(words.contains(&"IgnoreSIGPIPE=no"), "{argv}");
     assert_eq!(
         run_file(dir, "runner"),
@@ -2413,44 +2659,6 @@ fn last_pass_reads_recorded_snapshots_and_later_red_or_unknown_order_invalidates
 }
 
 #[test]
-fn a_declared_selection_over_the_bound_refuses_before_any_run_but_reuse_needs_no_new_budget() {
-    let w = World::new();
-    w.commit("source.rs");
-    let out = w.local(
-        &[],
-        &[(
-            "DEV_VALIDATE_SELECTION_CMD",
-            "printf 'selection=all\nexpected-secs=21\n'",
-        )],
-    );
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("validate: over-bound expected-secs=21 bound=20"));
-    assert!(!w.worktree.join("tmp/validation-runs").exists());
-    let first = w.local(&[], &[]);
-    assert!(first.status.success());
-    let first_dir = directory(&first);
-    let out = w.local(
-        &[],
-        &[(
-            "DEV_VALIDATE_SELECTION_CMD",
-            "printf 'selection=all\nexpected-secs=21\n'",
-        )],
-    );
-    assert!(out.status.success(), "{}", stderr(&out));
-    let dir = directory(&out);
-    assert!(run_file(&dir, "start").contains(&format!("pass-run={first_dir}\n")));
-    assert!(!Path::new(&dir).join("execution").exists());
-    let out = w.local(
-        &["--fresh"],
-        &[(
-            "DEV_VALIDATE_SELECTION_CMD",
-            "printf 'selection=all\nexpected-secs=21\n'",
-        )],
-    );
-    assert_eq!(out.status.code(), Some(2));
-}
-
-#[test]
 fn reuse_of_the_real_pass_ends_after_a_later_failed_or_unfinished_attempt_on_that_tree() {
     for missing in ["cmd", "paths", "start"] {
         let w = World::new();
@@ -2466,7 +2674,6 @@ fn reuse_of_the_real_pass_ends_after_a_later_failed_or_unfinished_attempt_on_tha
             stderr(&next)
         );
         assert!(!run_file(&directory(&next), "start").contains("pass-run="));
-        assert!(!run_file(&directory(&next), "start").contains("bound-run="));
     }
     let w = World::new();
     w.commit("source.rs");
@@ -3473,9 +3680,9 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
 }
 
 #[test]
-fn ambiguous_selector_answers_do_not_admit_ci_or_invent_an_over_bound_estimate() {
+fn ambiguous_selector_answers_do_not_admit_ci() {
     for selector in [
-        "printf 'selection=all\nselection=subset\nexpected-secs=21\nexpected-secs=22\n'",
+        "printf 'selection=all\nselection=subset\n'",
         "printf 'selection=unknown\n'",
         "exit 1",
     ] {
@@ -3862,143 +4069,6 @@ fn snapshot_classification_preserves_the_index_timestamp_and_writes_no_shared_ob
     git(&w.worktree, &["add", "racy.rs"]);
     let expected = git(&w.worktree, &["write-tree"]);
     assert_eq!(field(&read_record(&w, &dir), "tree"), expected);
-}
-
-#[test]
-fn bound_records_reuse_only_the_same_command_context_with_covered_paths_and_no_finding() {
-    use orch_runtime::ops::{
-        proof::Declaration,
-        validate::{Reuse, Want, reuse},
-    };
-    let cases = [
-        "bound",
-        "host",
-        "finding",
-        "missing-prefix",
-        "different-prefix",
-        "different-command",
-        "different-class",
-        "different-docs",
-        "different-base",
-        "shorter-bound",
-        "wider-paths",
-        "ci",
-        "reused",
-    ];
-    for case in cases {
-        let w = World::new();
-        let dir = executor_dir(&w, "echo full", 20);
-        let dir_text = dir.display().to_string();
-        let at = agent_runtime::clock::iso_utc(1769700020);
-        fs::write(
-            dir.join("exit"),
-            format!(
-                "guard-exit={} at={at} verdict=no-verdict{}\n",
-                if case == "host" { 3 } else { 124 },
-                if case == "host" { " cause=host" } else { "" }
-            ),
-        )
-        .unwrap();
-        fs::write(
-            dir.join("log"),
-            if case == "finding" {
-                "runner=none\nFINDING: code\n"
-            } else {
-                "runner=none\n"
-            },
-        )
-        .unwrap();
-        fs::write(dir.join("paths"), "a.rs\n").unwrap();
-        let mut start = fs::read_to_string(dir.join("start")).unwrap();
-        start.push_str("finding-prefix=FINDING:\n");
-        fs::write(dir.join("start"), start).unwrap();
-        let mut stage = orch_runtime::validate::files::RunFile::read(&dir)
-            .unwrap()
-            .stage()
-            .unwrap();
-        let p = stage.proof.as_mut().unwrap();
-        match case {
-            "missing-prefix" => p.finding_prefix.clear(),
-            "different-prefix" => p.finding_prefix = "OTHER:".into(),
-            "different-command" => p.cmd = "other".into(),
-            "different-class" => p.class = "small".into(),
-            "different-docs" => p.docs_only = true,
-            "different-base" => p.base = "other".into(),
-            "shorter-bound" => p.timeout_secs = 19,
-            "wider-paths" => fs::write(dir.join("paths"), "a.rs\nb.rs\n").unwrap(),
-            "ci" => p.mode = orch_runtime::state::ValidateMode::Ci,
-            "reused" => {
-                p.reused = Some(orch_runtime::state::Reused::BoundRun {
-                    run_dir: "prior".into(),
-                })
-            }
-            _ => {}
-        }
-        let want = Want {
-            cmd: "echo full".into(),
-            class: "standard".into(),
-            docs_only: false,
-            base: String::new(),
-            finding_prefix: "FINDING:".into(),
-            tree: "new-tree".into(),
-            paths: vec!["a.rs".into()],
-            timeout_secs: 20,
-        };
-        let declaration = Declaration {
-            cmd: "echo full".into(),
-            range_cmd: None,
-            docs_cmd: None,
-            ci_declared: false,
-            finding_prefix: "FINDING:".into(),
-        };
-        let answer = reuse(&[stage], &want, &declaration);
-        assert_eq!(
-            answer,
-            if case == "bound" {
-                Reuse::Bound {
-                    run_dir: dir_text,
-                    exit: 124,
-                }
-            } else {
-                Reuse::None
-            },
-            "{case}"
-        );
-    }
-    // A run the bound ended answers the next start of its command: the start
-    // records it, runs nothing and ends no-verdict.
-    let w = World::new();
-    w.commit("source.rs");
-    let bound = [
-        ("DEV_VALIDATE_CMD", "sleep 30"),
-        ("DEV_VALIDATE_TIMEOUT_SECS", "1"),
-        ("DEV_VALIDATE_FINDING_PREFIX", "FINDING:"),
-    ];
-    let first = w.local(&[], &bound);
-    assert_eq!(
-        field(text(&first).lines().last().unwrap(), "validate"),
-        "no-verdict",
-        "{}",
-        text(&first)
-    );
-    let first = directory(&first);
-    let out = w.local(&[], &bound);
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    let dir = directory(&out);
-    assert!(
-        run_file(&dir, "start").contains(&format!("\nbound-run={first}\n")),
-        "{}",
-        run_file(&dir, "start")
-    );
-    assert!(
-        run_file(&dir, "log").starts_with(&format!("runner=none bound-run={first}:")),
-        "{}",
-        run_file(&dir, "log")
-    );
-    assert_eq!(
-        field(text(&out).lines().last().unwrap(), "validate"),
-        "no-verdict"
-    );
 }
 
 #[test]
@@ -4394,7 +4464,7 @@ fn a_shell_start_whose_child_never_ran_is_no_run_but_the_runtimes_unread_launch_
     fs::write(
         dir.join("start"),
         format!(
-            "worktree={wt}\ntimeout-bin=timeout\nstart={started}\ntimeout-secs=3600\npoll-secs=1\ncap-secs=3611\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
+            "worktree={wt}\nstart={started}\nquiet-secs=660\npoll-secs=1\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
             w.head()
         ),
     )

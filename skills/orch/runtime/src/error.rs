@@ -343,9 +343,6 @@ pub enum Error {
     /// worktree's HEAD, its snapshot, a scratch directory.
     #[error("the validation start could not read its {read}: {cause}")]
     ValidateUnreadable { read: &'static str, cause: String },
-    /// The selector's estimate exceeds the bound; nothing is recorded.
-    #[error("the selector expects {expected}s, over the {bound}s bound")]
-    OverBound { expected: u64, bound: u64 },
     // The acceptance's authorization and its summary record.
     /// An acceptance for a directed item names no owner directive, or
     /// another's; the item's key carries the id it needs.
@@ -522,7 +519,6 @@ impl Error {
             Error::ValidateStopFailed { .. } => "stop-failed",
             Error::ValidateLaunchFailed { .. } => "launch-failed",
             Error::ValidateUnreadable { .. } => "validate-unreadable",
-            Error::OverBound { .. } => "over-bound",
             Error::AuthorizationMissing { .. } => "authorization-missing",
             Error::AuthorizationDiffers { .. } => "authorization-differs",
             Error::SummaryCommentDiffers { .. } => "summary-comment-differs",
@@ -788,10 +784,6 @@ impl Error {
                 vec![pair("run_dir", run_dir.clone())]
             }
             Error::ValidateUnreadable { read, .. } => vec![pair("read", (*read).to_owned())],
-            Error::OverBound { expected, bound } => vec![
-                pair("expected_secs", expected.to_string()),
-                pair("bound", bound.to_string()),
-            ],
             Error::AuthorizationMissing { directive } => {
                 vec![pair("directive", directive.clone())]
             }

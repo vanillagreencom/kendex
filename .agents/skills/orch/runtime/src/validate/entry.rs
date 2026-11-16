@@ -10,7 +10,6 @@ use clap::Args as ClapArgs;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 /// The word every refusal and notice of `validate entry` opens with.
 const VALIDATE: &str = "validate";
@@ -19,7 +18,7 @@ const VALIDATE: &str = "validate";
 #[command(
     long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues: it prints state=running with the run directory, and --wait --run-dir follows the run on.
 
-DEV_VALIDATE_TIMEOUT_SECS bounds the command. The cap adds the kill grace and one poll interval. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
+A run has no time limit: its executor ends it as stalled only after the start's quiet-secs with no output, no new process and no CPU work, and a wait then prints validate=FAILING cause=stalled step=STEP last-line=LINE. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
 
 An admitted --run-id uses the runtime's declaration and base to resolve the mode. An ad-hoc start defaults to full. Range and ci requests require --base; full ignores a carried base with a notice. --reproduce forces fresh local work without CI admission or selector preview. --restack is a ci request without scoped execution.
 
@@ -27,7 +26,7 @@ A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_C
 
 --record reads mode, selection, verdict, identity, scope, fallback and wall time. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
 
-A live or unreadable start obligation refuses a second run. --stop ends only the recorded unit or command identities. A deadline or command exit 3 records no-verdict; a command's own 124 or 137 is a failure."
+A live or unreadable start obligation refuses a second run. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure."
 )]
 pub struct Args {
     #[arg(long)]
@@ -205,9 +204,6 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
         }
         Err(Failure { error, exit }) => {
             let diagnostic = match &*error {
-                Error::OverBound { expected, bound } => {
-                    format!("{VALIDATE}: over-bound expected-secs={expected} bound={bound}")
-                }
                 Error::ValidateUnreadable { read, cause } => {
                     format!("{VALIDATE}: {read} cause={cause}")
                 }
@@ -390,12 +386,7 @@ fn entry(
         }
         // An attached run has ended by now; a detached one is followed for
         // one call's budget.
-        let follow = if req.foreground {
-            started.cap_secs
-        } else {
-            budget
-        };
-        let (text, exit) = files::wait(Path::new(&started.run_dir), follow, &SystemClock)?;
+        let (text, exit) = files::wait(Path::new(&started.run_dir), budget, &SystemClock)?;
         return Ok(TextReply::new(text, exit));
     }
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
@@ -434,10 +425,7 @@ fn entry(
                     &run_dir.join("runner"),
                     &argv,
                     Some(&run_dir.join("job.err")),
-                    agent_runtime::effects::job::Bounds {
-                        runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
-                        memory,
-                    },
+                    agent_runtime::effects::job::Bounds { memory },
                     &SystemClock,
                 );
                 match launch.answer() {
@@ -474,20 +462,11 @@ fn entry(
                 super::started_line(&run_dir, &resolved.proof)
             )
             .map_err(|e| files::unreadable("stdout", e))?;
-            Ok((
-                run_dir,
-                resolved.proof.cap_secs,
-                resolved.ran_nothing.is_none(),
-            ))
+            Ok((run_dir, resolved.ran_nothing.is_none()))
         })?;
-    let follow = if req.foreground {
-        if run_dir.2 {
-            run::execute(&run_dir.0, &SystemClock, &super::group_leader(&settings))?;
-        }
-        run_dir.1
-    } else {
-        budget
-    };
-    let (text, exit) = files::wait(&run_dir.0, follow, &SystemClock)?;
+    if req.foreground && run_dir.1 {
+        run::execute(&run_dir.0, &SystemClock, &super::group_leader(&settings))?;
+    }
+    let (text, exit) = files::wait(&run_dir.0, budget, &SystemClock)?;
     Ok(TextReply::new(text, exit))
 }
