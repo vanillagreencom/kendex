@@ -409,7 +409,10 @@ require_issue_header_shape() {
 				{rule: "post-merge-deadline", box: .number, fix: "Use Deadline: +Nh with N from 1 through 72, or after a merge or time trigger a real UTC time in YYYY-MM-DDTHH:MM:SSZ form at most 72 hours after it."}
 			  elif .reading_rule != null then
 				{rule: .reading_rule, box: .number, fix: "Write a numeric reading as FIGURE COMPARATOR NUMBER UNIT, such as p95 create latency <= 300 ms."}
-			  else empty end] | first) as $post
+			  else .number as $number
+				| $parsed.errors[] | select(.box == $number and .rule == "post-merge-fields")
+				| . + {fix: "Use complete post-merge fields, a merge, UTC time or release OWNER/REPO TAG-GLOB trigger, and a valid Deadline."}
+			  end] | first) as $post
 		| ($parsed.outside_boxes | first) as $outside
 		| if $moves_action then
 			$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)
