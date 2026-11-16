@@ -1159,6 +1159,24 @@ fn lane_mail_is_the_session_its_record_names_and_a_call_before_the_binding_is_th
     );
     assert_eq!(world.cursor(), "2");
 
+    // A record that cannot be read holds no turn end with nothing unread,
+    // and refuses no tool call that meets no halt.
+    fs::write(world.fleet(), "{").unwrap();
+    let out = world.mail("claude", &[], &of_session("lead-1", json!({})));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(
+        out.stderr
+            .lines()
+            .any(|line| line == "lane-mail-check: lane-record=unread"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(world.sent_count(), "", "no idle judgement recorded");
+    world.direct("d3", "report", false);
+    let out = world.mail("claude", &["halt"], &of_session("lead-1", bash.clone()));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    assert_eq!(world.cursor(), "2");
+
     // A halt refuses another session as it refuses a subagent: the read is
     // neither shown nor passed.
     world.bind(Some("lead-1"));
@@ -1185,7 +1203,15 @@ fn lane_mail_is_the_session_its_record_names_and_a_call_before_the_binding_is_th
         "{",
     )
     .unwrap();
-    let out = world.mail("claude", &["deliver"], &of_session("lead-1", bash));
+    let out = world.mail("claude", &["deliver"], &of_session("lead-1", bash.clone()));
+    assert_eq!(
+        out.first(),
+        "lane-mail-check: lane-record=unread",
+        "{}",
+        out.stderr
+    );
+    let out = world.mail("claude", &["halt"], &of_session("lead-1", bash));
+    assert_eq!(out.code, 2, "{}", out.stderr);
     assert_eq!(
         out.first(),
         "lane-mail-check: lane-record=unread",
@@ -1355,6 +1381,30 @@ fn a_job_under_the_lane_lead_is_handed_nothing_and_moves_no_record_of_the_lanes(
     assert_eq!(out.code, 0, "{}", out.stderr);
     let record: Value = serde_json::from_str(&fs::read_to_string(&context).unwrap()).unwrap();
     assert_eq!(record["session_id"], "j1");
+
+    // A process named for the lane's configured harness binary, a name no
+    // harness owns, is a harness between as well.
+    let configured = world.root.join("job").join("lane-harness");
+    write_executable(&configured, "#!/bin/sh\n\"$@\"\nexit $?\n");
+    let binaries = format!("claude={}", configured.display());
+    let reader = lane_mail().display().to_string();
+    let env = [
+        ("LANE_MAIL_CLI", reader.as_str()),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str()),
+    ];
+    let mut command = program(&configured);
+    command.arg(binary()).arg("--no-private-env");
+    let call = of_session("j1", json!({"tool_name": "Bash"}));
+    let out = world.run_in(
+        command,
+        &world.lane,
+        &world.hooks("claude"),
+        &["deliver"],
+        &call,
+        &env,
+    );
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(world.cursor(), "0");
 }
 
 #[test]
