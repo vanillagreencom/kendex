@@ -59,11 +59,11 @@ The entry's exits mean `0` clean, `1` violations, anything else a step that did 
 
 Read when writing a check's excludes list or baseline. Excludes use `pattern<TAB>reason` per line. The shell glob matches the full repo-relative path, with `*` crossing `/`. A pattern without a reason is a configuration error. An opening `!` restores matches to the scan and wins over all exclusion rows regardless of order. Escape a literal opening exclamation mark as `\!foo`.
 
-Baselines use `path<TAB>N`, sorted under `LC_ALL=C`, with unique paths and a positive integer. `N` is a suppression count or a binary object size in bytes. The initial suppression baseline procedure is [CHECKS.md § suppression-ban](../CHECKS.md#suppression-ban). Keep non-render exceptions in the reasoned excludes list.
+Baselines use `path<TAB>N`, sorted under `LC_ALL=C`, with unique paths and a positive integer. `N` is a binary object size in bytes. Keep non-render exceptions in the reasoned excludes list.
 
 ## Generated-file exclusions
 
-Read when a guard reports an inventory failure or when adding a render exclusion. Suppression-ban, conflict-markers, md-type and py-names exclude exact paths in `.kendex-generated.json`. Judge a render's defect at its source in the author's repository. Keep the inventory with the renders. In-place sources stay scanned because the writer does not list them. An explicit `!` exclusion row still restores a listed path to the scan.
+Read when a guard reports an inventory failure or when adding a render exclusion. Conflict-markers, md-type and py-names exclude exact paths in `.kendex-generated.json`. Judge a render's defect at its source in the author's repository. Keep the inventory with the renders. In-place sources stay scanned because the writer does not list them. An explicit `!` exclusion row still restores a listed path to the scan.
 
 The inventory follows the excludes list's index-first read contract. An absent inventory excludes nothing. An unreadable or unloadable inventory also excludes nothing: the lane reports `inventory-unread=read:<status>` or `inventory-unread=load:<status>` and judges every file. Findings then print `owner-unknown=<count>` and exit `0` locally because ownership is unknown; a nonempty `CI` or `GITHUB_ACTIONS` keeps those findings blocking. The classifier `changelog-entries --classify` still refuses with exit `2`.
 

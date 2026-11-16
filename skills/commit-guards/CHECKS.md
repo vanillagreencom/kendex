@@ -19,24 +19,6 @@ A binary file not over the ceiling but at or above `COMMIT_GUARDS_BYTE_WARN_PCT`
 
 The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --against REF` hands `--against REF`, `all --staged` hands `--staged`. byte-ceiling takes a range under every setting, since it is ratcheted and the range is the question it answers. The two range scopes also reach md-type and md-refs, on the same dot conventions. md-refs takes them only where `COMMIT_GUARDS_MD_SCOPE` is `touched`; under `all` it is handed `--all` instead, because a range is narrower than the sweep that setting asks for. md-type takes them under either setting. A copy is an addition; symlinks and gitlinks are not sized.
 
-## suppression-ban
-
-Blanket suppressions fail flat, scanned by pathspec:
-
-| Language | Pathspec | Banned shape |
-|---|---|---|
-| Rust | `*.rs` | an inner `#![allow(...)]` at line start, judged whole across its lines, that names a lint group, lists two or more lints, or carries no `reason = "..."` |
-| Python | `*.py` | own-line `# ruff: noqa` or `# flake8: noqa`, with or without codes |
-| JS/TS | `*.js *.jsx *.ts *.tsx *.mjs *.cjs *.mts *.cts *.vue *.svelte` | bare block `/* eslint-disable */` |
-| Go | `*.go` | `//nolint` alone, or `//nolint:all` |
-| Biome | the JS/TS pathspec plus `*.css *.jsonc` | `biome-ignore-all`; `biome-ignore-start` with no rule or a bare `lint` or `lint/<group>` scope; `biome-ignore lint:` or `biome-ignore lint/<group>:` naming no rule |
-
-Legal: a per-line suppression naming its lint with a reason (`# noqa: E501`, `// eslint-disable-next-line rule -- why`, `//nolint:gosec // why`, `// biome-ignore lint/<group>/<rule>: why`, a per-item Rust attribute). A Rust `#![allow(lint, reason = "...")]` naming one lint is legal at any level. A group, a list of lints or a missing reason fails.
-
-The bare-allow ratchet counts reasonless `#[allow(dead_code)]` and `#[allow(unused...)]` attributes per `*.rs` file; `reason = "..."` exempts one. Counts are held to `COMMIT_GUARDS_SUPPRESSION_BASELINE`, tighten-only: a new bare allow, growth past a row, and a row looser than reality all fail. `--update` lowers or removes rows and re-checks, never adds or raises one; the first baseline is written by hand from the reported `new bare allow` lines. `--baseline FILE` and `--excludes FILE` override the baseline and `COMMIT_GUARDS_SUPPRESSION_EXCLUDES`.
-
-Generated paths and adopted source follow [SKILL.md § Generated-file exclusions](SKILL.md#generated-file-exclusions).
-
 ## conflict-markers
 
 Seven `<`, seven `|`, or seven `>` at column 0, followed by a space or end of line, fail in every tracked file. Indented or quoted occurrences and the seven-`=` separator do not fire. `--excludes FILE` overrides `COMMIT_GUARDS_CONFLICT_EXCLUDES`. The render paths `.kendex-generated.json` lists are not judged, read at the first file carrying a marker; an inventory that cannot be read follows [SKILL.md § Generated-file exclusions](SKILL.md#generated-file-exclusions).

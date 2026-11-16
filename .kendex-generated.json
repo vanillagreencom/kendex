@@ -87,7 +87,6 @@
   ".agents/skills/commit-guards/scripts/pre-push",
   ".agents/skills/commit-guards/scripts/py-names",
   ".agents/skills/commit-guards/scripts/secrets",
-  ".agents/skills/commit-guards/scripts/suppression-ban",
   ".agents/skills/communication/SKILL.md",
   ".agents/skills/communication/references/messages.md",
   ".agents/skills/communication/references/questions.md",

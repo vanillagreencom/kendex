@@ -1,5 +1,0 @@
-# suppression-ban exclusion list — vendored trees only. Hand-written source
-# is never excluded: every lint suppression there states its reason.
-# Format and generated-file ownership: skills/commit-guards/SKILL.md.
-
-skills/iced-rs/**	vendored upstream iced source and examples bundled as the skill's API reference — upstream's allows are not this repo's to justify

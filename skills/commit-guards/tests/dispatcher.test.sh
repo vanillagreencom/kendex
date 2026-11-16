@@ -22,8 +22,7 @@ GG="$SKILL_DIR/scripts/commit-guards"
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would change every batch below.
 unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_BYTE_CEILING_KB \
-  COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_SUPPRESSION_EXCLUDES \
-  COMMIT_GUARDS_SUPPRESSION_BASELINE COMMIT_GUARDS_CONFLICT_EXCLUDES \
+  COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_CONFLICT_EXCLUDES \
   COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS \
   COMMIT_GUARDS_MD_PATHS COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_REFS_PATHS_EXTRA COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA \
   COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE \
@@ -68,7 +67,7 @@ single() { # ENVS ARGS [STDIN]
 }
 
 # Stable dispatcher records and scope values.
-DEFAULT="suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
+DEFAULT="conflict-markers changelog-entries md-type md-refs py-names secrets"
 STAGED_SCOPED="byte-ceiling md-type md-refs py-names secrets"
 ERR="commit-guards: "
 steps() { # MODE CHECKS [INCOMPLETE]
@@ -309,13 +308,13 @@ assert_eq "must-fail: without the change-scoped list md-type sweeps the tree and
   "$(GG="$SWEEPING_GG" batch "COMMIT_GUARDS_CHECKS=md-type,COMMIT_GUARDS_MD_SCOPE=all" "all --base base")"
 
 echo "=== a retired check name is dropped with one warning until the next major release ==="
-for retired in md-format todo-ban prose comments; do
+for retired in md-format todo-ban prose comments suppression-ban; do
   run_rows \
     "a setting naming $retired runs the rest and warns once|clean retired-$retired-1|COMMIT_GUARDS_CHECKS=$retired md-refs||rc=0 commit-guards: retired-check=$retired;commit-guards: step=md-refs;$(ok md-refs)"
 done
 run_rows \
   "a setting naming only retired checks runs nothing and passes|clean retired-2|COMMIT_GUARDS_CHECKS=md-format||rc=0 commit-guards: retired-check=md-format;commit-guards: unrun-all=retired"
-gg_mutant UNRETIRED_GG commit-guards 'RETIRED_CHECKS="md-format todo-ban prose comments"' 'RETIRED_CHECKS=""'
+gg_mutant UNRETIRED_GG commit-guards 'RETIRED_CHECKS="md-format todo-ban prose comments suppression-ban"' 'RETIRED_CHECKS=""'
 clean retired-3
 assert_eq "must-fail: without the retired list the setting is refused as unknown" \
   "rc=2 commit-guards: check-unknown=md-format" \
@@ -370,11 +369,11 @@ incomplete() { # ENVS — the dispatcher's own records from the private copy
 }
 clean incomplete-one
 assert_eq "an unrunnable check is named and left out; the rest run and the verdict names only them" \
-  "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: step=suppression-ban;commit-guards: result=0:suppression-ban" \
-  "$(incomplete COMMIT_GUARDS_CHECKS='suppression-ban conflict-markers')"
+  "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: step=changelog-entries;commit-guards: result=0:changelog-entries" \
+  "$(incomplete COMMIT_GUARDS_CHECKS='changelog-entries conflict-markers')"
 assert_eq "control: the shipped package runs the same check" \
-  "rc=0 commit-guards: step=suppression-ban;commit-guards: step=conflict-markers;commit-guards: result=0:suppression-ban conflict-markers" \
-  "$(R="$R" batch COMMIT_GUARDS_CHECKS='suppression-ban conflict-markers' '')"
+  "rc=0 commit-guards: step=changelog-entries;commit-guards: step=conflict-markers;commit-guards: result=0:changelog-entries conflict-markers" \
+  "$(R="$R" batch COMMIT_GUARDS_CHECKS='changelog-entries conflict-markers' '')"
 assert_eq "every enabled check unrunnable is named, and nothing runs" \
   "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: unrun-all=conflict-markers" \
   "$(incomplete COMMIT_GUARDS_CHECKS=conflict-markers)"
