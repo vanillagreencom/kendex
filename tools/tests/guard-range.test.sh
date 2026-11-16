@@ -895,7 +895,7 @@ echo "=== --suite-reach holds a runtime's callers and Rust targets ==="
 # rt-bin through a variable path; otherpkg holds a fixture a Rust target of
 # rtpkg reads and a helper an rtpkg suite sources, each spelled from the
 # sibling package.
-mkdir -p "$R/skills/rtpkg/runtime/src" "$R/skills/rtpkg/scripts" "$R/skills/rtpkg/tests/rust" "$R/skills/rtpkg/tests/fixtures" \
+mkdir -p "$R/skills/rtpkg/runtime/src" "$R/skills/rtpkg/scripts" "$R/skills/rtpkg/tests/rust/fixtures" "$R/skills/rtpkg/tests/fixtures" \
   "$R/skills/deppkg/runtime/src" "$R/skills/deppkg/tests/rust" \
   "$R/skills/otherpkg/tests/lib" "$R/skills/otherpkg/tests/fixtures" "$R/skills/otherpkg/scripts/lib"
 printf '[package]\nname = "rtpkg"\n\n[lib]\nname = "rtpkg"\npath = "src/lib.rs"\n\n[[bin]]\nname = "rt-bin"\npath = "src/main.rs"\n\n[[test]]\nname = "one"\npath = "../tests/rust/one.rs"\n\n[[test]]\nname = "two"\npath = "../tests/rust/two.rs"\n' \
@@ -910,7 +910,9 @@ printf '#!/usr/bin/env bash\n. "$SCRIPT_DIR/../../otherpkg/scripts/lib/shared.sh
 printf 'shared() { :; }\n' >"$R/skills/otherpkg/scripts/lib/shared.sh"
 printf '#[test]\nfn one() {}\n' >"$R/skills/rtpkg/tests/rust/one.rs"
 printf '#[test]\nfn two() { read("../otherpkg/tests/fixtures/data.txt"); }\n' >"$R/skills/rtpkg/tests/rust/two.rs"
-printf 'pub fn support() {}\n' >"$R/skills/rtpkg/tests/rust/support.rs"
+printf '#!/usr/bin/env bash\necho marker\n' >"$R/skills/rtpkg/scripts/rt-marker"
+printf 'pub fn support() { plant("rt-marker"); }\n' >"$R/skills/rtpkg/tests/rust/support.rs"
+printf '{}\n' >"$R/skills/rtpkg/tests/rust/fixtures/f.json"
 printf '#[test]\nfn dt() {}\n' >"$R/skills/deppkg/tests/rust/dt.rs"
 printf 'data\n' >"$R/skills/rtpkg/tests/fixtures/x"
 printf 'data\n' >"$R/skills/otherpkg/tests/fixtures/data.txt"
@@ -941,8 +943,12 @@ $RT/h-user.test.sh"
   "another package's library a script sources as ../<name>/<file> selects that script's suite|skills/otherpkg/scripts/lib/shared.sh|skills/otherpkg/tests/o.test.sh
 $RT/rt-caller.test.sh"
   "a changed Rust target selects itself alone|skills/rtpkg/tests/rust/one.rs|target rtpkg/one"
-  "a changed Rust input selects every target of its runtime|skills/rtpkg/tests/rust/support.rs|target rtpkg/lib
+  "a changed Rust test module selects every test target of its runtime and not its lib|skills/rtpkg/tests/rust/support.rs|target rtpkg/one
+target rtpkg/two"
+  "a changed Rust fixture selects every target of its runtime, its lib included|skills/rtpkg/tests/rust/fixtures/f.json|target rtpkg/lib
 target rtpkg/one
+target rtpkg/two"
+  "a script only a Rust test module names selects every test target of its runtime and not its lib|skills/rtpkg/scripts/rt-marker|target rtpkg/one
 target rtpkg/two"
   "a path of no role selects its tree's whole set and its runtime's targets|skills/rtpkg/tests/fixtures/x|$RT/h-user.test.sh
 $RT/plain.test.sh
@@ -982,6 +988,12 @@ runtime_control "a script's source line read as no read" \
   's/^        if (sources) keep\[count\] = 1$//' 4
 runtime_control "another tree's runtime that offers no program name" \
   's/^  \[ "$(path_role "$home" "$rel")" = runtime \] || return 1$/  return 1/' 0
+runtime_control "a Rust test module that adds the lib" \
+  's/^        \[\[ \$rel =~ .* \]\] || REACH_TARGETS+=/        REACH_TARGETS+=/' 6
+runtime_control "a Rust fixture that adds no lib" \
+  's/^        \[\[ \$rel =~ .* \]\] || REACH_TARGETS+=.*$/        :/' 7
+runtime_control "a joined Rust test module that adds the lib" \
+  's/^        \[\[ \$rel =~ .* \]\] || REACH_TARGETS+=/        REACH_TARGETS+=/' 8
 reset_world
 
 echo "=== a range with no usable base is refused before anything runs ==="

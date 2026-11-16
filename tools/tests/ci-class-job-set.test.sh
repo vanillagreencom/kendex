@@ -26,11 +26,6 @@ small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
 micro|false|skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
-micro|false|skills/orch/tests/dev-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/review-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/lane-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/dev-review-lane-workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
 micro|false|skills/agent-runtime/runtime/src/lib.rs|$SHARD_CODE|$ORCH_ALL +rest
 micro|false|tools/tests/example.test.sh|$(lanes linux false true false)|+guards-scans -guards-tools -guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
@@ -77,29 +72,30 @@ ROWS
 # The Rust targets are the reach's: a runtime source runs every target of its
 # runtime and of each runtime that path-depends on it, a path a target or the
 # runtime runs or reads runs those targets, and a lane source every target.
-# PATHS|A TARGET THE LIST HOLDS|ONE IT DOES NOT, `-` for none
-while IFS='|' read -r paths held absent; do
+# What the reach leaves out is held in guard-range's planted runtime.
+# PATHS|A TARGET THE LIST HOLDS
+while IFS='|' read -r paths held; do
   got="$(selection micro false "$(printf '%s\n' $paths)" | field rust_targets)"
   check "rust targets over '$paths' hold $held" true "$(jq --arg t "$held" 'index($t) != null' <<<"$got")"
-  [ "$absent" = - ] ||
-    check "rust targets over '$paths' leave out $absent" false "$(jq --arg t "$absent" 'index($t) != null' <<<"$got")"
 done <<'ROWS'
-skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|orch/lib|-
-skills/agent-runtime/runtime/src/lib.rs|orch/lib|-
-skills/orch/scripts/lane-marker|orch/verify|orch/lib
-hooks/lane-mail-check.sh|orch/controller|orch/lib
-skills/mailbox/scripts/lane-mail|agent-runtime/controller|agent-runtime/lib
-skills/orch/tests/rust/push.rs|orch/push|orch/lib
-tools/ci-job-set|orch/*|-
+skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|orch/lib
+skills/agent-runtime/runtime/src/lib.rs|orch/lib
+skills/orch/scripts/lane-marker|orch/verify
+hooks/lane-mail-check.sh|orch/controller
+skills/mailbox/scripts/lane-mail|agent-runtime/controller
+skills/orch/tests/rust/push.rs|orch/push
+tools/ci-job-set|orch/*
 ROWS
 check "a path no target can depend on runs none" '[]' \
   "$(selection micro false "$UNREAD_DOC" | field rust_targets)"
 
 # The shards are the reach's projection and the skips the rest: the lock
 # record runs the two orch suites that read it, in the orch shards that hold
-# them on either runner, and skips every other orch suite, and the github
-# package's group-leader.sh runs the restack-skip suite and the runtime's
-# targets that run it (the required members of the derived reach).
+# them on either runner, and skips every other orch suite; the github
+# package's group-leader.sh runs the runtime's target that runs it, and a
+# path a suite's input note names for a read the scan cannot see runs that
+# suite (the required members of the derived reach and of the notes).
+# A runtime source runs every Jarvis suite that runs that built runtime.
 lock="$(selection micro false .kendex-lock.json)"
 kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$lock")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | grep -v '/run-all\.sh$' | tr '\n' ' ')"
 check "the lock record keeps the orch suites that read it, and no other" \
@@ -108,10 +104,22 @@ keeping="$(for os in Linux macOS; do printf '%s\n' skills/orch/tests/post_merge.
 check "and starts the orch legs that hold them, and no other" "$keeping" \
   "$(field shards <<<"$lock" | grep -o 'orch-[a-z]*' | sort | tr '\n' ' ')"
 leader="$(selection micro false skills/github/scripts/lib/group-leader.sh)"
-check "group-leader.sh keeps the restack-skip suite" false \
-  "$(jq 'index("skills/orch/tests/restack_skip.sh") != null' <<<"$(field skipped_suites <<<"$leader")")"
-check "and runs the runtime target that runs it" true \
+check "group-leader.sh runs the runtime target that runs it" true \
   "$(jq 'index("orch/validate") != null' <<<"$(field rust_targets <<<"$leader")")"
+# PATH|THE SUITES WHOSE NOTES NAME IT
+while IFS='|' read -r path suites; do
+  skipped="$(selection micro false "$path" | field skipped_suites)"
+  for suite in $suites; do
+    check "$path keeps $suite" false "$(jq --arg s "$suite" 'index($s) != null' <<<"$skipped")"
+  done
+done <<'ROWS'
+skills/change-scope/references/narrow-change.conf|skills/orch/tests/merge-pr-restack-wiring.test.sh
+skills/agent-runtime/scripts/setup|skills/orch/tests/post_merge.sh
+skills/mailbox/scripts/lib/file-lock.sh|skills/orch/tests/lane-host-ssh.sh
+skills/github/scripts/lib/kendex-env.sh|skills/orch/tests/settings-literal-strings.sh
+skills/orch/runtime/src/ops/approve.rs|skills/jarvis/tests/controls.test.sh skills/jarvis/tests/forward.test.sh skills/jarvis/tests/owner-note.test.sh skills/jarvis/tests/owner-unanswered.test.sh skills/jarvis/tests/presence.test.sh skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession-controls.test.sh skills/jarvis/tests/succession.test.sh skills/jarvis/tests/task.test.sh skills/jarvis/tests/watch-loop.test.sh
+skills/agent-runtime/runtime/src/context.rs|skills/jarvis/tests/controls.test.sh skills/jarvis/tests/forward.test.sh skills/jarvis/tests/owner-note.test.sh skills/jarvis/tests/owner-unanswered.test.sh skills/jarvis/tests/presence.test.sh skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession-controls.test.sh skills/jarvis/tests/succession.test.sh skills/jarvis/tests/task.test.sh skills/jarvis/tests/watch-loop.test.sh
+ROWS
 
 # The copy stands beside the real reach, so only the planted rule differs.
 cp "$ROOT/tools/guard" "$TMP/rule/tools/guard"

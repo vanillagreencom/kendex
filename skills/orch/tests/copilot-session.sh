@@ -2,9 +2,6 @@
 # Tests for the Copilot session record's writer, copilot-statusline, the
 # command that writes it from the JSON Copilot hands a statusLine command,
 # and the account a Copilot session's record names.
-# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
-# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
-# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/growth-state.sh

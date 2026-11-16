@@ -1560,7 +1560,8 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #   rust-target  a skill's tests/rust/<file> that runtime/Cargo.toml names
 #                as a [[test]] path
 #   rust-input   any other file under a skill's tests/rust/: a module, a
-#                fixture or a planted program those targets compile or run
+#                fixture or a planted program those targets compile or run;
+#                a fixture the lib's unit rows read too
 # A runtime file, a Rust target and a Rust input are scanned as a suite is,
 # their quoted names counted as names (runtime_facts states their targets).
 # A module is scanned as a lib is, and a test module or test program as a
@@ -2087,7 +2088,8 @@ reach_join() { # ROLE PATH [changed]
         REACH_TARGETS+="${tree#skills/}/$line"$'\n'
       else
         # A module or fixture of the targets: every target of its runtime.
-        REACH_TARGETS+="${tree#skills/}/lib"$'\n'
+        # The lib compiles no tests/rust/*.rs module and reads its fixtures.
+        [[ $rel =~ ^tests/rust/[^/]+\.rs$ ]] || REACH_TARGETS+="${tree#skills/}/lib"$'\n'
         while read -r line; do
           case "$line" in "$tree test "*) line=${line#"$tree test "}; REACH_TARGETS+="${tree#skills/}/${line%% *}"$'\n' ;; esac
         done <<<"$RUNTIME_FACTS"
@@ -2128,9 +2130,12 @@ reach_join() { # ROLE PATH [changed]
 #   - A changed runtime file, or one that joins, adds every Rust target of
 #     its runtime and of each runtime that path-depends on it, and their
 #     [[bin]] names as needles any file may name (reach_runtime). A Rust
-#     target that joins adds itself, and a changed Rust input every target
-#     of its runtime. A runtime file, a Rust target and a Rust input join on
-#     any needle their code names, a quoted name included, as a suite does.
+#     target that joins adds itself, and a Rust input, changed or joined,
+#     every [[test]] target of its runtime, and the lib target too unless
+#     it is a tests/rust/*.rs module: the lib's unit rows read fixtures
+#     under tests/rust/ and compile no module there. A runtime file, a Rust
+#     target and a Rust input join on any needle their code names, a
+#     quoted name included, as a suite does.
 #   - A changed runtime file of another tree, a ../ input here, also offers
 #     its programs' names (home_seed); a name no file here spells maps to
 #     nothing.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Surface: Jarvis event acquisition, batching, retry and settings.
 # Inputs: skills/jarvis/scripts/, skills/jarvis/tests/watch_test.py, skills/jarvis/tests/mail_world.py,
-# skills/mailbox/scripts/, skills/orch/scripts/, skills/slack/scripts/.
+# skills/mailbox/scripts/, skills/orch/scripts/, skills/slack/scripts/,
+# skills/orch/runtime/.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 export JARVIS_TEST_BASH="$BASH"

@@ -2,7 +2,8 @@
 # Surface: bound-session hook activity renews local and host Jarvis holds.
 # Inputs: skills/jarvis/scripts/, skills/jarvis/tests/presence_test.py,
 # hooks/lane-mail-check.sh, hooks/lane-mail-deliver.sh, hooks/session-start-row.sh,
-# hooks/tests/lib/, skills/orch/scripts/, skills/mailbox/scripts/, skills/slack/scripts/.
+# hooks/tests/lib/, skills/orch/scripts/, skills/mailbox/scripts/, skills/slack/scripts/,
+# skills/orch/runtime/, skills/agent-runtime/runtime/.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 source "$ROOT/hooks/tests/lib/lane-mail-world.sh"
