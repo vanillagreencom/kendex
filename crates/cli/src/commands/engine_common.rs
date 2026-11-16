@@ -364,7 +364,13 @@ fn rendered(
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
-        ui::report::notice(&skipped.line());
+        let setup_pending = super::commit_offer::adding_with_repo_effects()
+            && report.repo_effects.iter().any(|effect| {
+                effect.name == skipped.declared.name && effect.root == skipped.declared.root
+            });
+        if !setup_pending {
+            ui::report::notice(&skipped.line());
+        }
         if super::repo_effects::set_up_beside_main(env, &report.plan.scope, skipped)? {
             kendex_core::bot_instructions::add_to_generated(
                 env,
