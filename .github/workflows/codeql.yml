@@ -4,6 +4,9 @@ name: CodeQL
 # advanced workflow: https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configuring-advanced-setup-for-code-scanning
 # This optional security scan does not carry a required CI context.
 on:
+  # New queries must also reach code that has not changed.
+  schedule:
+    - cron: '23 4 * * 1'
   push:
     branches: [main]
     paths:
