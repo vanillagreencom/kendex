@@ -1,12 +1,12 @@
 # CI Fix Workflow
 
-Analyze CI failures and route them to the right agent.
+Analyze a pull request's CI failure, fix it directly or route it to the right agent, then confirm the review gate and CI at the new head.
 
 | Command | Flow |
 |---------|------|
 | `ci-fix` \| `ci-fix [PR_NUMBER]` | § 1 → § 2 → § 3 → § 5, with § 4 first for a merge-group run |
 
-**Caller context** (via `⤵`): managed `lifecycle` uses the caller's `issue_id`; standalone is the default.
+**Caller context** (via `⤵`): a managed `lifecycle` uses the caller's `issue_id` as the state key; standalone is the default.
 
 ## 1. Identify Failures
 
@@ -28,15 +28,33 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Standalone only: use the extracted issue as `[STATE_KEY]`, or `pr-[PR_NUMBER]` when empty. Run `init` only when `exists` is false:
+**Standalone state.** `[STATE_KEY]` is the pull request's issue, or `pr-[PR_NUMBER]` where it names none. Run each command as its own tool call:
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
+```
+
+```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
+```
+
+```bash
 .agents/skills/orch/scripts/orch-runtime state exists --item [STATE_KEY]
+```
+
+Only where the reply's `exists` is `false`, create the state with the branch the second read printed:
+
+```bash
 .agents/skills/orch/scripts/orch-runtime state init --item [STATE_KEY] --branch [PR_BRANCH]
+```
+
+Then lift any standing post-PR stop:
+
+```bash
 .agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [STATE_KEY]
 ```
+
+Managed, `[STATE_KEY]` is the caller's `issue_id`. Every command below that takes `[ISSUE_ID]` takes this one key.
 
 ## 2. Fetch Error Details
 
@@ -44,24 +62,27 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 .agents/skills/github/scripts/github.sh ci-logs [PR_NUMBER]
 ```
 
-`ci-logs` reads the pull request head's checks alone; a merge-group run's failed logs are § 4's read.
+`ci-logs` reads the pull request head's checks alone. A merge-group run's failed logs are § 4's read.
 
 ## 3. Classify And Route
 
-Formatting, obvious lint, and a missing import are fixed directly; a test failure, a build error, or non-obvious lint is delegated. A failure in a merge-group run takes § 4 first, which names the PR whose commits caused it.
+Fix formatting, obvious lint and a missing import directly (§ 3.1). Delegate a test failure, a build error or non-obvious lint (§ 3.2). A failure in a merge-group run takes § 4 first, which names the pull request whose commits caused it.
 
-Resolve the decision mode once for this post-PR workflow. Named stops use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
+Read the decision mode once for this workflow. Named stops follow [SKILL.md § The Cycle](../SKILL.md#the-cycle).
 
 ```bash
-.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
 ```
 
 ### 3.1 Direct Fixes
 
-Resolve the worktree (`github.sh pr-issue [PR_NUMBER] --format=text`, then `worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) as `[DIR]`; `WORKTREE_PATH` is `git-context repo-root "[DIR]"`. Apply the fix, then:
+Resolve the pull request's worktree as `[DIR]`: read its issue with `github.sh pr-issue [PR_NUMBER] --format=text`, then `.agents/skills/worktree/scripts/worktree exists` and `worktree path` for that issue, creating it with `--pr [PR_NUMBER]` where it is missing. `[WORKTREE_PATH]` is `.agents/skills/orch/scripts/git-context repo-root "[DIR]"`. Apply the fix, then commit and push:
 
 ```bash
 git -C "[WORKTREE_PATH]" commit -am "fix([ISSUE_ID]): Resolve CI failure ([ERROR_TYPE])"
+```
+
+```bash
 git -C "[WORKTREE_PATH]" push
 ```
 
@@ -69,27 +90,29 @@ git -C "[WORKTREE_PATH]" push
 
 ### 3.2 Delegated Fixes
 
-Infer the agent from the component paths or issue labels. Apply [Delegation](../references/skill-rules.md#delegation) before each dev or integration-analysis delegation. A test failure in concurrent code that passes locally is a flaky-test candidate — check the project's testing conventions (missing barriers, iteration-based waits, static mutable state) before treating it as a real regression.
+Infer the agent from the component paths or the issue's labels. Apply [Delegation](../references/skill-rules.md#delegation) before each dev or integration-analysis delegation. A test failure in concurrent code that passes locally is a flaky-test candidate: check the project's testing conventions (missing barriers, iteration-based waits, static mutable state) before treating it as a regression.
 
-Stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Each command takes the one state key as `[ISSUE_ID]`: the caller's `issue_id` when managed, § 1's `[STATE_KEY]` standalone. The mint stores the token at `ci_round_id` and answers it as `result.value`:
+Stamp the round immediately before delegating, each command as its own tool call. Apply the cleanup condition and arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure).
 
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"begin-round","kind":"ci"}'
-```
+1. Mint the CI token, which the runtime stores at `ci_round_id`; the reply's `.result.report.round_id` is the token. A CI round opens no dev stage.
 
-Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune, recorded under the CI token: write `tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "ci"}`, then run it:
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"begin-round","kind":"ci"}'
+   ```
 
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request tmp/prune-round-[ISSUE_ID].json
-```
+2. Where the cleanup condition applies, prune under the CI token: write `[WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "ci"}`, then run it:
 
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"ci"}'
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
+   ```
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+3. Record the delegation time:
 
-This route uses `ci_round_id` for CI fixes and integration analysis. Apply the [Round Closure exception](../references/skill-rules.md#round-closure) to its watchdog. Accept this round on the agent's return message plus the pushed fix commit; on an absent return follow the escalation ladder.
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"ci"}'
+   ```
+
+The route writes no dev-return receipt. Arm the watchdog with the CI token, as [Round Closure](../references/skill-rules.md#round-closure) states for `ci-fix.md`; its missing-receipt `wait` is expected. Accept the round on the agent's return message plus the pushed fix commit. On an absent return, follow the escalation ladder. `[WORKTREE_PATH]` is § 3.1's.
 
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).
@@ -116,18 +139,39 @@ Report: what was fixed, the validate status, and any unrelated failures.
 
 ## 4. Merge-Group Failures
 
-A merge-group run, the one [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle step 1 points this workflow at as `[RUN_ID]`, runs on GitHub's temporary queue branch and carries no pull request. Its head carries this PR's commits on top of those of the PRs queued ahead of it. Read that head as `[GROUP_HEAD]`, the PR's base branch as `[BASE_REF]`, the commits the head carries past that base, then the run's failed logs, the error output every route below carries:
+A merge-group run, the `[RUN_ID]` the Recovery cycle of [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) step 1 hands this workflow, runs on GitHub's temporary queue branch and has no pull request. Its head carries this pull request's commits on top of those of the pull requests queued ahead of it. Read, each as its own tool call:
 
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh run view [RUN_ID] --json headSha --jq .headSha
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefName --jq .baseRefName
-env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/compare/[BASE_REF]...[GROUP_HEAD]" --jq '.commits[] | [.sha, .commit.message] | @tsv'
-env -u GH_REPO -u GITHUB_REPOSITORY gh run view [RUN_ID] --log-failed
-```
+1. The group's head, `[GROUP_HEAD]`:
 
-Cross-reference those commits with the original PRs to identify which file failed, which commit introduced it, and which PR that commit belongs to. A failure this PR's own commits cause takes § 3. Another single identifiable PR routes to that PR's agent; a genuine cross-PR integration issue routes to the architecture reviewer for analysis, delegated from this PR's worktree. When the source stays unclear after that analysis, `auto-recommended` records `ci-source-unclear`; `ask` presents the evidence to the user.
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh run view [RUN_ID] --json headSha --jq .headSha
+   ```
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is this PR's worktree, resolved as § 3.1 resolves it.
+2. The pull request's base branch, `[BASE_REF]`:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefName --jq .baseRefName
+   ```
+
+3. The commits the head carries past that base:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/compare/[BASE_REF]...[GROUP_HEAD]" --jq '.commits[] | [.sha, .commit.message] | @tsv'
+   ```
+
+4. The run's failed logs, the error output every route below carries:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh run view [RUN_ID] --log-failed
+   ```
+
+Match those commits to their pull requests to find which file failed, which commit introduced the failure, and which pull request holds that commit:
+
+- This pull request's own commits caused it: § 3.
+- One other identifiable pull request caused it: route it to that pull request's agent.
+- A cross-PR integration issue: delegate the analysis to the architecture reviewer from this pull request's worktree, with the brief below. `[WORKTREE_PATH]` is this pull request's, resolved as § 3.1 resolves it.
+
+Where the source stays unclear after that analysis, `auto-recommended` records the named stop `ci-source-unclear`; `ask` presents the evidence to the user.
 
 <delegation_format>
 Merge queue CI failure — integration issue across the PRs of one merge group.
@@ -150,62 +194,80 @@ Report findings for a user decision.
 
 ## 5. Verify
 
-Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection.
+### 5.1 Review gate
 
-Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Write [the review call](../references/gates.md#the-review-call)'s request file from `[WORKTREE_PATH]`, `[MARK_READY]` `false`, and run the short exact-head re-confirmation through its review wait with the shorter period:
+Confirm the review gate at the new head **before** waiting on CI, on every repository. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Write [the review call](../references/gates.md#the-review-call)'s request file from `[WORKTREE_PATH]` with `[MARK_READY]` `false`, then run the short exact-head confirmation with the shorter review period:
 
 ```bash
 env PR_REVIEW_WAIT_SECS=300 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-review-request-[STATE_KEY].json"
 ```
 
-Its reply's `mode` is `GATE_MODE`, the item's recorded one. Under the `off` gate mode the wait ends at its first reply: a `complete` verdict `off`, or a `pending copilot-pending` reply, whose work merge-pr § 5 step 1's call holds before the merge call ([gates.md § Copilot requests](../references/gates.md#copilot-requests)), goes to the CI wait. A `blocked` verdict under either mode takes the `blocked` row below. A refusal is no mode, so report it and stop. On `approval`, route its `request` by [Copilot requests](../references/gates.md#copilot-requests) before the verdict. Route the verdict:
+The reply's `mode` is `GATE_MODE`, the item's recorded one. A refusal is no mode: report it and stop. Under the `off` gate mode the wait ends at its first reply: a `complete` verdict `off`, or a `pending` reply whose reason is `copilot-pending`, goes to the CI wait; merge-pr § 5 step 1's call holds that Copilot work before the merge ([gates.md § Copilot requests](../references/gates.md#copilot-requests)). On `approval`, route the reply's `request` by [Copilot requests](../references/gates.md#copilot-requests) before the verdict. Route the verdict:
 
-- `approved` / `proceeded` → wait for CI. ci-fix writes no `pr_approval.reviewer_down` for `proceeded`; the caller records it. It is a LOCAL verdict — orch posts no status.
-- `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
-- `blocked` → a regression-against-main blocker stands open on the item, its location in `reason`. Managed: return the unmet gate to the caller. Standalone: report the location and stop. Never treat it as a met gate.
-- `copilot-error` → route as [Copilot requests](../references/gates.md#copilot-requests) says. Managed: return the unmet gate to the caller. Standalone: re-run this step once for the overseer approval. If the gate stays unmet, use the `timeout` stop route below.
-- `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
-- `unreadable` → re-run the call once. If it repeats, take the `timeout` route's stop.
+- `approved` / `proceeded` → wait for CI (§ 5.3). This workflow writes no `pr_approval.reviewer_down` for `proceeded`; the caller records it. It is a local verdict: orch posts no status.
+- `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then run § 5.1 again.
+- `blocked` → a regression-against-main blocker stands open on the item, its location in `reason`. Managed: return the `blocked` verdict to the caller. Standalone: report the location and stop. Never treat it as a met gate.
+- `copilot-error` → route as [Copilot requests](../references/gates.md#copilot-requests) says. Managed: return the unmet gate to the caller. Standalone: run § 5.1 once more for the overseer approval; if the gate stays unmet, take the `timeout` stop below.
+- `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Run § 5.1 once more. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
+- An `unreadable` reply → run the call once more. If it repeats, take the `timeout` stop.
 
-For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
+### 5.2 Merge-group reproduction
 
-- A red local run is the fix's failure; report it and stop.
-- A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. For a `run-live` refusal, take the wait or stop route of [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate), then start the reproduction again. Report any other unproved reproduction and stop.
-
-The pull-request wait below proves nothing about the fix under the harness-ci queue-only default, where the pull-request run reports `CI` with no lane. The caller re-arms only under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle's re-queue rule.
-
-The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](../references/waiter-launch.md) and repeated while `result.status` is `pending` or `unreadable`, as [submit-pr.md § 5](submit-pr.md#5-verify-ci) runs it, its merge-state read first; `[OWNER/REPO]` is the repository as `gh repo view --json nameWithOwner --jq .nameWithOwner` answers it from the checkout. A `pr-not-open` refusal says the pull request is closed or merged: report its `state` and stop.
+For a merge-group failure, run the failing job's command locally on the fix head before any wait: `DEV_VALIDATE_CMD` through the validation entry with `--reproduce`, which never defers the run to CI, or the suite the failing job named.
 
 ```bash
-jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
-  '{op: "verify-pr", repo: $repo, pr: $pr, required_only: true}' \
-  > "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"
+.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --reproduce
+```
+
+Exit 3 with `state=running` is no outcome: follow the run with `orch-runtime validate entry --wait --run-dir [RUN_DIR]` to its verdict. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
+
+- A red local run is the fix's failure: report it and stop.
+- A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. For a `run-live` refusal, take the wait or stop route of [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate), then start the reproduction again. Report any other unproved reproduction and stop.
+
+The pull-request wait proves nothing about the fix under the harness-ci queue-only default, where the pull-request run reports `CI` with no lane. The caller re-arms only under the re-queue rule of the Recovery cycle in [merge-pr.md § 5](merge-pr.md#5-execute-the-merge).
+
+### 5.3 CI wait
+
+The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](../references/waiter-launch.md) and repeated while `result.status` is `pending` or `unreadable`, as [submit-pr.md § 5](submit-pr.md#5-verify-ci) runs it, its merge-state read first. `[OWNER/REPO]` is the repository `gh repo view --json nameWithOwner --jq .nameWithOwner` names from the checkout. Write the request to `[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json` with the harness file tool as `{"op": "verify-pr", "repo": "[OWNER/REPO]", "pr": [PR_NUMBER], "required_only": true}`, then run it:
+
+```bash
 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"
 ```
 
-On `status=complete` with `verdict=fail`, a transient runner failure on the pull request's head is rerun once per head before the result goes anywhere. A merge group's run is never rerun: a same-head re-queue under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge)'s re-queue rule takes its place. Read and record the pull request's rerun as [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery) One rerun per head does, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and repeat the wait after the interval submit-pr.md § 5 keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
+A `pr-not-open` refusal says the pull request is closed or merged: report its `state` and stop.
+
+**One rerun per head.** On `status=complete` with `verdict=fail`, rerun a transient runner failure on the pull request's head once before the result goes anywhere, as [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery) One rerun per head does, with `[STATE_KEY]` as the key. A merge group's run is never rerun: a same-head re-queue under the re-queue rule of [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) takes its place. Where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"ci-rerun","head":"[HEAD]"}'
+```
+
+```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
 ```
 
-A passing or unconfigured CI result, `status=complete` with `verdict=pass` or `verdict=none`, clears the standalone CI-fix budget:
+On `rerun run=[RUN_ID]`, record the run, then repeat the wait after the interval submit-pr.md § 5 keeps between calls, never at once: GitHub registers the new attempt after the verb answers.
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"ci-rerun-run","head":"[HEAD]","run":[RUN_ID]}'
+```
+
+**Passing CI.** `status=complete` with `verdict=pass` or `verdict=none` clears the standalone CI-fix budget:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state head-budget reset --item [STATE_KEY] --kind ci-fix
 ```
 
-**Linear only** — post the short status to the tracker:
+### 5.4 Report a fix
 
-Write the status body with the harness file-write tool to `tmp/ci-fix-status-[STATE_KEY].md` and bind that path as `[BODY_FILE]`:
+**Linear only**, where the state key is a Linear issue: write the status body to `[WORKTREE_PATH]/tmp/ci-fix-status-[STATE_KEY].md` with the harness file tool, then post it:
 
 ```markdown
 CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]
 ```
 
 ```bash
-.agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body-file [BODY_FILE]
+.agents/skills/linear/scripts/linear.sh comments create [STATE_KEY] --body-file [WORKTREE_PATH]/tmp/ci-fix-status-[STATE_KEY].md
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
@@ -222,7 +284,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Still failing:
+### 5.5 Still failing
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -238,22 +300,31 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Managed failures return to the caller, which owns `CI_FIX_MAX_CYCLES`. Standalone `auto-recommended` spends a cycle of the PR's budget. The count runs across the heads these cycles push, because each cycle pushes its own fix; only the passing-CI clear in this section resets it:
+A managed failure returns to the caller, which owns `CI_FIX_MAX_CYCLES`. A standalone `auto-recommended` run spends one cycle of the pull request's budget. The count runs across the heads the cycles push, since each cycle pushes its own fix; only the passing-CI reset of § 5.3 clears it. Read the head, then take the cycle:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
+```
+
+```bash
 .agents/skills/orch/scripts/orch-runtime state head-budget take --item [STATE_KEY] --kind ci-fix --head [CI_HEAD]
 ```
 
-Its reply's `verdict`: `continue` reruns § 1. `at-cap` records and returns `ci-fix-cap`, and no cycle starts past the cap until the overseer, judging with the reply's `attempts` and `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)):
+The reply's `verdict`:
 
-```bash
-.agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name ci-fix-cap --gate ci --remaining "[REMAINING_CHECKS_AND_ATTEMPTS]" --comment-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
-.agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
-```
+- `continue`: run § 1 again.
+- `at-cap`: the cap is a ruling point, not the end of work the pull request's goal needs. Record and return the named stop `ci-fix-cap`. Start no cycle past the cap until the overseer, judging with the reply's `attempts` and `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). A remaining failure whose cause is another concern than the pull request's goal, and which can land apart, gets its own item with its owner in the same pass; the work the goal needs continues.
 
-Under `ask`, present `Run ci-fix again` | `Stop`; continuation clears the stop.
+  ```bash
+  .agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name ci-fix-cap --gate ci --remaining "[REMAINING_CHECKS_AND_ATTEMPTS]" --comment-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
+  ```
+
+  ```bash
+  .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
+  ```
+
+  Under `ask`, present `Run ci-fix again` | `Stop`; continuing clears the stop.
 
 ## 6. Return
 
-**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5 read at the new head. That mode is the caller's from here. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.
+**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5.1 read at the new head; that mode is the caller's from here. **Standalone**: return `.post_pr_stop` where one stands; otherwise the CI-fix session is complete.
