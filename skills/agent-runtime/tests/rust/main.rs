@@ -132,6 +132,7 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
         compaction_env: None,
         extra_args: Vec::new(),
         program: None,
+        grants: None,
     };
     let flag = "--dangerously-skip-permissions".to_owned();
     let bypass = build(&intent(Permission::Bypass)).unwrap();
@@ -2303,5 +2304,384 @@ fn subagent_room_reads_the_config_under_codex_home() {
             "cap_source": "config",
             "in_use": "unread",
         })
+    );
+}
+
+/// A root for a row that runs the wrapper, under the build's own temporary
+/// folder: under `/tmp` the wrapper's private `/tmp` would take a write to
+/// the row's home for a granted one.
+fn wrapper_root() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    assert!(!root.starts_with("/tmp"), "{}", root.display());
+    (dir, root)
+}
+
+/// The kernel holds what the grants say, for the program and its child:
+/// the home refuses a write, the worktree and the seat take one, the
+/// seat's settings stay read-only, a socket in the runtime folder is
+/// hidden and the one bound back stands. The words alone are run, as the
+/// pane would run them, with no launch around them.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the_runtime_sockets() {
+    use agent_runtime::confine::{Grants, Word, linux_words};
+    use std::os::unix::net::UnixListener;
+    let (_dir, root) = wrapper_root();
+    let [home, wt, seat, rt] = ["home", "wt", "seat", "rt"].map(|n| root.join(n));
+    for dir in [&home, &wt, &seat, &rt] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(seat.join("settings.json"), "{}").unwrap();
+    let _bus = UnixListener::bind(rt.join("bus")).unwrap();
+    let _agent = UnixListener::bind(rt.join("agent.sock")).unwrap();
+    let grants = Grants {
+        writable: vec![wt.clone()],
+        seats: vec![seat.clone()],
+        read_only: vec![seat.join("settings.json")],
+        runtime_dir: Some(rt.clone()),
+        sockets: vec![rt.join("agent.sock")],
+        desktop: false,
+        file: root.join("grants.json"),
+    };
+    let words: Vec<String> = linux_words(&grants)
+        .into_iter()
+        .map(|word| match word {
+            Word::Plain(word) => word,
+            Word::Display(_) => panic!("a display word without a desktop grant"),
+        })
+        .collect();
+    let script = r#"touch "$HOME/x" 2>/dev/null && echo home=written || echo home=refused
+sh -c 'touch "$HOME/child"' 2>/dev/null && echo child=written || echo child=refused
+touch "$1/y" && echo worktree=written || echo worktree=refused
+touch "$2/credentials" && echo seat=written || echo seat=refused
+{ echo '{"hooks":1}' > "$2/settings.json"; } 2>/dev/null && echo settings=written || echo settings=refused
+[ -S "$3/bus" ] && echo bus=visible || echo bus=hidden
+[ -S "$3/agent.sock" ] && echo agent=bound || echo agent=hidden
+echo "confined=${AGENT_RUNTIME_CONFINED:-none}"
+"#;
+    let out = Command::new("bwrap")
+        .args(&words)
+        .args(["/bin/sh", "-c", script, "_"])
+        .args([&wt, &seat, &rt])
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        [
+            "home=refused",
+            "child=refused",
+            "worktree=written",
+            "seat=written",
+            "settings=refused",
+            "bus=hidden",
+            "agent=bound",
+            "confined=1",
+        ]
+    );
+    assert!(!home.join("x").exists() && !home.join("child").exists());
+    assert!(wt.join("y").exists() && seat.join("credentials").exists());
+    assert_eq!(
+        std::fs::read_to_string(seat.join("settings.json")).unwrap(),
+        "{}"
+    );
+}
+
+/// The probe judges the `PATH` the launch's shell searches: no `bwrap`
+/// there, a `bwrap` whose trial run is refused (its own line carried), and
+/// the host's working one.
+#[test]
+#[cfg(target_os = "linux")]
+fn the_probe_names_a_missing_bwrap_and_a_refused_trial_and_answers_a_working_one() {
+    use agent_runtime::Error;
+    use agent_runtime::confine::{Answer, Host};
+    let probe = |path: Option<&std::ffi::OsStr>| agent_runtime::confine::probe(Host::Linux, path);
+    let (_dir, root) = wrapper_root();
+    let empty = root.join("empty");
+    let planted = root.join("planted");
+    std::fs::create_dir_all(&empty).unwrap();
+    std::fs::create_dir_all(&planted).unwrap();
+    write_executable(
+        &planted.join("bwrap"),
+        "#!/bin/sh\necho 'bwrap: planted refusal' >&2\nexit 1\n",
+    );
+    let refusal = |dir: &std::path::Path| match probe(Some(dir.as_os_str())) {
+        Err(Error::Refused {
+            key: "confinement-unavailable",
+            fields,
+        }) => fields,
+        other => panic!("{}: {other:?}", dir.display()),
+    };
+    assert_eq!(
+        refusal(&empty),
+        [("cause".to_owned(), "bwrap-missing".to_owned())]
+    );
+    assert_eq!(
+        refusal(&planted),
+        [
+            ("cause".to_owned(), "userns-off".to_owned()),
+            ("detail".to_owned(), "bwrap: planted refusal".to_owned()),
+        ]
+    );
+    let host = std::env::var_os("PATH").expect("PATH");
+    assert_eq!(probe(Some(&host)).unwrap(), Answer::Confined);
+}
+
+/// A launch row's world: a root outside `/tmp`, a lanes' tmux server
+/// whose socket stands in the runtime folder the grants hide, a second
+/// server at that folder's `wayland-1` standing for the display (a tmux
+/// client's answer is the proof a socket was reached), the display's name
+/// in the lanes server's environment, and the seat and worktree a launch
+/// is granted. Both servers end with the world.
+struct ConfinedWorld {
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+    rt: PathBuf,
+    wt: PathBuf,
+    seat: PathBuf,
+    lanes: PathBuf,
+    display: PathBuf,
+}
+
+impl ConfinedWorld {
+    fn new() -> ConfinedWorld {
+        let (dir, root) = wrapper_root();
+        let [rt, wt, seat] = ["rt", "wt", "seat"].map(|n| root.join(n));
+        for dir in [&rt, &wt, &seat] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let lanes = rt.join("tmux");
+        let display = rt.join("wayland-1");
+        agent_runtime::host::tmux::start_private_server(&lanes, "lanes", &root)
+            .expect("the lanes' server");
+        agent_runtime::host::tmux::start_private_server(&display, "display", &root)
+            .expect("the display's server");
+        // The session's own: tmux records a display name its creating
+        // client lacked as removed in the session, over the global one.
+        tmux_at(
+            &lanes,
+            &[
+                "set-environment",
+                "-t",
+                "lanes",
+                "WAYLAND_DISPLAY",
+                "wayland-1",
+            ],
+        );
+        ConfinedWorld {
+            _dir: dir,
+            root,
+            rt,
+            wt,
+            seat,
+            lanes,
+            display,
+        }
+    }
+
+    /// Launch `harness` through the real `agent-runtime launch` in a window
+    /// named `window`, its program a planted script that reports what it
+    /// and its child reach into the worktree, under grants of the worktree
+    /// and the seat with the runtime folder hidden, `desktop` as given.
+    /// The reply, the grants as the intent named them, and the report.
+    fn launch(
+        &self,
+        harness: &str,
+        window: &str,
+        desktop: bool,
+    ) -> (
+        serde_json::Value,
+        serde_json::Value,
+        std::collections::BTreeMap<String, String>,
+    ) {
+        let bin = self.root.join("bin").join(window);
+        std::fs::create_dir_all(&bin).unwrap();
+        let program = bin.join(harness);
+        let report = self.wt.join(window);
+        write_executable(
+            &program,
+            format!(
+                r#"#!/bin/sh
+{{
+touch "$HOME/x-{window}" 2>/dev/null && echo home=written || echo home=refused
+sh -c 'touch "$HOME/child-{window}"' 2>/dev/null && echo child=written || echo child=refused
+touch '{wt}/y-{window}' && echo worktree=written || echo worktree=refused
+tmux -S '{lanes}' display-message -p ok >/dev/null 2>&1 && echo tmux=reached || echo tmux=refused
+tmux -S '{display}' display-message -p ok >/dev/null 2>&1 && echo display=reached || echo display=refused
+[ -n "${{TMUX:-}}" ] && echo tmux_var=set || echo tmux_var=none
+echo "wayland_var=${{WAYLAND_DISPLAY:-none}}"
+echo "confined=${{AGENT_RUNTIME_CONFINED:-none}}"
+}} > '{report}.tmp'
+mv '{report}.tmp' '{report}'
+"#,
+                wt = self.wt.display(),
+                lanes = self.lanes.display(),
+                display = self.display.display(),
+                report = report.display(),
+            ),
+        );
+        let grants = serde_json::json!({
+            "writable": [self.wt],
+            "seats": [self.seat],
+            "runtime_dir": self.rt,
+            "desktop": desktop,
+            "file": self.root.join(format!("grants-{window}.json")),
+        });
+        let intent = self.root.join(format!("intent-{window}.json"));
+        std::fs::write(
+            &intent,
+            serde_json::json!({
+                "harness": harness,
+                "home": self.seat,
+                "cwd": self.wt,
+                "program": program,
+                "grants": grants,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let out = Command::new(binary())
+            .args(["launch", "--intent"])
+            .arg(&intent)
+            .arg("--record")
+            .arg(self.root.join(format!("record-{window}.json")))
+            .arg("--socket")
+            .arg(&self.lanes)
+            .args(["--session", "lanes", "--window-name", window])
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+            panic!(
+                "{window}: no reply: {e}\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(reply["ok"], true, "{window}: {reply}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !report.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{window}: no report; the line: {}",
+                reply["result"]["command_line"]
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let text = std::fs::read_to_string(&report).unwrap();
+        let rows = text
+            .lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        (reply["result"].clone(), grants, rows)
+    }
+}
+
+impl Drop for ConfinedWorld {
+    fn drop(&mut self) {
+        for socket in [&self.lanes, &self.display] {
+            let _ = Command::new("tmux")
+                .arg("-S")
+                .arg(socket)
+                .arg("kill-server")
+                .output();
+        }
+    }
+}
+
+fn reported(rows: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+    rows.iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
+/// A worker launched with grants runs its harness under the wrapper: the
+/// home refuses its write and its child's, the worktree takes one, the
+/// lanes' tmux server and the display are out of reach, `TMUX` is cleared
+/// and the display's name with it, and the grants file it is pointed at
+/// holds its grants. The same launch with `desktop` keeps the display's
+/// name and reaches its socket, and still no tmux server.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_confined_launch_refuses_home_child_tmux_and_display_and_a_desktop_grant_reaches_the_display() {
+    let world = ConfinedWorld::new();
+    let (record, grants, report) = world.launch("claude", "lane", false);
+    assert_eq!(
+        report,
+        reported(&[
+            ("home", "refused"),
+            ("child", "refused"),
+            ("worktree", "written"),
+            ("tmux", "refused"),
+            ("display", "refused"),
+            ("tmux_var", "none"),
+            ("wayland_var", "none"),
+            ("confined", "1"),
+        ]),
+        "{}",
+        record["command_line"]
+    );
+    assert!(!world.root.join("x-lane").exists() && !world.root.join("child-lane").exists());
+    assert_eq!(
+        record["confinement"],
+        serde_json::json!({"state": "confined"})
+    );
+    let file = std::fs::read_to_string(world.root.join("grants-lane.json")).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&file).unwrap(),
+        grants
+    );
+    let (record, _, report) = world.launch("claude", "desk", true);
+    assert_eq!(
+        report,
+        reported(&[
+            ("home", "refused"),
+            ("child", "refused"),
+            ("worktree", "written"),
+            ("tmux", "refused"),
+            ("display", "reached"),
+            ("tmux_var", "none"),
+            ("wayland_var", "wayland-1"),
+            ("confined", "1"),
+        ]),
+        "{}",
+        record["command_line"]
+    );
+}
+
+/// Copilot CLI's answer is unconfined: under the same grants its launch
+/// runs the harness bare, which reaches what the operator reaches, and the
+/// record names the cause.
+#[test]
+#[cfg(target_os = "linux")]
+fn an_unconfined_harness_launches_bare_and_its_record_names_the_cause() {
+    let world = ConfinedWorld::new();
+    let (record, _, report) = world.launch("copilot", "copilot", false);
+    assert_eq!(
+        record["confinement"],
+        serde_json::json!({"state": "unconfined", "cause": "token-on-session-bus"})
+    );
+    assert_eq!(
+        report,
+        reported(&[
+            ("home", "written"),
+            ("child", "written"),
+            ("worktree", "written"),
+            ("tmux", "reached"),
+            ("display", "reached"),
+            ("tmux_var", "set"),
+            ("wayland_var", "none"),
+            ("confined", "none"),
+        ]),
+        "{}",
+        record["command_line"]
     );
 }

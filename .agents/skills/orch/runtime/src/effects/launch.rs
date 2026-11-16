@@ -1262,6 +1262,7 @@ fn hosted_command(
         cwd: PathBuf::from(&r.mail_root),
         brief_arg: None,
         brief_path: None,
+        confinement: None,
     })
 }
 
@@ -2316,6 +2317,7 @@ mod tests {
             cwd,
             brief_arg: None,
             brief_path: None,
+            confinement: None,
         }
     }
 
@@ -2615,6 +2617,7 @@ mod tests {
                 compaction_env: None,
                 extra_args: Vec::new(),
                 program: None,
+                grants: None,
             };
             let cwd = intent.cwd.clone();
             lane_words(&mut intent, &cwd);

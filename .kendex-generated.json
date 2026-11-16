@@ -14,6 +14,7 @@
   ".agents/skills/agent-runtime/runtime/src/accounts/walk.rs",
   ".agents/skills/agent-runtime/runtime/src/accounts/wall.rs",
   ".agents/skills/agent-runtime/runtime/src/clock.rs",
+  ".agents/skills/agent-runtime/runtime/src/confine.rs",
   ".agents/skills/agent-runtime/runtime/src/context.rs",
   ".agents/skills/agent-runtime/runtime/src/controller/effect.rs",
   ".agents/skills/agent-runtime/runtime/src/controller/handoff.rs",

@@ -1136,6 +1136,10 @@ struct LaunchRecord {
     /// read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     baseline: Option<Vec<String>>,
+    /// Whether an intent that named grants runs its harness confined, or
+    /// the cause it runs without the wrapper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confinement: Option<agent_runtime::confine::Answer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stopped: Option<StopRecord>,
 }
@@ -1797,6 +1801,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 harness_process: None,
                 native_session: None,
                 baseline,
+                confinement: command
+                    .confinement
+                    .as_ref()
+                    .map(agent_runtime::confine::Confinement::answer),
                 stopped: None,
             };
             // The record names the window before its line is typed, so an

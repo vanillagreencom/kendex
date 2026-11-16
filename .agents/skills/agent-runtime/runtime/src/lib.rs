@@ -8,6 +8,7 @@
 
 pub mod accounts;
 pub mod clock;
+pub mod confine;
 pub mod context;
 pub mod controller;
 #[allow(

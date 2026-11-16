@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::confine::{Confinement, Grants};
 use crate::error::{Error, Result};
 use crate::harness::{Harness, PermissionMeaning};
 
@@ -122,6 +123,11 @@ pub struct LaunchIntent {
     /// an install at a configured location. Absolute.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program: Option<PathBuf>,
+    /// What a worker's launch may reach: the harness runs inside the
+    /// wrapper unless its own answer is unconfined. `None` spells no
+    /// wrapper, as a controller's launch does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grants: Option<Grants>,
 }
 
 fn brief_none() -> Brief {
@@ -143,6 +149,10 @@ pub struct LaunchCommand {
     pub brief_arg: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief_path: Option<PathBuf>,
+    /// For an intent that names grants: the wrapper the line runs the
+    /// program under, or why this harness runs without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confinement: Option<Confinement>,
 }
 
 /// The names every launch clears, so the child never writes the launching
@@ -169,10 +179,10 @@ pub const LAUNCH_SCRUB: [&str; 10] = [
 ];
 
 /// The desktop session's display names, through which a key, pointer or
-/// capture tool finds the owner's screen. A worker's launch clears them; a
-/// controller acts on the owner's desktop, so its launch keeps what its
-/// window's environment holds, which is the server environment its opener
-/// started.
+/// capture tool finds the owner's screen. A worker's launch clears them
+/// unless its grants authorize the desktop; a controller acts on the
+/// owner's desktop, so its launch keeps what its window's environment
+/// holds, which is the server environment its opener started.
 pub const DESKTOP_DISPLAY: [&str; 3] =
     ["WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"];
 
@@ -222,11 +232,18 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     let mut args: Vec<String> = Vec::new();
     let mut env = intent.env.clone();
     let mut env_remove = intent.env_remove.clone();
-    let desktop: &[&str] = if intent.agent.as_deref() == Some(CONTROLLER_AGENT) {
+    let desktop: &[&str] = if intent.agent.as_deref() == Some(CONTROLLER_AGENT)
+        || intent.grants.as_ref().is_some_and(|g| g.desktop)
+    {
         &[]
     } else {
         &DESKTOP_DISPLAY
     };
+    let confinement = intent
+        .grants
+        .as_ref()
+        .map(|grants| crate::confine::confinement(crate::confine::Host::this(), h, grants))
+        .transpose()?;
     for &name in LAUNCH_SCRUB.iter().chain(desktop) {
         if !env_remove.iter().any(|n| n == name) {
             env_remove.push(name.to_owned());
@@ -420,6 +437,7 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         cwd: intent.cwd.clone(),
         brief_arg,
         brief_path,
+        confinement,
     })
 }
 
@@ -513,11 +531,25 @@ impl LaunchCommand {
     /// run time. The shell is replaced, so the pane lives exactly as long
     /// as the harness: a pane gone is a harness exited, which is the one
     /// positive reading of an exit a launcher can take from the host.
+    /// A confined command writes its grants file first and runs the
+    /// wrapper as the program, the harness its command: the wrapper's
+    /// process holds the pane, the harness below it.
     pub fn shell_line(&self) -> String {
         let mut line = String::new();
         line.push_str("cd ");
         line.push_str(&shell_quote(&self.cwd.display().to_string()));
         line.push_str(" && ");
+        let wrapper = match &self.confinement {
+            Some(Confinement::Confined { wrapper }) => Some(wrapper),
+            Some(Confinement::Unconfined { .. }) | None => None,
+        };
+        if let Some(wrapper) = wrapper {
+            line.push_str(&format!(
+                "printf '%s\\n' {} > {} && ",
+                shell_quote(&wrapper.text),
+                shell_quote(&wrapper.file.display().to_string())
+            ));
+        }
         if !self.env_remove.is_empty() || !self.env.is_empty() {
             line.push_str("exec env");
             for name in &self.env_remove {
@@ -531,6 +563,14 @@ impl LaunchCommand {
             line.push(' ');
         } else {
             line.push_str("exec ");
+        }
+        if let Some(wrapper) = wrapper {
+            line.push_str(&shell_quote(&wrapper.program));
+            for word in &wrapper.words {
+                line.push(' ');
+                line.push_str(&word.shell());
+            }
+            line.push(' ');
         }
         line.push_str(&shell_quote(&self.program));
         for (index, arg) in self.args.iter().enumerate() {
@@ -584,6 +624,7 @@ mod tests {
             compaction_env: None,
             extra_args: Vec::new(),
             program: None,
+            grants: None,
         }
     }
 

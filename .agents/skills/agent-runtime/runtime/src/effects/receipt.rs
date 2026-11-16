@@ -276,6 +276,7 @@ mod tests {
             cwd: dir.path().to_path_buf(),
             brief_arg: None,
             brief_path: None,
+            confinement: None,
         };
         let line = launch_line(&path, ID, &command);
         // The pane shell is bash here; the line's own words run under sh.

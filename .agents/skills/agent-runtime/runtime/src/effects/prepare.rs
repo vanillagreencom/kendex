@@ -130,6 +130,7 @@ pub fn build_launch(
         compaction_env: spec.opener.compaction_env.clone(),
         extra_args: spec.extra_args.to_vec(),
         program: engine.harness_binaries.get()?.remove(&spec.harness),
+        grants: None,
     };
     let command = crate::launch::build(&intent)?;
     Ok((intent, command))
