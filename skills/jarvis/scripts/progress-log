@@ -342,8 +342,9 @@ def home_check(home, handoff):
             # predecessor pointer, never to an inferred generation or date.
             for number, line in enumerate(lines, 1):
                 if re.match(r"\s*(?:- )?(?:\*\*)?Predecessor", line, re.I):
-                    for path in re.findall(r"(?:state/)?archive/[^\s`)]+\.md", line):
-                        target = path if path.startswith("state/") else "state/" + path
+                    for path in re.findall(r"(?:state/(?:[^\s`)]+/)?)?archive/[^\s`)]+\.md", line):
+                        target = (path if path.startswith("state/") else
+                                  os.path.relpath(archive_dir(handoff) / path.removeprefix("archive/"), home))
                         if not tracked_archive(home, target, tracked):
                             failures.append((name, number, "predecessor-archive", "workflows/session.md:102"))
             try:

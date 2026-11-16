@@ -162,26 +162,48 @@ class ProgressLog(MailWorld):
         selected.parent.mkdir()
         good = state_handoff("- KEN-1: next\n")
         selected.write_text(good)
+        archive = selected.parent / "archive/earlier.md"
+        archive.parent.mkdir()
+        default_archive = self.home / "state/archive/earlier.md"
+        default_archive.parent.mkdir()
+        default_archive.write_text("# Unrelated default archive\n")
         self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
         self.assertEqual(self.command(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
                                        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                                        "commit", "-qm", "established selected handoff"], self.home).returncode, 0)
         for selector in ("state/delegate/handoff.md", selected):
-            for label, content, expected in (
-                    ("valid", good, []),
-                    ("required section", good.replace("## Sub-agents", "## Other"),
+            # session.md's replacement workflow archives beside the selected handoff.
+            for label, content, tracked, expected in (
+                    ("valid", good, False, []),
+                    ("required section", good.replace("## Sub-agents", "## Other"), False,
                      [("state/delegate/handoff.md", "1", "handoff-sub-agents")]),
-                    ("deleted", None,
-                     [("state/delegate/handoff.md", "1", "recovery-entry-missing")])):
+                    ("deleted", None, False,
+                     [("state/delegate/handoff.md", "1", "recovery-entry-missing")]),
+                    ("selected archive", state_handoff("Predecessor archive: [earlier](archive/earlier.md)\n"), True, []),
+                    ("selected home-relative archive", state_handoff("Predecessor archive: [earlier](state/delegate/archive/earlier.md)\n"), True, []),
+                    ("missing selected archive", state_handoff("Predecessor archive: [earlier](archive/earlier.md)\n"), False,
+                     [("state/delegate/handoff.md", "5", "predecessor-archive")]),
+                    ("missing home-relative selected archive", state_handoff("Predecessor archive: [earlier](state/delegate/archive/earlier.md)\n"), False,
+                     [("state/delegate/handoff.md", "5", "predecessor-archive")]),
+                    ("default home-relative archive", state_handoff("Predecessor archive: [earlier](state/archive/earlier.md)\n"), False, [])):
                 with self.subTest(selector=selector, row=label):
                     if content is None:
                         selected.unlink()
                     else:
                         selected.write_text(content)
+                    if tracked:
+                        archive.write_text("# Selected predecessor\n")
+                    else:
+                        archive.unlink(missing_ok=True)
                     # Default violations are irrelevant when an override selects another file.
                     self.handoff.write_text("## State\n")
                     self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
                     selected.write_text(good)
+                    # Neither an unstaged archive nor an unstaged deletion changes the candidate.
+                    if tracked:
+                        archive.unlink()
+                    else:
+                        archive.write_text("# Unstaged predecessor\n")
                     self.assert_home_check(expected, selector)
         self.assertEqual(self.command(["git", "add", "--all"], self.home).returncode, 0)
         self.assert_home_check([("state/handoff.md", "1", "handoff-sub-agents"),
@@ -345,6 +367,8 @@ class ProgressLog(MailWorld):
         mutations = (
             ('for field in ("Source", "Date", "Supersedes", "Replaced by"):', 'for field in ():', "test_home_structure"),
             ('selected = os.path.relpath(handoff, home)', 'selected = str(DEFAULT_HANDOFF)',
+             "test_selected_commit_handoff"),
+            ('os.path.relpath(archive_dir(handoff) / path.removeprefix("archive/"), home)', '"state/" + path',
              "test_selected_commit_handoff"),
             ('if not tracked_archive(home, target, tracked):', 'if target not in tracked:',
              "test_predecessor_tracked_symlinks"),
