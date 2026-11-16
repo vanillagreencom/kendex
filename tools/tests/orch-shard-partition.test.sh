@@ -1297,13 +1297,16 @@ main_only_filters() { # WORKFLOW CONTEXT [FIELD] ; a resolved shared suite input
   gh_eval value "$2" "$expr" | jq -er 'select(type == "string")'
 }
 dedicated_rows() { # WORKFLOW ; suite|shard|os from the dedicated include matrix
-  awk '
-    /^  [A-Za-z0-9_-]+:/ { active = ($1 == "skill-suites-main-only:") }
-    active && /^          - suite: / { suite = $3 }
-    active && /^            shard: / { shard = $2 }
-    active && /^            os: / { print suite "|" shard "|" $2 }
-  ' "$1"
+  local expr
+  expr="$(matrix_expr "$1" include skill-suites-main-only)" || return
+  [[ -n "$expr" ]] || return 1
+  gh_eval value '{"needs":{"changes":{"result":"failure"}}}' "$expr" |
+    jq -er '.[] | [.suite,.shard,.os] | join("|")'
 }
+# A failed selector retains exactly the same workflow-owned declarations.
+main_declared="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")"
+check "dedicated fallback preserves declared native entries" \
+  "$(jq -er '.[] | [.suite,.shard,.os] | join("|")' <<<"$main_declared")" "$(dedicated_rows "$WORKFLOW")"
 dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
   local suite shard os ctx temporary filters rows="$TMP/dedicated-rows" claims="$TMP/dedicated-row"
   dedicated_rows "$1" > "$rows" || return
@@ -1414,26 +1417,17 @@ for os in ubuntu-latest macos-latest; do
     [[ "$fault" == native-empty || "$os" == ubuntu-latest ]] || continue
     [[ "$fault" != native-empty || "$os" == macos-latest ]] || continue
     mutant="$TMP/event-$fault.yml"
-    awk -v fault="$fault" '
-      /^  [A-Za-z0-9_-]+:/ { active = ($1 == "skill-suites-main-only:") }
-      active && ((fault != "native-empty" && /^          - suite: orch-shard-partition.test$/) ||
-                 (fault == "native-empty" && /^          - suite: critical-path-deny.test$/)) { row = 3; hits++ }
-      row {
-        if (fault == "native-empty") {
-          held = held $0 "\n"; print; row--
-          if (!row) { sub(/os: ubuntu-latest/, "os: macos-latest", held); printf "%s", held; held = "" }
-          next
-        }
-        if (fault == "duplicated") held = held $0 "\n"
-        if (fault == "wrong-shard" && /shard: guards-tools-tail$/) sub(/guards-tools-tail$/, "guards-hooks")
-        if (fault != "omitted") print
-        row--
-        if (!row && fault == "duplicated") { printf "%s", held; held = "" }
-        next
-      }
-      { print }
-      END { exit hits == 0 }
-    ' "$WORKFLOW" > "$mutant" || { bad "event control matched no dedicated entry"; continue; }
+    declarations="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")" || exit 1
+    changed="$(jq -c --arg fault "$fault" '
+      if $fault == "omitted" then map(select(.suite != "orch-shard-partition.test"))
+      elif $fault == "duplicated" then . + [.[] | select(.suite == "orch-shard-partition.test")]
+      elif $fault == "wrong-shard" then map(if .suite == "orch-shard-partition.test" then .shard = "guards-hooks" else . end)
+      else . + [.[] | select(.suite == "critical-path-deny.test") | .os = "macos-latest"] end' <<<"$declarations")" || exit 1
+    awk -v old="$declarations" -v new="$changed" '
+      { pos = index($0, old)
+        if (pos) { $0 = substr($0, 1, pos - 1) new substr($0, pos + length(old)); n++ }
+        print
+      } END { exit n != 2 }' "$WORKFLOW" > "$mutant" || { bad "event control matched no dedicated entry"; continue; }
     edited "$WORKFLOW" "$mutant" "event-$fault"
     rc=0
     event_claims "$mutant" push "$os" "$major" > "$TMP/event-control" || rc=$?

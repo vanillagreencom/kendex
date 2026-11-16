@@ -43,7 +43,10 @@ name: Skill Tests
 # same-head merge group did not prove them: the `changes` job reads that
 # group's shard jobs through `tools/ci-job-set`, whose push route states the
 # proof, and an unread, failed, pending or absent proof runs the shard. The
-# temporary main-only suites run on every push. THE NIGHTLY RUN, the daily schedule on main, also runs the
+# temporary main-only suites follow the same package reach before proof subtraction.
+# Cache-only cargo legs run only on build inputs. THE NIGHTLY RUN tests a
+# head only when it differs from the latest successful scheduled run of this
+# workflow on main; unread evidence runs it. A night that runs keeps the
 # full macOS shell roster, the macOS cargo tests and the Windows tests; a
 # manual dispatch runs the same jobs on demand. A macOS or Windows failure
 # that independently passing changes cause only in combination, or that no
@@ -155,14 +158,14 @@ jobs:
   # check nothing will report.
   #
   # The class is read on merge_group alone. A pull request runs no lane, and
-  # the nightly run runs its fixed jobs without a class. On a push to main
-  # only the root checkout and the select step run: tools/ci-job-set reads
+  # the nightly run compares scheduled heads without a class. On main pushes
+  # and schedules only the root checkout and select step run. ci-job-set reads
   # the same-head merge group's shard jobs, which `actions: read` admits,
   # and publishes the shards that group left unproved. The root checkout
   # there is main itself.
   changes:
     name: Classify the diff
-    if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -189,6 +192,9 @@ jobs:
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
       skipped_suites: ${{ steps.select.outputs.skipped_suites }}
+      cache_compile: ${{ steps.select.outputs.cache_compile }}
+      main_suites: ${{ steps.select.outputs.main_suites }}
+      nightly: ${{ steps.select.outputs.nightly }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
     # tools/ci-aggregate run from the group's tree, held by review.
@@ -198,6 +204,9 @@ jobs:
       EVENT: ${{ github.event_name }}
       BASE: ${{ github.event.merge_group.base_sha }}
       HEAD: ${{ github.event.merge_group.head_sha }}
+      PUSH_BEFORE: ${{ github.event.before }}
+      PUSH_AFTER: ${{ github.event.after }}
+      MAIN_ONLY_SUITES: '[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"},{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"},{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]'
     steps:
       # THREE CHECKOUTS, and the split is the point. The classifier is the
       # DEFAULT BRANCH's copy, where the change's author cannot change
@@ -214,6 +223,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: the classifier, from the default branch
         if: github.event_name == 'merge_group'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1577,11 +1587,11 @@ jobs:
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && ((github.event_name == 'schedule' && (needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false')) || github.event_name == 'workflow_dispatch') }}
     strategy:
       fail-fast: false
       matrix:
-        shard: *skill-suite-shards
+        shard: [review-gate, refresh, guards-scans, guards-commit, guards-commit-tail, guards-hooks, guards-hooks-tail, guards-tools, guards-tools-tail, linear, linear-controls, worktree, worktree-restack, rest, jarvis, slack, mailbox, node, pi-claude-bridge]
         os: [macos-latest]
         # The native eligibility owner declares unsupported and empty shards,
         # and those whose families another macOS job retains. The partition
@@ -1634,23 +1644,12 @@ jobs:
   # Real failures stay red here. This family is deliberately absent from CI's needs.
   skill-suites-main-only:
     name: Temporary main suite (${{ matrix.suite }}, ${{ matrix.os }})
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.changes.result != 'success' || needs.changes.outputs.main_suites != '[]') }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suite: critical-path-deny.test
-            shard: guards-hooks
-            os: ubuntu-latest
-          - suite: orch-shard-partition.test
-            shard: guards-tools-tail
-            os: ubuntu-latest
-          - suite: pi-agents-tmux
-            shard: node
-            os: ubuntu-latest
-          - suite: adopt-refresh.test
-            shard: refresh
-            os: ubuntu-latest
+        include: ${{ fromJSON(needs.changes.result != 'success' && '[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"},{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"},{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]' || needs.changes.outputs.main_suites) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
@@ -1759,7 +1758,7 @@ jobs:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_linux.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1847,7 +1846,7 @@ jobs:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_macos.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2122,7 +2121,7 @@ jobs:
     name: Windows cargo (core and CLI targets compile)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_windows_check.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -2152,7 +2151,7 @@ jobs:
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -2187,7 +2186,7 @@ jobs:
   # The default catalog must pass the released engine's strict validation.
   catalog:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     permissions:
       contents: read
     # Each merge-group part renders the catalog and runs its share of the
@@ -2222,7 +2221,7 @@ jobs:
   # and does not test these renderer binaries.
   smoke:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     name: real-CLI round trip
     permissions:
       contents: read

@@ -246,11 +246,11 @@ PUBLISHED_BY_SCRIPT="$(selection standard false 'crates/core/src/lib.rs' |
 [ "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" | grep -c .)" -gt 0 ] ||
   { echo "ci-job-set published no lane, so the extractor is broken" >&2; exit 1; }
 check "the changes job publishes exactly the lanes ci-job-set selects" \
-  "$PUBLISHED_BY_SCRIPT" "$(published_map "$WORKFLOW" | awk '{ print $1 }' | LC_ALL=C sort)"
+  "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" cache_compile main_suites nightly | LC_ALL=C sort)" "$(published_map "$WORKFLOW" | awk '{ print $1 }' | LC_ALL=C sort)"
 check "each published lane is the select step's line of the same name" "" \
   "$(published_map "$WORKFLOW" | awk '$1 != $2')"
 check "the gates read exactly the lanes ci-job-set selects" \
-  "$PUBLISHED_BY_SCRIPT" "$(lanes_read "$WORKFLOW")"
+  "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" cache_compile main_suites nightly | LC_ALL=C sort)" "$(lanes_read "$WORKFLOW")"
 GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 [ "$(printf '%s\n' "$GATE_PAIRS" | grep -c .)" -gt 0 ] ||
   { echo "no gated job read out of $WORKFLOW, so the extractor is broken" >&2; exit 1; }
@@ -264,7 +264,7 @@ GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 aggregate_gap() { # WORKFLOW AGGREGATE — `lanes: missing= extra= events: missing= extra=`
   local wf="$1" agg="$2" needs job expr group held=""
   needs="$(job_needs "$wf" | awk -F '\t' -v j="$agg" '$1 == j { print $2 }' | tr ',' '\n' | grep .)" || needs=""
-  gate_pairs "$wf" >"$TMP/gap-gates"
+  gate_pairs "$wf" | grep -vE '^(cache_compile|main_suites|nightly):' >"$TMP/gap-gates"
   job_ifs "$wf" >"$TMP/gap-ifs"
   while IFS= read -r job; do
     grep -q ":$job\$" "$TMP/gap-gates" && continue
@@ -310,7 +310,7 @@ gated_jobs() { # WORKFLOW
 running() { # WORKFLOW SELECTION [RESULT] [EVENT] — the gated jobs that run, sorted and spaced
   local wf="$1" sel="$2" result="${3:-success}" event="${4:-pull_request}" map="$TMP/published-map" job expr
   published_map "$wf" >"$map"
-  gated_jobs "$wf" >"$TMP/gated"
+  gated_jobs "$wf" | grep -vE '^skill-suites-(macos|main-only)$' >"$TMP/gated"
   job_needs "$wf" >"$TMP/needs"
   job_ifs "$wf" | while IFS="$(printf '\t')" read -r job expr; do
     grep -qxF -- "$job" "$TMP/gated" &&
@@ -334,7 +334,7 @@ EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-m
 # What a merge group runs of it: every lane.
 EVERY_GROUP_LANE="$EVERY_GATED"
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
-  "$(gated_jobs "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
+  "$(gated_jobs "$WORKFLOW" | grep -vE '^skill-suites-(macos|main-only)$' | tr '\n' ' ' | sed 's/ $//')"
 
 one_skill="$(selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
@@ -381,12 +381,13 @@ event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted
 }
 # A main push runs its fixed jobs and the shell shards its group left
 # unproved: none, some on both runners, or every one where changes failed.
-MAIN_FIXED="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
-MAIN_JOBS="$MAIN_FIXED skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
-PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[]'
-PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"]'
-PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[]'
-NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos smoke"
+MAIN_FIXED="cargo-check-windows catalog changes"
+MAIN_COMPILE="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
+MAIN_JOBS="$MAIN_COMPILE skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
+PUSH_PROVED='cache_compile=false main_suites=[] shell_shards=false shell_os=[] shards=[] queue_macos_shards=[]'
+PUSH_REST='cache_compile=false main_suites=[{}] shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"]'
+PUSH_LINUX='cache_compile=false main_suites=[{}] shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[]'
+NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke"
 # EVENT|RESULT|SELECTION|EXPECTED. A pull request runs `CI` alone for a
 # Rust-only diff, a docs-only diff and a dead classifier alike.
 event_rows=0
@@ -400,12 +401,15 @@ pull_request|success|$PROSE_ROW|ci
 pull_request|failure|$ALL_OFF|ci
 merge_group|success|$VERIFY_ROW|bot-instructions changes ci markdown preflight
 merge_group|success|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows changes ci markdown preflight
-push|success|$PUSH_PROVED|$MAIN_FIXED skill-suites-main-only smoke
-push|success|$PUSH_REST|$MAIN_JOBS
+push|success|$PUSH_PROVED|$MAIN_FIXED smoke
+push|success|$PUSH_REST|$MAIN_FIXED skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke
 push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-main-only skill-suites-shard smoke
 push|failure|$ALL_OFF|$MAIN_JOBS
 schedule|skipped|$ALL_OFF|$NIGHTLY_JOBS
-workflow_dispatch|skipped|$ALL_OFF|$NIGHTLY_JOBS
+workflow_dispatch|skipped|$ALL_OFF|${NIGHTLY_JOBS/ changes/}
+schedule|success|nightly=false|changes
+schedule|success|nightly=true|$NIGHTLY_JOBS
+workflow_dispatch|success|nightly=false|${NIGHTLY_JOBS/ changes/}
 ROWS
 [ "$event_rows" -ge 12 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
 
@@ -848,8 +852,7 @@ ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can ru
   local wf="$1" ci job expr main_only=""
   ci="$(jobs_named "$wf" CI)"
   while IFS=$'\t' read -r job expr; do
-    case "$expr" in *needs.*) continue ;; esac
-    if [ "$(gh_eval value '{"github":{"event_name":"merge_group"}}' "$expr")" = false ]; then
+    if [ "$(gh_eval value '{"github":{"event_name":"merge_group"},"needs":{"changes":{"result":"failure","outputs":{}}}}' "$expr")" = false ]; then
       main_only="$main_only$job\n"
     fi
   done < <(job_ifs "$wf")
@@ -901,7 +904,7 @@ done <<'ROWS'
 merge_group|true
 pull_request|false
 push|true
-schedule|false
+schedule|true
 workflow_dispatch|false
 ROWS
 
