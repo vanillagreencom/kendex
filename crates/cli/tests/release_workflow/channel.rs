@@ -617,7 +617,8 @@ fn a_main_run_holds_its_pending_targets_until_publication() {
     };
     check(&workflow);
 
-    let block = format!("concurrency:\n  group: {group}\n  cancel-in-progress: false\n  queue: max\n");
+    let block =
+        format!("concurrency:\n  group: {group}\n  cancel-in-progress: false\n  queue: max\n");
     assert_eq!(workflow.matches(&block).count(), 1);
     // Preserve every matched line in a shell no-op. Removing just the outer
     // block recreates the live mixed running/pending case: all job groups
