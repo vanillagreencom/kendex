@@ -28,7 +28,7 @@ printf '%s\n' "$payload" >>"${CURL_PAYLOAD_LOG:?}"
 issue=$(jq -cn --arg id "$(jq -r '.variables.id // "PROJ-1"' <<<"$payload")" --arg mode "$SYNC_MODE" --arg form "$CASE_FORM" '
   {id: $id, identifier: $id, title: "Reporter title",
    description: (if $form == "completion" then "## Done when\n- [ ] read" else "Reporter body" end),
-   team: {id: "team-id", key: "PROJ", name: "Project"},
+   team: {id: "7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47", key: "PROJ", name: "Project"},
    state: {name: "Todo", type: "unstarted"}, labels: {nodes: [], pageInfo: {hasNextPage: false}},
    relations: {nodes: [], pageInfo: {hasNextPage: false}},
    inverseRelations: {nodes: [], pageInfo: {hasNextPage: false}},
