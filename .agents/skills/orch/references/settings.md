@@ -1,79 +1,221 @@
 # Settings
 
-Read when a workflow, a reference or a `--help` names a setting and the task needs where it is set, what it does or its default. A committed default goes in `kendex.settings.toml` under `[env]`; a secret or a personal override goes in `.env.local`. Installation adds no settings; [kendex.settings.toml.example](../kendex.settings.toml.example) is the annotated guide.
+Read when a workflow, a reference or a `--help` names a setting and the task needs where it is set, what it changes or its default. The annotated guide a consumer copies from is [kendex.settings.toml.example](../kendex.settings.toml.example). Installation adds no settings.
 
-| Variable | Purpose | Default |
-|---------|---------|---------|
-| `ORCH_STATE_DIR` | Workflow state directory; the `--state-dir` flag wins where both are set | `tmp` |
-| `ORCH_ARCHIVE_ROOT` | Archive folder. The runtime archives there in its retention duty, `state remove` and an item's terminal close-out in its close; `lane-mail compact` and SSH lane close archive there through `scripts/lib/state-archive.sh`, which needs Python for a configured value. Set an absolute path outside linked worktrees and state or mailbox folders. A configured value requires a readable Git worktree list. A relative or `~` value refuses each archive write, the runtime's as `setting-invalid`; the settings load accepts it | `${FLEET_DIR:-$HOME/.fleet}/archive` |
-| `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims, the weekly walls recorded from lane banners and cached account usage, shared by the runtime and `lanes` | `tmp/oversee-watch` under the project root |
-| `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names, matched case-insensitively and canonicalized | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
-| `CI_WAIT_MAX_SECS` | Budget in seconds of a workflow's CI wait, the repeated `verify-pr` call. Set it above the longest required job's run time | `600` |
-| `CI_FIX_MAX_CYCLES` | Automatic ci-fix cycles for one PR, counted across the heads they push; a passing CI run clears the count | `6` |
-| `QUEUE_WAIT_REACH_CMD` | Bash command `orch-runtime queue-watch` runs in the project's checkout on an `ejected` verdict, for the red group's `reach`. Its standard input is the failed check names on the group head, one per line. `QUEUE_REACH_CLASS`, `QUEUE_REACH_DOCS_ONLY` and `QUEUE_REACH_PATHS`, a file of paths one per line, are the change the item's latest whole-branch validation of the pull request's head recorded. It prints `outside NAME` or `within NAME` for each check it maps and exits `0`. A check it leaves unanswered, any other line or exit, and an empty value each read `unread` | empty |
-| `REVIEW_MAX_CYCLES` | Re-review cycles per issue. `0`: one blockers-only fix round, accepted on its validation without re-review; `1`: one fix round and one re-review of its diff | `1` |
-| `REVIEW_MAX_EXTERNAL_ROUNDS` | External comment-triage passes and automatic review-wait restarts on one PR head | `4` |
-| `REVIEWER_SLOT_BUDGET` | Concurrent agent-session budget counting the primary; `0` is unlimited; how reviews fit it: [skill-rules.md § Reviewer persistence is budget-conditional](skill-rules.md#reviewer-persistence-is-budget-conditional). On Codex, the cap `spawn-adapter slots` reports | `0` |
-| `ORCH_USER_MODE` | `ceo` or `engineer`: [ask set and composition](communication-modes.md), [prose](../../communication/references/messages.md#reader-modes) | `ceo` |
-| `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` takes the recommended one | `auto-recommended` |
-| `ORCH_MERGE_AUTONOMY` | `auto` merges once every gate is green on authorization already given; `ask` requires it per merge | `auto` |
-| `PM_CREATE_AUTONOMY` | Audit creation and cancellation: project-management's `README.md` § Setup | `ask`; `auto` under `ceo` |
-| `ORCH_VERIFY_SCHEDULE` | Free text naming where and how often `/orch verify` runs: a Claude Code routine, a cron job that starts a harness on the base checkout, or the overseer's watch while it runs. Names an existing schedule and starts nothing; what a Stop with open boxes needs of it: [oversee.md § 5](../workflows/oversee.md#5-stop) | empty |
-| `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
-| `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
-| `ORCH_OVERSEER_LANES` | Fleet lane cap: the lanes of every kind but `claude-cloud` a launch's admission counts, [lane-directive.md § Caps](lane-directive.md#caps) | `4` |
-| `ORCH_OVERSEER_CLOUD_LANES` | Claude cloud session cap per overseer: the `claude-cloud` lanes a launch's admission counts, [lane-directive.md § Caps](lane-directive.md#caps) | `10` |
-| `ORCH_CONNECTED_REPOS` | Blank-separated `OWNER/REPO` list of repositories the overseer may launch lanes in beside its own. The watch and `orch-runtime report` run in the overseer's checkout and read each one beside their `--repo` values, a park may wait on a pull request in one, and a cloud launch names each in its `cloud_repo_access` beside the item's repository | empty |
-| `ORCH_MAIN_WORKFLOWS` | Blank-separated `OWNER/REPO:FILE` list of workflow files whose red push or nightly run on `main` the watch reports for that repository, beside `skill-tests.yml` and `ci.yml`, which every repository reads; an entry whose file the repository lacks, or whose repository the watch does not read, is reported | empty |
-| `ORCH_WAKE_PROCESS` | `pgrep -f` wake pattern for `lane-mail-check`. Empty disables the check with no watch record | empty |
-| `ORCH_WAKE_START` | Wake start command printed by the turn-end refusal. Empty disables the check with no watch record | empty |
-| `ORCH_TMUX_VERIFY_SECS` | Seconds, a whole number above zero, that bound each wait the runtime takes on a tmux pane or a harness: a launch's wait for its window to open and the harness to come up at its composer, for the brief's turn in the session file and for that file to be found; a succession's wait for its caller to end; the watch's wake, typed and confirmed within it; and the hosted launch's ssh dial. Twice it, plus a margin, bounds `op --effect-exit`'s wait for a detached job's answer. Any other value refuses a request whose effect reads it as `setting-invalid` before its intent is recorded. `watch run` judges only the watch's own settings at its start, so an invalid value fails each wake pass as `watch-step-failed`, and nothing is typed: [guide](../kendex.settings.toml.example) § Fleet | `15` |
-| `ORCH_VALIDATE_MEMORY_MAX` | Memory cap, swap included, of each validation run the runtime starts as a systemd user unit: a whole number of bytes, or of `K`, `M`, `G` or `T` in base 1024, at least `1G`; any other value refuses the start as `setting-invalid` naming the `floor`. The unit takes `MemoryMax`, `MemorySwapMax=0` and `OOMPolicy=continue` and no `MemoryHigh`, and its runner line names `memory-max=<bytes>`. A run the cap kills ends `validate=FAILING cause=memory-cap limit=<bytes> peak=<bytes>`. A `setsid` or `--attached` run holds no cap, and its runner line says `memory-cap=unavailable cause=<reason>`: [job-units.md](job-units.md) | unset, no cap |
-| `ORCH_LANE_OUTPUT` | Lane pane output, `quiet` or `normal`, which the launch states in the lane's brief; another value refuses the launch `setting-invalid`: [skill-rules.md](skill-rules.md) § Lane Output | `quiet` |
-| `ORCH_ROUND_PRUNE_DISK_PCT` | Disk use percent of the volume holding the item worktree's `target/`, at or past which the `prune-round` request clears that Cargo output at a round's start and records what it freed under `round_prunes`; below it the request records `below-mark`. A value that is no whole percent refuses the request `setting-invalid`: [skill-rules.md](skill-rules.md) § Round Closure | `75` |
-| `ORCH_HANDOFF_CONTEXT_PCT` | Earlier handoff percentage (1 to 100, capped at 90); strict for lane handoff and overseer succession alike: [context rule](oversee-events.md#judgement-rules) | `90` |
-| `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` | Nonnegative whole token reserve for attached agent returns: [pre-panel launch admission](../workflows/review-pr.md#2-prepare-reviewers) and the [native launch refusal](oversee-events.md#judgement-rules). Ordinary checkpoints and succession use the plain mark. | `150000` |
-| `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom mark `orch-runtime accounts pick --fleet --lane` reads through `--min-headroom-pct`. Who judges it on each kind of lane, and the lane's handoff: [skill-rules.md § Round Closure](skill-rules.md#round-closure). Overseer seats keep their own room: [`ORCH_OVERSEER_HEADROOM_PCT`](#orch-overseer-headroom-pct) | `3` |
-| `ORCH_WALL_RELAUNCH` | `auto` has the watch relaunch a walled lane where it can; `ask` leaves every wall to the overseer. When the watch does, and what it reports under each: [oversee-events.md § Event kinds](oversee-events.md#event-kinds), `lane-relaunched` and `usage-limit` | `auto` |
-| `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries the overseer walk, `orch-runtime successor` and `orch-runtime accounts walk --overseer`, tries in order. With the setting unset, a context-mark succession walks the caller's own entry alone, keeping its harness and model; other marks and a first launch walk the default. Each entry's grammar and how its model resolves at launch: [guide](../kendex.settings.toml.example) § Fleet | `claude:standard:high,codex:standard:high` |
-| `ORCH_PR_ORDER` | Publication order: `review-first`, `open-first` or `push-first`. A set value overrides visibility. [`pr-order --help`](../runtime/src/validate/mod.rs) owns the defaults, validation and draft rules | unset |
-| `ORCH_DELIVERY` | `pr` uses pull requests. `push-base` keeps the tier's local checks and review, then fast-forward pushes the resolved base branch. The pushed commit's record: [oversee-events.md § Direct-push cycle records](oversee-events.md#direct-push-cycle-records); when an item takes the PR route instead: [submit-pr.md § 2.1](../workflows/submit-pr.md#21-base-publication) | `pr`, also when unset |
-| `ORCH_LANE_PREFERENCE` | `harness[@host]:model:effort` entries in default-model order; grammar: [guide](../kendex.settings.toml.example) § Fleet; when the overseer walks them: [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) step 3; which entry the walk takes: [Lane preference](lane-directive.md#lane-preference) | unset |
-| Owner-ask settings | `ORCH_QUESTION_TOOL`, `ORCH_ASK_WAIT_MINUTES`, `ORCH_OWNER_EMAIL` (defaults to `KENDEX_USER_EMAIL`), `ORCH_OWNER_ASK_LABEL` (unset by default): [guide](../kendex.settings.toml.example) § Talking to you | |
-| `ORCH_OVERSEER_SUCCESSION` | `on` permits runtime transfers and automatic recovery; `off` refuses transfers and requests no recovery. Each mark under either value: [oversee.md § Succession](../workflows/oversee.md#succession); the watch's recovery: [overseer-session-events.md](overseer-session-events.md) | `on` |
-| `ORCH_OVERSEER_DEAD_PASSES` | Watch passes a weak exited reading of the overseer needs before it is reported, a context that fills its window or a pane its shell holds alone while the recorded process still runs, and the passes a usage banner on its pane the account judgement confirms needs. A proven end is reported on its first pass: the exit record or the session's end row over a pane its shell holds alone, such a pane whose recorded process is gone or whose record names no process, or the pane gone from the recorded server or kept dead there: [guide](../kendex.settings.toml.example) | `2` |
-| <a id="orch-overseer-headroom-pct"></a>`ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which the overseer succeeds onto an account above it and `lane-mail-check` refuses its turn end. An overseer's seat keeps this room for it and what the overseer spends until the binding window's reset. The account judge charges that spend beside a worker's lanes, at the account's measured rate shared among the spenders at the sample. Where no rate is measured, every plan is charged `ORCH_LANE_BURN_PCT_PER_HOUR`. A worker's pick holds the room left after that charge to `min(ORCH_LANE_MAX_PCT, 100 - ORCH_OVERSEER_HEADROOM_PCT)` and returns the seat last. A lane on a seat hands off once its room, less the overseer's spend, is at or below `max(ORCH_HANDOFF_HEADROOM_PCT, ORCH_OVERSEER_HEADROOM_PCT)`. Codex credits count as room on a seat as on any account | `5` |
-| <a id="orch-lane-dirs"></a>`ORCH_LANE_DIRS` | Colon-separated account directories, the accounts the account judge chooses among. An entry is absolute, or relative to `HOME`, so one line in `kendex.settings.toml` names the same accounts on every machine. An entry's harness is read from its files: Copilot's `config.json` or Codex's `auth.json` with no Claude `.credentials.json` beside it, else Claude. Unset, no local account is a candidate, and the roster says `accounts-unconfigured key=ORCH_LANE_DIRS`. An entry whose files cannot be read leaves the listing unread as `account-dir-unreadable path= cause=`, so the pick answers `unjudged`. The judge measures the account `CODEX_HOME` or `COPILOT_HOME` names, and an account a pick names, but never chooses one of them | unset |
-| `ORCH_OVERSEER_WALL_MINUTES` | Projected wall minutes that fire overseer succession. `0` disables it | `20` |
-| `ORCH_OVERSEER_MARK_REPEAT` | Watch passes a standing `overseer-mark` waits before it repeats | `5` |
-| Recording settings | `ORCH_FLEET_LOG_ROW_BYTES`, `ORCH_TAKEOVER_ROWS`, `ORCH_RECORD_RETENTION_DAYS`, `ORCH_PROGRESS_REPORT_DIR`: [recording policy](../schemas/workflow-state.md#recording-policy) | |
-| `ORCH_REPORT_QUIET_HOURS` | Owner-local window in which a report writes and prints with no owner notice; empty disables it. The morning brief and the notices that stay immediate: [oversee-events.md, `report-due`](oversee-events.md#report-due) | `0-7` |
-| `ORCH_OWNER_TIME_ZONE` | Report time zone | `America/Los_Angeles` |
-| Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: [guide](../kendex.settings.toml.example) | |
-| `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | The app token the `approve-head` request reads on every call: a regular file you own, readable by you alone, in a directory no one else can write, holding one token line. Anything else refuses the request `credential` with its `file` and `cause`. Keep it at an absolute path outside lane roots, swapped atomically before expiry by the control VM (hosted) or fleet worker (local) | |
-| `ORCH_OVERSEER_REVIEW_LOGIN` | The token app's bot login, such as `vanillagreen-overseer[bot]`, which each approval records and its read-back matches. Unset, `approve-head` refuses `approval-login` before any call | |
-| `ORCH_COPILOT_HOLD_SECS` | Bound for Copilot's work on a head, in whole seconds above zero written with no sign and no leading zero: any other value refuses the review call and `orch-runtime copilot-wait` as `setting-invalid` and an `approve-head` request with `hold_copilot` as `copilot-hold-setting`. What the review call holds and from when: [gates.md § Copilot requests](gates.md#copilot-requests), **Copilot's work in flight**; `orch-runtime copilot-wait`'s bound: [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse). `approve-head` with `hold_copilot` waits out Copilot's work on the bound head, counted from that wait's start, before it reads the review replies. Requires the token app's repository Checks: read permission | `600` |
-| `ORCH_LANE_HOST` | `lane-host`'s host: `local`, `claude-cloud` (Claude Code's own cloud sessions) or a provider executable, each a [host kind](../schemas/lane-host.md#host-kinds) | `local` |
-| `ORCH_LANE_HOST_MAX_CALLS` / `ORCH_LANE_HOST_BUSY_WAIT_SECS` | Per-home long-call cap and seconds to wait at that cap; [Host protocol](../schemas/lane-host.md#provider-protocol) places the verbs | `4` / `30` |
-| `ORCH_LANE_HOST_SHORT_MAX_CALLS` / `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` | Independent per-home short-call cap and wait; mailbox reads can run while long calls wait on sandbox preparation | `4` / `30` |
-| `ORCH_OVERSEER_HOST` | The provider `overseer-host inspect` reads a recorded overseer session through, for Jarvis's session backend; `tmux` is the included provider. The runtime's controller launches and `orch-runtime register` use tmux directly. [Protocol](../schemas/overseer-host.md) | `tmux` |
-| `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
-| `QA_PERF_RUNNER` / `QA_PERF_WORKLOAD` / `QA_PERF_BASELINE` | The performance review's documented runner command, the workload it measures and the baseline it compares against. `record-qa-decision` records `needs-perf-test` as gating only when all three are set; otherwise it records the signal under `advisory` with `review-unproducible key=<the first unset key>` | empty |
-| `QA_UI_PATHS` | Space-separated path globs whose modification adds the `needs-ui-review` QA signal | empty |
-| `QA_UI_DESIGN_DOC` | Repository path of the design-system doc a dev round that changes a view builds to and the `needs-ui-review` pass judges against; unset is reported as a gap | empty |
-| `RECONCILE_STALE_HOURS` | Hours since its last update after which a started item with no open pull request is a `started-stale` finding of `orch-runtime reconcile-items`. The verb's `--stale-hours` wins; a value that is no whole number refuses `reconcile-threshold-invalid`. `RECONCILE_GH_CLI` names the `gh` the verb runs, `gh` where unset | `24` |
-| `WORKTREE_CLI` | Path to the worktree CLI the runtime drives; empty resolves the installed worktree skill's script | resolved |
-| Reviewer-gate settings | `PR_REVIEW_WAIT_SECS`, `PR_COPILOT_REQUESTS`: [references/gates.md](gates.md) | |
-| <a id="orch-lane-max-pct"></a>`ORCH_LANE_MAX_PCT` | Usage share at or above which the account judge, `orch-runtime accounts pick`, refuses an account for every launch, turn-end mark and succession pick. The judge reads the window that binds the lane: the fullest of the account's weekly and monthly plan windows and the window of the model the lane runs. A five-hour window is never read. A launch is judged on that window's projected use, its measured use plus the lanes' spend to its reset ([`ORCH_LANE_BURN_PCT_PER_HOUR`](#orch-lane-burn-pct-per-hour)); a named account's mark on its measured use. A Codex account past the bound stays a candidate on its credits above `ORCH_LANE_CODEX_CREDIT_FLOOR`, and a grant pool is judged on the grant alone ([`ORCH_LANE_CLOUD_CREDIT_FLOOR`](#orch-lane-cloud-credit-floor)). A seat keeps its overseer's room: [`ORCH_OVERSEER_HEADROOM_PCT`](#orch-overseer-headroom-pct). A pick's `--max-pct` or `--min-headroom-pct` replaces the bound | `95` |
-| <a id="orch-lane-burn-pct-per-hour"></a>`ORCH_LANE_BURN_PCT_PER_HOUR` | A lane's hourly spend in points of five hours' room, charged where the account measured no rate on the window that binds it: a week is charged 5/168 of it an hour, a month 5/720. The judge charges each live lane on the account, and a launch's candidate, from now to the window's reset, at least one hour and one hour where no reset is stated. A measured rate, shared among the lanes live at its sample, replaces it. `0` turns the charge off | `5` |
-| <a id="orch-lane-retire"></a>`ORCH_LANE_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs naming the UTC day an account ends. The judge picks the account until that day and measures it after it, refusing it `retired`; a credential that still answers after its end is one `account-end-contradicted` line under the roster. A provider's `plan-ends` states the same for its rows. Names match as in `ORCH_LANE_EXCLUDE`; an entry naming a path or no calendar day refuses every read of the account judge as `setting-invalid`, which the settings load itself accepts | empty |
-| <a id="orch-lane-exclude"></a>`ORCH_LANE_EXCLUDE` | Comma-separated account names, each an alias or a directory's name with or without its leading dot, never a path. The judge still measures an excluded account and refuses it `excluded` for every lane pick and launch, from this machine's listing, a provider's rows or a stated pool; an overseer's own pick reads its figures. A path refuses every read of the account judge as `setting-invalid`, which the settings load itself accepts | empty |
-| <a id="orch-lane-copilot-pool"></a>`ORCH_LANE_COPILOT_POOL` | Comma-separated `PI_ROOT=USED/GRANTED` pairs: the Copilot pool a Pi root spends on a `github-copilot/` model, as you state it, read for a root no provider row reads. The root is absolute; used and granted are whole credit counts of at most twelve digits, the grant above zero, one entry per root. Any other entry refuses every read of the account judge as `setting-invalid`, which the settings load itself accepts. Under a provider whose account read fails, a Pi pick on that pool with no stated entry answers `unjudged` as `copilot-pool-unread` | empty |
-| <a id="orch-lane-cloud-credit-floor"></a>`ORCH_LANE_CLOUD_CREDIT_FLOOR` | Dollars a Claude cloud or Pi Anthropic API grant must exceed to stay pickable. A pick on a grant pool is judged on the grant alone and spends the grant that expires first: a grant at or below the floor, locked or past its end reads `walled`, and one nothing measured `unmeasured` | `10` |
-| `ORCH_LANE_CODEX_CREDIT_FLOOR` | Credits a spent Codex account must exceed to stay pickable; its rank after plan room: [Lane preference](lane-directive.md#lane-preference). Provisional; lane-day arithmetic: [guide](../kendex.settings.toml.example) | `5000` |
-| `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
-| `ORCH_SIZE_TEST_PATHS` | Extra test-path globs for the shared CI change classification | empty |
+## Where a setting is set
 
-`ORCH_OVERSEER_PREFERENCE`'s accepted forms and their compatibility window: [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet. The refresh report lists the numeric form only.
+The runtime reads each key from the first of these that sets it:
 
-Launch settings and Codex compaction limits: [skill-rules.md](skill-rules.md#coordination), Compaction.
+1. The caller's own environment.
+2. The private env file: `.env.local`, or the project file `KENDEX_ENV_FILE` names. `--no-private-env` skips it.
+3. `.kendex/settings.toml`, under `[env]`.
+4. `kendex.settings.toml`, under `[env]`.
+
+An empty value is an unset one. Commit shared defaults in `kendex.settings.toml`; put a secret or a personal override in the private env file.
+
+The private env file is read as data and never run, one `KEY=VALUE` line at a time with an optional leading `export`. Its two readers differ on a value outside a plain form:
+
+- The runtime (`orch-runtime`, `agent-runtime`) reads a single-quoted string, a double-quoted string or a bare word, with `$HOME`, `${HOME}` and a leading `~` read as the home. Any other shell form of a key only some verbs read is passed over and named on stderr as `settings-skipped path=<file> key=<key> reason=shell-form`. Such a line for `ORCH_STATE_DIR` refuses every verb.
+- The shell loader skill scripts use, `skills/change-scope/scripts/lib/kendex-env.sh`, reads a bare word of letters, digits and `_./:@%+,=-`, or a quoted string with no `$` or backtick inside double quotes. Any other value of a key a script asks for fails that script's load, naming the file and line. It reads no home form.
+
+Write a value both read alike: a bare word or a quoted string with no `$`, `~` or backtick.
+
+## Repository and tools
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_STATE_DIR` | The per-item state folder, relative to the main checkout unless absolute. `--state-dir` wins over it. | `tmp` |
+| `ORCH_ARCHIVE_ROOT` | Where the retention duty and an item's close-out archive what they remove. A set value is an absolute path outside linked worktrees and state or mailbox folders; any other value refuses each archive write, while a verb that writes no archive runs. | unset: no archive is kept |
+| `ORCH_POST_MERGE_CMD` | A Bash command `scripts/post-merge` runs in the base checkout after a sync. `ORCH_POST_MERGE_BEFORE` and `ORCH_POST_MERGE_AFTER` name the range; a failed command keeps the range for the next run. | unset |
+| `RECONCILE_STALE_HOURS` | Hours since its last update after which a started item with no open pull request is a `started-stale` finding of `orch-runtime reconcile-items`. `--stale-hours` wins; a value that is no whole number refuses `reconcile-threshold-invalid`. | `24` |
+| `RECONCILE_GH_CLI` | The `gh` program `reconcile-items` runs. | `gh` |
+| `WORKTREE_CLI` | The worktree program the runtime drives. | `.agents/skills/worktree/scripts/worktree` |
+| `ORCH_AGENT_RUNTIME` | The agent-runtime wrapper the wake duty delivers through. | `.agents/skills/agent-runtime/scripts/agent-runtime` |
+| `LANE_MAIL_CLI` | The mailbox program a lane close asks for unanswered asks. | `.agents/skills/mailbox/scripts/lane-mail` |
+| `CHANGE_SCOPE_PATHS_CLI` | The program the lane admission reads a range's changed paths through. | `.agents/skills/change-scope/scripts/harness-only` |
+| `OVERSEE_WATCH_TRACKER` | The tracker program the watch's tracker duty reads through. | `.agents/skills/linear/scripts/linear.sh` |
+| `OVERSEE_WATCH_PR_WATCH` | The reducer the watch's GitHub duty runs per repository. | `.agents/skills/github/scripts/pr-watch.sh` |
+| `LINEAR_TEAM` | The Linear team the tracker duties, the report and the admission read. Unset leaves the tracker duties off. | unset |
+
+## Review and CI
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_DELIVERY` | `pr` delivers through a pull request. `push-base` keeps the tier's local checks and review, then pushes the resolved base branch. Any other word refuses the verb that reads it `setting-invalid`; a shell-form line refuses it `setting-unread`. | `pr` |
+| `ORCH_PR_ORDER` | Publication order: `review-first`, `open-first` or `push-first`. Unset follows the repository's visibility. `orch-runtime pr order --help` owns the defaults; an order outside the three words refuses. | unset |
+| `ORCH_STAGES` | The optional stages the consumer runs, space-separated: `external-review`, `local-review`, `preflight`, `doc-limits`, `git-hooks`, `focused-proof`. Read from the base checkout's files alone, never the environment. A chosen stage runs whether or not its tool is installed. | unset: every stage; empty: none |
+| `PR_REVIEW_WAIT_SECS` | The reviewer's period on a head: [gates.md](gates.md). | `900` |
+| `PR_REVIEW_ON_TIMEOUT` | What a spent review period answers: [gates.md](gates.md). | `proceed` |
+| `PR_COPILOT_REQUESTS` | Whether Copilot review is requested: [gates.md](gates.md). | `on` |
+| `ORCH_COPILOT_HOLD_SECS` | The bound on Copilot's work in flight on a head, in whole seconds above zero. `approve-head` with `hold_copilot` waits it out from that wait's start before it reads the review replies; work still running at the bound permits the approval while the head stands. Another value refuses the review call and `copilot-wait` `setting-invalid`, and `approve-head` `copilot-hold-setting`. The token app needs the repository's Checks read permission. | `600` |
+| `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | The app token `approve-head` reads on every call: a regular file you own, readable by you alone, in a folder no one else can write, holding one token. Anything else refuses `credential` with its `file` and `cause`. Keep it outside lane roots, swapped atomically before expiry by the host that renews it. | unset |
+| `ORCH_OVERSEER_REVIEW_LOGIN` | The token app's bot login, which each approval records and its read-back matches. Unset, `approve-head` refuses `approval-login` before any call. | unset |
+| `CI_WAIT_MAX_SECS` | The budget of a workflow's CI wait, the repeated `verify-pr` call. Set it above the longest required job. | `600` |
+| `QUEUE_WAIT_ARMED_MINUTES` | Minutes the merge workflow keeps waiting on an armed head whose checks are pending or unmergeable, from the first such result on that head. No runtime code reads it: `workflows/merge-pr.md` reads it through `orch-env QUEUE_WAIT_ARMED_MINUTES 90`. | `90` |
+| `QUEUE_WAIT_ARM_GRACE` | Seconds `queue-watch` keeps polling a pull request no poll has seen queued or armed before answering `not_queued`. | `120` |
+| `QUEUE_WAIT_CONFIRM_POLLS` | Consecutive polls a `conflicting`, `ejected` or `disarmed` reading must hold before `queue-watch` ends on it. | `2` |
+| `QUEUE_WAIT_PROBE_INTERVAL` | The least seconds between two review-thread probes, and between two check probes, of `queue-watch`. | `120` |
+| `QUEUE_WAIT_REACH_CMD` | A Bash command `queue-watch` runs in the project's checkout on an `ejected` verdict. Its input is the group head's failed check names, one per line; `QUEUE_REACH_CLASS`, `QUEUE_REACH_DOCS_ONLY` and `QUEUE_REACH_PATHS` (a file of paths) describe the change. It prints `outside NAME` or `within NAME` per check and exits 0. A check left unanswered, any other line or exit, and an empty value read `unread`. | unset |
+| `CI_FIX_MAX_CYCLES` | Automatic ci-fix cycles for one pull request, counted across the heads they push; a passing CI run clears the count. | `6` |
+| `REVIEW_MAX_CYCLES` | Re-review cycles per item. `0` allows one blockers-only fix round, accepted on its validation without re-review; `1` allows one fix round and one re-review of its diff. | `1` |
+| `REVIEW_MAX_EXTERNAL_ROUNDS` | External comment-triage passes and automatic review-wait restarts on one head. | `4` |
+| `REVIEWER_SLOT_BUDGET` | Concurrent agent sessions a review may hold, the primary counted; `0` is unlimited. How reviews fit it: [skill-rules.md](skill-rules.md). On Codex, `agent-runtime subagent room --harness codex` reads the thread cap. | `0` |
+| `REVIEW_GATE_REFRESH_REVIEW`, `REVIEW_GATE_REFRESH_BRANCH`, `REVIEW_GATE_REFRESH_AUTHOR` | The refresh pull request's review route, branch and author, which `verify-review` reads from the base checkout's policy. | review-gate's |
+
+## Validation
+
+`orch-runtime validate entry --help` owns how a start resolves its mode from these keys.
+
+| Key | What it changes | Default |
+|---|---|---|
+| `DEV_VALIDATE_CMD` | The project's whole battery. Unset, a validation start refuses. | unset |
+| `DEV_VALIDATE_RANGE_CMD` | The command that validates the changes since a base. | unset: no range mode |
+| `DEV_VALIDATE_SELECTION_CMD` | The selector that previews the command's own selection. | unset |
+| `DEV_VALIDATE_TEXT_CMD` | The docs mode's command, an empty value kept. | unset |
+| `DEV_VALIDATE_CI_CONTEXT` | The required status-check context that runs the project's validation. | unset: no CI deferral |
+| `DEV_VALIDATE_FINDING_PREFIX` | The prefix the project's commands print each finding with. Unset, no run is reuse evidence. | unset |
+| `ORCH_VALIDATE_MEMORY_MAX` | The memory a validation run's whole process tree is held to: whole bytes, or `K`, `M`, `G` or `T` in base 1024, at least `1G`. Another value refuses the start `setting-invalid` naming the `floor`. A value over the host's room refuses `memory-short need= room=`. The start line names `memory-bound=<bytes> rule=consumer|host`, or `memory-cap=unavailable cause=` where the room is unread. | unset: the room the host gives the start |
+| `ORCH_ROUND_PRUNE_DISK_PCT` | Disk use percent, `1` to `100`, of the volume holding the lane worktree's `target/`, at or past which `prune-round` clears that Cargo output at a round's start; below it the request records `below-mark`. Another value refuses `setting-invalid`. | `75` |
+| `ORCH_APPLE_WORKFLOW`, `ORCH_APPLE_LABELS` | The macOS run workflow and the item labels that call for it, read by `dev-return write`'s Apple gate. | `.github/workflows/mac-run.yml`, `ios macos` |
+
+## Talking to you
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_USER_MODE` | `ceo` or `engineer`. It composes the three keys below where they are unset: [communication-modes.md](communication-modes.md). Another value reads as `engineer`. | `engineer` |
+| `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` takes the recommended one. | `ask`; `auto-recommended` under `ceo` |
+| `ORCH_MERGE_AUTONOMY` | `ask` requires authorization per merge; `auto` merges once every gate is green. | `ask`; `auto` under `ceo` |
+| `PM_CREATE_AUTONOMY` | Audit creation and cancellation: project-management's README. | `ask`; `auto` under `ceo` |
+| `AGENT_RUNTIME_QUESTION_TOOL` | `off` or `overseer`: whether a launched controller keeps the harness's question dialog. A worker never keeps it. | `off` |
+| `ORCH_ASK_WAIT_MINUTES` | Minutes an owner ask waits when `lane-mail` gets no `--wait`. | `120` |
+| `ORCH_OWNER_EMAIL` | The owner's tracker account, whose comments answer a tracker-posted ask. The answer read needs it and `ORCH_OWNER_ASK_LABEL` both. | `KENDEX_USER_EMAIL` |
+| `ORCH_OWNER_ASK_LABEL` | The label a tracker-posted ask carries. | unset |
+| `ORCH_VERIFY_SCHEDULE` | Free text naming where and how often `/orch verify` runs, such as a routine or a cron job on the base checkout. It starts nothing. A Stop with open boxes needs it: [oversee.md](../workflows/oversee.md) § 5. | unset |
+
+## Reports
+
+`watch/report.rs` judges these at the report; a value outside its form refuses the report naming the key.
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_REPORT` | `on` or `off`: whether the overseer writes progress reports. | `on` |
+| `ORCH_REPORT_EVERY_MINUTES` | Minutes between timed reports; `0` turns the timer off. | `0` |
+| `ORCH_REPORT_EVERY_ISSUES` | Items finished between reports; `0` turns it off. | `0` |
+| `ORCH_REPORT_UPCOMING` | Upcoming items a report lists. | `5` |
+| `ORCH_REPORT_QUIET_HOURS` | Owner-local hours in which a report is written and printed with no owner notice. Empty turns quiet hours off. What stays immediate: [oversee-events.md](oversee-events.md), `report-due`. | `0-7` |
+| `ORCH_OWNER_TIME_ZONE` | The zone the quiet hours and report times read in. | `America/Los_Angeles` |
+
+## Fleet lanes
+
+Launch settings and Codex compaction: [skill-rules.md](skill-rules.md) § Coordination.
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_OVERSEER_LANES` | The fleet cap: lanes of every kind but `claude-cloud` a launch's admission counts. | `4` |
+| `ORCH_OVERSEER_CLOUD_LANES` | The Claude cloud sessions one overseer holds at once. | `10` |
+| `ORCH_LANE_PREFERENCE` | `harness[@host]:model:effort` entries a lane launch walks (`orch-runtime lane walk`). Unset, a launch takes the model it names. Grammar: the example § Fleet. | unset |
+| `ORCH_LANE_OUTPUT` | `quiet` or `normal`: what a lane prints in its pane, stated in its brief. Another value refuses the launch `setting-invalid`. | `quiet` |
+| `ORCH_LANE_HOST` | The lane host: `local`, `claude-cloud` or a provider executable: [lane-host.md](../schemas/lane-host.md) § Host kinds. | `local` |
+| `ORCH_LANE_HOST_MAX_CALLS`, `ORCH_LANE_HOST_BUSY_WAIT_SECS` | The provider's long-call cap per home and the seconds to wait at it. | `4`, `30` |
+| `ORCH_LANE_HOST_SHORT_MAX_CALLS`, `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` | The independent short-call cap and wait, so mailbox reads run while long calls wait. | `4`, `30` |
+| `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` | Seconds the provider's `accounts` verb may take; `0` asks for no bound. | `30` |
+| `ORCH_LANE_CLOUD_REPOS` | `<name>=<owner>/<repo>` pairs: the repository each account can reach, which a `cloud-session` pick admits an account on. | unset |
+| `ORCH_LANE_CLOSE_SECS` | Seconds a lane stop waits after SIGTERM before SIGKILL. | `15` |
+| `ORCH_LANE_WRITABLE` | Further folders a confined local lane may write, `:`-separated, each absolute or `~/`, read from the overseer's settings alone, never the lane's tree. A fleet whose `origin` is a local path or a `file://` remote names that repository here, or its lanes cannot push. An entry that is relative, the home or a folder holding it, or inside an account seat refuses the launch. | unset |
+| `SECOND_OPINION_MODELS` | The second-opinion roster a lane's review walks; a confined lane's grants bind each listed harness's accounts. | `claude codex` |
+| `ORCH_MODEL_RECOVERY_LIMIT` | Model recoveries a lane is relaunched by since its last reset; the one that would reach it is refused and logged. | `3` |
+| `AGENT_RUNTIME_TMUX_VERIFY_SECS` | Seconds a launch waits for the harness to come up at its composer, and the bound of each pane wait. | `15` |
+| `AGENT_RUNTIME_JOB_CLAIM_SECS` | Seconds a transfer's or a stop's caller waits for its detached job to claim the intent. | `15` |
+| `AGENT_RUNTIME_TMUX_SESSION` | The tmux session every harness window opens in, where the caller names none. | unset: the opener's own |
+| `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended; `native` keeps the harness's own prompts. | `bypass` |
+| `AGENT_RUNTIME_HARNESS_BINARIES` | `harness=/absolute/path` pairs, comma-separated, for a harness not on `PATH`. | unset |
+
+A local lane on Linux runs confined, except a Copilot CLI lane, which runs unconfined by name; every lane on macOS runs unconfined. `orch-runtime ready --duty launch` prints `confinement=off harness=<h> cause=<c>` for each.
+
+## Accounts
+
+The account judge, `orch-runtime accounts pick`, reads these through agent-runtime.
+
+| Key | What it changes | Default |
+|---|---|---|
+| <a id="orch-lane-dirs"></a>`AGENT_RUNTIME_ACCOUNT_DIRS` | `:`-separated account folders, each absolute or relative to `HOME`: the accounts the judge picks among. An entry's harness is read from the credential it holds. | unset: no local account is a candidate |
+| `AGENT_RUNTIME_ACCOUNT_ALIASES` | `<discovered name>=<alias>` pairs, the names the roster and the judge use. | unset |
+| <a id="orch-lane-exclude"></a>`AGENT_RUNTIME_ACCOUNT_EXCLUDE` | Comma-separated account names, never paths. The judge still measures an excluded account and refuses it `excluded` for every pick. | unset |
+| <a id="orch-lane-retire"></a>`AGENT_RUNTIME_ACCOUNT_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs: the account is picked until that UTC day and measured after it. | unset |
+| <a id="orch-lane-max-pct"></a>`AGENT_RUNTIME_ACCOUNT_MAX_PCT` | The usage share at or above which a pick refuses an account, read on the window that binds the lane. A launch is judged on that window's projected room: the window charged, for each live lane on the account and the candidate, the burn below until the window's reset. A pick's `--max-pct` replaces it. | `95` |
+| <a id="orch-lane-burn-pct-per-hour"></a>`AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR` | A live session's hourly spend, in points of five hours' room, where its account measured no rate: a week is charged 5/168 of it an hour, a month 5/720. It is charged over the hours left to the window's reset, at least one and at most the window's length, one where no reset is known. A rate the account measured on that window, shared among the spenders at the sample, replaces it; where no lane was live at the sample, a lane is charged no less than this. `0` turns the charge off. | `5` |
+| <a id="orch-overseer-headroom-pct"></a>`AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` | The headroom a controller hands off at, and so the room an overseer's seat keeps for it: a worker's pick holds a seat to `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - this)`. | `5` |
+| `AGENT_RUNTIME_CODEX_CREDIT_FLOOR` | The Codex credit balance above which a walled window still leaves the account pickable. | `5000` |
+| <a id="orch-lane-cloud-credit-floor"></a>`AGENT_RUNTIME_CLOUD_CREDIT_FLOOR` | The dollars a cloud or API credit grant must exceed to be picked. A grant pool is judged on its grant's verdict alone. | `10` |
+| <a id="orch-lane-copilot-pool"></a>`AGENT_RUNTIME_COPILOT_POOL` | `<pi root>=<used>/<granted>` pairs: the Copilot pool each Pi root spends, as you state it, where no login or provider row reads it. | unset |
+| `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | The account records' root: the usage cache and the wall records. Absolute or `~/`. | `kendex/agent-runtime/accounts` under `$XDG_STATE_HOME`, else `~/.local/state` |
+| `AGENT_RUNTIME_USAGE_TTL` | Seconds a cached usage figure is served; `0` declines every cached figure. | `300` |
+| `AGENT_RUNTIME_USAGE_MAX_AGE` | A caller's own pass interval, which widens the cache window and never narrows it. | unset |
+| `AGENT_RUNTIME_CLAUDE_USAGE_URL`, `AGENT_RUNTIME_CODEX_USAGE_URL`, `AGENT_RUNTIME_CLAUDE_TOKEN_URL` | The usage and token endpoints, for a host that reaches them through another address. | the providers' own |
+| `AGENT_RUNTIME_CLAUDE_CLIENT_ID` | The OAuth client id a Claude token renewal posts with. Unset, every expired Claude account reads `error` naming the key. | unset |
+| `CODEX_HOME`, `COPILOT_HOME` | A home the harness's CLI reads: measured as the account it names, never a candidate. | unset |
+
+## Handoff and succession
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_HANDOFF_CONTEXT_PCT` | The share of the context window strictly past which a context reading is due, held to the judge's ceiling: [oversee-events.md](oversee-events.md) § Judgement rules. | `90` |
+| `ORCH_HANDOFF_CONTEXT_TOKENS` | The tokens used at which every context reading is due, whatever the window. | `650000` |
+| `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` | Tokens an attached launch keeps below the context mark for returns still to come: a whole number. Another form refuses the turn end, naming the value and a handoff instruction (`turnend/marks.rs` `agent_reserve`). | `150000` |
+| `ORCH_HANDOFF_HEADROOM_PCT` | The account headroom a lane's turn end hands off at. | `3` |
+| `ORCH_OVERSEER_WALL_MINUTES` | Minutes to the account's wall, at the measured rate, at which the overseer hands off; `0` turns the mark off. | `20` |
+| `ORCH_OVERSEER_MEMORY_PCT` | The percent of its cgroup's memory cap at which the overseer's harness hands off. | unset: no memory mark |
+| `AGENT_RUNTIME_CONTROLLER_SUCCESSION` | `on` or `off`: whether a controller may ask for its own succession. Under `off`, `request-transfer` refuses before any intent persists. | `on` |
+| `AGENT_RUNTIME_CONTROLLER_PREFERENCE` | The `harness:model:effort` entries a succession walks for the successor. Unset, a context mark's succession walks the controller's own entry alone. Grammar: the example § Fleet. | `claude:standard:high,codex:standard:high` |
+| `ORCH_WAKE_PROCESS`, `ORCH_WAKE_START` | For a controller with no live watch claim: a regular expression over each process's command line that names the process that wakes it, and the start command its turn end prints where none runs. | unset |
+
+## Fleet watch
+
+`orch-runtime watch run` judges these at its start.
+
+| Key | What it changes | Default |
+|---|---|---|
+| `OVERSEE_WATCH_STATE_DIR` | The watch's state folder: the claim store and the relaunch markers. | `tmp/oversee-watch` under the main checkout |
+| `ORCH_WATCH_MAIL_INTERVAL` | Seconds between the end of one mail turn and the start of the next. | `20` |
+| `ORCH_OVERSEER_MARK_REPEAT` | Long passes between two repeats of a standing mark or stall line. | `5` |
+| `ORCH_OVERSEER_DEAD_PASSES` | Long passes an overseer pane reads dead before the watch reports it. | `2` |
+| `ORCH_WATCH_TAIL_LINES` | Pane lines a lane event carries. | `12` |
+| `ORCH_WATCH_PREPARE_SECS` | Seconds a lane may read `preparing` before `lane-prepare-stuck`. | `1800` |
+| `ORCH_DIRECTIVE_UNREAD_SECS` | Seconds a sent directive may stay unread before `directive-unread`. | `300` |
+| `ORCH_WATCH_START_STALL_SECS` | Seconds since `running_at` with no status file before `start-stalled`. | `600` |
+| `ORCH_WATCH_LANE_STALL_SECS` | Seconds a cloud lane's head and status may stand before `lane-stalled`. | `3600` |
+| `ORCH_CLOUD_STALL_MINUTES` | Minutes a stalled cloud lane's directive may stay unanswered before the watch closes it. | `30` |
+| `ORCH_WATCH_LANE_AGE_SECS` | Seconds past `launched_at` before `lane-long`. | `12600` |
+| `ORCH_WALL_RELAUNCH` | `auto`: the watch relaunches a walled lane itself; `ask`: it leaves every wall to the overseer. | `auto` |
+| `ORCH_CONNECTED_REPOS` | Further `OWNER/REPO` names the watch's GitHub duty reads beside the fleet's, whitespace-separated. | unset |
+| `ORCH_MAIN_WORKFLOWS` | `OWNER/REPO:FILE` entries whose main-branch runs the watch reads. Another shape refuses the watch's start. | unset |
+| `ORCH_EXTERNAL_TRIAGE` | `on` or `off`: whether the GitHub duty reports outside contributions. | `on` |
+| `ORCH_SECURITY_ALERTS` | `on` or `off`: whether the GitHub duty reads each repository's open security alerts. | `on` |
+| `ORCH_SECURITY_ALERT_TOKEN_FILE` | The installation token file the alert reads run under, held to the same file rules as the review token. Unset or unfit, the alert read refuses `credential`. | unset |
+
+## Recording
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_RECORD_RETENTION_DAYS` | Days past a record's own end before the retention duty removes it; `lane-mail compact` reads it too. | `5` |
+| `ORCH_FLEET_LOG_ROW_BYTES` | Bytes of text one fleet-log row may carry. | `600` |
+| `ORCH_TAKEOVER_ROWS` | Fleet-log rows a successor reads whole at takeover. | `10` |
+| `ORCH_PROGRESS_REPORT_DIR` | The owner progress reports' folder; a relative path joins the main checkout. | `tmp/progress-reports` |
+
+## QA
+
+| Key | What it changes | Default |
+|---|---|---|
+| `QA_PERF_PATHS` | Space-separated globs whose change adds the `needs-perf-test` signal. | unset |
+| `QA_PERF_RUNNER`, `QA_PERF_WORKLOAD`, `QA_PERF_BASELINE` | The performance review's runner command, workload and baseline. `record-qa-decision` records `needs-perf-test` as gating only with all three set; otherwise it records the signal as advisory with `review-unproducible key=<the first unset key>`. | unset |
+| `QA_UI_PATHS` | Space-separated globs whose change adds the `needs-ui-review` signal. | unset |
+| `QA_UI_DESIGN_DOC` | The design-system doc a view-changing round builds to and the UI review judges against. Unset is reported as a gap. | unset |
+
+## Change measurement
+
+change-scope reads these from the base commit's settings files, or the caller's environment: `change-scope --help`.
+
+| Key | What it changes | Default |
+|---|---|---|
+| `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots set aside from production and test counts where their source changes in the same branch. | `.agents .claude .codex .pi` |
+| `ORCH_SIZE_TEST_PATHS` | Extra test-path globs for the measurement. | unset |

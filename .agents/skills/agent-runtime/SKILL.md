@@ -24,24 +24,52 @@ Before changing this skill's scripts, runtime or tests, read DEVELOPMENT.md.
 # Agent Runtime
 
 ```bash
-.agents/skills/agent-runtime/scripts/setup                        # once per source revision, into the user cache
+.agents/skills/agent-runtime/scripts/setup                       # once per source revision, into the user cache
+.agents/skills/agent-runtime/scripts/setup --detach --hold PATH  # from a caller that must answer while it builds
 .agents/skills/agent-runtime/scripts/agent-runtime <verb> --help
 ```
 
-This package owns reusable launch, account-selection mechanics under caller policy, session identity, delivery, handoff and stop. It holds no GitHub policy, issue classification, report formatting, personal tasks or fleet scheduling: a caller supplies its intent and policy and consumes typed results.
+This package owns launch, account selection under the caller's policy, session identity, delivery, handoff and stop for one harness session. It holds no GitHub policy, issue classification, report format, personal task or fleet schedule. A caller supplies its intent and policy and reads typed results.
 
-- One execution contract. A session is started, inspected, handed work and stopped through the CLI verbs `launch`, `inspect`, `deliver` and `stop`; `session`, `probe`, `judge` and `process` are the reads behind them. A caller writes no harness flag, process classifier or stop sequence of its own. The library holds the primitives the CLI verbs compose.
-- Every verb prints one JSON reply on stdout: `protocol` is `agent-runtime-v1`, `ok` is true with a `result` or false with a `refusal` of `key`, `fields` and `text`, never both. A refusal also prints one line `agent-runtime: <key> field=value ...` on stderr and exits 1. Route on the key, never on the text, and refuse a reply whose protocol you do not know.
-- An effect reports an `Outcome`: `not-started`, `confirmed`, `failed` or `unconfirmed`. Reconcile an `unconfirmed` effect before asking for the same effect again.
-- `deliver` refuses unless the judge reads the pane `idle`; the refusal names the state it read. `--force` is for a probe that knows better, never for a workflow.
+## Rules
+
+- Start, read, hand work to and stop a session through `launch`, `inspect`, `deliver` and `stop`. `probe`, `judge`, `session-file`, `rows` and `process` are the reads behind them; `accounts`, `controller`, `session` and `subagent` hold the account judge, the controller's hand-over, the calling session's own record and subagent spawns. Write no harness flag, process classifier or stop sequence of your own.
+- Every verb prints one JSON reply on stdout. `protocol` is `agent-runtime-v1`; `ok` is true with a `result`, or false with a `refusal` of `key`, `fields` and `text`. A refusal also prints `agent-runtime: <key> field=value ...` on stderr and exits 1; a malformed command line prints `agent-runtime: usage` and exits 2. Route on the key, never the text, and refuse a reply whose protocol you do not know.
+- An effect reports an outcome: `not-started`, `confirmed`, `failed` or `unconfirmed`. Reconcile an `unconfirmed` effect before asking for the same effect again.
+- `deliver` refuses unless the judge reads the pane `idle`, and the refusal names the state it read. `--force` is for a probe that knows better, never for a workflow.
 - Stop by recorded identity. `stop` signals the pid and start time the launch record holds, and the harness processes below it, each only while its start still matches. Never stop a session by process name or by a pid alone.
-- Charge a worker that runs outside an orch lane to its account: start it with no controlling terminal as `agent-runtime process lead --file <root>/workers/<name> --account <config dir> -- <program>`, where `<root>` is the account records root the pickers read (`AGENT_RUNTIME_ACCOUNT_STATE_DIR`). Every account pick charges that account while the worker's group runs, and nothing once it ends. The caller owns the file: lead again under the same name, or remove the file after the worker ends.
-- The launch record is a locked, revisioned JSON file written by `launch` and healed by `inspect`; pass the same file to every later verb. Unknown fields in it survive every write.
-- Build route: `scripts/setup` builds the runtime with `cargo build --release --locked` into the user cache, `$AGENT_RUNTIME_CACHE`, else `$XDG_CACHE_HOME/kendex/agent-runtime`, else `~/.cache/kendex/agent-runtime`, under a key that is one sha256 over `runtime/Cargo.toml`, `Cargo.lock`, every file under `src/` and the same inputs of every path dependency the manifest declares, and places the binary at `<cache>/bin/agent-runtime-<key>` in one rename. A dirty tree builds its own key; a repeated setup for an existing key builds nothing. Offline, pass `--offline`; the build then needs every locked dependency in the cargo cache. Nothing is built into the installed files. The same route builds another skill's runtime crate that depends on this one: `scripts/setup --runtime DIR --name NAME` places `<cache>/bin/NAME-<key>`, and that skill's wrapper computes the key through `scripts/lib/key.sh`; orch's `scripts/setup` and `scripts/orch-runtime` are the one such pair.
-- Run through `scripts/agent-runtime`, which runs the binary for the sources beside it. Without that binary it prints `agent-runtime: setup-required key=<key> run=<path to scripts/setup>` on stderr and exits 69, and builds nothing: run setup before a hook or caller needs the binary, since nothing compiles on a hook path or a status read.
+- `launch` writes the launch record, a locked, revisioned JSON file; `inspect` heals it as the harness comes up. Pass the same file to every later verb. Fields the runtime does not know survive every write.
+- Charge a worker that runs outside an orch lane to its account. Start it with no controlling terminal as `agent-runtime process lead --file <root>/workers/<name> --account <config dir> -- <program>`, where `<root>` is the account records root, `AGENT_RUNTIME_ACCOUNT_STATE_DIR`. Every account pick charges that account while the worker's group runs. A file outside `workers/` refuses `group-file-uncounted`. The caller owns the file: lead again under the same name, or remove it after the worker ends.
+
+## Confinement
+
+A launch intent that names `grants` runs the harness inside a kernel boundary. On Linux the line runs it under `bwrap`: the whole tree read-only, a private `/tmp`, the user's runtime folder hidden, and only the granted paths bound back writable. Every process the harness starts is inside too. A controller's intent names no grants and runs unconfined.
+
+- Copilot CLI runs unconfined on every host, `cause=token-on-session-bus`.
+- Every harness runs unconfined on a host other than Linux, `cause=macos-profile-unbuilt`.
+- The launch record names the answer, `confined` or `unconfined` with its cause. No setting changes it.
+
+Inside the boundary:
+
+- `AGENT_RUNTIME_CONFINED` is `1`, and `AGENT_RUNTIME_GRANTS` names the grants file. Read it before writing outside the working tree: the kernel refuses a write outside the grants.
+- `TMPDIR` is `/tmp`, a folder private to the session.
+- The tmux and session-bus sockets are out of reach. `GH_TOKEN` is set where the grants hand a token file.
+- A job the runtime starts from inside runs under `setsid`, never a systemd unit, so it stays inside.
+
+## Build and run
+
+`scripts/setup` builds the runtime with `cargo build --release --locked` into the user cache: `$AGENT_RUNTIME_CACHE`, else `$XDG_CACHE_HOME/kendex/agent-runtime`, else `~/.cache/kendex/agent-runtime`. The key is one sha256 over `runtime/Cargo.toml`, `Cargo.lock`, every file under `src/` and the same inputs of every path dependency. The binary lands at `<cache>/bin/agent-runtime-<key>` in one rename. A dirty tree builds its own key, and a key already built builds nothing. Nothing is built into the installed files.
+
+- Offline, pass `--offline`. The build then needs every locked dependency in the cargo cache.
+- `setup --runtime DIR --name NAME` builds another skill's runtime crate that depends on this one, at `<cache>/bin/NAME-<key>`. That skill's wrapper computes the key through `scripts/lib/key.sh`. orch's `scripts/setup` and `scripts/orch-runtime` are that pair.
+- Inside a confined orch lane, `AGENT_RUNTIME_CACHE` names the lane's own cache, and the shared cache is read-only.
+
+`scripts/agent-runtime` runs the binary for the sources beside it. Without that binary it builds nothing: it prints `agent-runtime: setup-required key=<key> run=<path to scripts/setup>` on stderr and exits 69. Run setup before a hook or caller needs the binary.
+
+A caller that must answer while the binary is missing, such as a harness hook, runs `setup --detach`. It starts at most one build per key and answers at once with `key=<key> binary=<path>`, `runtime-building` or `runtime-unbuilt cause=<cause>`. With `--hold PATH`, while PATH exists, a running build exits 3 every time and an unbuilt key exits 3 once per PATH and cause. A key that ended unbuilt is not started again by `--detach`; a setup without `--detach` is the remedy. `setup --help` states every answer and cause.
 
 ## Reading routes
 
 - A person installing or choosing the package: [README.md](README.md).
 - A maintainer building, testing or probing it: the package's `DEVELOPMENT.md` in the catalog.
-- Flags, defaults and verb descriptions: `agent-runtime <verb> --help`.
+- Flags, defaults and each verb: `agent-runtime <verb> --help`.
