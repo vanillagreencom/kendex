@@ -6,6 +6,16 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.22.1] - 2026-11-16
+
+### Fixed
+
+- Guard help now documents the three exit statuses for checking hook arming and the exit-status taxonomy for the other guard verbs.
+- Hourly refreshes can skip idle work in repositories with more than 1,000 runs in their older refresh history.
+- Templates keep folder catalogs distinct, including folders whose names differ only by `.git`, and preserve the selected catalog's kind and declaring scope. Older templates keep unique catalog matches, including native Windows folder paths; ambiguous matches remain visible and unresolved. Older relative folder references resolve correctly, adding the same package keeps one member even before subscribing, targeted removal keeps members from other catalogs even when removing an older unsubscribed entry, and disabled destination catalogs refuse installation before any template files change. Operations that need no catalog declarations work even when an unrelated project's manifest cannot be read.
+
+  You do: save an ambiguous older template member again from its catalog.
+
 ## [1.22.0] - 2026-11-15
 
 ### Added
@@ -3089,7 +3099,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.22.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.22.1..HEAD
+[1.22.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.1
 [1.22.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.0
 [1.21.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.21.0
 [1.20.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.20.0
