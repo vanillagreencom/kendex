@@ -28,7 +28,7 @@
 //! reads answered, a head GitHub never shows arms against it and fails the
 //! same way; with the stand-down's arm made without the read, the stand-down
 //! behind a lagging head fails the same way; with a read gh fails taken as
-//! a lagging head, that row exits 0 unarmed; with the reads cut to two, the
+//! a lagging head, that row retries rather than failing the head read; with the reads cut to two, the
 //! never-matches row counts two reads, not five; with a refused arm on the
 //! matched head passed over, the refused-arm row exits 0 armed; with the
 //! wait between reads cut to one second, the `sleep` stub's log reddens
@@ -1062,11 +1062,11 @@ fn a_landed_record_closes_the_open_rolling_pull_request() {
 }
 
 /// Queue reads can still contain this run's own rolling entry. It must
-/// neither hold up landing nor hide another entry. A busy update stays
-/// unarmed on a repeat run, then a later merged head lands its current record.
+/// neither hold up landing nor hide another entry. A busy update arms its
+/// pushed head, then a later merged head lands its current record.
 #[test]
 #[allow(clippy::expect_used)]
-fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
+fn the_rolling_entry_does_not_block_landing_and_busy_updates_arm() {
     for (count, nodes) in [
         (1, r#"[{"pullRequest":{"number":41}}]"#),
         (
@@ -1129,8 +1129,15 @@ fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
         let asked = log.strip_prefix(&before).expect("log prefix");
         assert!(asked.contains("dequeuePullRequest"), "{asked}");
         assert!(asked.contains("pr edit 41"), "{asked}");
-        assert!(!asked.contains("pr merge"), "{asked}");
-        assert!(!world.gh_state.join("armed").exists(), "{output}");
+        let rolling = world.rolling_head();
+        assert!(
+            asked.contains(&format!(
+                "pr merge 41 --squash --auto --match-head-commit {rolling}"
+            )),
+            "{asked}"
+        );
+        assert!(output.contains("lock-record: armed=41\n"), "{output}");
+        assert!(world.gh_state.join("armed").exists(), "{output}");
         assert_eq!(world.origin_main(), head, "{output}");
         let before = world.gh_log();
         git_ok(&world.home, &world.main, &["checkout", "-q", "main"]);
@@ -1140,12 +1147,15 @@ fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
         assert!(output.contains("lock-record: rolling-current="), "{output}");
         let log = world.gh_log();
         let asked = log.strip_prefix(&before).expect("log prefix");
-        let verified = asked.rfind("kendex verify ").expect("final verification");
-        assert!(verified < at(asked, "mergeQueue(branch:"), "{asked}");
-        assert_eq!(asked.matches("mergeQueue(branch:").count(), 1, "{asked}");
+        assert!(!asked.contains("mergeQueue(branch:"), "{asked}");
         assert!(!asked.contains("pr merge"), "{asked}");
         assert!(!asked.contains("pr edit"), "{asked}");
-        assert!(!world.gh_state.join("armed").exists(), "{output}");
+        assert!(world.gh_state.join("armed").exists(), "{output}");
+        // A cancelled arm on a current record must also be restored behind a busy queue.
+        fs::remove_file(world.gh_state.join("armed")).expect("remove fixture arm");
+        let repeated = world.lock_record_with("", &busy);
+        assert!(repeated.status.success(), "{}", said(&repeated));
+        assert!(said(&repeated).contains("lock-record: armed=41\n"));
         world.branch("c", "ship");
         assert!(world.queue_merge("c").status.success());
         let head = world.main_head();
@@ -1159,21 +1169,26 @@ fn the_rolling_entry_does_not_block_itself_or_arm_behind_another_entry() {
     }
 }
 
-/// Restoring the unconditional arm must make the busy-queue guarantee fail.
+/// Restoring main's busy-queue suppression leaves a pushed head unarmed.
 #[test]
 #[allow(clippy::expect_used)]
-fn a_busy_queue_arm_control_reaches_the_arm() {
+fn main_busy_queue_suppression_control_leaves_the_pushed_head_unarmed() {
     let row = LANDING_ROWS
         .iter()
         .find(|row| row.name == "queue-busy")
         .expect("busy row");
     let (world, _, run) = row.run(Some((
-        "if [[ \"$land_check\" != skipped:queued ]]; then arm \"$number\" \"$recorded\"; fi",
-        "arm \"$number\" \"$recorded\"",
+        "arm \"$number\" \"$recorded\" || arm_status=$?",
+        "if [[ \"$land_check\" != skipped:queued ]]; then arm \"$number\" \"$recorded\" || arm_status=$?; fi",
     )));
     assert_eq!(run.status.code(), Some(0), "{}", said(&run));
-    assert!(world.gh_log().contains("pr merge 41"));
-    assert!(world.gh_state.join("armed").exists());
+    assert!(said(&run).contains("lock-record: pushed=origin/kendex/lock\n"));
+    assert!(!world.gh_log().contains("pr merge 41"));
+    assert!(!world.gh_state.join("armed").exists());
+    assert!(
+        std::panic::catch_unwind(|| assert_recorded_and_opened(&world, &said(&run), 41)).is_err(),
+        "main suppression must fail the same assertion as the busy-queue regression"
+    );
 }
 
 /// One run the landing reporter answers: `GH_FAIL`, the `gh` stub's
@@ -1418,14 +1433,7 @@ fn a_landing_precondition_the_run_does_not_meet_says_its_line() {
             "{}: {pushes}",
             row.name
         );
-        if row.name == "queue-busy" {
-            assert!(
-                output.contains("lock-record: pull-request=41 action=opened"),
-                "{output}"
-            );
-            assert!(!world.gh_log().contains("pr merge"), "{output}");
-            assert!(!world.gh_state.join("armed").exists(), "{output}");
-        } else if row.code == 0 {
+        if row.code == 0 {
             assert_recorded_and_opened(&world, &output, 41);
         } else {
             assert!(
@@ -1811,7 +1819,7 @@ const HEAD_READS: &[HeadRead] = &[
 /// two seconds apart and five reads at most, and where it never is, the
 /// record still lands, the pull request is left unarmed with both
 /// revisions named and a warning annotation for the Actions run, and the
-/// run exits 0; a read gh fails, or an arm GitHub refuses on the matched
+/// run exits 1; a read gh fails, or an arm GitHub refuses on the matched
 /// head, leaves it unarmed and exits 1.
 #[test]
 fn the_arm_after_a_push_waits_for_github_to_show_the_pushed_head() {
@@ -1832,8 +1840,8 @@ fn assert_head_read(row: &HeadRead) {
     let output = said(&run);
     let lag = row.lag;
     let code = match row.arm {
-        Arm::Armed | Arm::Unarmed => 0,
-        Arm::ReadFailed | Arm::Refused => 1,
+        Arm::Armed => 0,
+        Arm::Unarmed | Arm::ReadFailed | Arm::Refused => 1,
     };
     assert_eq!(run.status.code(), Some(code), "lag {lag}: {output}");
     assert!(
@@ -1908,7 +1916,9 @@ fn assert_head_read(row: &HeadRead) {
                 &format!("pr merge 41 --squash --auto --match-head-commit {rolling}\n"),
             );
             assert!(
-                stderr.contains("gh stub: merge refused\n"),
+                stderr.contains(&format!(
+                    "lock-record: unarmed=41 pushed={rolling} head={rolling}\n"
+                )),
                 "lag {lag}: {output}"
             );
             assert!(
