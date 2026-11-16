@@ -988,12 +988,20 @@ fn the_started_and_done_lines_and_run_inventory_keep_the_reader_contract() {
     assert!(out.status.success(), "{}", stderr(&out));
     let dir = directory(&out);
     let first = text(&out).lines().next().unwrap().to_owned();
-    assert!(first.starts_with(&format!("state=started run-dir={dir} log={dir}/log sentinel={dir}/exit quiet-secs=660 poll-secs=1 class=")),"{first}");
-    // The quiet time the executor ends a stalled run at is the start
-    // record's, and the run has no other limit.
+    assert!(first.starts_with(&format!("state=started run-dir={dir} log={dir}/log sentinel={dir}/exit quiet-secs=660 poll-secs=1 memory-bound=")),"{first}");
+    let bound = field(&first, "memory-bound");
+    assert!(
+        first.contains(&format!(" memory-bound={bound} rule=host class=")),
+        "{first}"
+    );
+    // The quiet time the executor ends a stalled run at and the memory it
+    // holds the run's tree to are the start record's, and the run has no
+    // other limit.
     let start = run_file(&dir, "start");
     assert_eq!(field(&start, "quiet-secs"), "660", "{start}");
     assert_eq!(field(&start, "poll-secs"), "1", "{start}");
+    assert_eq!(field(&start, "memory-bound"), bound, "{start}");
+    assert_eq!(field(&start, "rule"), "host", "{start}");
     for gone in ["timeout-bin", "timeout-secs", "cap-secs", "quiet-clock"] {
         assert_eq!(field(&start, gone), "", "{start}");
     }
@@ -2059,9 +2067,12 @@ fn a_unit_launch_hands_the_manager_the_callers_variables_and_open_file_limit() {
         "{argv}"
     );
     assert!(words.contains(&"IgnoreSIGPIPE=no"), "{argv}");
+    let bound = field(started["started_line"].as_str().unwrap(), "memory-bound");
     assert_eq!(
         run_file(dir, "runner"),
-        format!("runner=systemd\nunit={unit}\nline=runner=systemd unit={unit}\n")
+        format!(
+            "runner=systemd\nunit={unit}\nline=runner=systemd unit={unit} memory-max={bound}\n"
+        )
     );
 }
 
@@ -2078,14 +2089,28 @@ fn unit_launch(manager: &str, dir: &str) -> (Vec<String>, String) {
     (argv.lines().map(str::to_owned).collect(), line)
 }
 
-/// A memory cap set for validation is its unit's hard limit over the whole
-/// tree, swap included, with the manager's stop at the first OOM kill off
-/// and no soft cap beside it, on the admitted start and the ad-hoc entry
-/// alike, and the runner line names it; with none set, the unit carries
-/// none of them.
+/// The host's memory in bytes, `MemTotal` of `/proc/meminfo`: no bound a
+/// start reads from this host's room can pass it.
+fn host_memory() -> u64 {
+    let meminfo = fs::read_to_string("/proc/meminfo").unwrap();
+    let kb: u64 = meminfo
+        .lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))
+        .and_then(|rest| rest.trim().strip_suffix(" kB"))
+        .and_then(|kb| kb.trim().parse().ok())
+        .unwrap();
+    kb * 1024
+}
+
+/// Every validation unit is held to its start's bound over the whole tree,
+/// swap included, with the manager's stop at the first OOM kill off and no
+/// soft cap beside it, on the admitted start and the ad-hoc entry alike;
+/// the bound is the host's room where no value is set (`rule=host`) and a
+/// consumer's value under the room where one is (`rule=consumer`), and the
+/// started line and the runner line name it.
 #[test]
-fn a_set_memory_cap_is_the_validation_units_hard_limit_with_no_swap_and_no_oom_stop() {
-    for (cap, held) in [(Some("1G"), true), (None, false)] {
+fn a_validation_unit_is_held_at_its_hosts_room_or_a_consumers_narrower_value_with_no_swap() {
+    for cap in [Some("1G"), None] {
         let w = World::new();
         let (path, manager) = manager(&w);
         let mut extra = vec![
@@ -2098,29 +2123,31 @@ fn a_set_memory_cap_is_the_validation_units_hard_limit_with_no_swap_and_no_oom_s
         let started = ok(&w.start(&[], &extra));
         let dir = started["run_dir"].as_str().unwrap();
         assert_eq!(w.wait_marked(dir)["outcome"], "pass", "{cap:?}");
+        let started_line = started["started_line"].as_str().unwrap();
+        let bound: u64 = field(started_line, "memory-bound").parse().unwrap();
+        let rule = field(started_line, "rule");
+        match cap {
+            Some(_) => assert_eq!((bound, rule.as_str()), (1 << 30, "consumer")),
+            None => {
+                assert_eq!(rule, "host", "{started_line}");
+                assert!((1 << 30..=host_memory()).contains(&bound), "{started_line}");
+            }
+        }
+        let start = run_file(dir, "start");
+        assert_eq!(field(&start, "memory-bound"), bound.to_string(), "{start}");
         let (words, line) = unit_launch(&manager, dir);
         for property in [
-            "MemoryMax=1073741824",
-            "MemorySwapMax=0",
-            "OOMPolicy=continue",
+            format!("MemoryMax={bound}"),
+            "MemorySwapMax=0".to_owned(),
+            "OOMPolicy=continue".to_owned(),
         ] {
-            assert_eq!(
-                words.iter().any(|w| w == property),
-                held,
-                "{cap:?} {property}: {words:?}"
-            );
+            assert!(words.contains(&property), "{cap:?} {property}: {words:?}");
         }
-        if held {
-            assert!(
-                !words.iter().any(|w| w.starts_with("MemoryHigh=")),
-                "{words:?}"
-            );
-        }
-        assert_eq!(
-            line.ends_with(" memory-max=1073741824"),
-            held,
-            "{cap:?}: {line}"
+        assert!(
+            !words.iter().any(|w| w.starts_with("MemoryHigh=")),
+            "{words:?}"
         );
+        assert!(line.ends_with(&format!(" memory-max={bound}")), "{line}");
         assert_eq!(w.stage(dir)["job"]["line"], json!(line), "{cap:?}");
     }
     let w = World::new();
@@ -2144,12 +2171,14 @@ fn a_set_memory_cap_is_the_validation_units_hard_limit_with_no_swap_and_no_oom_s
 }
 
 /// A memory cap no cgroup of the run's own can hold, a `setsid` job or a
-/// run in the caller's own process, is said unheld once, on the runner
-/// line the run's record and its log carry, and the run still runs: a
-/// manager that does not answer, and a client older than a property the
-/// cap sets, which refuses the name before it asks the manager anything.
+/// run in the caller's own process, is held to its start's bound by its
+/// executor, whose log says so under the launcher's line, and its
+/// launcher's line, which the run's record carries, says nothing of
+/// memory: a manager that does not answer, and a client older than a
+/// property the cap sets, which refuses the name before it asks the
+/// manager anything.
 #[test]
-fn a_memory_cap_no_cgroup_of_the_run_holds_is_said_unheld_once_and_the_run_runs() {
+fn a_run_no_cgroup_of_its_own_holds_is_held_to_its_bound_by_its_executor() {
     for (answer, opening, cause) in [
         (
             ("VALIDATE_PROBE_ANSWER", "no-manager"),
@@ -2158,7 +2187,7 @@ fn a_memory_cap_no_cgroup_of_the_run_holds_is_said_unheld_once_and_the_run_runs(
         ),
         (
             ("VALIDATE_START_ANSWER", "unknown-assignment"),
-            "runner=setsid reason=unit-launch-failed detail=Unknown assignment: OOMPolicy=continue ",
+            "runner=setsid reason=unit-launch-failed detail=Unknown assignment: OOMPolicy=continue",
             "unit-launch-failed",
         ),
     ] {
@@ -2176,12 +2205,17 @@ fn a_memory_cap_no_cgroup_of_the_run_holds_is_said_unheld_once_and_the_run_runs(
         let dir = started["run_dir"].as_str().unwrap();
         let stage = w.wait_marked(dir);
         assert_eq!(stage["outcome"], "pass", "{cause}");
-        let word = format!(" memory-cap=unavailable cause={cause}");
         let line = stage["job"]["line"].as_str().unwrap();
         assert!(line.starts_with(opening), "{line}");
-        assert_eq!(line.matches(&word).count(), 1, "{line}");
+        assert!(!line.contains("memory"), "{line}");
         let log = run_file(dir, "log");
-        assert_eq!(log.lines().next(), Some(line), "{log}");
+        let mut lines = log.lines();
+        assert_eq!(lines.next(), Some(line), "{log}");
+        assert_eq!(
+            lines.next(),
+            Some("memory-held=reader bound=1073741824"),
+            "{log}"
+        );
         assert!(
             !run_file(dir, "exit").contains("memory-cap"),
             "{}",
@@ -2193,18 +2227,173 @@ fn a_memory_cap_no_cgroup_of_the_run_holds_is_said_unheld_once_and_the_run_runs(
     let dir = started["run_dir"].as_str().unwrap();
     let stage = w.stage(dir);
     assert_eq!(stage["outcome"], "pass");
-    assert_eq!(
-        stage["job"]["line"],
-        "runner=attached memory-cap=unavailable cause=attached"
+    assert_eq!(stage["job"]["line"], "runner=attached");
+    assert!(
+        run_file(dir, "log").contains("\nmemory-held=reader bound=1073741824\n"),
+        "{}",
+        run_file(dir, "log")
     );
+}
+
+/// A command tree whose resident memory passes the bound its start set,
+/// where no unit's cap holds it, is ended whole by its executor and fails
+/// with the bound and the peak it read, on the sentinel and the wait, on a
+/// `setsid` and an attached run alike; a process outside the tree runs on,
+/// and a tree under its bound passes with no cause.
+#[test]
+fn a_tree_past_the_bound_its_executor_holds_ends_failing_with_the_limit_and_the_peak() {
+    use std::sync::{Arc, mpsc};
+    const BOUND: u64 = 16 << 20;
+    const HELD: u64 = 48 << 20;
+    /// A process outside the run's tree, ended and reaped whatever the
+    /// row's answer.
+    struct Sibling(std::process::Child);
+    impl Drop for Sibling {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    for (case, runner, line, holds) in [
+        (
+            "setsid, over",
+            "setsid",
+            "runner=setsid reason=probe-failed",
+            true,
+        ),
+        ("attached, over", "attached", "runner=attached", true),
+        ("attached, under", "attached", "runner=attached", false),
+    ] {
+        let w = World::new();
+        let ready = w.root.join("ready");
+        let go = w.root.join("go");
+        // The command prints its rank and names itself ready while it holds
+        // nothing, so no reading can end it first; only once the row says
+        // go does the holder fill a shell variable of its own size, then
+        // wait well past the reads that end it.
+        let hold = if holds {
+            format!("printf -v held '%*s' {HELD} ''; sleep 20")
+        } else {
+            "sleep 3".to_owned()
+        };
+        let command = format!(
+            "cat /proc/self/oom_score_adj; echo ready > '{}'; until [ -e '{}' ]; do sleep 0.05; done; {hold}; echo done",
+            ready.display(),
+            go.display()
+        );
+        let dir = executor_dir(&w, &command, 600);
+        let mut start = fs::read_to_string(dir.join("start")).unwrap();
+        start.push_str(&format!("memory-bound={BOUND}\n"));
+        fs::write(dir.join("start"), start).unwrap();
+        fs::write(
+            dir.join("runner"),
+            format!("runner={runner}\nline={line}\n"),
+        )
+        .unwrap();
+        let mut sibling = Sibling(program("sleep").arg("60").spawn().unwrap());
+        let clock = Arc::new(support::FakeClock::new());
+        let c = clock.clone();
+        let d = dir.clone();
+        let (sent, received) = mpsc::channel();
+        let task = std::thread::spawn(move || {
+            let answer = orch_runtime::validate::run::execute(
+                &d,
+                c.as_ref(),
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../github/scripts/lib/group-leader.sh"),
+            );
+            sent.send(answer).unwrap();
+        });
+        until(|| ready.exists());
+        fs::write(&go, "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let answer = loop {
+            match received.try_recv() {
+                Ok(answer) => break answer,
+                Err(mpsc::TryRecvError::Disconnected) => panic!("executor ended without answer"),
+                Err(mpsc::TryRecvError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{case}: executor exceeded parent deadline"
+                    );
+                    clock.release(Duration::from_millis(100));
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
+        answer.unwrap();
+        task.join().unwrap();
+        assert!(
+            sibling.0.try_wait().unwrap().is_none(),
+            "{case}: a process outside the tree ended"
+        );
+        drop(sibling);
+        let log = fs::read_to_string(dir.join("log")).unwrap();
+        assert!(
+            log.contains(&format!("\nmemory-held=reader bound={BOUND}\n")),
+            "{case}: {log}"
+        );
+        // The tree is ranked first for any OOM killer on every route.
+        assert!(log.contains("\n1000\n"), "{case}: {log}");
+        let sentinel = fs::read_to_string(dir.join("exit")).unwrap();
+        let (waited, exit) = orch_runtime::validate::files::wait(&dir, 0, clock.as_ref()).unwrap();
+        if !holds {
+            assert_eq!(field(&sentinel, "guard-exit"), "0", "{case}: {sentinel}");
+            assert!(!sentinel.contains(" cause="), "{case}: {sentinel}");
+            assert_eq!(exit, 0, "{case}: {waited}");
+            continue;
+        }
+        assert_eq!(field(&sentinel, "guard-exit"), "137", "{case}: {sentinel}");
+        assert_eq!(
+            field(&sentinel, "limit"),
+            BOUND.to_string(),
+            "{case}: {sentinel}"
+        );
+        let peak: u64 = field(&sentinel, "peak").parse().unwrap();
+        // The peak is the reading that ended the tree, which may land while
+        // the holder still fills.
+        assert!(peak > BOUND, "{case}: {sentinel}");
+        assert!(
+            sentinel.ends_with(&format!(" cause=memory-cap limit={BOUND} peak={peak}\n")),
+            "{case}: {sentinel}"
+        );
+        assert!(!log.contains("\ndone\n"), "{case}: {log}");
+        assert!(!dir.join("own-exit").exists(), "{case}");
+        let id: agent_runtime::process::Identity =
+            serde_json::from_slice(&fs::read(dir.join("command")).unwrap()).unwrap();
+        assert!(matches!(
+            agent_runtime::process::still_runs(&id),
+            agent_runtime::reading::Reading::Gone
+        ));
+        assert_eq!(exit, 1, "{case}: {waited}");
+        assert!(
+            waited.contains(&format!(
+                " validate=FAILING cause=memory-cap limit={BOUND} peak={peak} run-dir="
+            )),
+            "{case}: {waited}"
+        );
+    }
 }
 
 /// The memory cap's setting is judged by the validation start that reads
 /// it, before any record: a value outside systemd's byte form or under the
-/// floor refuses the start with the key, the value and the floor, and the
-/// item's record is left as it was.
+/// floor refuses the start with the key, the value and the floor; a value
+/// over the host's room refuses it `memory-short` with the need and the
+/// room; either way the item's record is left as it was.
 #[test]
-fn a_memory_cap_outside_its_form_or_under_its_floor_refuses_the_start_with_nothing_recorded() {
+fn a_memory_value_outside_its_form_under_its_floor_or_over_the_room_refuses_the_start_with_nothing_recorded()
+ {
+    let w = World::new();
+    let before = fs::read_to_string(&w.item).unwrap();
+    let out = w.start(&[], &[("ORCH_VALIDATE_MEMORY_MAX", "1023T")]);
+    assert_eq!(refusal(&out), "memory-short", "{}", stderr(&out));
+    let fields = &reply(&out)["refusal"]["fields"];
+    assert_eq!(fields[0], json!(["need", (1023u64 << 40).to_string()]));
+    assert_eq!(fields[1][0], "room");
+    let room: u64 = fields[1][1].as_str().unwrap().parse().unwrap();
+    assert!(room < 1023 << 40, "{fields}");
+    assert_eq!(fields.as_array().unwrap().len(), 2, "{fields}");
+    assert_eq!(fs::read_to_string(&w.item).unwrap(), before);
     for value in [
         "512M",
         "1073741823",

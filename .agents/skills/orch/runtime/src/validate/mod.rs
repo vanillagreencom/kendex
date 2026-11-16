@@ -1410,7 +1410,7 @@ fn quiet_clock_unavailable() -> Option<&'static str> {
 }
 
 /// The run's `start` record, line for line in the form the executor reads.
-fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
+fn start_record(worktree: &Path, proof: &Proof, start: u64, memory: &MemoryBound) -> String {
     let mut text = String::new();
     let mut line = |l: String| {
         text.push_str(&l);
@@ -1425,6 +1425,13 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
     }
     if let Some(cause) = quiet_clock_unavailable() {
         line(format!("quiet-clock=unavailable cause={cause}"));
+    }
+    match memory {
+        MemoryBound::Held { bytes, rule } => {
+            line(format!("memory-bound={bytes}"));
+            line(format!("rule={}", rule.word()));
+        }
+        MemoryBound::Unread { cause } => line(format!("memory-cap=unavailable cause={cause}")),
     }
     line(format!("class={}", proof.class));
     line(format!("docs-only={}", proof.docs_only));
@@ -1472,6 +1479,7 @@ fn write_run_dir(
     resolved: &Resolved,
     start: u64,
     locking: Locking,
+    memory: &MemoryBound,
 ) -> std::result::Result<(), String> {
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| format!("tmp: {e}"))?;
     match fs::create_dir(run_dir) {
@@ -1493,7 +1501,10 @@ fn write_run_dir(
     }
     write("paths", &paths)?;
     write("cmd", &resolved.proof.cmd)?;
-    write("start", &start_record(worktree, &resolved.proof, start))?;
+    write(
+        "start",
+        &start_record(worktree, &resolved.proof, start, memory),
+    )?;
     record::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
         let mut names = Vec::new();
         for entry in
@@ -1545,7 +1556,7 @@ fn write_run_dir(
 /// The `state=started` line, with the CI fallback cause appended where the
 /// rules read fell back to a local run, so the dev agent sees why CI did
 /// not take the change.
-fn started_line(run_dir: &Path, proof: &Proof) -> String {
+fn started_line(run_dir: &Path, proof: &Proof, memory: &MemoryBound) -> String {
     let class_fallback = proof
         .class_fallback
         .as_ref()
@@ -1564,22 +1575,125 @@ fn started_line(run_dir: &Path, proof: &Proof) -> String {
         .map(|secs| format!("expected-secs={secs} "))
         .unwrap_or_default();
     format!(
-        "state=started run-dir={rd} log={rd}/log sentinel={rd}/exit {expected}quiet-secs={QUIET_SECS}{quiet_clock} poll-secs={} class={} docs-only={}{class_fallback}{ci_fallback}",
+        "state=started run-dir={rd} log={rd}/log sentinel={rd}/exit {expected}quiet-secs={QUIET_SECS}{quiet_clock} poll-secs={} {} class={} docs-only={}{class_fallback}{ci_fallback}",
         proof.poll_secs,
+        memory.words(),
         proof.class,
         proof.docs_only,
         rd = run_dir.display(),
     )
 }
 
-/// The least memory cap a start takes: a cgroup starved by a smaller one
+/// The least memory bound a start takes: a cgroup starved by a smaller one
 /// can fail a kernel allocation and leave the host's root volume read-only.
 const MEMORY_FLOOR: u64 = 1 << 30;
 
+/// What set a run's memory bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Rule {
+    /// The room the host gave the start.
+    Host,
+    /// A consumer's `ORCH_VALIDATE_MEMORY_MAX`, at or under that room.
+    Consumer,
+}
+
+impl Rule {
+    fn word(self) -> &'static str {
+        match self {
+            Rule::Host => "host",
+            Rule::Consumer => "consumer",
+        }
+    }
+}
+
+/// The memory a run's whole tree is held to, set once at its start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemoryBound {
+    Held {
+        bytes: u64,
+        rule: Rule,
+    },
+    /// The host's room could not be read: the run starts with no bound and
+    /// its start says so.
+    Unread {
+        cause: &'static str,
+    },
+}
+
+impl MemoryBound {
+    /// The bound a launch hands its runner, where one is held.
+    pub(crate) fn bytes(self) -> Option<u64> {
+        match self {
+            MemoryBound::Held { bytes, .. } => Some(bytes),
+            MemoryBound::Unread { .. } => None,
+        }
+    }
+
+    /// The start line's words for the bound.
+    fn words(self) -> String {
+        match self {
+            MemoryBound::Held { bytes, rule } => {
+                format!("memory-bound={bytes} rule={}", rule.word())
+            }
+            MemoryBound::Unread { cause } => format!("memory-cap=unavailable cause={cause}"),
+        }
+    }
+}
+
+/// The bound a start holds its run to, from the room this process's tree can
+/// take now (`process::room`, read once per start).
+pub(crate) fn memory_bound(settings: &crate::settings::ValidateSettings) -> Result<MemoryBound> {
+    bound_of(
+        consumer_value(settings)?,
+        agent_runtime::process::room(
+            Path::new("/proc"),
+            Path::new("/sys/fs/cgroup"),
+            std::process::id(),
+        ),
+    )
+}
+
+/// The bound from the room read and the consumer's value: the value where
+/// one is set, which narrows the room and is the run's need, else the room.
+/// A need over the room, the value or the [`MEMORY_FLOOR`], refuses the
+/// start `memory-short need=<bytes> room=<bytes>` before anything is
+/// recorded or launched: a run the host cannot hold is refused, never
+/// widened past the host.
+fn bound_of(
+    value: Option<u64>,
+    room: std::result::Result<u64, agent_runtime::reading::Unreadable>,
+) -> Result<MemoryBound> {
+    let room = match room {
+        Ok(room) => room,
+        Err(unread) => {
+            return Ok(MemoryBound::Unread {
+                cause: unread.cause,
+            });
+        }
+    };
+    let need = value.unwrap_or(MEMORY_FLOOR);
+    if room < need {
+        return Err(Error::Runtime(agent_runtime::Error::refused(
+            "memory-short",
+            &[("need", &need.to_string()), ("room", &room.to_string())],
+        )));
+    }
+    Ok(match value {
+        Some(bytes) => MemoryBound::Held {
+            bytes,
+            rule: Rule::Consumer,
+        },
+        None => MemoryBound::Held {
+            bytes: room,
+            rule: Rule::Host,
+        },
+    })
+}
+
 /// `ORCH_VALIDATE_MEMORY_MAX` as a start reads it: a whole number of bytes,
 /// or of K, M, G or T in base 1024 as `systemd.resource-control(5)` spells
-/// `MemoryMax=`, at least [`MEMORY_FLOOR`]; unset is no cap.
-pub(crate) fn memory_max(settings: &crate::settings::ValidateSettings) -> Result<Option<u64>> {
+/// `MemoryMax=`, at least [`MEMORY_FLOOR`]; unset is none.
+fn consumer_value(settings: &crate::settings::ValidateSettings) -> Result<Option<u64>> {
     let Some(text) = &settings.memory_max else {
         return Ok(None);
     };
@@ -1672,26 +1786,17 @@ fn ask_launcher(
     answer.answer()
 }
 
-/// The runner line of a run in the caller's own process tree, which no
-/// cgroup of the run's own holds: a memory cap asked for is said unheld.
-pub(crate) fn attached_line(memory: Option<u64>) -> String {
-    match memory {
-        Some(_) => "runner=attached memory-cap=unavailable cause=attached".to_owned(),
-        None => "runner=attached".to_owned(),
-    }
-}
-
 #[allow(
     clippy::disallowed_methods,
     reason = "the foreground executor records its owner before it starts a command"
 )]
-fn attached(run_dir: &Path, env: &Env, memory: Option<u64>) -> Launch {
+fn attached(run_dir: &Path, env: &Env) -> Launch {
     let Some(owner) = &env.owner else {
         return Launch::Refused {
             cause: "owner-unreadable".to_owned(),
         };
     };
-    let line = attached_line(memory);
+    let line = "runner=attached".to_owned();
     if let Err(e) = fs::write(
         run_dir.join("runner"),
         format!(
@@ -1745,7 +1850,7 @@ pub fn start(
         cause: format!("{worktree}: {e}"),
     })?;
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
-    let memory = memory_max(&settings.validate)?;
+    let memory = memory_bound(&settings.validate)?;
     record::locked(&worktree.join("tmp/validation-start"), locking, || {
         let snapshot = load(&path)?.ok_or_else(|| {
             Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
@@ -1799,8 +1904,14 @@ pub fn start(
         };
         let (run_id, run_dir, start_secs) = (started.run_id, started.run_dir, started.start);
         let run_dir_path = PathBuf::from(&run_dir);
-        let launched = match write_run_dir(&worktree, &run_dir_path, &resolved, start_secs, locking)
-        {
+        let launched = match write_run_dir(
+            &worktree,
+            &run_dir_path,
+            &resolved,
+            start_secs,
+            locking,
+            &memory,
+        ) {
             Err(cause) => Launch::Refused { cause },
             Ok(()) => match &resolved.ran_nothing {
                 Some(_) => Launch::Started {
@@ -1810,14 +1921,16 @@ pub fn start(
                     start: None,
                     line: "runner=none".to_owned(),
                 },
-                None if req.foreground => attached(&run_dir_path, env, memory),
+                None if req.foreground => attached(&run_dir_path, env),
                 None => ask_launcher(
                     settings,
                     &worktree,
                     &run_dir_path,
                     &item,
                     &round,
-                    agent_runtime::effects::job::Bounds { memory },
+                    agent_runtime::effects::job::Bounds {
+                        memory: memory.bytes(),
+                    },
                 ),
             },
         };
@@ -1892,11 +2005,89 @@ pub fn start(
             class_fallback: proof.class_fallback.clone(),
             mode: proof.mode,
             base: proof.base.clone(),
-            started_line: started_line(&run_dir_path, proof),
+            started_line: started_line(&run_dir_path, proof, &memory),
             launched: resolved.ran_nothing.is_none(),
             job,
             outcome,
             run_dir,
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_runtime::reading::Unreadable;
+
+    /// The bound is the room where no consumer value is set, the value
+    /// where the room holds it; a room under the floor or under the value
+    /// refuses the start with both figures; an unread room bounds nothing
+    /// and names its cause.
+    #[test]
+    fn a_start_is_bounded_at_its_room_narrowed_by_a_consumer_and_refused_short_of_its_need() {
+        const GIB: u64 = 1 << 30;
+        let held = |bytes, rule| Ok(MemoryBound::Held { bytes, rule });
+        let short = |need: u64, room: u64| Err(format!("memory-short need={need} room={room}",));
+        let cases = [
+            (
+                "the host's room",
+                None,
+                Ok(97 * GIB),
+                held(97 * GIB, Rule::Host),
+            ),
+            (
+                "the room at the floor",
+                None,
+                Ok(GIB),
+                held(GIB, Rule::Host),
+            ),
+            (
+                "a room under the floor",
+                None,
+                Ok(GIB - 1),
+                short(GIB, GIB - 1),
+            ),
+            (
+                "a value under the room",
+                Some(2 * GIB),
+                Ok(97 * GIB),
+                held(2 * GIB, Rule::Consumer),
+            ),
+            (
+                "a value at the room",
+                Some(4 * GIB),
+                Ok(4 * GIB),
+                held(4 * GIB, Rule::Consumer),
+            ),
+            (
+                "a value over the room",
+                Some(8 * GIB),
+                Ok(4 * GIB),
+                short(8 * GIB, 4 * GIB),
+            ),
+            (
+                "an unread room",
+                Some(2 * GIB),
+                Err(Unreadable {
+                    cause: "host-room-unread",
+                }),
+                Ok(MemoryBound::Unread {
+                    cause: "host-room-unread",
+                }),
+            ),
+        ];
+        for (case, value, room, want) in cases {
+            let got = bound_of(value, room).map_err(|e| match e {
+                Error::Runtime(agent_runtime::Error::Refused { key, fields }) => format!(
+                    "{key}{}",
+                    fields
+                        .iter()
+                        .map(|(k, v)| format!(" {k}={v}"))
+                        .collect::<String>()
+                ),
+                other => panic!("{case}: {other}"),
+            });
+            assert_eq!(got, want, "{case}");
+        }
+    }
 }

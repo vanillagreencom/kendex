@@ -390,7 +390,7 @@ fn entry(
         return Ok(TextReply::new(text, exit));
     }
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
-    let memory = super::memory_max(&settings.validate)?;
+    let memory = super::memory_bound(&settings.validate)?;
     let run_dir =
         agent_runtime::record::locked(&worktree.join("tmp/validation-start"), locking, || {
             if let Some((dir, pid)) = files::live(&worktree)? {
@@ -412,8 +412,15 @@ fn entry(
                 env.nonce
             );
             let run_dir = worktree.join("tmp").join(format!("dev-validate-{id}"));
-            super::write_run_dir(&worktree, &run_dir, &resolved, env.now_secs, locking)
-                .map_err(|e| files::unreadable("run-dir", e))?;
+            super::write_run_dir(
+                &worktree,
+                &run_dir,
+                &resolved,
+                env.now_secs,
+                locking,
+                &memory,
+            )
+            .map_err(|e| files::unreadable("run-dir", e))?;
             if resolved.ran_nothing.is_none() && !req.foreground {
                 let exe = std::env::current_exe().map_err(|e| files::unreadable("exe", e))?;
                 let exe = exe.display().to_string();
@@ -425,7 +432,9 @@ fn entry(
                     &run_dir.join("runner"),
                     &argv,
                     Some(&run_dir.join("job.err")),
-                    agent_runtime::effects::job::Bounds { memory },
+                    agent_runtime::effects::job::Bounds {
+                        memory: memory.bytes(),
+                    },
                     &SystemClock,
                 );
                 match launch.answer() {
@@ -445,13 +454,12 @@ fn entry(
                 fs::write(
                     run_dir.join("runner"),
                     format!(
-                        "runner=attached\npid={}\nstart={}\nline={}\n",
+                        "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
                         env.owner
                             .as_ref()
                             .ok_or_else(|| files::unreadable("owner", "absent"))?
                             .pid,
                         env.owner.as_ref().unwrap().start,
-                        super::attached_line(memory)
                     ),
                 )
                 .map_err(|e| files::unreadable("runner", e))?;
@@ -459,7 +467,7 @@ fn entry(
             writeln!(
                 std::io::stdout(),
                 "{}",
-                super::started_line(&run_dir, &resolved.proof)
+                super::started_line(&run_dir, &resolved.proof, &memory)
             )
             .map_err(|e| files::unreadable("stdout", e))?;
             Ok((run_dir, resolved.ran_nothing.is_none()))

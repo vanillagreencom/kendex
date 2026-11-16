@@ -161,6 +161,30 @@ pub fn execute(
             .ok_or("cgroup-unread")
             .and_then(Cap::of)
     });
+    let cgroup = agent_runtime::effects::job::own_cgroup_dir().and_then(Kills::of);
+    // The start's bound is the kernel's where the run's unit holds a cap,
+    // and this executor's to hold on every other route.
+    let bound = match field("memory-bound") {
+        "" => None,
+        bytes => Some(
+            bytes
+                .parse::<u64>()
+                .map_err(|_| fail("memory-bound", bytes.to_owned()))?,
+        ),
+    };
+    let reader = match (bound, &cap) {
+        (Some(bound), Some(Ok(_))) => {
+            writeln!(log, "memory-held=unit bound={bound}")
+                .map_err(|e| fail("log", e.to_string()))?;
+            None
+        }
+        (Some(bound), Some(Err(_)) | None) => {
+            writeln!(log, "memory-held=reader bound={bound}")
+                .map_err(|e| fail("log", e.to_string()))?;
+            Some(bound)
+        }
+        (None, _) => None,
+    };
     let started = clock
         .wall()
         .duration_since(UNIX_EPOCH)
@@ -174,28 +198,28 @@ pub fn execute(
     // which restores the INT and QUIT a caller's async job leaves ignored. A
     // detached run takes the dispositions its unit or setsid start gives it,
     // so it runs no prefix and needs no perl.
+    // An OOM killer, the unit's, a slice's or the host's, kills the process
+    // its badness ranks first (`proc_pid_oom_score_adj(5)`): the command's
+    // tree is ranked above every other process, this executor included,
+    // which must outlive the kill to record it, and the unrelated work a
+    // host-level kill would otherwise take. A host without the file ranks
+    // nothing and runs the command alike.
     let mut bash = Command::new("/bin/bash");
     if runner.get("runner").is_some_and(|r| r == "attached") {
         bash.args([
             "-c",
-            ". \"$1\"; exec \"${KENDEX_GROUP_LEADER[@]}\" /bin/bash -c \"$2\"",
+            "printf 1000 2>/dev/null >/proc/self/oom_score_adj; . \"$1\"; exec \"${KENDEX_GROUP_LEADER[@]}\" /bin/bash -c \"$2\"",
             "_",
             &group_leader.display().to_string(),
             &command,
         ]);
-    } else if matches!(cap, Some(Ok(_))) {
-        // At the cap the kernel kills the process its badness ranks first
-        // (`proc_pid_oom_score_adj(5)`): the command's tree is ranked above
-        // this executor, which shares the cap and must outlive the kill to
-        // record it.
+    } else {
         bash.args([
             "-c",
             "printf 1000 2>/dev/null >/proc/self/oom_score_adj; exec /bin/bash -c \"$1\"",
             "_",
             &command,
         ]);
-    } else {
-        bash.args(["-c", &command]);
     }
     let child = bash
         .current_dir(field("worktree"))
@@ -250,16 +274,26 @@ pub fn execute(
         started: clock.now(),
         warned: false,
     };
-    let mut progress = Progress::open(run_dir, pid, Duration::from_secs(quiet), run, expected)?;
+    let mut progress = Progress::open(
+        run_dir,
+        pid,
+        Duration::from_secs(quiet),
+        run,
+        expected,
+        reader,
+    )?;
     // Keep the owned leader unreaped until its group is empty. Its kernel
     // number cannot be reused while cleanup reads the group's members.
-    let stalled = loop {
+    let end = loop {
         match agent_runtime::process::identity(pid) {
-            agent_runtime::reading::Reading::Gone => break None,
+            agent_runtime::reading::Reading::Gone => break End::Exited,
             agent_runtime::reading::Reading::Live(_) => {
                 progress.observe(clock)?;
+                if let Some((limit, peak)) = progress.outgrew() {
+                    break End::Outgrew { limit, peak };
+                }
                 if let Some(stalled) = progress.stalled(clock.now())? {
-                    break Some(stalled);
+                    break End::Stalled(stalled);
                 }
                 clock.sleep(Duration::from_millis(100));
             }
@@ -268,19 +302,22 @@ pub fn execute(
             }
         }
     };
-    if stalled.is_none() {
+    if matches!(end, End::Exited) {
         atomic(run_dir, "own-exit", "")?;
     }
     // The verdict is written before the command's tree is ended: a teardown
     // the executor cannot confirm is its own error, and never takes back the
     // verdict the command already gave.
-    let status = if stalled.is_some() {
-        124
-    } else {
-        let status = group.reap_leader()?;
-        status
-            .code()
-            .unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
+    let status = match end {
+        End::Exited => {
+            let status = group.reap_leader()?;
+            status
+                .code()
+                .unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
+        }
+        End::Stalled(_) => 124,
+        // The status a kill at a cap gives the leader.
+        End::Outgrew { .. } => 137,
     };
     let ended = clock
         .wall()
@@ -298,18 +335,29 @@ pub fn execute(
         ),
     )?;
     let memory = cap.as_ref().map(MemoryEnd::of);
+    let host_kill = cgroup.as_ref().is_some_and(Kills::rose);
     atomic(
         run_dir,
         "exit",
-        &sentinel(status, &ended_at, stalled.as_ref(), memory.as_ref()),
+        &sentinel(status, &ended_at, &end, memory.as_ref(), host_kill),
     )?;
-    if stalled.is_some() {
+    if !matches!(end, End::Exited) {
         stop_tree(pid)?;
     }
     group.end()
 }
 
-/// Stop every process at or below the stalled command's leader, a member
+/// How the executor's watch of its command ended.
+enum End {
+    /// The leader exited.
+    Exited,
+    /// The command showed no work for its quiet time.
+    Stalled(Stalled),
+    /// The tree's resident memory passed the bound this executor holds.
+    Outgrew { limit: u64, peak: u64 },
+}
+
+/// Stop every process at or below the ended command's leader, a member
 /// that left the leader's group included.
 #[allow(
     clippy::disallowed_methods,
@@ -333,28 +381,33 @@ fn stop_tree(leader: u32) -> Result<()> {
 
 /// The run's sentinel line: its exit and end, then what the memory cap
 /// says where the launcher set one, then the verdict's own suffix. A kill
-/// at the cap is the run's cause and replaces that suffix, since it decides
-/// the verdict (`ops::validate::sentinel_outcome`). A stall's last line is
-/// the line's last field, since it is the log's text.
+/// at the unit's cap, or the executor's end at its own bound, is the run's
+/// cause and replaces that suffix, since it decides the verdict
+/// (`ops::validate::sentinel_outcome`). A failed run whose group lost a
+/// process to an OOM killer that was not its own cap names the host's. A
+/// stall's last line is the line's last field, since it is the log's text.
 fn sentinel(
     status: i32,
     ended_at: &str,
-    stalled: Option<&Stalled>,
+    end: &End,
     memory: Option<&MemoryEnd>,
+    host_kill: bool,
 ) -> String {
-    let suffix = match (memory, stalled) {
+    let suffix = match (memory, end) {
         (Some(MemoryEnd::Killed { limit, peak }), _) => {
             let peak = peak.map_or_else(|| "unread".to_owned(), |peak| peak.to_string());
             format!(" cause=memory-cap limit={limit} peak={peak}")
         }
-        (Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None, Some(stalled)) => format!(
+        (_, End::Outgrew { limit, peak }) => {
+            format!(" cause=memory-cap limit={limit} peak={peak}")
+        }
+        (_, End::Stalled(stalled)) => format!(
             " cause=stalled quiet-secs={} step={} last-line={}",
             stalled.quiet_secs, stalled.step, stalled.last_line
         ),
-        (Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None, None) if status == 3 => {
-            " verdict=no-verdict cause=host".to_owned()
-        }
-        (Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None, None) => String::new(),
+        (_, End::Exited) if host_kill && status != 0 => " cause=memory-host".to_owned(),
+        (_, End::Exited) if status == 3 => " verdict=no-verdict cause=host".to_owned(),
+        (_, End::Exited) => String::new(),
     };
     let word = match memory {
         Some(MemoryEnd::Unstated(word)) => format!(" {word}"),
@@ -394,6 +447,10 @@ struct Progress {
     next_read: Instant,
     next_line: Instant,
     steps: Steps,
+    /// The bound this executor holds the tree's resident memory to, where
+    /// no unit's cap holds it, and the most the tree has read.
+    bound: Option<u64>,
+    peak: u64,
 }
 
 impl Progress {
@@ -407,6 +464,7 @@ impl Progress {
         quiet: Duration,
         run: Step,
         run_expected: Option<u64>,
+        bound: Option<u64>,
     ) -> Result<Progress> {
         let record = fs::OpenOptions::new()
             .append(true)
@@ -433,6 +491,8 @@ impl Progress {
                 run_warned: false,
                 current: run,
             },
+            bound,
+            peak: 0,
         })
     }
 
@@ -462,6 +522,8 @@ impl Progress {
         let tree = match agent_runtime::process::tree(self.leader) {
             Ok(members) => {
                 let cpu: u64 = members.iter().map(|m| m.cpu_ms).sum();
+                let rss: u64 = members.iter().map(|m| m.rss_bytes).sum();
+                self.peak = self.peak.max(rss);
                 let ids: HashSet<(u32, String)> = members
                     .into_iter()
                     .map(|m| (m.id.pid, m.id.start))
@@ -503,6 +565,15 @@ impl Progress {
             now.duration_since(self.worked).as_secs()
         )
         .map_err(|e| super::files::unreadable("progress", e))
+    }
+
+    /// The bound and the tree's peak, once a reading of the tree's resident
+    /// memory passed the bound this executor holds. A page two members
+    /// share counts in each, so the sum can stand above what the kernel
+    /// charges; a tree that could not be read is judged at its next read.
+    fn outgrew(&self) -> Option<(u64, u64)> {
+        let bound = self.bound?;
+        (self.peak > bound).then_some((bound, self.peak))
     }
 
     /// The stall, once the command has shown no work for its quiet time:
@@ -689,6 +760,25 @@ impl Events {
             max: count("max")?,
             oom_kill: count("oom_kill")?,
         })
+    }
+}
+
+/// The cgroup this executor and its command run in, with its counts before
+/// the command.
+struct Kills {
+    dir: PathBuf,
+    before: Events,
+}
+
+impl Kills {
+    fn of(dir: PathBuf) -> Option<Kills> {
+        Events::read(&dir).map(|before| Kills { dir, before })
+    }
+
+    /// An OOM killer took a process from the group since the command
+    /// started; counts unread after are no kill.
+    fn rose(&self) -> bool {
+        Events::read(&self.dir).is_some_and(|after| after.oom_kill > self.before.oom_kill)
     }
 }
 
@@ -1423,129 +1513,199 @@ pub fn stop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::validate::{end_notice, memory_cap_cause, sentinel_outcome};
+    use crate::ops::validate::{end_notice, failure_cause, memory_cap_cause, sentinel_outcome};
 
     fn events(max: u64, oom_kill: u64) -> String {
         format!("low 0\nhigh 0\nmax {max}\noom {oom_kill}\noom_kill {oom_kill}\noom_group_kill 0\n")
     }
 
     /// A run whose own cgroup reached its cap while an OOM killer took a
-    /// member fails with the cause and its figures, whatever the leader's
-    /// exit, on its sentinel, its `state=done` reading and its lane's end
-    /// notice; a kill the group's own cap did not cause, a cap reached
-    /// with no kill, a group with no cap and counts unread after each
-    /// keep the leader's verdict and the bound's suffix where it applies.
+    /// member, or whose tree the executor ended past the bound it holds,
+    /// fails with the cause and its figures, whatever the leader's exit, on
+    /// its sentinel, its `state=done` reading and its lane's end notice; a
+    /// failed run whose group lost a process to a kill its own cap did not
+    /// make names the host's, and a passing one keeps its pass; a cap
+    /// reached with no kill, a group with no cap and counts unread after
+    /// each keep the leader's verdict and the stall's suffix where it
+    /// applies.
     #[test]
     #[allow(
         clippy::disallowed_methods,
         reason = "the row plants a cgroup's files and a run directory under its own temporary directories"
     )]
-    fn a_kill_at_the_runs_own_memory_cap_fails_the_run_with_its_figures() {
-        // case | memory.max | events after | memory.peak | leader exit | stalled |
-        // the outcome | the cause the line ends with
+    fn a_run_past_its_memory_bound_fails_with_its_figures_and_a_hosts_kill_is_named() {
+        // case | memory.max, none where no unit cap holds the run | events
+        // after | memory.peak | leader exit | how the watch ended | the
+        // outcome | the cause the wait and the notice state
         type Row<'a> = (
             &'a str,
-            &'a str,
+            Option<&'a str>,
             Option<String>,
             Option<&'a str>,
             i32,
-            bool,
+            &'a str,
             StageOutcome,
             Option<&'a str>,
         );
         let killed = Some("cause=memory-cap limit=1073741824 peak=1100000000");
-        let rows: [Row; 8] = [
+        let stalled = Some(
+            "cause=stalled step=run last-line=cargo test: waiting on the build directory lock",
+        );
+        let unit = Some("1073741824");
+        let rows: [Row; 13] = [
             (
                 "killed, leader 0",
-                "1073741824",
+                unit,
                 Some(events(3, 1)),
                 Some("1100000000"),
                 0,
-                false,
+                "exited",
                 StageOutcome::Fail,
                 killed,
             ),
             (
                 "killed, leader 137",
-                "1073741824",
+                unit,
                 Some(events(3, 1)),
                 Some("1100000000"),
                 137,
-                false,
+                "exited",
                 StageOutcome::Fail,
                 killed,
             ),
             (
                 "killed, then stalled",
-                "1073741824",
+                unit,
                 Some(events(3, 1)),
                 Some("1100000000"),
                 124,
-                true,
+                "stalled",
                 StageOutcome::Fail,
                 killed,
             ),
             (
                 "killed, peak unread",
-                "1073741824",
+                unit,
                 Some(events(3, 1)),
                 None,
                 0,
-                false,
+                "exited",
                 StageOutcome::Fail,
                 Some("cause=memory-cap limit=1073741824 peak=unread"),
             ),
             (
-                "an ancestor's kill",
-                "1073741824",
+                "an ancestor's kill, leader 0",
+                unit,
                 Some(events(0, 1)),
                 Some("1"),
                 0,
-                false,
+                "exited",
                 StageOutcome::Pass,
                 None,
             ),
             (
+                "an ancestor's kill, leader 1",
+                unit,
+                Some(events(0, 1)),
+                Some("1"),
+                1,
+                "exited",
+                StageOutcome::Fail,
+                Some("cause=memory-host"),
+            ),
+            (
+                "the host's kill, no unit, leader 137",
+                None,
+                Some(events(0, 1)),
+                None,
+                137,
+                "exited",
+                StageOutcome::Fail,
+                Some("cause=memory-host"),
+            ),
+            (
+                "outgrew the executor's bound",
+                None,
+                Some(events(0, 0)),
+                None,
+                137,
+                "outgrew",
+                StageOutcome::Fail,
+                Some("cause=memory-cap limit=16777216 peak=50331648"),
+            ),
+            (
                 "cap reached, reclaimed",
-                "1073741824",
+                unit,
                 Some(events(3, 0)),
                 Some("1"),
                 1,
-                false,
+                "exited",
                 StageOutcome::Fail,
                 None,
             ),
             (
                 "no cap, stalled",
-                "max",
+                Some("max"),
                 Some(events(0, 0)),
                 None,
                 124,
-                true,
+                "stalled",
                 StageOutcome::Fail,
+                stalled,
+            ),
+            (
+                "no unit, stalled",
                 None,
+                Some(events(0, 0)),
+                None,
+                124,
+                "stalled",
+                StageOutcome::Fail,
+                stalled,
             ),
             (
                 "counts gone after",
-                "1073741824",
+                unit,
                 None,
                 None,
                 0,
-                false,
+                "exited",
                 StageOutcome::Pass,
                 None,
             ),
+            (
+                "counts gone after, leader 1",
+                unit,
+                None,
+                None,
+                1,
+                "exited",
+                StageOutcome::Fail,
+                None,
+            ),
         ];
-        let stall = Stalled {
-            quiet_secs: 660,
-            step: "run".to_owned(),
-            last_line: "cargo test: waiting on the build directory lock".to_owned(),
-        };
-        for (case, max, after, peak, status, stalled, outcome, cause) in rows {
+        for (case, max, after, peak, status, end, outcome, cause) in rows {
+            let end = match end {
+                "exited" => End::Exited,
+                "stalled" => End::Stalled(Stalled {
+                    quiet_secs: 660,
+                    step: "run".to_owned(),
+                    last_line: "cargo test: waiting on the build directory lock".to_owned(),
+                }),
+                _ => End::Outgrew {
+                    limit: 16_777_216,
+                    peak: 50_331_648,
+                },
+            };
             let dir = tempfile::tempdir().expect("tempdir");
-            fs::write(dir.path().join("memory.max"), format!("{max}\n")).unwrap();
+            fs::write(
+                dir.path().join("memory.max"),
+                format!("{}\n", max.unwrap_or("max")),
+            )
+            .unwrap();
             fs::write(dir.path().join("memory.events"), events(0, 0)).unwrap();
-            let cap = Cap::of(dir.path().to_path_buf());
+            let cap = max.map(|_| Cap::of(dir.path().to_path_buf()));
+            let kills = Kills::of(dir.path().to_path_buf());
             match after {
                 Some(after) => fs::write(dir.path().join("memory.events"), after).unwrap(),
                 None => fs::remove_file(dir.path().join("memory.events")).unwrap(),
@@ -1556,26 +1716,27 @@ mod tests {
             let line = sentinel(
                 status,
                 "2026-01-01T00:00:00Z",
-                stalled.then_some(&stall),
-                Some(&MemoryEnd::of(&cap)),
+                &end,
+                cap.as_ref().map(MemoryEnd::of).as_ref(),
+                kills.as_ref().is_some_and(Kills::rose),
             );
             let line = line.trim_end();
             assert_eq!(sentinel_outcome(line), Some(outcome), "{case}: {line}");
-            assert_eq!(memory_cap_cause(line), cause, "{case}: {line}");
-            if max == "max" {
+            assert_eq!(
+                failure_cause(line).as_deref(),
+                cause.filter(|_| outcome == StageOutcome::Fail),
+                "{case}: {line}"
+            );
+            if memory_cap_cause(line).is_some() {
+                assert!(cause.is_some_and(|c| c.starts_with("cause=memory-cap ")));
+            }
+            if max == Some("max") {
                 assert!(
                     line.contains(" memory-cap=unavailable cause=cgroup-uncapped"),
                     "{case}: {line}"
                 );
             }
-            let cause = match (cause, stalled) {
-                (Some(cause), _) => Some(cause),
-                (None, true) => Some(
-                    "cause=stalled step=run last-line=cargo test: waiting on the build directory lock",
-                ),
-                (None, false) => None,
-            };
-            if case == "counts gone after" {
+            if case.starts_with("counts gone after") {
                 assert!(line.contains(" memory-cap=unread"), "{case}: {line}");
             }
             // The run's end notice and its waiter's `state=done` line carry

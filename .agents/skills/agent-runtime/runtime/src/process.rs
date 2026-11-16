@@ -72,7 +72,8 @@ pub(crate) const USER_HZ: u64 = 100;
 /// 3), the parent pid (4), the process group (5), the foreground process
 /// group of the controlling terminal (8, `-1` without one), the CPU times in
 /// clock ticks (14 to 17: user and system, then those of the children it
-/// reaped) and the start in clock ticks since boot (22).
+/// reaped), the start in clock ticks since boot (22) and the resident set in
+/// pages (24).
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 struct Stat {
@@ -85,6 +86,8 @@ struct Stat {
     /// needs them, so a line it cannot sum still answers every other read.
     cpu_ticks: Option<u64>,
     start: String,
+    /// `None` where the field is no whole number, as `cpu_ticks`.
+    rss_pages: Option<u64>,
 }
 
 #[cfg(target_os = "linux")]
@@ -102,6 +105,7 @@ fn parse_stat(stat: &str) -> Option<Stat> {
         .get(11..15)?
         .iter()
         .try_fold(0u64, |sum, field| sum.checked_add(field.parse().ok()?));
+    let rss_pages = fields.get(21).and_then(|field| field.parse().ok());
     Some(Stat {
         name,
         state,
@@ -110,6 +114,40 @@ fn parse_stat(stat: &str) -> Option<Stat> {
         tpgid,
         cpu_ticks,
         start: format!("ticks:{start}"),
+        rss_pages,
+    })
+}
+
+/// The kernel's page size in bytes, the unit of a stat line's resident set,
+/// from this process's auxiliary vector: `AT_PAGESZ` (`getauxval(3)`), read
+/// as `proc(5)` lays `/proc/self/auxv` out, one native `unsigned long` type
+/// and one value per entry. Read once; the size is fixed while a host runs.
+#[cfg(target_os = "linux")]
+fn page_bytes() -> std::result::Result<u64, Unreadable> {
+    static PAGE: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    PAGE.get_or_init(|| {
+        fs::read("/proc/self/auxv")
+            .ok()
+            .and_then(|auxv| page_size(&auxv))
+    })
+    .ok_or(Unreadable {
+        cause: "page-size-unread",
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn page_size(auxv: &[u8]) -> Option<u64> {
+    /// `AT_PAGESZ` in `include/uapi/linux/auxvec.h`.
+    const AT_PAGESZ: usize = 6;
+    let word = std::mem::size_of::<usize>();
+    auxv.chunks_exact(2 * word).find_map(|entry| {
+        let (key, value) = entry.split_at(word);
+        if usize::from_ne_bytes(key.try_into().ok()?) != AT_PAGESZ {
+            return None;
+        }
+        u64::try_from(usize::from_ne_bytes(value.try_into().ok()?))
+            .ok()
+            .filter(|bytes| *bytes > 0)
     })
 }
 
@@ -282,6 +320,73 @@ impl Memory {
 /// cap; the root of the tree keeps none. The OOM kill count is read beside
 /// the charge and leaves the charge's reading standing where it is unread.
 pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Option<Memory>> {
+    caps_of(proc_root, cgroup_root, pid).map(|(caps, oom_kill)| {
+        caps.into_iter()
+            .reduce(|fullest, capped| {
+                if capped.fuller_than(fullest) {
+                    capped
+                } else {
+                    fullest
+                }
+            })
+            .map(|fullest| Memory {
+                oom_kill,
+                ..fullest
+            })
+    })
+}
+
+/// The memory a new process tree in `pid`'s control group can take now, in
+/// bytes: the host's available memory or the least headroom under a cap on
+/// the group's path, whichever is smaller, since any cap on the path ends
+/// the tree when its group fills. The host's figure is `MemAvailable` of
+/// `<proc_root>/meminfo`, the kernel's estimate of what can be allocated
+/// without swapping (`proc_meminfo(5)`). Unreadable, never a size, where
+/// either reading is: a host with no `meminfo`, any host but Linux, is
+/// `host-room-unread`.
+pub fn room(
+    proc_root: &Path,
+    cgroup_root: &Path,
+    pid: u32,
+) -> std::result::Result<u64, Unreadable> {
+    let unreadable = |cause: &'static str| Unreadable { cause };
+    let available = match fs::read_to_string(proc_root.join("meminfo")) {
+        Ok(text) => mem_available(&text).ok_or(unreadable("meminfo-unparsed"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(unreadable("host-room-unread"));
+        }
+        Err(_) => return Err(unreadable("meminfo-unreadable")),
+    };
+    let caps = match caps_of(proc_root, cgroup_root, pid) {
+        Reading::Live((caps, _)) => caps,
+        Reading::Gone => return Err(unreadable("pid-gone")),
+        Reading::Unreadable { cause } => return Err(unreadable(cause)),
+    };
+    Ok(caps
+        .iter()
+        .map(|cap| cap.max.saturating_sub(cap.current))
+        .fold(available, u64::min))
+}
+
+/// `MemAvailable` in bytes from a `meminfo` text, which states it in kB.
+fn mem_available(meminfo: &str) -> Option<u64> {
+    let figure = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:"))?;
+    figure
+        .trim()
+        .strip_suffix(" kB")?
+        .trim()
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(1024)
+}
+
+/// Every capped group on the path of the control group `pid` runs in, under
+/// `cgroup_root`, nearest first, each with its own charge, and the sum of
+/// their `memory.events` `oom_kill`, `None` where one of them could not be
+/// read; the readings [`memory_of`] states.
+fn caps_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<(Vec<Memory>, Option<u64>)> {
     let unreadable = |cause: &'static str| Reading::Unreadable { cause };
     let text = match fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup")) {
         Ok(text) => text,
@@ -320,7 +425,7 @@ pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Opti
             .parse()
             .ok()
     };
-    let mut fullest: Option<Memory> = None;
+    let mut caps = Vec::new();
     let mut oom_kill = Some(0u64);
     let mut dir = group.as_path();
     loop {
@@ -332,23 +437,18 @@ pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Opti
                     Err(cause) => return unreadable(cause),
                 };
                 oom_kill = oom_kill.zip(kills(dir)).map(|(sum, n)| sum + n);
-                let capped = Memory {
+                caps.push(Memory {
                     current,
                     max,
                     oom_kill: None,
-                };
-                if fullest.is_none_or(|fullest| capped.fuller_than(fullest)) {
-                    fullest = Some(capped);
-                }
+                });
             }
             Ok(None) => {}
             Err(cause) => return unreadable(cause),
         }
         match dir.parent() {
             Some(parent) if dir != cgroup_root && parent.starts_with(cgroup_root) => dir = parent,
-            Some(_) | None => {
-                return Reading::Live(fullest.map(|m| Memory { oom_kill, ..m }));
-            }
+            Some(_) | None => return Reading::Live((caps, oom_kill)),
         }
     }
 }
@@ -563,11 +663,13 @@ fn proc_readings() -> std::result::Result<Vec<(u32, Reading<Stat>)>, Unreadable>
 }
 
 /// A live process at or below a root, with the CPU time it used, user and
-/// system, the children it has reaped included.
+/// system, the children it has reaped included, and its resident memory. A
+/// page two members share is in each one's resident size.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub id: Identity,
     pub cpu_ms: u64,
+    pub rss_bytes: u64,
 }
 
 /// The live processes at or below `root` by their parent links, from one read
@@ -578,7 +680,7 @@ pub struct Member {
 pub fn tree(root: u32) -> std::result::Result<Vec<Member>, Unreadable> {
     #[cfg(target_os = "linux")]
     {
-        tree_of(proc_readings()?, root)
+        tree_of(proc_readings()?, root, page_bytes()?)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -593,6 +695,7 @@ pub fn tree(root: u32) -> std::result::Result<Vec<Member>, Unreadable> {
 fn tree_of(
     readings: Vec<(u32, Reading<Stat>)>,
     root: u32,
+    page_bytes: u64,
 ) -> std::result::Result<Vec<Member>, Unreadable> {
     let mut live = Vec::new();
     for (pid, reading) in readings {
@@ -624,12 +727,16 @@ fn tree_of(
         let ticks = stat.cpu_ticks.ok_or(Unreadable {
             cause: "cpu-unparsed",
         })?;
+        let pages = stat.rss_pages.ok_or(Unreadable {
+            cause: "rss-unparsed",
+        })?;
         members.push(Member {
             id: Identity {
                 pid: *pid,
                 start: stat.start.clone(),
             },
             cpu_ms: ticks.saturating_mul(1000) / USER_HZ,
+            rss_bytes: pages.saturating_mul(page_bytes),
         });
         queue.extend(children.get(pid).into_iter().flatten());
     }
@@ -1069,6 +1176,7 @@ mod tests {
         assert_eq!(stat.tpgid, 4567);
         assert_eq!(stat.cpu_ticks, Some(14 + 15 + 16 + 17));
         assert_eq!(stat.start, "ticks:9912345");
+        assert_eq!(stat.rss_pages, Some(24));
         // A CPU field that is no whole number leaves the line's other reads.
         let line = stat_line("x", "S").replace(" 16 ", " -1 ");
         let stat = parse_stat(&line).expect("parsed");
@@ -1157,38 +1265,43 @@ mod tests {
     }
 
     /// A tree holds the root and every process whose parent links reach it,
-    /// each with its CPU time in milliseconds, and nothing outside it; an
-    /// exited entry is left out, two entries a reused pid links as each
-    /// other's parent are read once each, and one unreadable entry or CPU
-    /// field anywhere fails the reading.
+    /// each with its CPU time in milliseconds and its resident size in bytes
+    /// at the page size given, and nothing outside it; an exited entry is
+    /// left out, two entries a reused pid links as each other's parent are
+    /// read once each, and one unreadable entry, CPU field or resident size
+    /// anywhere fails the reading.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_tree_holds_the_roots_descendants_with_their_cpu_and_is_read_whole() {
-        let entry = |pid: u32, ppid: u32, cpu: &str| {
+    fn a_tree_holds_the_roots_descendants_with_their_cpu_and_memory_and_is_read_whole() {
+        let entry = |pid: u32, ppid: u32, cpu: &str, rss: &str| {
             let line = stat_line("x", "S")
                 .replacen("42 (x)", &format!("{pid} (x)"), 1)
                 .replace(" 41 42 ", &format!(" {ppid} 42 "))
-                .replace(" 14 15 16 17 ", &format!(" {cpu} 0 0 0 "));
+                .replace(" 14 15 16 17 ", &format!(" {cpu} 0 0 0 "))
+                .replace(" 24 25 ", &format!(" {rss} 25 "));
             (pid, stat_reading(Ok(line)))
         };
         let readings = || {
             vec![
-                entry(1, 0, "5"),
-                entry(10, 1, "250"),
-                entry(11, 10, "3"),
-                entry(12, 11, "0"),
-                entry(20, 1, "9"),
+                entry(1, 0, "5", "7"),
+                entry(10, 1, "250", "100"),
+                entry(11, 10, "3", "2"),
+                entry(12, 11, "0", "0"),
+                entry(20, 1, "9", "50"),
                 (13, Reading::Gone),
             ]
         };
-        let mut members = tree_of(readings(), 10).expect("readable");
+        let mut members = tree_of(readings(), 10, 4096).expect("readable");
         members.sort_by_key(|m| m.id.pid);
-        let read: Vec<(u32, u64)> = members.iter().map(|m| (m.id.pid, m.cpu_ms)).collect();
-        assert_eq!(read, vec![(10, 2500), (11, 30), (12, 0)]);
+        let read: Vec<(u32, u64, u64)> = members
+            .iter()
+            .map(|m| (m.id.pid, m.cpu_ms, m.rss_bytes))
+            .collect();
+        assert_eq!(read, vec![(10, 2500, 409_600), (11, 30, 8192), (12, 0, 0)]);
         assert_eq!(members[0].id.start, "ticks:9912345");
-        assert!(tree_of(readings(), 99).expect("readable").is_empty());
-        let looped = vec![entry(10, 11, "1"), entry(11, 10, "1")];
-        assert_eq!(tree_of(looped, 10).expect("readable").len(), 2);
+        assert!(tree_of(readings(), 99, 4096).expect("readable").is_empty());
+        let looped = vec![entry(10, 11, "1", "1"), entry(11, 10, "1", "1")];
+        assert_eq!(tree_of(looped, 10, 4096).expect("readable").len(), 2);
         let mut unread = readings();
         unread.push((
             30,
@@ -1197,19 +1310,128 @@ mod tests {
             },
         ));
         assert_eq!(
-            tree_of(unread, 10),
+            tree_of(unread, 10, 4096),
             Err(Unreadable {
                 cause: "stat-unreadable"
             })
         );
-        let mut uncounted = readings();
-        uncounted.push(entry(14, 12, "x"));
+        for (field, cause) in [("cpu", "cpu-unparsed"), ("rss", "rss-unparsed")] {
+            let mut uncounted = readings();
+            uncounted.push(match field {
+                "cpu" => entry(14, 12, "x", "1"),
+                _ => entry(14, 12, "1", "x"),
+            });
+            assert_eq!(
+                tree_of(uncounted, 10, 4096),
+                Err(Unreadable { cause }),
+                "{field}"
+            );
+        }
+    }
+
+    /// The page size is the `AT_PAGESZ` entry of an auxiliary vector in this
+    /// host's word form, wherever it stands among the entries; a vector
+    /// without one, or with a zero size, names none. This process's own
+    /// vector names one.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_page_size_is_the_auxiliary_vectors_page_entry() {
+        let vector = |entries: &[(usize, usize)]| -> Vec<u8> {
+            entries
+                .iter()
+                .flat_map(|(key, value)| [key.to_ne_bytes(), value.to_ne_bytes()].concat())
+                .collect()
+        };
         assert_eq!(
-            tree_of(uncounted, 10),
-            Err(Unreadable {
-                cause: "cpu-unparsed"
-            })
+            page_size(&vector(&[(3, 64), (6, 16384), (0, 0)])),
+            Some(16384)
         );
+        assert_eq!(page_size(&vector(&[(3, 64), (0, 0)])), None);
+        assert_eq!(page_size(&vector(&[(6, 0), (0, 0)])), None);
+        assert!(page_bytes().is_ok_and(|bytes| bytes.is_power_of_two()));
+    }
+
+    /// The room is the host's available memory or the least headroom under
+    /// a cap on the group's path, whichever is smaller: a farther cap with
+    /// less room than the nearest one bounds it, and a group past its cap
+    /// leaves none. A reading that cannot be made names its cause and is
+    /// never a size.
+    #[test]
+    fn the_room_is_the_smaller_of_the_hosts_available_memory_and_the_least_headroom_under_a_cap() {
+        const GIB: u64 = 1 << 30;
+        /// Each group of the path, `a` then `a/b`, with its cap and charge,
+        /// or none for a group with no cap.
+        type Groups = [Option<(u64, u64)>; 2];
+        let caps = |a, ab| -> Groups { [a, ab] };
+        let cases = [
+            ("uncapped", Some("8388608"), caps(None, None), Ok(8 * GIB)),
+            (
+                "the farther cap has less room",
+                Some("8388608"),
+                caps(Some((10 * GIB, 9 * GIB)), Some((4 * GIB, GIB))),
+                Ok(GIB),
+            ),
+            (
+                "the nearest cap has less room",
+                Some("8388608"),
+                caps(Some((10 * GIB, GIB)), Some((4 * GIB, 2 * GIB))),
+                Ok(2 * GIB),
+            ),
+            (
+                "the host has less room than any cap",
+                Some("524288"),
+                caps(Some((10 * GIB, GIB)), None),
+                Ok(GIB / 2),
+            ),
+            (
+                "a group past its cap",
+                Some("8388608"),
+                caps(None, Some((GIB, 2 * GIB))),
+                Ok(0),
+            ),
+            (
+                "no meminfo",
+                None,
+                caps(None, None),
+                Err("host-room-unread"),
+            ),
+            (
+                "no available figure",
+                Some("x"),
+                caps(None, None),
+                Err("meminfo-unparsed"),
+            ),
+        ];
+        for (case, available, groups, want) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let proc_root = root.path().join("proc");
+            let cgroup_root = root.path().join("cgroup");
+            fs::create_dir_all(proc_root.join("7")).unwrap();
+            fs::write(proc_root.join("7/cgroup"), "0::/a/b\n").unwrap();
+            if let Some(kb) = available {
+                let line = if kb == "x" {
+                    String::new()
+                } else {
+                    format!("MemAvailable:   {kb} kB\n")
+                };
+                fs::write(
+                    proc_root.join("meminfo"),
+                    format!("MemTotal:       16777216 kB\nMemFree:        1 kB\n{line}"),
+                )
+                .unwrap();
+            }
+            for (group, cap) in ["a", "a/b"].into_iter().zip(groups) {
+                let dir = cgroup_root.join(group);
+                fs::create_dir_all(&dir).unwrap();
+                let (max, current) = cap.map_or(("max".to_owned(), 5), |(max, current)| {
+                    (max.to_string(), current)
+                });
+                fs::write(dir.join("memory.max"), format!("{max}\n")).unwrap();
+                fs::write(dir.join("memory.current"), format!("{current}\n")).unwrap();
+            }
+            let read = room(&proc_root, &cgroup_root, 7).map_err(|unread| unread.cause);
+            assert_eq!(read, want, "{case}");
+        }
     }
 
     /// The test-owned `ps` at `tests/rust/fixtures/fake-ps/ps`, found first

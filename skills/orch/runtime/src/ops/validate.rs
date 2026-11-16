@@ -490,19 +490,22 @@ fn stop(path: &Path, doc: &mut Document, r: &RecordStop, env: &Env) -> Result<St
     })
 }
 
-/// The cause a sentinel line ends with where the kernel killed a member of
-/// the run's tree at the run's own memory cap: `cause=memory-cap
-/// limit=<bytes> peak=<bytes>`.
+/// The cause a sentinel line ends with where the run's tree outgrew the
+/// run's own memory bound, the kernel's kill at its unit's cap or its
+/// executor's end of it: `cause=memory-cap limit=<bytes> peak=<bytes>`.
 pub fn memory_cap_cause(line: &str) -> Option<&str> {
     line.find(" cause=memory-cap ").map(|at| &line[at + 1..])
 }
 
 /// The cause a failed run's wait and end notice state from its sentinel:
-/// the memory cap's, or, for a run its executor ended as stalled, the step
-/// and the log's last line, the last line last.
+/// the memory cap's, the host's OOM kill, or, for a run its executor ended
+/// as stalled, the step and the log's last line, the last line last.
 pub fn failure_cause(line: &str) -> Option<String> {
     if let Some(cause) = memory_cap_cause(line) {
         return Some(cause.to_owned());
+    }
+    if line.trim_end().ends_with(" cause=memory-host") {
+        return Some("cause=memory-host".to_owned());
     }
     let tail = &line[line.find(" cause=stalled ")? + 1..];
     let (head, last_line) = tail.split_once(" last-line=")?;

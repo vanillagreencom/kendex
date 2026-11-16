@@ -547,17 +547,8 @@ impl Launcher<'_> {
         reason: &str,
         argv: &[&str],
         stderr: Option<&Path>,
-        memory: Option<u64>,
     ) -> Launched {
-        // A process group holds no memory bound: a cap asked for is said
-        // unheld once, on the line the run's record and log carry.
-        let unheld = memory
-            .map(|_| {
-                let cause = reason.split(' ').next().unwrap_or(reason);
-                format!(" memory-cap=unavailable cause={cause}")
-            })
-            .unwrap_or_default();
-        let line = format!("runner=setsid reason={reason}{unheld}");
+        let line = format!("runner=setsid reason={reason}");
         let ended = |status: &str, cause: String| Launched {
             unanswered: false,
             read: SidecarRead::Failed {
@@ -802,7 +793,7 @@ pub fn launch_recorded(
     let Runner::Setsid { reason } = runner else {
         unreachable!()
     };
-    launcher.launch_setsid(record, &reason, argv, stderr, bounds.memory)
+    launcher.launch_setsid(record, &reason, argv, stderr)
 }
 
 /// A caller's own command started as a recorded job: `orch-runtime
