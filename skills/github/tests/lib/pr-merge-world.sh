@@ -467,6 +467,7 @@ calls() {
         [[ " $line " != *" --admin "* ]] || kind="$kind:admin"
         out="$out,$kind"
         ;;
+      "api graphql"*autoMergeAllowed*) ;;
       "api graphql"*"mergeQueue(branch:"*) out="$out,graphql:entries" ;;
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
       "api user"*) out="$out,user" ;;

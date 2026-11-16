@@ -265,7 +265,14 @@ NO_APPROVAL="arm: no-merge-gate=required_approval repo=owner/repo|calls=$PRE aut
 NO_THREADS="arm: no-merge-gate=required_thread_resolution repo=owner/repo|calls=$PRE auth=<unset>"
 NO_STALE="arm: no-merge-gate=dismiss_stale_reviews repo=owner/repo|calls=$PRE auth=<unset>"
 UNVERIFIED="arm: no-merge-gate=unverified repo=owner/repo|calls=$PRE auth=<unset>"
+mutant_copy rest-auto '    allow=$(with_token "$token" kendex_github_auto_merge_allowed) || allow=""' '    allow=$(with_token "$token" gh api '\''repos/{owner}/{repo}'\'' --jq '\''.allow_auto_merge'\'' 2>/dev/null) || allow=""' >/dev/null
 run_table "the approval gate" "\
+a REST response missing auto-merge still reaches the ruleset gate|checks:ci-required repo:pushless queue:SQUASH approvals:0/true/true|auto|1|-|merge-route: queue cause=queue-ruleset-mixed ruleset=null rule=pull_request;$NO_APPROVAL|mutant:rest-auto:--auto+--keep-branch
+a REST response missing auto-merge arms with GraphQL true|checks:ci-required repo:pushless queue:SQUASH post-auto|auto|75|-|merge-route: queue cause=queue-ruleset-mixed ruleset=null rule=required_status_checks;$ARMED
+GraphQL false refuses even when REST would allow auto-merge|checks:ci-required env:STUB_AUTO_MERGE_JSON=false|auto|1|-|arm: no-merge-gate=allow_auto_merge repo=owner/repo|calls=$PRE auth=<unset>
+a failed GraphQL setting read refuses|checks:ci-required env:STUB_AUTO_MERGE_EXIT=1|auto|1|-|$UNVERIFIED
+a null GraphQL setting refuses|checks:ci-required env:STUB_AUTO_MERGE_JSON=null|auto|1|-|$UNVERIFIED
+a string true GraphQL setting refuses|checks:ci-required env:STUB_AUTO_MERGE_JSON=\"true\"|auto|1|-|$UNVERIFIED
 a base requiring 1 approval, thread resolution and stale dismissal arms|checks:ci-required post-auto approvals:1/true/true|auto|75|-|$ARMED
 a base requiring 2 approvals, thread resolution and stale dismissal arms|checks:ci-required post-auto approvals:2/true/true|auto|75|-|$ARMED
 a base requiring 0 approvals refuses, naming the repository: nothing mutated|checks:ci-required post-auto approvals:0/true/true|auto|1|-|$NO_APPROVAL
