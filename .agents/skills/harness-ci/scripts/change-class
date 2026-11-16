@@ -6,7 +6,11 @@
 #                [--output FILE] [--lanes-from DIR] [--queue-only-default BOOL]
 #
 # --output appends lanes=true|false and lanes_cause beside the class and queue
-# verdicts. The lane rules are ../references/wiring.md § Per-lane verdicts.
+# verdicts. With --lanes-from it also appends a lane_verdicts multiline value
+# with lane_<name>=true|false.
+# stderr carries each `lane: name=<name> verdict=true|false cause=<cause>`
+# record, as the composite action's class log does. The lane rules are
+# ../references/wiring.md § Per-lane verdicts.
 # --lanes-from names a separate trusted checkout with .github/ci-lanes.conf;
 # empty by default, so no lane is declared. --queue-only-default true asks
 # for the queue-only default's stand-down, as the harness-ci template's
@@ -593,20 +597,38 @@ answer() { # CLASS FIELDS [measured]
     [ -f "$work/declared" ] || die "cause=declared-paths-unreadable" \
       "the docs reader did not complete declaration discovery"
     # harness-only owns the resolved endpoints; render move checks read them.
-    # The records below are the ones the action's log carries, save the
-    # unread-paths line: this route publishes no lane verdict it could change.
     { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"
-      [ -z "$light_line" ] || printf '%s\n' "$light_line"; } >"$work/class-log"
+      [ -z "$light_line" ] || printf '%s\n' "$light_line"
+      printf '%s\n' "$unread_line"; } >"$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
       "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" "$QUEUE_INPUTS" >&2
   fi
   if [ -n "$output" ]; then
     if ! { printf 'change_class=%s\nqueue_only=%s\n' "$1" "$QUEUE_ONLY"
-      [ "$output" = /dev/null ] || printf 'lanes=%s\nlanes_cause=%s\n' "$lanes" "$lanes_cause"
+      if [ "$output" != /dev/null ]; then
+        printf 'lanes=%s\nlanes_cause=%s\n' "$lanes" "$lanes_cause"
+        if [ -n "$lanes_from" ]; then
+          printf 'lane_verdicts<<__change_class_lane_verdicts_end__\n'
+          local index=0
+          while [ "$index" -lt "$lane_count" ]; do
+            printf 'lane_%s=%s\n' "${lane_names[$index]}" "${lane_values[$index]}"
+            index=$((index + 1))
+          done
+          printf '__change_class_lane_verdicts_end__\n'
+        fi
+      fi
     } >>"$output" 2>/dev/null; then
       die "cause=output-write-failed" \
         "could not append the verdict to '$output'"
     fi
+  fi
+  if [ -n "$output" ] && [ "$output" != /dev/null ]; then
+    index=0
+    while [ "$index" -lt "$lane_count" ]; do
+      printf 'lane: name=%s verdict=%s %s\n' "${lane_names[$index]}" \
+        "${lane_values[$index]}" "${lane_causes[$index]}" >&2
+      index=$((index + 1))
+    done
   fi
   printf '%s\n%s\n' "$queue_line" "$per_push_line" >&2
   [ -z "$light_line" ] || printf '%s\n' "$light_line" >&2
