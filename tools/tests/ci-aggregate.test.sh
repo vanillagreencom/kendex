@@ -25,12 +25,13 @@
 #      condition carries no status function. A pull request runs `CI` alone,
 #      and CI passes there without its aggregate, whatever the diff. A merge
 #      group runs the job set its class selects, the two diff checks and
-#      the macOS legs its queue_macos_shards list names. A push to main runs
-#      the cargo compile legs, catalog, smoke, the main-only suites and the
-#      shell shards its same-head merge group left unproved, the whole
-#      eligible roster where the changes job failed; the nightly run, schedule or dispatch, runs the native macOS roster, and the macOS and
-#      Windows cargo test steps run there and in the group, never on the
-#      push. The queue's legs expand to that list, or to the macOS-capable
+#      the macOS legs its queue_macos_shards list names. Main selects cache
+#      compilation and dedicated work by inputs, and ordinary shards by
+#      inputs less whole same-head proof. Catalog, smoke and the Windows
+#      check stay unconditional on main. Schedule consumes the nightly
+#      decision; dispatch keeps the full native roster. Selected macOS and
+#      Windows cargo jobs test outside pushes and compile alone on main.
+#      The queue's legs expand to that list, or to the macOS-capable
 #      roster where nothing classified, and CI's lane for them is true
 #      exactly where they run.
 #      A dead classifier runs every gated job a merge group runs and the
@@ -364,10 +365,9 @@ ROWS
 [ "$job_rows" -ge 10 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # Every job of the workflow, gated or not, per event: the event's whole run.
-# The changes job runs on a merge group and a main push, so the pull request
-# and the nightly run read it skipped and its outputs empty; every other job
-# a condition reads reads skipped, as nothing ran ahead of it. A job with no `if:` runs under
-# GitHub's implicit success().
+# The supplied result and outputs model changes for each event. Other needs
+# start skipped so the evaluator can resolve the workflow's actual job
+# conditions. A job with no `if:` uses GitHub's implicit success().
 event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted and spaced
   local wf="$1" event="$2" result="$3" sel="$4" ctx job needs expr
   published_map "$wf" >"$TMP/published-map"
@@ -379,8 +379,8 @@ event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted
     printf '%s\t%s\t%s\n' "$job" "$needs" "${expr:-success()}"
   done | gh_eval jobs "$ctx" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
 }
-# A main push runs its fixed jobs and the shell shards its group left
-# unproved: none, some on both runners, or every one where changes failed.
+# Main retains unconditional jobs plus selected cache, dedicated and shell
+# work. Failed selection retains the full fallback.
 MAIN_FIXED="cargo-check-windows catalog changes"
 MAIN_COMPILE="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
 MAIN_JOBS="$MAIN_COMPILE skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
@@ -435,8 +435,9 @@ merge_group|failure|$ALL_OFF|["ubuntu-latest"]
 ROWS
 [ "$leg_rows" -ge 4 ] || { echo "the leg table read $leg_rows rows" >&2; exit 1; }
 
-# The nightly job reads the skipped classifier's fallback through its shard
-# alias. These are source and expression checks, not a hosted execution.
+# A selected night uses a fixed full matrix even though changes succeeded
+# without publishing a merge-group shard selection. These evaluate source
+# expressions rather than a hosted execution.
 macos_condition() { # WORKFLOW
   job_ifs "$1" | awk -F '\t' '$1 == "skill-suites-macos" { print $2 }'
 }
@@ -453,8 +454,8 @@ workflow_dispatch|skipped|true
 ROWS
 check "the nightly macOS matrix uses macOS alone" '["macos-latest"]' \
   "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
-check "the nightly run runs the full shard roster through the alias" "$ROSTER" \
-  "$(gh_eval value "$(context_json schedule skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
+check "a selected night runs the fixed full shard roster" "$ROSTER" \
+  "$(gh_eval value "$(context_json schedule success 'nightly=true' "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
 
 # The queue's macOS legs: the job's condition, then its shard key evaluated,
 # as GitHub expands the matrix; `none` where the condition stands the job
@@ -615,9 +616,8 @@ while IFS='|' read -r event step runs; do
 done <<<"$STEP_ROWS"
 check "the step table holds every run step of $STEP_JOB" "missing= extra=" "$(step_coverage_gap "$WORKFLOW")"
 
-# The cargo test steps: the merge group tests what its class selects, the
-# nightly run tests on macOS and Windows, and the push to main compiles for
-# the cache alone.
+# Once selected, macOS and Windows cargo jobs test on groups, selected
+# nights and dispatches. A selected main cargo job compiles for its cache.
 # JOB|EVENT|RUNS
 while IFS='|' read -r job event runs; do
   check "the $job test step runs on $event: $runs" "$runs" "$(STEP_JOB="$job" step_runs "$WORKFLOW" test "$event")"
@@ -845,8 +845,8 @@ done
 # `CI` is the aggregate context the organization standard has every repository
 # report, checked by review-gate's standard-ci-context row.
 # Every other merge-group job reports into it; it runs on a pull request and
-# a merge group whatever its needs did, and the classifier it reads runs on
-# the merge group and the main push alone.
+# a merge group whatever its needs did. The changes job selects group and
+# main work and decides whether a scheduled head needs testing.
 
 ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can run on a merge group
   local wf="$1" ci job expr main_only=""
@@ -892,8 +892,7 @@ merge_group|every needed job succeeded|yes
 pull_request|a pull request runs no lane|yes
 merge_group|a pull request runs no lane|no
 ROWS
-# The workflow's events; the changes job every lane and CI read runs on the
-# merge group and, for its push route alone, the main push.
+# The changes job serves merge groups, main pushes and scheduled heads.
 check "the workflow runs on its five events" "merge_group pull_request push schedule workflow_dispatch" \
   "$(triggers "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 changes_if="$(job_ifs "$WORKFLOW" | awk -F '\t' '$1 == "changes" { print $2 }')"
@@ -958,9 +957,8 @@ aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal ke
 # classifier cannot produce a passing CI context over skipped jobs.
 saved_results="$RESULTS"
 for job in catalog smoke; do
-  # Main's checkout is a real producer even when classification has no
-  # usable output. The same jobs must check external releases there, on the
-  # push and on the nightly run.
+  # Main always checks external releases, even without selected inputs.
+  # Unread scheduled selection also retains these jobs.
   while IFS='|' read -r event result sel; do
     case " $(running "$WORKFLOW" "$sel" "$result" "$event") " in
       *" $job "*) ok "$job runs on $event with classifier $result and no selected inputs" ;;

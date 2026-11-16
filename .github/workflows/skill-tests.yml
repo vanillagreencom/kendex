@@ -107,8 +107,8 @@ name: Skill Tests
 # the list of legs held to 30 minutes, every macOS leg among them; every
 # other leg takes 15. The per-shard figures behind each budget are in the
 # comment above it.
-# Every merge group runs its selected Linux and macOS shards; the nightly
-# run runs the whole macOS roster.
+# Every merge group runs its selected Linux and macOS shards; a selected
+# night runs the whole native macOS roster.
 
 "on":
   # Kept for the required `CI` context alone: a pull request runs no lane.
@@ -1579,11 +1579,10 @@ jobs:
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
 
-  # The full nightly macOS roster. changes is skipped there, so the shared
-  # matrix expression uses its full-roster fallback. The suite steps and
-  # budgets have one owner. A main push runs its macOS legs in the queue job
-  # below, because changes runs there and the shared alias would read its
-  # Linux list.
+  # A selected night and manual dispatch need the full native roster.
+  # Keep this matrix fixed: a successful scheduled changes job publishes a
+  # nightly decision without the merge group's shard list. Shared steps and
+  # budgets retain one owner; main uses the queue job's selected remainder.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes

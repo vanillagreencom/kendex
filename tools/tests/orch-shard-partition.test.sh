@@ -1296,20 +1296,20 @@ main_only_filters() { # WORKFLOW CONTEXT [FIELD] ; a resolved shared suite input
   [[ -n "$expr" ]] || return 1
   gh_eval value "$2" "$expr" | jq -er 'select(type == "string")'
 }
-dedicated_rows() { # WORKFLOW ; suite|shard|os from the dedicated include matrix
+dedicated_rows() { # WORKFLOW CONTEXT ; suite|shard|os from the dedicated include matrix
   local expr
   expr="$(matrix_expr "$1" include skill-suites-main-only)" || return
   [[ -n "$expr" ]] || return 1
-  gh_eval value '{"needs":{"changes":{"result":"failure"}}}' "$expr" |
+  gh_eval value "$2" "$expr" |
     jq -er '.[] | [.suite,.shard,.os] | join("|")'
 }
 # A failed selector retains exactly the same workflow-owned declarations.
 main_declared="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")"
 check "dedicated fallback preserves declared native entries" \
-  "$(jq -er '.[] | [.suite,.shard,.os] | join("|")' <<<"$main_declared")" "$(dedicated_rows "$WORKFLOW")"
+  "$(jq -er '.[] | [.suite,.shard,.os] | join("|")' <<<"$main_declared")" "$(dedicated_rows "$WORKFLOW" '{"needs":{"changes":{"result":"failure"}}}')"
 dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
   local suite shard os ctx temporary filters rows="$TMP/dedicated-rows" claims="$TMP/dedicated-row"
-  dedicated_rows "$1" > "$rows" || return
+  dedicated_rows "$1" "$4" > "$rows" || return
   while IFS='|' read -r suite shard os; do
     [[ "$os" == "$2" ]] || continue
     ctx="$(jq -c --arg suite "$suite" --arg shard "$shard" --arg os "$os" \
@@ -1327,6 +1327,31 @@ dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
     cat "$claims"
   done < "$rows"
 }
+# Successful changes must carry their selected tuples through the real matrix
+# and shared suite filters, independently of the full failure fallback.
+selected_suites='[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"}]'
+selected_rows=$'critical-path-deny.test|guards-hooks|ubuntu-latest\norch-shard-partition.test|guards-tools-tail|ubuntu-latest'
+selected_claims=$'guards-hooks\thooks/tests/critical-path-deny.test.sh\nguards-tools-tail\ttools/tests/orch-shard-partition.test.sh'
+published_map "$WORKFLOW" > "$TMP/dedicated-map"
+selected_ctx="$(context_json push success "main_suites=$selected_suites" "$TMP/dedicated-map")"
+check "successful dedicated matrix preserves selected suite shard and runner tuples" \
+  "$selected_rows" "$(dedicated_rows "$WORKFLOW" "$selected_ctx")"
+check "successful dedicated selection reaches exactly its shell claims" \
+  "$selected_claims" "$(dedicated_claims "$WORKFLOW" ubuntu-latest 4 "$selected_ctx")"
+# Keep the fallback intact while substituting another nonempty success subset.
+plant "$WORKFLOW" '|| needs.changes.outputs.main_suites)' \
+  "|| '[{\"suite\":\"adopt-refresh.test\",\"shard\":\"refresh\",\"os\":\"ubuntu-latest\"}]')" \
+  "$TMP/dedicated-success-other.yml" skill-suites-main-only
+dedicated_rows "$TMP/dedicated-success-other.yml" "$selected_ctx" > "$TMP/dedicated-other-rows"
+dedicated_claims "$TMP/dedicated-success-other.yml" ubuntu-latest 4 "$selected_ctx" > "$TMP/dedicated-other-claims"
+if [[ -s "$TMP/dedicated-other-rows" && -s "$TMP/dedicated-other-claims" ]] &&
+  ! cmp -s <(printf '%s\n' "$selected_rows") "$TMP/dedicated-other-rows" &&
+  ! cmp -s <(printf '%s\n' "$selected_claims") "$TMP/dedicated-other-claims"; then
+  ok "must-fail: another nonempty successful matrix loses the selected tuples and claims"
+else
+  bad "successful dedicated matrix control did not replace the selected subset"
+fi
+
 event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claims
   local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards shard row_ctx temporary filters excluded
   [[ "$event" != merge_group ]] || { result=failure; ref=refs/heads/gh-readonly-queue/main/fixture; }

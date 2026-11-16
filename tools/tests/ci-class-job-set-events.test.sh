@@ -289,14 +289,24 @@ push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
 if grep -qxF 'shards=[]' "$TMP/push-out"; then bad 'must-fail: main selection mutant escaped'; else ok 'must-fail: main selection mutant runs forbidden lock-only shards'; fi
 
 # Only the latest successful scheduled main run can stand a night down.
+# A history with competing heads must reject an older matching success.
+awk '{ n += sub(/sort_by\(\.created_at\) \| last \|/, "sort_by(.created_at) | first |") } { print } END { exit n != 1 }' \
+  "$JOB_SET" >"$TMP/trusting/tools/ci-job-set"
 while IFS='|' read -r row mutation expected; do
   jq "$mutation" "$DATA/main-proof-runs.json" >"$TMP/push/no-run/runs.json"
   : >"$TMP/nightly-out"
   PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-out" "$JOB_SET"
   check "nightly $row" "nightly=$expected" "$(cat "$TMP/nightly-out")"
+  if [ "$row" = older-match-newest-different ]; then
+    : >"$TMP/nightly-control-out"
+    PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-control-out" "$TMP/trusting/tools/ci-job-set"
+    check "must-fail: oldest successful night skips a head the latest night did not test" nightly=false "$(cat "$TMP/nightly-control-out")"
+  fi
 done <<'ROWS'
-equal|.workflow_runs[0] += {event:"schedule",head_branch:"main",status:"completed",conclusion:"success"}|false
-different|.workflow_runs[0] += {event:"schedule",head_branch:"main",status:"completed",conclusion:"success",head_sha:"other"}|true
+equal|.workflow_runs[0] += {event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z"}|false
+different|.workflow_runs[0] += {event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z",head_sha:"other"}|true
+older-match-newest-different|.workflow_runs = [(.workflow_runs[0] + {id:1,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-14T02:00:00Z"}),(.workflow_runs[0] + {id:2,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z",head_sha:"other"})]|true
+newest-match-older-different|.workflow_runs = [(.workflow_runs[0] + {id:2,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z"}),(.workflow_runs[0] + {id:1,event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-14T02:00:00Z",head_sha:"other"})]|false
 push-success|.workflow_runs[0].event = "push"|true
 no-success|.workflow_runs = []|true
 unread|del(.workflow_runs)|true
