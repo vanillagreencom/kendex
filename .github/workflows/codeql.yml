@@ -1,0 +1,77 @@
+name: CodeQL
+
+# Default setup cannot filter triggering paths. Disable it before enabling this
+# advanced workflow: https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configuring-advanced-setup-for-code-scanning
+# This optional security scan does not carry a required CI context.
+on:
+  # New queries must also reach code that has not changed.
+  schedule:
+    - cron: '23 4 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.rs'
+      - '**/*.js'
+      - '**/*.jsx'
+      - '**/*.mjs'
+      - '**/*.cjs'
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.mts'
+      - '**/*.cts'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'ui/package.json'
+      - 'ui/package-lock.json'
+      - '**/*.py'
+      - '**/*.rb'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '!**/*.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.rs'
+      - '**/*.js'
+      - '**/*.jsx'
+      - '**/*.mjs'
+      - '**/*.cjs'
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.mts'
+      - '**/*.cts'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'ui/package.json'
+      - 'ui/package-lock.json'
+      - '**/*.py'
+      - '**/*.rb'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '!**/*.md'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Preserve default setup's languages; javascript/typescript are aliases.
+        language: [actions, javascript-typescript, python, ruby, rust]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          category: /language:${{ matrix.language }}
