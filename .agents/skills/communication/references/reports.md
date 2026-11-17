@@ -88,41 +88,41 @@ Readings
     - 90 kendex _(median 35 h)_: Acceptance is late; I started checking the oldest today.
     - 10 fleet: Acceptance is late; I started checking these after kendex.
 - 3 lanes past 3.5 hours at 9:30 am need help; I inspected their failures:
-    - *<https://linear.app/<workspace>/issue/KEN-0002|[KEN-0002]>* _(17 h)_: Review blocks progress; I sent the setup decision.
+    - *<https://linear.app/your-workspace/issue/KEN-0002|[KEN-0002]>* _(17 h)_: Review blocks progress; I sent the setup decision.
         - _Paused for a design review of its test setup; I sent the decision._
-    - *<https://linear.app/<workspace>/issue/HT-0003|[HT-0003]>* _(8 h)_: Repeated failures delay delivery; I narrowed its failing checks.
+    - *<https://linear.app/your-workspace/issue/HT-0003|[HT-0003]>* _(8 h)_: Repeated failures delay delivery; I narrowed its failing checks.
 
-_*<https://linear.app/<workspace>/issue/KEN-0001|[KEN-0001]>* cuts the check time; I read it after it merges._
+_*<https://linear.app/your-workspace/issue/KEN-0001|[KEN-0001]>* cuts the check time; I read it after it merges._
 
 ```
 Completed
 ```
 
-- *<https://linear.app/<workspace>/issue/VGS-0004|[VGS-0004]>* Test windows no longer reset your idle timer
-- *<https://linear.app/<workspace>/issue/KEN-0005|[KEN-0005]>* Lanes warn before a prepaid grant runs out
-- *<https://linear.app/<workspace>/issue/HT-0006|[HT-0006]>* A file only tests read runs only those tests
+- *<https://linear.app/your-workspace/issue/VGS-0004|[VGS-0004]>* Test windows no longer reset your idle timer
+- *<https://linear.app/your-workspace/issue/KEN-0005|[KEN-0005]>* Lanes warn before a prepaid grant runs out
+- *<https://linear.app/your-workspace/issue/HT-0006|[HT-0006]>* A file only tests read runs only those tests
 
 ```
 In progress
 ```
 
-- *<https://linear.app/<workspace>/issue/VGS-0007|[VGS-0007]>* Power settings pane with the idle timeline
-- *<https://linear.app/<workspace>/issue/KEN-0008|[KEN-0008]>* Overseer restarts when its plan ends
+- *<https://linear.app/your-workspace/issue/VGS-0007|[VGS-0007]>* Power settings pane with the idle timeline
+- *<https://linear.app/your-workspace/issue/KEN-0008|[KEN-0008]>* Overseer restarts when its plan ends
 - Moving four overseers to the account with the most room
 
 ```
 Blocked
 ```
 
-- *<https://linear.app/<workspace>/issue/FLT-0009|[FLT-0009]>* Waits for its prerequisite
+- *<https://linear.app/your-workspace/issue/FLT-0009|[FLT-0009]>* Waits for its prerequisite
 
-_It launches when *<https://linear.app/<workspace>/issue/KEN-0008|[KEN-0008]>* merges._
+_It launches when *<https://linear.app/your-workspace/issue/KEN-0008|[KEN-0008]>* merges._
 
 ```
 Waiting on you
 ```
 
-- *<https://linear.app/<workspace>/issue/VG-0010|[VG-0010]>* Certified-mail receipt number for the Forms 8606
+- *<https://linear.app/your-workspace/issue/VG-0010|[VG-0010]>* Certified-mail receipt number for the Forms 8606
 
 _Due by mail on Oct 23._
 
@@ -143,7 +143,7 @@ Jarvis self-analysis
 - *Good:* Found the overseer outage cause within 30 minutes
 - *Bad:* Missed two stopped overseers for 11 hours
 
-_*<https://linear.app/<workspace>/issue/KEN-0008|[KEN-0008]>* restarts a stopped overseer on its own._
+_*<https://linear.app/your-workspace/issue/KEN-0008|[KEN-0008]>* restarts a stopped overseer on its own._
 
 `Next report: 1 pm`
 ````

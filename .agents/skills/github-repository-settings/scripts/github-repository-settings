@@ -6,11 +6,113 @@ fail() {
   exit 2
 }
 
+effects() {
+  python3 -B - "$@" <<'PY_EFFECTS'
+"""Private write boundary for the package launcher; core alone changes arming."""
+
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+
+
+def armed(root, name):
+    # v1.21.0 core repo_effects/armed.rs owns this presence-only inventory.
+    # The released CLI has no package arming-status verb. Read that one record
+    # through git's worktree-local directory; never create a second inventory.
+    environment = dict(os.environ)
+    for key in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        environment.pop(key, None)
+    # Match released core's absent-repository rule before reading its record:
+    # https://github.com/vanillagreencom/kendex/blob/v1.21.0/crates/core/src/repo_effects.rs#L174-L189
+    # https://github.com/vanillagreencom/kendex/blob/v1.21.0/crates/core/src/guard/repo.rs#L32-L41
+    environment["LC_ALL"] = "C"
+    probe = subprocess.run(["git", "-C", root, "rev-parse", "--is-inside-work-tree"],
+                           env=environment, capture_output=True, text=True)
+    if probe.returncode:
+        if any(phrase in probe.stderr for phrase in
+               ("not a git repository (or any ", "not a working tree")):
+            return False
+        raise OSError(f"probe repository {root}: {probe.stderr.strip()}")
+    if probe.stdout.strip() == "false":
+        return False
+    if probe.stdout.strip() != "true":
+        raise OSError(f"probe repository {root}: unexpected answer {probe.stdout!r}")
+    result = subprocess.run(["git", "-C", root, "rev-parse", "--absolute-git-dir"],
+                            env=environment, capture_output=True, text=True)
+    if result.returncode:
+        raise OSError(f"read repository git directory: {result.stderr.strip()}")
+    record = Path(result.stdout.rstrip("\n")) / "kendex/armed" / name / "-record"
+    try:
+        mode = record.lstat().st_mode
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(mode):
+        raise OSError(f"read arming record {record}: not a regular file")
+    return True
+
+
+def retire(root, skills):
+    # Keep marker discovery, ownership and region parsing in the shared library.
+    sys.path.insert(0, str(Path(skills) / "bot-instructions/scripts"))
+    from lib import marker, render, tree, validators_repo, writer
+    from lib.errors import RenderError
+
+    findings = validators_repo.unconfigured_orphans(tree.Worktree(root), "retire")
+    for finding in findings:
+        path = finding.path
+        if os.path.islink(os.path.join(root, path)):
+            raise RenderError(f"{path}: a symlink cannot be retired")
+    for finding in findings:
+        path = finding.path
+        if path == "AGENTS.md":
+            def remove_region(existing):
+                body = render.region_of(existing) if existing is not None else None
+                if body is None or not marker.owns("AGENTS.md", body):
+                    raise RenderError("AGENTS.md: owned region could not be located during retirement")
+                return render.splice(existing, "")
+            writer.replace(root, path, transform=remove_region, require_marker=False,
+                           reject_symlink=True)
+            print("removed region AGENTS.md\t## Code Review Rules")
+        else:
+            writer.remove(root, path)
+            print(f"removed {path}")
+
+
+def main():
+    operation, root, skills = sys.argv[1:]
+    try:
+        if operation == "armed":
+            if armed(root, "github-repository-settings"):
+                return 0
+            print("github-repository-settings: not-set-up=github-repository-settings", file=sys.stderr)
+            print("Use Set up on the github-repository-settings package page before writing.", file=sys.stderr)
+            return 2
+        # Core recovery re-renders the still-armed predecessor. Both packages
+        # use its marker, so preserve all shared outputs until core revokes it.
+        if operation == "core-retire" and armed(root, "bot-instructions"):
+            print("github-repository-settings: cleanup-preserved=bot-instructions")
+            return 0
+        retire(root, skills)
+        return 0
+    except Exception as error:
+        print(f"github-repository-settings: {operation}-failed={root}", file=sys.stderr)
+        print(error, file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY_EFFECTS
+}
+
 usage() {
   cat <<'EOF'
-Usage: github-repository-settings <adopt --dry-run|render|check [--staged]> [options]
+Usage: github-repository-settings <adopt|render|retire|setup-install|setup-retire|region-bounds|check [--staged]> [options]
 
-Options: --repo PATH, --dry-run, --json, --help
+Options: --repo PATH, --dry-run, --discover, --json, --help
+region-bounds forwards --input PATH to the shared library without repository settings.
 The bot-instructions library owns render, preview and check semantics.
 Check reports github-standard-check-location=hosted|local|unset on stderr.
 Exit codes: 0 clean, 1 findings, 2 could not complete.
@@ -19,9 +121,20 @@ EOF
 
 case "${1:-}" in
   --help|-h) usage; exit 0 ;;
-  adopt|render|check) verb=$1; shift ;;
-  *) fail usage "${1:-missing}" 'Choose adopt --dry-run, render or check.' ;;
+  region-bounds) verb=$1 ;;
+  adopt|render|retire|setup-install|setup-retire|check) verb=$1; shift ;;
+  *) fail usage "${1:-missing}" 'Choose adopt, render, retire or check; Set up runs setup-install.' ;;
 esac
+# Keep checkout installation links so local review points at installed doctrine.
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -L)"
+skills_dir="$(cd -- "$script_dir/../.." && pwd -L)"
+library="$skills_dir/bot-instructions/scripts/bot-instructions"
+[ -x "$library" ] || fail dependency bot-instructions 'Install the required bot-instructions package beside this package.'
+# OwnedRegion replaces the declared installer's arguments with this protocol.
+# Its input is a host-supplied snapshot, independent of settings and arming.
+if [ "$verb" = region-bounds ]; then
+  exec "$library" "$@"
+fi
 repo=.
 preview=false
 staged=false
@@ -33,25 +146,39 @@ while [ "$#" -gt 0 ]; do
       repo=$2
       shift 2
       ;;
-    --dry-run) preview=true; args+=("$1"); shift ;;
+    --dry-run)
+      case "$verb" in adopt|render|setup-install) ;; *) fail usage --dry-run 'Only adoption and rendering support previews.' ;; esac
+      preview=true; args+=("$1"); shift ;;
     --staged)
       [ "$verb" = check ] || fail usage --staged 'Only check accepts --staged.'
       staged=true; args+=("$1"); shift ;;
-    --json) args+=("$1"); shift ;;
+    --discover)
+      [ "$verb" = render ] || [ "$verb" = setup-install ] || fail usage --discover 'Only rendering accepts --discover.'
+      preview=true; args+=("$1"); shift ;;
+    --json)
+      [ "$verb" = check ] || fail usage --json 'Only check accepts --json.'
+      args+=("$1"); shift ;;
     --help|-h) usage; exit 0 ;;
     *) fail usage "$1" 'Use --help for supported options.' ;;
   esac
 done
-[ "$verb" != adopt ] || [ "$preview" = true ] || fail usage adopt 'Adoption requires --dry-run in this package.'
 
-# Keep checkout installation links so local review points at installed doctrine.
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -L)"
-skills_dir="$(cd -- "$script_dir/../.." && pwd -L)"
-library="$skills_dir/bot-instructions/scripts/bot-instructions"
-settings="$skills_dir/review-gate/scripts/lib/settings.sh"
-[ -x "$library" ] || fail dependency bot-instructions 'Install the required bot-instructions package beside this package.'
-[ -r "$settings" ] || fail dependency review-gate 'Install the required review-gate package beside this package.'
 cd -- "$repo" || fail repository "$repo" 'Could not open the repository.'
+# Core owns consent and arming. Ordinary writes only read its existing record;
+# setup-install is the declared operation core licenses before recording setup.
+if [ "$preview" = false ] && { [ "$verb" = render ] || [ "$verb" = adopt ] || [ "$verb" = retire ]; }; then
+  effects armed "$PWD" "$skills_dir" || exit 2
+fi
+# Core licenses this declared operation for removal and failed-install cleanup,
+# including partial writes made before core could record successful setup.
+if [ "$verb" = retire ] || [ "$verb" = setup-retire ]; then
+  operation=retire
+  [ "$verb" != setup-retire ] || operation=core-retire
+  effects "$operation" "$PWD" "$skills_dir"
+  exit $?
+fi
+settings="$skills_dir/review-gate/scripts/lib/settings.sh"
+[ -r "$settings" ] || fail dependency review-gate 'Install the required review-gate package beside this package.'
 # shellcheck source=../../review-gate/scripts/lib/settings.sh
 source "$settings" || exit 2
 if [ "$staged" = true ]; then
@@ -74,7 +201,7 @@ case "$verb:$review" in
   *:on) output=full ;;
   *) fail setting GITHUB_STANDARD_BOT_REVIEW 'Choose off or on.' ;;
 esac
-if [ "$verb" = adopt ] && [ -z "$location" ]; then
+if { [ "$verb" = adopt ] || [ "$verb" = setup-install ]; } && [ -z "$location" ]; then
   fail setting GITHUB_STANDARD_CHECK_LOCATION 'Choose hosted or local before adoption.'
 fi
 if [ "$verb" = check ]; then
@@ -84,6 +211,14 @@ if [ "$verb" = check ]; then
       'Set GITHUB_STANDARD_CHECK_LOCATION and GITHUB_STANDARD_BOT_REVIEW to adopt review-file checks.' >&2
     exit 0
   fi
+fi
+# Core uses this installer for setup, ordinary render and one-run refresh.
+# Every invocation keeps the shared renderer's marker gate; takeover is adopt.
+[ "$verb" != setup-install ] || args[0]=render
+if [ "$verb" = adopt ] && [ "$preview" = false ]; then
+  status=0
+  "$library" adopt --dry-run --repo "$PWD" --output "$output" || status=$?
+  [ "$status" -le 1 ] || exit "$status"
 fi
 status=0
 "$library" "${args[@]}" --repo "$PWD" --output "$output" || status=$?

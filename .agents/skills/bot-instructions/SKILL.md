@@ -40,6 +40,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Bot Instructions
 
+When github-repository-settings declares repository effects, core selects that package as the review-file owner. Keep this declaration available for predecessor discovery and recovery. Scopes without that declaration retain this renderer and checker.
+
 ```bash
 .agents/skills/bot-instructions/scripts/bot-instructions render   # write every enabled surface
 .agents/skills/bot-instructions/scripts/bot-instructions check    # re-render and compare

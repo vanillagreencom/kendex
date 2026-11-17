@@ -1,149 +1,82 @@
 # Svg
 
-> `iced::widget::svg` · iced 0.14.0 · feature = `svg`
+Read when displaying, tinting or rotating an SVG with Iced 0.14.0. Enable the `svg` feature on `iced`.
 
-Displays a vector graphics image (SVG) that resizes smoothly without quality loss. Supports color filtering, rotation, and opacity.
+Use the built-in `iced::widget::svg` for vector images that resize without losing quality. The [widget source] owns constructors, sizing, fitting defaults and styling signatures. The [handle source] owns SVG data loading; the [helper source] defines `svg(handle)` as a call to `Svg::new(handle)`.
 
-## API
+## Loading and sizing
 
-### `Svg` struct
+Pass a file path to `svg(...)`, or construct a handle with `svg::Handle::from_path`. `Svg::from_path` is also available. Set the widget's width and height, then choose a [ContentFit] strategy for the image within those bounds.
 
 ```rust
-pub struct Svg<'a, Theme = Theme>
-where
-    Theme: Catalog,
-{ /* private fields */ }
+use iced::widget::{svg, Svg};
+use iced::ContentFit;
 
-impl<'a, Theme> Svg<'a, Theme>
-where
-    Theme: Catalog,
-{
-    pub fn new(handle: impl Into<Handle>) -> Self;
-    pub fn from_path(path: impl Into<PathBuf>) -> Self;
-
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn content_fit(self, content_fit: ContentFit) -> Self;
-    pub fn rotation(self, rotation: impl Into<Rotation>) -> Self;
-    pub fn opacity(self, opacity: impl Into<f32>) -> Self;
-
-    pub fn style(
-        self,
-        style: impl Fn(&Theme, Status) -> Style + 'a,
-    ) -> Self
-    where
-        <Theme as Catalog>::Class<'a>: From<Box<dyn Fn(&Theme, Status) -> Style + 'a>>;
-
-    pub fn class(
-        self,
-        class: impl Into<<Theme as Catalog>::Class<'a>>,
-    ) -> Self; // feature = "advanced"
+fn icon() -> Svg<'static> {
+    svg("icons/settings.svg")
+        .width(24)
+        .height(24)
+        .content_fit(ContentFit::Contain)
 }
 ```
 
-### `Handle` enum
+`Handle` is an opaque struct. `Handle::from_memory` accepts SVG bytes or gzip-compressed SVG data. Use a static byte slice for an embedded asset, or owned bytes for data loaded at runtime.
 
 ```rust
-pub enum Handle {
-    Path(PathBuf),
-    Bytes(Bytes),
-}
+use iced::widget::{svg, Svg};
 
-impl Handle {
-    pub fn from_path(path: impl Into<PathBuf>) -> Handle;
-    pub fn from_memory(bytes: impl Into<Bytes>) -> Handle;
+fn logo() -> Svg<'static> {
+    let bytes = include_bytes!("../assets/logo.svg");
+    svg(svg::Handle::from_memory(bytes.as_slice()))
 }
 ```
 
-### `Status` enum
+The paths in these examples name assets in the consuming application. Keep a reusable handle in application state when displaying the same data repeatedly. Resizing complex SVGs can still have a considerable rendering cost.
+
+## Tint and opacity
+
+`.style(...)` receives the theme and the SVG's idle or hovered status. Return `svg::Style` with `color: Some(...)` to tint the whole image, replacing its intrinsic colors. Use `color: None` to retain them. The bundled [SVG example](../examples/svg/src/main.rs) switches between a tint and the original colors.
 
 ```rust
-pub enum Status {
-    Idle,
-    Hovered,
-}
-```
+use iced::widget::{svg, Svg};
+use iced::Color;
 
-### `Style` struct
-
-```rust
-pub struct Style {
-    pub color: Option<Color>,
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style;
-}
-```
-
-### Functions
-
-```rust
-pub fn svg<'a, Theme>(handle: impl Into<Handle>) -> Svg<'a, Theme>
-where
-    Theme: Catalog + 'a;
-```
-
-### Type aliases
-
-```rust
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme, Status) -> Style + 'a>;
-```
-
-## Patterns
-
-### Display from file path
-
-```rust
-use iced::widget::svg;
-
-svg("icons/settings.svg").width(24).height(24)
-```
-
-### Tint with a color on hover
-
-```rust
-svg("icon.svg")
-    .style(|_theme, status| svg::Style {
+fn hover_icon() -> Svg<'static> {
+    svg("icon.svg").style(|_theme, status| svg::Style {
         color: match status {
             svg::Status::Hovered => Some(Color::from_rgb(0.2, 0.5, 1.0)),
             svg::Status::Idle => Some(Color::WHITE),
         },
     })
+}
 ```
 
-### Load from bytes
+Use `.opacity(...)` for transparency, with values from `0.0` to `1.0`. Before relying on a tint for a fade, follow the [SVG alpha checks](guide-custom-widgets.md#svg-alpha-caveat).
+
+For a custom theme, implement `svg::Catalog`. Its class selects a style for the current status. The `.style(...)` closure requires a class that can be built from `svg::StyleFn`; `.class(...)` requires the `advanced` feature. See the [widget source] and [catalog guide](catalog.md) for those contracts.
+
+## Rotation
+
+Convert degrees to `Radians` before passing the angle to `.rotation(...)`. The [angle source] defines the conversion; the [rotation source] defines how rotation affects layout. Converting `Radians` into `Rotation` uses floating rotation, which keeps the unrotated layout size. Use `Rotation::Solid` when layout must fit the rotated content.
 
 ```rust
-let svg_data = include_bytes!("../assets/logo.svg");
-svg(svg::Handle::from_memory(svg_data.as_slice()))
+use iced::widget::{svg, Svg};
+use iced::{Degrees, Radians};
+
+fn arrow() -> Svg<'static> {
+    svg("arrow.svg").rotation(Radians::from(Degrees(90.0)))
+}
 ```
 
-### Rotated icon
+## Related references
 
-```rust
-use iced::Rotation;
+- [Image](widget-image.md): raster images.
+- [Canvas](canvas.md): custom drawing with paths.
+- [Widgets](widgets.md): widget selection.
 
-svg("arrow.svg").rotation(Rotation::from_degrees(90.0))
-```
-
-## Gotchas
-
-- Requires the `svg` crate feature.
-- Complex SVGs can be expensive to render, especially when resized frequently. Cache the handle in state.
-- `Style::color` applies as a color filter (tint) to the entire SVG. Set to `None` to display original colors.
-- `content_fit` defaults to `ContentFit::Contain`.
-
-## See also
-
-- `widget-image.md` -- raster image display
-- `canvas.md` -- custom drawing with paths
-- `catalog.md` -- the `Catalog` trait pattern
-- `guide-custom-widgets.md` -- SVG alpha caveat (tint alpha may diverge from container alpha)
-- `widgets.md` -- widget catalog
+[widget source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/svg.rs
+[handle source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/svg.rs
+[helper source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs
+[ContentFit]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/content_fit.rs
+[angle source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/angle.rs
+[rotation source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/rotation.rs
