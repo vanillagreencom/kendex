@@ -2,117 +2,22 @@
 
 > `iced::widget::markdown` · iced 0.14.0 · feature = `markdown`
 
-Renders Markdown content as native iced widgets. Parses Markdown text into `Item`s, then displays them via `view` or `items`. Link clicks produce `String` (URL) messages.
+Read when displaying Markdown, handling its links or customizing its widgets. The pinned [Markdown source] owns parsing, items, settings, styles and viewer contracts. The bundled [Markdown example](../examples/markdown/src/main.rs) shows custom image rendering and link messages.
 
-## API
+## Parsing and display
 
-### Parsing
-
-```rust
-pub fn parse(markdown: &str) -> impl Iterator<Item = Item> + '_;
-```
-
-### Display functions
-
-```rust
-pub fn view<'a, Theme, Renderer>(
-    items: impl IntoIterator<Item = &'a Item>,
-    settings: impl Into<Settings>,
-) -> Element<'a, String, Theme, Renderer>
-where
-    Theme: Catalog + 'a,
-    Renderer: Renderer<Font = Font> + 'a;
-
-pub fn items<'a, Message, Theme, Renderer>(
-    viewer: &impl Viewer<'a, Message, Theme, Renderer>,
-    settings: Settings,
-    items: &'a [Item],
-) -> Element<'a, Message, Theme, Renderer>
-where
-    Message: 'a,
-    Theme: Catalog + 'a,
-    Renderer: Renderer<Font = Font> + 'a;
-```
-
-### `Item` enum
-
-```rust
-pub enum Item {
-    // Opaque -- variants not publicly documented.
-    // Produced by `parse()`, consumed by `view()` / `items()`.
-}
-```
-
-### `Settings` struct
-
-```rust
-pub struct Settings {
-    pub text_size: Pixels,
-    pub h1_size: Pixels,
-    pub h2_size: Pixels,
-    pub h3_size: Pixels,
-    pub h4_size: Pixels,
-    pub h5_size: Pixels,
-    pub h6_size: Pixels,
-    pub code_size: Pixels,
-    pub spacing: Pixels,
-    pub style: Style,
-}
-
-impl Settings {
-    pub fn with_style(style: impl Into<Style>) -> Settings;
-    pub fn with_text_size(
-        text_size: impl Into<Pixels>,
-        style: impl Into<Style>,
-    ) -> Settings;
-}
-
-impl From<&Theme> for Settings {}
-impl From<Theme> for Settings {}
-```
-
-### `Style` struct
-
-```rust
-pub struct Style {
-    pub font: Font,
-    pub inline_code_highlight: Highlight,
-    pub inline_code_padding: Padding,
-    pub inline_code_color: Color,
-    pub inline_code_font: Font,
-    pub code_block_font: Font,
-    pub link_color: Color,
-}
-```
-
-### `Viewer` trait
-
-```rust
-pub trait Viewer<'a, Message, Theme, Renderer> {
-    // Allows custom message types for link clicks.
-    // Implement to map URL strings into your own Message type.
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>) -> Style;
-}
-```
-
-## Patterns
-
-### Basic markdown display
+`markdown::parse(text)` returns an iterator of `Item`. Collect the items into state when the text changes, then pass references to `markdown::view`. Avoid parsing unchanged text on every view call. `Item` is a public enum; consult the source for its variants instead of treating it as opaque.
 
 ```rust
 use iced::widget::markdown;
 
 struct State {
     items: Vec<markdown::Item>,
+}
+
+#[derive(Debug, Clone)]
+enum Message {
+    LinkClicked(markdown::Uri),
 }
 
 impl State {
@@ -122,48 +27,37 @@ impl State {
         }
     }
 
-    fn view(&self) -> Element<'_, Message> {
-        markdown::view(&self.items, Theme::TokyoNight)
+    fn view(&self) -> iced::Element<'_, Message> {
+        markdown::view(&self.items, iced::Theme::TokyoNight)
             .map(Message::LinkClicked)
-            .into()
     }
 }
 ```
 
-### Custom text sizes
+`view` emits `markdown::Uri` link messages. Map them into the application's message type and handle navigation in `update`; rendering does not open links. `markdown::Content::parse(text)` is an alternative state container, with `items()` for display and `push_str(...)` for streamed Markdown.
+
+## Settings and style
+
+Use a `Theme` or `&Theme` as the settings argument, or construct `Settings::with_style(...)` or `Settings::with_text_size(...)`:
 
 ```rust
 let settings = markdown::Settings::with_text_size(16, &theme);
 markdown::view(&items, settings).map(Message::LinkClicked)
 ```
 
-### Handle link clicks
+`with_text_size` sets heading sizes to 2, 1.75, 1.5, 1.25, 1 and 1 times the base size for levels 1 through 6. Adjust the public heading fields for other sizes. `Settings` also holds code size, spacing and `Style`; `Style` supplies text and code fonts, inline-code highlighting, padding and colors, and link color. The [Markdown source] owns their complete fields and defaults.
 
-```rust
-#[derive(Debug, Clone)]
-enum Message {
-    LinkClicked(String), // receives the URL
-}
+## Custom viewers
 
-fn update(state: &mut State, message: Message) {
-    match message {
-        Message::LinkClicked(url) => {
-            println!("Navigating to: {url}");
-        }
-    }
-}
-```
+Use `view_with(items, settings, &viewer)` to customize rendering. `Viewer::on_link_click(Uri)` supplies the application's message, and the trait provides methods for individual Markdown elements. `items(&viewer, settings, slice)` also renders a slice with a custom viewer.
 
-## Gotchas
-
-- Requires the `markdown` crate feature to be enabled.
-- `parse()` returns an iterator -- collect it into a `Vec<Item>` and store in state. Re-parsing on every `view()` call is wasteful.
-- The simple `view()` function produces `Element<'a, String, ...>` -- link clicks emit raw URL strings. Use `.map(Message::LinkClicked)` to wrap them.
-- Heading sizes auto-scale from `text_size`: h1 = 2x base, each subsequent level 25% smaller.
+The theme's `markdown::Catalog` combines the widget catalogs Markdown uses and supplies the code-block class; it is not a standalone `Style` lookup catalog. Consult the source for its supertraits and method signature.
 
 ## See also
 
-- `widget-text-editor.md` -- editable rich text
-- `theme.md` -- `Theme` converts into `Settings` via `From`
-- `element.md` -- `.map()` for message type conversion
-- `widgets.md` -- widget catalog
+- [Text editor](widget-text-editor.md): editing text.
+- [Theme](theme.md): theme settings.
+- [Element](element.md): mapping messages.
+- [Widget catalog](widgets.md).
+
+[Markdown source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/markdown.rs
