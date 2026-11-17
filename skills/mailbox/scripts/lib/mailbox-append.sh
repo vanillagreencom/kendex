@@ -207,9 +207,18 @@ owner_tracker_unwritten() { # ISSUE CAUSE [ERROR FILE]
   printf 'lane-mail: tracker-unwritten issue=%s cause=%s\n' "$1" "$2" >&2
 }
 
-# Both mailbox readers fold posting evidence before selecting asks or cursors.
-OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_tracker_public:
-  select(.kind != "tracker-posted" and .kind != "tracker-failed");
+# Both mailbox readers fold the private records onto the ask each names before
+# selecting asks or cursors: posting evidence, and a reservation, which makes a
+# standing owner ask reserved as `--reserved` makes one at ask time, so every
+# reader of the folded ask judges the one `reserved` field.
+OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_private:
+  .kind == "tracker-posted" or .kind == "tracker-failed" or .kind == "reservation";
+def owner_tracker_public:
+  select(owner_private | not);
+def owner_ask_reserved($private):
+  if .kind == "ask" and .to == "owner"
+    and (.id as $id | any($private[]; .kind == "reservation" and .re == $id))
+  then .reserved = true else . end;
 def owner_tracker_record($outcomes):
   if .kind == "ask" and .to == "owner" and .issue != null then
     . as $ask | ([$outcomes[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record

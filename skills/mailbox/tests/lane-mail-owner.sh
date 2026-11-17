@@ -12,7 +12,9 @@
 # recommendation, the box `events --after` requires, the reply's delivery id, the
 # referenced mailbox's read lock, a draft's medium, fields and text hash, and
 # a reserved ask's field, its two conflicts, its --due exclusion and its
-# --default refusal.
+# --default refusal, and a standing ask's reservation: its fold, reserve's
+# reads of the close before and after its append, its kind read, and the
+# default's judge under the close's lock.
 # The owner notice's day-long text rule keeps its controls beside its rows.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
@@ -777,6 +779,121 @@ assert_eq "$RC=$OUT" "0=lane-mail: resolved id=$ASK by=text answer=$ANSWER" "the
 lm pending --item overseer --to owner
 assert_eq "$RC=$OUT" "0=" "the answered reserved ask is no longer pending"
 
+# --- a standing ask reserved ---------------------------------------------------
+# reserve makes an ask sent with a recommendation reserved under its own id:
+# the watch's two reads, --due and --default, then treat it as a reserved ask,
+# and the owner's answer still closes it.
+over_lines() { wc -l < "$BOX/to-overseer.jsonl" | tr -d ' '; }
+new_repo reserve
+owner_ask 'Ship the release?' ship,hold ship 0
+lm reserve --item overseer --id "$ASK"
+assert_eq "$RC=$OUT" "0=lane-mail: reserved id=$ASK" "reserve keeps the standing ask under its own id"
+lm pending --item overseer --to owner --due
+assert_eq "$RC=$OUT" "0=" "--due leaves out a reserved standing ask past its deadline"
+lm pending --item overseer --to owner
+assert_eq "$RC=$(jq -r '[.id, .reserved] | map(tostring) | join(" ")' <<<"$OUT")" "0=$ASK true" \
+  "the reserved standing ask stays pending under its id, read as reserved"
+lm events --item overseer --box to-overseer
+assert_eq "$RC=$(sed 1d <<<"$OUT" | jq -r '[.id, .reserved] | map(tostring) | join(" ")')" "0=$ASK true" \
+  "events folds the reservation into the ask and emits no record of its own"
+lm resolve --item overseer --id "$ASK" --default
+assert_eq "$RC=$ERR=$(default_answers)" "2=lane-mail: ask-reserved=$ASK=0" \
+  "resolve --default refuses the reserved standing ask and writes no default answer"
+LINES="$(over_lines)"
+lm reserve --item overseer --id "$ASK"
+assert_eq "$RC=$OUT=$(over_lines)" "0=lane-mail: reserved id=$ASK=$LINES" "a second reserve appends nothing"
+lm resolve --item overseer --id "$ASK" --text "$(text a 'hold it')"
+CLOSE="$(field "$BOX/to-lane.jsonl" 'select(.kind == "resolution") | .id')"
+assert_eq "$RC=$OUT" "0=lane-mail: resolved id=$ASK by=text answer=$CLOSE" "the owner's answer closes the reserved standing ask"
+lm reserve --item overseer --id "$ASK"
+assert_eq "$RC=$ERR=$(over_lines)" "2=lane-mail: resolved-already=$ASK id=$CLOSE=$LINES" \
+  "reserve refuses a closed ask by its close and appends nothing"
+
+# An ask reserved at ask time is reserved already: reserve appends nothing.
+new_repo reserve_reserved
+reserved_ask --wait 0
+lm reserve --item overseer --id "$ASK"
+assert_eq "$RC=$OUT=$(over_lines)" "0=lane-mail: reserved id=$ASK=1" "reserve of an ask sent --reserved appends nothing"
+
+# ID|WANT (rc=first stderr line); each refusal appends nothing.
+new_repo reserve_refusals
+owner_ask 'Ship?' ship,hold ship 0
+lm notice --item overseer --to owner --file "$(text n 'Shipped.')"
+NOTICE="$(field "$BOX/to-overseer.jsonl" 'select(.kind == "notice") | .id')"
+lm send --item overseer --directive --file "$(text d 'Carry on.')"
+DIRECTIVE="$(field "$BOX/to-lane.jsonl" '.id')"
+jq -cn '{id:"peer-ask",kind:"ask",to:"peer",at:"2000-01-01T00:00:00Z",text:"x"}' >> "$BOX/to-overseer.jsonl"
+LINES="$(over_lines)"
+while IFS='|' read -r id want; do
+  lm reserve --item overseer --id "$id"
+  assert_eq "$RC=$ERR=$(over_lines)" "$want=$LINES" "reserve --id $id refuses as $want"
+done <<ROWS
+1700000000-1-1|2=lane-mail: ask-unknown=1700000000-1-1
+$NOTICE|2=lane-mail: not-owner-ask=$NOTICE kind=notice
+$DIRECTIVE|2=lane-mail: not-owner-ask=$DIRECTIVE kind=directive
+peer-ask|2=lane-mail: not-owner-ask=peer-ask kind=ask
+ROWS
+lm reserve --item KEN-1 --id "$ASK"
+assert_eq "$RC=$ERR" "2=lane-mail: overseer-only=KEN-1" "reserve acts on the overseer mailbox alone"
+
+# resolve pauses inside the close's lock while reserve runs to its end or to
+# its own wait on that lock: the two interleave where a deadline meets a
+# reservation. RESOLVE_BIN pauses; RESERVE_BIN reserves. Sets RACE_RESOLVE and
+# RACE_RESERVE to `<rc>=<first stdout or stderr line>`.
+PAUSE_DIR="$(mutant_scripts fixtures/close-pause lib/mailbox-append.sh)" || exit 1
+mutate_file "$PAUSE_DIR/lib/mailbox-append.sh" '  if ! orch_take_lock 9 "$1" "$2"; then
+    exec 9>&-
+    return 3
+  fi' '  if ! orch_take_lock 9 "$1" "$2"; then
+    exec 9>&-
+    return 3
+  fi
+  : > "$RACE_MARKER"
+  pause_tries=0
+  while [ ! -e "$RACE_RELEASE" ] && [ "$pause_tries" -lt 400 ]; do
+    pause_tries=$((pause_tries + 1))
+    sleep 0.05
+  done'
+race_result() { # NAME
+  local rc
+  rc="$(cat "$TMP_ROOT/$1.rc")" || exit 1
+  printf '%s=%s' "$rc" "$(cat "$TMP_ROOT/$1.out" "$TMP_ROOT/$1.err" | sed -n 1p)"
+}
+reserve_race() { # NAME RESOLVE_BIN RESERVE_BIN [RESOLVE_ARGS...]
+  local name="$1" resolver="$2" reserver="$3" tries=0 resolving reserving
+  shift 3
+  new_repo "$name"
+  LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Ship it?' ship,hold ship 0
+  (cd "$LANE" && rc=0
+    RACE_MARKER="$TMP_ROOT/$name.paused" RACE_RELEASE="$TMP_ROOT/$name.release" \
+      "$resolver" resolve --item overseer --id "$ASK" "$@" >"$TMP_ROOT/$name-resolve.out" 2>"$TMP_ROOT/$name-resolve.err" || rc=$?
+    printf '%s\n' "$rc" >"$TMP_ROOT/$name-resolve.rc") & resolving=$!
+  await_marker "$TMP_ROOT/$name.paused" || exit 1
+  (cd "$LANE" && rc=0
+    "$reserver" reserve --item overseer --id "$ASK" >"$TMP_ROOT/$name-reserve.out" 2>"$TMP_ROOT/$name-reserve.err" || rc=$?
+    printf '%s\n' "$rc" >"$TMP_ROOT/$name-reserve.rc") & reserving=$!
+  until [ -e "$TMP_ROOT/$name-reserve.rc" ] || jq -e 'select(.kind == "reservation")' "$BOX/to-overseer.jsonl" >/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 100 ] || break
+    sleep 0.05
+  done
+  : > "$TMP_ROOT/$name.release"
+  wait "$resolving" "$reserving"
+  RACE_RESOLVE="$(race_result "$name-resolve")"
+  RACE_RESERVE="$(race_result "$name-reserve")"
+}
+# A deadline's default that read the ask before the reservation landed
+# refuses it under the close's lock, and the reservation stands.
+reserve_race race_default "$PAUSE_DIR/lane-mail" "$LANE_MAIL" --default
+assert_eq "$RACE_RESOLVE|$RACE_RESERVE|$(default_answers)" "2=lane-mail: ask-reserved=$ASK|0=lane-mail: reserved id=$ASK|0" \
+  "a default racing a reservation refuses and the reservation stands"
+# A close landing while the reservation does is reserve's refusal, never its
+# receipt.
+reserve_race race_close "$PAUSE_DIR/lane-mail" "$LANE_MAIL"
+CLOSE="$(field "$BOX/to-lane.jsonl" 'select(.kind == "resolution") | .id')"
+assert_eq "$RACE_RESOLVE|$RACE_RESERVE" "0=lane-mail: resolved id=$ASK by=explicit answer=$CLOSE|2=lane-mail: resolved-already=$ASK id=$CLOSE" \
+  "a close racing a reservation is reserve's refusal"
+
 # --- resolve, exactly once ----------------------------------------------------
 new_repo resolve_nonowner
 owner_ask 'Still open?' yes,no yes
@@ -1284,7 +1401,7 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.attach')" "0=$LANE/elsewhere/x
 lm attach-check --attach "$LANE/elsewhere/x.md"
 assert_eq "$RC=$OUT" "0=lane-mail: attach=$LANE/elsewhere/x.md" \
   "control: without the directory rule attach-check accepts a file anywhere"
-mutant attach-check-root '  ask | notice | send | resolve | peer | compact | attach-check)' '  ask | notice | send | resolve | peer | compact)'
+mutant attach-check-root '  ask | notice | send | resolve | reserve | peer | compact | attach-check)' '  ask | notice | send | resolve | reserve | peer | compact)'
 attach_from_worktree
 assert_eq "$RC" 2 "control: without the main checkout's root attach-check from a worktree judges the worktree's directory"
 
@@ -1384,6 +1501,45 @@ LANE_MAIL_BIN="$LANE_MAIL" reserved_ask --wait 0
 mutant reserved-default-any '[ "$RESERVED_ASK" = false ] || refuse ask-reserved "$MSGID"' ':'
 lm resolve --item overseer --id "$ASK" --default
 assert_eq "$RC=$ERR" "2=lane-mail: recommend-missing=$ASK" "control: without the reserved refusal --default falls to the missing recommendation"
+
+new_repo control_reservation_fold
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Ship?' ship,hold ship 0
+FOLD_DIR="$(mutant_scripts mutants/reservation-fold lib/mailbox-append.sh)" || exit 1
+mutate_file "$FOLD_DIR/lib/mailbox-append.sh" 'then .reserved = true else . end;' 'then . else . end;'
+LANE_MAIL_BIN="$FOLD_DIR/lane-mail"
+lm reserve --item overseer --id "$ASK"
+lm pending --item overseer --to owner --due
+assert_eq "$RC=$(jq -r '.id' <<<"$OUT")" "0=$ASK" "control: without the fold --due lists the reserved standing ask"
+
+new_repo control_reserve_closed
+LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Ship?' ship,hold ship 0
+LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK"
+mutant reserve-closed-late '    lm_reserve_unclosed
+    RESERVED_BEFORE' '    RESERVED_BEFORE'
+lm reserve --item overseer --id "$ASK"
+assert_eq "$RC=${ERR%% id=*}=$(over_lines)" "2=lane-mail: resolved-already=$ASK=2" \
+  "control: without the first read a closed ask gains a reservation before the refusal"
+
+new_repo control_reserve_kind
+LANE_MAIL_BIN="$LANE_MAIL" lm notice --item overseer --to owner --file "$(text n 'Shipped.')"
+NOTICE="$(field "$BOX/to-overseer.jsonl" '.id')"
+mutant reserve-kind-unread '    [ -n "$KIND" ] || refuse ask-unknown "$MSGID"' '    refuse ask-unknown "$MSGID"'
+lm reserve --item overseer --id "$NOTICE"
+assert_eq "$RC=$ERR" "2=lane-mail: ask-unknown=$NOTICE" "control: without the kind read a notice's id reads as unknown"
+
+GUARD_DIR="$(mutant_scripts mutants/default-unguarded lane-mail)" || exit 1
+mutate_file "$GUARD_DIR/lane-mail" 'if [ "$reserved" = true ]; then' 'if false; then'
+rm -- "$GUARD_DIR/lib/mailbox-append.sh"
+cp -- "$PAUSE_DIR/lib/mailbox-append.sh" "$GUARD_DIR/lib/mailbox-append.sh"
+reserve_race control_race_default "$GUARD_DIR/lane-mail" "$LANE_MAIL" --default
+assert_eq "${RACE_RESOLVE%% answer=*}" "0=lane-mail: resolved id=$ASK by=default" \
+  "control: without the judge under the close's lock a racing default closes the reserved ask"
+
+mutant reserve-unjudged-after 'lm_reserve_unclosed locked' ':'
+reserve_race control_race_close "$PAUSE_DIR/lane-mail" "$LANE_MAIL_BIN"
+assert_eq "$RACE_RESERVE" "0=lane-mail: reserved id=$ASK" \
+  "control: without the read after the append reserve reports a reservation the close beat"
+LANE_MAIL_BIN="$LANE_MAIL"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

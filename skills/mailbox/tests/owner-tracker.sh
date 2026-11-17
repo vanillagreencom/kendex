@@ -71,8 +71,8 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       assertion='a missing outcome releases at the fixed bound and preserves later delivery'
     elif [[ "$rule" == private-failed ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'select(.kind != "tracker-posted" and .kind != "tracker-failed")' \
-        'select(.kind != "tracker-posted")'
+        '.kind == "tracker-posted" or .kind == "tracker-failed" or' \
+        '.kind == "tracker-posted" or'
       assertion='readers fold terminal outcomes without replay or private events'
     elif [[ "$rule" == cause ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \

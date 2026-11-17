@@ -16,7 +16,7 @@ tags: [automation]
 
 # Mailbox
 
-Use `scripts/lane-mail` to send, read and resolve repository messages. Its `--help` defines verbs, envelopes, receipts and refusal keys.
+Use `scripts/lane-mail` to send, read and resolve repository messages, and to keep an owner question open past its deadline. Its `--help` defines verbs, envelopes, receipts and refusal keys.
 
 Owner questions and notices work with mailbox installed alone. A directive to an overseer needs the reader that orch records. Lane sends, hosted mail, compaction and notice attachments need orch installed beside mailbox. These operations refuse before writing when their required helper is absent. Worktree lookup and owner-question tracker updates use their optional sibling skills when installed.
 

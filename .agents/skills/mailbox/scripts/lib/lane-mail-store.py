@@ -22,11 +22,12 @@ def mailbox_directive_receipt:
   .kind == "directive" and ((.id | type) == "string") and (.id | test("^[A-Za-z0-9._-]+$"));
 def objects($box):
   [$box.raw[] | (fromjson? // empty) | objects] as $all
-  | [$all[] | select(.kind == "tracker-posted" or .kind == "tracker-failed")] as $posted
+  | [$all[] | select(owner_private)] as $private
   | [range(0; $box.raw | length) as $i
       | ($box.raw[$i] | (fromjson? // empty) | objects)
       | owner_tracker_public
-      | owner_tracker_record($posted)
+      | owner_tracker_record($private)
+      | owner_ask_reserved($private)
       | {line: $box.numbers[$i], envelope: .}];
 '''
 READ_JQ = OBJECTS_JQ + r'''

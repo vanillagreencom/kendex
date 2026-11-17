@@ -36,6 +36,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail compact --item ITEM [--root ROOT]
        lane-mail attach-check --attach PATH
        lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
+       lane-mail reserve --item overseer --id MSGID
        lane-mail peer ask|send --repo REPO [--host] [options]
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
@@ -292,6 +293,18 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               --default on a reserved ask is `ask-reserved`, and on an ask
               line carrying no recommendation, which `ask` never writes,
               `recommend-missing`
+  reserve --item overseer --id MSGID
+              makes a standing owner ask reserved under its own id, as
+              --reserved makes one at ask time: a private reservation record
+              naming it lands in to-overseer.jsonl, and every read of the ask
+              then carries `reserved: true`, so pending --due never lists it
+              and resolve --default refuses it `ask-reserved`; an answer still
+              closes it through resolve. Prints `lane-mail: reserved
+              id=<MSGID>`, appending nothing where the ask is reserved
+              already. A closed ask is refused `resolved-already` with the
+              close's id=, also where a close lands while the reservation
+              does; an id naming no message is `ask-unknown`, and one naming
+              any message but an owner ask is `not-owner-ask` with its kind=
   send --item overseer --directive ... --thread-ts TS --parent PATH
               Slack's relay supplies both fields on a threaded owner directive.
               PATH holds one JSON object: ts (equal to TS), author (owner or
@@ -451,6 +464,9 @@ verb writes the item, a send into the overseer's own mailbox and a `resolve
 --default` included, writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
 caller's kendex.toml, else the last segment of its origin URL, else the
 checkout's own directory name.
+A private reservation record, from `reserve`, names an owner ask by its re;
+reads fold it into that ask as `reserved: true`, never emit it as an event,
+and count its line.
 A private tracker-posted or tracker-failed record carries an immutable ask's
 outcome by its re and issue. Posted records carry the question comment's id in
 tracker_comment. Failure records carry the failed operation in cause.
@@ -540,7 +556,7 @@ seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress
 recommend-invalid, recommend-missing, recommend-required, effect-required, ask-reserved-effect, draft-field,
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
-overseer-only,
+overseer-only, not-owner-ask,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
@@ -657,11 +673,12 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
     attach-repeated) text='A notice carries one attachment. Send each additional file in a separate notice.' ;;
     ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
-    ask-unknown) text='No eligible ask in the mailbox carries that id. An overseer send --re answers an owner ask; resolve closes any ask the overseer sent. A lane reply names an ask that lane sent.' ;;
+    ask-unknown) text='No eligible ask in the mailbox carries that id. An overseer send --re answers an owner ask; resolve closes any ask the overseer sent; reserve keeps an owner ask open. A lane reply names an ask that lane sent.' ;;
     resolved-already) text='This ask is already closed by the record named above. Deliver later text as a directive with `send --item overseer --directive`.' ;;
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
     owner-notice-repeated) text='The owner already holds this notice: the owner notice named by id= above carries the same text and was sent within the last 24 hours, so nothing is appended whatever the attachment or reference. That id is the receipt of the send that landed. New words send it again; waiting does not.' ;;
-    overseer-only) text='resolve closes an owner ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
+    overseer-only) text='resolve and reserve act on an ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
+    not-owner-ask) text='reserve keeps an owner ask open past its deadline, and the id names another message, of the kind above: a notice, an answer, a directive, a private record, or an ask a peer or nobody is to answer. None of them has a deadline a default would close.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
     host-route-missing) text='A hosted send goes to the provider its caller names, and ORCH_LANE_HOST is empty in this environment, so nothing says which host holds the lane'"'"'s mailbox. Nothing was sent. Run it with ORCH_LANE_HOST set to the host the lane record names, as orch passes it.' ;;
@@ -697,7 +714,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | compact | peer | attach-check) ;;
+  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | reserve | compact | peer | attach-check) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -809,6 +826,11 @@ done
 if [ "$VERB" = compact ]; then
   for given in $OPTS_GIVEN; do
     case "$given" in --item | --root) ;; *) refuse option-unknown "$given" ;; esac
+  done
+fi
+if [ "$VERB" = reserve ]; then
+  for given in $OPTS_GIVEN; do
+    case "$given" in --item | --id) ;; *) refuse option-unknown "$given" ;; esac
   done
 fi
 if [ "$VERB" = attach-check ]; then
@@ -1119,7 +1141,7 @@ lm_send_channel() {
 # and decides which lanes are this overseer's to write.
 OWN_ROOT=""
 case "$VERB" in
-  ask | notice | send | resolve | peer | compact | attach-check)
+  ask | notice | send | resolve | reserve | peer | compact | attach-check)
     OWN_ROOT="$(mailbox_common_root . 2>/dev/null)" || OWN_ROOT="" ;;
 esac
 
@@ -1212,7 +1234,7 @@ case "$VERB:$ITEM:$DEFAULT" in
   ask:* | notice:*) FROM="$ITEM" ;;
   send:overseer:*) FROM=owner ;;
   resolve:*:0) FROM=owner; [ -n "$FILE" ] || FROM="overseer:$(lm_repository)" ;;
-  send:* | peer:* | resolve:*) FROM="overseer:$(lm_repository)" ;;
+  send:* | peer:* | resolve:* | reserve:*) FROM="overseer:$(lm_repository)" ;;
 esac
 
 # A lane verb is rooted at its own worktree; the overseer's verbs take --root.
@@ -1291,7 +1313,7 @@ lm_root_own() { # ROOT own|checkout
         ;;
     esac
   fi
-  if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ]; then
+  if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ]; then
     LANE_ROOT="$(mailbox_common_root "$1" 2>/dev/null)" || LANE_ROOT=""
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
@@ -1299,7 +1321,7 @@ lm_root_own() { # ROOT own|checkout
 if [ "$HOST" -eq 0 ]; then
   if [ "$VERB" = peer ] || { [[ "$OPTS_GIVEN" == *"--root$NL"* ]] && [ "$SESSION_GIVEN" -eq 0 ]; }; then
     lm_root_own "$ROOT" checkout
-  elif [ "$VERB" = send ] || [ "$VERB" = resolve ]; then
+  elif [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ]; then
     lm_root_own "$ROOT" own
   fi
 fi
@@ -1520,17 +1542,18 @@ lm_objects() { # FILE [BOX [AFTER]]
     snapshot=true
     now="$(date -u +%s)" || return 1
   fi
-  # Posting is confirmed after the immutable ask. Fold that evidence before
-  # cursor selection, while keeping the ask's original logical position.
+  # Posting evidence and a reservation land after the immutable ask. Fold them
+  # before cursor selection, while keeping the ask's original logical position.
   jq -c -R -n --arg box "${2:-}" --arg after "${3:-}" --argjson count "$count" \
     --argjson snapshot "$snapshot" --argjson now "$now" \
     --slurpfile numbers "$numbers" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"'
     [inputs | input_line_number as $physical | (fromjson? // empty) | objects
       | {physical: $physical, envelope: .}] as $rows
-    | [$rows[].envelope | select(.kind == "tracker-posted" or .kind == "tracker-failed")] as $posted
+    | [$rows[].envelope | select(owner_private)] as $private
     | $rows[] | .physical as $physical | .envelope
     | owner_tracker_public
-    | owner_tracker_record($posted)
+    | owner_tracker_record($private)
+    | owner_ask_reserved($private)
     # Snapshot consumers reread every ask; cursor consumers must retain pending
     # asks at their original line. The bound releases interrupted tracker writes.
     | if $snapshot then owner_tracker_snapshot($now) else . end
@@ -1798,8 +1821,19 @@ lm_guard_owner_answer() { # FILE
 # append under the close's lock so a reply racing its deadline wins if it
 # landed first. The close record follows these optional answer bytes.
 lm_guard_close() { # FILE
+  local reserved
   lm_guard_resolve "$1" || return $?
   if [ "$BY" = default ]; then
+    # A reservation that landed after this ask was read is judged here, under
+    # the close's lock, which reserve takes after its own append to judge the
+    # close: however the two interleave, no default closes a reserved ask.
+    # While this lock is held, compaction cannot be rewriting the ask's file.
+    reserved="$(lm_objects "$TO_OVERSEER" |
+      jq -r --arg id "$MSGID" 'select(.kind == "ask" and .id == $id) | .reserved == true')" || return 2
+    if [ "$reserved" = true ]; then
+      : >"$WORK_DIR/reserved.earlier" || return 3
+      return 1
+    fi
     jq -r -R --arg re "$MSGID" '(fromjson? // empty) | objects
       | select(.kind == "answer" and .re == $re) | .id' <"$1" >"$WORK_DIR/owner.answers" || return 2
     [ ! -s "$WORK_DIR/owner.answers" ] || return 0
@@ -1857,6 +1891,32 @@ lm_ref_find() {
     [ -z "$ref_json" ] || return 0
   done
   refuse ref-unknown "$REF"
+}
+
+# Refuses `resolved-already` where a close of MSGID stands in to-lane.jsonl.
+# reserve asks before its append, so a closed ask gains no record, and again
+# after it under the lock the close's writer takes: a resolve --default that
+# read the ask before the reservation landed has either closed it by then or
+# reads the reservation under that lock. The first read takes no lock, since
+# a close it misses is the second read's.
+lm_reserve_unclosed() { # [locked]
+  [ -f "$TO_LANE" ] || return 0
+  if [ "${1:-}" = locked ]; then
+    lm_locked 7 "$TO_LANE" lm_reserve_closes
+  else
+    lm_reserve_closes
+  fi
+}
+lm_reserve_closes() {
+  local rc=0
+  lm_guard_resolve "$TO_LANE" 2>"$WORK_DIR/unclosed.err" || rc=$?
+  [ "$rc" -ne 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/unclosed.err")"
+  [ "$rc" -eq 0 ] || {
+    REFUSE_EXTRA="id=$(awk 'NR == 1 { print $1 }' <"$WORK_DIR/resolved.earlier")" ||
+      refuse file-unreadable "$WORK_DIR/resolved.earlier"
+    refuse resolved-already "$MSGID" "$(cat -- "$WORK_DIR/unclosed.err")"
+  }
+  cat -- "$WORK_DIR/unclosed.err" >&2
 }
 
 # The ask ID closes or answers, refused where none stands.
@@ -2402,6 +2462,7 @@ case "$VERB" in
     if lm_append_local "$TO_LANE" "$LINE" lm_guard_close; then
       lm_resolved "$MSGID" "$BY" "$CLOSE_ID"
     else
+      [ ! -e "$WORK_DIR/reserved.earlier" ] || refuse ask-reserved "$MSGID"
       read -r EARLIER_ID EARLIER_BY EARLIER_KEY <"$WORK_DIR/resolved.earlier" ||
         refuse file-unreadable "$WORK_DIR/resolved.earlier"
       # The same delivery asking again gets the same close and no second
@@ -2414,6 +2475,31 @@ case "$VERB" in
         refuse resolved-already "$MSGID" "$(cat -- "$WORK_DIR/local.err")"
       fi
     fi
+    ;;
+
+  reserve)
+    [ "$ITEM" = overseer ] || refuse overseer-only "$ITEM"
+    [ -n "$MSGID" ] || refuse option-required --id
+    if ! lm_ask_find "$MSGID"; then
+      # The id names no owner ask: say what it does name, where anything does.
+      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+      lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+      KIND="$(jq -r -R --arg id "$MSGID" '(fromjson? // empty) | objects | select(.id == $id) | .kind | strings' \
+        "$WORK_DIR/ask.jsonl" "$WORK_DIR/lane.jsonl")" || refuse file-unreadable "$BOX"
+      [ -n "$KIND" ] || refuse ask-unknown "$MSGID"
+      REFUSE_EXTRA="kind=${KIND%%"$NL"*}"
+      refuse not-owner-ask "$MSGID"
+    fi
+    lm_reserve_unclosed
+    RESERVED_BEFORE="$(jq -r '.reserved == true' <<<"$ASK_JSON")" || refuse file-unreadable "$TO_OVERSEER"
+    if [ "$RESERVED_BEFORE" = false ]; then
+      : >"$WORK_DIR/reservation.txt" || refuse write-failed "$BOX"
+      FILE="$WORK_DIR/reservation.txt"
+      LINE="$(lm_envelope reservation "$MSGID")"
+      lm_append_local "$TO_OVERSEER" "$LINE"
+      lm_reserve_unclosed locked
+    fi
+    printf 'lane-mail: reserved id=%s\n' "$MSGID"
     ;;
 
   events)
