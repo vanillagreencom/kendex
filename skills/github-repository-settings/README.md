@@ -4,17 +4,20 @@ Select local review instructions or enabled GitHub review files for a repository
 
 ## Operations
 
-- `adopt --dry-run` previews takeover without writes and reports hand edits.
+- `adopt --dry-run` previews takeover without writes and reports hand edits. Armed `adopt` takes unmanaged content over; follow it with `render`.
+- `retire` removes marked review files and the owned review region while preserving unrelated content.
 - `render` writes the selected files through bot-instructions.
 - `check [--staged]` compares files without writes and reports the check location. With `--staged`, it reads tracked settings and review files from the index. Process and private-file settings keep their working values and normal precedence. A nested settings file keeps its working values only when it is absent from HEAD and the index. A staged deletion stays absent even if its working file remains.
 
 ## Setup
 
-Install this package with its required `bot-instructions` and `review-gate` dependencies. Python 3.11 or later is required by bot-instructions. Use the latest released kendex engine accepted by the catalog checks.
+Install this package with its required `bot-instructions` and `review-gate` dependencies. Python 3.11 or later is required by bot-instructions. Use kendex 1.21.0 or later.
 
 Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` before adoption. Remote review defaults to `off`. Set `GITHUB_STANDARD_BOT_REVIEW` to `on` to render the bots enabled in the existing `[bot-instructions]` manifest table. Put these settings under `[env]` as shown in [the settings example](kendex.settings.toml.example).
 
-Local output writes the `AGENTS.md` review pointer region. It needs the manifest's `codex` flag and an installed bot-instructions package inside the checkout. It leaves remote files outside this operation. This package installs no hosted CI and declares no repository effects.
+Local output writes the `AGENTS.md` review pointer region. It needs the manifest's `codex` flag and an installed bot-instructions package inside the checkout. It leaves remote files outside this operation. This package installs no hosted CI.
+
+Adopt the repository effect through Set up on this package's desktop page, or the CLI's disclosed installation with `--allow-repo-effects`, after choosing hosted or local. Core retires the previous owner, runs this package's installer and transfers the arming record. Ordinary unarmed write commands refuse and name Set up. Remove the package to run retirement and let core revoke its arming record. Direct `retire` leaves the record for core to manage.
 
 The bot-instructions renderer, schemas and validators remain a temporary dependency. KEN-2362 removes that dependency after the ownership transition. See [the skill](SKILL.md) for commands.
 
