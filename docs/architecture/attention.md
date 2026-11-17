@@ -22,7 +22,7 @@ A footer that counts every event in red teaches a person to ignore it. Separatin
 
 ## The canonical example
 
-`ui/src/components/home/attention-rows.ts`: one row per item with its class, `CLASS_TONES` as the only tone source, and `attention-rows.test.ts` beside it holding each producer to its class. A new event adds a producer there and nowhere else.
+`ui/src/components/home/attention-rows.ts::attentionRows` derives the shared rows, with `CLASS_TONES` as their tone source. Add a new event producer there so every surface reads the same classification.
 
 ## Revisit when
 
