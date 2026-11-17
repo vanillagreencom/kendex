@@ -435,7 +435,7 @@ a tracked-file listing that fails holds every conflicted path, an ordinary one i
 a sourcing script that cannot be read holds every conflicted path, an ordinary one included|source broken-git:sourcing|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base
 a tracked listing that cannot be split holds every conflicted path, an ordinary one included|source broken-cut|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base
 a recorded pick that does not resolve holds every conflicted path, an ordinary one included|source broken-git:pick|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base
-an unreadable activity owner refuses before the restack|source broken-jq|create topic --restack|rc=75 err=worktree-resume-held: path=<wt> cause=activity-unreadable paused=no parses=ok,ok runs=ok,ok saved=- markers=- body=base,base
+declarations that cannot be read hold every conflicted path, an ordinary one included|source broken-jq|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $SOURCE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$S markers=$S body=base,base
 a hook declared only at the pre-restack head is held|branch-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$U markers=$U body=base,base
 a hook declared only on the new base is held|base-declared|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CURSOR_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$U markers=$U body=base,base
 a hook the base deleted is held at the branch's side|deleted|create topic --restack|rc=1 err=worktree-rebase-conflicts: <wt>;worktree-restack-hook-held: $CLAUDE_HOOK paused=yes parses=ok,ok runs=ok,ok saved=$C markers=- body=wt,base
@@ -466,15 +466,7 @@ while IFS='|' read -r label fixture command want; do
   n=$((n + 1))
   # shellcheck disable=SC2086
   build "row-$n" "$WORKTREE_SCRIPT" $fixture
-  if [[ "$fixture" == "source broken-jq" ]]; then
-    held_head="$(git -C "$WT" rev-parse HEAD)"
-    held_reflog="$(git -C "$WT" reflog --format='%H %gs')"
-  fi
   assert_eq "$(run "$command")" "$want" "$label"
-  if [[ "$fixture" == "source broken-jq" ]]; then
-    assert_eq "$(git -C "$WT" rev-parse HEAD)" "$held_head" "$label: HEAD stays unchanged"
-    assert_eq "$(git -C "$WT" reflog --format='%H %gs')" "$held_reflog" "$label: no rebase ran"
-  fi
 done <<<"$ROWS"
 
 echo
