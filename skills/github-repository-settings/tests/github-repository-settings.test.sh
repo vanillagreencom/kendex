@@ -20,7 +20,8 @@ import shutil
 import subprocess
 import sys
 
-skills, scratch = map(Path, sys.argv[1:3])
+skills = Path(sys.argv[1]).resolve()
+scratch = Path(sys.argv[2])
 bash = sys.argv[3]
 environment = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "MSYS") if key in os.environ}
 environment["PYTHONDONTWRITEBYTECODE"] = "1"
