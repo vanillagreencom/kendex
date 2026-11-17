@@ -6,53 +6,7 @@ Dynamic tiling layout. Users split, resize, drag, and reorganize panes. `State<T
 
 ## API
 
-### Key types
-
-- `State<T>` -- Pane tree state. Public fields: `panes: BTreeMap<Pane, T>`, `internal: Internal`.
-- `Configuration<T>` -- `Split { axis, ratio, a, b }` or `Pane(T)`.
-- `Pane` / `Split` -- Opaque identifiers (`Copy`, `Hash`, `Eq`, `Ord`).
-- `Axis` -- `Horizontal` or `Vertical`.
-- `Direction` -- `Up`, `Down`, `Left`, `Right`.
-- `DragEvent` -- `Picked { pane }`, `Dropped { pane, target }`, `Canceled { pane }`.
-- `ResizeEvent` -- `{ split: Split, ratio: f32 }`.
-- `Content` / `TitleBar` / `Controls` -- Pane content wrappers.
-
-### `State<T>` methods
-
-```rust
-impl<T> State<T> {
-    pub fn new(first_pane_state: T) -> (State<T>, Pane);
-    pub fn with_configuration(config: impl Into<Configuration<T>>) -> State<T>;
-    pub fn len(&self) -> usize;
-    pub fn get(&self, pane: Pane) -> Option<&T>;
-    pub fn get_mut(&mut self, pane: Pane) -> Option<&mut T>;
-    pub fn iter(&self) -> impl Iterator<Item = (&Pane, &T)>;
-    pub fn adjacent(&self, pane: Pane, direction: Direction) -> Option<Pane>;
-    pub fn split(&mut self, axis: Axis, pane: Pane, state: T) -> Option<(Pane, Split)>;
-    pub fn split_with(&mut self, target: Pane, pane: Pane, region: Region);
-    pub fn drop(&mut self, pane: Pane, target: Target);
-    pub fn swap(&mut self, a: Pane, b: Pane);
-    pub fn resize(&mut self, split: Split, ratio: f32);
-    pub fn close(&mut self, pane: Pane) -> Option<(T, Pane)>;
-    pub fn maximize(&mut self, pane: Pane);
-    pub fn restore(&mut self);
-    pub fn maximized(&self) -> Option<Pane>;
-}
-```
-
-### `Configuration<T>` enum
-
-```rust
-pub enum Configuration<T> {
-    Split {
-        axis: Axis,
-        ratio: f32,
-        a: Box<Configuration<T>>,
-        b: Box<Configuration<T>>,
-    },
-    Pane(T),
-}
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/pane_grid.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/pane_grid.rs); [widget/src/pane_grid/state.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/pane_grid/state.rs); [widget/src/pane_grid/configuration.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/pane_grid/configuration.rs); [widget/src/pane_grid/content.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/pane_grid/content.rs); [widget/src/pane_grid/title_bar.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/pane_grid/title_bar.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -60,6 +14,7 @@ pub enum Configuration<T> {
 
 ```rust
 use iced::widget::{pane_grid, text};
+use iced::Element;
 
 struct State {
     panes: pane_grid::State<Pane>,
@@ -70,17 +25,19 @@ enum Pane {
     AnotherKindOfPane,
 }
 
+#[derive(Debug, Clone)]
 enum Message {
     PaneDragged(pane_grid::DragEvent),
     PaneResized(pane_grid::ResizeEvent),
 }
 
 fn view(state: &State) -> Element<'_, Message> {
-    pane_grid(&state.panes, |pane, state, is_maximized| {
+    pane_grid(&state.panes, |_pane, state, _is_maximized| {
         pane_grid::Content::new(match state {
             Pane::SomePane => text("This is some pane"),
             Pane::AnotherKindOfPane => text("This is another kind of pane"),
         })
+        .title_bar(pane_grid::TitleBar::new(text("Pane")))
     })
     .on_drag(Message::PaneDragged)
     .on_resize(10, Message::PaneResized)

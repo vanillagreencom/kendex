@@ -6,63 +6,7 @@ Wraps content to intercept mouse events: press, release, double-click, right-cli
 
 ## API
 
-### `MouseArea` struct
-
-```rust
-pub struct MouseArea<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Renderer: Renderer,
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> MouseArea<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer,
-{
-    pub fn new(
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-
-    // Left button
-    pub fn on_press(self, message: Message) -> Self;
-    pub fn on_release(self, message: Message) -> Self;
-    pub fn on_double_click(self, message: Message) -> Self;
-
-    // Right button
-    pub fn on_right_press(self, message: Message) -> Self;
-    pub fn on_right_release(self, message: Message) -> Self;
-
-    // Middle button
-    pub fn on_middle_press(self, message: Message) -> Self;
-    pub fn on_middle_release(self, message: Message) -> Self;
-
-    // Scroll
-    pub fn on_scroll(
-        self,
-        on_scroll: impl Fn(ScrollDelta) -> Message + 'a,
-    ) -> Self;
-
-    // Hover
-    pub fn on_enter(self, message: Message) -> Self;
-    pub fn on_move(
-        self,
-        on_move: impl Fn(Point) -> Message + 'a,
-    ) -> Self;
-    pub fn on_exit(self, message: Message) -> Self;
-
-    // Cursor appearance
-    pub fn interaction(self, interaction: Interaction) -> Self;
-}
-```
-
-### Functions
-
-```rust
-pub fn mouse_area<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> MouseArea<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/mouse_area.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/mouse_area.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -70,6 +14,7 @@ where
 
 ```rust
 use iced::widget::{mouse_area, text};
+use iced::mouse;
 
 mouse_area(text("Click me!"))
     .on_press(Message::TextClicked)
@@ -113,10 +58,10 @@ mouse_area(content)
 ## Gotchas
 
 - `on_press` fires on mouse-down (not mouse-up like `button`). Use this for drag initiation or immediate feedback.
-- `on_move` receives absolute `Point` coordinates, not relative to the widget. Subtract `layout.bounds().position()` for local coordinates in a custom widget.
-- `interaction` sets the cursor appearance when hovering. Without it, the cursor stays as `Interaction::None` (inherited from context).
+- `on_move` receives widget-local coordinates. The widget uses `Cursor::position_in` to subtract its bounds origin.
+- `interaction` supplies a hover cursor only when the child reports `Interaction::None`. The child's interaction takes precedence.
 - `MouseArea` captures events only within its content's bounds. It does not expand to fill available space unless the content does.
-- All handler methods are additive -- you can chain multiple handlers on the same `MouseArea`.
+- Different handler kinds can coexist. Calling the same setter again replaces its message or closure. A child that captures an event prevents the area from handling it.
 
 ## See also
 
