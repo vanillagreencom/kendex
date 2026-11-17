@@ -150,6 +150,12 @@ pub fn is_env_name(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// The prefix `kendex-env.sh` keeps for its own variables. It assigns each
+/// key while it is still running, so it refuses a key in either project
+/// file that starts with this, and a template declaring one is a finding:
+/// the key would fail every load of the file it lands in.
+const LOADER_PREFIX: &str = "_kendex_";
+
 /// How a comment block says a key takes one of a fixed set of values.
 const VALUES_PREFIX: &str = "values:";
 

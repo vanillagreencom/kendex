@@ -141,8 +141,8 @@ calls() {
   while IFS= read -r line; do
     [[ "$line" != "" ]] || continue
     case "$line" in
-      "api user --jq .login") kind=user ;;
-      "api installation/repositories --jq .total_count") kind=installation ;;
+      "api user --include --jq .login") kind=user ;;
+      "api installation/repositories --include --jq .total_count") kind=installation ;;
       "repo view --json nameWithOwner -q .nameWithOwner") kind=repo ;;
       "api repos/"*"/labels/"*)
         path="${line#api repos/}"

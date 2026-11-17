@@ -1,7 +1,7 @@
 ---
 name: commit-guards
 description: "Load to add, tune, or debug a commit guard lane, its git hooks, or COMMIT_GUARDS_* settings."
-summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown, Python names and commit messages, plus an optional comment audit and git hook shims."
+summary: "Commit guards for bytes, conflicts, changelog, markdown and Python names, plus git hook shims."
 license: MIT
 user-invocable: true
 metadata:
@@ -13,7 +13,7 @@ tags: [automation]
 dependencies:
   optional: [docs-writing]
 repo-effects:
-  summary: "Arms git pre-commit, commit-msg and pre-push hooks, so every commit in this repository runs the guard chain and every push runs it over the branch, for everyone who commits or pushes here, not only for kendex."
+  summary: "Arms git pre-commit, commit-msg and pre-push hooks, so every commit in this repository runs the guard chain and every push retains enabled destination binary-growth checks, for everyone who commits or pushes here, not only for kendex."
   writes:
     - ".git/hooks/kendex-guards"
     - ".git/hooks/pre-commit"
@@ -32,7 +32,7 @@ repo-effects:
   notes:
     - "Pre-commit skips a missing companion silently. Preflight is skipped on a first commit. A companion installed with its script missing or not executable is named unrun and blocks nothing, except the selected github-repository-settings owner, which blocks with exit 2. The selected review-file check's `unconfigured` record with its `renders=none` attestation at exit 0 or the older exit 2 is named not adopted and blocks nothing; every other companion or guard failure blocks the commit, a stale review-file render included."
     - "Every hook blocks on a nonzero result; Git's no-verify flag bypasses the commit hooks for one commit and the pre-push hook for one push."
-    - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; the pre-push hook is where that branch is judged, and CI where its credential scan is."
+    - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; CI judges replayed content and the pre-push hook retains only enabled destination binary-growth checks."
     - "Git does not clone hooks; arm every clone once."
 ---
 
@@ -61,7 +61,7 @@ For installer maintenance or ref/scope collection mechanics, read [DEVELOPMENT.m
 
 Before resolving a setting, writing a settings file, exclusions or a baseline, or enabling release collation, read [hooks and settings](references/hooks-and-settings.md#settings-resolution). That reference owns settings resolution, grammar and exclusion/baseline formats. Use [kendex.settings.toml.example](kendex.settings.toml.example) for project declarations and the matching [CHECKS.md](CHECKS.md) section for check-specific semantics. Each check's script owns its defaults.
 
-The settings template also declares `COMMAND_SAFETY_HISTORY_POLICY` for the command-safety hook. Select its native Git history fence only with a Git build that supports the global `--no-lazy-fetch` option.
+The settings template also declares `COMMAND_SAFETY_HISTORY_POLICY` for the command-safety hook. Select its native Git history fence only with Git 2.45.1 or later, the floor kendex's command-safety reference derives under Git history policy.
 
 ## Generated-file exclusions
 

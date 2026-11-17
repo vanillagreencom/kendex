@@ -38,33 +38,36 @@ engine = bin_dir / 'kendex'
 engine.write_text('#!' + sys.executable + '\n'
     'import os, pathlib, sys\n'
     'assert sys.argv[1:] == ["marketplace", "list", "--scope", "project", "--json"]\n'
-    'if os.environ.get("SOURCE_READ") == "fail": sys.exit(47)\n'
+    'if os.environ.get("SOURCE_READ") == "fail": sys.stderr.write("kendex-said-probe\\n"); sys.exit(47)\n'
     'sys.stdout.write(pathlib.Path(os.environ["SOURCE_JSON"]).read_text())\n')
 engine.chmod(0o755)
 default = dict(schema=1, subscriptions=[dict(enabled=True, repo='vanillagreencom/kendex')])
 manifest = 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n'
-cases = [('default-main', default, manifest, True),
-         ('third-party', dict(schema=1, subscriptions=[dict(enabled=True, repo='owner/catalog')]), manifest, False),
-         ('local-path', dict(schema=1, subscriptions=[dict(enabled=True, path='../catalog')]), manifest, False),
-         ('disabled-remote', dict(schema=1, subscriptions=default['subscriptions'] + [dict(enabled=False, repo='owner/catalog')]), manifest, True),
-         ('unknown-schema', dict(schema=2, subscriptions=default['subscriptions']), manifest, False),
-         ('unknown-sources', dict(schema=1, subscriptions=[]), manifest, False),
-         ('unknown-row', dict(schema=1, subscriptions=[{}]), manifest, False),
-         ('unknown-enabled', dict(schema=1, subscriptions=[dict(enabled='true', repo='vanillagreencom/kendex')]), manifest, False),
-         ('unknown-json', None, manifest, False),
-         ('malformed-json', '{', manifest, False),
-         ('malformed-manifest', default, '[', False),
-         ('missing-manifest', default, None, False),
-         ('unreadable-owner', default, manifest, False)]
+# The answer each case takes: covered, uncovered where a source or an
+# override is not the default catalog at main, and unread where the engine's
+# answer, its shape or a manifest could not be read.
+cases = [('default-main', default, manifest, 'covered'),
+         ('third-party', dict(schema=1, subscriptions=[dict(enabled=True, repo='owner/catalog')]), manifest, 'uncovered'),
+         ('local-path', dict(schema=1, subscriptions=[dict(enabled=True, path='../catalog')]), manifest, 'uncovered'),
+         ('disabled-remote', dict(schema=1, subscriptions=default['subscriptions'] + [dict(enabled=False, repo='owner/catalog')]), manifest, 'covered'),
+         ('unknown-schema', dict(schema=2, subscriptions=default['subscriptions']), manifest, 'unread'),
+         ('no-sources', dict(schema=1, subscriptions=[]), manifest, 'uncovered'),
+         ('unknown-row', dict(schema=1, subscriptions=[{}]), manifest, 'unread'),
+         ('unknown-enabled', dict(schema=1, subscriptions=[dict(enabled='true', repo='vanillagreencom/kendex')]), manifest, 'unread'),
+         ('unknown-json', None, manifest, 'unread'),
+         ('malformed-json', '{', manifest, 'unread'),
+         ('malformed-manifest', default, '[', 'unread'),
+         ('missing-manifest', default, None, 'unread'),
+         ('unreadable-owner', default, manifest, 'unread')]
 for revision in ('topic', 'v1', 'd'*40):
     listed = copy.deepcopy(default)
     listed['subscriptions'][0]['rev'] = revision
-    cases.append(('source-revision-' + revision, listed, manifest, False))
+    cases.append(('source-revision-' + revision, listed, manifest, 'uncovered'))
 for table in ('agents', 'skills', 'hooks', 'commands', 'mcp-servers', 'bundles', 'pi-extensions'):
-    cases.append((table + '-override', default, manifest + '\n[' + table + '.probe]\nsource = "kendex"\nrev = "topic"\n', False))
-cases += [('inline-override', default, 'schema = 7\nskills = {probe = {source = "kendex", rev = "topic"}}\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n', False),
-          ('local-manifest-override', default, manifest, False)]
-def check_body(script, name, listed, text, covered):
+    cases.append((table + '-override', default, manifest + '\n[' + table + '.probe]\nsource = "kendex"\nrev = "topic"\n', 'uncovered'))
+cases += [('inline-override', default, 'schema = 7\nskills = {probe = {source = "kendex", rev = "topic"}}\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n', 'uncovered'),
+          ('local-manifest-override', default, manifest, 'uncovered')]
+def check_body(script, name, listed, text, answer):
     folder = root / name
     folder.mkdir(exist_ok=True)
     if text is not None:
@@ -78,26 +81,38 @@ def check_body(script, name, listed, text, covered):
                  SOURCE_READ='fail' if name == 'unreadable-owner' else ''),
         capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, (name, result.stderr)
-    assert result.stdout == ('sources=covered\n' if covered else 'sources=uncovered\n'), ('source-coverage', name, result.stdout)
+    assert result.stdout == 'sources=' + answer + '\n', ('source-coverage', name, result.stdout)
+    # An unread answer names the project on stderr, after what kendex said.
+    unread_line = 'refresh-sources=unread value=' + str(folder)
+    assert (unread_line in result.stderr.splitlines()) == (answer == 'unread'), ('source-coverage', name, result.stderr)
+    if name == 'unreadable-owner':
+        assert result.stderr.startswith('kendex-said-probe\n'), ('source-coverage', name, result.stderr)
 for case in cases:
     check_body(body, *case)
     print('source-coverage: case=' + case[0] + ' pass')
-original = "assert all(row.get('enabled') is False or"
+original = "if not sources or not all(row['enabled'] is False or"
 assert body.count(original) == 1
-broken = body.replace(original, "assert True or all(row.get('enabled') is False or")
+broken = body.replace(original, "if not sources or not all(True or row['enabled'] is False or")
 assert broken != body
 case = next(row for row in cases if row[0] == 'third-party')
 try: check_body(broken, 'control-third-party', *case[1:])
 except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
 else: raise AssertionError('source coverage control missed other catalog')
-original = 'assert not revision(tomllib.loads(manifest.read_text()))'
+original = 'if manifest.exists() and revision(tomllib.loads(manifest.read_text())):'
 assert body.count(original) == 1
-broken = body.replace(original, 'assert True # ' + original)
+broken = body.replace(original, 'if False and ' + original[3:])
 assert broken != body
 case = next(row for row in cases if row[0] == 'skills-override')
 try: check_body(broken, 'control-item-override', *case[1:])
 except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
 else: raise AssertionError('source coverage control missed item override')
+original = "    verdict = 'unread'\n"
+assert body.count(original) == 1
+broken = body.replace(original, "    verdict = 'uncovered'\n")
+case = next(row for row in cases if row[0] == 'unreadable-owner')
+try: check_body(broken, 'control-unread-as-uncovered', *case[1:])
+except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
+else: raise AssertionError('source coverage control missed an unread answer read as uncovered')
 SOURCE_CASES
 then ok 'source coverage uses engine subscriptions and rejects revisions or unknown evidence; controls'
 else bad 'source coverage'; fi
@@ -117,6 +132,9 @@ set -euo pipefail
 # its fixture paths so that the repository read reaches the API fixture.
 export TEST_STATE="@STATE@" GH_SHIM_FIXTURES="@FIXTURES@" TEST_GH_SHIM="@GH_SHIM@"
 printf '%s\n' "$*" >>"$TEST_STATE/calls"
+printf '%s|%s\n' "${GH_TOKEN-}" "$*" >>"$TEST_STATE/tokens"
+# The landing token reaches only the landing push.
+[ -z "${KENDEX_LAND_TOKEN+set}" ] || printf 'gh %s\n' "$*" >>"$TEST_STATE/land-token-seen"
 query=""
 for arg in "$@"; do
   case "$arg" in
@@ -149,6 +167,13 @@ case "$*" in
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
   'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
   'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
+  'api graphql '*'mergeQueue(branch: $branch)'*)
+    # The landing check's queue read, answered as GitHub's body with the
+    # entry count queue-entries holds, none unset.
+    entries=0
+    if [ -f "$TEST_STATE/queue-entries" ]; then entries="$(cat "$TEST_STATE/queue-entries")"; fi
+    [ "$entries" != fail ] || exit 87
+    printf '{"data":{"repository":{"mergeQueue":{"entries":{"totalCount":%s}}}}}\n' "$entries" ;;
   'api graphql '*)
     # A read before any refusal is the run-start read, which precedes the
     # refresh.
@@ -162,8 +187,14 @@ case "$*" in
     elif [ -f "$TEST_STATE/push-refused" ]; then
       [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
       state="$TEST_STATE/push-state.json"
+    elif [ -f "$TEST_STATE/refreshed" ]; then
+      state="$TEST_STATE/start-state.json"
+      if [ -f "$TEST_STATE/prepush-state.json" ]; then state="$TEST_STATE/prepush-state.json"; fi
+      if [ -f "$TEST_STATE/disarm-attempted" ] && [ -f "$TEST_STATE/disarm-state.json" ]; then
+        state="$TEST_STATE/disarm-state.json"
+      fi
+      [ ! -f "$TEST_STATE/prepush-query-failed" ] || exit 87
     else
-      [ ! -f "$TEST_STATE/refreshed" ] || exit 89
       [ "${TEST_START_QUERY:-pass}" != fail ] || exit 87
       state="$TEST_STATE/start-state.json"
     fi
@@ -215,6 +246,7 @@ case "$*" in
         jq -cn --arg state "$arm_state" --arg head "$head" --argjson queued "$queued" --argjson armed "$armed" \
           '{data:{repository:{ref:{target:{oid:$head}},pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-07T03:00:00Z"} else null end)}}}}' >"$TEST_STATE/arm-state.json" ;;
       *' --disable-auto '*)
+        : >"$TEST_STATE/disarm-attempted"
         [ "${TEST_DISARM_MODE:-pass}" != refused ] || { printf 'GraphQL: disarm refused\n' >&2; exit 1; }
         rm -f -- "$TEST_STATE/armed" ;;
       *)
@@ -236,6 +268,7 @@ cat >"$TMP/bin/kendex" <<'SH'
 set -euo pipefail
 printf '%s|%s\n' "$*" "${KENDEX_CATALOG_REV-unset}" >>"@STATE@/catalog-revs"
 printf '%s|%s|%s\n' "$PWD" "$*" "${KENDEX_CATALOG_REV-unset}" >>"@STATE@/project-calls"
+[ -z "${KENDEX_LAND_TOKEN+set}" ] || printf 'kendex %s\n' "$*" >>"@STATE@/land-token-seen"
 # The runner calls the render verb under env -i, so it reads no test
 # setting; a row drives it through the state. render-exit and render-said are the verb's
 # exit and output where a row sets them; otherwise, like kendex, it runs the
@@ -346,6 +379,31 @@ if [ -f "$TEST_STATE/classifier-proof" ] &&
 fi
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
+# The landing push runs as git -C ROOT push.
+if [[ " $* " == *' push '*':refs/heads/main '* ]]; then
+  printf 'git push main token=%s\n' "${GH_TOKEN-}" >>"$TEST_STATE/calls"
+  [ -f "$TEST_STATE/land-mode" ] || exec "$TEST_REAL_GIT" "$@"
+  # The remote refuses for real, so the runner reads what git itself
+  # reports: a push behind a default branch another push moved after the
+  # run's fetch, recorded in moved-head, then a refusal the remote's own
+  # hook gives with GitHub's ruleset words, as a ruleset refuses on GitHub.
+  case "$(cat "$TEST_STATE/land-mode")" in
+    moved)
+      tip="$("$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" rev-parse refs/heads/main)"
+      moved="$(GIT_AUTHOR_NAME=competitor GIT_AUTHOR_EMAIL=competitor@example.invalid GIT_COMMITTER_NAME=competitor GIT_COMMITTER_EMAIL=competitor@example.invalid "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" commit-tree "$tip^{tree}" -p "$tip" -m moved)"
+      "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" update-ref refs/heads/main "$moved" "$tip"
+      printf '%s\n' "$moved" >"$TEST_STATE/moved-head"
+      exec "$TEST_REAL_GIT" "$@" ;;
+    rejected)
+      printf '#!/bin/sh\necho "error: GH013: Repository rule violations found for refs/heads/main." >&2\nexit 1\n' >"$TEST_LEASE_REMOTE/hooks/pre-receive"
+      chmod +x "$TEST_LEASE_REMOTE/hooks/pre-receive"
+      status=0
+      "$TEST_REAL_GIT" "$@" || status=$?
+      rm -f -- "${TEST_LEASE_REMOTE:?}/hooks/pre-receive"
+      exit "$status" ;;
+    *) exit 2 ;;
+  esac
+fi
 if [ "${1:-}" = push ]; then
   printf 'git push\n' >>"$TEST_STATE/calls"
   case "${TEST_PUSH_MODE:-normal}" in
@@ -389,7 +447,7 @@ file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
 file_edit "$TMP/bin" gh 1 '@STATE@' "s|@STATE@|$TMP/state|"
 file_edit "$TMP/bin" gh 1 '@FIXTURES@' "s|@FIXTURES@|$FIXTURES|"
 file_edit "$TMP/bin" gh 1 '@GH_SHIM@' "s|@GH_SHIM@|$TMP/standard-gh|"
-file_edit "$TMP/bin" kendex 7 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 8 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -432,6 +490,100 @@ git -C "$repo" push -q origin main
 printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/push-state.json"
 cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
 runner="$repo/refresh/refresh-consumer.sh"
+
+# Publication examines the whole index, excluding only enumerated project locks.
+# The same lock-only assertion rejects the old publication rule on a source copy.
+lock_saved_repo="$repo"
+lock_saved_runner="$runner"
+git clone -q --branch main "$repo" "$TMP/lock-consumer"
+repo="$TMP/lock-consumer"
+git -C "$repo" config user.name fixture
+git -C "$repo" config user.email fixture@example.invalid
+git -C "$repo" config gc.auto 0
+git -C "$repo" config maintenance.auto false
+lock_base="$(git -C "$repo" rev-parse main)"
+git init -q --bare "$TMP/lock-remote"
+git --git-dir="$TMP/lock-remote" config gc.auto 0
+git --git-dir="$TMP/lock-remote" config maintenance.auto false
+git -C "$repo" remote set-url origin "$TMP/lock-remote"
+LEASE_REMOTE="$TMP/lock-remote"
+mkdir -p "$TMP/lock-control"
+cp -RL "$repo/refresh" "$repo/skills" "$TMP/lock-control/"
+file_edit "$TMP/lock-control" refresh/refresh-consumer.sh 1 'publication_paths\+=' '/publication_paths+=/s/^/  : # /'
+while IFS='|' read -r lock_name lock_project lock_add; do
+  reset_default
+  git -C "$repo" checkout -q -B main "$lock_base"
+  runner="$repo/refresh/refresh-consumer.sh"
+  [ "$lock_name" != control ] || runner="$TMP/lock-control/refresh/refresh-consumer.sh"
+  printf 'schema = 7\n' >"$repo/kendex.toml"
+  printf 'previous lock\n' >"$repo/.kendex-lock.json"
+  if [ -n "$lock_project" ]; then
+    mkdir -p "$repo/$lock_project"
+    printf 'schema = 7\n' >"$repo/$lock_project/kendex.toml"
+    printf 'current\n' >"$repo/$lock_project/rendered.txt"
+    printf 'previous nested lock\n' >"$repo/$lock_project/.kendex-lock.json"
+  fi
+  printf '[env]\nKENDEX_REFRESH_PROJECTS = "%s"\nPR_REVIEW_GATE = "on"\n' "$lock_project" >"$repo/kendex.settings.toml"
+  commit "$repo"
+  git -C "$repo" push -q --force origin main
+  git --git-dir="$LEASE_REMOTE" update-ref -d refs/heads/kendex/refresh
+  : >"$TMP/state/pr"
+  : >"$TMP/state/calls"
+  : >"$TMP/state/project-calls"
+  REFRESH_ADDS="$lock_add"
+  run_refresh current pass render
+  lock_suppressed=false
+  if [ "$RC" -eq 0 ] && [ "$(git -C "$repo" rev-parse HEAD)" = "$(git -C "$repo" rev-parse main)" ] &&
+      ! git --git-dir="$LEASE_REMOTE" show-ref --verify --quiet refs/heads/kendex/refresh &&
+      ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls" &&
+      grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
+      grep -qxF 'state=current' "$TMP/state/outputs" &&
+      grep -qxF 'sources=covered' "$TMP/state/outputs" &&
+      grep -qF 'PR_REVIEW_GATE' "$TMP/state/summary"; then lock_suppressed=true; fi
+  case "$lock_name" in
+    control|unselected)
+      if [ "$lock_suppressed" = false ] && [ "$RC" -eq 0 ] &&
+          grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
+          git --git-dir="$LEASE_REMOTE" show-ref --verify --quiet refs/heads/kendex/refresh; then
+        ok "lock publication $lock_name rejects suppression"
+      else bad "lock publication $lock_name" "$OUT"; fi ;;
+    *)
+      if [ "$lock_suppressed" = true ]; then ok "lock-only $lock_name publishes nothing and reports settings and sources"
+      else bad "lock-only $lock_name" "$OUT"; fi
+      reset_default
+      : >"$TMP/state/calls"
+      run_refresh content-update pass render
+      lock_head="$(git --git-dir="$LEASE_REMOTE" rev-parse refs/heads/kendex/refresh)"
+      lock_published=true
+      for lock_scope in "$repo" ${lock_project:+"$repo/$lock_project"}; do
+        lock_relative="${lock_scope#"$repo"}"
+        lock_relative="${lock_relative#/}"
+        lock_prefix="${lock_relative:+$lock_relative/}"
+        grep -qxF "$lock_scope|verify --scope project|v1.7.0" "$TMP/state/project-calls" || lock_published=false
+        [ "$(git --git-dir="$LEASE_REMOTE" show "$lock_head:${lock_prefix}.kendex-lock.json")" = 'added by the refresh' ] || lock_published=false
+        [ "$(git --git-dir="$LEASE_REMOTE" show "$lock_head:${lock_prefix}rendered.txt")" = content-update ] || lock_published=false
+      done
+      if [ "$RC" -eq 0 ] && [ "$lock_published" = true ] &&
+          grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
+          grep -qxF 'git push' "$TMP/state/calls" &&
+          [ -e "$TMP/state/armed" ]; then ok "content-changing $lock_name publishes the current locks with content"
+      else bad "content-changing $lock_name" "$OUT"; fi ;;
+  esac
+done <<'LOCK_PUBLICATION_ROWS'
+root||.kendex-lock.json
+nested|packaging/jarvis [home]|.kendex-lock.json
+unselected||unselected/.kendex-lock.json
+control||.kendex-lock.json
+LOCK_PUBLICATION_ROWS
+unset REFRESH_ADDS LEASE_REMOTE
+reset_default
+repo="$lock_saved_repo"
+runner="$lock_saved_runner"
+: >"$TMP/state/pr"
+: >"$TMP/state/calls"
+: >"$TMP/state/creates"
+
+run_admission_rows
 
 # The same assertions reject the runner on the implementation's main base.
 run_project_rows
@@ -557,7 +709,12 @@ catalog_refresh_matches() { # EXPECTED
       [ "$RC" -eq 0 ] && [ "$calls" = $'refresh --scope project --yes --leave|main\nrefresh --scope project --yes --leave|v7.8.9' ] &&
         [ "$(grep -c '^catalog-held ' <<<"$OUT")" -eq 1 ] &&
         grep -qxF 'catalog-held min=7.9.0 engine=7.8.9' <<<"$OUT" &&
-        grep -qF 'catalog-held min=7.9.0 engine=7.8.9' "$TMP/state/body" ;;
+        grep -qF 'catalog-held min=7.9.0 engine=7.8.9' "$TMP/state/summary" &&
+        grep -qxF "refresh-state=unchanged pr=1 class=render head=$catalog_head published=false" <<<"$OUT" &&
+        grep -qF "$catalog_head" "$TMP/state/summary" &&
+        [ "$catalog_head" = "$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" ] &&
+        ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls" &&
+        [ ! -e "$TMP/state/arm-attempted" ] ;;
     refused)
       [ "$RC" -eq 1 ] && [ "$calls" = 'refresh --scope project --yes --leave|main' ] &&
         ! grep -q '^catalog-held ' <<<"$OUT" &&
@@ -581,6 +738,10 @@ while IFS='|' read -r name main_error release_error revision expected; do
   [ -z "$main_error" ] || printf '%s\n' "$main_error" >"$TMP/state/catalog-main-error"
   [ -z "$release_error" ] || printf '%s\n' "$release_error" >"$TMP/state/catalog-release-error"
   CATALOG_REV="$revision"
+  if [ "$expected" = release ]; then
+    catalog_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  fi
+  : >"$TMP/state/calls"
   run_refresh catalog-update pass render
   unset CATALOG_REV
   if catalog_refresh_matches "$expected"; then ok "$name"; else bad "$name" "$OUT"; fi
@@ -628,6 +789,8 @@ FALLBACK_CONTROL
       CATALOG_REV=v7.8.9 expected=selected-refused
       printf 'Error: catalog-needs-engine min=7.9.0 engine=7.8.9\n' >"$TMP/state/catalog-release-error" ;;
   esac
+  catalog_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  : >"$TMP/state/calls"
   run_refresh catalog-update pass render
   unset CATALOG_REV
   if ! catalog_refresh_matches "$expected"; then ok "control: $mutation turns the catalog row red"
@@ -874,6 +1037,352 @@ rm -f -- "$TMP/state/branch-rules" "$TMP/state/branch-protected"
 reset_default
 cp "$TMP/arm-runner" "$runner"
 cp "$TMP/arm-helper" "$arm_helper"
+# A render this run committed goes to the default branch from the run
+# itself, with no pull request and with the landing token alone, where its
+# merge queue holds no entry, and lands where GitHub takes the push. No
+# token, another class, other sources, a busy or unread queue and GitHub's
+# refusal keep the pull request route, and a default branch that moved
+# defers to the next run. A retained head never lands, and a landed run
+# closes the open rolling pull request only while GitHub still holds it
+# open. SAID is the one refresh-land line the run prints, or none: every
+# precondition that keeps the pull request names itself, once a landing
+# name is set. A precondition that answers nothing ends the run on
+# refresh-error=land-check, exit 1, with nothing pushed. Each run restores
+# the remote's default branch, so the next starts from it.
+land_matches() { # OUTCOME CLASS CLOSE SAID
+  local main rolling
+  main="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)" || return 1
+  rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
+  if [ "$1" = land-check ]; then [ "$RC" -eq 1 ] || return 1; else [ "$RC" -eq 0 ] || return 1; fi
+  [ "$(grep '^refresh-land=' <<<"$OUT" || true)" = "${4:+refresh-land=$4}" ] || return 1
+  case "$1" in
+    landed)
+      [ "$main" != "$land_base" ] && [ "$(git --git-dir="$TMP/remote" rev-parse "$main^")" = "$land_base" ] &&
+        [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=landed pr=none class=render head=$main" <<<"$OUT" &&
+        ! grep -q '^pr merge \|^api --method ' "$TMP/state/calls" &&
+        grep -qxF "Landed \`$main\` on \`main\` with no pull request." "$TMP/state/summary" &&
+        grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary" &&
+        [ "$(grep -c '^git push main ' "$TMP/state/calls")" -eq 1 ] &&
+        grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
+        # No gh call carries the landing token; the queue read carries the
+        # repository token.
+        ! grep -q '^land-token|' "$TMP/state/tokens" &&
+        grep -q '^test-token|api graphql .*mergeQueue' "$TMP/state/tokens" &&
+        # Neither gh nor kendex inherits the landing token.
+        [ ! -e "$TMP/state/land-token-seen" ] || return 1
+      case "$3" in
+        close) grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" ;;
+        *) ! grep -q '^pr close ' "$TMP/state/calls" ;;
+      esac ;;
+    base-moved)
+      [ "$main" = "$(cat "$TMP/state/moved-head")" ] && [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=deferred reason=$1" <<<"$OUT" &&
+        grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
+        ! grep -q '^pr \|^api --method ' "$TMP/state/calls" ;;
+    land-check)
+      [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF 'refresh-error=land-check value=unset' <<<"$OUT" &&
+        ! grep -q '^git push\|^pr \|^api --method ' "$TMP/state/calls" ;;
+    retained)
+      [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=unchanged pr=1 class=render head=$land_rolling published=false" <<<"$OUT" &&
+        ! grep -q '^git push\|^pr \(merge\|close\) \|^api --method ' "$TMP/state/calls" ;;
+    pull | refused | unasked)
+      [ "$main" = "$land_base" ] && [ "$rolling" != "$land_rolling" ] &&
+        grep -qxF "refresh-state=pushed pr=1 class=$2" <<<"$OUT" &&
+        grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $rolling" "$TMP/state/calls" || return 1
+      case "$1" in
+        refused) grep -qxF 'git push main token=land-token' "$TMP/state/calls" ;;
+        unasked) ! grep -q 'mergeQueue\|^git push main ' "$TMP/state/calls" ;;
+        pull) ! grep -q '^git push main ' "$TMP/state/calls" ;;
+      esac ;;
+    *) return 1 ;;
+  esac
+}
+# The landing check's queue read, refresh/lib/landing.sh's one reader for
+# both landing scripts, judged on GitHub's GraphQL answers: the no-queue
+# and one-entry bodies recorded from GitHub, and the errors body gh prints
+# and exits 1 on (recorded) or 0 on. A count prints; anything else refuses,
+# which keeps the pull request. Each control breaks one branch of the
+# reader on a copy of the library and must turn its row red.
+mkdir -p "$TMP/queue-reader-bin"
+cat >"$TMP/queue-reader-bin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$QUEUE_CALL"
+printf '%s' "$QUEUE_ANSWER"
+exit "$QUEUE_STATUS"
+SH
+chmod +x "$TMP/queue-reader-bin/gh"
+queue_read() { # LIBRARY ANSWER STATUS — sets OUT and RC
+  RC=0
+  OUT="$(env -i PATH="$TMP/queue-reader-bin:$PATH" QUEUE_CALL="$TMP/queue-reader-call" \
+    QUEUE_ANSWER="$2" QUEUE_STATUS="$3" "$BASH" -c '. "$1" && kendex_land_queue_entries acme/test main' _ "$1" 2>/dev/null)" || RC=$?
+}
+QUEUE_ROWS='no-queue|{"data":{"repository":{"mergeQueue":null}}}|0|0
+one-entry|{"data":{"repository":{"mergeQueue":{"entries":{"totalCount":1}}}}}|0|1
+empty-queue|{"data":{"repository":{"mergeQueue":{"entries":{"totalCount":0}}}}}|0|0
+errors-failed|{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}|1|refused
+errors-passed|{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}|0|refused
+no-count|{"data":{"repository":{"mergeQueue":{"entries":{}}}}}|0|refused
+not-json|not-json|0|refused
+empty||0|refused'
+queue_row_matches() { # WANT
+  if [ "$1" = refused ]; then [ "$RC" -ne 0 ] && [ -z "$OUT" ]; else [ "$RC" -eq 0 ] && [ "$OUT" = "$1" ]; fi
+}
+while IFS='|' read -r name answer status want; do
+  rm -f -- "$TMP/queue-reader-call"
+  queue_read "$REFRESH_DIR/lib/landing.sh" "$answer" "$status"
+  if queue_row_matches "$want" &&
+      grep -qF -- '-f owner=acme -f repo=test -f branch=main ' "$TMP/queue-reader-call"; then
+    ok "queue read $name"
+  else bad "queue read $name" "rc=$RC out=$OUT want=$want"; fi
+done <<<"$QUEUE_ROWS"
+cp "$REFRESH_DIR/lib/landing.sh" "$TMP/queue-reader-control.sh"
+while IFS='~' read -r control row match edit; do
+  file_edit "$TMP" queue-reader-control.sh 1 "$match" "$edit"
+  IFS='|' read -r name answer status want <<<"$(grep "^$row|" <<<"$QUEUE_ROWS")"
+  queue_read "$TMP/queue-reader-control.sh" "$answer" "$status"
+  if ! queue_row_matches "$want"; then ok "control: $control turns the $row queue read red"
+  else bad "queue read $control control" "rc=$RC out=$OUT"; fi
+  cp "$REFRESH_DIR/lib/landing.sh" "$TMP/queue-reader-control.sh"
+done <<'CONTROLS'
+a count read as empty~one-entry~then \.entries\.totalCount$~s/then \.entries\.totalCount$/then 0/
+no queue read as unreadable~no-queue~if \. == null then 0$~s/if \. == null then 0$/if . == null then error("no queue")/
+errors passed over~errors-passed~error\("GraphQL errors"\)$~s/then error("GraphQL errors")$/then . /
+CONTROLS
+cp "$TMP/arm-runner" "$TMP/land-runner"
+# A consumer's root manifest, which the source coverage the landing check
+# asks reads: it subscribes to kendex's catalog alone.
+printf 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n' >"$repo/kendex.toml"
+commit "$repo"
+landing_lib="$repo/refresh/lib/landing.sh"
+cp "$landing_lib" "$TMP/land-lib"
+# The source edits the landing rows and their controls make on a copy of
+# the runner or of the landing library it sources. `arms RUNNER` prints the
+# patterns of the runner's landing reporter, the case after
+# refresh_land_check; `edit RUNNER LIBRARY ARMS NAME...` makes each named
+# edit, an arm-* name taking its edit inside that arm from the ARMS table.
+# Every edit asserts it matches once before it replaces.
+cat >"$TMP/land-control.py" <<'LAND_CONTROL'
+from pathlib import Path
+import re
+import sys
+
+def reporter(text):
+    start = 'refresh_land_check\ncase "$land_check" in\n'
+    assert text.count(start) == 1, 'reporter'
+    block = text[text.index(start) + len(start):]
+    block = block[:block.index('\nesac\n') + 1]
+    arms = []
+    for line in block.splitlines(keepends=True):
+        arm = re.match(r'  (\S[^)]*)\)', line)
+        if arm:
+            arms.append([arm.group(1), line])
+        else:
+            assert arms, line
+            arms[-1][1] += line
+    return arms
+
+if sys.argv[1] == 'arms':
+    for pattern, _ in reporter(Path(sys.argv[2]).read_text()):
+        print(pattern)
+    sys.exit(0)
+runner, library = Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve()
+arm_table = [line.split('~') for line in Path(sys.argv[4]).read_text().splitlines() if line]
+edits = {
+    'refusal-deferred': (runner, "  printf 'refresh-land=refused value=%s\\n' \"$KENDEX_LAND_STATUS\"\nfi", "  printf 'refresh-state=deferred reason=base-moved\\n'; exit 0\nfi"),
+    'close-merged': (runner, '    merged | closed) return 0 ;;', '    merged | closed) ;;'),
+    'token-exported': (runner, 'unset KENDEX_LAND_TOKEN\n', ''),
+    'token-unchecked': (runner, '  if [ -z "$land_token" ]; then\n', '  if false; then\n'),
+    'token-unsaid': (runner, 'if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi', 'land_check=unconfigured'),
+    'precondition-unsaid': (runner, 'if [ "$class" != render ]; then land_check=skipped:class; return 0; fi', 'if [ "$class" != render ]; then return 0; fi'),
+    'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
+    'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
+    'queue-ignored': (runner, '  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi\n', ''),
+    'skip-unchanged': (runner, 'if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
+    'moved-unread': (library, '*":refs/heads/$4:[rejected]"*) KENDEX_LAND_RESULT=base-moved ;;', '*":refs/heads/$4:[rejected-never]"*) KENDEX_LAND_RESULT=base-moved ;;'),
+    'remote-moved': (library, '*":refs/heads/$4:[rejected]"*)', '*":refs/heads/$4:["*"rejected]"*)'),
+}
+for name in sys.argv[5:]:
+    if name.startswith('arm-'):
+        _, arm, _, inside, replaced = next(entry for entry in arm_table if entry[0] == name)
+        text = next(text for pattern, text in reporter(runner.read_text()) if pattern == arm)
+        if inside:
+            assert text.count(inside) == 1, inside
+            target, old, new = runner, text, text.replace(inside, replaced)
+        else:
+            target, old, new = runner, text, ''
+    else:
+        target, old, new = edits[name]
+    s = target.read_text()
+    assert s.count(old) == 1, old
+    changed = s.replace(old, new)
+    assert changed != s
+    target.write_text(changed)
+LAND_CONTROL
+# NAME~ARM~ROW~INSIDE~REPLACED: one must-fail control per arm of the
+# runner's landing reporter, run on the landing row it answers. INSIDE is
+# the text replaced inside the arm; with none the arm is deleted whole. The
+# keyed line dropped leaves the row saying nothing; the pass arm deleted
+# sends a run that tries nothing to the refusal; the refusal deleted lets
+# an unanswered precondition run on to the pull request.
+cat >"$TMP/reporter-arms" <<'REPORTER_ARMS'
+arm-pass~try | unconfigured~no-token~~
+arm-said~unavailable:?* | skipped:?*~unread-queue~printf 'refresh-land=~: 'refresh-land=
+arm-refusal~*~precondition-unanswered~~
+REPORTER_ARMS
+# Every arm the runner's reporter has takes one entry, read from the
+# runner, so an arm cannot ship without a control.
+reporter_arms="$(python3 "$TMP/land-control.py" arms "$REFRESH_DIR/refresh-consumer.sh")" || reporter_arms=""
+controlled_arms="$(cut -d'~' -f2 "$TMP/reporter-arms")"
+if grep -qxF '*' <<<"$reporter_arms" &&
+    [ "$(sort <<<"$reporter_arms")" = "$(sort <<<"$controlled_arms")" ]; then
+  ok 'each landing reporter arm has a control'
+else bad 'landing reporter arm controls' "arms=[$reporter_arms] controlled=[$controlled_arms]"; fi
+arm_runs=0
+# NAME|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE|CONFIGURED|SAID|EDIT
+# PUSH is GitHub's answer to the landing push: taken, moved (the base moved)
+# or rejected (a ruleset refused it). CONTROL is a source edit on a copy of
+# the runner, or of the landing library it sources, that must turn the
+# row's assertion red; the reporter arm controls above join the row they
+# name. EDIT is a source edit every run of the row takes: the
+# precondition-unanswered row's class check returns with no answer.
+# CONFIGURED is KENDEX_LAND_CONFIGURED, which the shared workflow sets true
+# where either landing name is set; the half-pair row holds a name and no
+# token. The third-party row's project also subscribes to a catalog other
+# than kendex's, and the sources-unread row's engine fails its subscription
+# list.
+for row in \
+  'landed|render|true||landed|token-exported|0|land-token|close|true|' \
+  'merged-since-start|render|true||landed|close-merged|0|land-token|merged|true|' \
+  'no-token|render|true||unasked|token-unchecked|0|||false|' \
+  'half-pair|render|true||unasked|token-unsaid|0|||true|unavailable value=token' \
+  'small-class|small|true||unasked|precondition-unsaid|0|land-token||true|skipped value=class' \
+  'unmeasured|standard|false||unasked||0|land-token||true|skipped value=class' \
+  'base-moved|render|true|moved|base-moved|moved-unread|0|land-token||true|' \
+  'push-refused|render|true|rejected|refused|refusal-deferred remote-moved|0|land-token||true|refused value=1' \
+  'third-party|render|true||unasked|coverage-ignored|0|land-token||true|skipped value=sources-uncovered' \
+  'sources-unread|render|true||unasked|sources-unread-uncovered|0|land-token||true|unavailable value=sources-read' \
+  'queue-busy|render|true||pull|queue-ignored|2|land-token||true|skipped value=queued' \
+  'unread-queue|render|true||pull||fail|land-token||true|unavailable value=queue-read' \
+  'precondition-unanswered|small|true||land-check||0|land-token||true||precondition-unsaid' \
+  'retained|render|true||retained|skip-unchanged|0|land-token||true|'; do
+  IFS='|' read -r name class MEASURED land expected control queue LAND_TOKEN close LAND_CONFIGURED said edit <<<"$row"
+  printf '%s\n' "$queue" >"$TMP/state/queue-entries"
+  arm_controls="$(awk -F'~' -v row="$name" '$3 == row { print $1 }' "$TMP/reporter-arms")"
+  for mutation in none $control $arm_controls; do
+    reset_default
+    cp "$TMP/land-runner" "$runner"
+    cp "$TMP/land-lib" "$landing_lib"
+    edits=()
+    [ -z "$edit" ] || edits+=("$edit")
+    [ "$mutation" = none ] || edits+=("$mutation")
+    case "$mutation" in arm-*) arm_runs=$((arm_runs + 1)) ;; esac
+    if [ "${#edits[@]}" -gt 0 ]; then
+      python3 "$TMP/land-control.py" edit "$runner" "$landing_lib" "$TMP/reporter-arms" "${edits[@]}"
+    fi
+    case "$name" in
+      third-party) printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"},{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/.fixture-sources" ;;
+      sources-unread) : >"$repo/.fixture-source-unread" ;;
+    esac
+    commit "$repo"
+    git -C "$repo" push -q origin main
+    land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+    rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/prepush-state.json" "${TMP:?}/state/moved-head"
+    [ -z "$land" ] || printf '%s\n' "$land" >"$TMP/state/land-mode"
+    printf '1\n' >"$TMP/state/pr"
+    content="land-$name-$mutation"
+    if [ "$name" = retained ]; then
+      # The rolling head a run published on this base after a ruleset
+      # refused its landing push, kept open as after a failed merge group.
+      # The run under test renders the same tree.
+      printf 'rejected\n' >"$TMP/state/land-mode"
+      run_refresh "$content" pass "$class"
+      rm -f -- "${TMP:?}/state/land-mode"
+      [ "$RC" -eq 0 ] || bad "$name rolling head setup" "$OUT"
+      reset_default
+    fi
+    land_rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+    if [ "$close" = merged ]; then
+      # GitHub merged the rolling pull request after the run-start read.
+      jq '.data.repository.pullRequest.state = "MERGED"' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json"
+    fi
+    : >"$TMP/state/calls"
+    : >"$TMP/state/tokens"
+    rm -f -- "${TMP:?}/state/land-token-seen"
+    run_refresh "$content" pass "$class"
+    if [ "$mutation" = none ]; then
+      if land_matches "$expected" "$class" "$close" "$said"; then ok "$name landing outcome"; else bad "$name landing outcome" "$OUT"; fi
+    elif ! land_matches "$expected" "$class" "$close" "$said"; then
+      ok "control: $mutation turns the $name landing assertion red"
+    else bad "$name $mutation landing control" "$OUT"; fi
+    git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+    case "$name" in
+      third-party | sources-unread)
+        reset_default
+        git -C "$repo" rm -q .fixture-sources .fixture-source-unread --ignore-unmatch
+        commit "$repo" ;;
+    esac
+  done
+done
+cp "$TMP/land-lib" "$landing_lib"
+rm -f -- "${TMP:?}/state/prepush-state.json"
+if [ "$arm_runs" -eq "$(grep -c . "$TMP/reporter-arms")" ]; then ok 'each landing reporter arm control ran on its row'
+else bad 'landing reporter arm controls ran' "ran=$arm_runs"; fi
+# The current route closes the open rolling pull request the same way: only
+# while GitHub still holds it open.
+for close in close merged; do
+  reset_default
+  cp "$TMP/land-runner" "$runner"
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  printf '1\n' >"$TMP/state/pr"
+  if [ "$close" = merged ]; then
+    jq '.data.repository.pullRequest.state = "MERGED"' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json"
+  fi
+  : >"$TMP/state/calls"
+  run_refresh "$(git -C "$repo" show HEAD:rendered.txt)" pass render
+  closed=false
+  ! grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" || closed=true
+  if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
+      { { [ "$close" = close ] && [ "$closed" = true ]; } || { [ "$close" = merged ] && [ "$closed" = false ]; }; }; then
+    ok "current route close=$close"
+  else bad "current route close=$close" "$OUT"; fi
+  rm -f -- "${TMP:?}/state/prepush-state.json"
+done
+# A revert on kendex main reaches the consumer as one more render, which
+# lands by the same route: a render back to the bytes the landed one
+# replaced lands on top of it.
+reset_default
+cp "$TMP/land-runner" "$runner"
+printf '0\n' >"$TMP/state/queue-entries"
+LAND_TOKEN=land-token
+MEASURED=true
+commit "$repo"
+git -C "$repo" push -q origin main
+land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+revert_before="$(git --git-dir="$TMP/remote" show "$land_base:rendered.txt")"
+: >"$TMP/state/pr"
+run_refresh land-forward pass render
+forward="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+reset_default
+run_refresh "$revert_before" pass render
+reverted="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+if [ "$RC" -eq 0 ] && [ "$forward" != "$land_base" ] && [ "$(git --git-dir="$TMP/remote" rev-parse "$forward^")" = "$land_base" ] &&
+    [ "$(git --git-dir="$TMP/remote" rev-parse "$reverted^")" = "$forward" ] &&
+    grep -qxF "refresh-state=landed pr=none class=render head=$reverted" <<<"$OUT" &&
+    [ "$(git --git-dir="$TMP/remote" show "$reverted:rendered.txt")" = "$revert_before" ]; then
+  ok 'a render reverted on kendex main lands by the same route'
+else bad 'reverted render landing' "$OUT"; fi
+git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+unset MEASURED LAND_TOKEN LAND_CONFIGURED
+rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/queue-entries"
+reset_default
+git -C "$repo" rm -q kendex.toml
+commit "$repo"
+reset_default
+cp "$TMP/arm-runner" "$runner"
 commit "$repo"
 git -C "$repo" push -q origin main
 run_refresh stale pass render
@@ -919,7 +1428,7 @@ for mutation in body summary failure; do
       file_edit "$repo" refresh/refresh-consumer.sh 1 '^printf -v body ' \
         's/"\$version_report"/""/' ;;
     summary)
-      file_edit "$repo" refresh/refresh-consumer.sh 1 '^  printf .*GITHUB_STEP_SUMMARY' \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 '^  printf .*"\$version_report" >>"\$\{GITHUB_STEP_SUMMARY:' \
         's/"\$version_report"/""/' ;;
     failure)
       file_edit "$repo" refresh/refresh-consumer.sh 1 '^if ! engine_version=' \
@@ -1203,8 +1712,23 @@ for mode in absent absent-control current current-control; do
       file_edit "$repo" refresh/refresh-consumer.sh 1 \
         '^if \[ -f kendex\.settings\.toml \]; then$' 's/^if \[ -f kendex\.settings\.toml \]; then$/if true; then # &/' ;;
     current-control)
-      file_edit "$repo" refresh/refresh-consumer.sh 1 \
-        '^  \[ -z "\$settings_report" \] \|\| ' 's/^  \[ -z "\$settings_report" \] || /  : # &/' ;;
+      python3 - "$runner" <<'CURRENT_SUMMARY_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+text = path.read_text()
+start = 'if [ "$publication_status" -eq 0 ]; then\n'
+assert text.count(start) == 1
+offset = text.index(start)
+end = text.index('\nfi\n', offset) + len('\nfi\n')
+current = text[offset:end]
+old = '  [ -z "$settings_report" ] || '
+assert current.count(old) == 1
+changed = text[:offset] + current.replace(old, '  : # ' + old) + text[end:]
+assert changed != text
+path.write_text(changed)
+CURRENT_SUMMARY_CONTROL
+      ;;
   esac
   commit "$repo"
   git -C "$repo" push -q origin main
@@ -1312,14 +1836,13 @@ cp "$TMP/apply-runner" "$runner"
 rm -f -- "${repo:?}/.claude/hooks/leftover.sh"
 commit "$repo"
 git -C "$repo" push -q origin main
-# The body must update with the current class, including when the rolling
-# tree is unchanged. Every class arms the head it published; each row starts
+# Every changed publication updates the body with the current class and arms
+# the head it published; each row starts
 # unarmed, so an arm a previous row left cannot answer for it.
 for row in \
   'standard|open|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
   'render|update|cause=renders-match-their-sources' \
   'standard|update|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
-  'standard|unchanged|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
   'trivial|update|cause=documentation-paths lines=8' \
   'micro|update|cause=production-within-micro production=8' \
   'small|update|cause=production-within-small subsystem=skills' \
@@ -1331,11 +1854,9 @@ for row in \
     : >"$TMP/state/pr"
     method=POST
   fi
-  [ "$mode" != unchanged ] || state=unchanged
   : >"$TMP/state/calls"
   reset_default
-  # The unchanged row deliberately repeats the preceding content.
-  [ "$mode" = unchanged ] || content="class-$class"
+  content="class-$class"
   run_refresh "$content" pass "$class"
   if refresh_class_matches "$class" "$state" "$CLASS_REASON" "$method"; then
     ok "$class $mode publishes its class and cause and arms its head"
@@ -1657,8 +2178,11 @@ for row in \
     missing-field) jq 'del(.data.repository.pullRequest.isInMergeQueue)' "$TMP/state/push-state.json" >"$TMP/partial"; mv "$TMP/partial" "$TMP/state/push-state.json" ;;
     malformed-response) printf 'not-json\n' >"$TMP/state/push-state.json" ;;
   esac
-  starts=1
-  [ -s "$TMP/state/pr" ] || starts=0
+  starts=2
+  if [ ! -s "$TMP/state/pr" ]; then
+    starts=1
+    [ "$name" != new-branch-failure ] || starts=0
+  fi
   : >"$TMP/state/calls"
   run_refresh "push-$name" pass render
   if refresh_push_matches "$expected" "$reason" "$starts"; then ok "$name post-refusal state"; else bad "$name post-refusal state" "$OUT"; fi
@@ -1696,6 +2220,11 @@ mutations = {
     'refusal-armed': ('        case "$reason" in active | armed) reason=queued ;; esac ;;', '        case "$reason" in active) reason=queued ;; esac ;;'),
 }
 old, new = mutations[sys.argv[2]]
+if sys.argv[2] in ('defer', 'fail-open', 'armed-defer'):
+    # Bind this mutation to the push-refusal branch, not its pre-push read.
+    suffix = "\n        printf 'refresh-state=deferred reason=%s\\n' \"$reason\"\n        exit 0 ;;\n    esac\n    printf 'refresh-error=push"
+    old += suffix
+    new += suffix
 assert s.count(old) == 1
 if sys.argv[2] == 'queue-field':
     # Retain the selection outside the query argument, not in its payload.
@@ -1765,9 +2294,9 @@ import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 old, new = {
-    'no-defer': ('    queued | merged | closed)\n      printf', '    no-start-defer)\n      printf'),
-    'no-disarm': ('  if [ "$reason" = armed ] && ! gh pr merge', '  if false && ! gh pr merge'),
-    'disarm-open': ('" >&2\n        exit 1 ;;\n    esac\n  fi', '" >&2 ;;\n    esac\n  fi'),
+    'no-defer': ('    queued | merged | closed | branch-gone)\n      printf', '    no-start-defer)\n      printf'),
+    'no-disarm': ('    if [ "$reason" = armed ] && ! gh pr merge', '    if false && ! gh pr merge'),
+    'disarm-open': ('" >&2\n          exit 1 ;;\n      esac\n    fi', '" >&2 ;;\n      esac\n    fi'),
 }[sys.argv[2]]
 assert s.count(old) == 1
 changed = s.replace(old, new) + '\n# ' + old.split('\n')[0] + '\n'
@@ -2312,7 +2841,7 @@ REAL_KENDEX_SH
   REAL_MANIFEST_SCHEMA="$(real_manifest_schema)"
   # Live rows test engine migration. Legacy refusal rows reach the shell fallback
   # with the same byte assertion for its passing baselines and runner controls.
-  for row in previous older newer missing current source-catalog legacy-previous legacy-source-catalog step-control distance-control table-control manifest-control; do
+  for row in previous older unsupported newer missing current source-catalog legacy-previous legacy-source-catalog step-control distance-control table-control manifest-control; do
     manifest=kendex.toml
     case "$row" in source-catalog | legacy-source-catalog | manifest-control) manifest=kendex-local.toml ;; esac
     real_refresh_fixture "schema-$row" "$manifest"
@@ -2322,7 +2851,10 @@ REAL_KENDEX_SH
     committed="$REAL_MANIFEST_SCHEMA"
     case "$row" in
       previous | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control) committed=$((REAL_MANIFEST_SCHEMA - 1)) ;;
-      older | distance-control) committed=$((REAL_MANIFEST_SCHEMA - 2)) ;;
+      # Schema 6 has an engine migration chain; schema 5 has none and reaches
+      # the shell fallback's refusal, including its distance control.
+      older) committed=6 ;;
+      unsupported | distance-control) committed=5 ;;
       newer) committed=$((REAL_MANIFEST_SCHEMA + 1)) ;;
     esac
     python3 - "$repo/$manifest" "$committed" "$row" "$bot_table" <<'SCHEMA_FIXTURE'
@@ -2396,10 +2928,10 @@ SCHEMA_CONTROL
     run_real_refresh
     schema_passed=no
     case "$row" in
-      older | newer | missing | distance-control)
+      unsupported | newer | missing | distance-control)
         if real_refresh_stopped 'refresh-error=refresh value=' &&
             cmp -s "$real_root/schema-before" "$repo/$manifest"; then schema_passed=yes; fi ;;
-      previous | current | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control)
+      previous | older | current | source-catalog | legacy-previous | legacy-source-catalog | step-control | table-control | manifest-control)
         if [ "$RC" -eq 0 ] && [ -s "$TMP/state/creates" ]; then
           git --git-dir="$real_root/remote" show "refs/heads/kendex/refresh:$manifest" >"$real_root/schema-after"
           if python3 - "$real_root/schema-before" "$real_root/schema-after" "$committed" "$REAL_MANIFEST_SCHEMA" <<'SCHEMA_ASSERT'

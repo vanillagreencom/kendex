@@ -383,6 +383,8 @@ UNIV="$TMP/universe"
   for f in skills/*/tests/*.sh tools/tests/*.test.sh hooks/tests/*.sh refresh/tests/*.test.sh; do
     [[ "$f" != skills/orch/tests/run-all.sh ]] || continue
     case "$f" in "$LINEAR_PREFIX"*) continue ;; esac
+    # A package's run-all.sh runs its suites through the orch runner; it is none.
+    case "$f" in */tests/run-all.sh) continue ;; esac
     printf '%s\n' "$f"
   done
 ) | sort > "$UNIV"
@@ -1322,17 +1324,20 @@ main_only_filters() { # WORKFLOW CONTEXT [FIELD] ; a resolved shared suite input
   [[ -n "$expr" ]] || return 1
   gh_eval value "$2" "$expr" | jq -er 'select(type == "string")'
 }
-dedicated_rows() { # WORKFLOW ; suite|shard|os from the dedicated include matrix
-  awk '
-    /^  [A-Za-z0-9_-]+:/ { active = ($1 == "skill-suites-main-only:") }
-    active && /^          - suite: / { suite = $3 }
-    active && /^            shard: / { shard = $2 }
-    active && /^            os: / { print suite "|" shard "|" $2 }
-  ' "$1"
+dedicated_rows() { # WORKFLOW CONTEXT ; suite|shard|os from the dedicated include matrix
+  local expr
+  expr="$(matrix_expr "$1" include skill-suites-main-only)" || return
+  [[ -n "$expr" ]] || return 1
+  gh_eval value "$2" "$expr" |
+    jq -er '.[] | [.suite,.shard,.os] | join("|")'
 }
+# A failed selector retains exactly the same workflow-owned declarations.
+main_declared="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")"
+check "dedicated fallback preserves declared native entries" \
+  "$(jq -er '.[] | [.suite,.shard,.os] | join("|")' <<<"$main_declared")" "$(dedicated_rows "$WORKFLOW" '{"needs":{"changes":{"result":"failure"}}}')"
 dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
   local suite shard os ctx temporary filters rows="$TMP/dedicated-rows" claims="$TMP/dedicated-row"
-  dedicated_rows "$1" > "$rows" || return
+  dedicated_rows "$1" "$4" > "$rows" || return
   while IFS='|' read -r suite shard os; do
     [[ "$os" == "$2" ]] || continue
     ctx="$(jq -c --arg suite "$suite" --arg shard "$shard" --arg os "$os" \
@@ -1350,6 +1355,31 @@ dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
     cat "$claims"
   done < "$rows"
 }
+# Successful changes must carry their selected tuples through the real matrix
+# and shared suite filters, independently of the full failure fallback.
+selected_suites='[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"}]'
+selected_rows=$'critical-path-deny.test|guards-hooks|ubuntu-latest\norch-shard-partition.test|guards-tools-tail|ubuntu-latest'
+selected_claims=$'guards-hooks\thooks/tests/critical-path-deny.test.sh\nguards-tools-tail\ttools/tests/orch-shard-partition.test.sh'
+published_map "$WORKFLOW" > "$TMP/dedicated-map"
+selected_ctx="$(context_json push success "main_suites=$selected_suites" "$TMP/dedicated-map")"
+check "successful dedicated matrix preserves selected suite shard and runner tuples" \
+  "$selected_rows" "$(dedicated_rows "$WORKFLOW" "$selected_ctx")"
+check "successful dedicated selection reaches exactly its shell claims" \
+  "$selected_claims" "$(dedicated_claims "$WORKFLOW" ubuntu-latest 4 "$selected_ctx")"
+# Keep the fallback intact while substituting another nonempty success subset.
+plant "$WORKFLOW" '|| needs.changes.outputs.main_suites)' \
+  "|| '[{\"suite\":\"adopt-refresh.test\",\"shard\":\"refresh\",\"os\":\"ubuntu-latest\"}]')" \
+  "$TMP/dedicated-success-other.yml" skill-suites-main-only
+dedicated_rows "$TMP/dedicated-success-other.yml" "$selected_ctx" > "$TMP/dedicated-other-rows"
+dedicated_claims "$TMP/dedicated-success-other.yml" ubuntu-latest 4 "$selected_ctx" > "$TMP/dedicated-other-claims"
+if [[ -s "$TMP/dedicated-other-rows" && -s "$TMP/dedicated-other-claims" ]] &&
+  ! cmp -s <(printf '%s\n' "$selected_rows") "$TMP/dedicated-other-rows" &&
+  ! cmp -s <(printf '%s\n' "$selected_claims") "$TMP/dedicated-other-claims"; then
+  ok "must-fail: another nonempty successful matrix loses the selected tuples and claims"
+else
+  bad "successful dedicated matrix control did not replace the selected subset"
+fi
+
 event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claims
   local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards shard row_ctx temporary filters excluded
   [[ "$event" != merge_group ]] || { result=failure; ref=refs/heads/gh-readonly-queue/main/fixture; }
@@ -1440,26 +1470,17 @@ for os in ubuntu-latest macos-latest; do
     [[ "$fault" == native-empty || "$os" == ubuntu-latest ]] || continue
     [[ "$fault" != native-empty || "$os" == macos-latest ]] || continue
     mutant="$TMP/event-$fault.yml"
-    awk -v fault="$fault" '
-      /^  [A-Za-z0-9_-]+:/ { active = ($1 == "skill-suites-main-only:") }
-      active && ((fault != "native-empty" && /^          - suite: orch-shard-partition.test$/) ||
-                 (fault == "native-empty" && /^          - suite: critical-path-deny.test$/)) { row = 3; hits++ }
-      row {
-        if (fault == "native-empty") {
-          held = held $0 "\n"; print; row--
-          if (!row) { sub(/os: ubuntu-latest/, "os: macos-latest", held); printf "%s", held; held = "" }
-          next
-        }
-        if (fault == "duplicated") held = held $0 "\n"
-        if (fault == "wrong-shard" && /shard: guards-tools-tail$/) sub(/guards-tools-tail$/, "guards-hooks")
-        if (fault != "omitted") print
-        row--
-        if (!row && fault == "duplicated") { printf "%s", held; held = "" }
-        next
-      }
-      { print }
-      END { exit hits == 0 }
-    ' "$WORKFLOW" > "$mutant" || { bad "event control matched no dedicated entry"; continue; }
+    declarations="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")" || exit 1
+    changed="$(jq -c --arg fault "$fault" '
+      if $fault == "omitted" then map(select(.suite != "orch-shard-partition.test"))
+      elif $fault == "duplicated" then . + [.[] | select(.suite == "orch-shard-partition.test")]
+      elif $fault == "wrong-shard" then map(if .suite == "orch-shard-partition.test" then .shard = "guards-hooks" else . end)
+      else . + [.[] | select(.suite == "critical-path-deny.test") | .os = "macos-latest"] end' <<<"$declarations")" || exit 1
+    awk -v old="$declarations" -v new="$changed" '
+      { pos = index($0, old)
+        if (pos) { $0 = substr($0, 1, pos - 1) new substr($0, pos + length(old)); n++ }
+        print
+      } END { exit n != 2 }' "$WORKFLOW" > "$mutant" || { bad "event control matched no dedicated entry"; continue; }
     edited "$WORKFLOW" "$mutant" "event-$fault"
     rc=0
     event_claims "$mutant" push "$os" "$major" > "$TMP/event-control" || rc=$?
@@ -1707,10 +1728,10 @@ check "must-fail: a linear roster without its retention loses its unresolved sui
 # on both loses the rest of the family on macOS; releasing on neither runs
 # each suite twice on Linux; a macOS rest blind to those paths runs the two
 # twice there. A deleted path step returns its suite to macOS rest.
-jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;'
+jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.test.sh" ;;'
 jarvis_skip='                grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")'
 jarvis_moved="$(printf '%s\n' skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession.test.sh | sort)"
-(cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.sh) > "$TMP/jarvis-suites"
+(cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.test.sh) > "$TMP/jarvis-suites"
 grep -qxF skills/jarvis/tests/controls.test.sh "$TMP/jarvis-suites" ||
   bad "no mixed Jarvis suite was discovered, so the Jarvis retention controls prove nothing"
 jarvis_universe() { # OS ; the eligible Jarvis suites, unresolved ones included, into os-universe
@@ -1741,7 +1762,7 @@ while IFS='|' read -r os major fault target expected replacement; do
   check "must-fail: a Jarvis rest $target changed leaves the $expected Jarvis suites $fault on $os" \
     "$want" "$got"
 done <<'ROWS'
-macos-latest|3|lost|arm|unmoved|              jarvis) needle="skills/$x/tests/*.sh" ;;
+macos-latest|3|lost|arm|unmoved|              jarvis) needle="skills/$x/tests/*.test.sh" ;;
 ubuntu-latest|4|duplicated|arm|family|              jarvis) needle="" ;;
 macos-latest|3|duplicated|skip|moved|                unclaimed+=("$t")
 ROWS

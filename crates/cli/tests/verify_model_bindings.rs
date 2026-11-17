@@ -29,7 +29,7 @@ fn bound_and_unbound_class_agents_verify_after_apply() {
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['codex', 'copilot']\nmethod = 'copy'\n[agents.worker]\nsource = 'cat'\n{bindings}",
+                "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = ['codex', 'copilot']\nmethod = 'copy'\n[agents.worker]\nsource = 'cat'\n{bindings}",
                 source_path(&catalog)
             ),
         );

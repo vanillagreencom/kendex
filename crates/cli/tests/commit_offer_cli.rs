@@ -78,7 +78,7 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        format!("schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.offer]\n{}\n[agents.offer-file]\nsource = \"offer\"\n", test_util::source_path(&catalog)),
+        format!("schema = 8\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.offer]\n{}\n[agents.offer-file]\nsource = \"offer\"\n", test_util::source_path(&catalog)),
     )
     .unwrap();
     fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
@@ -96,7 +96,7 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
 /// A bare repository the project calls `origin`, under a name the fake
 /// `gh` reads its answer from.
 #[allow(clippy::unwrap_used)]
-fn origin(project: &Path, name: &str) -> PathBuf {
+pub(crate) fn origin(project: &Path, name: &str) -> PathBuf {
     let bare = project.parent().unwrap().join(format!("{name}.git"));
     git(
         project,
@@ -136,7 +136,7 @@ fn executable(path: &Path, body: &str) {
 /// `--repo`, or `GH_REPO` for `gh api`, which has no `--repo`. The
 /// directory holds nothing but `gh`, so git resolves as before.
 #[allow(clippy::unwrap_used)]
-fn path_with_fake_gh(home: &Path) -> String {
+pub(crate) fn path_with_fake_gh(home: &Path) -> String {
     let dir = home.join("fake-bin");
     executable(&dir.join("gh"), FAKE_GH);
     format!(
@@ -280,7 +280,7 @@ fn the_install_record_is_committed_with_the_renders() {
     .unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
     )
     .unwrap();
     git(&project, &["add", "-A"]);
@@ -371,8 +371,8 @@ fn an_add_commits_every_file_it_wrote_and_names_one_that_held_a_change() {
             add: ["--agent", "scout"],
             edited: Some((
                 MANIFEST,
-                "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
-                "# mine\nschema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
+                "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n",
+                "# mine\nschema = 8\n\n[install]\nharnesses = [\"claude\"]\n",
             )),
             carried: &[".kendex-lock.json", ".gitignore", ".claude/agents/scout.md"],
             left: Some(MANIFEST),
@@ -932,12 +932,6 @@ fn a_package_whose_check_fails_holds_the_commit() {
 /// candidate index is written under is made unwritable.
 #[test]
 fn a_commit_the_packages_cannot_be_asked_about_refuses_a_flag() {
-    // Root writes through a mode bit, so the candidate is built and the
-    // state this case is about is never reached on such a runner.
-    if rustix::process::geteuid().is_root() {
-        eprintln!("skipped: root writes through the unwritable git directory this case needs");
-        return;
-    }
     for (flags, code, refused) in [
         (&["--commit"][..], Some(1), true),
         (&[][..], Some(0), false),
@@ -949,13 +943,12 @@ fn a_commit_the_packages_cannot_be_asked_about_refuses_a_flag() {
             "# App\n\n## Code Review Rules\n\nold generated rules\n",
             "# App\n\n## Code Review Rules\n\nold generated rules\n",
         );
-        let git_dir = project.join(".git");
-        fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let Some(unwritable) = test_util::unwritable_dir(&project.join(".git")) else {
+            return;
+        };
 
         let (output, text) = apply(&home, &project, flags);
-        // Writable again before any assertion can fail: a directory left
-        // 0555 is one the temp dir cannot clean up.
-        fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        drop(unwritable);
 
         assert_eq!(output.status.code(), code, "{flags:?}: {text}");
         assert!(
@@ -1012,7 +1005,7 @@ fn unarmed_consumer(tmp: &tempfile::TempDir) -> PathBuf {
     fs::create_dir_all(&package).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
     )
     .unwrap();
     fs::write(package.join("SKILL.md"), declaration("first rules")).unwrap();

@@ -124,8 +124,6 @@ name: Skill Tests
   merge_group:
   push:
     branches: [main]
-  # The nightly platform roster. GitHub starts a schedule only on the default
-  # branch; a manual dispatch runs the same jobs.
   schedule:
     - cron: '17 9 * * *'
   workflow_dispatch:
@@ -211,6 +209,9 @@ jobs:
       EVENT: ${{ github.event_name }}
       BASE: ${{ github.event.merge_group.base_sha }}
       HEAD: ${{ github.event.merge_group.head_sha }}
+      PUSH_BEFORE: ${{ github.event.before }}
+      PUSH_AFTER: ${{ github.event.after }}
+      MAIN_ONLY_SUITES: '[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"},{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"},{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]'
     steps:
       # THREE CHECKOUTS, and the split is the point. The classifier is the
       # DEFAULT BRANCH's copy, where the change's author cannot change
@@ -227,6 +228,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: the classifier, from the default branch
         if: github.event_name == 'merge_group'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -370,7 +372,6 @@ jobs:
       # Scan before candidate scripts: they can change the scanner executable
       # in the shared runner directory. Trusted code and policy alone cannot
       # protect a scan that runs after candidate code.
-      # This content-check job runs on every merge group, and CI holds its result.
       # This catalog repository keeps source scripts under skills/, not .agents/.
       - name: the credential guards, from the default branch
         if: always()
@@ -422,24 +423,18 @@ jobs:
         run: |
           base_ref=${BASE_REF#refs/heads/}
           DECISIONS_BASE_REF="origin/$base_ref" skills/decider/scripts/decisions check
-      # The two whole-tree content scans live in this job because every class
+      # The whole-tree content scan lives in this job because every class
       # runs it, `render` and `trivial` included, and a diff small enough to
       # be `trivial` can still push a document past its ceiling. always(): a
-      # red check above must not suppress either scan.
+      # red check above must not suppress the scan.
       #
-      # The merge group is the one run that judges a change, so both scans
-      # run there: a byte ceiling past its limit or a work marker ejects the
-      # group and returns the change to its lane.
+      # The merge group is the one run that judges a change, so the scan
+      # runs there: a byte ceiling past its limit ejects the group and
+      # returns the change to its lane.
       - name: doc-limits (document byte ceilings)
         if: always()
         working-directory: candidate
         run: skills/doc-limits/scripts/doc-limits
-      # The commit lane runs todo-ban --staged and judges what a commit adds;
-      # this scan takes the rest, in every blob git reads as text.
-      - name: todo-ban (index-wide work-marker scan)
-        if: always()
-        working-directory: candidate
-        run: skills/commit-guards/scripts/todo-ban
       # The commit lane's changelog check over the whole change, its package
       # version rule included. The commit chain runs the copy in the
       # committing worktree, so a branch cut before a rule landed commits
@@ -519,13 +514,7 @@ jobs:
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    # Merge groups run Linux shards when classification is missing or
-    # selects shell work with a remaining Linux runner; main pushes run the
-    # Linux shards their same-head merge group left unproved, read from the
-    # same lines. Where the changes job did not succeed the full fallback
-    # roster runs; an empty list stands the job down, since an empty matrix
-    # fails the run. The status function lifts implicit success after a
-    # changes failure.
+    # GitHub rejects an empty matrix; !cancelled() permits the failure fallback.
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
     strategy:
       fail-fast: false
@@ -1025,9 +1014,9 @@ jobs:
       # One `guards` shard held all of it and ran
       # 901-1061s on the macOS leg against roughly a third of that on Linux.
       # `guards-scans` is the scans below, each one pass over a tracked-file
-      # roster or the shell roster; the document-set and work-marker scans run
-      # in the bot-instructions job instead, which every class runs, on a pull
-      # request. The ruff install rides with the two shards that run a suite
+      # roster or the shell roster; the document-set scan runs
+      # in the bot-instructions job instead. The ruff install rides with the
+      # two shards that run a suite
       # needing it: commit-guards' own py-names.test.sh in `guards-commit`,
       # and its install-git-hooks.test.sh in `guards-hooks`.
       #
@@ -1850,30 +1839,17 @@ jobs:
   # Real failures stay red here. This family is deliberately absent from CI's needs.
   skill-suites-main-only:
     name: Temporary main suite (${{ matrix.suite }}, ${{ matrix.os }})
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.changes.result != 'success' || needs.changes.outputs.main_suites != '[]') }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suite: critical-path-deny.test
-            shard: guards-hooks
-            os: ubuntu-latest
-          - suite: orch-shard-partition.test
-            shard: guards-tools-tail
-            os: ubuntu-latest
-          - suite: pi-agents-tmux
-            shard: node
-            os: ubuntu-latest
-          - suite: adopt-refresh.test
-            shard: refresh
-            os: ubuntu-latest
+        include: ${{ fromJSON(needs.changes.result != 'success' && '[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"},{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"},{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]' || needs.changes.outputs.main_suites) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
     steps: *skill-suite-steps
 
-  # Full UI validation reaches the required aggregator on every merge group
-  # that selects it.
   ui-tests:
     name: UI (vitest, tsc, biome)
     needs: changes
@@ -1931,9 +1907,8 @@ jobs:
   markdown:
     # The range scans check the change against the merge group's base: md-type
     # refuses a shape finding the group introduced, md-refs a dead reference.
-    # This required check prevents a hook bypass from putting Markdown on main
-    # that the next local push must refuse. CI requires it on every merge
-    # group.
+    # This required check catches Markdown findings in commits that bypassed
+    # the local hooks. CI requires it on every merge group.
     name: Markdown (shape + references)
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
@@ -1968,10 +1943,7 @@ jobs:
   #
   # One compile cache per shard, keyed by the action on the lockfile, the
   # toolchain and RUSTFLAGS, plus the crate — and on macOS the leg — through
-  # `key:` so parallel shards never race one entry. A pull request runs no
-  # lane and saves none; the main and nightly runs save the entries every
-  # other ref restores, and a change to the lockfile restores the nearest
-  # older entry.
+  # `key:` so parallel shards never race one entry.
   cargo-linux:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
@@ -1999,7 +1971,7 @@ jobs:
         timeout-minutes: 1
         run: *confine-read
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
       # THE load-bearing crate guard, the cargo twin of the shard guard above:
@@ -2039,13 +2011,7 @@ jobs:
           set -u
           pkgs=(libdbus-1-dev)
           [ "$CRATE" != kendex-app ] || pkgs+=(libwebkit2gtk-4.1-dev libgtk-3-dev)
-          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
-          trap 'rm -- "$apt_sources"' EXIT
-          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
-            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
-            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
-          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
-          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y "${pkgs[@]}"
+          tools/apt-install "${pkgs[@]}"
       # pi_carrier.rs runs the `pi-hooks` carrier for its end-to-end case — a
       # hook declared in kendex.toml firing under Pi — and skips without bun.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -2059,8 +2025,7 @@ jobs:
       # (catalog_render_lint 103s and guard_hooks 25s of it), kendex-core
       # ~20s, kendex-app ~10s. This leg is not split: 150s sits inside the
       # five-minute Linux trigger the header sets, and the test that costs
-      # the macOS leg its own leg costs 103s here. The merge group runs the
-      # Linux tests; the main and nightly runs compile only.
+      # the macOS leg its own leg costs 103s here.
       - name: test
         if: github.event_name == 'merge_group'
         timeout-minutes: 10
@@ -2114,7 +2079,7 @@ jobs:
     timeout-minutes: ${{ matrix.leg == 'render-lint' && 33 || matrix.leg == 'rest' && 38 || matrix.leg == 'verify-lock' && 37 || matrix.leg == 'apply-locked' && 38 || 40 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
       # The same guard as the Linux shard's, on this file's own crate lines.
@@ -2157,8 +2122,9 @@ jobs:
       # time and by the Linux cargo job above.
       #
       # The seam is where the seconds are. Over seventeen macOS kendex-cli
-      # runs of this workflow the one test in `catalog_render_lint` took
-      # 801-1012s, and over the eleven of those whose step was not killed at
+      # runs of this workflow the slow one of the two tests in
+      # `catalog_render_lint`, `installed_catalog_passes_reference_lane`,
+      # took 801-1012s, and over the eleven of those whose step was not killed at
       # its bound every other target together took 235-267s. That test
       # installs every package on every harness and lints the result, so it
       # carries the lane and it carries a leg of its own.
@@ -2237,6 +2203,16 @@ jobs:
       # has that room. verify_ remains with verify-lock.
       # The split removes that family from rest to meet the 600s split figure;
       # hosted PR timing must confirm both legs, independently of their bounds.
+      # render-lint: in merge-group Skill Tests runs 42557012510 to
+      # 42960972919, its longest passing test step took 464s. Its cost is
+      # installed_catalog_passes_reference_lane, the slow one of the
+      # two tests in catalog_render_lint, whose reference pass runs once per
+      # top-level scope in parallel. On one Linux host held to cores 0-2
+      # (macos-latest has 3), that test takes 101.0-102.1s with the reference
+      # pass run per scope and 181.8-185.1s with one pass over the tree; the
+      # timings are on KEN-5028. Scaled by 102.1/181.8, the 464s step
+      # is an estimated 261s, and 261s * 1.25 = 326s fits the 480s bound.
+      # This is an estimate, not a macOS measurement.
       # All filters are libtest substrings; new integration tests still land
       # in one leg. Whole-crate bounds retain their measured 534s core and
       # 81s app maxima with the existing allowance.
@@ -2247,8 +2223,6 @@ jobs:
       # 0 tests and half a second today, well inside the bound above.
       # Integration filters get their own invocation: passing them alongside
       # --lib, --bins or cli_smoke would also filter those unrelated tests.
-      # The push to main compiles for the cache alone; the merge group and
-      # the nightly run test.
       - name: test
         if: github.event_name != 'push'
         timeout-minutes: ${{ matrix.leg == 'render-lint' && 8 || matrix.leg == 'rest' && 13 || matrix.leg == 'verify-lock' && 12 || matrix.leg == 'apply-locked' && 13 || 12 }}
@@ -2304,19 +2278,12 @@ jobs:
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
           components: clippy, rustfmt
       - name: System dependencies for the keychain store and the app shell
-        run: |
-          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
-          trap 'rm -- "$apt_sources"' EXIT
-          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
-            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
-            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
-          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
-          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
+        run: tools/apt-install libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
       - name: cargo clippy
         timeout-minutes: 20
         run: |
@@ -2352,7 +2319,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -2382,7 +2349,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -2407,12 +2374,11 @@ jobs:
           printf '%s\n' "$gated"
           echo "::warning title=platform-gated tests::$n files under crates/*/tests carry a whole-file cfg gate that excludes Windows; the list is in this step"
 
-  # The main and nightly runs run both checks whatever the paths: external
-  # releases can change without a repository path changing.
+  # External releases can change without a repository path changing.
   # The default catalog must pass the released engine's strict validation.
   catalog:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     permissions:
       contents: read
     # Each merge-group part renders the catalog and runs its share of the
@@ -2459,7 +2425,7 @@ jobs:
   # and does not test these renderer binaries.
   smoke:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     name: real-CLI round trip
     permissions:
       contents: read
@@ -2467,21 +2433,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       - name: System dependencies for the keychain store
-        run: |
-          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
-          trap 'rm -- "$apt_sources"' EXIT
-          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
-            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
-            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
-          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
-          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev
+        run: tools/apt-install libdbus-1-dev
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -2507,18 +2466,8 @@ jobs:
           KENDEX_CLI_SMOKE: "1"
         run: cargo test -p kendex-cli --test cli_smoke -- --nocapture
 
-  # The aggregate CI context follows the repository required-checks ruleset.
-  # Every other job reports into it except the nightly macOS skill suites.
-  # GitHub counts a skipped required context as satisfied. `always()` keeps
-  # a failed or skipped need from skipping this context on pull_request and
-  # merge_group. It does not run on the main or nightly runs, where nothing
-  # requires it.
-  #
-  # On a pull request every other job is skipped and this context passes:
-  # GitHub admits the pull request to the queue on it, and the merge group
-  # proves the head. On a merge group tools/ci-aggregate accepts a skipped
-  # lane only where the changes job selected it `false`; every job it needs
-  # that no lane names must succeed.
+  # GitHub accepts a skipped required context. always() prevents a failed need
+  # from skipping the context that must report that failure.
   ci:
     name: CI
     needs: [changes, bot-instructions, skill-suites-shard, skill-suites-macos-queue, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows, catalog, smoke]

@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { Catalog, Scope } from "@/bindings";
@@ -47,7 +48,7 @@ import {
   type SortKey,
 } from "@/lib/package-order";
 import { afforded, type ColumnBudget, useRoom } from "@/lib/table-room";
-import { membersFor } from "@/lib/template-members";
+import { membersFor, type Saveable } from "@/lib/template-members";
 import { cn } from "@/lib/utils";
 import { type InstallSubject, useInstallFlow } from "@/stores/install-flow";
 import {
@@ -185,6 +186,11 @@ export function PackagesTable({
   // rows that happened to be in those positions afterwards.
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const [addingToTemplate, setAddingToTemplate] = useState(false);
+  const [preparingTemplate, setPreparingTemplate] = useState(false);
+  const [saveable, setSaveable] = useState<Saveable>({
+    members: [],
+    dropped: [],
+  });
   const showPlaces = places !== undefined;
 
   // The room the table has is the room the page gives it, which no column
@@ -347,7 +353,17 @@ export function PackagesTable({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setAddingToTemplate(true)}
+            disabled={preparingTemplate}
+            onClick={() => {
+              setPreparingTemplate(true);
+              void membersFor(chosen, rows)
+                .then((selection) => {
+                  setSaveable(selection);
+                  setAddingToTemplate(true);
+                })
+                .catch((error: unknown) => toast.error(String(error)))
+                .finally(() => setPreparingTemplate(false));
+            }}
           >
             {ADD_TO_TEMPLATE_LABEL}
           </Button>
@@ -357,7 +373,7 @@ export function PackagesTable({
         </div>
       ) : null}
       <AddToTemplateDialog
-        saveable={membersFor(chosen, rows)}
+        saveable={saveable}
         open={addingToTemplate}
         onOpenChange={setAddingToTemplate}
       />

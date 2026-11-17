@@ -141,12 +141,16 @@ remote_rows() {
       repeat_rc=0
       "${row[@]}" "$BASH_BIN" "$run_hook" </dev/null >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || repeat_rc=$?
       assert_eq "$repeat_rc $(first_line "$TMP_ROOT/stdout")" "0 cloud-git-hooks: armed=$repo" 'resume stays armed'
-      # Git's message hook calls the real gate, rather than a fixture gate.
-      printf 'invalid message\n' >"$TMP_ROOT/message"
+      # Git's message hook calls the real gate, rather than a fixture gate: a
+      # staged change the settings require an entry for, and none written.
+      printf '[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "owed/*"\n' >"$repo/kendex.settings.toml"
+      mkdir -p "$repo/owed" && printf 'x\n' >"$repo/owed/a.txt"
+      git -C "$repo" add kendex.settings.toml owed/a.txt
+      printf 'feat: no entry\n' >"$TMP_ROOT/message"
       check_rc=0
       (cd -- "$repo" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
         "$BASH_BIN" .git/hooks/commit-msg "$TMP_ROOT/message") >"$TMP_ROOT/message-result" 2>&1 || check_rc=$?
-      assert_eq "$check_rc" 1 'armed commit-msg rejects a bad message'
+      assert_eq "$check_rc $(grep -c '^commit-msg: changelog-missing=' "$TMP_ROOT/message-result")" '1 1' 'armed commit-msg rejects a bad message'
     else
       assert_eq "$(test -s "$INSTALL_REPORT" && echo present || echo absent)" present "$layout captures a real installer report"
       # Compare with the real child's output. The hook's own explanation

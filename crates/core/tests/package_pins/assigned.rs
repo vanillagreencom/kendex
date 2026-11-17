@@ -95,7 +95,7 @@ fn assert_overlap(case: Overlap) {
             write_manifest(
                 &w,
                 &format!(
-                    "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n[skills.{held_root}]\nsource = \"cat\"\nrev = \"{first}\"\n[skills.{fresh_root}]\nsource = \"cat\"\n{fresh_rev}",
+                    "schema = 8\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n[skills.{held_root}]\nsource = \"cat\"\nrev = \"{first}\"\n[skills.{fresh_root}]\nsource = \"cat\"\n{fresh_rev}",
                     harness.name()
                 ),
             );
@@ -343,7 +343,7 @@ fn hook_pin_counterfactual_replays_requirements_before_assignments() {
     write_manifest(
         &w,
         &format!(
-            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n[hooks.deliver]\nsource = \"cat\"\nrev = \"{first}\"\nharnesses = [\"claude\"]\n[skills.lead]\nsource = \"cat\"\n"
+            "schema = 8\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n[hooks.deliver]\nsource = \"cat\"\nrev = \"{first}\"\nharnesses = [\"claude\"]\n[skills.lead]\nsource = \"cat\"\n"
         ),
     );
     fetch_mirrors(&w);
@@ -811,7 +811,7 @@ fn repeated_hook_replays_keep_both_pin_notices() {
     write_manifest(
         &w,
         &format!(
-            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\", \"copilot\"]\n[hooks.a]\nsource = \"cat\"\nrev = \"{first}\"\nharnesses = [\"claude\"]\n[hooks.b]\nsource = \"cat\"\nrev = \"{first}\"\nharnesses = [\"claude\"]\n"
+            "schema = 8\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\", \"copilot\"]\n[hooks.a]\nsource = \"cat\"\nrev = \"{first}\"\nharnesses = [\"claude\"]\n[hooks.b]\nsource = \"cat\"\nrev = \"{first}\"\nharnesses = [\"claude\"]\n"
         ),
     );
     fetch_mirrors(&w);
@@ -1072,7 +1072,7 @@ fn targeted_updates_read_every_harness_copys_owners() {
         write_manifest(
             &w,
             &format!(
-                "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n[skills.ra]\nsource = \"cat\"\nharnesses = [\"{}\"]\n[skills.rb]\nsource = \"cat\"\nharnesses = [\"{}\"]\n",
+                "schema = 8\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\", \"copilot\"]\nmethod = \"copy\"\n[skills.ra]\nsource = \"cat\"\nharnesses = [\"{}\"]\n[skills.rb]\nsource = \"cat\"\nharnesses = [\"{}\"]\n",
                 q_on.name(),
                 t_on.name()
             ),
@@ -1239,7 +1239,7 @@ fn last_package(subtree: bool) -> OfflineRemoval {
     write_manifest(
         &w,
         &format!(
-            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.lead]\nsource = \"cat\"\n"
+            "schema = 8\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.lead]\nsource = \"cat\"\n"
         ),
     );
     sync_and_apply(&w);

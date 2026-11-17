@@ -56,13 +56,7 @@ The package installs `bin/kendex` and nothing else: no desktop app and no `kende
 | `kendex-bin` | app + CLI | the release's prebuilt AppImage and command |
 | `kendex-cli-git` | CLI | remote `main`, built from source |
 
-All four install `/usr/bin/kendex`, so no two can be installed together: each names the other three in `conflicts`, in both directions. A dependency on the name `kendex` is satisfied by `kendex` itself, which carries it as its `pkgname`, and by `kendex-git` and `kendex-bin`, which declare it in `provides`. `kendex-cli-git` declares no `provides`: a dependency on `kendex` asks for the app as well, and the command alone would satisfy it wrongly. None of the four declares `replaces`: every name already exists under its own recipe, and a `replaces` would swap a person's chosen variant for another during an ordinary system upgrade, taking the desktop app away from a `kendex-git` install without asking.
-
-Every recipe carries `epoch=1`. kendex 1.0.0 follows 5.0.1, so the version number goes backwards; without the epoch pacman reads 1.0.0 as older than the 5.x a machine already holds and never offers the upgrade.
-
-`kendex` and `kendex-git`, the two desktop packages built from source, build the frontend themselves (`npm ci` then `npm run build` under `ui/`) before `cargo build`, because the desktop binary embeds `ui/dist` and only `cargo tauri build` would run that step on its own. Those two install the app as a plain binary at `/usr/lib/kendex/kendex-app`, where `kendex-bin` installs the released AppImage at `/usr/lib/kendex/kendex.AppImage`; both are off `PATH`. `kendex-cli-git` builds from source too and runs neither npm step, which is why it carries no `npm` makedepend and installs no app. The desktop packages depend on `desktop-file-utils` and `xdg-utils` because the app makes itself the `kendex://` handler on first launch through `update-desktop-database` and `xdg-mime`. `kendex-cli-git` depends only on git and `dbus`. All four declare `dbus` because the command links libdbus-1 through keyring’s `sync-secret-service` backend; Arch’s `dbus` also supplies the headers and `dbus-1.pc` for source builds. The Linux Homebrew formula installs `dbus` and patches the command to find its library.
-
-Which package owns a running install is asked of the package manager (`pacman -Qoq`; `dpkg-query -S` and `rpm -qf` for the deb and rpm) rather than read off the layout, in `crates/core/src/install_channel.rs`: all four Arch packages install the same command, two track `main` where the other two track a release, and the update guidance names the package that is actually installed. A name that is none of these names nobody and offers no command.
+Install only one Arch variant at a time. The desktop variants include the CLI; `kendex-cli-git` installs the CLI alone. Use your package manager to update the variant you installed. The [Arch recipes](arch/) own build and dependency details.
 
 ## Per release
 
@@ -70,7 +64,7 @@ Maintainers update recipe pins after publication through [DEVELOPMENT.md § Rele
 
 ### The version restart, once
 
-The formula's counterpart to Arch's epoch is `version_scheme 1`: brew compares the scheme before the number, so an installed 5.0.1 (scheme 0) shows in `brew outdated` and `brew upgrade kendex-cli` moves it; the scheme never goes down. A cask has no version scheme, and `auto_updates true` hands its upgrade to an app that renders no notice for a feed older than itself, so the cask's `caveats` block tells a 5.x install to `brew uninstall` the app, then the `kendex-cli` formula that leaves behind, and install the app again from the tap. `the_formula_declares_the_restart_as_a_new_version_scheme` and `the_cask_tells_a_5_x_install_to_reinstall_the_app_and_its_cli` in `crates/cli/tests/packaging_recipes.rs` hold both; drop the cask's block once no install is left on 5.x.
+To upgrade a Homebrew app installed at 5.x, follow the [cask's reinstall instructions](homebrew/kendex-cask.rb): remove the old app and the CLI formula it leaves behind, then install the app again from the tap. A CLI-only installation takes `brew upgrade kendex-cli`.
 
 ## Publishing
 

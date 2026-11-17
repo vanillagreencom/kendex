@@ -54,20 +54,12 @@ export interface BuildClaudeQueryOptionsInput {
 	resumeSessionId: string | null;
 	mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
 	claudeExecutable?: string;
-	/**
-	 * True for a request pi marks as a one-shot it drives itself (compaction and
-	 * branch summaries). Those legitimately carry no tools, so the isolation
-	 * stands rather than handing a summarization turn file and shell tools.
-	 */
-	piOneShot?: boolean;
 }
 
 export interface BuiltClaudeQueryOptions {
 	queryOptions: NonNullable<Parameters<typeof query>[0]["options"]>;
 	/** Whether pi's tools reached the child on the bridged custom-tools server. */
 	bridgedToolsPresent: boolean;
-	/** Whether the options carry the substitution half of the built-in denylist. */
-	builtinIsolationApplied: boolean;
 	// Diagnostics-ish bits the caller's debug line reports.
 	enableCloudMcp: boolean;
 	appendSystemPrompt: boolean;
@@ -77,7 +69,7 @@ export interface BuiltClaudeQueryOptions {
 }
 
 export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): BuiltClaudeQueryOptions {
-	const { cwd, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable, piOneShot } = input;
+	const { cwd, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable } = input;
 	const providerSettings = bridgeConfig.provider ?? {};
 	const accountScope = accountSessionScope(account);
 	// Whether to expose the Claude account's claude.ai cloud MCP connectors
@@ -87,15 +79,10 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	// Connector WRITE control: read-only by default (writes denied); the one-shot
 	// approved-write executor sets CLAUDE_BRIDGE_CONNECTOR_WRITE=allow / config.
 	const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
-	// Whether pi's tools actually reached the child on this request. Kept as the
-	// raw fact: the caller reports on it, and the two reasons isolation can stand
-	// without it are separate answers to a separate question.
+	// Whether pi's tools reached the child on this request, for the caller's
+	// report. It grants no permission: the tool isolation is the same either way
+	// (see toolIsolationForQuery).
 	const bridgedToolsPresent = Boolean(mcpServers?.[MCP_SERVER_NAME]);
-	// Whether the substitution half of the built-in denylist is safe to apply.
-	// It is when pi's tools replaced those built-ins, when the request carries no
-	// tools by design, or when connectors mode restricts the child as a security
-	// boundary rather than as a substitution — see toolIsolationForQuery.
-	const builtinIsolationApplied = bridgedToolsPresent || piOneShot === true || enableCloudMcp;
 	// Declare the account's connected connectors explicitly so `alwaysLoad` can
 	// hold startup until they attach — otherwise the turn-1 manifest is built
 	// before the CLI has fetched them.
@@ -154,7 +141,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 		cwd,
 		model: queryModel.id,
 		env: childEnv,
-		...connectorQueryOptions(enableCloudMcp, connectorWriteMode, builtinIsolationApplied),
+		...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
 		// Filesystem settings.env overrides the inherited child environment.
@@ -184,7 +171,6 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Bu
 	return {
 		queryOptions,
 		bridgedToolsPresent,
-		builtinIsolationApplied,
 		enableCloudMcp,
 		appendSystemPrompt,
 		promptContextLabels: promptContextAppend.labels,

@@ -14,7 +14,11 @@
 # startup with `wiring-error: cause=dependency-absent skill=change-scope`.
 #
 # --output appends lanes=true|false and lanes_cause beside the class and queue
-# verdicts. The lane rules are ../references/wiring.md § Per-lane verdicts.
+# verdicts. With --lanes-from it also appends a lane_verdicts multiline value
+# with lane_<name>=true|false.
+# stderr carries each `lane: name=<name> verdict=true|false cause=<cause>`
+# record, as the composite action's class log does. The lane rules are
+# ../references/wiring.md § Per-lane verdicts.
 # --lanes-from names a separate trusted checkout with .github/ci-lanes.conf;
 # empty by default, so no lane is declared. --queue-only-default true asks
 # for the queue-only default's stand-down, as the harness-ci template's

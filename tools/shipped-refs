@@ -28,7 +28,7 @@
 # the scheme docs/decisions spells. It is read in markdown prose outside
 # code spans and front matter, linked or not, by md-refs' block and ID
 # readers, and in the comment text of any other shipped file whose comment
-# family gg_comment_family knows, which the comments lane's extractor
+# family gg_comment_family knows, which lib/comment-text.sh's extractor
 # separates. Not read: commands/, which is none of the four roots; the
 # comments of a file with no family there, .awk and .txt among them; and
 # front matter. An ID passes only where the package ships a `<ID>-*.md`

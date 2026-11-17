@@ -1685,6 +1685,36 @@ worktree_checkout_mode() {
   esac
 }
 
+# A rebase leaves untracked files to Git's own refusal; the replay refused
+# them before it detaches, and keeps that contract.
+require_clean_restack() {
+  local wt="$1" key=restack-dirty untracked=no verdict=""
+  if [[ "$REPLAY" == true ]]; then key=replay-dirty; untracked=normal; fi
+  verdict="$(
+    GIT_OPTIONAL_LOCKS=0 git -C "$wt" status --porcelain -z --untracked-files="$untracked" 2>/dev/null |
+      {
+        result=clean
+        while IFS= read -r -d '' entry; do
+          # The tool's own link at a tracked file entry whose assume-unchanged
+          # bit failed is a typechange; unshadow's restore replaces it.
+          if [[ "${entry:0:3}" == ' T ' ]] && is_managed_symlink_path "$wt" "${entry:3}"; then continue; fi
+          result=dirty
+        done
+        printf '%s' "$result"
+      }
+    exit "${PIPESTATUS[0]}"
+  )" || {
+    worktree_message reuse-status-failed "$wt" "Error: could not read the worktree before restacking." >&2
+    return 1
+  }
+  if [[ "$verdict" != clean ]]; then
+    worktree_message "$key" "$wt" "Error: uncommitted work must be kept before restacking." >&2
+    return 1
+  fi
+  # A failed legacy repair can leave real files hidden by assume-unchanged.
+  unshadow_tracked_symlink_paths "$wt" check
+}
+
 materialize_worktree_claim() {
   local wt="$1" mode path
   mode="$(worktree_checkout_mode "$wt")" || return 1
@@ -2226,14 +2256,46 @@ discover_candidate_ownership() {
   done
 }
 
+# A local or origin branch whose tip the start point already contains holds
+# no work to protect, so it is no claim. Parallel arrays (Bash 3.2) of the
+# branches the last scan passed that way, with each tip and where it was read.
+CONTAINED_BRANCHES=()
+CONTAINED_TIPS=()
+CONTAINED_SOURCES=()
+
+# Only a proved ancestry passes: an empty base, an unknown tip or a failed
+# read is no proof and leaves the branch a claim.
+tip_in_base() {
+  local tip="$1" base="$2"
+  [[ -n "$tip" && -n "$base" ]] || return 1
+  git -C "$PROJECT_ROOT" merge-base --is-ancestor "$tip" "$base" 2>/dev/null
+}
+
+# A branch read at one tip both locally and on origin is one entry,
+# source local+origin.
+note_contained_branch() {
+  local branch="$1" tip="$2" source="$3" last=$((${#CONTAINED_BRANCHES[@]} - 1))
+  if [[ $last -ge 0 && "${CONTAINED_BRANCHES[$last]}" == "$branch" && "${CONTAINED_TIPS[$last]}" == "$tip" ]]; then
+    CONTAINED_SOURCES[$last]+="+$source"
+    return 0
+  fi
+  CONTAINED_BRANCHES+=("$branch")
+  CONTAINED_TIPS+=("$tip")
+  CONTAINED_SOURCES+=("$source")
+}
+
+# The first remote ref that claims the branch. Only an origin ref is passed
+# over, when contained in BASE or when DEFER leaves origin to the post-fetch
+# scan: another remote is not the claim authority origin is.
 remote_ref_for_branch() {
-  local branch="$1" oid="" ref="" i
+  local branch="$1" base="$2" defer="$3" oid="" ref="" remote="" i
   for ((i = 0; i < ${#OWNERSHIP_REMOTE_HEAD_NAMES[@]}; i++)); do
+    remote="${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}"
     while read -r oid ref; do
-      if [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]]; then
-        printf '%s/%s\n' "${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}" "$branch"
-        return 0
-      fi
+      [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]] || continue
+      [[ "$remote" == origin ]] && { [[ "$defer" == true ]] || tip_in_base "$oid" "$base"; } && continue
+      printf '%s/%s\n' "$remote" "$branch"
+      return 0
     done <<<"${OWNERSHIP_REMOTE_HEAD_REFS[$i]}"
   done
   return 1
@@ -2260,8 +2322,17 @@ remote_branch_oid_discovered() {
   return 1
 }
 
+# BASE is the full ref the issue branch will start from; empty, every
+# existing branch is a claim. PHASE pre-fetch, with a BASE, leaves local and
+# origin branches to the post-fetch scan: BASE is not fetched yet, so a branch
+# merged since the last fetch is unproved there, and that scan alone decides
+# containment.
 scan_candidate_ownership() {
-  local issue="$1" branch="" existing_wt="" remote_ref="" pr_details="" pr_number=""
+  local issue="$1" base="$2" phase="${3:-}" defer=false branch="" existing_wt="" remote_ref="" pr_details="" pr_number="" tip=""
+  [[ -n "$base" && "$phase" == pre-fetch ]] && defer=true
+  CONTAINED_BRANCHES=()
+  CONTAINED_TIPS=()
+  CONTAINED_SOURCES=()
   for branch in "${CANDIDATE_BRANCHES[@]}"; do
     existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
     # The main checkout is never issue work, so it must never be rendered as
@@ -2287,17 +2358,51 @@ scan_candidate_ownership() {
       refuse_existing_branch "$issue" "$branch" pr "#$pr_number"
       return "$ACTIVE_WORK_EXIT"
     fi
-    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
-      refuse_existing_branch "$issue" "$branch" local
-      return "$ACTIVE_WORK_EXIT"
+    if [[ "$defer" != true ]] && git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+      tip="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$branch^{commit}" || true)"
+      if ! tip_in_base "$tip" "$base"; then
+        refuse_existing_branch "$issue" "$branch" local
+        return "$ACTIVE_WORK_EXIT"
+      fi
+      note_contained_branch "$branch" "$tip" local
     fi
-    remote_ref="$(remote_ref_for_branch "$branch" 2>/dev/null || true)"
-    if [[ -n "$remote_ref" ]]; then
+    if remote_ref="$(remote_ref_for_branch "$branch" "$base" "$defer" 2>/dev/null)"; then
       refuse_existing_branch "$issue" "$branch" remote "$remote_ref"
       return "$ACTIVE_WORK_EXIT"
     fi
+    if [[ "$defer" != true ]] && tip="$(remote_branch_oid_discovered origin "$branch")"; then
+      note_contained_branch "$branch" "$tip" origin
+    fi
   done
   return 0
+}
+
+# Add the claim's worktree on BRANCH from START. A local BRANCH the scan
+# found contained moves to START by compare-and-swap on the tip the scan
+# proved, so a branch that moved since keeps its commits; its upstream is
+# dropped, as a new --no-track branch has none.
+add_claim_worktree() {
+  local start="$1" start_oid="" reused=false i
+  for ((i = 0; i < ${#CONTAINED_BRANCHES[@]}; i++)); do
+    [[ "${CONTAINED_BRANCHES[$i]}" == "$BRANCH" && "${CONTAINED_SOURCES[$i]}" == local* ]] || continue
+    start_oid="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "$start^{commit}")" || return 1
+    if ! git -C "$PROJECT_ROOT" update-ref -m "worktree create: $BRANCH is in $start" "refs/heads/$BRANCH" "$start_oid" "${CONTAINED_TIPS[$i]}" 2>/dev/null; then
+      worktree_message branch-moved "branch=$BRANCH tip=${CONTAINED_TIPS[$i]}" "Error: branch '$BRANCH' moved after the ownership scan; no worktree was created." >&2
+      return 1
+    fi
+    if git -C "$PROJECT_ROOT" config --get "branch.$BRANCH.merge" >/dev/null 2>&1; then
+      git -C "$PROJECT_ROOT" branch --unset-upstream "$BRANCH" >/dev/null 2>&1 || return 1
+    fi
+    reused=true
+  done
+  if [[ "$reused" == true ]]; then
+    git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} "$WT_PATH" "$BRANCH" >/dev/null 2>&1 || return 1
+  else
+    git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "$start" >/dev/null 2>&1 || return 1
+  fi
+  for ((i = 0; i < ${#CONTAINED_BRANCHES[@]}; i++)); do
+    worktree_message branch-in-base "branch=${CONTAINED_BRANCHES[$i]} source=${CONTAINED_SOURCES[$i]} tip=${CONTAINED_TIPS[$i]}" "Branch '${CONTAINED_BRANCHES[$i]}' holds no commit $start lacks, so it is no claim." >&2
+  done
 }
 
 acquire_issue_claim_lock() {
@@ -2466,10 +2571,12 @@ release_own_session_lease() {
 
 # `--reuse`/`--restack` re-enter an existing worktree, which is the
 # second-implementer gap for the session-lifetime case. A foreign lease
-# is refused by name; our own is refreshed so a long reuse cycle cannot age past
-# the TTL and be swept while it is still working.
+# is refused by name, with no write. REUSE_LEASE_OWNER names our own lease,
+# which refresh_reuse_session_lease refreshes so a long reuse cycle cannot age
+# past the TTL and be swept while it is still working.
 reuse_respects_session_lease() {
   local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc=0
+  REUSE_LEASE_OWNER=""
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
   if [[ "$env_owner" == "$issue_owner" ]]; then
@@ -2504,7 +2611,15 @@ reuse_respects_session_lease() {
     echo "Coordinate with the owning session instead of reusing its worktree." >&2
     return 1
   fi
-  if ! "$SESSION_GUARD" refresh "$wt" --owner "$owner" >/dev/null; then
+  REUSE_LEASE_OWNER="$owner"
+  return 0
+}
+
+# The refresh is the reuse's first mutation, so it follows every admission.
+refresh_reuse_session_lease() {
+  local wt="$1"
+  [[ -n "$REUSE_LEASE_OWNER" ]] || return 0
+  if ! "$SESSION_GUARD" refresh "$wt" --owner "$REUSE_LEASE_OWNER" >/dev/null; then
     worktree_message lease-refresh-failed "$wt" "Error: could not refresh the session guard lease on $wt." >&2
     return 1
   fi
@@ -3164,15 +3279,23 @@ case "${1:-}" in
         || exit "$ACTIVE_WORK_EXIT"
 
       REUSE_CHECKOUT_MODE="$(worktree_checkout_mode "$WT_PATH")" || exit 1
+      if [[ "$REUSE_CHECKOUT_MODE" != claim && ( "$RESTACK" == true || "$REPLAY" == true ) ]]; then
+        require_clean_restack "$WT_PATH" || exit 1
+      fi
+      refresh_reuse_session_lease "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+
       if [[ "$REUSE_CHECKOUT_MODE" == claim ]]; then
         discover_ownership_remote_heads || exit 1
         acquire_issue_claim_lock "$ISSUE" || exit 1
         require_registered_project_worktree "$WT_PATH" "materialize it" || exit 1
         fetch_origin || exit 1
         materialize_worktree_claim "$WT_PATH" || exit 1
+        if [[ "$RESTACK" == true || "$REPLAY" == true ]]; then
+          require_clean_restack "$WT_PATH" || exit 1
+        fi
       fi
       REUSE_STATUS="" REUSE_MERGED_COMMIT=""
-      REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
+      REUSE_STATUS="$(GIT_OPTIONAL_LOCKS=0 git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
       if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
         if [[ "$REUSE_CHECKOUT_MODE" == claim || -n "${WORKTREE_SETUP_CMD:-}" ]]; then
           setup_app_worktree "$WT_PATH" true true || exit 1
@@ -3251,15 +3374,8 @@ case "${1:-}" in
         else
           REUSE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
           if [[ "$REPLAY" == true ]]; then
-            # The rebase engine lets git itself refuse a dirty tree; the
-            # replay must refuse before detaching. Merge commits cannot be
-            # represented by an ordered cherry-pick, so they are refused up
-            # front rather than mid-replay. No mutation before either check.
-            if [[ -n "$(git -C "$WT_PATH" status --porcelain 2>/dev/null || true)" ]]; then
-              worktree_message replay-dirty "$WT_PATH" "Error: $WT_PATH has uncommitted changes; refusing to replay over them." >&2
-              echo "Commit or discard them, then retry." >&2
-              exit 1
-            fi
+            # An ordered cherry-pick cannot represent merge commits. Refuse
+            # before the replay detaches rather than stopping mid-sequence.
             if [[ "$(git -C "$WT_PATH" rev-list --merges --count "$REUSE_BASE_OID..HEAD" 2>/dev/null || echo 1)" -ne 0 ]]; then
               worktree_message replay-merges "$WT_PATH" "Error: The replay range origin/$DEFAULT_BRANCH..$CURRENT_BRANCH in $WT_PATH contains merge commits, which an ordered cherry-pick replay cannot represent." >&2
               echo "Use the rebase engine ($0 create $ISSUE --reuse) or reconcile the merge manually." >&2
@@ -3269,7 +3385,7 @@ case "${1:-}" in
           # Configured symlinks that shadow tracked files make git refuse to
           # detach HEAD, so the rebase below cannot even start.
           # Undo the shadowing first; every terminal path re-applies setup.
-          if ! unshadow_tracked_symlink_paths "$WT_PATH"; then
+          if ! unshadow_tracked_symlink_paths "$WT_PATH" restore; then
             restore_unshadowed_worktree_setup "$WT_PATH"
             exit 1
           fi
@@ -3563,18 +3679,29 @@ case "${1:-}" in
     # candidate ownership scan as bare create. Discovery runs once before any
     # lock/config/directory mutation, then again while the claim lock is held.
     if [[ -n "$FROM" ]]; then
+      # Only a --from of the default branch starts where bare create does and
+      # takes its contained-branch rule. Any other REF can be the candidate
+      # branch itself, which trivially contains its own tip, so every existing
+      # branch stays a claim.
+      CLAIM_BASE=""
+      if resolve_default_branch optional && [[ "$FROM" == "$DEFAULT_BRANCH" ]]; then
+        CLAIM_BASE="refs/remotes/origin/$DEFAULT_BRANCH"
+      fi
       build_candidate_branches "$ISSUE" "$BRANCH"
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "$CLAIM_BASE" pre-fetch || exit "$ACTIVE_WORK_EXIT"
       acquire_issue_claim_lock "$ISSUE" || exit 1
       guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fetch_origin || exit 1
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "$CLAIM_BASE" || exit "$ACTIVE_WORK_EXIT"
 
       BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
-      # Resolve: try origin/$FROM first (remote branch), then $FROM directly (local branch/tag/commit)
-      if git -C "$PROJECT_ROOT" rev-parse --verify "origin/$FROM" &>/dev/null; then
+      # Resolve: the claim base, else origin/$FROM (remote branch), else $FROM
+      # directly (local branch/tag/commit)
+      if [[ -n "$CLAIM_BASE" ]] && git -C "$PROJECT_ROOT" rev-parse --verify --quiet "$CLAIM_BASE^{commit}" >/dev/null; then
+        START_POINT="$CLAIM_BASE"
+      elif git -C "$PROJECT_ROOT" rev-parse --verify "origin/$FROM" &>/dev/null; then
         START_POINT="origin/$FROM"
       elif git -C "$PROJECT_ROOT" rev-parse --verify "$FROM" &>/dev/null; then
         START_POINT="$FROM"
@@ -3583,7 +3710,7 @@ case "${1:-}" in
         exit 1
       fi
       mkdir -p "$TREES_DIR"
-      git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
+      add_claim_worktree "$START_POINT" || exit 1
       release_issue_claim_lock
       setup_app_worktree "$WT_PATH" "$CHECKOUT" true "$ISSUE"
       report_created_worktree
@@ -3655,16 +3782,16 @@ case "${1:-}" in
       resolve_default_branch || exit 1
       build_candidate_branches "$ISSUE" "$BRANCH"
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "refs/remotes/origin/$DEFAULT_BRANCH" pre-fetch || exit "$ACTIVE_WORK_EXIT"
       acquire_issue_claim_lock "$ISSUE" || exit 1
       guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fetch_origin || exit 1
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "refs/remotes/origin/$DEFAULT_BRANCH" || exit "$ACTIVE_WORK_EXIT"
 
       BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
       mkdir -p "$TREES_DIR"
-      git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1
+      add_claim_worktree "refs/remotes/origin/$DEFAULT_BRANCH" || exit 1
     fi
 
     release_issue_claim_lock

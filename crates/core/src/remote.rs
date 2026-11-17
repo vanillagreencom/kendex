@@ -46,18 +46,27 @@ fn effective_rev<'a>(env: &'a Env, repo: &str, rev: Option<&'a str>) -> Option<&
 pub struct Resolution {
     pub commit: String,
     pub root: PathBuf,
-    /// Set when the cache answered something the network could not confirm.
-    pub warning: Option<String>,
+    /// Why the fetch failed, set when the cache answered something the
+    /// network could not confirm.
+    pub fetch_failed: Option<String>,
     /// What publishing this commit did to the repository's older snapshots.
     pub retention: store::Retention,
 }
 
 impl Resolution {
+    /// The line a terminal shows for an answer the network could not
+    /// confirm.
+    pub fn warning(&self, repo: &str) -> Option<String> {
+        self.fetch_failed
+            .as_ref()
+            .map(|error| format!("{repo}: using cached version ({error})"))
+    }
+
     fn at(commit: &str, root: PathBuf) -> Resolution {
         Resolution {
             commit: commit.to_owned(),
             root,
-            warning: None,
+            fetch_failed: None,
             retention: store::Retention::Untouched,
         }
     }
@@ -66,7 +75,7 @@ impl Resolution {
         Resolution {
             commit: commit.to_owned(),
             root: published.root,
-            warning: None,
+            fetch_failed: None,
             retention: published.retention,
         }
     }
@@ -89,7 +98,7 @@ pub struct Synced {
 impl Synced {
     fn of(repo: &str, resolution: Resolution) -> Synced {
         let mut synced = Synced::default();
-        synced.notes.extend(resolution.warning);
+        synced.notes.extend(resolution.warning(repo));
         match resolution.retention {
             store::Retention::Untouched => {}
             store::Retention::Pruned { removed } => synced.removed_snapshots = removed,
@@ -163,10 +172,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
     let _guard = store::lock_repo(env, &key, repo)?;
     let fetched = store::ensure_mirror(&mirror, &url).and_then(|()| store::fetch(&mirror));
     stamp_fetch(env, &key, &mirror, &fetched);
-    let warning = match &fetched {
-        Ok(()) => None,
-        Err(error) => Some(format!("{repo}: using cached version ({error})")),
-    };
+    let fetch_failed = fetched.as_ref().err().map(ToString::to_string);
     let Some(commit) = store::resolve_ref(&mirror, selector) else {
         // The mirror cannot name this selector: nothing was fetched, or the
         // branch or tag is gone upstream.
@@ -188,7 +194,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
         Some(root) => Resolution::at(&commit, root),
         None => Resolution::published(&commit, store::publish(env, &key, &mirror, &commit)?),
     };
-    resolution.warning = warning;
+    resolution.fetch_failed = fetch_failed;
     Ok(resolution)
 }
 

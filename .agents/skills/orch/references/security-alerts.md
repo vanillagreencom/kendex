@@ -1,6 +1,6 @@
 # Security alerts
 
-Read when [oversee-events.md § Event kinds](oversee-events.md#event-kinds) routes a `security-alert` or `security-alerts-unread` line, or a heartbeat's `bot-fix` line, here.
+Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a `security-alert` or `security-alerts-unread` event, and at a heartbeat line on a Dependabot pull request, `bot-fix` or plain.
 
 ## Triage
 
@@ -33,9 +33,10 @@ The overseer runs every dismissal and resolution itself, from its own host, with
 ## Dependabot pull requests
 
 - **Take-over.** A lane taking over a Dependabot pull request branches from its head (`git fetch origin pull/[N]/head`), adds the version bump, changelog fragment and suite, merges through the queue, and closes the bot's pull request linking its own.
-- **`bot-fix pr=[N] alert=[ALERTS]`**, after the repository and a tab, on a heartbeat is a security update the listed alerts link. Those alerts take § Triage, and the lane that works the filed item takes the pull request over.
-- **`bot-fix pr=[N] alert=none`** is a security update whose every linked alert has left the open list: close it, saying so.
-- **A plain open pull request line** on a Dependabot pull request is one no alert links, a version update or one opened since the last pass: leave it.
+- **`bot-fix pr=[N] alert=[ALERTS]`**, after the repository and a tab, on a heartbeat is a security update the listed alerts link: those alerts take § Triage, and the lane that works the filed item takes the pull request over as above.
+- **`bot-fix pr=[N] alert=none`** on a heartbeat is a security update whose every linked alert has left the open list: close it saying so.
+- **Owner.** The overseer owns every open Dependabot pull request, version updates included, from the first heartbeat that lists it.
+- **A plain heartbeat line** on a Dependabot pull request, a `dependabot/` head branch, is one no alert links: a version update, or one opened since the last long pass. At that first heartbeat the overseer files one fix item naming the pull request, unless one already names it, and the lane that works the item takes the pull request over as above; or it closes the pull request with a comment that gives the reason. An alert that links it later joins that item, per § Triage.
 
 ## Unread alerts
 

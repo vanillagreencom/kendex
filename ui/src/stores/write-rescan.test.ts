@@ -276,12 +276,12 @@ describe("a write that reaches repo_effects and is refused", () => {
   it("reads the machine again behind an unsubscribe", async () => {
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "error",
-      error: "the scope is busy",
+      error: { phase: "refused", message: "the scope is busy" },
     });
 
     const outcome = await useMarketplacesStore
       .getState()
-      .unsubscribe(scope, "kit", false, false);
+      .unsubscribe(scope, "kit", "Acme Kit", false, false);
     await rescansSettled();
 
     expect(outcome).toEqual({ error: "the scope is busy" });
@@ -399,9 +399,17 @@ describe("the setup of a package holding the commit", () => {
     others: 0,
     branch: "main",
     remote: null,
+    choices: [
+      {
+        route: "commit",
+        effect: { kind: "commit", branch: "main" },
+        default: false,
+      },
+      { route: "leave", effect: { kind: "leave" }, default: true },
+    ],
+    recoversRefusedPush: false,
     push: { kind: "noRemote" },
     pullRequest: { kind: "noRemote" },
-    openNumber: null,
     message: "chore: kendex app",
     newBranch: "kendex/renders",
     repo: null,
@@ -436,7 +444,12 @@ describe("the setup of a package holding the commit", () => {
     {
       name: "refused",
       armed: { status: "error", error: "the installer exited 1" },
-      stage: { at: "setUpFailed", error: "the installer exited 1" },
+      stage: {
+        at: "setUpFailed",
+        step: { kind: "installer", name: "guards" },
+        armed: [],
+        error: "the installer exited 1",
+      },
     },
   ] as const)("reads the machine again behind it: $name", async (row) => {
     vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);

@@ -59,7 +59,7 @@ fn installed(home: &Path, launcher: &str) -> PathBuf {
     let project = home.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
     );
     let package = project.join("catalog/skills/bot-instructions");
     write(&package.join("SKILL.md"), DECLARATION);
@@ -87,6 +87,51 @@ fn armed(project: &Path) -> bool {
         "bot-instructions",
     )
     .unwrap()
+}
+
+/// The skip instruction is part of add's setup contract (KEN-5246).
+#[test]
+#[allow(clippy::unwrap_used)]
+fn add_reports_only_repository_setup_that_is_still_needed() {
+    for allowed in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp).join("home");
+        let project = home.join("dev/app");
+        write(
+            &project.join("kendex.toml"),
+            "schema = 8\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n",
+        );
+        let package = project.join("catalog/skills/bot-instructions");
+        write(&package.join("SKILL.md"), DECLARATION);
+        let script = package.join("scripts/bot-instructions");
+        write(&script, RENDERS);
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        git(&project, &["init", "-q", "-b", "main"]);
+        let mut args = vec![
+            "add",
+            "cat",
+            "--skill",
+            "bot-instructions",
+            "--yes",
+            "--leave",
+        ];
+        if allowed {
+            args.push("--allow-repo-effects");
+        }
+        let ran = kendex(&home, &project, &args);
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "{said}");
+        assert_eq!(
+            said.contains("bot-instructions: render skipped"),
+            !allowed,
+            "{said}"
+        );
+        assert_eq!(armed(&project), allowed);
+        assert_eq!(
+            project.join(".github/copilot-instructions.md").exists(),
+            allowed
+        );
+    }
 }
 
 #[test]
@@ -137,7 +182,7 @@ fn a_project_without_the_package_says_it_is_absent() {
     let project = home.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n",
     );
     fs::create_dir_all(project.join(".claude")).unwrap();
     git(&project, &["init", "-q", "-b", "main"]);
@@ -223,4 +268,135 @@ fn refresh_commits_package_changes_only_when_the_candidate_is_unconfigured() {
         assert!(!armed(&project));
         assert!(!project.join("package-code-ran").exists());
     }
+}
+
+/// An armed render that fails after a refresh's write landed leaves that
+/// write owed its offer, made over everything the write changed: the
+/// commit carries the copy and the record, and the `.gitignore` the write
+/// changed beside them, with the failure the run exits on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_render_that_fails_after_the_refresh_wrote_still_commits_the_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp).join("home");
+    let project = installed(
+        &home,
+        "#!/bin/sh\nif [ \"$1\" = check ]; then\n  exit 0\nfi\necho 'fixture-render: broke' >&2\nexit 1\n",
+    );
+    // A file the write changes beside its renders, which only the reading
+    // the write took can give to the commit.
+    fs::remove_file(project.join(".gitignore")).unwrap();
+    for args in [
+        &["config", "user.name", "t"][..],
+        &["config", "user.email", "t@t"],
+        &["config", "commit.gpgsign", "false"],
+        &["add", "-A"],
+        &["commit", "-qm", "installed"],
+    ] {
+        git(&project, args);
+    }
+    let repo = kendex_core::guard::Repo::at(&project).unwrap();
+    kendex_core::repo_effects::armed::arm(
+        kendex_core::repo_effects::armed::record_dir(&repo, false),
+        "bot-instructions",
+    )
+    .unwrap();
+    let source = project.join("catalog/skills/bot-instructions/SKILL.md");
+    let updated = format!("{DECLARATION}\nUpdated package documentation.\n");
+    write(&source, &updated);
+    git(&project, &["add", "catalog"]);
+    git(&project, &["commit", "-qm", "update the package"]);
+
+    let ran = kendex(&home, &project, &["refresh", "--yes", "--commit"]);
+
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(1), "{said}");
+    assert!(said.contains("fixture-render: broke"), "{said}");
+    let files = Hardened::git(
+        &["show", "--name-only", "--format=", "HEAD"],
+        Some(&project),
+    )
+    .run()
+    .unwrap();
+    let files = String::from_utf8(files.stdout).unwrap();
+    for path in [
+        ".claude/skills/bot-instructions/SKILL.md",
+        ".kendex-lock.json",
+        ".gitignore",
+    ] {
+        assert!(
+            files.lines().any(|line| line == path),
+            "{path}: {files}\n{said}"
+        );
+    }
+}
+
+/// A subscription edit is on disk once its write lands, so a render that
+/// fails after it is said beside the edit, never in its place: the run
+/// names what it changed, then the failure it exits on. Unsubscribing
+/// with `--keep-packages` lands its first transaction before the re-sync
+/// whose render fails.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_render_that_fails_after_a_subscription_edit_keeps_the_edit_said() {
+    const BREAKS: &str = "#!/bin/sh\nif [ \"$1\" = check ]; then\n  exit 0\nfi\necho 'fixture-render: broke' >&2\nexit 1\n";
+    let cases: [(&[&str], &str, &str); 4] = [
+        (
+            &["source", "add", "other", "other"],
+            "added marketplace 'other'",
+            "[sources.other]",
+        ),
+        (
+            &["source", "disable", "cat"],
+            "marketplace 'cat' switched off",
+            "enabled = false",
+        ),
+        (
+            &["marketplace", "subscribe", "other", "--name", "more"],
+            "subscribed to 'more' (other)",
+            "[sources.more]",
+        ),
+        (
+            &["marketplace", "unsubscribe", "cat", "--keep-packages"],
+            "unsubscribed from 'cat', 1 kept",
+            "[skills.bot-instructions]\nsource = \"local\"",
+        ),
+    ];
+    let mut missed = Vec::new();
+    for (args, landed, manifest) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp).join("home");
+        let project = installed(&home, BREAKS);
+        write(
+            &project.join("other/skills/note/SKILL.md"),
+            "---\nname: note\ndescription: another catalog's skill\n---\nNote.\n",
+        );
+        let repo = kendex_core::guard::Repo::at(&project).unwrap();
+        kendex_core::repo_effects::armed::arm(
+            kendex_core::repo_effects::armed::record_dir(&repo, false),
+            "bot-instructions",
+        )
+        .unwrap();
+
+        let ran = kendex(&home, &project, args);
+
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert_eq!(ran.status.code(), Some(1), "{args:?}: {said}");
+        assert!(
+            fs::read_to_string(project.join("kendex.toml"))
+                .unwrap()
+                .contains(manifest),
+            "{args:?} did not write its edit: {said}"
+        );
+        let edit = said.lines().position(|line| line.ends_with(landed));
+        let failure = said
+            .lines()
+            .position(|line| line.contains("fixture-render: broke"));
+        if !matches!((edit, failure), (Some(edit), Some(failure)) if edit < failure) {
+            missed.push(format!(
+                "{args:?} did not say {landed:?} before the failure: {said}"
+            ));
+        }
+    }
+    assert!(missed.is_empty(), "{}", missed.join("\n"));
 }

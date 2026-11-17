@@ -64,6 +64,15 @@ impl Pre {
         })
     }
 
+    /// What a move of `path` planned after the edits in `replacements`
+    /// binds to: the entries as they will sit once each named regular file
+    /// holds its new bytes.
+    pub fn tree_as_is_after(path: &Path, replacements: &[(PathBuf, Vec<u8>)]) -> Result<Pre> {
+        Ok(Pre::TreeIs {
+            hash: crate::hash::hash_tree_as_is_replacing(path, replacements)?,
+        })
+    }
+
     /// Whether this precondition binds to there being nothing, rather
     /// than to content.
     ///

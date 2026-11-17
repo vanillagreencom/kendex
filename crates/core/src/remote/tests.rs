@@ -153,7 +153,7 @@ fn a_cached_pin_resolves_offline_and_an_uncached_one_is_a_hard_error() {
     fs::remove_dir_all(&f.upstream).unwrap();
     let offline = sync(&f.env, REPO, Some(&pinned)).unwrap();
     assert!(body(&offline.root).contains("v1"));
-    assert!(offline.warning.is_none());
+    assert!(offline.fetch_failed.is_none());
 
     let error = sync(&f.env, REPO, Some(&never_fetched)).unwrap_err();
     let CoreError::PinUnavailable { repo, pin, reason } = &error else {
@@ -267,7 +267,7 @@ fn the_default_branch_is_tracked_and_a_failed_refresh_keeps_serving() {
     fs::remove_dir_all(&f.upstream).unwrap();
     let offline = sync(&f.env, REPO, None).unwrap();
     assert_eq!(offline.commit, second_commit);
-    assert!(offline.warning.unwrap().contains("using cached version"));
+    assert!(offline.fetch_failed.is_some());
     assert!(body(&offline.root).contains("v2"));
 }
 

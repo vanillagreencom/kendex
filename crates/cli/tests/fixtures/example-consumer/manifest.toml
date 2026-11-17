@@ -1,4 +1,4 @@
-schema = 7
+schema = 8
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"

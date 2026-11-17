@@ -15,7 +15,7 @@ scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
 
 `activate` also assigns the issue to the person `KENDEX_USER_EMAIL` names when nobody is assigned yet; SKILL.md § Option Behavior states the outcomes.
 
-Cancel, duplicate, and absorb are all `comments create` + `issues update --state "Canceled"`; name the surviving issue in the comment on both sides of an absorb.
+Cancel, duplicate, and absorb first disposition every open descendant, including open work below a closed child: read `issues children [ISSUE_ID] --recursive --pending`, comment the reason for each disposition, and detach a child to keep it with `issues update [CHILD_ID] --remove-parent`. Cancel a child only with independent authorization for that child, recording its reason and resolving its descendants first. After the descendants are detached or terminal, use `comments create` + `issues update --state "Canceled"` on the parent; name the surviving issue in the comment on both sides of an absorb. The state update refuses open descendants before writing, and bulk-update checks the whole batch before writing any item.
 
 ## Quota Holds
 
@@ -91,7 +91,7 @@ scripts/linear.sh issues create \
   --priority [PRIORITY] --estimate [ESTIMATE] --description-file [PATH]
 ```
 
-`[PATH]` holds a body built from project-management's `templates/issue-description-template.md`, including the `Reached by:` line. `[VALIDATED_LABELS]` is the full set project-management's `references/labels.md` § Creates Carry the Full Set selects, validated by step 2 of § Labels, not a bare agent label. Add any blocking relations the new issue should impose after it exists.
+`[PATH]` holds a body built from project-management's `templates/issue-description-template.md`, including the `Reached by:` and `Supersession:` lines. `[VALIDATED_LABELS]` is the full set project-management's `references/labels.md` § Creates Carry the Full Set selects, validated by step 2 of § Labels, not a bare agent label. Add any blocking relations the new issue should impose after it exists.
 
 ## Task discovery
 

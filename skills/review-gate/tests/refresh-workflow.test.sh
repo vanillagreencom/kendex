@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Surface: the refresh workflow trigger declarations.
 # Inputs: skills/review-gate/templates/kendex-refresh.yml, refresh/kendex-refresh.yml,
-# skills/harness-ci/tests/lib/workflow.sh.
+# skills/harness-ci/tests/lib/workflow.sh, skills/harness-ci/tests/lib/gh-eval.py,
+# .github/workflows/refresh-release.yml.
 # GitHub Actions reads these declarations; this suite checks their source shape.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,7 +44,7 @@ check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
       esac
     done
     cron="$(schedule_cron "$file")" || return 2
-    if [ "$cron" != '17 * * * *' ]; then
+    if [ "$cron" != '43 8 * * *' ]; then
       printf 'caller=%s cron=%s\n' "$index" "$cron"
       failed=1
     fi
@@ -57,8 +58,8 @@ for file in "$TEMPLATE" "$CALLER"; do
 done
 
 # Each control uses the same assertions as the shipped callers.
-plant "$TEMPLATE" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/template.yml"
-plant "$CALLER" '    - cron: "17 * * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/caller.yml"
+plant "$TEMPLATE" '    - cron: "43 8 * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/template.yml"
+plant "$CALLER" '    - cron: "43 8 * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/caller.yml"
 
 while IFS='|' read -r shape expected_exit; do
   case "$shape" in
@@ -109,3 +110,33 @@ for source in template caller; do
   done
 done
 printf 'pass: %s   fail: 0\n' "$PASS"
+
+# GitHub evaluates this job condition before allocating its runner. Execute
+# the declared expression for each route; a missing output must refresh.
+python3 - "$TEMPLATE" "$CALLER" "$GH_EVAL" <<'PY'
+from pathlib import Path
+import json, re, subprocess, sys
+
+def check(text):
+    release, refresh = text.split('  release:\n', 1)[1].split('  refresh:\n', 1)
+    assert 'runs-on:' not in release and 'concurrency:' not in release and 'environment:' not in release
+    assert 'uses: vanillagreencom/kendex/.github/workflows/refresh-release.yml@v1' in release
+    expression = re.search(r'^    if: \$\{\{ (.+) \}\}$', refresh, re.M).group(1)
+    for success, route, wanted in ((True, 'skip', False), (True, 'full', True),
+                                   (True, 'reviews', True), (True, '', True), (False, 'full', False)):
+        context = dict(github=dict(repository='acme/widgets', ref='refs/heads/main',
+                                   event=dict(repository=dict(default_branch='main'))),
+                       needs=dict(release=dict(result='success' if success else 'failure', outputs=dict(route=route))))
+        result = subprocess.run([sys.executable, sys.argv[3], 'jobs', json.dumps(context)],
+                                input='refresh\trelease\t' + expression + '\n',
+                                text=True, capture_output=True, check=True, timeout=10)
+        assert result.stdout == ('refresh\n' if wanted else ''), (route, success, result.stdout)
+for path in sys.argv[1:3]:
+    text = Path(path).read_text()
+    check(text)
+    clause = "needs.release.outputs.route != 'skip' && "
+    assert text.count(clause) == 1
+    try: check(text.replace(clause, ''))
+    except AssertionError: pass
+    else: raise AssertionError('must-fail: unchanged schedule started refresh')
+PY

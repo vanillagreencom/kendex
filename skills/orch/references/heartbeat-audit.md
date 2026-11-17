@@ -42,6 +42,10 @@ Leave Triage items younger than 24 hours unchanged.
 - Under `PM_CREATE_AUTONOMY=ask`, closures also wait for approval.
 - Take held rows out of the execution set, their `supersedes[]` and cascading child cancellations included, and keep them in the findings for the owner. Every held row appears in the owner ask or the progress report, with its proposed action, its reason and any pending ask. The automatic Cancel set is never the whole displayed Cancel section.
 
+### High-priority project correction
+
+Authorization's Urgent or High priority hold does not hold a `wrong_project` correction whose `to` is a map project, because that project-only move changes no state or owner. Every other hold still applies to that correction, and every other action on that item stays held. Example: a High-priority item with Location `.fleet-setup` and no other hold sits in Skills & Agents Library. The map's Review Gate & CI `admits` sentence names CI setup in `.fleet-setup`. The TPM returns `wrong_project[]` with that item's `issue`, `from: "Skills & Agents Library"`, and `to: "Review Gate & CI"`. Authorize the correction, apply the project-only update and reason comment through `audit-issues` § 7.1, then verify it live through § 7.5. The verified item is in Review Gate & CI and remains High with the same state and owner. Its proposed label, priority and cancellation actions stay held by its priority.
+
 ## Triage execution
 
 1. Accept an authorized aged Triage item, after audit-issues § 7.0's label preflight:

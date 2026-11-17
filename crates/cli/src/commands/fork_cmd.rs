@@ -48,14 +48,24 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
     let filter = args.effective_scope()?;
     let scope = resolve_scopes(env, filter)?.remove(0);
 
-    let plan = match &args.rename {
-        Some(new) => kendex_core::engine::fork::rename_fork(env, &scope, kind, &args.name, new)?,
-        None => kendex_core::engine::fork::fork(env, &scope, kind, &args.name, harness)?,
+    let (plan, warnings) = match &args.rename {
+        Some(new) => (
+            kendex_core::engine::fork::rename_fork(env, &scope, kind, &args.name, new)?,
+            Vec::new(),
+        ),
+        None => {
+            let forked = kendex_core::engine::fork::fork(env, &scope, kind, &args.name, harness)?;
+            (forked.plan, forked.warnings)
+        }
     };
     for op in &plan.ops {
         say(&format!("  - {}", op.line()));
     }
     kendex_core::apply::execute(env, &plan)?;
+    crate::ui::stderr(&super::engine_common::warning_lines(
+        &crate::ui::style(),
+        &warnings,
+    ));
 
     // Second transaction renders the fork (or the renamed fork) in place.
     // A rename leaves the old name's artifacts and lock entries behind as

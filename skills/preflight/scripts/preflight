@@ -758,6 +758,133 @@ has_exit_trap() { # FILE
   done < <(LC_ALL=C awk '!/^[[:space:]]*#/ && /(^[[:space:]]*|[;(`{&|][[:space:]]*)trap[[:space:]]/ { print NR }' "$1" 2>/dev/null)
   return 1
 }
+# runuser and other launchers pass the quoted -c operand to a separate shell.
+# Keep its lines in a separate file so neither shell borrows the other's trap.
+# Bash's existing quote probes delimit the operand; this is not shell parsing.
+DOUBLE_SHELL_PARENT=''
+DOUBLE_SHELL_CHILD=''
+double_shell_bodies() { # RAW DOUBLE-QUOTED OPERAND -> parent/child projections
+  local body="$1" i=0 ch='' next='' expansion='' closed=0
+  DOUBLE_SHELL_PARENT=''
+  DOUBLE_SHELL_CHILD=''
+  while [ "$i" -lt "${#body}" ]; do
+    ch="${body:i:1}"
+    next="${body:i+1:1}"
+    # The parent consumes these escapes without running the escaped character.
+    if [ "$ch" = '\' ]; then
+      case "$next" in
+        '$' | '`' | '"' | '\' | $'\n')
+          DOUBLE_SHELL_CHILD="$DOUBLE_SHELL_CHILD$next"
+          DOUBLE_SHELL_PARENT="$DOUBLE_SHELL_PARENT ${next//[!$'\n']/ }"
+          i=$((i + 2))
+          continue ;;
+      esac
+    fi
+    case "$ch$next" in
+      '$(' | '`'*)
+        expansion="$ch"
+        i=$((i + 1))
+        if [ "$ch" = '$' ]; then expansion='$('; i=$((i + 1)); fi
+        closed=0
+        while [ "$i" -lt "${#body}" ]; do
+          ch="${body:i:1}"
+          expansion="$expansion$ch"
+          i=$((i + 1))
+          case "$ch" in ')' | '`') ;; *) continue ;; esac
+          substitution_parse_result "$expansion" || return 1
+          case "$SUBSTITUTION_PARSE_RESULT" in open:*) continue ;; esac
+          closed=1
+          break
+        done
+        [ "$closed" = 1 ] || return 1
+        # The parent executes this expansion before passing the operand.
+        DOUBLE_SHELL_PARENT="$DOUBLE_SHELL_PARENT$expansion"
+        DOUBLE_SHELL_CHILD="$DOUBLE_SHELL_CHILD${expansion//[!$'\n']/ }"
+        ;;
+      *)
+        DOUBLE_SHELL_CHILD="$DOUBLE_SHELL_CHILD$ch"
+        DOUBLE_SHELL_PARENT="$DOUBLE_SHELL_PARENT${ch//[!$'\n']/ }"
+        i=$((i + 1)) ;;
+    esac
+  done
+}
+shell_scope_count=0
+mktemp_scope_lines() { # FILE -> untrapped invocation line numbers
+  local file="$1" scope='' child='' line='' prefix='' source='' prior='' tail=''
+  local n=0 start=0 consumed=0 status=0 body='' i=0 quote='' again=0 parent=''
+  local child_re="(^|[[:space:];(&|])([^[:space:];(&|)]*\/)?(bash|sh)[[:space:]]+-[a-zA-Z]*c[[:space:]]+([\"'])"
+  shell_scope_count=$((shell_scope_count + 1))
+  scope="$TMP/shell-scope.$shell_scope_count"
+  : >"$scope" || return 1
+  while [ "$again" = 1 ] || IFS= read -r line || [ -n "$line" ]; do
+    if [ "$again" = 1 ]; then again=0; else n=$((n + 1)); fi
+    if [ -z "$source" ] && ! is_comment_line "$line" && [[ "$line" =~ $child_re ]]; then
+      # The match can follow a launcher; retain everything before its quote.
+      prefix="${line%%"${BASH_REMATCH[0]}"*}${BASH_REMATCH[0]}"
+      prefix="${prefix%?}"
+      status=0
+      line_is_code "$scope" "$n" || status=$?
+      case "$status" in 0) ;; 1) printf '%s\n' "$line" >>"$scope"; continue ;; *) return 1 ;; esac
+      substitution_parse_result "$prefix" || return 1
+      # A quote makes launcher text data; an open substitution still runs it.
+      case "${SUBSTITUTION_PARSE_RESULT:6:1}" in
+        \" | \') printf '%s\n' "$line" >>"$scope"; continue ;;
+      esac
+      start="$n"
+      source="${line:${#prefix}:1}"
+      quote="$source"
+      line="${line:${#prefix}+1}"
+    fi
+    if [ -n "$source" ]; then
+      prior="$source"
+      substitution_parse_result "$source$line" || return 1
+      case "$SUBSTITUTION_PARSE_RESULT" in
+        open:*) source="$source$line"$'\n'; continue ;;
+      esac
+      tail="$(after_action "$prior" "$line")" || return 1
+      consumed=$((${#line} - ${#tail} - 1))
+      body="$prior${line:0:consumed}"
+      body="${body:1}"
+      if [ "$quote" = '"' ]; then
+        double_shell_bodies "$body" || return 1
+        body="$DOUBLE_SHELL_CHILD"
+        parent="$DOUBLE_SHELL_PARENT"
+      fi
+      shell_scope_count=$((shell_scope_count + 1))
+      child="$TMP/shell-child.$shell_scope_count"
+      : >"$child" || return 1
+      i=1
+      while [ "$i" -lt "$start" ]; do printf '\n' >>"$child"; i=$((i + 1)); done
+      printf '%s\n' "$body" >>"$child" || return 1
+      mktemp_scope_lines "$child" || return 1
+      if [ "$quote" = '"' ]; then
+        printf '%s"%s"' "$prefix" "$parent" >>"$scope"
+      else
+        printf "%s''" "$prefix" >>"$scope"
+        i="$start"
+        while [ "$i" -lt "$n" ]; do printf '\n' >>"$scope"; i=$((i + 1)); done
+      fi
+      line="$tail"
+      again=1
+      source=''
+    else
+      printf '%s\n' "$line" >>"$scope"
+    fi
+  done <"$file"
+  # Incomplete shell syntax is reported by shell-syntax, never accepted here.
+  [ -z "$source" ] || return 1
+  status=0
+  has_exit_trap "$scope" || status=$?
+  case "$status" in 0) return 0 ;; 1) ;; *) return 1 ;; esac
+  n=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$line" in *mktemp*) ;; *) continue ;; esac
+    is_comment_line "$line" && continue
+    line="$(unquoted_code "$line")" || return 1
+    if grep -Eq -- "$MKTEMP_CALL_RE" <<<"$line"; then printf '%s\n' "$n"; fi
+  done <"$scope"
+}
 # Whether the shell reads LINE as code: the lines above it leave no quote or
 # here-document open, where the same text is data another command receives.
 line_is_code() { # FILE LINE: 0 code, 1 data, 2 dependency/input failure
@@ -1435,7 +1562,6 @@ while IFS= read -r f; do
   has_ee=0
   has_noee=0
   has_pf=0
-  has_trap=0
   mktemp_reported=0
   is_shell_path "$f" "$cpath" && is_sh=1
   own_rules=0
@@ -1516,13 +1642,10 @@ while IFS= read -r f; do
     file_matches "$cpath" "$ERREXIT_RE" && has_ee=1
     file_matches "$cpath" "$NOERREXIT_RE" && has_noee=1
     file_matches "$cpath" "$PIPEFAIL_RE" && has_pf=1
-    trap_status=0
-    has_exit_trap "$cpath" || trap_status=$?
-    case "$trap_status" in
-      0) has_trap=1 ;;
-      1) ;;
-      *) env_error mktemp-trap "$f" "shell trap context could not be read" ;;
-    esac
+    if [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ]; then
+      mktemp_scope_lines "$cpath" >"$TMP/untrapped.$IDX" \
+        || env_error mktemp-trap "$f" "shell trap context could not be read"
+    fi
 
     if ! syntax="$(bash -n -- "$cpath" 2>&1)"; then
       while IFS= read -r raw; do
@@ -1652,18 +1775,11 @@ while IFS= read -r f; do
 
     # The literal prefilters keep the regex passes off the lines that cannot
     # carry either shape — most of them.
-    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ] && [ "$has_trap" = 0 ] && [ "$mktemp_reported" = 0 ]; then
-      case "$content" in
-        *mktemp*)
-          if ! is_comment_line "$content"; then
-            unquoted="$(unquoted_code "$content")"
-            if grep -Eq -- "$MKTEMP_CALL_RE" <<<"$unquoted"; then
-              mktemp_reported=1
-              emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
-            fi
-          fi
-          ;;
-      esac
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ] && [ "$mktemp_reported" = 0 ]; then
+      if grep -qxF -- "$n" "$TMP/untrapped.$IDX"; then
+        mktemp_reported=1
+        emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
+      fi
     fi
 
     # Creation at a literal absolute temp path escapes a TMPDIR redirect by

@@ -29,7 +29,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSession, openSession, deleteSession } from "cc-session-io";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk/core";
 
 const CWD = process.cwd();
 const MODEL = "claude-haiku-4-5";

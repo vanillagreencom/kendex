@@ -13,6 +13,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `critical-path-deny`: In an unattended orch lane, denies the remaining critical-path removal prompts at once and gives rewrites for variable targets and unresolved paths. The launch environment removes prompts for inline shell scripts and targets from command substitution.
 - `dev-stop-check`: Stops a coding agent from finishing while the validation run it started is still going, and hands it the command that waits for the verdict.
 - `doc-drift-check`: Retired. Runs no check; `kendex remove doc-drift-check --scope project --sweep` removes it and its files.
+- `docs-writing-bash-note`: Reminds Claude Code of the docs-writing rules when it changes tracked Markdown through Bash. Every call remains allowed.
 - `docs-writing-note`: Points the assistant at the docs-writing rules and example for the first Markdown file it edits in a session. Deleted files need no reminder, and every edit remains allowed.
 - `jarvis-memory-note`: Reminds the assistant to read the note guidance when it edits memory. Every edit remains allowed.
 - `lane-mail-check`: Uses orch and mailbox to hand lanes their overseer's mail and hold turn ends for handoff or idle checks, plus a `wake=unarmed` refusal for the registered overseer without its repeat follow or the Jarvis session whose `ORCH_WAKE_PROCESS` does not match, printing `ORCH_WAKE_START`; empty Jarvis session keys with no watch claim disable the check, and a running single pass is its own wake. Pi's wake check is partial; a continued turn or an unavailable check only warns.
@@ -23,7 +24,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `lane-mail-prompt`: Hands a Copilot lane the messages its overseer sent with each prompt it is handed, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
 - `lane-mail-start`: Hands a Copilot lane the messages its overseer sent as soon as its session starts, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
 - `pre-commit-check`: Stops options that skip armed commit checks and bypass commits after a hook-path change in the same command. Missing setup or an unavailable reader produces a notice with the responsible owner.
-- `reviewer-read-only`: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
+- `reviewer-read-only`: Stops a cooperating reviewer's edits, commits, pushes, Git commands that discard work, and ordinary `rm` or `git rm` deletes in a work tree; lets it write its review report.
 - `reviewer-stop-check`: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 - `session-drift-check`: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. A lane gets the install rule instead of kendex fix advice, and a lane launched to refresh gets the whole report.
 - `session-end-row`: Writes down that a session ended, so a fleet's overseer that exits is seen to have exited without anyone reading its screen.

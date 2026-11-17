@@ -65,6 +65,7 @@ vi.mock("@/bindings", () => ({
     installTargets: vi.fn(),
     templatesList: vi.fn(),
     templateAddMembers: vi.fn(),
+    templateCatalogSource: vi.fn(),
     templateCreateFromSelection: vi.fn(),
   },
 }));
@@ -95,6 +96,12 @@ const SUBSCRIPTION: MarketplaceRow = {
   meta: null,
   mode: null,
   recordsUnreadable: false,
+};
+
+const TEMPLATE_CATALOG = {
+  kind: "repository" as const,
+  repo: SUBSCRIPTION.repo!,
+  origin: { origin: "declared" as const, scope: CATALOG.scope },
 };
 
 const OFFERED: AvailablePackage = {
@@ -154,6 +161,10 @@ const savedIs = (saved: SavedItem[]) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(commands.templateCatalogSource).mockResolvedValue({
+    status: "ok",
+    data: { held: "catalog", catalog: TEMPLATE_CATALOG, rev: null },
+  });
   savedIs([]);
   vi.mocked(commands.bookmarkAdd).mockResolvedValue({
     status: "ok",
@@ -519,33 +530,76 @@ describe("the Bookmarks tab", () => {
     expect(host.textContent).toContain("no manifest there");
   });
 
-  it("offers a ticked selection to a template, as the marketplace the bookmark records", async () => {
-    savedIs([SAVED_SKILL]);
-    const host = mount(<BookmarksView />);
-    await settle();
-
-    await act(async () => control(host, "Select gh").click());
-    expect(button(host, installSelectedLabel(1))).toBeTruthy();
-
-    await act(async () => button(host, ADD_TO_TEMPLATE_LABEL).click());
-    await settle();
-    const name = document.querySelector<HTMLInputElement>("#template-new-name");
-    if (!name) throw new Error("the new-template name field is not on screen");
-    await userEvent.type(name, "Kit");
-    await act(async () => button(document, "Save").click());
-    expect(commands.templateCreateFromSelection).toHaveBeenCalledWith("Kit", [
-      {
-        kind: "skill",
-        name: "gh",
-        enabled: true,
-        source: {
-          held: "marketplace",
-          repo: SAVED_SKILL.bookmark.repo,
-          rev: null,
-        },
+  it.each([
+    { catalog: CATALOG, savedCatalog: TEMPLATE_CATALOG },
+    {
+      catalog: {
+        by: "subscription",
+        scope: { scope: "project", root: "/work/acme" },
+        source: "folder",
       },
-    ]);
-  });
+      savedCatalog: {
+        kind: "folder",
+        root: "/work/catalog",
+        origin: { scope: "project", root: "/work/acme" },
+      },
+    },
+    {
+      catalog: {
+        by: "subscription",
+        scope: { scope: "global" },
+        source: "folder-git",
+      },
+      savedCatalog: {
+        kind: "folder",
+        root: "/work/catalog.git",
+        origin: { scope: "global" },
+      },
+    },
+  ] satisfies {
+    catalog: Catalog;
+    savedCatalog: import("@/bindings").TemplateCatalog;
+  }[])(
+    "offers a ticked selection to a template from $catalog",
+    async ({ catalog, savedCatalog }) => {
+      const saved = { ...SAVED_SKILL, catalog };
+      savedIs([saved]);
+      vi.mocked(commands.templateCatalogSource).mockResolvedValue({
+        status: "ok",
+        data: { held: "catalog", catalog: savedCatalog, rev: null },
+      });
+      const host = mount(<BookmarksView />);
+      await settle();
+
+      await act(async () => control(host, "Select gh").click());
+      expect(button(host, installSelectedLabel(1))).toBeTruthy();
+
+      await act(async () => button(host, ADD_TO_TEMPLATE_LABEL).click());
+      await settle();
+      const name =
+        document.querySelector<HTMLInputElement>("#template-new-name");
+      if (!name)
+        throw new Error("the new-template name field is not on screen");
+      await userEvent.type(name, "Kit");
+      await act(async () => button(document, "Save").click());
+      expect(commands.templateCatalogSource).toHaveBeenCalledWith(
+        catalog,
+        null,
+      );
+      expect(commands.templateCreateFromSelection).toHaveBeenCalledWith("Kit", [
+        {
+          kind: "skill",
+          name: "gh",
+          enabled: true,
+          source: {
+            held: "catalog",
+            catalog: savedCatalog,
+            rev: null,
+          },
+        },
+      ]);
+    },
+  );
 
   it("keeps a row whose marketplace cannot be served, says why, and offers no install", async () => {
     savedIs([

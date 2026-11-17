@@ -27,10 +27,6 @@
 #              gg_md_bare_scope reports which,
 #              for a caller that has to know before running the lane
 #
-# The range scopes are what the pre-push lane hands these lanes: nothing is
-# staged by the time a push is judged, so their bare scope would open no file
-# over a document a replay carried in.
-#
 # md-refs widens a triggered check to all configured documents so target edits
 # recheck unchanged callers.
 #
@@ -53,11 +49,9 @@ GG_MD_RENAMES=exact
 #
 # Two callers. gg_md_scope below, so the setting is read once and the answer
 # and the run cannot disagree. And a batch caller that needs to know, BEFORE
-# running a lane, whether a bare run would open any file: `touched` selects
-# from the staged diff and opens none where nothing is staged, while `all`
-# needs nothing staged and sweeps the tree. A caller that inferred that from
-# the lane merely deferring to this file would withhold a lane the project
-# explicitly asked to run over everything.
+# running a lane, whether a range would narrow its configured scope:
+# `touched` selects from the staged diff, while `all` sweeps the tree. A range
+# must not narrow a lane the project asked to run over everything.
 #
 # Side-effect-free: it prints nothing, reads no index and leaves GG_MD_MODE
 # alone, so it needs neither `set -f` nor gg_tmpdir — only the repository

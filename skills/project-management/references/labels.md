@@ -20,7 +20,7 @@ Run before any workflow creates an issue or updates issue labels:
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. Report each finding to the user; it does not halt the create. A non-zero audit exit is reported with its error output and never read as clean, and `taxonomy-unreadable` halts the create.
+Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undeclared labels on the team's open issues, with the issues carrying them, and each name both a team label and a workspace label use. A team or issue audit reads those issues from its run's inventory ([tpm-audit § 1.2](../workflows/tpm-audit.md#12-load-label-policy)). Report each finding to the user; it does not halt the create. A non-zero audit exit is reported with its error output and never read as clean, and `taxonomy-unreadable` halts the create.
 
 GitHub-tracked runs read `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` instead.
 

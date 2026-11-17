@@ -219,6 +219,8 @@ An active child pauses the merge: ask the user, per child, whether this PR lande
 
 Read `.title`, `.project_id` and `.labels`. Join the label names with commas and split them by the taxonomy the create refuses against, with `linear.sh labels declared "[NAMES]"`: `.kept`, joined the same way, is `[PARENT_LABELS]`, and `.dropped`, shown in this step's output, is `[DROPPED_LABELS]` (`none` when empty). A non-zero exit **aborts the merge**. `[BUNDLE_PRIORITY]` is the highest priority across `[SAFE_IDS]` (Linear `1` Urgent to `4` Low, the lower number wins; `3` where none is set). Build `[BUNDLE_DESC]` from `.agents/skills/project-management/templates/parent-issue-template.md`, with a `## Sub-Issues` list and a `## Context` line naming the detachment. Its `**Reached by**` line is `this merge-pr rebundle, detaching pending children from [ISSUE] before merge`. A rebundle parent is structural, so the create passes no `--review-born`.
 
+Its `**Supersession**` line records `re-scoped [ISSUE]`, per parent-issue-template Rule 7.
+
 Write `[BUNDLE_DESC]` with the harness file-write tool to `tmp/rebundle-description-[ISSUE].md` and bind that path as `[BODY_FILE]`:
 
 ```bash

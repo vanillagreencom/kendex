@@ -37,8 +37,8 @@
 #      and read the exclusion list from the default branch, even when the
 #      PR adds a row excluding every path. The subject is a depth-1
 #      checkout plus its own ancestry, fetched on pull_request alone.
-#   7. concurrency: two heads of one PR share a group and cancel, while
-#      merge-group and default-branch runs each keep their own group.
+#   7. concurrency: the template declares no concurrency group at workflow
+#      or job level, so no run cancels another.
 #   8. action pins: every GitHub-owned or third-party action in a source or
 #      rendered consumer template uses a full SHA and release-version comment.
 #   9. the endpoints: a pull request's base end is the base its merge ref
@@ -51,11 +51,11 @@
 # from the judged checkout, CI without always(), a template without
 # merge_group, a render-reach step that fails the job, an evaluator that
 # refuses every expression, a credential scanner read from the PR, the
-# subject's checkout without its pull_request gate, a concurrency group
-# missing its event, the aggregate run from the subject, a missing helper
-# without its annotation guard, a short action pin, a template not asking
-# for the queue-only default, the pull request's recorded base, and a fixed
-# old installer pin.
+# subject's checkout without its pull_request gate, a concurrency group put
+# back at workflow or job level, the aggregate run from the subject, a
+# missing helper without its annotation guard, a short action pin, a
+# template not asking for the queue-only default, the pull request's
+# recorded base, and a fixed old installer pin.
 set -euo pipefail
 # shellcheck source=../../change-scope/tests/lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
@@ -169,38 +169,26 @@ assert_eq "CI needs every other job" \
   "$(job_needs "$TEMPLATE" | cut -f1 | grep -vxF "$CI_JOB" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" \
   "$(job_needs "$TEMPLATE" | awk -F '\t' -v j="$CI_JOB" '$1 == j { print $2 }' | tr ',' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 
-# GitHub's pull_request and merge_group events produce separate payloads.
-# The merge-group row uses a run id equal to the PR number, so a group
-# missing event_name collides even without a PR field on the merge group.
-check_concurrency() { # TEMPLATE
-  local workflow event pr run group cancel ctx rows=0
-  while IFS='|' read -r workflow event pr run group cancel; do
-    rows=$((rows + 1))
-    ctx="$(jq -cn --arg w "$workflow" --arg e "$event" --argjson p "$pr" --argjson r "$run" \
-      '{github: {workflow: $w, event_name: $e, run_id: $r}}
-      | if $e == "pull_request" then .github.event = {pull_request: {number: $p}} else . end')"
-    assert_eq "concurrency for $workflow $event PR=$pr run=$run" "$group $cancel" \
-      "$(concurrency_value "$1" group "$ctx") $(concurrency_value "$1" cancel-in-progress "$ctx")"
-  done <<'ROWS'
-CI|pull_request|42|7|CI-pull_request-42|true
-CI|pull_request|42|8|CI-pull_request-42|true
-CI|pull_request|43|7|CI-pull_request-43|true
-Other|pull_request|42|7|Other-pull_request-42|true
-CI|merge_group|0|42|CI-merge_group-42|false
-CI|merge_group|0|43|CI-merge_group-43|false
-CI|push|0|42|CI-push-42|false
-CI|push|0|43|CI-push-43|false
-CI|schedule|0|44|CI-schedule-44|false
-CI|workflow_dispatch|0|45|CI-workflow_dispatch-45|false
-ROWS
-  require_rows concurrency "$rows"
-  [ "$FAIL" -eq 0 ]
+# A run is cancelled only through a concurrency group, which GitHub reads at
+# workflow and at job level, and a cancelled run ends CI as cancelled, which
+# blocks the pull request. Each concurrency key, its indentation stripped.
+concurrency_keys() { # TEMPLATE
+  { grep -E '^ *concurrency:' "$1" || [ $? -eq 1 ]; } | sed 's/^ *//'
 }
-check_concurrency "$TEMPLATE"
-plant "$TEMPLATE" '-${{ github.event_name }}' '' "$SANDBOX/no-concurrency-event.yml"
-status=0
-(FAIL=0; check_concurrency "$SANDBOX/no-concurrency-event.yml") >"$SANDBOX/no-concurrency-event.log" 2>&1 || status=$?
-assert_eq "must-fail: concurrency rows reject a group missing its event" 1 "$status"
+keys="$(concurrency_keys "$TEMPLATE")"
+assert_eq "the template declares no concurrency group" "" "$keys"
+# NAME|JOB|LINE THE GROUP GOES ABOVE|PLANTED GROUP, \n A LINE BREAK|KEY READ BACK
+rows=0
+while IFS='|' read -r name job above group key; do
+  rows=$((rows + 1))
+  plant "$TEMPLATE" "$above" "$(printf '%b' "$group")"$'\n'"$above" "$SANDBOX/concurrency-$name.yml" "$job" line
+  assert_eq "must-fail: a $name-level concurrency group put back is read" "$key" \
+    "$(concurrency_keys "$SANDBOX/concurrency-$name.yml")"
+done <<'ROWS'
+workflow||jobs:|concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true|concurrency:
+job|ci|    name: CI|    concurrency: ci-${{ github.ref }}|concurrency: ci-${{ github.ref }}
+ROWS
+require_rows concurrency "$rows"
 
 # --- 2. The job set ---------------------------------------------------------
 
@@ -362,10 +350,10 @@ assert_eq "the template's steps name the shipped script paths" \
 .agents/skills/commit-guards/scripts/secrets
 .agents/skills/harness-ci/scripts/aggregate-needs
 .agents/skills/harness-ci/scripts/harness-only
-.agents/skills/review-gate/scripts/install-latest.sh" \
+.agents/skills/harness-ci/scripts/install-latest.sh" \
   "$(grep -vE '^[[:space:]]*#' "$TEMPLATE" | grep -oE '\.agents/skills/[A-Za-z0-9_/.-]+' | LC_ALL=C sort -u)"
 assert_eq "those paths are shipped scripts" "yes yes yes yes yes" \
-  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../review-gate/scripts/install-latest.sh" ] && echo yes || echo no)"
+  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/install-latest.sh" ] && echo yes || echo no)"
 
 # The CI job scans every pull request, with its installer in the same step,
 # and, under the scan's condition, checks out the merge commit alone at
@@ -736,15 +724,15 @@ done
 assert_eq "the candidate step requests the prerequisite-only mode" yes \
   "$(grep -qF -- '--mode render-candidate --repo subject' "$TEMPLATE" && echo yes || echo no)"
 assert_eq "the installer uses the trusted release selector" \
-  'classifier/.agents/skills/review-gate/scripts/install-latest.sh' "$(step_key "$TEMPLATE" kendex run)"
+  'classifier/.agents/skills/harness-ci/scripts/install-latest.sh' "$(step_key "$TEMPLATE" kendex run)"
 assert_eq "the installer reads with the workflow token" 'github.token' "$(step_key "$TEMPLATE" kendex GITHUB_TOKEN)"
 
 # Execute the template's command with the real release-selection helper.
 # Only its external HTTP dependency is replaced. Each release response must
 # reach the installer's arguments, so a fixed old pin fails this assertion.
 install_root="$SANDBOX/release-selection"
-mkdir -p "$install_root/bin" "$install_root/classifier/.agents/skills/review-gate/scripts" "$install_root/home"
-cp "$TEST_DIR/../../review-gate/scripts/install-latest.sh" "$install_root/classifier/.agents/skills/review-gate/scripts/"
+mkdir -p "$install_root/bin" "$install_root/classifier/.agents/skills/harness-ci/scripts" "$install_root/home"
+cp "$TEST_DIR/../scripts/install-latest.sh" "$install_root/classifier/.agents/skills/harness-ci/scripts/"
 mkdir -p "$install_root/classifier/.agents/skills/harness-ci/scripts/lib" \
   "$install_root/classifier/.agents/skills/change-scope/scripts/lib"
 cp "$TEST_DIR/../scripts/lib/change-class.sh" "$install_root/classifier/.agents/skills/harness-ci/scripts/lib/"
@@ -784,7 +772,7 @@ done
 # Plant the defect in the helper: this models the old fixed-version
 # installer while preserving the production command's dependency execution.
 sed 's/--version "$version"/--version main-build-250/' \
-  "$TEST_DIR/../../review-gate/scripts/install-latest.sh" >"$install_root/classifier/.agents/skills/review-gate/scripts/install-latest.sh"
+  "$TEST_DIR/../scripts/install-latest.sh" >"$install_root/classifier/.agents/skills/harness-ci/scripts/install-latest.sh"
 install_body="$(step_key "$TEMPLATE" kendex run)"
 (cd -- "$install_root" && env -i PATH="$install_root/bin:$PATH" HOME="$install_root/home" \
   RELEASE_TAG=v7.8.10 INSTALL_RECORD="$install_root/record" \

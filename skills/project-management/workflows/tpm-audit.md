@@ -16,6 +16,8 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 | `--single <file>` | `single` | The one item in an [audit-issues-input.md](../schemas/audit-issues-input.md) file |
 | `--project-order` | `project-order` | All projects and initiatives |
 
+`--inventory <file>` accompanies `--team` or `--issues` on Linear: the pass inventory the brief hands over, read per § 1.1.2.
+
 ---
 
 ## 1. Mode and Context
@@ -49,6 +51,12 @@ For an existing-issue entry in `INPUT_ITEMS`, use its `identifier` as the reques
 
 `TEAM` is `auth-check`'s `team`, a name; `TEAM_PREFIX` is that team's `key`. `teams get` looks up by name and needs no issue, so a team with none yet resolves and the audit proceeds. Halt when `auth-check` reports no team and when `teams get` resolves none — an audit that cannot resolve its own scope must not run unscoped. With the scope resolved, a row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode. Which path resolves and filters: [SKILL.md](../SKILL.md) § Scope by Path.
 
+### 1.1.2 Read the Pass Inventory
+
+**Skip if** TRACKER=github or MODE is not `team` or `issues`, and leave `[INVENTORY_FILE]` unbound. A full audit pass runs those two modes, and each lists the whole team. Project, project-order and single runs keep their live reads.
+
+`[INVENTORY_FILE]` is the brief's `--inventory` value, a fresh path its caller bound (audit-issues § 1.2.1). A brief with no `--inventory` leaves it unbound. Each command line below marked `§ 1.1.2` passes `--inventory [INVENTORY_FILE]` when it is bound, and runs without that flag when it is not. The first read given the file collects the team's every issue in every state into it. Each later read takes its rows from that file under its own filter (`linear.sh issues --help`, `--inventory`). A read that refuses `inventory-unread` halts the analysis with its error output, as any failed read does (§ 1.2). Never rerun it without `--inventory`: the live listing would be a second reading.
+
 ### 1.2 Load Label Policy
 
 ```bash
@@ -58,7 +66,13 @@ gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRAC
 
 `--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis notes in `analysis[]` and scopes itself to.
 
-Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
+Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). On TRACKER=linear under a declared taxonomy, run that preflight's label audit in this form:
+
+```bash
+.agents/skills/linear/scripts/linear.sh labels audit --inventory [INVENTORY_FILE]   # TRACKER=linear, § 1.1.2
+```
+
+A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
 
 ### 1.3 Fetch Projects
 
@@ -74,7 +88,7 @@ Fetch every project in ONE command. `projects list --state` matches one state ty
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --project "[PROJECT]" --state "Backlog,Todo,In Progress,In Review,Verifying" --max   # project mode
-.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review" --max               # team mode
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review" --max --inventory [INVENTORY_FILE]   # team mode, § 1.1.2
 .agents/skills/linear/scripts/linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe                                     # issues mode, one call
 gh issue view [N] --repo [REPOSITORY] --json number,title,body,labels,state,url                                                           # issues mode, github
 ```
@@ -100,7 +114,7 @@ gh issue view [N] --repo [REPOSITORY] --json body,comments                      
 Fetch active comparison rows in one command:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max --inventory [INVENTORY_FILE]   # § 1.1.2
 ```
 
 Each row carries its own `project` name, empty for an issue with none. Discard every row outside the § 1.1.1 team scope before comparison. Never loop `--project` over the projects from § 1.3. Use the active set for duplicates, relations, supersessions, and the § 6 cancellation sweep. Verifying rows remain comparison evidence (§ 1.1).
@@ -125,7 +139,13 @@ The same stated cap applies: past 200 issues the comparison set is partial, and 
 
 **Skip if** TRACKER=github — treat the repository as one scope.
 
-Read the project map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`, kept for § 3 and § 6.3. A map repository's project definitions are the entries of the `### Project map` block rendered in this skill's project instructions, each with its `kind`, `admits`, and `ends_when` or `role` ([project-map.md § Declaration](../references/project-map.md#declaration)); each entry's Linear id is the audit's `projects[].id`. A run whose audit returns `map-absent` has no map: for each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
+Read the project map, kept for § 3 and § 6.3:
+
+```bash
+.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]" --inventory [INVENTORY_FILE]   # § 1.1.2
+```
+
+A map repository's project definitions are the entries of the `### Project map` block rendered in this skill's project instructions, each with its `kind`, `admits`, and `ends_when` or `role` ([project-map.md § Declaration](../references/project-map.md#declaration)); each entry's Linear id is the audit's `projects[].id`. A run whose audit returns `map-absent` has no map: for each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
 
 ### 1.7 Collect Verification Evidence
 
@@ -236,6 +256,8 @@ This is the cancellation sweep. No mode that reaches this section skips it.
 Compare each input issue against the § 1.5 active set and its own closed search results. Same problem plus same approach is a duplicate (`duplicates[]`) whatever project it lives in; same problem with a genuinely different approach keeps both with a `related` link. When title and keyword matching finds nothing, extract the module or component name from the location field and search on that. Keep closed-row conclusions within that item's returned evidence and report any truncation; a truncated search is not proof of no match. Closed rows take no disposition (§ 1.1).
 
 When an input item's scope **fully covers** an existing issue, that is `supersedes[]` on the input item, not `duplicates[]`, subject to § 7.0's contract-parent scope transfer. Signals: the item's `decision_ref` supersedes the existing issue's governing decision, the item's `creates[]` is a superset of the existing deliverables, or the existing issue references a superseded decision.
+
+**Supersession record.** This comparison writes each `create`'s `create_fields.supersession` in the form [audit-output.md](../schemas/audit-output.md) § ISSUE Mode gives, from the rows and searches above, with no further search or list read. A `supersedes[]` entry is `superseded [ISSUE_ID]`, followed by `at completion` for `when: at-completion`, or `re-scoped [ISSUE_ID]` for `when: partial`. An existing issue on the `remove` side of a `duplicates[]` pair whose `keep` is the item is `duplicate [ISSUE_ID]`. A match kept separate with a `related` link has no entry. With no entry, the record is `none found; searched: [TERMS]`, naming the title, target and component terms the § 1.5 closed search and this section searched.
 
 ### 6.2 Obsolete
 
@@ -374,7 +396,7 @@ Otherwise, first match wins: creation bar failed → `skip` for a proposed item,
 
 **Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Canceled issue; new scope goes in a new issue with a `related` relation to the completed one.
 
-For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set) selects from § 1.2 — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. Its `add_relations` carries every relation § 5.1 keeps for the item; in single mode, which skips § 5, it carries the ones § 14 step 4 confirms. audit-issues § 7.2 persists them with the create. `reach` is the producer the input item's `impact` names — the same line the filing bar reads, never re-derived from the finding. `review_born` is true when `SOURCE` is `review`, `pr-comments`, or `local-review`, false otherwise; a `review_born` create at priority 2 also carries `symptom` from the input item, and is left blocked with a `reason` when the item states none. `regressed_by` is the input item's, copied as written and omitted when the item has none. Preserve confirmed input `supersedes[]` entries and their `when`, subject to § 7.0's contract-parent scope transfer; verify entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
+For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set) selects from § 1.2 — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. Its `add_relations` carries every relation § 5.1 keeps for the item; in single mode, which skips § 5, it carries the ones § 14 step 4 confirms. audit-issues § 7.2 persists them with the create. `reach` is the producer the input item's `impact` names — the same line the filing bar reads, never re-derived from the finding. `review_born` is true when `SOURCE` is `review`, `pr-comments`, or `local-review`, false otherwise; a `review_born` create at priority 2 also carries `symptom` from the input item, and is left blocked with a `reason` when the item states none. `regressed_by` is the input item's, copied as written and omitted when the item has none. Preserve confirmed input `supersedes[]` entries and their `when`, subject to § 7.0's contract-parent scope transfer; verify entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. `supersession` is the § 6.1 record, or in single mode the § 14 step 4 record. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
 
 ---
 
@@ -407,7 +429,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] The § 6 cancellation sweep ran against the § 1.5 active set; closed rows took no disposition, and each input item's closed-row findings report and respect any search truncation
 - [ ] TRACKER=linear: when the § 1.4.1 set is non-empty, one comments read covered the input set, candidate duplicate/relation/supersession rows, and every active cancellation candidate; an empty set made no read
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix, except an `add_relations.related` entry, which the linear skill's Blocked Label vs Issue Relations section lets name an issue in another team
-- [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
+- [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `supersession` record from the comparison that admitted it, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 - [ ] More than one create follows § 7.1's rework-parent rule: its placement, its children and its two exceptions; no create is a `make_child` under the input's `parent_issue` outside § 7.1's cases; no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)
 
@@ -434,7 +456,7 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
 
 1. **Input.** Read the file as § 1.1 reads `issues` mode. It holds exactly one `items[]` entry and no `hierarchy_contract`; any other shape halts naming the item count, and the caller runs `--issues`.
 2. **Scope and labels.** § 1.1.1, then § 1.2.
-3. **Placement.** Linear: the § 1.3 command, then the project whose name and description fit the item's `location`; in a map repository, the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing), with `project_needed` when it routes to none. GitHub: § 1.3's degradation.
+3. **Placement.** Linear: the § 1.3 command; with no map, choose the project whose name and description fit the item's `location`. In a map repository, use the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing). Quote the matching `admits` sentence in the `issues[]` row's `reason` and name the Location it admits. When no sentence admits that Location, return `project_needed` and explain the missing fit in `reason`; the examples are in § Routing. Reuse that map read. GitHub: § 1.3's degradation.
 4. **Duplicates by title, explicit supersession and relation confirmation.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 
    ```bash
@@ -443,6 +465,8 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
    ```
 
    Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). Check every input `supersedes[].identifier`, every `blocks_issues` and `blocked_by_issues` identifier, and every issue the item's text names as work it builds on or waits for against this same read, with no second tracker list. A Verifying row confirms a relation, never a supersession. Echo each confirmed `supersedes[]` identifier, its title, reason and `when` into the create row's `supersedes[]`. Echo each confirmed `blocks_issues` identifier into its `add_relations.blocks`, and each confirmed `blocked_by_issues` identifier or text-named prerequisite into `add_relations.blocked_by`. Report each absent identifier in the row's `reason` as not touched and omit it from `supersedes[]` and `add_relations`. A confirmed explicit supersession is disposed by its `when`, not treated as a duplicate title. Another title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
+
+   This same read gives a `create` its `create_fields.supersession` in the § 6.1 form: each confirmed `supersedes[]` entry by its `when`, else `none found; searched: [TERMS]`, naming the title terms checked against the open titles.
 
 5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "make_child", "parent": null}` when the input's `parent_issue` names a rework parent, or when the input's `in_pr_bundle` is true and its `parent_issue` is the issue being worked (§ 7.1's in-PR bundle exception), else `{"action": "none", "parent": null}`. When the input `description` has `## Owner directive (verbatim)`, copy its block unchanged into `create_fields.description`; restated Requirements and Done when may add detail, never replace, shorten or reorder it.
 

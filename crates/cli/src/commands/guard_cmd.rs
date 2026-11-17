@@ -14,6 +14,8 @@ use super::{answer, out, say};
 #[derive(Subcommand)]
 pub enum GuardCommand {
     /// Run the checks for a Git hook
+    ///
+    /// Exit statuses: 0 clean, 1 violations, 2 the check could not run.
     Run {
         /// pre-commit | commit-msg
         hook: String,
@@ -21,10 +23,24 @@ pub enum GuardCommand {
         message_file: Option<PathBuf>,
     },
     /// Turn on this repository's Git commit checks
+    ///
+    /// Exit statuses: 0 clean, 1 violations, 2 the check could not run.
     Install,
     /// Turn off this repository's Git commit checks
+    ///
+    /// Exit statuses: 0 clean, 1 violations, 2 the check could not run.
     Uninstall,
     /// Check whether this repository's Git hooks are active
+    ///
+    /// Exit statuses (relayed from the commit-guards package):
+    ///
+    /// 0 armed.
+    ///
+    /// 1 not armed (drifted, absent, or core.hooksPath switching hooks off).
+    ///
+    /// 2 the check could not run (no commit-guards package in the repository,
+    /// an unreadable hooks directory, a core.hooksPath outside the check's reach,
+    /// or a repository git refuses to read).
     Check,
 }
 

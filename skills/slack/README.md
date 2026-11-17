@@ -75,7 +75,7 @@ The overseer records its ruling and closes the question. A reserved question wai
 
 A request forwarded by a satellite's Jarvis appears as a new channel message naming the computer, with the request time in your time zone, how forwarding was confirmed and the request's words. The overseer's notices follow in that thread. The confirmation does not prove who asked: reply in that thread if the request is not yours. The overseer judges the confirmation words in its mailbox, where the references stay. If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
 
-Send text as standard Markdown and file comments as Slack's mrkdwn. [Message standard](SKILL.md#message-standard) explains the difference. Use `slack thread` for an explicit thread read and `slack post --thread TS` for a reply confined to that thread.
+Send text and file comments as standard Markdown; the package converts a file comment to Slack's mrkdwn. [Message standard](SKILL.md#message-standard) explains the difference. Use `slack thread` for an explicit thread read and `slack post --thread TS` for a reply confined to that thread.
 
 Repeat `--file` on one `slack post` to share related files with one comment: `slack post --thread TS --file A --file B --text T`. A rejected file or failed upload shares no partial group. Slack's recipient settings decide notifications.
 

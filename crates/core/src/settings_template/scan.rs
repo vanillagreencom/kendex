@@ -556,6 +556,15 @@ fn decode_entry(
             fix: "spell keys bare, with letters, digits and underscores, starting with a letter or underscore"
                 .to_owned(),
         });
+    } else if shown.starts_with(super::LOADER_PREFIX) {
+        problems.push(TemplateFinding {
+            line,
+            problem: format!(
+                "{shown} starts with {}, the prefix kendex-env.sh keeps for its own variables, so every load of a file holding it fails",
+                super::LOADER_PREFIX
+            ),
+            fix: format!("rename the key so it does not start with {}", super::LOADER_PREFIX),
+        });
     }
     if comment.is_empty() {
         problems.push(TemplateFinding {

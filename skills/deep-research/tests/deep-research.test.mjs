@@ -573,7 +573,7 @@ test("KENDEX_ENV_FILE names the private env file, and a quoted value reads back 
 
 // The shared shell loader resolves KENDEX_ENV_FILE from the process
 // environment, then .kendex/settings.toml, then kendex.settings.toml. This
-// package has to agree, or it sources a different private file from every
+// package has to agree, or it reads a different private file from every
 // other package in the same project.
 test("KENDEX_ENV_FILE keeps the same precedence the shell loader gives it", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-envlayers-"));

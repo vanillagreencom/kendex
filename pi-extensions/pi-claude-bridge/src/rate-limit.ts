@@ -1,4 +1,4 @@
-import { USAGE_LIMIT_ERROR_PREFIXES } from "@anthropic-ai/claude-agent-sdk";
+import { USAGE_LIMIT_ERROR_PREFIXES } from "@anthropic-ai/claude-agent-sdk/core";
 
 export const RATE_LIMIT_AUTO_RESUME_EVENT = "kendex:rate-limit";
 export const RATE_LIMIT_TOKEN = "\x1b[31m[rate-limit]\x1b[39m";

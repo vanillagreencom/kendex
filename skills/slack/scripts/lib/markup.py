@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 from api import MARKDOWN_LIMIT
 from refusals import Refusal, keyed, notice
@@ -33,10 +33,22 @@ SKIP_ZONES = {
     "angle": r"<[^<>\n]*>",
     "url": r"\b(?:[a-zA-Z][a-zA-Z0-9+.-]*://|www\.)[^\s<>`]+",
 }
-LITERAL = re.compile("|".join(SKIP_ZONES.values()), re.MULTILINE)
+LITERAL = re.compile("|".join(f"(?P<zone_{name}>{zone})" for name, zone in SKIP_ZONES.items()), re.MULTILINE)
 METADATA_SECONDS = 86400
 Tracker = Tuple[re.Pattern, Callable[[str], str]]
-REFERENCES = re.compile(r"(?<![\w/#])(?:[\w.-]+(?:/[\w.-]+)?)?#[0-9]+\b|\b[0-9a-fA-F]{4,64}\b")
+# A commit is 7 to 64 hex characters with a letter, outside a hyphenated
+# word: years, "ISO-8601" and UUID groups are not commits.
+REFERENCES = re.compile(r"(?<![\w/#])(?:[\w.-]+(?:/[\w.-]+)?)?#[0-9]+\b"
+                        r"|(?<![\w-])(?=[0-9a-fA-F]{7,64}(?![\w-]))[0-9]*[a-fA-F][0-9a-fA-F]*")
+# Standard Markdown forms that mrkdwn writes differently; a heading or bold
+# span is also where a tracker link adds no bold of its own.
+HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(\S.*?)(?:[ \t]+#+)?[ \t]*$", re.MULTILINE)
+BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+BULLET = re.compile(r"^([ \t]*)[-*+][ \t]+", re.MULTILINE)
+# A leading quote marker is mrkdwn's own; every other `&`, `<` and `>` is text.
+CONTROL = re.compile(r"(^[ \t]*(?:>[ \t]*)+)|[&<>]", re.MULTILINE)
+SLACK_TOKEN = re.compile(r"<(?:[@#!]|[a-zA-Z][a-zA-Z0-9+.-]*:)[^<>\n]*>")
+INLINE_LINK = re.compile(r"\[(.*)\]\(([a-zA-Z][a-zA-Z0-9+.-]*:[^\s|<>]*)\)")
 
 
 class TrackerMetadata:
@@ -164,8 +176,18 @@ class Verbatim:
         return f"```\n{escape(self.text)}\n```"
 
 
-# A run of outbound text: plain, a tracker link as (label, url), or a block.
-Part = Union[str, Tuple[str, str], Verbatim]
+class Link(NamedTuple):
+    """A linked reference. A tracker issue shows its id bracketed and bold;
+    `bold` says the text around it is already bold."""
+
+    label: str
+    url: str
+    issue: bool
+    bold: bool
+
+
+# A run of outbound text: plain, a link, or a block.
+Part = Union[str, Link, Verbatim]
 
 
 def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_comment: bool = False,
@@ -173,18 +195,24 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
     """Link bare tracker ids once and return the actual outbound representation.
 
     `text` is one string, or strings and `Verbatim` blocks in order; a
-    string is linked, a block never is. Files take mrkdwn; messages retain
-    standard Markdown, including after link expansion. `fallback` remains
-    accepted for the explicit single-message post caller.
+    string is linked, a block never is. A file comment's standard Markdown
+    is converted to mrkdwn; messages retain standard Markdown, including
+    after link expansion. A text matching the secret pattern returns as
+    written, unlinked and unconverted, so the caller's check refuses the
+    bytes that matched. `fallback` remains accepted for the explicit
+    single-message post caller.
     """
     pieces = [text] if isinstance(text, str) else list(text)
-    # Expansion must not hide a match from the caller's refusal check.
-    preserve = secret_pattern().search("".join(_render(piece, mrkdwn=False) for piece in pieces).encode()) is not None
+    written = "".join(_render(piece, mrkdwn=False) for piece in pieces)
+    # Linking or conversion can join a character to a match and hide it.
+    preserve = secret_pattern().search(written.encode()) is not None
+    if preserve:
+        return written, "text" if file_comment else "markdown_text"
     tracker = TRACKERS.get(root)
     references = TRACKERS.references(root)
     parts: List[Part] = []
     for piece in pieces:
-        if isinstance(piece, Verbatim) or preserve:
+        if isinstance(piece, Verbatim):
             parts.append(piece)
         else:
             parts.extend(_linked(piece, tracker, references))
@@ -192,7 +220,7 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
     mrkdwn = file_comment
     if not mrkdwn:
         return markdown, "markdown_text"
-    return "".join(_render(part, mrkdwn=True) for part in parts), "text"
+    return _mrkdwn(parts), "text"
 
 
 def continuations(text: str) -> List[str]:
@@ -278,8 +306,13 @@ def _partition(text: str, capacity: int) -> List[str]:
             current = opening + "\n" + content + separator + ending
         else:
             if len(current) + len(literal) > capacity:
-                chunks.append(current)
-                current = ""
+                # A word joined to the literal, such as a link's bold
+                # marker, moves with it to the next part.
+                cut = max(current.rfind(" "), current.rfind("\n")) + 1
+                if cut == 0 or len(current) - cut + len(literal) > capacity:
+                    cut = len(current)
+                chunks.append(current[:cut])
+                current = current[cut:]
             current += literal
         pos = match.end()
     ordinary(text[pos:])
@@ -294,13 +327,17 @@ def _linked(text: str, tracker: Optional[Tracker], references: Tuple[re.Pattern,
     parts: List[Part] = []
     pos = 0
     reference_pattern, reference_url = references
+    masked = _masked(text)
+    strong = [(m.start(), m.end()) for m in chain(BOLD.finditer(masked), HEADING.finditer(masked))]
     pattern = re.compile(reference_pattern.pattern + ("|" + tracker[0].pattern if tracker is not None else ""))
     for start, end in chain(((literal.start(), literal.end()) for literal in LITERAL.finditer(text)), [(len(text), len(text))]):
         for match in pattern.finditer(text, pos, start):
             identifier = match.group()
-            target = reference_url(identifier) if reference_pattern.fullmatch(identifier) else tracker[1](identifier)
+            issue = reference_pattern.fullmatch(identifier) is None
+            target = tracker[1](identifier) if issue else reference_url(identifier)
+            bold = any(s <= match.start() and match.end() <= e for s, e in strong)
             parts.append(text[pos:match.start()])
-            parts.append((identifier, target) if target is not None else identifier)
+            parts.append(Link(identifier, target, issue, bold) if target is not None else identifier)
             pos = match.end()
         parts.append(text[pos:end])
         pos = end
@@ -308,13 +345,83 @@ def _linked(text: str, tracker: Optional[Tracker], references: Tuple[re.Pattern,
     return parts
 
 
+def _held(match: re.Match) -> bool:
+    """A literal region stays as written; an angle run that is not a Slack
+    token is text, its `<` and `>` escaped in mrkdwn."""
+    return match.group("zone_angle") is None or SLACK_TOKEN.fullmatch(match.group()) is not None
+
+
+def _masked(text: str) -> str:
+    """`text` with each literal region `_mrkdwn` holds aside as a run of
+    neutral characters of the same length, so a bold or heading test sees
+    the spans both routes format: a `**` inside code is not a bold marker.
+    A fence keeps its newlines, so the lines around it stay lines."""
+
+    def mask(match: re.Match) -> str:
+        literal = match.group()
+        if not _held(match):
+            return literal
+        if match.group("zone_fence") is not None:
+            return re.sub(r"[^\n]", "x", literal)
+        return "x" * len(literal)
+
+    return LITERAL.sub(mask, text)
+
+
 def _render(part: Part, mrkdwn: bool) -> str:
     if isinstance(part, str):
         return part
     if isinstance(part, Verbatim):
         return part.mrkdwn() if mrkdwn else part.markdown()
-    label, target = part
-    return f"<{target}|{label}>" if mrkdwn else f"[{label}]({target})"
+    label = f"[{part.label}]" if part.issue else part.label
+    star = "*" if part.issue and not part.bold else ""
+    if mrkdwn:
+        return f"{star}<{part.url}|{label}>{star}"
+    label = label.replace("[", r"\[").replace("]", r"\]")
+    return f"{star * 2}[{label}]({part.url}){star * 2}"
+
+
+def _mrkdwn(parts: List[Part]) -> str:
+    """Standard Markdown as mrkdwn: headings and `**bold**` as `*bold*`,
+    list markers as `•`, inline links as `<url|label>`, and `&`, `<`, `>`
+    escaped. Code, Slack tokens, bare URLs and any form not read here stay
+    as written; code is escaped, so it reads as typed.
+
+    Links and blocks, then literal regions, stand in as one placeholder
+    character the text lacks, so line rules see whole lines around them."""
+    plain = "".join(part for part in parts if isinstance(part, str))
+    free = (chr(code) for code in range(0xE000, 0xF900) if chr(code) not in plain)
+    held, zoned = next(free), next(free)
+    atoms = [_render(part, mrkdwn=True) for part in parts if not isinstance(part, str)]
+    text = "".join(part if isinstance(part, str) else held for part in parts)
+    zones: List[str] = []
+
+    def zone(match: re.Match) -> str:
+        literal = match.group()
+        if not _held(match):
+            return literal
+        if match.group("zone_markdown") is not None:
+            link = INLINE_LINK.fullmatch(literal)
+            if link is not None:
+                label = re.sub(r"\\([!-/:-@\[-`{-~])", r"\1", link.group(1))
+                literal = f"<{link.group(2)}|{escape(label)}>"
+        elif match.group("zone_fence") is not None or match.group("zone_code") is not None:
+            literal = escape(literal)
+        # A fence's closing newline stays text, so the next line starts a line.
+        tail = "\n" if literal.endswith("\n") else ""
+        zones.append(literal[: len(literal) - len(tail)])
+        return zoned + tail
+
+    text = LITERAL.sub(zone, text)
+    text = CONTROL.sub(lambda m: m.group(1) or escape(m.group()), text)
+    text = HEADING.sub(lambda m: "*" + BOLD.sub(r"\1", m.group(1)) + "*", text)
+    text = BULLET.sub("\\1• ", text)
+    text = BOLD.sub(r"*\1*", text)
+    for mark, values in ((zoned, zones), (held, atoms)):
+        assert text.count(mark) == len(values), "mrkdwn placeholder count changed"
+        pieces = text.split(mark)
+        text = pieces[0] + "".join(value + piece for value, piece in zip(values, pieces[1:]))
+    return text
 
 
 def escape(text: str) -> str:

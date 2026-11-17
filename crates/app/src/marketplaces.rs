@@ -65,7 +65,7 @@ pub struct MarketplaceRow {
     pub path: Option<String>,
     /// Where that folder is on this machine, from
     /// [`kendex_core::source::path_root`]: the declaration resolved against
-    /// the place that declares it, slashed. What `repo_identity` folds for
+    /// the place that declares it, slashed. What `repo_identity` carries for
     /// a folder, and what a bookmark of one records. Two directories
     /// never share a string, which the spelling alone cannot promise:
     /// rootedness is the running platform's answer, and a POSIX-rooted path

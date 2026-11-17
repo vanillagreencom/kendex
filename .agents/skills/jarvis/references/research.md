@@ -19,5 +19,6 @@
 - State the standard, scope and period before measuring work. Read evidence from its source and compare actual results with that standard.
 - Measure cost, elapsed time, waits, repeated work and unresolved failures when those measures serve the stated audit. Record missing evidence and each gap's owner and closing check.
 - For a scheduled audit, record its due time and scope on its tracker item under [long-session.md:Homes](long-session.md#homes). Compare with the prior audit, verify open actions and set their next check.
+- Count work as done only when its result meets its acceptance check. A merge, a close or a worker's success proves only that event, per [tasks.md:Check the outcome](../workflows/tasks.md#4-check-the-outcome). Count abandoned attempts against the outcome they sought. A grouping parent is not a second outcome. A denominator the audit could not read stays unread, and no rate is computed from it.
 - For a documentation-growth audit, read changed and added guidance. Check whether each section has a current task, one rule owner and a reading route. Remove repeated or obsolete instructions through their source owner. Keep facts in the home defined by [memory.md:Home](memory.md#home).
 - Report results through [communication.md:Message types](communication.md#message-types). Keep open audit actions open in the tracker until their checks pass.

@@ -1,6 +1,35 @@
-// The lines a write's answer accounts for. They are Rust's; this side only
-// puts them on the screen.
+// The lines a write's answer accounts for, and why that account is short.
+// They are Rust's; this side only puts them on the screen.
 import { toast } from "sonner";
+import type { ItemWarning } from "@/bindings";
+import { UNFINISHED_STEP, unfinishedTitle } from "@/lib/copy";
+import { NO_REASON_GIVEN } from "@/lib/settled";
+import { useProblemsStore } from "@/stores/problems";
+
+/** Say the step behind a landed write that failed — `AuditView.unfinished`,
+ *  on the answer or on the view it nests — beside what the surface already
+ *  said for the write. Absent, it says nothing.
+ *
+ *  Not a refusal: the write stands, so the caller's own success line, its
+ *  account and its fresh view all still land. The failure goes to the error
+ *  dialog rather than a toast because it is a failure of an action the
+ *  person just took, and because the commit offer waits behind that dialog
+ *  (`asks-first.ts`): the person reads what landed and what did not before
+ *  being asked what to do with the files, and leaving or refusing the
+ *  commit afterwards takes neither back. A run over several writes keeps
+ *  each one's account through the dialog's own join rule
+ *  (`useProblemsStore`). */
+export function sayUnfinished(
+  subject: string,
+  unfinished: string | null | undefined,
+): void {
+  if (unfinished === null || unfinished === undefined) return;
+  useProblemsStore.getState().showError({
+    title: unfinishedTitle(subject),
+    message: unfinished === "" ? NO_REASON_GIVEN : unfinished,
+    steps: [UNFINISHED_STEP],
+  });
+}
 
 /** Show the account, every line of it, uncut. Nothing below the window
  *  can tell kendex's own notices from a departing package's output by the
@@ -10,6 +39,19 @@ import { toast } from "sonner";
  *  names the manual remedy. */
 export function sayUndone(undone: string[] | undefined) {
   for (const line of undone ?? []) toast.message(line);
+}
+
+/** Say what a write reported about itself: the links an adopt, a fork or a
+ *  template save kept as written, each with its fix. Only the write can say
+ *  them, since the files read the same afterwards whether a link was
+ *  converted or kept, so a toast carries them and nothing keeps them.
+ *  Absent, it says nothing. */
+export function sayWritten(written: ItemWarning[] | undefined): void {
+  for (const warning of written ?? []) {
+    toast.message(`${warning.name}: ${warning.message}`, {
+      description: warning.remediation ?? undefined,
+    });
+  }
 }
 
 /** The lines of `value`, or nothing if it is not a list of them. */

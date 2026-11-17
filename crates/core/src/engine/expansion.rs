@@ -454,6 +454,7 @@ impl Expansion {
             harnesses: None,
             method: None,
             env: None,
+            links: None,
         };
         let mut selected = Dependency {
             chosen_rev: decl.rev.clone(),

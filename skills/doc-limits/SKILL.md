@@ -16,13 +16,13 @@ tags: [automation]
 
 # Doc Limits
 
-Run the document byte-ceiling check before review and in CI. The commit-guards pre-commit and pre-push chains use the staged mode; at push the index is held equal to HEAD first, so that mode measures the tree being pushed.
+Run the document byte-ceiling check before review and in CI. The commit-guards pre-commit chain uses the staged mode.
 
 ```bash
 .agents/skills/doc-limits/scripts/doc-limits
 .agents/skills/doc-limits/scripts/doc-limits --staged
 ```
 
-The check measures `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, at the root and at any depth, and no other file. A document over its limit fails the check. [references/policy.md § Path classes](references/policy.md#path-classes) says how a class sets a ceiling among those files.
+The check measures `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, at the root and at any depth, and no other file. A document over its limit fails the check. Bring it under its limit in this order: cut restated content first, split only at a real subject boundary, and never delete a rule to fit. [references/policy.md § Path classes](references/policy.md#path-classes) says how a class sets a ceiling among those files.
 
 A document that must stay whole gets a row in the configured excludes file with its reason. Class selection and the exclusion format are [references/policy.md](references/policy.md). Flags, settings and exit codes are in `doc-limits --help`.

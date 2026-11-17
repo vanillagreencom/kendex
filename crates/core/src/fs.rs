@@ -93,6 +93,11 @@ pub(crate) fn executable_if_script(path: &Path, bytes: &[u8]) -> Result<()> {
 /// the link stays — renaming over the link itself would swap a user's
 /// dotfiles link for a detached copy.
 pub fn atomic_write(path: &Path, contents: &str) -> Result<()> {
+    atomic_write_bytes(path, contents.as_bytes())
+}
+
+/// Byte-preserving counterpart for rendered files, including non-UTF-8 assets.
+pub(crate) fn atomic_write_bytes(path: &Path, contents: &[u8]) -> Result<()> {
     write_then_rename(path, contents, false, true)
 }
 
@@ -100,18 +105,18 @@ pub fn atomic_write(path: &Path, contents: &str) -> Result<()> {
 /// the rename and the parent directory syncs after, so after this returns
 /// the file either exists complete or not at all — even across power loss.
 pub fn atomic_write_durable(path: &Path, contents: &str) -> Result<()> {
-    write_then_rename(path, contents, true, true)
+    write_then_rename(path, contents.as_bytes(), true, true)
 }
 
 /// Atomic cache write that replaces a final symlink instead of writing
 /// through it. Cache entries are owned files, never user-managed links.
 pub(crate) fn atomic_write_no_follow(path: &Path, contents: &str) -> Result<()> {
-    write_then_rename(path, contents, false, false)
+    write_then_rename(path, contents.as_bytes(), false, false)
 }
 
 fn write_then_rename(
     path: &Path,
-    contents: &str,
+    contents: &[u8],
     durable: bool,
     follow_final_link: bool,
 ) -> Result<()> {
@@ -123,6 +128,14 @@ fn write_then_rename(
         .parent()
         .ok_or_else(|| CoreError::io(&path, std::io::Error::other("path has no parent")))?;
     fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
+    // A rename installs the temporary file's mode. Carry the destination's
+    // permission bits before publishing it so executable hooks stay executable.
+    // A no-follow cache write replaces a link, not its target or its mode.
+    let permissions = match fs::symlink_metadata(&path) {
+        Ok(meta) => meta.is_file().then(|| meta.permissions()),
+        Err(error) if error.kind() == NotFound => None,
+        Err(error) => return Err(CoreError::io(&path, error)),
+    };
     // One temp name per write, not per process: two writers sharing a name
     // truncate each other's bytes, and the one that loses the rename either
     // fails with ENOENT or writes its payload straight over the live file
@@ -134,11 +147,16 @@ fn write_then_rename(
             std::process::id(),
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
-        match fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&candidate)
-        {
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        if permissions.is_some() {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            // Shared config edits retain private values. Restrict access at
+            // creation: chmod after writing cannot revoke an open reader.
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
             Ok(file) => break (candidate, file),
             Err(error) if error.kind() == AlreadyExists => continue,
             Err(error) => return Err(CoreError::io(&candidate, error)),
@@ -152,7 +170,15 @@ fn write_then_rename(
         let _ = fs::remove_file(&tmp);
         CoreError::io(at, error)
     };
-    if let Err(error) = temp_file.write_all(contents.as_bytes()) {
+    if let Err(error) = temp_file.write_all(contents) {
+        drop(temp_file);
+        return Err(discard(error, &tmp));
+    }
+    #[cfg(all(test, unix))]
+    tests::observe_temporary(&tmp);
+    if let Some(permissions) = permissions
+        && let Err(error) = temp_file.set_permissions(permissions)
+    {
         drop(temp_file);
         return Err(discard(error, &tmp));
     }

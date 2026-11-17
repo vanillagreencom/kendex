@@ -23,15 +23,18 @@ bad() {
   return 0
 }
 
-# These declarations forward both fixed environment pairs. This checks wiring,
-# not hosted resolution. The FLEET pair also supplies the issue-token step.
+# These declarations forward the fixed environment pairs. This checks wiring,
+# not hosted resolution. The FLEET pair also supplies the issue-token step,
+# and the optional KENDEX_LAND pair the landing token step.
 if python3 - "$TEST_DIR/../kendex-refresh.yml" "$TEST_DIR/../../skills/review-gate/templates/kendex-refresh.yml" <<'FORWARDING'
 from pathlib import Path
 import re, sys
 expected = {'KENDEX_APP_ID': '${{ secrets.KENDEX_APP_ID }}',
             'KENDEX_APP_PRIVATE_KEY': '${{ secrets.KENDEX_APP_PRIVATE_KEY }}',
             'FLEET_GH_APP_ID': '${{ secrets.FLEET_GH_APP_ID }}',
-            'FLEET_GH_APP_PRIVATE_KEY': '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'}
+            'FLEET_GH_APP_PRIVATE_KEY': '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}',
+            'KENDEX_LAND_APP_ID': '${{ secrets.KENDEX_LAND_APP_ID }}',
+            'KENDEX_LAND_APP_PRIVATE_KEY': '${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}'}
 def check(text):
     block = text.split('    secrets:\n', 1)[1]
     actual = dict(re.findall(r'^      ([A-Za-z0-9_-]+): (.+)$', block, re.M))
@@ -48,7 +51,7 @@ for path in sys.argv[1:]:
         except AssertionError: pass
         else: raise AssertionError('missing forwarding control '+name)
 FORWARDING
-then ok 'default callers forward both fixed pairs; omitted same-name controls fail';
+then ok 'default callers forward the fixed pairs; omitted same-name controls fail';
 else bad 'default caller credential forwarding'; fi
 
 if python3 - "$WORKFLOW" "$TMP" "$BASH" <<'PY'
@@ -58,6 +61,7 @@ import copy, datetime, io, json, os, pathlib, re, subprocess, sys, zipfile
 text = open(sys.argv[1]).read()
 assert 'secrets[' not in text
 job = dict(re.findall(r'^    (environment|runs-on): (.+)$', text, re.M))
+job['env'] = dict(re.findall(r'^      ([A-Z_]+): (.+)$', text.split('\n    env:\n', 1)[1].split('\n    steps:\n', 1)[0], re.M))
 steps = []
 for block in re.split(r'^      - ', text, flags=re.M)[1:]:
     step = {}; current = None
@@ -118,7 +122,7 @@ def check(job):
     assert job['runs-on'] == "${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}"
     checkouts = [s for s in steps if s.get('uses', '').startswith('actions/checkout@')]
     assert len(checkouts) == 2
-    consumer, kendex = checkouts
+    kendex, consumer = checkouts
     assert all(s['with']['persist-credentials'] == 'false' for s in checkouts)
     assert consumer['with']['path'] == 'consumer' and 'repository' not in consumer['with']
     assert kendex['with'] == {'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
@@ -147,8 +151,27 @@ def check(job):
     assert install['working-directory'] == 'kendex'
     assert install['env'] == {'GH_TOKEN': '""', 'WORKFLOW_REF': '${{ job.workflow_ref }}', 'WORKFLOW_SHA': '${{ job.workflow_sha }}'}
     tokens = [s for s in steps if s.get('uses', '').startswith('actions/create-github-app-token@')]
-    assert len(tokens) == 2
-    repository, upstream = tokens
+    assert len(tokens) == 3
+    repository, land, upstream = tokens
+    # The landing token: the consumer repository alone, contents: write
+    # alone, minted only from a complete landing pair, a failed mint leaving
+    # it empty, and read by the refresh step alone. The job also says
+    # whether either name is set, so the refresh step reports a token that
+    # did not arrive.
+    assert job['env'] == {'KENDEX_LAND_PAIR': "${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}",
+                          'KENDEX_LAND_CONFIGURED': "${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}"}, job['env']
+    assert land['id'] == 'land-token' and land.get('continue-on-error') is True
+    assert land['if'] == "steps.inputs.outputs.route == 'full' && env.KENDEX_LAND_PAIR == 'true'"
+    assert land['with']['owner'] == '${{ github.repository_owner }}'
+    assert land['with']['repositories'] == '${{ github.event.repository.name }}'
+    assert land['with']['app-id'] == '${{ secrets.KENDEX_LAND_APP_ID }}'
+    assert land['with']['private-key'] == '${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}'
+    assert {k: v for k, v in land['with'].items() if k.startswith('permission-')} == {'permission-contents': 'write'}
+    landing = [s for s in steps if 'steps.land-token.outputs.token' in json.dumps(s)]
+    assert len(landing) == 1 and landing[0]['env']['KENDEX_LAND_TOKEN'] == '${{ steps.land-token.outputs.token }}'
+    assert 'refresh-consumer.sh' in landing[0]['run']
+    assert landing[0]['env']['GH_TOKEN'] == '${{ steps.token.outputs.token }}'
+    assert steps.index(land) < steps.index(landing[0])
     assert steps.index(repository) > steps.index(install)
     assert repository['with']['owner'] == '${{ github.repository_owner }}'
     assert repository['with']['repositories'] == '${{ github.event.repository.name }}'
@@ -180,7 +203,8 @@ for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
     print(f'  executed: {script} from release checkout with consumer cwd; status=0,47')
 for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token',
                  'consumer-disabled-exec', 'reviews-disabled-exec', 'consumer-masked-failure', 'reviews-masked-failure',
-                 'environment', 'app-secret-name', 'dynamic-secret-index', 'mixed-pair', 'unconditional-organization'):
+                 'environment', 'app-secret-name', 'dynamic-secret-index', 'mixed-pair', 'unconditional-organization',
+                 'land-workflows', 'land-exposure', 'land-shared', 'land-required'):
     j = copy.deepcopy(job); steps = j['steps']
     refresh = next(s for s in steps if 'refresh-consumer.sh' in s.get('run', ''))
     if mutation == 'consumer-script':
@@ -201,6 +225,14 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
         next(s for s in steps if s.get('id') == 'token')['with']['private-key'] = '${{ secrets.KENDEX_APP_PRIVATE_KEY || secrets.FLEET_GH_APP_PRIVATE_KEY }}'
     elif mutation == 'unconditional-organization':
         next(s for s in steps if s.get('id') == 'token')['with']['permission-organization-secrets'] = 'read'
+    elif mutation == 'land-workflows':
+        next(s for s in steps if s.get('id') == 'land-token')['with']['permission-workflows'] = 'write'
+    elif mutation == 'land-exposure':
+        next(s for s in steps if 'refresh-reviews.sh' in s.get('run', ''))['env']['KENDEX_LAND_TOKEN'] = '${{ steps.land-token.outputs.token }}'
+    elif mutation == 'land-shared':
+        refresh['env']['GH_TOKEN'] = '${{ steps.land-token.outputs.token }}'
+    elif mutation == 'land-required':
+        del next(s for s in steps if s.get('id') == 'land-token')['continue-on-error']
     elif mutation.endswith(('-disabled-exec', '-masked-failure')):
         script = 'refresh-consumer.sh' if mutation.startswith('consumer-') else 'refresh-reviews.sh'
         step = next(s for s in steps if script in s.get('run', ''))
@@ -222,7 +254,23 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
 
 # Execute the first step unchanged. Only the git and REST transports are
 # recorded fixtures; all tuple, artifact and review decisions are production.
-check_step = job['steps'][0]
+check_step = next(s for s in job['steps'] if s.get('id') == 'inputs')
+assert job['steps'][0]['with']['ref'] == '${{ job.workflow_sha }}'
+assert check_step['run'] == 'set -euo pipefail\nexec python3 "$GITHUB_WORKSPACE/kendex/refresh/check-inputs.py"\n'
+release_text = (pathlib.Path(sys.argv[1]).parent / 'refresh-release.yml').read_text()
+assert 'value: ${{ jobs.release.outputs.route }}' in release_text
+assert "route: ${{ steps.inputs.outputs.route || 'full' }}" in release_text
+assert "if: job.workflow_sha != ''" in release_text
+assert "if: steps.checkout.outcome == 'success'" in release_text
+assert 'continue-on-error: true' in release_text
+assert 'WORKFLOW_SHA: ${{ job.workflow_sha }}' in release_text
+assert 'ref: ${{ job.workflow_sha }}' in release_text
+assert 'repository: ${{ job.workflow_repository }}' in release_text
+assert 'exec python3 "$GITHUB_WORKSPACE/kendex/refresh/check-inputs.py"' in release_text
+assert 'upload-artifact' not in release_text  # only a completed refresh attests current inputs
+checker = pathlib.Path(sys.argv[1]).parents[2] / 'refresh/check-inputs.py'
+# Run the extracted production code through the clock wrapper below.
+check_step['run'] = "python3 - <<'PY'\n" + checker.read_text() + 'PY\n'
 assert check_step['id'] == 'inputs'
 assert check_step['env']['WORKFLOW_SHA'] == '${{ job.workflow_sha }}'
 assert 'permissions:' not in text.split('jobs:\n', 1)[1].split('    steps:', 1)[0]
@@ -231,7 +279,10 @@ full_gate = "steps.inputs.outputs.route == 'full'"
 def check_gates(candidate):
     save = next(s for s in candidate['steps'] if s.get('uses', '').startswith('actions/upload-artifact@'))
     render = next(s for s in candidate['steps'] if s.get('id') == 'refresh')
-    assert all(s.get('if') == gate for s in candidate['steps'][1:] if s is not save and s is not render), 'later-step-ungated'
+    land = next(s for s in candidate['steps'] if s.get('id') == 'land-token')
+    assert all(s.get('if') == gate for s in candidate['steps'][candidate['steps'].index(next(s for s in candidate['steps'] if s.get('id') == 'inputs'))+1:] if s not in (save, render, land)), 'later-step-ungated'
+    # Only the render step reads the landing token.
+    assert land['if'] == full_gate + " && env.KENDEX_LAND_PAIR == 'true'"
     # The review route runs no render and so saves no record.
     assert render['if'] == full_gate
     assert save['if'] == full_gate + " && steps.refresh.outputs.state == 'current' && steps.refresh.outputs.sources == 'covered' && steps.inputs.outputs.record-path != ''"
@@ -239,7 +290,7 @@ def check_gates(candidate):
     assert render['run'].endswith('refresh-consumer.sh"\n')
 check_gates(job)
 ungated = copy.deepcopy(job)
-ungated['steps'][1]['if'] += ' || true'
+ungated['steps'][2]['if'] += ' || true'
 try: check_gates(ungated)
 except AssertionError as error: assert error.args == ('later-step-ungated',)
 else: raise AssertionError('must-fail control missed later-step-ungated')
@@ -308,7 +359,9 @@ world['record'] = dict(inputs=tuple_record, run=8, attempt=1)
 now = datetime.datetime(2026, 10, 17, tzinfo=datetime.timezone.utc)
 recent = (now - datetime.timedelta(hours=1)).isoformat()
 old = (now - datetime.timedelta(hours=25)).isoformat()
-cases = [('unchanged', {}, 'skip')]
+cases = [('unchanged-consumer-sha-differs-from-release', {}, 'skip'),
+         ('changed-release-sha', {'workflow_sha': 'e'*40}, 'full'),
+         ('unavailable-release-identity', {'workflow_sha': ''}, 'full')]
 for field in tuple_record:
     changed = copy.deepcopy(tuple_record)
     changed[field] = [] if field == 'tags' else 'd'*40
@@ -337,6 +390,19 @@ def job_steps(check='success', checkout='skipped', render='skipped'):
     return [dict(steps=[dict(name='refresh-input-check', conclusion=check),
                         dict(name='Run actions/checkout', conclusion=checkout),
                         dict(name=render_name, conclusion=render)])]
+# REST skipped jobs have no executed steps; the release check is not a render record.
+new_skip = [dict(conclusion='success', steps=[dict(name='release-input-check', conclusion='success')]),
+            dict(conclusion='skipped', steps=[])]
+for name, jobs, route in (
+    ('new-caller-skipped-job', new_skip, 'skip'),
+    ('new-caller-omitted-skipped-job', new_skip[:1], 'skip'),
+    ('new-caller-unrecognized-check', [dict(conclusion='success', steps=[]), new_skip[1]], 'full'),
+    ('new-caller-failed-check', [dict(conclusion='success', steps=[dict(name='release-input-check', conclusion='failure')]), new_skip[1]], 'full'),
+    ('new-caller-unreadable-job', [new_skip[0], dict(steps=[])], 'full'),
+    ('new-caller-executed-refresh', [new_skip[0], dict(conclusion='success', steps=[])], 'full'),
+):
+    cases.append((name, dict(history=[dict(id=9, run_attempt=1, conclusion='success')] + world['history'],
+                             jobs={'9': jobs}), route))
 # A whole-job skip, a review-only run and a full render, in that order.
 for conclusion in ('success', 'failure', 'cancelled', 'timed_out'):
     for checkout, render in (('skipped', 'skipped'), ('success', 'skipped'), ('success', 'success')):
@@ -360,6 +426,16 @@ cases += [('intervening-unnamed-render', dict(history=[dict(id=9, run_attempt=1,
           ('history-bound', dict(history=[dict(id=n, run_attempt=1, conclusion='success',
                                                created_at='2026-09-01T00:00:00Z', updated_at='2026-09-01T00:00:00Z')
                                          for n in range(1000, 2000)] + world['history']), 'full')]
+# Fleet and vg exceeded 1,000 runs in the older 35 days of the rerun horizon.
+older_start = datetime.datetime(2026, 8, 13, 1, tzinfo=datetime.timezone.utc)
+dense_history = [dict(id=1000 + n, run_attempt=1, conclusion='success',
+                      created_at=(older_start + datetime.timedelta(minutes=37 * n)).isoformat(),
+                      updated_at=(older_start + datetime.timedelta(minutes=37 * n)).isoformat())
+                 for n in range(1334)]
+assert len(dense_history) > 1000
+assert all(now - datetime.timedelta(days=65) < datetime.datetime.fromisoformat(r['created_at']) <
+           now - datetime.timedelta(days=30) for r in dense_history)
+cases.append(('dense-older-history', dict(history=dense_history + world['history']), 'skip'))
 # The same run ID can name several attempts. A record must bind the current
 # producer attempt; an intervening rerun has unproved earlier work.
 for location in ('record', 'intervening', 'older'):
@@ -408,25 +484,34 @@ def execute_check(body, name, overrides, route):
     outputs = case / 'outputs'; outputs.write_text('')
     calls = case / 'calls'; calls.write_text('')
     env = dict(PATH=str(bin_dir) + os.pathsep + '/usr/bin:/bin', GH_TOKEN='read-token',
-               GH_REPO='acme/widgets', DEFAULT_BRANCH='main', WORKFLOW_SHA=workflow,
+               GH_REPO='acme/widgets', DEFAULT_BRANCH='main', WORKFLOW_SHA=data.get('workflow_sha', workflow), GITHUB_SHA=consumer,
                GITHUB_RUN_ID='100', GITHUB_RUN_ATTEMPT=data.get('current_attempt', '1'),
                GITHUB_OUTPUT=str(outputs), RUNNER_TEMP=str(case), CHECK_WORLD=str(fixture), CHECK_CALLS=str(calls))
     result = subprocess.run([sys.argv[3], '-c', body], env=env, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, (name, result.stderr)
     values = dict(line.split('=', 1) for line in outputs.read_text().splitlines())
     assert values['route'] == route, ('refresh-decision', name, values, result.stdout)
-    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/')), ('complete-initial-tuple', name, values)
+    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/') and overrides.get('workflow_sha', workflow) != ''), ('complete-initial-tuple', name, values)
     if 'record-path' in values:
-        assert json.loads(pathlib.Path(values['record-path']).read_text()) == dict(inputs=tuple_record, run=100, attempt=int(env['GITHUB_RUN_ATTEMPT']))
+        assert json.loads(pathlib.Path(values['record-path']).read_text()) == dict(inputs=dict(tuple_record, workflow=env['WORKFLOW_SHA']), run=100, attempt=int(env['GITHUB_RUN_ATTEMPT']))
     print('  executed check: ' + name + ' route=' + route)
 
 for name, overrides, route in cases:
     execute_check(check_step['run'], name, overrides, route)
+original = 'end = min(start + datetime.timedelta(days=7), now)'
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, original.replace('days=7', 'days=35') + ' # ' + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'dense-older-history')
+try: execute_check(broken, 'control-oversized-history-window', case[1], 'skip')
+except AssertionError as error:
+    assert error.args[0][:2] == ('refresh-decision', 'control-oversized-history-window'), error
+else: raise AssertionError('must-fail control missed oversized history window')
 original = "if previous['inputs'] != inputs:"
 assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, 'if False: # ' + original)
 assert broken != check_step['run']
-try: execute_check(broken, 'control-ignore-input-change', cases[1][1], 'full')
+try: execute_check(broken, 'control-ignore-input-change', next(row[1] for row in cases if row[0] == 'changed-consumer'), 'full')
 except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
 else: raise AssertionError('must-fail control missed tuple comparison')
 original = next(line.strip() for line in check_step['run'].splitlines() if "== 'Refresh and arm the rolling pull request'] == ['skipped']" in line)
@@ -460,7 +545,11 @@ assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, original.replace('continue', 'break # continue'))
 assert broken != check_step['run']
 case = next(row for row in cases if row[0] == 'older-attempt-2-success')
-try: execute_check(broken, 'control-stop-at-record-run', case[1], 'full')
+# Keep the older rerun after the record in the same API window, so the
+# planted break actually hides it regardless of window traversal order.
+overrides = copy.deepcopy(case[1])
+overrides['history'][1]['created_at'] = '2026-10-15T22:00:00Z'
+try: execute_check(broken, 'control-stop-at-record-run', overrides, 'full')
 except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
 else: raise AssertionError('must-fail control missed older rerun')
 original = next(line for line in check_step['run'].splitlines() if 'days=65' in line)

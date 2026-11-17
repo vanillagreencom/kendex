@@ -23,7 +23,10 @@ fn a_change_stacks_exactly_where_its_one_line_form_overflows() {
 #[test]
 fn inspection_components_wrap_content_within_80_cells() {
     let long = "界".repeat(90);
-    let columns = vec![vec![long.clone(), "switched off".into()]];
+    let columns = vec![vec![
+        vec!["界".repeat(9); 10].join(" "),
+        "switched off".into(),
+    ]];
     let cases = [
         (
             "table",
@@ -80,7 +83,17 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
         vec!["commit-guards".to_owned(), "0.9".to_owned()],
     ];
     vec![
-        ("header", style.header("check", "/home/me/dev/app, global")),
+        (
+            "header",
+            style.header(
+                "check",
+                &[
+                    Span::Command("/home/me/dev/app"),
+                    Span::Prose(", "),
+                    Span::Command("global"),
+                ],
+            ),
+        ),
         ("section", style.section("stale", 2, Status::Decision)),
         (
             "row",
@@ -345,7 +358,7 @@ fn a_hostile_value_is_escaped_by_every_component() {
     let rows = [vec![hostile.to_owned()]];
     for style in [rich(100), plain()] {
         let drawn = [
-            style.header(hostile, hostile),
+            style.header(hostile, &[Span::Prose(hostile), Span::Command(hostile)]),
             style.section(hostile, 1, Status::Notice),
             style.row(
                 Status::Notice,
@@ -392,10 +405,10 @@ fn a_hostile_value_is_escaped_by_every_component() {
 /// wrap hang under the text they continue.
 #[test]
 fn a_rich_line_wraps_inside_its_width() {
-    let long = "unmanaged copy of skill 'commit-guards' at /home/me/dev/app/.claude/skills/commit-guards differs from the package in 2 files";
+    let long = "unmanaged copy of skill 'commit-guards' at ~/app/skills/commit-guards differs from the package in 2 files";
     let style = rich(40);
     let drawn = [
-        style.header("check", long),
+        style.header("check", &[Span::Prose(long)]),
         style.row(
             Status::Decision,
             &[Span::Prose(long)],
@@ -536,4 +549,160 @@ fn pinned(style: &Style, want: &[(&str, &[&str])]) {
         assert_eq!(name, wanted);
         assert_eq!(tagged(lines), *expected, "{name}");
     }
+}
+
+/// No column narrows below its header's or a cell's widest word, nor its
+/// widest copied run — a path, which can hold a space: the prose beside
+/// them breaks between words instead, and a table whose floors pass the
+/// width runs past it. Plain joins the runs as written.
+#[test]
+fn a_table_never_breaks_a_word_or_a_copied_run() {
+    let folder = "/home/dev/projects/marketplaces/acme/team-skills-1";
+    let long = format!("/{}", "x".repeat(99));
+    let mixed = || {
+        Cell::default()
+            .copy("/srv/a")
+            .prose(" = ")
+            .copy("/srv/b")
+            .prose(" — the folder could not be read just now")
+    };
+    let rows = vec![
+        vec![
+            Cell::from("demo".to_owned()),
+            Cell::from("0 package(s), 0 bundle(s), 0 problem(s)".to_owned()),
+            Cell::default().copy(folder),
+        ],
+        vec![
+            Cell::from("old".to_owned()),
+            Cell::from("1 package(s)".to_owned()),
+            mixed(),
+        ],
+    ];
+    let squeezed = vec![vec![
+        Cell::from("demo-pretty".to_owned()),
+        Cell::from("3 package(s), 1 bundle(s), 0 problem(s)".to_owned()),
+        Cell::default().copy(format!("/home/dev/{}/demo-pretty", "x".repeat(44))),
+    ]];
+    let project = vec![vec![
+        Cell::default().copy("/home/dev/My Projects/acme-web"),
+        Cell::from("tools".to_owned()),
+        Cell::default()
+            .copy("/home/dev/My Projects/acme-web/marketplaces/tools")
+            .prose(" @ v2"),
+        Cell::from("[2 package(s)]".to_owned()),
+    ]];
+    let file = "examples/styling/snapshots/catppuccin_macchiato-tiny-skia.sha256";
+    let files = vec![
+        vec![file.to_owned(), "1234 bytes".to_owned()],
+        vec!["SKILL.md".to_owned(), "88 bytes".to_owned()],
+    ];
+    let cases: [(&str, Vec<String>, Vec<String>); 6] = [
+        (
+            "narrower than the width",
+            rich(80).table(&["name", "holds", "folder"], &rows),
+            vec![
+                format!(
+                    "  <1;90>name</>  <1;90>holds</>{}  <1;90>folder</>",
+                    " ".repeat(15)
+                ),
+                format!("  <90>{}</>", "─".repeat(78)),
+                format!("  demo  0 package(s), 0       {folder}"),
+                "        bundle(s), 0".to_owned(),
+                "        problem(s)".to_owned(),
+                "  old   1 package(s)          /srv/a = /srv/b — the folder could not be read"
+                    .to_owned(),
+                format!("{}just now", " ".repeat(30)),
+            ],
+        ),
+        (
+            "wider than the width",
+            rich(80).table(&["folder"], &[vec![Cell::default().copy(long.clone())]]),
+            vec![
+                "  <1;90>folder</>".to_owned(),
+                format!("  <90>{}</>", "─".repeat(100)),
+                format!("  {long}"),
+            ],
+        ),
+        (
+            "floors pass the width",
+            rich(80).table(&["name", "holds", "folder"], &squeezed),
+            [
+                "  <1;90>name</>         <1;90>holds</>        <1;90>folder</>".to_owned(),
+                format!("  <90>{}</>", "─".repeat(92)),
+                format!(
+                    "  demo-pretty  3            /home/dev/{}/demo-pretty",
+                    "x".repeat(44)
+                ),
+            ]
+            .into_iter()
+            .chain(
+                ["package(s),", "1", "bundle(s),", "0", "problem(s)"]
+                    .map(|word| format!("{}{word}", " ".repeat(15))),
+            )
+            .collect(),
+        ),
+        (
+            "a project root in the scope column",
+            rich(80).table(&["scope", "name", "from", "packages"], &project),
+            vec![
+                format!(
+                    "  <1;90>scope</>{}<1;90>name</>   <1;90>from</>{}<1;90>packages</>",
+                    " ".repeat(27),
+                    " ".repeat(47)
+                ),
+                format!("  <90>{}</>", "─".repeat(101)),
+                "  /home/dev/My Projects/acme-web  tools  /home/dev/My Projects/acme-web/marketplaces/tools  [2"
+                    .to_owned(),
+                format!("{}@ v2{}package(s)]", " ".repeat(41), " ".repeat(47)),
+            ],
+        ),
+        (
+            "a path in prose wider than its fair share",
+            rich(50).table(&["path", "size"], &files),
+            vec![
+                format!("  <1;90>path</>{}  <1;90>size</>", " ".repeat(file.len() - 4)),
+                format!("  <90>{}</>", "─".repeat(file.len() + 2 + 5)),
+                format!("  {file}  1234"),
+                format!("{}bytes", " ".repeat(2 + file.len() + 2)),
+                format!("  SKILL.md{}  88", " ".repeat(file.len() - 8)),
+                format!("{}bytes", " ".repeat(2 + file.len() + 2)),
+            ],
+        ),
+        (
+            "plain",
+            plain().table(&["folder"], &[vec![mixed()]]),
+            vec![
+                "folder".to_owned(),
+                "/srv/a = /srv/b — the folder could not be read just now".to_owned(),
+            ],
+        ),
+    ];
+    for (case, drawn, want) in cases {
+        assert_eq!(tagged(&drawn), want, "{case}");
+    }
+}
+
+/// A header's place, a command span, stays whole: one wider than any line
+/// is a line of its own under the title rather than one more cell run on
+/// the title's line, which the terminal would break mid-segment. A prose
+/// target, a report's title, still wraps between words.
+#[test]
+fn a_header_keeps_its_place_whole_and_wraps_its_prose() {
+    let root = "/private/var/folders/xy/abcdefghijk0000gn/T/.tmpAbCdEf/home/dev/6b32008b-c5c0-4327-9a3e-1234567890ab";
+    assert_eq!(
+        tagged(&rich(80).header("add", &[Span::Command(root)])),
+        [
+            "<1;34>kendex add</>  ".to_owned(),
+            format!("  <90>{root}</>"),
+        ]
+    );
+    let title = "the header splits a long project folder in the middle of a folder name";
+    assert_eq!(
+        tagged(&rich(40).header("report", &[Span::Prose(title)])),
+        [
+            "<1;34>kendex report</>  <90>the header splits a long</>",
+            "  <90>project folder in the middle of a</>",
+            "  <90>folder name</>",
+        ]
+    );
 }

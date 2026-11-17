@@ -25,12 +25,13 @@
 #      condition carries no status function. A pull request runs `CI` alone,
 #      and CI passes there without its aggregate, whatever the diff. A merge
 #      group runs the job set its class selects, the two diff checks and
-#      the macOS legs its queue_macos_shards list names. A push to main runs
-#      the cargo compile legs, catalog, smoke, the main-only suites and the
-#      shell shards its same-head merge group left unproved, the whole
-#      eligible roster where the changes job failed; the nightly run, schedule or dispatch, runs the native macOS roster, and the macOS and
-#      Windows cargo test steps run there and in the group, never on the
-#      push. The queue's legs expand to that list, or to the macOS-capable
+#      the macOS legs its queue_macos_shards list names. Main selects cache
+#      compilation and dedicated work by inputs, and ordinary shards by
+#      inputs less whole same-head proof. Catalog, smoke and the Windows
+#      check stay unconditional on main. Schedule consumes the nightly
+#      decision; dispatch keeps the full native roster. Selected macOS and
+#      Windows cargo jobs test outside pushes and compile alone on main.
+#      The queue's legs expand to that list, or to the macOS-capable
 #      roster where nothing classified, and CI's lane for them is true
 #      exactly where they run.
 #      A dead classifier runs every gated job a merge group runs and the
@@ -254,7 +255,7 @@ PUBLISHED_BY_SCRIPT="$(printf '%s %s' "$(selection standard false 'crates/core/s
 [ "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" | grep -c .)" -gt 0 ] ||
   { echo "ci-job-set published no lane, so the extractor is broken" >&2; exit 1; }
 check "the changes job publishes exactly the lanes ci-job-set selects" \
-  "$PUBLISHED_BY_SCRIPT" "$(published_map "$WORKFLOW" | awk '{ print $1 }' | LC_ALL=C sort)"
+  "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" cache_compile main_suites nightly | LC_ALL=C sort)" "$(published_map "$WORKFLOW" | awk '{ print $1 }' | LC_ALL=C sort)"
 check "each published lane is the select step's line of the same name" "" \
   "$(published_map "$WORKFLOW" | awk '$1 != $2')"
 check "the gates read exactly the lanes ci-job-set selects" \
@@ -290,7 +291,7 @@ GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 aggregate_gap() { # WORKFLOW AGGREGATE — `lanes: missing= extra= events: missing= extra=`
   local wf="$1" agg="$2" needs job expr group held=""
   needs="$(job_needs "$wf" | awk -F '\t' -v j="$agg" '$1 == j { print $2 }' | tr ',' '\n' | grep .)" || needs=""
-  gate_pairs "$wf" >"$TMP/gap-gates"
+  gate_pairs "$wf" | grep -vE '^(cache_compile|main_suites|nightly):' >"$TMP/gap-gates"
   job_ifs "$wf" >"$TMP/gap-ifs"
   while IFS= read -r job; do
     grep -q ":$job\$" "$TMP/gap-gates" && continue
@@ -336,7 +337,7 @@ gated_jobs() { # WORKFLOW
 running() { # WORKFLOW SELECTION [RESULT] [EVENT] — the gated jobs that run, sorted and spaced
   local wf="$1" sel="$2" result="${3:-success}" event="${4:-pull_request}" map="$TMP/published-map" job expr
   published_map "$wf" >"$map"
-  gated_jobs "$wf" >"$TMP/gated"
+  gated_jobs "$wf" | grep -vE '^skill-suites-(macos|main-only)$' >"$TMP/gated"
   job_needs "$wf" >"$TMP/needs"
   job_ifs "$wf" | while IFS="$(printf '\t')" read -r job expr; do
     grep -qxF -- "$job" "$TMP/gated" &&
@@ -361,7 +362,7 @@ EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-m
 # which reads its lane on the schedule alone.
 EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
-  "$(gated_jobs "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
+  "$(gated_jobs "$WORKFLOW" | grep -vE '^skill-suites-(macos|main-only)$' | tr '\n' ' ' | sed 's/ $//')"
 
 one_skill="$(selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
@@ -391,10 +392,9 @@ ROWS
 [ "$job_rows" -ge 10 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # Every job of the workflow, gated or not, per event: the event's whole run.
-# The changes job runs on a merge group and a main push, so the pull request
-# and the nightly run read it skipped and its outputs empty; every other job
-# a condition reads reads skipped, as nothing ran ahead of it. A job with no `if:` runs under
-# GitHub's implicit success().
+# The supplied result and outputs model changes for each event. Other needs
+# start skipped so the evaluator can resolve the workflow's actual job
+# conditions. A job with no `if:` uses GitHub's implicit success().
 event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted and spaced
   local wf="$1" event="$2" result="$3" sel="$4" ctx job needs expr
   published_map "$wf" >"$TMP/published-map"
@@ -431,8 +431,8 @@ pull_request|success|$PROSE_ROW|ci
 pull_request|failure|$ALL_OFF|ci
 merge_group|success|$VERIFY_ROW|bot-instructions changes ci markdown preflight
 merge_group|success|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows changes ci markdown preflight
-push|success|$PUSH_PROVED|$MAIN_FIXED skill-suites-main-only smoke
-push|success|$PUSH_REST|$MAIN_JOBS
+push|success|$PUSH_PROVED|$MAIN_FIXED smoke
+push|success|$PUSH_REST|$MAIN_FIXED skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke
 push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-main-only skill-suites-shard smoke
 push|failure|$ALL_OFF|$MAIN_JOBS
 schedule|failure|$ALL_OFF|cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke
@@ -464,8 +464,9 @@ merge_group|failure|$ALL_OFF|["ubuntu-latest"]
 ROWS
 [ "$leg_rows" -ge 4 ] || { echo "the leg table read $leg_rows rows" >&2; exit 1; }
 
-# The nightly job reads the skipped classifier's fallback through its shard
-# alias. These are source and expression checks, not a hosted execution.
+# A selected night uses a fixed full matrix even though changes succeeded
+# without publishing a merge-group shard selection. These evaluate source
+# expressions rather than a hosted execution.
 macos_condition() { # WORKFLOW
   job_ifs "$1" | awk -F '\t' '$1 == "skill-suites-macos" { print $2 }'
 }
@@ -581,10 +582,9 @@ check "the shard matrix expands ci-job-set's roster, in order, when nothing clas
   "$(selection standard false .github/workflows/skill-tests.yml | sed -n 's/.* shards=\([^ ]*\).*/\1/p')" \
   "$(legs "$WORKFLOW" "$ALL_OFF" failure merge_group shard)"
 
-# The document byte ceilings and the work-marker scan run in the job a
-# `render` or `trivial` diff runs, and in no other, so every class that runs
-# any gated job runs both scans in its merge group, as the step table below
-# holds. Each `run:` line is read with the job it sits in.
+# The document byte ceilings run in the job a `render` or `trivial` diff
+# runs, and in no other, so every class that runs any gated job runs that
+# scan in its merge group, as the step table below holds. Each `run:` line is read with the job it sits in.
 job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorted and spaced
   COMMAND="$2" awk '
     /^jobs:/ { in_jobs = 1; next }
@@ -595,9 +595,8 @@ job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorte
 }
 VERIFY_JOBS="$(running "$WORKFLOW" "$VERIFY_ROW" success merge_group)"
 [ -n "$VERIFY_JOBS" ] || { echo "the verify row runs no job, so the extractor is broken" >&2; exit 1; }
-for scan in skills/doc-limits/scripts/doc-limits skills/commit-guards/scripts/todo-ban; do
-  check "$scan runs in the verify job alone" "$VERIFY_JOBS" "$(job_of_run "$WORKFLOW" "$scan")"
-done
+check "doc-limits runs in the verify job alone" "$VERIFY_JOBS" \
+  "$(job_of_run "$WORKFLOW" skills/doc-limits/scripts/doc-limits)"
 
 # Every step runs on the merge group, the one run that judges a change: a
 # pull request runs no lane. Every run step of the job is held here: a step is known by its `id:`, or
@@ -606,7 +605,6 @@ done
 DOC_LIMITS=skills/doc-limits/scripts/doc-limits
 STEP_JOB=bot-instructions
 DOC_STEP='doc-limits (document byte ceilings)'
-TODO_STEP='todo-ban (index-wide work-marker scan)'
 SECRETS_STEP='secrets (credential scan of the change)'
 # `KEY<tab>IF<tab>RUN` per step of JOB: KEY its id, else its name, else `?`;
 # IF its condition (`${{ }}` stripped, or none); RUN yes where it has `run:`.
@@ -654,7 +652,6 @@ step_coverage_gap() { # WORKFLOW
 }
 # EVENT|STEP|RUNS
 STEP_ROWS="merge_group|$DOC_STEP|yes
-merge_group|$TODO_STEP|yes
 merge_group|$SECRETS_STEP|yes
 merge_group|bot-instructions-check|yes
 merge_group|decision-ids|yes
@@ -668,9 +665,8 @@ while IFS='|' read -r event step runs; do
 done <<<"$STEP_ROWS"
 check "the step table holds every run step of $STEP_JOB" "missing= extra=" "$(step_coverage_gap "$WORKFLOW")"
 
-# The cargo test steps: the merge group tests what its class selects, the
-# nightly run tests on macOS and Windows, and the push to main compiles for
-# the cache alone.
+# Once selected, macOS and Windows cargo jobs test on groups, selected
+# nights and dispatches. A selected main cargo job compiles for its cache.
 # JOB|EVENT|RUNS
 while IFS='|' read -r job event runs; do
   check "the $job test step runs on $event: $runs" "$runs" "$(STEP_JOB="$job" step_runs "$WORKFLOW" test "$event")"
@@ -898,8 +894,8 @@ done
 # `CI` is the aggregate context the organization standard has every repository
 # report, checked by review-gate's standard-ci-context row.
 # Every other merge-group job reports into it; it runs on a pull request and
-# a merge group whatever its needs did, and the classifier it reads runs on
-# the merge group and the main push alone.
+# a merge group whatever its needs did. The changes job selects group and
+# main work and decides whether a scheduled head needs testing.
 
 ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can run on a merge group
   local wf="$1" ci job expr main_only=""
@@ -1016,9 +1012,8 @@ aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal ke
 # classifier cannot produce a passing CI context over skipped jobs.
 saved_results="$RESULTS"
 for job in catalog smoke; do
-  # Main's checkout is a real producer even when classification has no
-  # usable output. The same jobs must check external releases there, on the
-  # push and on the nightly run.
+  # Main always checks external releases, even without selected inputs.
+  # Unread scheduled selection also retains these jobs.
   while IFS='|' read -r event result sel; do
     case " $(running "$WORKFLOW" "$sel" "$result" "$event") " in
       *" $job "*) ok "$job runs on $event with classifier $result and no selected inputs" ;;

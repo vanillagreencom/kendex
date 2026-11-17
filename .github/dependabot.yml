@@ -16,6 +16,12 @@ updates:
       - /.github/actions/change-class
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "vanillagreencom/kendex*"
   - package-ecosystem: npm
     directories:
       - /ui

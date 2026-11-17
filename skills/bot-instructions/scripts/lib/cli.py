@@ -214,7 +214,8 @@ def main(argv=None):
             lines = [f"bot-instructions: {ctx.config.key}={ctx.config.subject}",
                      f"bot-instructions: {ctx.config.attestation}", str(ctx.config)]
         elif args.verb == "render":
-            lines = verbs.render_verb(ctx, repo, dry_run=args.dry_run or args.discover)
+            lines = verbs.render_verb(ctx, repo, dry_run=args.dry_run,
+                                     discover=args.discover)
         elif args.verb == "check":
             lines = verbs.check_verb(ctx)
         else:

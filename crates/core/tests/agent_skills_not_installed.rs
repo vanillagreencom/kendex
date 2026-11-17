@@ -54,7 +54,7 @@ fn fixture(body: &str, catalog: &str) -> Fixture {
     fs::write(
         path,
         format!(
-            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\", \"copilot\", \"pi\"]\nmethod = \"copy\"\n{body}",
+            "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\", \"copilot\", \"pi\"]\nmethod = \"copy\"\n{body}",
             source_path(&source)
         ),
     )

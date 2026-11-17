@@ -33,7 +33,12 @@ pub fn template_draft(project: PathBuf) -> Result<Draft, String> {
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn template_create_from_project(project: PathBuf, chosen: Chosen) -> Result<Template, String> {
+/// The saved template, with the links its copies kept as written beside
+/// it: the save's own report, which nothing read later can give.
+pub fn template_create_from_project(
+    project: PathBuf,
+    chosen: Chosen,
+) -> Result<template::SavedTemplate, String> {
     let env = env()?;
     template::create_from_project(&env, &project, &chosen).map_err(|e| e.to_string())
 }
@@ -117,4 +122,14 @@ pub fn template_file(name: String, path: String) -> Result<String, String> {
     let env = env()?;
     let template = template::get(&env, &name).map_err(|e| e.to_string())?;
     template::stored_file(&env, &template, &path).map_err(|e| e.to_string())
+}
+
+/// Resolve a selected catalog while its declaration kind and scope are available.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn template_catalog_source(
+    catalog: kendex_core::source::browse::Catalog,
+    rev: Option<String>,
+) -> Result<template::MemberSource, String> {
+    template::catalog_source(&env()?, &catalog, rev).map_err(|e| e.to_string())
 }

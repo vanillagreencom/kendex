@@ -303,16 +303,19 @@ fn pick(env: &Env, name: &str, which: &Which) -> Result<SavedItem, Box<dyn std::
         .source
         .as_deref()
         .map(|typed| marketplace(env, typed))
-        .transpose()?
-        .map(|repo| kendex_core::source_ref::repo_identity(&repo));
+        .transpose()?;
     let mut found: Vec<SavedItem> = bookmark::resolve(env)?
         .into_iter()
         .filter(|item| item.bookmark.name == name)
         .filter(|item| wanted.is_none_or(|kind| item.bookmark.item == kind))
         .filter(|item| {
-            source
-                .as_deref()
-                .is_none_or(|identity| item.repo_identity == identity)
+            source.as_deref().is_none_or(|repo| {
+                item.bookmark.is(&Bookmark {
+                    repo: repo.to_owned(),
+                    item: item.bookmark.item,
+                    name: item.bookmark.name.clone(),
+                })
+            })
         })
         .collect();
     if found.len() > 1 {

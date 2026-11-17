@@ -649,7 +649,7 @@ The merge route stays the lane's; the overseer never adopts it as its own step.
 2. Where the repository has its own overseer, ask it which workflow holds its nightly run: `lane-mail peer ask --repo [OWNER/REPO] --file [PATH]` ([peer-mail.md](peer-mail.md)).
 3. Correct the entry, or the connected list, in the overseer repository's settings in a reviewed change. Restart the watch after it merges.
 
-### `security-alert`, `security-alerts-unread`, and a `heartbeat`'s `bot-fix` line
+### `security-alert`, `security-alerts-unread`, and a `heartbeat` line on a Dependabot pull request
 
 [security-alerts.md](security-alerts.md).
 

@@ -337,8 +337,10 @@ trap 'exit 143' TERM
 # what it holds, and a filesystem or cache keeping whole seconds rounds two
 # events one second apart to the same stamp. Every write this script makes to
 # a source tree waits that boundary out first, so what it wrote always outranks
-# the build before it. Without that, the cache the caller shares — usually
-# CARGO_TARGET_DIR — answers the next run with the last run's test binary.
+# the build before it. Without that, a build cache the caller shares answers
+# the next run with the last run's test binary. A compiled control builds with
+# its own CARGO_TARGET_DIR under its disposable root; a shared one, such as the
+# session's CARGO_TARGET_DIR, is what a caller breaking that rule falls back on.
 #
 # A caller whose --build shares no cache has nothing to outrank, and
 # https://github.com/vanillagreencom/kendex/blob/main/skills/reviewer/tests/mutation-stability.test.sh

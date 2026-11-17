@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # The lines a commit, or a commit range, ADDS to one path, for the lanes that
 # judge a diff by its additions: one reader, so the diff pins hold for both.
-# Sourced by todo-ban, comments and secrets; needs GG_TMP (gg_tmpdir) and the
-# family contract from lib/common.sh.
+# Sourced by secrets; needs GG_TMP (gg_tmpdir) and the family contract from
+# lib/common.sh.
 #
 # Bash 3.2-safe, like its parent.
 

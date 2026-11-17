@@ -142,7 +142,9 @@ fn resolve(probe: &Probe) -> Style {
 
 /// A piece of text a component draws. Prose breaks between words where a
 /// line runs out of room; a command never breaks, since split at a space it
-/// reads as a shorter command. [`wrap`] is the one place that rule is kept.
+/// reads as a shorter command, and neither does a word of prose that names
+/// a path, since split it no longer copies. [`wrap`] is the one place that
+/// rule is kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Span<'a> {
     Prose(&'a str),
@@ -165,26 +167,34 @@ impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
 /// `spans` broken into lines no wider than their room in terminal cells:
 /// the first line has `first` cells to fill, the rest `rest`, the room each
 /// has after its indent. Prose breaks at spaces, and a word wider than the
-/// room where it reaches the edge. A command starts a new line where it
-/// does not fit on the current one and is never broken: one wider than a
-/// whole line is that line, and the terminal wraps it. Verbatim text keeps
+/// room where it reaches the edge. A command, and a prose word that names a
+/// path (see [`names_a_path`]), starts a new line where it does not fit on
+/// the current one and is never broken: one wider than a whole line is
+/// that line, and the terminal wraps it, so a person can still copy it.
+/// Where one would start a first line with less room than the rest, a
+/// header's beside its title, and does not fit there, the first line is
+/// left empty, so the caller draws its lead alone there and the piece
+/// starts the next line, the widest line there is. Verbatim text keeps
 /// every space and breaks by cells alone.
 pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
+    // The cells on `line`, kept as pieces join it: measuring the whole
+    // line again for each piece is quadratic in a long table cell.
+    let mut used = 0;
     let mut room = first.max(1);
     // Whether a space separates the next piece from the one before it:
     // the spans are one text, so a space at a span's edge is still a space.
     let mut spaced = false;
     for span in spans {
-        let (text, whole) = match span {
+        let (text, command) = match span {
             Span::Prose(text) => (*text, false),
             Span::Command(text) => (*text, true),
             Span::Verbatim(text) => {
                 // The space a prose span left pending is the prose's own;
                 // the verbatim text's spaces are its content.
                 if spaced && !line.is_empty() {
-                    match cells(&line) + 1 > room {
+                    match used + 1 > room {
                         true => {
                             lines.push(std::mem::take(&mut line));
                             room = rest.max(1);
@@ -193,40 +203,74 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
                     }
                 }
                 push_cells(&mut line, &mut lines, &mut room, rest, text);
+                used = cells(&line);
                 spaced = false;
                 continue;
             }
         };
-        let pieces: Vec<&str> = match whole {
-            true => vec![text],
-            false => text.split(' ').collect(),
-        };
-        for (at, piece) in pieces.into_iter().enumerate() {
+        for (at, piece) in pieces(span).into_iter().enumerate() {
             spaced |= at > 0;
             if piece.is_empty() {
                 continue;
             }
-            let used = cells(&line);
+            let whole = command || names_a_path(piece);
+            let width = cells(piece);
             let gap = usize::from(used > 0 && spaced);
-            if used > 0 && used + gap + cells(piece) > room {
+            // The first line can have less room than the rest: a header's
+            // title takes part of it, and a piece drawn there past the edge
+            // would sit on the title's line rather than one of its own.
+            let later = whole && lines.is_empty() && used == 0 && width > room && room < rest;
+            if later || (used > 0 && used + gap + width > room) {
                 lines.push(std::mem::take(&mut line));
+                used = 0;
                 room = rest.max(1);
             } else if gap == 1 {
                 line.push(' ');
+                used += 1;
             }
             spaced = false;
-            if whole {
+            // A piece that fits joins whole; only a word wider than the
+            // room breaks by cells.
+            if whole || used + width <= room {
                 line.push_str(piece);
+                used += width;
                 continue;
             }
             push_cells(&mut line, &mut lines, &mut room, rest, piece);
+            used = cells(&line);
         }
-        spaced |= !whole && text.ends_with(' ');
+        spaced |= !command && text.ends_with(' ');
     }
     if !line.is_empty() {
         lines.push(line);
     }
     lines
+}
+
+/// The pieces of `span` that [`wrap`] keeps on one line wherever the room
+/// holds them: a prose word, a whole command, a verbatim character.
+fn pieces<'a>(span: &Span<'a>) -> Vec<&'a str> {
+    match *span {
+        Span::Prose(text) => text.split(' ').collect(),
+        Span::Command(text) => vec![text],
+        Span::Verbatim(text) => text
+            .char_indices()
+            .map(|(at, c)| &text[at..at + c.len_utf8()])
+            .collect(),
+    }
+}
+
+/// The cells of the widest piece [`wrap`] never breaks within `spans`: a
+/// room this wide draws every word and every command whole.
+pub(super) fn unbroken(spans: &[Span<'_>]) -> usize {
+    spans.iter().flat_map(pieces).map(cells).max().unwrap_or(0)
+}
+
+/// Whether a word of prose names a path: it holds a path separator or
+/// starts at the home directory. Read from the word alone, so a path with a
+/// space in it is two words here and may break at that space.
+fn names_a_path(word: &str) -> bool {
+    word.contains('/') || word.contains(std::path::MAIN_SEPARATOR) || word.starts_with('~')
 }
 
 /// `text` onto `line` a character at a time, ending the line where the
@@ -425,5 +469,70 @@ mod tests {
             ),
             ["(kendex check)"]
         );
+    }
+
+    /// A prose word that names a path is placed as a command is: whole on
+    /// the next line where the rest of this one cannot hold it, after an
+    /// empty first line where that line has less room than the rest, and a
+    /// line of its own where no line can hold it. Any other word still
+    /// breaks by cells.
+    #[test]
+    fn a_path_in_prose_is_never_broken() {
+        let native = format!(
+            "C:{s}Users{s}a{s}.pi{s}agent{s}extensions{s}pi-widgets",
+            s = std::path::MAIN_SEPARATOR
+        );
+        let at_native = format!("at {native} here");
+        let rows: [(&str, &str, usize, usize, &[&str]); 6] = [
+            (
+                "wider than any line",
+                "shadow copy /home/a/.pi/agent/extensions/pi-widgets (no version)",
+                12,
+                12,
+                &[
+                    "shadow copy",
+                    "/home/a/.pi/agent/extensions/pi-widgets",
+                    "(no version)",
+                ],
+            ),
+            (
+                "wider than the first line's room alone",
+                "/home/a/b now",
+                4,
+                20,
+                &["", "/home/a/b now"],
+            ),
+            (
+                "wider than the first line and every later one",
+                "/home/a/b/c/d now",
+                4,
+                8,
+                &["", "/home/a/b/c/d", "now"],
+            ),
+            (
+                "from the home directory",
+                "at ~a-long-home-name here",
+                8,
+                8,
+                &["at", "~a-long-home-name", "here"],
+            ),
+            (
+                "with the platform's own separator",
+                &at_native,
+                12,
+                12,
+                &["at", &native, "here"],
+            ),
+            (
+                "an ordinary word",
+                "at abcdefghijkl here",
+                8,
+                8,
+                &["at", "abcdefgh", "ijkl", "here"],
+            ),
+        ];
+        for (case, text, first, rest, want) in rows {
+            assert_eq!(wrap(&[Span::Prose(text)], first, rest), want, "{case}");
+        }
     }
 }

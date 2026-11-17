@@ -30,7 +30,7 @@ Classification contracts: [SKILL.md](SKILL.md). Workflow setup, the queue-only d
 
 ## Setup
 
-Commit the installed skill and generated-file inventory. The runner needs `jq`, `python3`, a compatible `kendex` on PATH and a fetched source mirror. Follow [workflow wiring](references/wiring.md) to install the engine from the trusted default branch with review-gate's installer. An unsupported engine keeps product checks running. An update made by a newer unreleased engine needs a compatible release before CI can skip those checks.
+Commit the installed skill and generated-file inventory. The runner needs `jq`, `python3`, a compatible `kendex` on PATH and a fetched source mirror. Follow [workflow wiring](references/wiring.md) to install the engine from the trusted default branch with harness-ci's installer. An unsupported engine keeps product checks running. An update made by a newer unreleased engine needs a compatible release before CI can skip those checks.
 
 Set repository options in the default branch's `kendex.settings.toml` under `[env]`:
 

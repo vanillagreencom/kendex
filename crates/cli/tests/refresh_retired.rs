@@ -43,7 +43,7 @@ const BY_SET: &str = "[bundles.ship]\nsource = \"cat\"\n";
 /// The consumer's manifest on `harnesses`, declaring `declared`.
 fn manifest(catalog: &Path, harnesses: &str, declared: &str) -> String {
     format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n{declared}",
+        "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [{harnesses}]\nmethod = \"copy\"\n{declared}",
         source_path(catalog)
     )
 }
@@ -463,7 +463,9 @@ const PI_INDEX: &str = "export const version = 1;\n";
 /// A kept retired Pi package deleted or edited by hand is no failure of a
 /// plain refresh, which writes nothing of it, as a hook's or a skill's is
 /// not: verify alone fails its row. Nor of an apply with no terminal: a
-/// package its catalog retired is not one the manifest asks for.
+/// package its catalog retired is not one the manifest asks for. The
+/// kept package still has its row in `update-pi --check`: nothing installs
+/// it again, so the plan must not drop it without a line.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
@@ -485,7 +487,7 @@ fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
         write(
             &project.join("kendex.toml"),
             &format!(
-                "schema = 7\n[sources.cat]\n{}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+                "schema = 8\n[sources.cat]\n{}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
                 source_path(&catalog)
             ),
         );
@@ -506,6 +508,18 @@ fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
         let kept = kendex(&home, &project, &refresh);
         assert!(kept.status.success(), "edited={edited}: {}", said(&kept));
         assert!(package.exists(), "edited={edited}: {}", said(&kept));
+        if !edited {
+            let check = ["update-pi", "--check", "--scope", "project"];
+            let planned = kendex(&home, &project, &check);
+            assert_eq!(planned.status.code(), Some(0), "{}", said(&planned));
+            let rows = String::from_utf8_lossy(&planned.stdout);
+            assert!(
+                rows.lines()
+                    .any(|line| line.split_whitespace().next() == Some("pi-widgets")),
+                "{}",
+                said(&planned)
+            );
+        }
         match edited {
             true => write(&package.join("index.js"), "export const version = 2;\n"),
             false => fs::remove_dir_all(&package).unwrap(),
@@ -578,7 +592,7 @@ fn verify_names_the_withholding_of_a_hook_requiring_a_retired_hook() {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[hooks.boss]\nsource = \"cat\"\n",
+            "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[hooks.boss]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     );
@@ -654,7 +668,7 @@ fn retired_beside_a_namesake(home: &Path, at: At) -> (PathBuf, PathBuf, PathBuf,
         &HOOK.replace("name: check", "name: deploy"),
     );
     let declared = format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.deploy]\nsource = \"cat\"\n",
+        "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n[hooks.deploy]\nsource = \"cat\"\n",
         source_path(&catalog)
     );
     let (manifest, root, scope) = match at {
@@ -805,7 +819,7 @@ fn verify_names_the_kind_and_scope_of_a_global_left_over_removal() {
     assert_ne!(undeclared, declared, "the skill's declaration stays");
     write(&manifest, &undeclared);
     let project = home.join("consumer");
-    write(&project.join("kendex.toml"), "schema = 7\n");
+    write(&project.join("kendex.toml"), "schema = 8\n");
     repository(&project);
 
     let verified = kendex(&home, &project, &["verify", "--scope", "global"]);

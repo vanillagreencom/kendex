@@ -10,7 +10,7 @@ fn run(args: &[&str], extra: &[(&str, &str)]) -> (bool, String, String) {
     let home = rooted(&tmp);
     let project = home.join("project");
     fs::create_dir_all(project.join(".claude")).unwrap();
-    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 8\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(&project)
@@ -110,6 +110,8 @@ fn support_modes_keep_streams_and_plain_protocol() {
     );
 }
 
+/// Rich prose wraps within 80 columns; the created file's path is drawn
+/// whole, so one wider than the line stands on a line of its own.
 #[test]
 fn support_prose_wraps_at_eighty_columns() {
     let name = "this-package-name-is-deliberately-long-so-that-the-created-file-message-needs-to-wrap-at-the-terminal-width";
@@ -122,10 +124,17 @@ fn support_prose_wraps_at_eighty_columns() {
             .lines()
             .any(|line| console::measure_text_width(line) > 80)
     );
+    let file = format!("/{name}/SKILL.md");
+    let alone = |line: &str| {
+        let shown = console::strip_ansi_codes(line);
+        let shown = shown.trim();
+        shown.ends_with(&file) && !shown.contains(' ')
+    };
+    assert!(rich.1.lines().any(alone), "{:?}", rich.1);
     for stream in [&rich.1, &rich.2] {
         for line in stream.lines() {
             assert!(
-                console::measure_text_width(line) <= 80,
+                console::measure_text_width(line) <= 80 || alone(line),
                 "too wide: {line:?}"
             );
         }

@@ -28,6 +28,7 @@ use super::{MemberKind, MemberSource, Namespace, Template, store};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedItem {
+    pub which: super::MemberWhich,
     pub kind: ItemKind,
     pub name: String,
     pub enabled: bool,
@@ -38,6 +39,9 @@ pub struct ResolvedItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedGroup {
+    pub catalog: Option<super::TemplateCatalog>,
+    pub which: super::MemberWhich,
+    pub scope: Option<Scope>,
     /// The repository or folder, as the template saved it.
     pub repo: String,
     /// The personal subscription that already carries it, or null where
@@ -68,6 +72,7 @@ pub struct ResolvedGroup {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedSet {
+    pub which: super::MemberWhich,
     pub name: String,
     pub enabled: bool,
     /// What the member was saved as. A plugin is its registry's own
@@ -89,6 +94,9 @@ pub struct ResolvedCopy {
     pub copy: String,
     /// The marketplace the bytes came from, where they came from one.
     pub from: Option<String>,
+    /// The reading the copy's links hold, which its declaration records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::manifest::SkillLinks>,
 }
 
 /// A member this machine cannot install, and why. A template carrying one
@@ -132,7 +140,7 @@ impl Resolution {
 
 /// What one template install did. Read after the write: the parts are
 /// what landed, not what was asked for.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateInstall {
     /// The repositories subscribed to along the way, in the order they
@@ -149,6 +157,7 @@ pub struct TemplateInstall {
     pub copied: Vec<String>,
     /// What a step said while it worked.
     pub notes: Vec<String>,
+    pub warnings: Vec<crate::engine::ItemWarning>,
     /// Why the run stopped short of the whole template, or null where it
     /// finished. What `subscribed` and `declared` name is on disk either
     /// way, and `copied` names bytes that may sit ahead of a render that
@@ -158,14 +167,29 @@ pub struct TemplateInstall {
     pub stopped: Option<String>,
 }
 
+impl TemplateInstall {
+    /// Fold in one step's report. The step plans the whole destination, so
+    /// its warnings name every package there, standing ones included, and
+    /// each step repeats them. The install carries only those about what
+    /// this step's request reached ([`crate::engine::EngineReport::requested`]);
+    /// the rest stay with the scope's own reading.
+    fn rendered(&mut self, report: crate::engine::EngineReport) {
+        let requested = report.requested();
+        self.notes.extend(report.notes);
+        self.warnings.extend(
+            report
+                .warnings
+                .into_iter()
+                .filter(|warning| requested.contains(&(warning.kind, warning.name.clone()))),
+        );
+    }
+}
+
 /// Read a template against this machine: which repositories carry its
 /// marketplace members, what version each resolves to, which copies it
 /// owns, and which members nothing can reach.
 pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
-    // The personal scope as its first write would create it: a fresh home
-    // already carries the default marketplace, so a member from it reuses
-    // that subscription rather than planning a second one the write refuses.
-    let personal = crate::engine::ops::manifest_for_reading(env, &Scope::Global)?;
+    let mut subscriptions = None;
     let mut groups: BTreeMap<String, ResolvedGroup> = BTreeMap::new();
     let mut copies = Vec::new();
     // A name two members claim is not installable however either half
@@ -178,61 +202,17 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
             continue;
         }
         match &member.source {
-            MemberSource::Marketplace { repo, rev } => {
-                let identity = crate::source_ref::repo_identity(repo);
-                let group = groups.entry(identity).or_insert_with(|| {
-                    let source = subscription_for(&personal, repo);
-                    ResolvedGroup {
-                        repo: repo.clone(),
-                        source,
-                        rev: rev.clone(),
-                        version: None,
-                        last_known: false,
-                        items: Vec::new(),
-                        bundles: Vec::new(),
-                    }
-                });
-                // One repository reads at one revision per scope, so two
-                // members of it pinned differently is not a selection
-                // anything can install. Said here, against the member that
-                // disagrees, rather than resolved by keeping whichever was
-                // seen first.
-                if group.rev != *rev {
-                    missing.push(MissingMember {
-                        kind: member.kind,
-                        name: member.name.clone(),
-                        repo: Some(repo.clone()),
-                        which: which_of(member),
-                        why: disagreeing_revs(repo, group.rev.as_deref(), rev.as_deref()),
-                    });
-                    continue;
-                }
-                // Routed by the table the member declares in, the same
-                // judge `contested` keys on, so what this offers and what
-                // that refuses cannot disagree. A set keeps its own kind
-                // on the row, so a surface acting on that row can still
-                // name a plugin as one.
-                match member.kind.namespace() {
-                    Namespace::Set => group.bundles.push(ResolvedSet {
-                        name: member.name.clone(),
-                        enabled: member.enabled,
-                        kind: member.kind,
-                    }),
-                    Namespace::Item(ItemKind::PiExtension) => missing.push(MissingMember {
-                        kind: member.kind,
-                        name: member.name.clone(),
-                        repo: Some(repo.clone()),
-                        which: which_of(member),
-                        why: super::PI_EXTENSION_DIRECT.to_owned(),
-                    }),
-                    Namespace::Item(kind) => group.items.push(ResolvedItem {
-                        kind,
-                        name: member.name.clone(),
-                        enabled: member.enabled,
-                    }),
-                }
+            MemberSource::Marketplace { rev, .. } | MemberSource::Catalog { rev, .. } => {
+                gather_catalog_member(
+                    env,
+                    member,
+                    rev,
+                    super::declarations(env, &mut subscriptions)?,
+                    &mut groups,
+                    &mut missing,
+                );
             }
-            MemberSource::Copy { copy, from, .. } => {
+            MemberSource::Copy { copy, from, .. } | MemberSource::SharedCopy { copy, from, .. } => {
                 let Some(kind) = member.kind.item() else {
                     missing.push(MissingMember {
                         kind: member.kind,
@@ -250,6 +230,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         enabled: member.enabled,
                         copy: copy.clone(),
                         from: from.clone(),
+                        links: member.source.links(),
                     }),
                     Err(error) => missing.push(MissingMember {
                         kind: member.kind,
@@ -263,12 +244,105 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
         }
     }
     let mut groups: Vec<ResolvedGroup> = groups.into_values().collect();
-    read_against_machine(env, &personal, &mut groups, &mut missing);
+    read_against_machine(env, &mut groups, &mut missing);
     Ok(Resolution {
         groups,
         copies,
         missing,
     })
+}
+
+fn gather_catalog_member(
+    env: &Env,
+    member: &super::Member,
+    rev: &Option<String>,
+    subscriptions: &[crate::source_ops::Subscription],
+    groups: &mut BTreeMap<String, ResolvedGroup>,
+    missing: &mut Vec<MissingMember>,
+) {
+    let CatalogReading { catalog, address } = match member_catalog(env, member, subscriptions) {
+        Ok(found) => found,
+        Err(why) => {
+            missing.push(MissingMember {
+                kind: member.kind,
+                name: member.name.clone(),
+                repo: match &member.source {
+                    MemberSource::Marketplace { repo, .. } => Some(repo.to_owned()),
+                    _ => None,
+                },
+                which: which_of(member),
+                why: why.to_string(),
+            });
+            return;
+        }
+    };
+    let repo = match &catalog {
+        Some(catalog) => catalog.reference(),
+        None => match &member.source {
+            MemberSource::Marketplace { repo, .. } => repo,
+            _ => unreachable!("only legacy strings lack a catalog"),
+        },
+    };
+    let identity = catalog.as_ref().map_or_else(
+        || format!("legacy:{}", crate::source_ref::repo_identity(repo)),
+        super::TemplateCatalog::identity,
+    );
+    let group = groups.entry(identity).or_insert_with(|| {
+        let source = address.as_ref().map(|(_, name)| name.clone());
+        ResolvedGroup {
+            catalog: catalog.clone(),
+            which: which_of(member),
+            scope: address.as_ref().map(|(scope, _)| scope.clone()),
+            repo: repo.to_owned(),
+            source,
+            rev: rev.clone(),
+            version: None,
+            last_known: false,
+            items: Vec::new(),
+            bundles: Vec::new(),
+        }
+    });
+    // One repository reads at one revision per scope, so two
+    // members of it pinned differently is not a selection
+    // anything can install. Said here, against the member that
+    // disagrees, rather than resolved by keeping whichever was
+    // seen first.
+    if group.rev != *rev {
+        missing.push(MissingMember {
+            kind: member.kind,
+            name: member.name.clone(),
+            repo: Some(repo.to_owned()),
+            which: which_of(member),
+            why: disagreeing_revs(repo, group.rev.as_deref(), rev.as_deref()),
+        });
+        return;
+    }
+    // Routed by the table the member declares in, the same
+    // judge `contested` keys on, so what this offers and what
+    // that refuses cannot disagree. A set keeps its own kind
+    // on the row, so a surface acting on that row can still
+    // name a plugin as one.
+    match member.kind.namespace() {
+        Namespace::Set => group.bundles.push(ResolvedSet {
+            which: which_of(member),
+            name: member.name.clone(),
+            enabled: member.enabled,
+            kind: member.kind,
+        }),
+        Namespace::Item(ItemKind::PiExtension) => missing.push(MissingMember {
+            kind: member.kind,
+            name: member.name.clone(),
+            repo: Some(repo.to_owned()),
+            which: which_of(member),
+            why: super::PI_EXTENSION_DIRECT.to_owned(),
+        }),
+        Namespace::Item(kind) => group.items.push(ResolvedItem {
+            which: which_of(member),
+            kind,
+            name: member.name.clone(),
+            enabled: member.enabled,
+        }),
+    }
 }
 
 /// What this machine can add to each group once its members are gathered:
@@ -281,12 +355,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
 /// meets that only after an earlier group has been committed. Asked here,
 /// where an unreachable copy is already answered, so the page and the
 /// install read one judgement.
-fn read_against_machine(
-    env: &Env,
-    personal: &Manifest,
-    groups: &mut [ResolvedGroup],
-    missing: &mut Vec<MissingMember>,
-) {
+fn read_against_machine(env: &Env, groups: &mut [ResolvedGroup], missing: &mut Vec<MissingMember>) {
     for group in groups {
         // What this machine already has. A read that finds nothing is not
         // a failure: the repository is fetched when the install runs.
@@ -296,7 +365,7 @@ fn read_against_machine(
             group.version = Some(resolution.commit);
             group.last_known = true;
         }
-        match standing_of(env, personal, group) {
+        match standing_of(env, group) {
             Standing::Unsubscribed => {}
             Standing::Readable(opened) => {
                 let (sealed, config) = opened.as_ref();
@@ -348,12 +417,19 @@ enum Standing {
 /// - **A repository this machine has never fetched** is deliberately not
 ///   answered either. Judging one needs a network read, and the template
 ///   page calls `resolve` on every open.
-fn standing_of(env: &Env, personal: &Manifest, group: &ResolvedGroup) -> Standing {
+fn standing_of(env: &Env, group: &ResolvedGroup) -> Standing {
     let Some(alias) = group.source.as_deref() else {
         return Standing::Unsubscribed;
     };
     let repo = crate::names::shown(&group.repo);
-    match crate::source::resolve(env, &Scope::Global, alias, personal) {
+    let Some(scope) = group.scope.as_ref() else {
+        unreachable!("resolved subscription carries its scope");
+    };
+    let manifest = match engine_ops::manifest_for_reading(env, scope) {
+        Ok(manifest) => manifest,
+        Err(error) => return Standing::Unserviceable(error.to_string()),
+    };
+    match crate::source::resolve(env, scope, alias, &manifest) {
         Ok(crate::source::SourceState::Ready(source)) => match read_catalog(&source) {
             // A catalog kendex cannot read as a catalog says nothing about
             // any name in it: every lookup would answer not-offered, and
@@ -407,7 +483,7 @@ fn keep_offered(
     missing: &mut Vec<MissingMember>,
 ) {
     let repo = group.repo.clone();
-    let mut gone: Vec<(MemberKind, String, String)> = Vec::new();
+    let mut gone: Vec<(MemberKind, String, super::MemberWhich, String)> = Vec::new();
     group.items.retain(|item| {
         match crate::source::find_item(sealed, config, item.kind, &item.name).is_some() {
             true => true,
@@ -415,6 +491,7 @@ fn keep_offered(
                 gone.push((
                     MemberKind::of(item.kind),
                     item.name.clone(),
+                    item.which.clone(),
                     no_longer_offered(&repo),
                 ));
                 false
@@ -425,24 +502,34 @@ fn keep_offered(
         |set| match crate::source::bundles::find(sealed, config, &set.name) {
             Ok(Some(_)) => true,
             Ok(None) => {
-                gone.push((set.kind, set.name.clone(), no_longer_offered(&repo)));
+                gone.push((
+                    set.kind,
+                    set.name.clone(),
+                    set.which.clone(),
+                    no_longer_offered(&repo),
+                ));
                 false
             }
             // The catalog declares a set this reader will not read. That is
             // the marketplace's problem, not a set the person imagined, and
             // the row says which.
             Err(error) => {
-                gone.push((set.kind, set.name.clone(), error.to_string()));
+                gone.push((
+                    set.kind,
+                    set.name.clone(),
+                    set.which.clone(),
+                    error.to_string(),
+                ));
                 false
             }
         },
     );
-    for (kind, name, why) in gone {
+    for (kind, name, which, why) in gone {
         missing.push(MissingMember {
             kind,
             name,
             repo: Some(repo.clone()),
-            which: super::MemberWhich::Marketplace { repo: repo.clone() },
+            which,
             why,
         });
     }
@@ -452,13 +539,12 @@ fn keep_offered(
 /// leave the group with none.
 fn drop_unconfirmed(group: &mut ResolvedGroup, missing: &mut Vec<MissingMember>, why: &str) {
     let repo = group.repo.clone();
-    let which = super::MemberWhich::Marketplace { repo: repo.clone() };
     for item in group.items.drain(..) {
         missing.push(MissingMember {
             kind: MemberKind::of(item.kind),
             name: item.name,
             repo: Some(repo.clone()),
-            which: which.clone(),
+            which: item.which,
             why: why.to_owned(),
         });
     }
@@ -467,7 +553,7 @@ fn drop_unconfirmed(group: &mut ResolvedGroup, missing: &mut Vec<MissingMember>,
             kind: set.kind,
             name: set.name,
             repo: Some(repo.clone()),
-            which: which.clone(),
+            which: set.which,
             why: why.to_owned(),
         });
     }
@@ -539,16 +625,24 @@ fn contested(members: &[super::Member]) -> BTreeMap<(Namespace, String), Missing
 /// plugin collide too.
 fn two_claims(name: &str, claimants: &[&super::Member]) -> String {
     let came_from = |member: &super::Member| match &member.source {
+        MemberSource::Catalog { catalog, .. } => {
+            format!("from {}", crate::names::shown(catalog.reference()))
+        }
         MemberSource::Marketplace { repo, .. } => {
             format!("from {}", crate::names::shown(repo))
         }
         MemberSource::Copy {
             from: Some(repo), ..
+        }
+        | MemberSource::SharedCopy {
+            from: Some(repo), ..
         } => format!(
             "as this template's own copy of {}'s",
             crate::names::shown(repo)
         ),
-        MemberSource::Copy { from: None, .. } => "as this template's own copy".to_owned(),
+        MemberSource::Copy { from: None, .. } | MemberSource::SharedCopy { from: None, .. } => {
+            "as this template's own copy".to_owned()
+        }
     };
     let shown = crate::names::shown(name);
     let each: Vec<String> = claimants
@@ -563,10 +657,13 @@ fn two_claims(name: &str, claimants: &[&super::Member]) -> String {
 
 fn which_of(member: &super::Member) -> super::MemberWhich {
     match &member.source {
+        MemberSource::Catalog { catalog, .. } => super::MemberWhich::Catalog {
+            catalog: catalog.clone(),
+        },
         MemberSource::Marketplace { repo, .. } => {
             super::MemberWhich::Marketplace { repo: repo.clone() }
         }
-        MemberSource::Copy { .. } => super::MemberWhich::Copy,
+        MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => super::MemberWhich::Copy,
     }
 }
 
@@ -587,20 +684,119 @@ fn disagreeing_revs(repo: &str, held: Option<&str>, wanted: Option<&str>) -> Str
     )
 }
 
-/// The personal subscription that already carries this repository, by the
-/// identity every source comparison uses rather than by spelling.
-fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
-    let identity = crate::source_ref::repo_identity(repo);
-    personal
-        .sources
-        .iter()
-        .find(|(_, decl)| {
-            decl.repo
-                .as_deref()
-                .or(decl.path.as_deref())
-                .is_some_and(|declared| crate::source_ref::repo_identity(declared) == identity)
-        })
-        .map(|(name, _)| name.clone())
+fn subscription_in(
+    env: &Env,
+    scope: &Scope,
+    catalog: &super::TemplateCatalog,
+) -> Result<Option<String>> {
+    let manifest = engine_ops::manifest_for_reading(env, scope)?;
+    Ok(crate::source_ops::matching_subscription(
+        env,
+        scope,
+        &manifest,
+        &catalog.declaration(None),
+    ))
+}
+
+pub(super) struct CatalogReading {
+    pub(super) catalog: Option<super::TemplateCatalog>,
+    address: Option<(Scope, String)>,
+}
+
+pub(super) enum CatalogError {
+    Ambiguous,
+    Read(CoreError),
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ambiguous => f.write_str("this legacy catalog matches more than one declaration — save again from its catalog"),
+            Self::Read(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+/// Legacy records retain main's fold only when every eligible declaration
+/// agrees on a single reading. Typed records compare kinds before identity.
+pub(super) fn member_catalog(
+    env: &Env,
+    member: &super::Member,
+    subscriptions: &[crate::source_ops::Subscription],
+) -> std::result::Result<CatalogReading, CatalogError> {
+    match &member.source {
+        MemberSource::Catalog { catalog, .. } => {
+            let mut scopes = Vec::new();
+            if let Some(scope) = catalog.scope() {
+                scopes.push(scope.clone());
+            }
+            for row in subscriptions {
+                if !scopes.contains(&row.scope) {
+                    scopes.push(row.scope.clone());
+                }
+            }
+            for scope in scopes {
+                if let Some(name) =
+                    subscription_in(env, &scope, catalog).map_err(CatalogError::Read)?
+                {
+                    return Ok(CatalogReading {
+                        catalog: Some(catalog.clone()),
+                        address: Some((scope, name)),
+                    });
+                }
+            }
+            Ok(CatalogReading {
+                catalog: Some(catalog.clone()),
+                address: None,
+            })
+        }
+        MemberSource::Marketplace { repo, .. } => {
+            let identity = crate::source_ref::repo_identity(repo);
+            let folder_identity = crate::source_ref::repo_identity(&crate::paths::slashed(
+                std::path::Path::new(repo),
+            ));
+            let matches: Vec<_> = subscriptions
+                .iter()
+                .filter(|row| {
+                    if row.is_remote {
+                        row.repo_identity == identity
+                    } else {
+                        crate::source_ref::repo_identity(&row.repo_identity) == folder_identity
+                            || crate::source_ref::repo_identity(&crate::paths::slashed(
+                                std::path::Path::new(&row.reference),
+                            )) == folder_identity
+                    }
+                })
+                .collect();
+            match matches.as_slice() {
+                [row] => {
+                    let manifest = engine_ops::manifest_for_reading(env, &row.scope)
+                        .map_err(CatalogError::Read)?;
+                    let catalog = manifest
+                        .sources
+                        .get(&row.name)
+                        .and_then(|decl| super::TemplateCatalog::declared(env, &row.scope, decl))
+                        .ok_or_else(|| {
+                            CatalogError::Read(CoreError::UnknownSource {
+                                name: row.name.clone(),
+                            })
+                        })?;
+                    Ok(CatalogReading {
+                        catalog: Some(catalog),
+                        address: Some((row.scope.clone(), row.name.clone())),
+                    })
+                }
+                [] => Ok(CatalogReading {
+                    catalog: None,
+                    address: None,
+                }),
+                _ => Err(CatalogError::Ambiguous),
+            }
+        }
+        MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => {
+            unreachable!("copies do not resolve as catalogs")
+        }
+    }
 }
 
 /// One install's record, and the only way it grows.
@@ -720,7 +916,7 @@ pub fn install(
     // (invariant 17): a caller can name a project by whatever it typed,
     // and every path this install derives has to key off one directory.
     let destination = &destination.canonical();
-    let resolution = resolve(env, template)?;
+    let mut resolution = resolve(env, template)?;
     if let Some(first) = resolution.missing.first() {
         return Err(CoreError::TemplateMemberUnavailable {
             name: format!("{} '{}'", first.kind.name(), first.name),
@@ -730,6 +926,7 @@ pub fn install(
     if resolution.count() == 0 {
         return Err(CoreError::TemplateEmpty);
     }
+    read_effective_subscriptions(env, destination, &mut resolution)?;
     // A saved index is adversarial input, and a hook environment it carries
     // is the one customization that reaches a command's own text:
     // `engine::targets::assignments` writes each key there as a shell word,
@@ -791,6 +988,103 @@ pub fn install(
     Ok(landed.install)
 }
 
+fn read_effective_subscriptions(
+    env: &Env,
+    destination: &Scope,
+    resolution: &mut Resolution,
+) -> Result<()> {
+    // Origin selects the saved reading. Execution reuses the destination,
+    // then the personal declaration; judge that same address before any write.
+    for group in &mut resolution.groups {
+        let address = match &group.catalog {
+            Some(catalog) => match subscription_in(env, destination, catalog)? {
+                Some(name) => Some((destination.clone(), name)),
+                None => {
+                    subscription_in(env, &Scope::Global, catalog)?.map(|name| (Scope::Global, name))
+                }
+            },
+            None => None,
+        };
+        (group.scope, group.source) = match address {
+            Some((scope, name)) => (Some(scope), Some(name)),
+            None => (None, None),
+        };
+    }
+    read_against_machine(env, &mut resolution.groups, &mut resolution.missing);
+    if let Some(first) = resolution.missing.first() {
+        return Err(CoreError::TemplateMemberUnavailable {
+            name: format!("{} '{}'", first.kind.name(), first.name),
+            why: first.why.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn plan_group_subscription(
+    env: &Env,
+    destination: &Scope,
+    group: &ResolvedGroup,
+    request: &AddRequest,
+) -> Result<(crate::engine::EngineReport, Subscription)> {
+    let subscribe = |scope: &Scope, request: Option<&AddRequest>| match &group.catalog {
+        Some(catalog) => crate::source_ops::subscribe_decl(
+            env,
+            scope,
+            catalog.declaration(group.rev.clone()),
+            request,
+        ),
+        None => {
+            let reference = match &group.rev {
+                Some(rev) => format!("{}@{rev}", group.repo),
+                None => group.repo.clone(),
+            };
+            match request {
+                Some(request) => {
+                    crate::source_ops::subscribe_and_install(env, scope, &reference, request)
+                }
+                None => crate::source_ops::subscribe(env, scope, &reference, None),
+            }
+        }
+    };
+    // A repository nothing subscribes to is subscribed personally
+    // first, the same declaration any other install of it would make.
+    // The add is judged before that subscription is written: a refusal
+    // there — a package no tool on this machine can take — must leave
+    // the personal manifest without a subscription only this install
+    // wanted. Into the personal scope, the subscription and the add are
+    // one plan; into a project, the personal declaration is carried in
+    // as the personal manifest would hold it, and the personal plan is
+    // written once the project's has been judged.
+    let address = group.scope.as_ref().zip(group.source.as_ref());
+    match (destination, address) {
+        (Scope::Project { .. }, Some((scope, name))) => {
+            crate::source_ops::install_from(env, scope, name, destination, request)
+                .map(|report| (report, Subscription::Existing))
+        }
+        (Scope::Project { root }, None) => subscribe(&Scope::Global, None).and_then(|subscribed| {
+            let report = crate::source_ops::install_project_carrying(
+                env,
+                root,
+                &subscribed.name,
+                &subscribed.decl,
+                request,
+            )?;
+            Ok((report, Subscription::Planned(subscribed.report.plan)))
+        }),
+        (Scope::Global, Some((_, name))) => engine_ops::add(
+            env,
+            destination,
+            &AddRequest {
+                source: Some(name.clone()),
+                ..request.clone()
+            },
+        )
+        .map(|report| (report, Subscription::Existing)),
+        (Scope::Global, None) => subscribe(destination, Some(request))
+            .map(|subscribed| (subscribed.report, Subscription::WithAdd)),
+    }
+}
+
 /// Install one marketplace group of the template: subscribe the personal
 /// scope where nothing does yet, add the members, and carry the saved
 /// switches onto what the add declared.
@@ -825,52 +1119,7 @@ fn install_group(
     // A whole set carries its own members; expanding agents' skills on
     // top would install beyond what the set declares.
     request.no_auto_skills = !request.bundles.is_empty();
-    let reference = match &group.rev {
-        Some(rev) => format!("{}@{rev}", group.repo),
-        None => group.repo.clone(),
-    };
-    // A repository nothing subscribes to is subscribed personally
-    // first, the same declaration any other install of it would make.
-    // The add is judged before that subscription is written: a refusal
-    // there — a package no tool on this machine can take — must leave
-    // the personal manifest without a subscription only this install
-    // wanted. Into the personal scope, the subscription and the add are
-    // one plan; into a project, the personal declaration is carried in
-    // as the personal manifest would hold it, and the personal plan is
-    // written once the project's has been judged.
-    let (report, subscription) = match (destination, &group.source) {
-        (Scope::Project { root }, Some(name)) => {
-            crate::source_ops::install_project_from_personal(env, root, name, &request)
-                .map(|report| (report, Subscription::Existing))
-        }
-        (Scope::Project { root }, None) => {
-            crate::source_ops::subscribe(env, &Scope::Global, &reference, None).and_then(
-                |subscribed| {
-                    let report = crate::source_ops::install_project_carrying(
-                        env,
-                        root,
-                        &subscribed.name,
-                        &subscribed.decl,
-                        &request,
-                    )?;
-                    Ok((report, Subscription::Planned(subscribed.report.plan)))
-                },
-            )
-        }
-        (Scope::Global, Some(name)) => engine_ops::add(
-            env,
-            destination,
-            &AddRequest {
-                source: Some(name.clone()),
-                ..request.clone()
-            },
-        )
-        .map(|report| (report, Subscription::Existing)),
-        (Scope::Global, None) => {
-            crate::source_ops::subscribe_and_install(env, destination, &reference, &request)
-                .map(|subscribed| (subscribed.report, Subscription::WithAdd))
-        }
-    }?;
+    let (report, subscription) = plan_group_subscription(env, destination, group, &request)?;
     let subscribed_with_add = match subscription {
         Subscription::Planned(plan) => {
             let repo = group.repo.clone();
@@ -902,7 +1151,7 @@ fn install_group(
     // Notes are what a step said while it worked, not a claim about a
     // write, so they travel whether or not the plan had anything in
     // it.
-    landed.install.notes.extend(report.notes);
+    landed.install.rendered(report);
     // The saved switch, applied to the declarations the add just
     // wrote. `AddRequest` carries no per-item flag, so the state is
     // put on the declaration the way the copy path does — one pass
@@ -983,6 +1232,7 @@ fn install_local(
             rev: None,
             enabled: copy.enabled,
             env: None,
+            links: copy.links,
         };
         manifest
             .declared_mut(copy.kind)
@@ -1039,7 +1289,7 @@ fn install_local(
     landed.commit(env, &report.plan, |install| {
         install.declared.extend(declared);
     })?;
-    landed.install.notes.extend(report.notes);
+    landed.install.rendered(report);
     Ok(())
 }
 

@@ -52,13 +52,16 @@ def remove(root, rel):
     os.unlink(os.path.join(root, rel))
 
 
-def replace(root, rel, data=None, transform=None, require_marker=True, dry_run=False):
+def replace(root, rel, data=None, transform=None, require_marker=True, dry_run=False,
+            reject_symlink=False):
     """Replace `rel` with `data`, atomically, behind the marker gate.
 
     `transform` is the read-modify-write form: it is handed the file's current
     text, or None when the path is absent, and returns the bytes to write, or
     None to leave the file alone. Any ownership decision that content settles
-    belongs inside it. Returns True when a write happened.
+    belongs inside it. Returns True when a write happened or would happen.
+    Adoption previews set `reject_symlink`: rendering can replace a linked
+    path inside the repository, but adoption must preserve the held bytes.
 
     Exactly one of `data` and `transform`. Neither is a caller that would
     write None; both is `data` silently dropped by the transform branch.
@@ -68,7 +71,7 @@ def replace(root, rel, data=None, transform=None, require_marker=True, dry_run=F
             f"{rel}: writer.replace takes exactly one of data= and transform=; "
             f"got {'neither' if data is None else 'both'}"
         )
-    if dry_run and os.path.islink(os.path.join(root, rel)):
+    if reject_symlink and os.path.islink(os.path.join(root, rel)):
         raise RenderError(f"{rel}: a symlink cannot be adopted")
     existing, owned = inspect(root, rel, require_marker=require_marker)
     if not owned:

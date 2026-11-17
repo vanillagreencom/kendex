@@ -22,8 +22,9 @@ LINEAR_TEAM_PREFIX = "PROJ"
 LINEAR_AGENT_LABELS = ""
 
 # Whether a new issue must say who runs into the problem. Any value turns it
-# on: a description with no "Reached by" line is refused, and a
-# high-priority issue born from a review also needs a "Symptom" line. A
+# on: a description with no "Reached by" line, or no "Supersession" record
+# of the search that admitted it, is refused, and a high-priority issue born
+# from a review also needs a "Symptom" line. A
 # description written on create, update or bulk-update with an invalid
 # "Post-merge:" trigger or deadline is refused. One that does not open with
 # nonempty quoted "> **Story:**" then "> **Why this matters:**" blocks is

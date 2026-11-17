@@ -8,6 +8,7 @@
 - Before taking the user's mouse or keyboard, request agreement through [communication.md:Message types](communication.md#message-types). Wait for their answer.
 - To stop a process, use its own process id after checking that it still belongs to the task. Do not stop unrelated processes by a shared name.
 - Ask before restarting the machine. Preserve open work before an authorized restart.
+- Start a long-running service through the platform's service manager or the existing job runner, such as the orch skill's job runner, and check that it runs after the start.
 
 ## Recovery
 

@@ -114,11 +114,16 @@ fn the_guards_travel_with_the_repository_and_gate_a_clone() {
     // Arming in the clone is the one act that needs a tool. After it, the
     // gate is committed shell and git, and nothing else.
     super::run(&world.home, &clone, &["guard", "install"]);
-    fs::write(clone.join("late.rs"), "// TO".to_owned() + "DO: not yet\n").unwrap();
+    // A conflict marker, spelled in halves so this file carries none.
+    fs::write(clone.join("late.rs"), "<<<<".to_owned() + "<<< ours\n").unwrap();
     git_without_kendex(&clone, &["add", "-A"]);
     let blocked = git_without_kendex(&clone, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", spoke(&blocked));
-    assert!(spoke(&blocked).contains("todo-ban"), "{}", spoke(&blocked));
+    assert!(
+        spoke(&blocked).contains("conflict-markers: match="),
+        "{}",
+        spoke(&blocked)
+    );
 }
 
 /// Removing the package leaves no shim behind. A shim whose scripts are

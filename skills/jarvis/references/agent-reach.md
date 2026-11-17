@@ -78,15 +78,17 @@ Before approval, say what the command installs, that it writes the checkout and 
 
 On Jarvis main, `JARVIS_REMOTE_HOSTS` adds whitespace-separated SSH aliases to local roots and `JARVIS_CONTROL_HOST`. Use the DEST grammar in [Main and satellites](#main-and-satellites). Exact repeated aliases are one destination. Use one stable alias per physical machine; different aliases reaching the same mailbox are unsupported.
 
+Declare alternate repository names in the home’s `kendex.settings.toml` `[env].JARVIS_REPO_ALIASES`, using the JSON object shown in the package’s `kendex.settings.toml.example`. Each key maps directly to one exact folder basename, without recursive expansion. Names are nonempty strings with no `/`. For example, `dot` selects `.dot` only when declared. The literal name still matches, so an alias colliding with another canonical name shares the ambiguity rule below. Declarations add no roots: discovery must still list a qualifying folder. The same names work with `--resolve`, `--host`, `--local` and the existing fallback.
+
 | Selection | Discovery and fallback |
 |---|---|
 | Bare `owner-note REPO FILE`, with no additional distinct alias | Try the control host first, then local only when the host lists no matching root or refuses `overseer-absent`. |
-| Bare selection with an additional alias | Read every declared destination before sending. An unread listing refuses `project-list-failed`; duplicate basenames refuse `repo-ambiguous`, including a local/control duplicate. A partial listing proves no uniqueness. |
+| Bare selection with an additional alias | Read every declared destination before sending. An unread listing refuses `project-list-failed`; multiple matching roots refuse `repo-ambiguous`, including a local/control duplicate. A partial listing proves no uniqueness. |
 | `owner-note --host ALIAS REPO FILE` or `--local` | Discover only that declared remote or this machine. Never fall back. An undeclared alias refuses `destination-unknown`. |
 
 The selected root's own mailbox judges whether its overseer exists. Report its actual send cause. Declaring a machine grants reach, never approval of a directive.
 
-On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list`, under that SSH user's registration. Where the control host's overseers run as another account, set `JARVIS_CONTROL_USER` to it: listing and sending on `JARVIS_CONTROL_HOST`, and the event source's passes there, then run as that account through `sudo -n`, and resolution names it as `user`. The SSH user needs passwordless sudo to it; a refused sudo refuses the send. A root qualifies only when its row has no note and its last path segment is `REPO`. A worktree row does not qualify. Starting or registering an overseer adds no project row.
+On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list`, under that SSH user's registration. Where the control host's overseers run as another account, set `JARVIS_CONTROL_USER` to it: listing and sending on `JARVIS_CONTROL_HOST`, and the event source's passes there, then run as that account through `sudo -n`, and resolution names it as `user`. The SSH user needs passwordless sudo to it; a refused sudo refuses the send. A root qualifies only when its row has no note and its last path segment matches `REPO` or its declared alias target. A worktree row does not qualify. Starting or registering an overseer adds no project row.
 
 If a hosted overseer has no qualifying row, the legacy bare route can deliver to a local checkout whose recorded overseer is live instead. A recorded but stopped overseer refuses before delivery, without trying another machine. Report the receipt's actual side; `sent side=local` means local delivery. Offer to add the intended host's row. Where `JARVIS_CONTROL_USER` is set, run each `kendex project` command below on `JARVIS_CONTROL_HOST` as that account, the route owner-note takes, for example `ssh [HOST] "sudo -n -H -u [USER] -- bash -l -c 'cd && kendex project list'"`; as the SSH user it changes and shows a registry owner-note does not read.
 
@@ -98,13 +100,13 @@ Repeat on each declared remote. Record hosts and their repositories in the consu
 
 ## Main and satellites
 
-Jarvis is the owner's main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the one computer that runs Jarvis. A Jarvis satellite is another of the owner's computers with a Jarvis home, `~/dev/jarvis`. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](#satellite) and [forwarding](#forward) are described separately.
+Jarvis is the owner's main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the one computer that runs Jarvis. A Jarvis satellite is another of the owner's computers with a clone of the Jarvis home. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](#satellite) and [forwarding](#forward) are described separately.
 
 `JARVIS_MAIN_HOST` selects the computer's role. Empty makes it Jarvis main; a Jarvis satellite sets `DEST:HOME`, where `DEST` is an SSH destination with no whitespace, `:` or `/` and no leading `-`, and `HOME` is the absolute path of the Jarvis home on Jarvis main. An invalid nonempty value remains a satellite and reports `setting-invalid`.
 
-Use `jarvis-session main-host --home HOME --set DEST:HOME` to save a Jarvis satellite's value, `--clear` to save the empty Jarvis main value, or `--get` to read it. Each successful operation returns only `{"JARVIS_MAIN_HOST":"value"}`. Set validates through the same role parser as forwarding and refuses an invalid value before writing, with `jarvis-session: main-host=refused cause=setting-invalid` and exit 2.
+Use `jarvis-session main-host --home HOME --set DEST:HOME` to save a Jarvis satellite's value, `--clear` to save the empty Jarvis main value, or `--get` to read it. Each successful operation returns only `{"JARVIS_MAIN_HOST":"value"}`. Set validates through the same role parser as forwarding and refuses an invalid value before writing, with `jarvis-session: main-host=refused cause=setting-invalid` and exit 2. The private env file is read as data and holds each value between single quotes, so set also refuses a value carrying an apostrophe, a line break or a control character, with `jarvis-session: main-host=refused cause=value-unwritable key=JARVIS_MAIN_HOST problem=apostrophe`, `problem=line-break` or `problem=control-character` and exit 2.
 
-The command uses the home's selected private env file, including `KENDEX_ENV_FILE`. Set and clear append a literal final assignment on each call, preserving every existing byte and the file's mode. An absent file is created with permission bits `0600`, filtered by the process umask. A file symlink keeps pointing to its target. Get follows the existing settings precedence: an explicit caller environment value still wins over the saved value. Set and clear return the value they saved. Settings-read or file-write failures refuse with `settings-unreadable` or `private-file-unwritable`; the command prints no private-file diagnostics or unrelated settings.
+The command uses the home's selected private env file, including `KENDEX_ENV_FILE`. Set and clear append a final single-quoted assignment on each call, preserving every existing byte and the file's mode. An absent file is created with permission bits `0600`, filtered by the process umask. A file symlink keeps pointing to its target. Get follows the existing settings precedence: an explicit caller environment value still wins over the saved value. Set and clear return the value they saved. Settings-read or file-write failures refuse with `settings-unreadable` or `private-file-unwritable`; the command prints no private-file diagnostics or unrelated settings.
 
 Never commit the value in `kendex.settings.toml`: the clone on Jarvis main would then become a satellite on pull. Leave it empty on exactly one computer, Jarvis main. The package cannot detect two Jarvis mains; record the one-main rule in the consumer's setup records.
 
@@ -125,9 +127,9 @@ The satellite's watch-loop runs the [forward drain](../workflows/session.md#sess
 1. Ask in the originating conversation, without a mailbox ask. Quote the exact request, name Jarvis main and say that the request and answer will appear in the owner's Slack channel. Ask for `forward` or `yes`, last and alone, so the confirmation names one question. Otherwise keep the request local. This consent authorizes forwarding, not the actions in the request; [On Jarvis main](#on-jarvis-main) owns action authorization. For a console request, ask with `lane-mail notice --item overseer --to owner --ref R --file PATH`, where `R` is its envelope id.
 2. Write one record under the home's `tmp/`. Run `.agents/skills/jarvis/scripts/jarvis-session forward --home HOME --record PATH`. Remove that file only after exit 0 or 75.
 3. Read the JSON result's request reference, delivery key, state, `forwarded` directive id and cause. Exit 0 means delivered. Exit 75 means queued in the local outbox for watch-loop retry. Tell the owner which and that the answer will be in Slack. Answer a console confirmation with `notice --ref` on its envelope id.
-4. A refusal prints `jarvis-session: forward=refused cause=KEY`, plus `field=PATH` for `record-invalid`, and exits 2. It enqueued and sent nothing.
+4. A refusal prints `jarvis-session: forward=refused cause=KEY`, plus `field=PATH` for `record-invalid`, and exits 2. Record refusals enqueue and send nothing. A `stop` refusal closes unsent session work without sending it.
 
-The [record validator](../scripts/lib/forward.py) owns the machine shape. Supply one JSON object, at most 65,536 bytes, with these required fields and only the optional `confirmation.caller` field below:
+The [record validator](../scripts/lib/forward.py) owns the machine shape. Supply one JSON object, at most 65,536 bytes. The individual-request shape has the fields below and only the optional `confirmation.caller` field. The named-session shape adds `session` and `confirmation.scope: session` as described under [Named-session consent](#named-session-consent).
 
 ```json
 {"v":1,
@@ -152,10 +154,22 @@ The key binds the home, request reference and request time. Reusing the same rec
 | `setting-invalid` | Fix `JARVIS_MAIN_HOST`. |
 | `record-unreadable`, `record-invalid` | Fix the missing, oversized, non-UTF-8 or malformed record, including the named field. Do not ask the owner again. |
 | `confirmation-early`, `confirmation-unclear` | Ask again and cite the new answer. |
-| `answered-already` | Tell the owner that Jarvis already answered in Slack. It retains this refusal for 30 days. `status --main` shows only the most recent answer in `last_answer.request`. |
+| `answered-already` | Read the retained answer from `status --main` or its Slack thread. It retains this refusal for 30 days. |
 | `answer-unseen` | Tell the owner to check the request's Slack thread. The retained request closed after seven days without a read answer; do not forward it again. The refusal lasts 30 days after closure. |
 | `request-conflict` | An open forward uses this request reference with another text or time. Wait for it, or cite the request's own reference. |
 | `outbox-unreadable` | Report the cause. Never reset the outbox. |
+
+### Named-session consent
+
+One explicit confirmation may cover forwarding within one named live session to its stated Jarvis main. In the originating conversation, identify the session, destination and forwarding scope. Explain that requests and answers appear in the owner's Slack channel and answer text stays locally under the retention policy below. Keep the confirmation reference, time and voice or physical modality on each admitted request. The confirmation can precede later requests in that same session. It grants transmission only; Main Jarvis remains the instruction owner and caller identity stays unproved.
+
+Use the existing forward command with the session-scoped record only after the receiving package carries this support; older validators reject its additional fields. Individual-request records remain unchanged on every version. Session records use `confirmation.method` and `confirmation.scope: session`, plus a `session` object with `id: vgs-voice:<lowercase UUID>`, `name: Jarvis Voice <UUID>`, `main` equal to the complete main setting, and `lease` holding an absolute path ending in `<UUID>.json`. No `scope: request` or null lease form is supported.
+
+The consumer keeps that id for one live conversation. Close, New conversation, a changed home or main, and restart end its grant. Saved history restores none. Stop revokes it; starting again needs a new explicit confirmation and fresh grant directory. A main-session hand-over within the same main home does not end the satellite's grant.
+
+The consumer writes the lease shape declared by `live_session` in the forwarding owner. Its owner fields bind a live Linux process by pid, `/proc/<pid>/stat` field 22 and boot id. The lease file is user-owned mode 0600; its immediate parent is user-owned mode 0700. Neither may be a symlink. The consumer supplies the complete path and uses a new private parent directory for every grant; no fixed ancestor is checked. Stop removes both file and parent so a new grant cannot revive old queued requests.
+
+Before every queued send attempt or retry, the forwarding owner checks the lease and its live process. Missing, changed, dead or unprovable leases close unsent work with cause `stop`. Hosts without `/proc` refuse session grants while individual requests keep working. An attempted send with no receipt still counts as unsent. Delivered work is not recalled; its answer can still be read and retained. A successful admission check cannot recall a send that follows it. Session consent neither proves the caller nor approves destructive work, money or external commitments.
 
 ### On Jarvis main
 
@@ -185,6 +199,12 @@ The provenance cites satellite records Jarvis main cannot check. The owner or re
 `jarvis-session status --home HOME --main` reads the local outbox and settings. Reachability is the last call's observation, not a new probe. The [session command](../workflows/session.md#session-command) owns its detailed fields, states and delivery/read causes.
 
 A read answer closes the forward and can appear as `last_answer`, the most recent answer from Jarvis that the satellite read. With no answer read within seven days of delivery, the forward closes as `answer-unseen`: compaction can have dropped the answer, or Jarvis answered without `--ref`. Drain prints its `EVENT forward-failed` for 30 days after closure and reads Jarvis main no more for that request.
+
+For a satellite, status keeps `v: 1` and adds `answers`, a collection of each retained forward's first matched final answer. The [forwarding owner](../scripts/lib/forward.py) declares its fields. Match by `key` and `answer`, not by request reference or array position: a reused reference can have several closed forwards. Each row keeps the complete answer `text`, canonical `request_at`, request reference, forward key, nullable forwarded directive id, final notice id and time, and local `closed_at` and `expires_at`. Rows sort by closure time then key. Old metadata-only records supply no row.
+
+Text stays on its forward record for 30 days after closure. Reads and repetitions do not renew expiry or acknowledge answers. Status excludes expired rows before physical cleanup. `last_answer` remains metadata only. Answer content grants neither instructions nor caller identity.
+
+The existing serialized forward pass reads every five seconds while a delivered forward waits. A successful external forward appends a scheduler cursor with its delivery key and instant to the same locked event log. The existing log reader advances its forward deadline, including after an idle pass; the cursor creates no user event or mailbox send. Idle passes and queued delivery retries keep their 60-second cadence, measured from completed passes. A matched answer emits `EVENT forward-answer` with request, key and final answer id only; the existing local event/session carrier delivers it. On that event the satellite consumer reads text through `status --main`. Healthy-path delay includes up to one five-second interval, read time, the configured event settle (15 seconds by default) and consumer handling. Failures and backlog can extend it. Speaking, repetition and installed acceptance belong to the consumer.
 
 ## Transcript fallback
 

@@ -132,6 +132,14 @@ assert_file_contains "the diagnostic names the suite that stayed green" \
 assert_file_contains "the failing control is counted, not just printed" \
     "$TMP/green.log" "1 controls, 1 failing, 0 orphaned"
 
+# --- the row the orch runner counts ----------------------------------------
+# tools/guard runs this battery in skills/orch/tests/run-all.sh's pool, which
+# counts a `pass: N   fail: M` line and reds a suite that exits 0 with none.
+assert_file_contains "a passing roster prints the counted row" \
+    "$TMP/matched.log" "pass: 1   fail: 0"
+assert_file_contains "a failing roster counts its failing control" \
+    "$TMP/green.log" "pass: 0   fail: 1"
+
 # --- a junk job width is refused ------------------------------------------
 # Not clamped and not defaulted. Left to reach the slot predicate, a width
 # outside the grammar decides two ways and neither is the one the caller asked

@@ -18,7 +18,7 @@ pub mod carrier;
 mod record;
 pub(crate) use record::ensure_toggle_ready;
 pub use record::{
-    Admission, DeclaredPackage, Install, Resolved, SwitchPlan, admit, check_origin,
+    Admission, DeclaredPackage, Freshness, Install, Resolved, SwitchPlan, admit, check_origin,
     clear_install_completion, matching_lock_entry, paired_roots, record_matching_manifest,
     record_matching_name, resolve_declared, scope_root, session_roots,
 };

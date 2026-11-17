@@ -21,8 +21,7 @@ CM="$SKILL_DIR/scripts/commit-msg"
 source "$SKILL_DIR/scripts/lib/common.sh"
 # shellcheck source=../scripts/lib/commit-parent.sh
 source "$SKILL_DIR/scripts/lib/commit-parent.sh"
-unset COMMIT_GUARDS_COMMIT_TYPES COMMIT_GUARDS_SUBJECT_MAX \
-  COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS COMMIT_GUARDS_CHANGELOG_PATHS \
+unset COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS COMMIT_GUARDS_CHANGELOG_PATHS \
   COMMIT_GUARDS_CHANGELOG_RECORD COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -78,7 +77,6 @@ commit() { # ARGS...
   printf 'rc=%s %s' "$rc" "$(LC_ALL=C awk '/^commit-msg: [a-z-]+=/ { print }' "$R/hook.out" | paste -sd ';' -)"
 }
 OWED="commit-msg: changelog-missing=crates/core/lib.rs:changelog.d/*/*.md"
-header() { printf 'commit-msg: header-valid=%s' "$1"; } # HEADER
 
 echo "=== an amend is judged against the parent it will HAVE, not the HEAD it replaces ==="
 # `git diff --cached` on an amend shows only what was staged ON TOP of the
@@ -90,22 +88,21 @@ echo "=== an amend is judged against the parent it will HAVE, not the HEAD it re
 # one before.
 staged_on_fragment next
 assert_eq "control: the commit AFTER a fragment commit still owes its own entry" \
-  "rc=1 $(header 'fix(KEN-2): change a crate again');$OWED" "$(commit -m 'fix(KEN-2): change a crate again')"
+  "rc=1 $OWED" "$(commit -m 'fix(KEN-2): change a crate again')"
 if [ "$HAVE_PROC" -eq 0 ]; then
   skip "the widening rows need /proc/<pid>/cmdline, where the committing argv is read"
 else
   staged_on_fragment amend
   assert_eq "an amend adding more code passes on the fragment the commit already carries" \
-    "rc=0 $(header 'fix(KEN-1): change a crate')" "$(commit --amend --no-edit)"
+    "rc=0 " "$(commit --amend --no-edit)"
   # MUST-FAIL: `--mess` is git's abbreviation of `--message`, so the `--amend`
   # behind it is the committer's message TEXT, not the flag. A scan reading
   # the flag out of a value fails open, excusing this commit with the
   # fragment the previous one carries; every fail-open this lane had came
-  # from that class. The header refusal is the message's own; the owed entry
-  # is the pin.
+  # from that class.
   staged_on_fragment value
   assert_eq "must-fail: a message VALUE spelling the flag does not widen the base" \
-    "rc=1 commit-msg: header-shape=--amend:build chore ci docs feat fix perf refactor revert style test;$OWED" \
+    "rc=1 $OWED" \
     "$(commit --mess '--amend')"
   # MUST-FAIL: a message merely CONTAINING the flag. The argv is read
   # NUL-delimited so this stays one argument; a scan joining argv with spaces
@@ -113,7 +110,7 @@ else
   # commit with the fragment the previous one carries.
   staged_on_fragment mention
   assert_eq "must-fail: a message CONTAINING the flag is not the flag" \
-    "rc=1 $(header 'fix(KEN-2): wire the --amend path');$OWED" \
+    "rc=1 $OWED" \
     "$(commit -m 'fix(KEN-2): wire the --amend path')"
 fi
 

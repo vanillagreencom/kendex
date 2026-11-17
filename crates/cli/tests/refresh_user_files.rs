@@ -71,7 +71,7 @@ fn installed(home: &Path) -> (PathBuf, PathBuf, String) {
     commit(&catalog, "Jarvis N");
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n[sources.own]\npath = \".\"\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[agents.operator]\nsource = \"own\"\n",
+        "schema = 8\n[sources.own]\npath = \".\"\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[agents.operator]\nsource = \"own\"\n",
     );
     write(
         &project.join("agents/operator.md"),

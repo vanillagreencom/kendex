@@ -548,7 +548,7 @@ mod tests {
         std::fs::create_dir_all(project.join(".claude")).unwrap();
         std::fs::write(
             project.join("kendex.toml"),
-            "schema = 7\n[install]\nharnesses = [\"claude\"]\n[[custom-hooks]]\nevent = \"PostModelSwitch\"\ncommand = \"./model-changed.sh\"\nagents = \"all\"\n",
+            "schema = 8\n[install]\nharnesses = [\"claude\"]\n[[custom-hooks]]\nevent = \"PostModelSwitch\"\ncommand = \"./model-changed.sh\"\nagents = \"all\"\n",
         )
         .unwrap();
         let scope = crate::model::Scope::Project {

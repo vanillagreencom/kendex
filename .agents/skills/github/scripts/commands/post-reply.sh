@@ -61,7 +61,7 @@ reply_via_graphql() {
     }'
 
     local result
-    result=$(gh_graphql "$query" -F threadId="$thread_id" -F body="$body") || return 1
+    result=$(gh_graphql "$query" -F threadId="$thread_id" -f body="$body") || return 1
 
     local url
     url=$(echo "$result" | jq -r '.addPullRequestReviewThreadReply.comment.url // ""')

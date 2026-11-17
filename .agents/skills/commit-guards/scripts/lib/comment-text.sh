@@ -1,7 +1,7 @@
 # shellcheck shell=bash
-# Comment text out of a source file, for the comments lane: which grammar a
-# path takes, and the scanner that walks a file under it. Sourced by
-# scripts/comments; needs gg_fail and GG_TMP from lib/common.sh.
+# Comment text out of a source file: which grammar a path takes, and the
+# scanner that walks a file under it. Sourced by scripts/md-refs; needs
+# gg_fail and GG_TMP from lib/common.sh.
 #
 # The scanner is a character walk with code, string, block-comment and
 # heredoc-body states carried across lines. A quoted shell command
@@ -22,13 +22,13 @@
 
 # Every extension the extractor has a grammar for, spelled once here and
 # once in the table in ../../CHECKS.md § comments. Two spellings of each name
-# because `*` crosses `/` but never stands in for the separator. The comments
-# lane reads it as its default path list.
+# because `*` crosses `/` but never stands in for the separator. md-refs
+# reads it as its default source path list.
 GG_COMMENT_PATHS_DEFAULT="*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile"
 
 # The grammar a path takes: its extension first, and for a path with none
-# the interpreter its shebang names. Prints nothing for a path this lane has
-# no grammar for. The table this spells is ../../CHECKS.md § comments.
+# the interpreter its shebang names. Prints nothing for a path this extractor
+# has no grammar for. The table this spells is ../../CHECKS.md § comments.
 gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when none
   local path="$1" blob="$2" base ext first
   base="${path##*/}"
@@ -108,7 +108,7 @@ The comment reader exited with status $2.${reason:+ $reason}" ;;
   esac
 }
 
-# comments and md-refs parse stdout as line<TAB>text. An extraction refusal
+# md-refs, the one consumer, parses stdout as line<TAB>text. An extraction refusal
 # uses stderr enum:line[:terminator], retained in GG_COMMENT_ERROR.
 # The comment text of one file under one grammar, as "line<TAB>text"
 # records. A block comment spanning lines emits one record per line. A

@@ -647,7 +647,7 @@ jobs:
           set -euo pipefail
           policy="$(.agents/skills/review-gate/scripts/review-policy --check-config)"
           if [ "$policy" = "review-policy=active" ]; then
-            .agents/skills/review-gate/scripts/install-latest.sh
+            .agents/skills/harness-ci/scripts/install-latest.sh
             lock="$(.agents/skills/review-gate/scripts/review-policy --lock-kendex)"
             case "$lock" in
               review-policy-lock-kendex=off) ;;

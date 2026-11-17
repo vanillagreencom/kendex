@@ -15,7 +15,7 @@ import {
 import { UPDATES_ONE_AT_A_TIME_NOTE } from "@/lib/copy-updates";
 import { beforeWriting, offerToCommit, rescanEverything } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
-import { saying } from "@/lib/undone";
+import { saying, sayUnfinished } from "@/lib/undone";
 import { workOut } from "@/lib/updates-read-state";
 import { versionRowLabel } from "@/lib/versions";
 import type { PackageRef } from "@/stores/nav";
@@ -91,6 +91,7 @@ export function packageVersionActions(
       }
       // One package's apply, so a removal it reports is that package's.
       sayApply(done, response.data, 1);
+      sayUnfinished(displayName, response.data.view.unfinished);
       afterChange(roots);
     });
   };

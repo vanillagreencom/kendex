@@ -231,12 +231,40 @@ describe("a member taken out of the template", () => {
       groups: [
         {
           repo: "owner/repo",
+          catalog: {
+            kind: "repository",
+            repo: "owner/repo",
+            origin: { origin: "direct" },
+          },
+          which: {
+            of: "catalog",
+            catalog: {
+              kind: "repository",
+              repo: "owner/repo",
+              origin: { origin: "direct" },
+            },
+          },
+          scope: null,
           source: null,
           rev: null,
           version: null,
           lastKnown: false,
           items: [],
-          bundles: [{ name: "review", enabled: true, kind: "plugin" }],
+          bundles: [
+            {
+              name: "review",
+              enabled: true,
+              kind: "plugin",
+              which: {
+                of: "catalog",
+                catalog: {
+                  kind: "repository",
+                  repo: "owner/repo",
+                  origin: { origin: "direct" },
+                },
+              },
+            },
+          ],
         },
       ],
       copies: [],
@@ -270,10 +298,92 @@ describe("a member taken out of the template", () => {
         {
           kind: "plugin",
           name: "review",
-          which: { of: "marketplace", repo: "owner/repo" },
+          which: {
+            of: "catalog",
+            catalog: {
+              kind: "repository",
+              repo: "owner/repo",
+              origin: { origin: "direct" },
+            },
+          },
         },
       ],
     );
+  });
+});
+
+describe("removing members from a mixed-format catalog group", () => {
+  it("forwards each item and set's original reference", async () => {
+    const catalog = {
+      kind: "repository" as const,
+      repo: "owner/repo",
+      origin: { origin: "direct" as const },
+    };
+    const typed = { of: "catalog" as const, catalog };
+    const legacy = { of: "marketplace" as const, repo: "owner/repo" };
+    vi.mocked(commands.templateResolve).mockResolvedValue({
+      status: "ok",
+      data: {
+        groups: [
+          {
+            repo: "owner/repo",
+            catalog,
+            which: typed,
+            scope: null,
+            source: null,
+            rev: null,
+            version: null,
+            lastKnown: false,
+            items: [
+              { kind: "skill", name: "new-skill", enabled: true, which: typed },
+              {
+                kind: "skill",
+                name: "old-skill",
+                enabled: true,
+                which: legacy,
+              },
+            ],
+            bundles: [
+              { kind: "bundle", name: "old-set", enabled: true, which: legacy },
+              { kind: "plugin", name: "new-set", enabled: true, which: typed },
+            ],
+          },
+        ],
+        copies: [],
+        missing: [],
+      },
+    });
+    vi.mocked(commands.templateFiles).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    vi.mocked(commands.templateRemoveMembers).mockResolvedValue({
+      status: "ok",
+      data: TEMPLATE,
+    });
+    const host = mount(<TemplatePage />);
+    await settle();
+    const expected = [
+      { kind: "skill", name: "new-skill", which: typed },
+      { kind: "skill", name: "old-skill", which: legacy },
+      { kind: "bundle", name: "old-set", which: legacy },
+      { kind: "plugin", name: "new-set", which: typed },
+    ];
+    for (const [index, member] of expected.entries()) {
+      const label = [...host.querySelectorAll("p")].find(
+        (one) => one.textContent === member.name,
+      );
+      const remove =
+        label?.parentElement?.parentElement?.querySelector("button");
+      if (!remove) throw new Error(`no removal control for ${member.name}`);
+      await act(async () => remove.click());
+      await settle();
+      expect(commands.templateRemoveMembers).toHaveBeenNthCalledWith(
+        index + 1,
+        "Rust service",
+        [member],
+      );
+    }
   });
 });
 

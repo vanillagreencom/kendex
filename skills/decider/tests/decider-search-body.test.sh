@@ -25,6 +25,7 @@ cat >"$REPO/docs/decisions/INDEX.md" <<'EOF'
 | 2026-01-01 | D027 | CC-1 | Performance measurement stack | Needs stable baselines | Never | Active | [D027](D027-perf.md) |
 | 2026-01-02 | D046 | CC-2 | Dev surface feature gating | Keeps prod lean | Never | Active | [D046](D046-gating.md) |
 | 2026-01-03 | D047 | CC-3 | Signature forgery guard | Prevents forgery | Never | Active | [D047](D047-forgery.md) |
+| 2026-01-04 | D048 | KEN-9001 | Retired runner layout | Lives in dormant tools-runner code | Never | Removed | `D048-runner.md` |
 EOF
 printf '# D027\n\nBenchmarks run in a hermetic sandbox against forgery and host drift.\n' >"$REPO/docs/decisions/D027-perf.md"
 printf '# D046\n\nClippy lints are enforced on the dev surface.\n' >"$REPO/docs/decisions/D046-gating.md"
@@ -75,6 +76,12 @@ evaluate_search_rows() {
       sorted-ids)
         projected=$(jq -cer 'if type == "array" then [.[].id] | sort else error("not an array") end' <<<"$out" 2>/dev/null)
         ;;
+      status-rationale)
+        projected=$(jq -cer 'if type == "array" then [.[] | "\(.id)|\(.status)|\(.rationale)"] | join(";") else error("not an array") end' <<<"$out" 2>/dev/null)
+        ;;
+      status-path)
+        projected=$(jq -cer 'if type == "array" then [.[] | "\(.id)|\(.status)|\(.path | sub(".*/"; ""))"] | join(";") else error("not an array") end' <<<"$out" 2>/dev/null)
+        ;;
       ids-scores)
         projected=$(jq -cer 'if type == "array" then [.[] | "\(.id):\(.score)"] | join(",") else error("not an array") end' <<<"$out" 2>/dev/null)
         ;;
@@ -98,6 +105,14 @@ and-across-decisions-miss~hermetic gating~ids~[]~none
 regex-bodies~hermetic|clippy~sorted-ids~["D027","D046"]~none
 keyword-miss~zzz-absent-token~ids~[]~none
 unindexed-file~hermetic~ids~["D027"]~stray
+status-keyword~dormant~status-rationale~D048|Removed|Lives in dormant tools-runner code~none
+status-active-keyword~hermetic~status-rationale~D027|Active|Needs stable baselines~none
+status-regex~dormant|zzz-absent-token~status-rationale~D048|Removed|Lives in dormant tools-runner code~none
+status-issue~--issue=KEN-9001~status-rationale~D048|Removed|Lives in dormant tools-runner code~none
+removed-path-keyword~dormant~status-path~D048|Removed|~none
+removed-path-regex~dormant|zzz-absent-token~status-path~D048|Removed|~none
+removed-path-issue~--issue=KEN-9001~status-path~D048|Removed|~none
+active-path-keyword~hermetic~status-path~D027|Active|D027-perf.md~none
 SEARCH_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
     guard="body-search table executed no rows"
@@ -125,6 +140,37 @@ if [[ "$failures" == *'|summary-body-score|'* ]]; then
   pass "missing score sort fails the ranking row"
 else
   fail "missing score sort did not fail the ranking row"
+fi
+
+fields_mutant="$(decider_mutate_script "$TMP_ROOT/no-status-rationale/decisions" '      {id, decision, status, rationale, path}' '      {id, decision, path}' 1)"
+failures="$(evaluate_search_rows "$fields_mutant" control status-issue)"
+if [[ "$failures" == *'|status-issue|'* ]]; then
+  pass "rows without status and rationale fail the issue row"
+else
+  fail "rows without status and rationale did not fail the issue row"
+fi
+
+removed_mutant="$(decider_mutate_script "$TMP_ROOT/removed-path/decisions" 'then .path = "" else' 'then . else' 1)"
+failures="$(evaluate_search_rows "$removed_mutant" control removed-path-keyword)"
+if [[ "$failures" == *'|removed-path-keyword|'* ]]; then
+  pass "a Removed row's deleted path fails the Removed path row"
+else
+  fail "a Removed row's deleted path did not fail the Removed path row"
+fi
+
+echo "=== get on a Removed row ==="
+get_removed() { # SCRIPT — prints path|rationale for D048
+  (cd "$REPO" && DECISIONS_DIR="$REPO/docs/decisions" "$1" get D048) 2>/dev/null | jq -r '"\(.path)|\(.rationale)"'
+}
+if [[ "$(get_removed "$DECISIONS")" == "|Lives in dormant tools-runner code" ]]; then
+  pass "get gives a Removed row no path and its rationale"
+else
+  fail "get on a Removed row (got: $(get_removed "$DECISIONS"))"
+fi
+if [[ "$(get_removed "$removed_mutant")" != "|Lives in dormant tools-runner code" ]]; then
+  pass "a Removed row's deleted path fails the get row"
+else
+  fail "a Removed row's deleted path did not fail the get row"
 fi
 
 echo

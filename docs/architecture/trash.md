@@ -16,6 +16,7 @@ A person who removes a package, or whose package kendex replaced, can get the by
 - Do run the pass only at the end of a completed `apply`, `refresh`, `remove` or `update-pi`, and the desktop's equivalent after its plan is on disk; a plan-only run and every other verb leave the trash alone.
 - Do keep every entry the invocation wrote, then every entry within `KENDEX_TRASH_KEEP_DAYS` while the running total stays within `KENDEX_TRASH_KEEP_MB`, newest first; the entry that crosses the size bound goes with everything older. The defaults are the constants in `crates/core/src/trash.rs`.
 - Do measure an entry once in its lifetime, in `sizes.json` inside the trash; `kendex trash list` measures fresh because it is the person's own request.
+- Do ask before `kendex trash empty` with no age, or an age of zero, removes anything, and with no terminal refuse naming `--yes`. With an age, remove only the entries past it, oldest first, so a removal that stops leaves the newest entries and the verb exits nonzero naming the count and the cause. Neither takes what the invocation wrote.
 - Do fail the pass closed: a bound that is not a count, a trash or record that will not read, or an entry that will not measure or remove stops it with what is left intact, reported as a warning, never as a failure of the verb.
 - Never bound the source-cache mirrors: a mirror is kept for the life of the install and removed by hand.
 

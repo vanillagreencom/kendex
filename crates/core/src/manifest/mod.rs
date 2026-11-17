@@ -27,7 +27,7 @@ pub use validate::{Finding, joined, output_style_count, validate};
 /// older supported file reads in the current form and its next write keeps
 /// the person's comments. A file without a complete rewrite chain refuses
 /// before interpretation or mutation; a newer file never downgrades.
-pub const MANIFEST_SCHEMA: u32 = 7;
+pub const MANIFEST_SCHEMA: u32 = 8;
 pub const DEFAULT_SOURCE_NAME: &str = "kendex";
 pub const DEFAULT_SOURCE_REPO: &str = "vanillagreencom/kendex";
 /// The reserved source name for content adopted into this scope.
@@ -147,6 +147,23 @@ pub struct ItemDecl {
     /// alone; validation refuses it on every other table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<BTreeMap<String, String>>,
+    /// Where a scope-owned skill's stored relative links are read from.
+    /// Written by the kendex writers that convert links as they store a
+    /// tree; absent, the bytes are carried as delivered. Read on a
+    /// `[skills.<name>]` table whose source is `local` or `in-place` alone;
+    /// validation refuses it everywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<SkillLinks>,
+}
+
+/// The reading a tagged scope-owned skill's links hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum SkillLinks {
+    /// Links mean what they reach from the scope's shared tree,
+    /// `<scope root>/.agents/skills/<canonical name>`, and every other
+    /// position the tree lands at is converted to keep those targets.
+    SharedTree,
 }
 
 impl ItemDecl {
@@ -158,6 +175,7 @@ impl ItemDecl {
             rev: None,
             enabled: true,
             env: None,
+            links: None,
         }
     }
 }

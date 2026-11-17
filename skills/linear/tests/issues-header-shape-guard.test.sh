@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
 # Surface: the filing bar on authored descriptions. Missing quoted openings
-# and invalid post-merge box fields refuse; header length remains advisory.
+# and invalid post-merge box fields refuse; header length and machine detail
+# in the opening remain advisory.
 # An owner action placed on a stored legacy body is judged on its own length.
 # Inputs: linear scripts, this suite, its assertion library, and the mailbox
 # owner-action producer. Real create/update/bulk-description routes must use
@@ -100,9 +101,12 @@ STORY='> **Story:** Refresh keeps the installed render current in a linked workt
 WHY='> **Why this matters:** The owner can use the updated instructions.'
 OUTCOME="$(printf '%s\n\n%s\n\n%s' "$STORY" "$WHY" '## Context')"
 REACH_LINE='**Reached by**: running `kendex refresh` in a linked worktree'
+# Create bodies carry the supersession record last, so no line number moves.
+SUPERSESSION_LINE='**Supersession**: none found; searched: refresh, linked worktree'
 SOURCE_LINE='**Source**: review of owner/repo#47'
 body() { printf '%s\n' "$@" >"$TMP_ROOT/body.md"; }
 
+if [[ ${LINEAR_HEADER_FIELDS_ONLY:-0} != 1 ]]; then
 # The opening matrix calls the actual shared owner. Entry-point rows below
 # prove create/update/bulk wiring without repeating this whole matrix per verb.
 source "$SKILL_DIR/scripts/lib/issue-validation.sh"
@@ -176,6 +180,53 @@ for length in 500 501; do
   fi
 done
 
+# detail_advisory — the opening-detail advisory in ERR as "LINE KINDS".
+detail_advisory() {
+  sed -n 's/^linear: advisory=issue-opening-detail line=\([0-9]*\) kinds=\([^ ]*\) .*$/\1 \2/p' <<<"$ERR"
+}
+# The filing agent follows the advisory to the two files that hold the rules.
+assert_detail_routes() { # DESC
+  assert "$1 names the description template" grep -q 'project-management templates/issue-description-template.md' <<<"$ERR"
+  assert "$1 names the reader rule" grep -q 'communication references/reports.md' <<<"$ERR"
+}
+
+# Machine detail in the opening is advised on and written; the plain rows are
+# prose that shares a shape with a pattern.
+PLAIN_WHY='The owner can use the updated instructions.'
+while IFS='|' read -r shape story why kinds; do
+  candidate="> **Story:** $story"$'\n\n'"> **Why this matters:** ${why:-$PLAIN_WHY}"$'\n\n## Context'
+  rc=0
+  require_issue_header_shape "$candidate" 2>"$ERR_FILE" || rc=$?
+  ERR="$(cat "$ERR_FILE")"
+  assert_eq "opening detail $shape files" "$rc" 0
+  if [[ -z "$kinds" ]]; then
+    assert_eq "opening detail $shape prints no diagnostic" "$ERR" ""
+  else
+    assert_eq "opening detail $shape names its kinds" "$(detail_advisory)" "1 $kinds"
+    assert_detail_routes "opening detail $shape"
+  fi
+done <<'ROWS'
+plain|The owner reads the item and knows what changes.||
+url|The owner opens https://linear.app/x/issue/a.md to read it.||
+fractions|Agents and/or owners work 24/7 on version 1.5/2.0.||
+date-only|It ran on 2026-11-11 and again on Nov 10.||
+relative-path|The owner sees skills/linear/SKILL.md in the item.||file-path
+root-path|It writes /home/dev/x without asking.||file-path
+home-path|It writes ~/.cargo/bin/kendex.||file-path
+slack-ts|The owner said so in Slack 1794379603.893169.||slack-ts
+mailbox-id|Directive 1794379719-3476856-13832 asked for it.||mailbox-id
+utc-z|It ran at 2026-11-11T06:49:47.079Z.||utc-time
+utc-word|It ran at 2026-11-11 06:49 UTC.||utc-time
+why-block|The owner reads the item.|It costs a read of tmp/notes.md.|file-path
+several|At 2026-11-11T06:49:47Z it read tmp/a.md.||file-path,utc-time
+ROWS
+
+# The body keeps its paths, ids and times.
+rc=0
+require_issue_header_shape "$OUTCOME"$'\n\nRead skills/linear/SKILL.md, Slack 1794379603.893169 at 2026-11-11T06:49:47Z.' 2>"$ERR_FILE" || rc=$?
+assert_eq "a body with machine detail outside the opening files" "$rc" 0
+assert_eq "machine detail outside the opening prints no advisory" "$(cat "$ERR_FILE")" ""
+
 # Material invalid openings reach the real command routes with valid reach.
 for operation in create update bulk-update; do
   case "$operation" in
@@ -183,7 +234,7 @@ for operation in create update bulk-update; do
     update) opening_args=(issues update CC-1) ;;
     bulk-update) opening_args=(issues bulk-update CC-1 CC-2) ;;
   esac
-  candidate="$STORY"$'\n\n## Done when\n\n'"$REACH_LINE"
+  candidate="$STORY"$'\n\n## Done when\n\n'"$REACH_LINE"$'\n'"$SUPERSESSION_LINE"
   run_linear "${opening_args[@]}" --description "$candidate"
   assert_opening_refused "$operation with a missing quoted Why through its entry point"
 done
@@ -198,11 +249,11 @@ assert_ne 'the symptom rule still refuses review-born priority-2 without symptom
 
 echo "=== create: the opening line ==="
 # A refused opening must remain one JSON record even beside a long header.
-body "$SOURCE_LINE" "$REACH_LINE" '' "$OUTCOME" '' "$(pad '**Symptom**: ' 501)"
+body "$SOURCE_LINE" "$REACH_LINE" '' "$OUTCOME" '' "$(pad '**Symptom**: ' 501)" "$SUPERSESSION_LINE"
 run_linear issues create --title "Source first" --description-file "$TMP_ROOT/body.md"
 assert_opening_refused "a create opening with a **Source**: line"
 
-body '' '' 'Reached by: kendex apply' '' "$OUTCOME"
+body '' '' 'Reached by: kendex apply' '' "$OUTCOME" "$SUPERSESSION_LINE"
 run_linear issues create --title "Reach first" --description-file "$TMP_ROOT/body.md"
 assert_opening_refused "a create whose first non-empty line is Reached by:" 3
 
@@ -275,11 +326,11 @@ assert_advised "a 501-character owner action over the unchanged stored body" iss
 
 echo "=== create: the header length ==="
 LONG="$(pad '**Symptom**: ' 501)"
-body "$OUTCOME" '' "$SOURCE_LINE" "$LONG" "$REACH_LINE"
+body "$OUTCOME" '' "$SOURCE_LINE" "$LONG" "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Long symptom" --description-file "$TMP_ROOT/body.md"
 assert_advised "a create with a 501-character **Symptom**: line" issueCreate "issue-header-length 8 501"
 
-body "$OUTCOME" '' "$(pad '**Symptom**: ' 500)" "$REACH_LINE"
+body "$OUTCOME" '' "$(pad '**Symptom**: ' 500)" "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Edge symptom" --description-file "$TMP_ROOT/body.md"
 assert_advised "a create with a 500-character header line" issueCreate
 
@@ -287,15 +338,33 @@ assert_advised "a create with a 500-character header line" issueCreate
 # Counted by repetition, not ${#}, which counts bytes under a C locale.
 WIDE='**Symptom**: '
 for _ in $(seq 450); do WIDE+="é"; done
-body "$OUTCOME" '' "$WIDE" "$REACH_LINE"
+body "$OUTCOME" '' "$WIDE" "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Wide symptom" --description-file "$TMP_ROOT/body.md"
 assert_advised "a create whose header is under 500 characters and over 500 bytes" issueCreate
 
 body "$OUTCOME" '' 'The work is complete when refresh writes the render.' \
   '' '## Done when' '' '- [ ] Refresh writes the render.' \
-  '' '## Filing record' '' "$SOURCE_LINE" '**Symptom**: the render stayed stale' "$REACH_LINE"
+  '' '## Filing record' '' "$SOURCE_LINE" '**Symptom**: the render stayed stale' "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Template body" --description-file "$TMP_ROOT/body.md"
 assert_advised "a template-shaped create" issueCreate
+
+echo "=== opening detail: each authored-description route writes and advises ==="
+DETAIL_OPENING="$(printf '%s\n\n%s\n\n%s' '> **Story:** The owner sees skills/linear/SKILL.md in the item.' "$WHY" '## Context')"
+while IFS='|' read -r operation expected; do
+  case "$operation" in
+    create) detail_args=(issues create --title 'Opening detail'); mutation=issueCreate ;;
+    update) detail_args=(issues update CC-1); mutation=issueUpdate ;;
+    bulk-update) detail_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
+  esac
+  run_linear "${detail_args[@]}" --description "$DETAIL_OPENING"$'\n\n'"$REACH_LINE"$'\n'"$SUPERSESSION_LINE"
+  assert_written "$operation with machine detail in the opening" "$mutation"
+  assert_eq "$operation advises once per written issue" "$(detail_advisory)" "$(printf "$expected")"
+done <<'ROWS'
+create|1 file-path
+update|1 file-path
+bulk-update|1 file-path\n1 file-path
+ROWS
+
 
 echo "=== update: --description and --description-file ==="
 run_linear issues update CC-1 --description "$(printf '%s\n\n%s\n' "$SOURCE_LINE" "$OUTCOME")"
@@ -364,6 +433,8 @@ assert "the complete writes the ticked box" \
   jq -s -e 'any(.[]; .variables.input.description // "" | contains("- [x] first"))' "$CURL_LOG"
 : >"$FILED"
 
+fi
+
 echo "=== post-merge box fields still refuse ==="
 # Each rule refuses and each operation is wired for a refusal and a write; the
 # Deadline rule's own table is issues-complete-done-when's filing rows.
@@ -374,8 +445,14 @@ while IFS='|' read -r operation trigger deadline rule; do
     bulk-update) box_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
   esac
   description="$(printf '%s\n' "$OUTCOME" "$REACH_LINE" '## Done when' \
-    "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: $trigger; Deadline: $deadline")"
-  run_linear "${box_args[@]}" --description "$description"
+    "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: $trigger; Deadline: $deadline" \
+    '' "$SUPERSESSION_LINE")"
+  if [[ "$operation" == update ]]; then
+    body "$description"
+    run_linear "${box_args[@]}" --description-file "$TMP_ROOT/body.md"
+  else
+    run_linear "${box_args[@]}" --description "$description"
+  fi
   if [ "$rule" = valid ]; then
     assert_advised "$operation accepts $trigger with $deadline" "$mutation"
   else
@@ -392,17 +469,26 @@ create|release owner/repo v*|+72h|valid
 update|merge|+72h|valid
 bulk-update|merge|2026-10-02T00:00:00Z|valid
 create|2026-10-01T00:00:00Z|2026-10-02T00:00:00Z|valid
+create|that row exists|2026-11-17T08:00:00Z|post-merge-fields
+update|that row exists|2026-11-17T08:00:00Z|post-merge-fields
+bulk-update|that row exists|2026-11-17T08:00:00Z|post-merge-fields
+create|merge|+24h|valid
+update|2026-11-16T08:00:00Z|2026-11-17T08:00:00Z|valid
+bulk-update|release owner/repo v*|+24h|valid
 ROWS
+
+[[ ${LINEAR_HEADER_FIELDS_ONLY:-0} != 1 ]] || exit 0
 
 # A missing opening beside a refused box leaves the box refusal alone on stderr.
 run_linear issues create --title "Post-merge check" --description "$(printf '%s\n' "$SOURCE_LINE" "$REACH_LINE" '## Done when' \
-  "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: merge; Deadline: set at merge")"
+  "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: merge; Deadline: set at merge" \
+  '' "$SUPERSESSION_LINE")"
 assert_ne "a missing opening beside an invalid deadline is refused" "$RC" 0
 assert_unwritten "a missing opening beside an invalid deadline"
 assert_jq "the refusal is the one stderr record" "$ERR" '.rule == "post-merge-deadline" and .box == 1'
 
 echo "=== the reach guard's key holds this guard too ==="
-body "$SOURCE_LINE" "$REACH_LINE"
+body "$SOURCE_LINE" "$REACH_LINE" "$SUPERSESSION_LINE"
 REACH=unset
 run_linear issues create --title "Default key" --description-file "$TMP_ROOT/body.md"
 assert_opening_refused "with no LINEAR_REQUIRE_REACH key a create opening with a header"

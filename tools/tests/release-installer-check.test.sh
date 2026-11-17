@@ -32,7 +32,10 @@
 # and the signature check asks codesign whether the app is signed. Every
 # fixture app is unsigned: the lane-without-secrets row warns and passes,
 # the lane-that-signs row (APPLE_SIGNING_IDENTITY set) refuses, and a
-# signed app is the release lane's alone to prove.
+# signed app is the release lane's alone to prove. A disk image fixture
+# that hdiutil cannot create is a FAIL row naming the row and
+# `fixture=hdiutil-create: <hdiutil's words>` in place of its check, and
+# the suite carries on to its footer.
 #
 # The attach table adds partial attachment and detach failure inputs. It runs on
 # every host, with hdiutil and codesign stubbed on PATH: the stub refuses
@@ -200,8 +203,11 @@ mac_app() {
   esac
 }
 
-# build_macos APP ARCHIVE DMG — the three columns of a macOS row
+# build_macos APP ARCHIVE DMG — the three columns of a macOS row; FIXTURE
+# names a disk image hdiutil refused to create, empty when every fixture
+# was built
 build_macos() {
+  FIXTURE=
   lane
   mkdir -p "$OUT/bundle/macos" "$OUT/bundle/dmg"
   [[ "$1" == none ]] || mac_app "$OUT/bundle/macos/kendex.app" "$1"
@@ -213,34 +219,60 @@ build_macos() {
   if [[ "$3" != none ]]; then
     rm -rf "$TMP/image"
     mac_app "$TMP/image/kendex.app" "$3"
-    hdiutil create -quiet -srcfolder "$TMP/image" -volname kendex "$OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg"
+    # -quiet would close hdiutil's stderr, and its refusal is a runner
+    # fault the row has to name.
+    hdiutil create -srcfolder "$TMP/image" -volname kendex "$OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg" \
+      >/dev/null 2>"$TMP/fixture-err" || FIXTURE="hdiutil-create: $(paste -s -d ';' "$TMP/fixture-err")"
   fi
 }
 
+# fixture_ok LABEL... — true when build_macos built every fixture; otherwise
+# a FAIL row per LABEL carrying FIXTURE, in place of the rows' checks
+fixture_ok() {
+  [[ "$FIXTURE" != "" ]] || return 0
+  local label
+  for label in "$@"; do
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s: fixture=%s\n' "$label" "$FIXTURE"
+  done
+  return 1
+}
+
+footer() {
+  printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+}
+
 MACOS=aarch64-apple-darwin
-if command -v hdiutil >/dev/null 2>&1 && command -v codesign >/dev/null 2>&1; then
+UNSIGNED_LABEL="an unsigned app on a lane without signing secrets is named as unsigned"
+SIGNING_LABEL="an unsigned app on a lane that signs is refused"
+macos_lane() {
   echo "=== the macOS lane, one row per shape of bundle ==="
   while IFS='|' read -r label app archive dmg rc first checked; do
     [[ "$label" != "" && "$label" != \#* ]] || continue
     build_macos "$app" "$archive" "$dmg"
+    fixture_ok "$label" || continue
     assert_eq "$(run "$MACOS")" "rc=$rc first=$first checked=$checked" "$label" macos
   done <<EOF
 the app, its updater archive and its disk image all carry the sidecar|command|command|command|0|-|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz,bundle/dmg/kendex_${VERSION}_aarch64.dmg
-an app with no sidecar|absent|command|command|1|absent=$OUT/bundle/macos/kendex.app|-
+an app with no sidecar|absent|command|none|1|absent=$OUT/bundle/macos/kendex.app|-
 an updater archive with no sidecar|command|absent|command|1|absent=$OUT/bundle/macos/kendex.app.tar.gz|bundle/macos/kendex.app
 no disk image at all|command|command|none|1|missing=*.dmg|bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz
 EOF
   build_macos command command command
+  fixture_ok "$UNSIGNED_LABEL" "$SIGNING_LABEL" || return 0
   run "$MACOS" >/dev/null
-  assert_eq "$(grep -c '^unsigned=' "$TMP/std" || true)" "1" \
-    "an unsigned app on a lane without signing secrets is named as unsigned"
+  assert_eq "$(grep -c '^unsigned=' "$TMP/std" || true)" "1" "$UNSIGNED_LABEL"
   # The same fixture on a lane that signs: the workflow exports
   # APPLE_SIGNING_IDENTITY only with every secret set, so an app it left
   # unsigned is refused rather than warned about.
   rc=0
   APPLE_SIGNING_IDENTITY="Developer ID Application: kendex" "$CHECK" "$MACOS" "$OUT" >"$TMP/std" 2>"$TMP/err" || rc=$?
-  assert_eq "rc=$rc first=$(first_text)" "rc=1 first=unsigned=$OUT/bundle/macos/kendex.app" \
-    "an unsigned app on a lane that signs is refused"
+  assert_eq "rc=$rc first=$(first_text)" "rc=1 first=unsigned=$OUT/bundle/macos/kendex.app" "$SIGNING_LABEL"
+}
+
+if command -v hdiutil >/dev/null 2>&1 && command -v codesign >/dev/null 2>&1; then
+  macos_lane
 else
   echo "skipped: the macOS rows need hdiutil and codesign, which this host has none of"
 fi
@@ -291,6 +323,10 @@ case "\$1" in
     else
       echo "image-path : $OUT/bundle/dmg/kendex_${VERSION}_aarch64.dmg"
     fi
+    ;;
+  create)
+    echo "hdiutil: create failed - stub create refusal" >&2
+    exit 1
     ;;
   *) echo "hdiutil stub: no verb \$1" >&2; exit 2 ;;
 esac
@@ -364,5 +400,27 @@ assert_eq "$got red=$red" \
   "rc=1 first=extract=$OUT/$DMG checked=bundle/macos/kendex.app,bundle/macos/kendex.app.tar.gz red=yes" \
   'must-fail: without failed-attempt cleanup the same image blocks the next attach'
 
-printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+# The macOS lane with every hdiutil create refused, on every host. It runs
+# as a background job because errexit stays live there, as it is in the
+# suite, and waiting on it cannot end this suite. It counts from zero, so
+# its footer holds its own rows alone: each row that needs a disk image is
+# one fixture FAIL row and skips its check, the rows that build none are
+# checked and pass, and the footer's status fails the job.
+stub_tools command
+(
+  PATH="$STUB/bin:$PATH"
+  PASS=0
+  FAIL=0
+  macos_lane
+  footer
+) >"$TMP/fixture-control" 2>&1 &
+control_rc=0
+wait "$!" || control_rc=$?
+refusal='fixture=hdiutil-create: hdiutil: create failed - stub create refusal'
+control_rows="$(sed -nE 's/^  (ok|FAIL) +/\1 /p' "$TMP/fixture-control" | paste -s -d ';' -)"
+control_footer="$(sed -n '/^pass: /p' "$TMP/fixture-control")"
+assert_eq "rc=$control_rc rows=$control_rows footer=$control_footer" \
+  "rc=1 rows=FAIL the app, its updater archive and its disk image all carry the sidecar: $refusal;ok an app with no sidecar;FAIL an updater archive with no sidecar: $refusal;ok no disk image at all;FAIL $UNSIGNED_LABEL: $refusal;FAIL $SIGNING_LABEL: $refusal footer=pass: 2   fail: 4" \
+  'must-fail: a disk image hdiutil cannot create is a named FAIL row in place of its check, and the suite fails at its footer'
+
+footer

@@ -18,7 +18,11 @@
 #   reset_world              the seeded commit, an empty index, a clean tree
 #   entry_points_executable [DIR]  the bit on each staged entry point
 #                            tools/exec-bits names in DIR, R by default
+#   suite_report PATH        the runner's report line in OUT for the shell
+#                            suite at PATH, empty where it did not run
 #   ok / bad                 the tally in PASS and FAIL
+# The guard runs shell suites through skills/orch/tests/run-all.sh, which reds
+# a suite that prints no row, so each suite a world plants prints one.
 # The fixture build below is unchecked line by line and stands on errexit.
 # Inputs: kendex.settings.toml
 set -euo pipefail
@@ -111,7 +115,7 @@ mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
   "$R/.agents/skills/demo/scripts" \
   "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"
 printf '#!/usr/bin/env bash\necho demo\n' >"$R/skills/demo/scripts/demo.sh"
-printf '#!/usr/bin/env bash\necho tested\n' >"$R/skills/demo/tests/demo.test.sh"
+printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$R/skills/demo/tests/demo.test.sh"
 printf '#!/usr/bin/env bash\necho accented\n' >"$R/skills/demo/scripts/frappé.sh"
 cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
 cp "$R/skills/demo/scripts/frappé.sh" "$R/.agents/skills/demo/scripts/frappé.sh"
@@ -123,7 +127,7 @@ printf 'name = "scout"\n' >"$R/.codex/agents/scout.toml"
 printf '# scout agent render\n' >"$R/.pi/agents/scout.md"
 mkdir -p "$R/hooks/tests" "$R/.claude/hooks" "$R/.codex/hooks" "$R/.pi/kendex/hooks"
 printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/demo.sh"
-printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/tests/demo.test.sh"
+printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$R/hooks/tests/demo.test.sh"
 cp "$R/hooks/demo.sh" "$R/.claude/hooks/demo.sh"
 cp "$R/hooks/demo.sh" "$R/.codex/hooks/demo.sh"
 printf '#!/usr/bin/env bash\necho other\n' >"$R/.pi/kendex/hooks/other.sh"
@@ -137,6 +141,21 @@ git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -q -m fixture
 SEED="$(git -C "$R" rev-parse HEAD)"
+
+# The guard's one runner call names a suite <tree>--<base>, or <base> where
+# the call held one battery, so the bare form stands for PATH only where that
+# battery is PATH's tree.
+suite_report() { # PATH
+  local base=${1##*/} tree=${1%/tests/*} call want
+  base=${base%.sh}
+  want="suite=${tree##*/}--$base"
+  call="$(sed -n 's#^=== skills/orch/tests/run-all.sh ##p' <<<"$OUT")"
+  case " $call " in
+    *" --battery "*" --battery "*) ;;
+    *" --battery $tree/tests "*) want="suite=$base" ;;
+  esac
+  awk -v want="$want" '$1 == want' <<<"$OUT"
+}
 
 reset_world() { # — the seeded commit, an empty index and a clean tree
   git -C "$R" reset -q --hard "$SEED"

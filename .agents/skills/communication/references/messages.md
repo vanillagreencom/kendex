@@ -4,12 +4,20 @@ Apply these rules before every message to a person. Read this file once per revi
 
 ## Reader modes
 
-Use the reader mode the caller supplies. The default prose is for a CEO with moderate technical knowledge.
+A message to a person has two independent presentation choices, Technical and Style. Use the values the caller supplies, which it selects from its own settings. An unset choice takes its default. Reader mode is the other name for Technical, and a caller may supply it as `ceo` or `engineer`.
 
-| Mode | Prose |
+| Technical | Prose |
 |---|---|
-| `ceo` | Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person must act on it. Name a tool, script, session or folder the person must act on with its job in the same sentence. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
-| `engineer` | Use the session's technical vocabulary for the same outcomes and costs. |
+| `off`, the default, or reader mode `ceo` | Write for a CEO with moderate technical knowledge. Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person asked about it or must act on it, and then use its precise name. Name a tool, script, session or folder the person must act on with its job in the same sentence. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
+| `on`, or reader mode `engineer` | Use the session's technical vocabulary for the same outcomes and costs. |
+
+| Style | Prose |
+|---|---|
+| `friendly` | [Plain language](#plain-language), except that a message may open with one short greeting before the answer and end with one short closing line. Those two lines are exempt from "Start with the answer itself", "Stop after the last fact" and "Delete a sentence that could sit in an answer about anything else". |
+| `concise`, the default | [Plain language](#plain-language) as written. |
+| `fun` | As `friendly`, and a sentence may also carry light humor or a playful word, while each fact stays in a plain sentence of its own. |
+
+Every combination writes the same facts from the same input. Each keeps the outcome, its effect on the person, the action the person must take, the uncertainty and the consent asked for or given. Style never relaxes [Evidence and costs](#evidence-and-costs), "Never rate, rank, praise or sell" or "Never trade correctness for brevity". It never changes a literal format a consumer or caller sets, such as a report-format override or the structure of a [decision request](questions.md). Neither choice grants authority or changes where, when or whether a message is sent.
 
 ## Plain language
 
@@ -82,7 +90,7 @@ Write times in the person's time zone with am or pm. Do not use a `Z` stamp.
 - Use inline code for a command or path. Use a code block for output longer than one line. Keep paragraphs to a few sentences.
 - Put text the person must send in a code block. Name the recipient above it.
 - Report changed rules, guidance or directives after their commit is pushed. Name each changed file once as `repo/folder/file.md`, linked to `https://github.com/OWNER/REPO/blob/COMMIT/path#heading` at that commit.
-- Beside a file, including a Slack file comment, use Slack mrkdwn: `*Label*` for bold, `<URL|LABEL>` for a link and plain lines for a list. The other markup rules still hold.
+- Write a Slack file comment in standard Markdown, as for a message. The slack package converts it to Slack mrkdwn when it posts the file. The exception is the report summary: [Summary template](reports.md#summary-template) and `orch-runtime report write` hold it to mrkdwn.
 
 ## Slack messages
 
@@ -94,15 +102,16 @@ Standard Markdown:
 **Installed plugins**
 
 - **Tailscale plugin:** The plugin is installed.
-- **[\[KEN-123\]](https://linear.app/vanillagreen/issue/KEN-123)** records the change to `kendex.toml`.
+- **[\[KEN-123\]](https://linear.app/<workspace>/issue/KEN-123)** records the change to `kendex.toml`.
 ```
 
-File-comment mrkdwn:
+The same text as a file comment, in the mrkdwn the slack package posts:
 
 ```text
 *Installed plugins*
-- *Tailscale plugin:* The plugin is installed.
-- *<https://linear.app/vanillagreen/issue/KEN-123|[KEN-123]>* records the change to `kendex.toml`.
+
+• *Tailscale plugin:* The plugin is installed.
+• *<https://linear.app/<workspace>/issue/KEN-123|[KEN-123]>* records the change to `kendex.toml`.
 ```
 
 Slack supports underline in structured `rich_text` text styles. The current post and relay routes send `markdown_text` or `mrkdwn` text, whose supported formats have no underline syntax. Use bold headers on this route; add no Unicode imitation. See Slack's [text element styles](https://docs.slack.dev/reference/block-kit/block-elements/text-element/), [Markdown block formats](https://docs.slack.dev/reference/block-kit/blocks/markdown-block/) and [mrkdwn styles](https://docs.slack.dev/messaging/formatting-message-text/#basic-visual-styles).
@@ -114,3 +123,5 @@ Own a mistake in one line, with its repair.
 ## Attachments
 
 Attach a screenshot or image when it explains the point better than words. Send a picture for review as a direct file post in its topic's thread. Send a picture to a person as a file post, never as a repository, commit or file-host link, because the link does not open for a reader without access. Evidence-only pictures can stay on the tracker item with its link.
+
+Beside each screenshot, say how it was captured and which build it shows, and say when that build differs from the one the person has installed.

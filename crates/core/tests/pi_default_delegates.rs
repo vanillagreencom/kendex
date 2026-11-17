@@ -73,7 +73,7 @@ fn pi_engineer_defaults_only_delegate_to_installed_agents() {
             .unwrap();
         }
         let mut manifest = format!(
-            "schema = 7\n[install]\nharnesses = ['pi']\n[sources.cat]\n{}\n{declaration}",
+            "schema = 8\n[install]\nharnesses = ['pi']\n[sources.cat]\n{}\n{declaration}",
             source_path(&catalog)
         );
         for name in ["iced", "maintainer", "rust", "runtime"] {

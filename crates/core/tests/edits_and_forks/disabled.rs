@@ -30,7 +30,7 @@ fn an_edit_made_while_disabled_survives_being_re_enabled() {
     fs::write(
         &toggled,
         format!(
-            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\nenabled = false\n"
+            "schema = 8\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\nenabled = false\n"
         ),
     )
     .unwrap();
@@ -43,7 +43,7 @@ fn an_edit_made_while_disabled_survives_being_re_enabled() {
     fs::write(
         &toggled,
         format!(
-            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n"
+            "schema = 8\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n"
         ),
     )
     .unwrap();
@@ -83,7 +83,7 @@ fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let manifest_with = |item: &str| {
         format!(
-            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{item}"
+            "schema = 8\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{item}"
         )
     };
     fs::write(&path, manifest_with("[agents.rev]\nsource = \"cat\"\n")).unwrap();
@@ -143,7 +143,7 @@ fn upstream_changing_while_disabled_is_not_a_false_edit() {
     fs::write(
         &path,
         format!(
-            "schema = 7\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\nenabled = false\n"
+            "schema = 8\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\nenabled = false\n"
         ),
     )
     .unwrap();
@@ -236,7 +236,7 @@ fn disabled_edited_agent_world() -> World {
     w
 }
 
-fn beside_rev_edited(w: &World) -> Result<apply::Plan, CoreError> {
+fn beside_rev_edited(w: &World) -> Result<kendex_core::engine::WritePlan, CoreError> {
     fork::fork_beside(
         &w.env,
         &w.scope,

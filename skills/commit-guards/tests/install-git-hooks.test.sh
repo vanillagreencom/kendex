@@ -67,21 +67,22 @@ run_rows \
 echo "=== the gate a real git commit meets ==="
 fx_clean() { armed clean; stage a.txt 'hello\n'; }
 fx_marker() { armed marker; stage_marker; }
-fx_header() { armed header; stage c.txt 'ok\n'; }
-fx_header_ok() { armed header-ok; stage c.txt 'ok\n'; }
+owed_entry() { armed "$1"; settings 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "*.txt"'; stage c.txt 'ok\n'; } # NAME
+fx_owed() { owed_entry owed; }
+fx_waived() { owed_entry waived; }
 fx_over_limit() { armed over-limit; settings 'DOC_LIMITS_CLASSES = "*.md=1k"'; stage AGENTS.md "$(head -c 1025 /dev/zero | tr '\0' x)"; }
 fx_at_limit() { armed at-limit; settings 'DOC_LIMITS_CLASSES = "*.md=1k"'; stage AGENTS.md "$(head -c 1024 /dev/zero | tr '\0' x)"; }
 fx_dangling_doc_limits() { armed dangling-doc-limits; stage a.txt 'hello\n'; rm "$R/.agents/skills/doc-limits"; ln -s "$TMP/no-such-skill" "$R/.agents/skills/doc-limits"; }
 fx_absent_doc_limits() { armed absent-doc-limits; stage a.txt 'hello\n'; rm "$R/.agents/skills/doc-limits"; }
 run_rows \
-  "clean staged content under a conventional header commits|fx_clean||commit|feat: add a|rc=0 $CHAIN_OK;${MSG_OK}feat: add a|" \
-  "a staged work marker blocks|fx_marker||commit|feat: add b|rc=1 $BLOCKED|" \
-  "a non-conventional header blocks after a clean chain, the header having reached the gate|fx_header||commit|just some words|rc=1 $CHAIN_OK;commit-msg: header-shape=just some words:build chore ci docs feat fix perf refactor revert style test|" \
-  "control: the same staged content commits under a conventional header|fx_header_ok||commit|feat: add c|rc=0 $CHAIN_OK;${MSG_OK}feat: add c|" \
+  "clean staged content commits|fx_clean||commit|feat: add a|rc=0 $CHAIN_OK|" \
+  "a staged conflict marker blocks|fx_marker||commit|feat: add b|rc=1 $BLOCKED|" \
+  "a change owing a changelog entry blocks after a clean chain, the message having reached the gate|fx_owed||commit|feat: add c|rc=1 $CHAIN_OK;commit-msg: changelog-missing=c.txt:changelog.d/*/*.md|" \
+  "control: the same staged content commits under a header that waives the entry|fx_waived||commit|feat: add c [no-changelog]|rc=0 $CHAIN_OK;commit-msg: changelog-waived=c.txt|" \
   "a document over the committed ceiling blocks|fx_over_limit||commit|feat: add big|rc=1 $BLOCKED|" \
-  "control: a document at the ceiling passes|fx_at_limit||commit|feat: add big|rc=0 $CHAIN_OK;${MSG_OK}feat: add big|" \
-  "a dangling doc-limits install is named unrun, never a silent skip, and the commit lands|fx_dangling_doc_limits||commit|feat: add a|rc=0 pre-commit: package-incomplete=<repo>/.agents/skills/doc-limits/scripts/doc-limits;$CHAIN_OK;${MSG_OK}feat: add a|" \
-  "control: an absent doc-limits is a skip and the commit lands|fx_absent_doc_limits||commit|feat: add a|rc=0 $CHAIN_OK;${MSG_OK}feat: add a|"
+  "control: a document at the ceiling passes|fx_at_limit||commit|feat: add big|rc=0 $CHAIN_OK|" \
+  "a dangling doc-limits install is named unrun, never a silent skip, and the commit lands|fx_dangling_doc_limits||commit|feat: add a|rc=0 pre-commit: package-incomplete=<repo>/.agents/skills/doc-limits/scripts/doc-limits;$CHAIN_OK|" \
+  "control: an absent doc-limits is a skip and the commit lands|fx_absent_doc_limits||commit|feat: add a|rc=0 $CHAIN_OK|"
 
 echo "=== the chain reads its configuration and its blobs from the commit, not the worktree ==="
 seeded() { # NAME SETTINGS-LINE — a repository whose HEAD carries the settings and one file
@@ -93,12 +94,12 @@ seeded() { # NAME SETTINGS-LINE — a repository whose HEAD carries the settings
   "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
   seed
 }
-checks_edited() { seeded "$1" 'COMMIT_GUARDS_CHECKS = "todo-ban"'; stage_marker; printf '[env]\nCOMMIT_GUARDS_CHECKS = "byte-ceiling"\n' >"$R/kendex.settings.toml"; }
-types_edited() { seeded "$1" 'COMMIT_GUARDS_COMMIT_TYPES = "feat"'; stage b.txt 'more\n'; printf '[env]\nCOMMIT_GUARDS_COMMIT_TYPES = "hack"\n' >"$R/kendex.settings.toml"; }
+checks_edited() { seeded "$1" 'COMMIT_GUARDS_CHECKS = "conflict-markers"'; stage_marker; printf '[env]\nCOMMIT_GUARDS_CHECKS = "byte-ceiling"\n' >"$R/kendex.settings.toml"; }
+required_edited() { seeded "$1" 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "b.txt"'; stage b.txt 'more\n'; printf '[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = ""\n' >"$R/kendex.settings.toml"; }
 fx_unstaged_checks() { checks_edited unstaged-checks; }
 fx_staged_checks() { checks_edited staged-checks; git -C "$R" add kendex.settings.toml; }
-fx_unstaged_types() { types_edited unstaged-types; }
-fx_staged_types() { types_edited staged-types; git -C "$R" add kendex.settings.toml; }
+fx_unstaged_required() { required_edited unstaged-required; }
+fx_staged_required() { required_edited staged-required; git -C "$R" add kendex.settings.toml; }
 fx_hidden_growth() {
   R="$(new_repo hidden-growth)"
   printf '.agents/\n' >"$R/.gitignore"
@@ -113,9 +114,9 @@ fx_hidden_growth() {
 }
 run_rows \
   "an unstaged settings edit cannot switch a check off|fx_unstaged_checks||commit|feat: add b|rc=1 $BLOCKED|" \
-  "control: staging that edit applies it|fx_staged_checks||commit|feat: add b|rc=0 $CHAIN_OK;${MSG_OK}feat: add b|" \
-  "an unstaged commit-type edit does not widen the message gate|fx_unstaged_types||commit|hack: sneak a type in|rc=1 $CHAIN_OK;commit-msg: header-shape=hack: sneak a type in:feat|" \
-  "control: staging that edit applies it too|fx_staged_types||commit|hack: sneak a type in|rc=0 $CHAIN_OK;${MSG_OK}hack: sneak a type in|" \
+  "control: staging that edit applies it|fx_staged_checks||commit|feat: add b|rc=0 $CHAIN_OK|" \
+  "an unstaged settings edit cannot switch the changelog rule off|fx_unstaged_required||commit|feat: add b|rc=1 $CHAIN_OK;commit-msg: changelog-missing=b.txt:changelog.d/*/*.md|" \
+  "control: staging that edit applies it too|fx_staged_required||commit|feat: add b|rc=0 $CHAIN_OK|" \
   "staged growth hidden by a reverted worktree copy still blocks|fx_hidden_growth||commit|feat: staged growth|rc=1 $BLOCKED|"
 
 echo "=== the repo-local entry runs and blocks ==="
@@ -124,7 +125,7 @@ fx_local_fail() { armed local-fail; local_entry '#!/bin/sh\necho "local: nope" >
 fx_local_missing() { armed local-missing; settings 'COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/local-check"'; }
 fx_local_escape() { armed local-escape; settings 'COMMIT_GUARDS_PRE_COMMIT_LOCAL = "../escape"'; }
 run_rows \
-  "a passing repo-local entry runs and the commit lands|fx_local_pass|$ONE|commit|chore: add the local check|rc=0 local: ran;$CHAIN_OK;${MSG_OK}chore: add the local check|" \
+  "a passing repo-local entry runs and the commit lands|fx_local_pass|$ONE|commit|chore: add the local check|rc=0 local: ran;$CHAIN_OK|" \
   "a failing repo-local entry blocks with its own output in front of the committer|fx_local_fail|$ONE|commit|chore: local check fails|rc=1 local: nope;$BLOCKED|" \
   "a configured but missing repo-local entry blocks|fx_local_missing|$ONE|commit|chore: local check missing|rc=1 pre-commit: local-missing=tools/local-check|" \
   "a repo-local entry escaping the repository blocks|fx_local_escape|$ONE|commit|chore: escaping local check|rc=1 pre-commit: path-escape=COMMIT_GUARDS_PRE_COMMIT_LOCAL:../escape|"
@@ -158,10 +159,10 @@ run_rows \
   "an unreachable script is exit 2 from the hook itself|fx_no_skill_hook|$ONE|hook||rc=2 $NO_SCRIPT|" \
   "a newline in a searched checkout cannot create another stable record|fx_no_skill_newline|$ONE|hook||rc=2 $NO_SCRIPT|" \
   "control: the hook exits 0 once the guard can run|fx_armed_hook|$ONE|hook||rc=0 $CHAIN_OK|" \
-  "a stale baked path runs the tree's own render at the recorded place, and names it|fx_stale_path|$ONE|commit|feat: add a|rc=0 $OWN;$CHAIN_OK;$OWN;${MSG_OK}feat: add a|helper=$X:ours['<repo>/gone/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a stale baked path runs the tree's own render at the recorded place, and names it|fx_stale_path|$ONE|commit|feat: add a|rc=0 $OWN;$CHAIN_OK;$OWN|helper=$X:ours['<repo>/gone/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "control: that chain still blocks|fx_stale_path_marker|$ONE|commit|feat: add b|rc=1 $OWN;$BLOCKED|" \
-  "the tree's own render runs before a baked scripts directory that is there|fx_own_first|$ONE|commit|feat: add a|rc=0 $OWN;$CHAIN_OK;$OWN;${MSG_OK}feat: add a|" \
-  "with no render at the recorded place, the baked scripts directory is run before any rediscovery, lane by lane|fx_baked_first|$ONE|commit|feat: add a|rc=0 foreign: baked ran;${MSG_OK}feat: add a|helper=$X:ours['<repo>/baked'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
+  "the tree's own render runs before a baked scripts directory that is there|fx_own_first|$ONE|commit|feat: add a|rc=0 $OWN;$CHAIN_OK;$OWN|" \
+  "with no render at the recorded place, the baked scripts directory is run before any rediscovery, lane by lane|fx_baked_first|$ONE|commit|feat: add a|rc=0 foreign: baked ran|helper=$X:ours['<repo>/baked'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 # The rows above pin the key; the remedy under it is read directly. The
 # tracked installer comes first, because a fresh clone carries it and may
@@ -220,10 +221,10 @@ fx_push_consumer_spent() {
 }
 run_rows \
   "a consumer's hooks are kept: one delegate at line 2, the body and its missing final newline as they were, an unrelated hook untouched|fx_compose||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo foreign: pre-commit<noeol> commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH +post-checkout=$X:#!/bin/sh~echo foreign: post-checkout hooksPath=<unset>" \
-  "control: the composed hook commits clean content and the foreign part runs after ours|fx_compose_clean|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;foreign: pre-commit;${MSG_OK}feat: add a|" \
+  "control: the composed hook commits clean content and the foreign part runs after ours|fx_compose_clean|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;foreign: pre-commit|" \
   "our part still blocks inside a composed hook, before the foreign part runs|fx_compose_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
   "a foreign hook ending in exit 0 cannot skip the guard|fx_terminal_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
-  "control: clean content commits through it and the foreign hook still runs|fx_terminal_clean|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;foreign: ran;${MSG_OK}feat: add a|" \
+  "control: clean content commits through it and the foreign hook still runs|fx_terminal_clean|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;foreign: ran|" \
   "a foreign hook's own refusal is preserved after ours passes|fx_refuses|$ONE|commit|feat: add a|rc=1 $CHAIN_OK;foreign: says no|" \
   "and its own exit status is the hook's|fx_refuses_hook|$ONE|hook||rc=3 $CHAIN_OK;foreign: says no|" \
   "a hook that merely mentions the helper by name still gets the guard|fx_mentions_helper||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~# see .git/hooks/kendex-guards for the shared guard~exit 0 commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
@@ -319,7 +320,7 @@ worktree_of() { # NAME — an armed, seeded repository and a linked worktree to 
   W="$TMP/wt-$1"
 }
 fx_wt_clean() { worktree_of wt-clean; printf 'hello\n' >"$W/w.txt"; git -C "$W" add w.txt; }
-fx_wt_marker() { worktree_of wt-marker; printf '# %s: nope\n' "$FX" >"$W/w.py"; git -C "$W" add w.py; }
+fx_wt_marker() { worktree_of wt-marker; printf '%s nope\n' "$CM" >"$W/w.py"; git -C "$W" add w.py; }
 # A linked worktree carrying its own copy of the package, the shape a lane
 # picking up its own package change has; both shims drifted, so a run that
 # did not refuse would rewrite all three files.
@@ -357,10 +358,10 @@ fx_wt_own() { wt_with_package own-render; announce "$R/.agents/skills/commit-gua
 fx_wt_none() { worktree_of no-render; announce "$R/.agents/skills/commit-guards/scripts" main; printf 'hello\n' >"$W/w.txt"; git -C "$W" add w.txt; }
 WT_OWN="kendex-guards: scripts=<root>/wt-own-render/.agents/skills/commit-guards/scripts (this tree)"
 run_rows \
-  "control: a clean commit from a linked worktree passes through the shared shims|fx_wt_clean|$ONE|commit|feat: from the worktree|rc=0 $CHAIN_OK;${MSG_OK}feat: from the worktree|" \
+  "control: a clean commit from a linked worktree passes through the shared shims|fx_wt_clean|$ONE|commit|feat: from the worktree|rc=0 $CHAIN_OK|" \
   "a linked worktree gets the guard chain too|fx_wt_marker|$ONE|commit|feat: from the worktree|rc=1 $BLOCKED|" \
-  "a linked worktree carrying its own render is judged by it, not by the main checkout's|fx_wt_own|$ONE|commit|feat: from the worktree|rc=0 $WT_OWN;foreign: tree copy ran;$WT_OWN;${MSG_OK}feat: from the worktree|" \
-  "control: a linked worktree carrying none runs the copy the main checkout armed|fx_wt_none|$ONE|commit|feat: from the worktree|rc=0 foreign: main copy ran;${MSG_OK}feat: from the worktree|" \
+  "a linked worktree carrying its own render is judged by it, not by the main checkout's|fx_wt_own|$ONE|commit|feat: from the worktree|rc=0 $WT_OWN;foreign: tree copy ran;$WT_OWN|" \
+  "control: a linked worktree carrying none runs the copy the main checkout armed|fx_wt_none|$ONE|commit|feat: from the worktree|rc=0 foreign: main copy ran|" \
   "a linked worktree over unarmed hooks writes nothing, names the main checkout's owner and exits 1: nothing is armed|fx_wt_install||install-wt||rc=1 install-git-hooks: linked-worktree=<repo>/.git/hooks;commit-guards git hooks: unarmed-linked-worktree=<repo>/.git/hooks|$DRIFTED hooksPath=<unset>" \
   "a linked worktree over the main checkout's arming says it is in place and writes nothing|fx_wt_install_armed||install-wt||rc=0 commit-guards git hooks: armed-by-main=<repo>/.git/hooks|$FRESH" \
   "control: the main checkout arms and repairs the drift the worktree left alone|fx_wt_install_main||install||rc=0 $ARMED|$FRESH" \

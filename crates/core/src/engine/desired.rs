@@ -444,6 +444,10 @@ pub struct DesiredState {
     /// A package refused everywhere has no item to carry its reasons, so
     /// they live here; `EngineReport::wanted`.
     pub(super) derived: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
+    /// Members a set carries that its catalog does not offer, by kind and
+    /// name, each with the set that carries it. Nothing derives them, so
+    /// `derived` never holds them; `EngineReport::unoffered`.
+    pub(super) unoffered: BTreeMap<(ItemKind, String), BTreeSet<crate::lock::Reason>>,
     /// Declarations whose source resolved and whose item was found and
     /// read, each with the provenance it is planned under. What these
     /// produced is the complete truth about them, so a lock entry they did

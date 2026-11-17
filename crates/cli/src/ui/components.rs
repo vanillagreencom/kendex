@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use super::escaped;
-use super::modes::{Look, Span, Style, cells, wrap};
+use super::modes::{Look, Span, Style, cells, unbroken, wrap};
 use super::symbols::{Glyphs, Symbol};
 use super::tokens::{Token, paint, strong};
 
@@ -37,6 +37,16 @@ pub enum Status {
 }
 
 impl Status {
+    /// The status a producer's class of attention is drawn with: a blocked
+    /// item as a failure, never as one more decision.
+    pub fn of(need: kendex_core::decision::Need) -> Status {
+        match need {
+            kendex_core::decision::Need::Blocked => Status::Failed,
+            kendex_core::decision::Need::Decision => Status::Decision,
+            kendex_core::decision::Need::Notice => Status::Notice,
+        }
+    }
+
     fn symbol(self) -> Symbol {
         match self {
             Status::Done => Symbol::Done,
@@ -68,6 +78,54 @@ pub struct Value<'a> {
     /// Drawn as a command: [`Span::Command`], never broken across lines.
     pub copy: &'a str,
     pub remark: Option<&'a str>,
+}
+
+/// One [`Style::table`] cell that holds what a reader copies and can hold a
+/// space — a path — drawn whole, as a row draws a [`Span::Command`], with
+/// the prose around it broken between words. A `String` cell is prose
+/// alone, and the table keeps each of its words whole.
+#[derive(Default)]
+pub struct Cell(Vec<(Shape, String)>);
+
+impl Cell {
+    /// `text` a reader copies, never broken across lines.
+    pub fn copy(mut self, text: impl Into<String>) -> Cell {
+        self.0.push((Shape::Command, text.into()));
+        self
+    }
+
+    /// `text` broken between words where it does not fit.
+    pub fn prose(mut self, text: impl Into<String>) -> Cell {
+        self.0.push((Shape::Prose, text.into()));
+        self
+    }
+}
+
+impl From<String> for Cell {
+    fn from(text: String) -> Cell {
+        Cell::default().prose(text)
+    }
+}
+
+/// What a [`Style::table`] cell says: its text, and which runs of it are
+/// drawn whole. Its plain spelling is the runs joined.
+pub trait TableCell {
+    fn spans(&self) -> Vec<Span<'_>>;
+}
+
+impl TableCell for String {
+    fn spans(&self) -> Vec<Span<'_>> {
+        vec![Span::Prose(self)]
+    }
+}
+
+impl TableCell for Cell {
+    fn spans(&self) -> Vec<Span<'_>> {
+        self.0
+            .iter()
+            .map(|(shape, text)| shape.span(text))
+            .collect()
+    }
 }
 
 /// One keyed choice of a [`Style::choices`] line.
@@ -103,9 +161,11 @@ impl Style {
         symbol.glyph(self.glyphs)
     }
 
-    /// The verb and what it acts on. Chrome: plain draws nothing,
-    /// since whoever reads a pipe already knows what they ran.
-    pub fn header(&self, verb: &str, target: &str) -> Vec<String> {
+    /// The verb and what it acts on. A place in the target, a command
+    /// span, stays whole: beside the title where it fits, else on a line
+    /// of its own under it. Chrome: plain draws nothing, since whoever
+    /// reads a pipe already knows what they ran.
+    pub fn header(&self, verb: &str, target: &[Span<'_>]) -> Vec<String> {
         let Look::Rich { palette, width } = self.look else {
             return Vec::new();
         };
@@ -116,7 +176,7 @@ impl Style {
             &lead,
             cells(&title) + 2,
             2,
-            &[Span::Prose(&escaped(target))],
+            &Escaped::from(target).spans(),
             |chunk| paint(palette, Token::Muted, chunk),
         )
     }
@@ -263,18 +323,11 @@ impl Style {
     /// Something that needs the reader: what it is, why where there is more
     /// to say than what, and what they can press about it.
     pub fn callout(&self, what: &str, why: Option<&str>, choices: &[Choice<'_>]) -> Vec<String> {
-        let mark = self.glyph(Symbol::Decision);
-        let (what, why) = (escaped(what), why.map(escaped));
-        let mut lines = match self.look {
-            Look::Plain => std::iter::once(format!("{mark} {what}"))
-                .chain(why.map(|why| format!("  {why}")))
-                .collect(),
-            Look::Rich { palette, width } => {
-                let lead = format!("{} ", paint(palette, Token::Warn, mark));
-                let mut lines = vec![String::new()];
-                lines.extend(fitted(width, &lead, 2, 2, &[Span::Prose(&what)], |chunk| {
-                    strong(palette, Token::Emphasis, chunk)
-                }));
+        let mut lines = self.head(Status::Decision, what);
+        let why = why.map(escaped);
+        match self.look {
+            Look::Plain => lines.extend(why.map(|why| format!("  {why}"))),
+            Look::Rich { width, .. } => {
                 if let Some(why) = why {
                     lines.extend(fitted(
                         width,
@@ -285,11 +338,29 @@ impl Style {
                         str::to_owned,
                     ));
                 }
-                lines
             }
-        };
+        }
         lines.extend(self.choices(choices));
         lines
+    }
+
+    /// The line that opens a block, marked with what its subject needs: a
+    /// decision, a failure for what is blocked, or a notice. Set off by a
+    /// blank line rich, and at column 0 plain.
+    pub fn head(&self, status: Status, what: &str) -> Vec<String> {
+        let mark = self.glyph(status.symbol());
+        let what = escaped(what);
+        match self.look {
+            Look::Plain => vec![format!("{mark} {what}")],
+            Look::Rich { palette, width } => {
+                let lead = format!("{} ", paint(palette, status.token(), mark));
+                let mut lines = vec![String::new()];
+                lines.extend(fitted(width, &lead, 2, 2, &[Span::Prose(&what)], |chunk| {
+                    strong(palette, Token::Emphasis, chunk)
+                }));
+                lines
+            }
+        }
     }
 
     /// Keyed buttons under what they answer, the default drawn as the
@@ -387,32 +458,56 @@ impl Style {
         .collect()
     }
 
-    /// Columns sized to their widest cell, a rule under the header.
-    pub fn table(&self, headers: &[&str], rows: &[Vec<String>]) -> Vec<String> {
-        let headers: Vec<String> = headers.iter().map(|cell| escaped(cell)).collect();
-        let rows: Vec<Vec<String>> = rows
+    /// Columns sized to their widest cell, a rule under the header. Rich
+    /// narrows the widest column first to fit the width, but never below
+    /// its header's or a cell's widest word, nor its widest copied run: no
+    /// word and no copied run breaks in the middle, and a table whose
+    /// floors pass the width runs past it, which the terminal wraps. A path
+    /// that can hold a space stays whole only as a [`Cell`] copy.
+    pub fn table<C: TableCell>(&self, headers: &[&str], rows: &[Vec<C>]) -> Vec<String> {
+        let headers: Vec<Escaped> = headers
             .iter()
-            .map(|row| row.iter().map(|cell| escaped(cell)).collect())
+            .map(|cell| Escaped::from(&[Span::Prose(cell)][..]))
+            .collect();
+        let rows: Vec<Vec<Escaped>> = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| Escaped::from(cell.spans().as_slice()))
+                    .collect()
+            })
             .collect();
         let mut widths: Vec<usize> = (0..headers.len())
             .map(|column| {
                 std::iter::once(&headers)
                     .chain(&rows)
                     .filter_map(|row| row.get(column))
-                    .map(|cell| cells(cell))
+                    .map(|cell| cells(&cell.joined()))
                     .max()
                     .unwrap_or(0)
             })
             .collect();
         if let Look::Rich { width, .. } = self.look {
+            let floors: Vec<usize> = (0..widths.len())
+                .map(|column| {
+                    std::iter::once(&headers)
+                        .chain(&rows)
+                        .filter_map(|row| row.get(column))
+                        .map(|cell| unbroken(&cell.spans()))
+                        .fold(1, usize::max)
+                })
+                .collect();
             let room = width.saturating_sub(2 + 2 * widths.len().saturating_sub(1));
             while widths.iter().sum::<usize>() > room {
-                let Some(widest) = widths.iter_mut().max() else {
+                let Some(widest) = widths
+                    .iter_mut()
+                    .zip(&floors)
+                    .filter(|(width, floor)| **width > **floor)
+                    .map(|(width, _)| width)
+                    .max()
+                else {
                     break;
                 };
-                if *widest <= 1 {
-                    break;
-                }
                 *widest -= 1;
             }
         }
@@ -429,17 +524,21 @@ impl Style {
                 .to_owned()
         };
         match self.look {
-            Look::Plain => std::iter::once(laid(&headers, &str::to_owned))
-                .chain(rows.iter().map(|row| laid(row, &str::to_owned)))
+            Look::Plain => std::iter::once(&headers)
+                .chain(&rows)
+                .map(|row| {
+                    let row: Vec<String> = row.iter().map(Escaped::joined).collect();
+                    laid(&row, &str::to_owned)
+                })
                 .collect(),
             Look::Rich { palette, .. } => {
                 let rule_cells = widths.iter().sum::<usize>() + 2 * widths.len().saturating_sub(1);
                 let rule = self.glyph(Symbol::Separator).repeat(rule_cells);
-                let wrapped = |row: &[String], paint_cell: &dyn Fn(&str) -> String| {
+                let wrapped = |row: &[Escaped], paint_cell: &dyn Fn(&str) -> String| {
                     let columns: Vec<Vec<String>> = row
                         .iter()
                         .zip(&widths)
-                        .map(|(cell, room)| wrap(&[Span::Prose(cell)], *room, *room))
+                        .map(|(cell, room)| wrap(&cell.spans(), *room, *room))
                         .collect();
                     (0..columns.iter().map(Vec::len).max().unwrap_or(0))
                         .map(|line| {
@@ -560,6 +659,16 @@ enum Shape {
     Verbatim,
 }
 
+impl Shape {
+    fn span(self, text: &str) -> Span<'_> {
+        match self {
+            Shape::Prose => Span::Prose(text),
+            Shape::Command => Span::Command(text),
+            Shape::Verbatim => Span::Verbatim(text),
+        }
+    }
+}
+
 /// Spans with each run escaped, and the kind each was kept.
 pub(super) struct Escaped(Vec<(Shape, String)>);
 
@@ -582,11 +691,7 @@ impl Escaped {
     fn spans(&self) -> Vec<Span<'_>> {
         self.0
             .iter()
-            .map(|(shape, text)| match shape {
-                Shape::Prose => Span::Prose(text),
-                Shape::Command => Span::Command(text),
-                Shape::Verbatim => Span::Verbatim(text),
-            })
+            .map(|(shape, text)| shape.span(text))
             .collect()
     }
 
@@ -596,10 +701,10 @@ impl Escaped {
     }
 }
 
-/// `spans` as rich lines no wider than `width` — a command excepted, which
-/// [`wrap`] never breaks — behind `lead` (already painted, `lead_cells`
-/// wide), continuation lines indented by `indent` cells, each chunk painted
-/// by `paint_chunk`. Empty spans are still one line, `lead` alone, as the
+/// `spans` as rich lines no wider than `width` — a piece [`wrap`] never
+/// breaks excepted — behind `lead` (already painted, `lead_cells` wide),
+/// continuation lines indented by `indent` cells, each chunk painted by
+/// `paint_chunk`. Empty spans are still one line, `lead` alone, as the
 /// plain look draws them: a blank line in another program's words keeps
 /// its place.
 fn fitted(

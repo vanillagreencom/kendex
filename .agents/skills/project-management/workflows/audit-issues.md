@@ -22,6 +22,8 @@ Overseer heartbeat audits use [Heartbeat audit](../../orch/references/heartbeat-
 
 The input file's `tracker` block fixes the tracker for the whole audit. A caller that already resolved one (orch `TRACKER`) must set it.
 
+**Pass inventory.** A `team` or `issue` run on Linear binds one fresh `[INVENTORY_FILE]` in § 1.2.1 and hands it to its § 4.1 TPM analysis, so that analysis lists the team once. Every other mode binds none.
+
 **Hierarchy contract.** A `hierarchy_contract` in the input file is binding per [audit-issues-input.md](../schemas/audit-issues-input.md) § Hierarchy Contract; § 4.2 enforces it before anything is presented or executed.
 
 ---
@@ -68,6 +70,8 @@ Every mode runs:
 Run `orch-runtime reconcile-items` only where the orch skill is installed. Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts. A refused reply exits 1; fix the failed read before auditing. A usage error exits 2. A dropped verification check stays unticked. The linear skill's completion route, `linear.sh issues complete`, owns the box and has no retire option: record its criterion, the person’s reason and their authority in an owner comment on the item that names that route as the box's owner.
 
 Keep the issue-label inventory for every create/update preflight.
+
+MODE `team` and `issue` bind `[INVENTORY_FILE]` to `[WORKTREE_PATH]/tmp/inventory-[MODE]-YYYYMMDD-HHMMSS.json`, `[WORKTREE_PATH]` being the § 4.1 `Worktree:`, and create that `tmp/` if it is missing. Bind a path no earlier run wrote: a path another run wrote serves that run's older reading. Nothing in this workflow reads the file; § 4.1 hands it to the TPM, whose first read given it collects the team ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
 
 #### 1.2.2 Preflight — GitHub (TRACKER=github)
 
@@ -169,7 +173,7 @@ Worktree: [WORKTREE_PATH]
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 
-Omit `[OWNER/REPO]` when `TRACKER=linear`.
+Omit `[OWNER/REPO]` when `TRACKER=linear`. When § 1.2.1 bound `[INVENTORY_FILE]`, append `--inventory [INVENTORY_FILE]` to `Arguments:`.
 
 ### 4.2 Collect and Validate
 
@@ -225,7 +229,7 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 .agents/skills/orch/scripts/orch-env PM_CREATE_AUTONOMY ask
 ```
 
-Accept `ask`, the caller default, or `auto`, which `ORCH_USER_MODE=ceo` composes when the settings ladder names neither; stop on any other value. The guardrails remain [SKILL.md § Disposition](../SKILL.md#disposition)'s creation bar, the `Reached by:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
+Accept `ask`, the caller default, or `auto`, which `ORCH_USER_MODE=ceo` composes when the settings ladder names neither; stop on any other value. The guardrails remain [SKILL.md § Disposition](../SKILL.md#disposition)'s creation bar, the `Reached by:`, `Supersession:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
 
 The accepted creation set contains every bar-passing proposed creation in § 5, including architecture gaps. **Auto.** Authorize that set and every row in the displayed Cancel section without a question. Cancel covers issue-mode `cancel`, `supersede`, `combine` and `supersedes[]`, plus project/team `obsolete[]`, `duplicates[]` and `combine[]` as defined in [audit-output.md](../schemas/audit-output.md). Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8. **Ask.** Offer the same accepted creation set. Apply the rest of this section only in this mode.
 
@@ -297,7 +301,7 @@ Process creates in dependency order — every issue after the issues it is block
 | create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. After creation, execute each authorized `supersedes[]` entry through Superseded issues below, subject to Contract-parent scope transfer above. Backlog is mandatory, never the team-default Triage. § 7.2.1 then promotes to Todo where it applies. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies. |
 | expand, update | workflow-actions § Descriptions + reason comment |
 | supersede, combine | workflow-actions § State Transitions (cancel/absorb), then Superseded issues below |
-| cancel | workflow-actions § State Transitions |
+| cancel | workflow-actions § State Transitions: disposition descendants before commenting and canceling the parent |
 | skip, valid | No action outside the authorized Triage disposition in [Heartbeat audit](../../orch/references/heartbeat-audit.md) |
 
 A `create` whose `create_fields.review_born` is true came from a review finding, and passes `--review-born` so the creation bar holds it to a reported `Symptom:` at priority 2:
@@ -316,13 +320,19 @@ A `create` whose `review_born` is false is the same command without that flag.
 | expand, update | Fetch with `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`, edit in a tmp file, then `gh issue edit [N] --repo [OWNER/REPO] --body-file [BODY_FILE]`. Title: `gh issue edit [N] --repo [OWNER/REPO] --title "[TITLE]"`. Labels: `.agents/skills/github/scripts/github.sh label-add [N] "[LABEL]" --issue` / `label-remove` |
 | supersede, combine, cancel | `gh issue comment [N] --repo [OWNER/REPO] --body "[REASON]"`, then `gh issue close [N] --repo [OWNER/REPO] --reason "not planned"` |
 
-**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. Preserve the marked owner directive block in the returned `create_fields.description` unchanged when writing the body file; never summarize it. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `reach` supplying `[REACH]`, `symptom` supplying `[SYMPTOM]`, `regressed_by` supplying `[REGRESSED_BY]`, and `review_born` deciding the `--review-born` flag. A proposal-backed row also carries `source`, which must agree with `review_born` before execution. When creating a child, carry the parent's research and decision references into the template's Filing record.
+**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. Preserve the marked owner directive block in the returned `create_fields.description` unchanged when writing the body file; never summarize it. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `reach` supplying `[REACH]`, `supersession` supplying `[SUPERSESSION]`, `symptom` supplying `[SYMPTOM]`, `regressed_by` supplying `[REGRESSED_BY]`, and `review_born` deciding the `--review-born` flag. A proposal-backed row also carries `source`, which must agree with `review_born` before execution. When creating a child, carry the parent's research and decision references into the template's Filing record.
 
-**Superseded issues — Linear**: process every authorized `supersedes[]` entry after its replacement exists, including on a `create` row, subject to Contract-parent scope transfer above. For `when: now` (also the default when omitted), read its direct children, the `children` rows at `depth` 0 (`issues get [SUPERSEDED_ID]`), detach any direct child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`), comment `"Superseded by [ISSUE_ID]. [REASON]"`, then `issues update [SUPERSEDED_ID] --state "Canceled"` — remaining children cascade-cancel. For `when: partial`, post the comment naming the replacement and transferred scope, then use the expand/update Descriptions route above to retain only the remainder; keep the named issue open. For `when: at-completion`, write the exact Completion block from [audit-issues-input.md](../schemas/audit-issues-input.md#completion-block) into the replacement description, containing only those remaining entries, and add `issues add-relation [ISSUE_ID] --related [SUPERSEDED_ID]` for readers. `issues complete` owns the later comment-then-cancel on Done and protects children under that block's contract; resolve any reported open-child disposition through the existing child/update routes before retrying completion. Never cancel it at filing. An entry not confirmed by the TPM or held by authorization is not touched.
+**Supersession record.** Before creating an issue, require § 6 authorization for every disposition its comparison requires, subject to Contract-parent scope transfer above. If any required disposition is withheld, hold the create and its dependent dispositions, even when other entries remain authorized. Report the held create and every withheld or unexecuted disposition in § 8 as not applied. Resume only when every required disposition is authorized; never replace a withheld action with a no-match record.
+
+Every create's body carries `create_fields.supersession` as its `**Supersession**:` line, the record the TPM comparison wrote ([audit-output.md](../schemas/audit-output.md) § ISSUE Mode). Preserve entries for dispositions already executed or authorized to execute with the filing, including their timing. Leave withheld or held actions out of the actual-action record; retain their not-applied outcomes in § 8.
+
+**Superseded issues — Linear**: process every authorized `supersedes[]` entry after its replacement exists, including on a `create` row, subject to Contract-parent scope transfer above. For `when: now` (also the default when omitted), follow workflow-actions § State Transitions to disposition descendants first. Detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`); replacement coverage alone does not authorize canceling a child. After every remaining descendant has its independently authorized, documented disposition, comment `"Superseded by [ISSUE_ID]. [REASON]"`, then `issues update [SUPERSEDED_ID] --state "Canceled"`. For `when: partial`, post the comment naming the replacement and transferred scope, then use the expand/update Descriptions route above to retain only the remainder; keep the named issue open. For `when: at-completion`, write the exact Completion block from [audit-issues-input.md](../schemas/audit-issues-input.md#completion-block) into the replacement description, containing only those remaining entries, and add `issues add-relation [ISSUE_ID] --related [SUPERSEDED_ID]` for readers. `issues complete` owns the later comment-then-cancel on Done and protects children under that block's contract; resolve any reported open-child disposition through the existing child/update routes before retrying completion. Never cancel it at filing. An entry not confirmed by the TPM or held by authorization is not touched.
 
 **GitHub degradation (explicit, never silent)**: GitHub has no bundle, typed-relation, project-state, or cascade model here. Represent structure in issue bodies — `make_child` becomes a `Parent: #[N]` line in the template's Context section plus a comment on the parent; relations become `Blocks: #N` / `Blocked by: #N` / `Related: #N` lines maintained through the body-edit route. Supersession has no detach or cascade: enumerate any sub-items listed in the closed issue's body in the close comment. Apply `partial` through the body-edit route. For `at-completion`, retain the strict Completion block and report the automatic completion close as not executed: `linear.sh issues complete` has no GitHub counterpart here. Never drop an approved hierarchy or relation action — either record its body representation or report it as not executed, and list every degradation in § 8.
 
 #### 7.2.1 Position in the Active Project
+
+**Skip if** the analyzed input's `source` is `research-issue`. Keep its research issue in Backlog until research-issue § 3 publishes its assets and handles readiness.
 
 **Linear only.** With `TRACKER=github`, record `positioning: n/a (github)` in § 8 and skip.
 

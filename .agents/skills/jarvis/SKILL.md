@@ -25,7 +25,7 @@ Jarvis is the main long-running session. Jarvis Voice is the VGS voice session o
 
 ## Setup
 
-Jarvis home is `~/dev/jarvis`, the folder with Jarvis's instructions, skills and memory. Use the [home layout](references/home-layout.md) for its files. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
+Jarvis home is the folder with Jarvis's instructions, skills and memory. [README: Install](README.md#install) creates it at `~/jarvis`. Use the [home layout](references/home-layout.md) for its files. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
 
 The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the Jarvis home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
 
@@ -64,16 +64,20 @@ Read the linked workflow or reference for the task before acting.
 | Task | Read first |
 |---|---|
 | Draft product videos, posts or outreach | Launch `publicist` for drafting with a task file or attached prompt. Before a publisher setup launch, obtain the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). Carry the approval record and named publisher selections in the setup task file. |
-| Choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
+| Read mail, pages or files, choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
 | Report committed Markdown growth and shape for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
+| Add an agent or skill, or change an installed agent | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [home layout](references/home-layout.md) |
+| Remember a fact or establish a workstream | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [memory](references/memory.md) |
+| Add a hook or schedule | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [verification](references/verification.md) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
 | Use an automation browser, fill a form or handle a bot check | [references/browser.md](references/browser.md) |
 | Handle credentials, account limits, sign-in or official records | [references/accounts-and-secrets.md](references/accounts-and-secrets.md) |
+| Prepare a filing obligation, close a month against the bank, triage mail with a deadline or request a finance decision | [references/finance.md](references/finance.md) |
 | Connect Slack, Linear, GitHub or a fleet machine | [Slack](workflows/setup-slack.md), [Linear](workflows/setup-linear.md), [GitHub](workflows/setup-github.md), [Fleet machine](workflows/setup-fleet-machine.md) |
 | Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |

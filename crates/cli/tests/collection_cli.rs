@@ -127,7 +127,7 @@ fn collection_subscriptions_and_snapshots_pass_before_a_fresh_step_installs() {
                 // the command before the earlier compatible step writes.
                 fs::write(
                     project.join("kendex.toml"),
-                    "schema = 7\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n",
+                    "schema = 8\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n",
                 )
                 .unwrap();
                 snapshots[1] = git(&upstream, &["rev-parse", "HEAD"]);
@@ -223,7 +223,7 @@ fn collection_world() -> (tempfile::TempDir, PathBuf, PathBuf, Vec<String>) {
         snapshots.push(git(&upstream, &["rev-parse", "HEAD"]));
     }
     fs::write(project.join("kendex.toml"),
-            "schema = 7\n[sources.last]\nrepo = 'acme/zkit'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n").unwrap();
+            "schema = 8\n[sources.last]\nrepo = 'acme/zkit'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n").unwrap();
     let cached = kendex(
         &home,
         &project,
@@ -293,7 +293,7 @@ fn world() -> (tempfile::TempDir, PathBuf, PathBuf, String) {
     let commit = upstream(&home);
     let project = home.join("app");
     fs::create_dir_all(project.join(".claude")).unwrap();
-    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 8\n").unwrap();
     assert_eq!(
         kendex_core::discover::project_root_from(&project, &home).as_deref(),
         Some(project.as_path()),
@@ -324,7 +324,7 @@ fn a_member_no_tool_can_take_leaves_the_scope_unsubscribed() {
         match tool {
             false => {
                 assert!(text.contains("no tool is on this machine"), "{text}");
-                assert_eq!(manifest, "schema = 7\n", "the refused step subscribed");
+                assert_eq!(manifest, "schema = 8\n", "the refused step subscribed");
                 assert!(!project.join(".claude/skills").exists(), "{text}");
             }
             true => {

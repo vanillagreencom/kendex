@@ -141,6 +141,88 @@ pub fn invalidate(env: &Env, scope: &Scope) -> Result<()> {
     }
 }
 
+/// Whose drift file this is: every snapshot schema and every memo from
+/// schema 6 name their scope. An older memo is known only by its schema.
+#[derive(Deserialize)]
+struct Owner {
+    #[serde(default)]
+    schema: Option<u32>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+/// Drop every snapshot and copies memo whose project root no longer
+/// exists, so the folder does not grow with each project a person
+/// deletes, and every memo from before memos named their scope, which no
+/// build of this schema reads. Each file is judged by the owner it names
+/// itself. Both kinds are derived, so nothing a person wrote is lost.
+/// What stays: the global scope's files, a file that is neither, a label
+/// that cannot name its root exactly ([`Scope::from_label`]), and a root
+/// whose existence fails to read: only not-found is gone. Returns notes,
+/// as [`super::refresh::refresh_stale`] does.
+pub(crate) fn prune_gone_projects(env: &Env) -> Vec<String> {
+    let dir = env.drift_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => return vec![format!("{}: not read ({error})", dir.display())],
+    };
+    let mut notes = Vec::new();
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) if entry.file_type().is_ok_and(|kind| kind.is_file()) => entry.path(),
+            Ok(_) => continue,
+            Err(error) => {
+                notes.push(format!("{}: not read ({error})", dir.display()));
+                continue;
+            }
+        };
+        let text = match read_if_exists(&path) {
+            Ok(Some(text)) => text,
+            Ok(None) => continue,
+            Err(error) => {
+                notes.push(error.to_string());
+                continue;
+            }
+        };
+        let Ok(owner) = serde_json::from_str::<Owner>(&text) else {
+            continue;
+        };
+        let memo = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(super::copies::MEMO_SUFFIX));
+        let label = match (owner.scope, owner.schema) {
+            (Some(label), _) => label,
+            (None, Some(schema)) if memo && schema < super::copies::MEMO_SCHEMA => {
+                remove(&path, &mut notes);
+                continue;
+            }
+            (None, _) => continue,
+        };
+        let Some(Scope::Project { root }) = Scope::from_label(&label) else {
+            continue;
+        };
+        match root.try_exists() {
+            Ok(true) => {}
+            Ok(false) => remove(&path, &mut notes),
+            Err(error) => notes.push(format!("{label}: not checked for removal ({error})")),
+        }
+    }
+    notes
+}
+
+fn remove(path: &std::path::Path, notes: &mut Vec<String>) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => notes.push(format!(
+            "{}: drift file not removed ({error})",
+            path.display()
+        )),
+    }
+}
+
 /// Derive the scope's snapshot from the deep reads and store it. This is
 /// the expensive path — mirrors, plans, scoring — and it belongs exactly
 /// where callers are already paying for that work.

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.13
+
+- With tool chrome on, the first render of a long transcript takes less CPU. A drawn tool row that already fits the terminal is no longer wrapped again; rows look the same. Thanks to @eaxeax.
+
 ### 2.0.12
 
 - Pi no longer crashes with "This extension ctx is stale" when it draws a tool row after the session was switched, forked or reloaded. Tool chrome keeps the current session's theme instead of its extension context. Thanks to @eaxeax.

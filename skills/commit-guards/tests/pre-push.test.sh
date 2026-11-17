@@ -48,25 +48,15 @@ ZERO=0000000000000000000000000000000000000000
 # The lines this lane and the checks that find a breach put in front of a
 # person. The batch's own step and verdict lines are dispatcher's contract and
 # are dropped, so a row reads as the push does: what was judged, what was
-# found, and the verdict. todo-ban's per-hit lines quote the marker they found,
-# and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |changelog-entries: (checked|major-breaking|violations)=|todo-ban: index-count=|md-type: (staged-count|summary|no-match|finding)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
-# No fixture here carries a doc-limits sibling, so that lane states its skip on
-# every single run and would repeat one long line in every row below. It is
-# asserted once, directly, after the table; what the lane finds at push is
-# skills/doc-limits/tests/push-scope.test.sh's subject.
-DROP='^pre-push: lane-absent=doc-limits '
-
-# Assembled from split tokens, so this file never holds a marker shape itself:
-# the kendex repo runs todo-ban over its own tree, tests included.
-TD="TO""DO"
-
+# found, and the verdict. conflict-markers' per-hit lines quote the marker they
+# found, and this file carries no marker shape, so only its count is kept.
+KEEP='^(pre-push: |byte-ceiling: )'
 # One line for a run: the exit status, then every kept line in order joined by
 # ';', with object ids reduced to <oid> — a fixture's commits are new every
 # run, and the claim is which scope was judged, not which hash it got.
 said() { # RC OUTPUT
   local out
-  out="$(printf '%s\n' "$2" | LC_ALL=C grep -E "$KEEP" | LC_ALL=C grep -Ev "$DROP" || true)"
+  out="$(printf '%s\n' "$2" | LC_ALL=C grep -E "$KEEP" || true)"
   out="$(printf '%s\n' "$out" | LC_ALL=C sed -E 's/[0-9a-f]{40}/<oid>/g')"
   printf 'rc=%s%s' "$1" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
@@ -114,6 +104,33 @@ push_ref() { # REPO REFSPEC [PUSH-FLAG] -> the run's one line on stdout
 }
 
 printf '%s\n' "$gg_suite"
+
+# The real installed hooks must judge an armed commit, then withhold every
+# content check on its push. Count actual dispatcher steps, never skip prose.
+NONREPEAT=""
+new_repo NONREPEAT nonrepeat
+printf '[env]\nCOMMIT_GUARDS_MD_SCOPE = "all"\n' >"$NONREPEAT/kendex.settings.toml"
+printf '[]\n' >"$NONREPEAT/.kendex-generated.json"
+printf 'content\n' >"$NONREPEAT/content.txt"
+q git -C "$NONREPEAT" add kendex.settings.toml .kendex-generated.json content.txt
+COMMIT_OUT="$(git -C "$NONREPEAT" commit -qm 'feat: commit through armed hooks' 2>&1)" || {
+  printf '%s\n' "$COMMIT_OUT" >&2
+  exit 2
+}
+COMMIT_STEPS="$(printf '%s\n' "$COMMIT_OUT" | awk '/^commit-guards: step=/ { sub(/^commit-guards: step=/, ""); sub(/ .*/, ""); print }' | paste -sd ' ' -)"
+assert_eq "armed pre-commit runs every default content check" \
+  'conflict-markers changelog-entries md-type md-refs py-names secrets' "$COMMIT_STEPS"
+PUSH_RC=0
+PUSH_OUT="$(git -C "$NONREPEAT" push origin main 2>&1)" || PUSH_RC=$?
+assert_eq "the armed commit pushes successfully" 0 "$PUSH_RC"
+assert_eq "push repeats no content check" 0 \
+  "$(printf '%s\n' "$PUSH_OUT" | awk '/^commit-guards: step=/ { n++ } END { print n+0 }')"
+if [ "${1:-}" = --nonrepeat-only ]; then
+  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+
 
 # --------------------------------------------------------------- the ref lines
 #
@@ -165,10 +182,10 @@ for row in \
   "a raw oid on the left still lands a branch, so it is judged|origin|$TIP $TIP refs/heads/main $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: result=0" \
   "a ref line missing a field is refused, never announced as carrying nothing|origin|refs/heads/main $TIP refs/heads/main|rc=2 pre-push: ref-line-short=refs/heads/main;pre-push: result=2" \
   "a second ref line at the same scope is not judged twice|origin|refs/heads/main $TIP refs/heads/main $SEED@@refs/heads/main $TIP refs/heads/mirror $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: scope-repeat=against:<oid>;pre-push: result=0" \
-  "a remote spelled as a URL matches no tracking ref, so the whole tree is the scope, and HEAD is named as the branch it resolves to|$CREDENTIAL_URL|HEAD $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0" \
+  "a remote spelled as a URL matches no tracking ref, so the whole tree is the scope, and HEAD is named as the branch it resolves to|$CREDENTIAL_URL|HEAD $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0" \
   "no ref lines at all is stated, not silently clean|origin||rc=0 pre-push: no-refs=0;pre-push: result=0" \
   "the boundary stands where git pushes to the URL the tracking refs were fetched from|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "and falls to the whole tree where git is pushing somewhere those refs do not describe|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0|$TMP/fork.git"; do
+  "and falls to the whole tree where git is pushing somewhere those refs do not describe|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0|$TMP/fork.git"; do
   IFS='|' read -r label remote reflines expect url <<<"$row"
   assert_eq "$label" "$expect" "$(direct "$remote" "$reflines" "$url")"
 done
@@ -190,44 +207,20 @@ case "$DIRECT_OUT" in
 esac
 assert_eq "the credential in the remote URL reaches no message" "absent" "$CREDENTIAL_SEEN"
 
-# The doc-limits lane the rows above drop from their kept lines. These
-# fixtures carry no such sibling, and a lane that vanished in silence is what
-# this chain's announce-every-lane rule exists to refuse.
-DOC_LIMITS_SEEN=absent
-case "$DIRECT_OUT" in
-  *"pre-push: lane-absent=doc-limits "*) DOC_LIMITS_SEEN=announced ;;
-esac
-assert_eq "a doc-limits sibling the tree does not carry is announced as a skip, never lost" \
-  "announced" "$DOC_LIMITS_SEEN"
-
-# An installed doc-limits whose script is not executable: the commit chain
-# names it unrun, but the push keeps its fail-closed contract and refuses.
-mkdir -p "$DIRECT/.agents/skills/doc-limits/scripts"
-printf '#!/bin/sh\nexit 0\n' >"$DIRECT/.agents/skills/doc-limits/scripts/doc-limits"
-UNRUNNABLE_RC=0
-direct origin "refs/heads/main $TIP refs/heads/main $SEED" >/dev/null || UNRUNNABLE_RC=$?
-DIRECT_PHYSICAL="$(cd -- "$DIRECT" && pwd -P)" || exit 2
-for UNRUNNABLE_EXPECT in refused absent; do
-  UNRUNNABLE_OUT="$DIRECT_OUT"
-  # A wrong path must fail the same matcher while keeping the refusal key.
-  if [ "$UNRUNNABLE_EXPECT" = absent ]; then
-    UNRUNNABLE_OUT="${DIRECT_OUT/$DIRECT_PHYSICAL/$DIRECT_PHYSICAL-wrong}"
-  fi
-  UNRUNNABLE_SEEN=absent
-  case "$UNRUNNABLE_OUT" in
-    *"pre-push: lane-missing=$DIRECT_PHYSICAL/.agents/skills/doc-limits/scripts/doc-limits"*) UNRUNNABLE_SEEN=refused ;;
-  esac
-  assert_eq "an installed doc-limits that cannot run: path match=$UNRUNNABLE_EXPECT" "$UNRUNNABLE_EXPECT" "$UNRUNNABLE_SEEN"
-done
-assert_eq "and the refusal is exit 2" "rc=2" "$(direct origin "refs/heads/main $TIP refs/heads/main $SEED" | cut -d' ' -f1)"
-rm -rf -- "${DIRECT:?}/.agents/skills/doc-limits"
+# A staged policy change would make byte-ceiling judge a policy not pushed.
+printf '\n# staged change\n' >>"$DIRECT/kendex.settings.toml"
+q git -C "$DIRECT" add kendex.settings.toml
+assert_eq "staged policy is refused before destination judgment" \
+  'rc=2 pre-push: index-path=kendex.settings.toml;pre-push: index-drift=1;pre-push: result=2' \
+  "$(direct origin "refs/heads/main $TIP refs/heads/main $SEED")"
+q git -C "$DIRECT" reset -q --hard HEAD
 
 # remote.<name>.url is not a scalar. A remote set up to push one branch to two
 # places carries two values, a fetch uses the first, and git runs this hook
 # once per URL — so no single URL is the one the tracking refs describe, under
 # either invocation, and there is no boundary to vouch for.
 MULTI_LINE="refs/heads/main $TIP refs/heads/main $ZERO"
-MULTI_WHOLE="rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
+MULTI_WHOLE="rc=0 pre-push: base-none=refs/heads/main:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
 MULTI_BOUNDED="rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0"
 q git -C "$DIRECT" remote set-url --add origin "$TMP/second.git"
 assert_eq "a remote carrying two URLs takes no boundary, under the one its refs came from" \
@@ -288,7 +281,7 @@ rewritten_push() { # -> the run's one line on stdout
 }
 
 REWRITE_BOUNDED="rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0"
-REWRITE_WHOLE="rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
+REWRITE_WHOLE="rc=0 pre-push: base-none=refs/heads/topic:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
 assert_eq "a push through a rewritten spelling of the remote keeps its boundary" \
   "$REWRITE_BOUNDED" "$(rewritten_push)"
 
@@ -305,91 +298,6 @@ assert_eq "the configured-value edit took" "rewritten" \
 assert_eq "must-fail: reading the configured value back loses the boundary the rewrite kept" \
   "$REWRITE_WHOLE" "$(rewritten_push)"
 cp -- "$REWRITE_KEPT" "$REWRITE_LANE"
-
-# ------------------------------------------------------------- the subject
-#
-# The not-head refusal settles which commit is leaving; it settles nothing
-# about what the lanes read. Every scan not handed a range reads the INDEX, and
-# every lane reads its tracked policy there. So a violation committed and then
-# staged away is uploaded while the batch reads clean bytes, which is a
-# fail-open in gate code.
-#
-# One repository, three states, one lane: todo-ban, which reads the index.
-drift_repo() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a marker
-  local __v="$1" r=""
-  new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "todo-ban"\n' >"$r/kendex.settings.toml"
-  q git -C "$r" add kendex.settings.toml
-  q git -C "$r" commit -q -m "feat: seed"
-  q git -C "$r" push -q origin main
-  q git -C "$r" checkout -q -b topic
-  printf '# %s: finish this\n' "$TD" >"$r/marked.py"
-  q git -C "$r" add marked.py
-  # Committed with no hook running, which is the state this whole lane exists
-  # for: a replay puts a commit on a branch that no guard has ever judged.
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: add the marked file"
-  eval "$__v=\$r"
-}
-
-DRIFT=""
-drift_repo DRIFT drift
-# The index still holds what HEAD holds, and the work tree is cleaned without
-# staging: nothing any lane reads has moved, and the batch finds the marker the
-# push is carrying. This is why the refusal below tests the index and not the
-# work tree.
-printf 'clean\n' >"$DRIFT/marked.py"
-assert_eq "an unstaged edit changes nothing the lanes read, and the marker is still found" \
-  "rc=1 pre-push: step=base:<oid>;todo-ban: index-count=1:0:tools/todo-ban-excludes;pre-push: result=1" \
-  "$(push_ref "$DRIFT" topic)"
-
-# Staged, and now the index says clean while HEAD carries the marker that is
-# being uploaded. A verdict here would be about a tree nobody is pushing.
-q git -C "$DRIFT" add marked.py
-# git answers 1 for any hook that refused, whatever the hook exited with; the
-# lane's own 2 is the line it printed, and the table above pins that exit
-# status where the lane is run directly.
-assert_eq "content staged over HEAD is refused, never judged" \
-  "rc=1 pre-push: index-path=marked.py;pre-push: index-drift=1;pre-push: result=2" \
-  "$(push_ref "$DRIFT" topic)"
-
-# The must-fail control for that refusal: a copy of the lane whose index test
-# is gone. The same staged cleanup then pushes, clean, over the marker.
-BLIND="$TMP/.blind/commit-guards"
-mkdir -p "$(dirname "$BLIND")"
-cp -R "$SKILL_TEMPLATE" "$BLIND"
-BLIND_BEFORE="$(cat -- "$BLIND/scripts/pre-push")"
-sed -i.bak 's#if ! index_is_head; then#if false; then#' "$BLIND/scripts/pre-push"
-rm -f -- "$BLIND/scripts/pre-push.bak"
-assert_eq "the blind edit took" "rewritten" \
-  "$(if [ "$BLIND_BEFORE" = "$(cat -- "$BLIND/scripts/pre-push")" ]; then echo unchanged; else echo rewritten; fi)"
-
-BLINDED=""
-drift_repo BLINDED blinded "$BLIND"
-printf 'clean\n' >"$BLINDED/marked.py"
-q git -C "$BLINDED" add marked.py
-assert_eq "must-fail: with the index test gone, the marker is pushed under a clean verdict" \
-  "rc=0 pre-push: step=base:<oid>;todo-ban: index-count=0:0:tools/todo-ban-excludes;pre-push: result=0" \
-  "$(push_ref "$BLINDED" topic)"
-
-# The must-fail control: the same rebased state, judged by a copy of the lane
-# whose batch call stands and whose verdict is thrown away. The breach is still
-# found and printed; only the fold is gone, and the push goes through. A row
-# asserting the finding alone would pass over this.
-MUTANT="$TMP/.mutant/commit-guards"
-mkdir -p "$(dirname "$MUTANT")"
-cp -R "$SKILL_TEMPLATE" "$MUTANT"
-MUTANT_BEFORE="$(cat -- "$MUTANT/scripts/pre-push")"
-sed -i.bak 's# all --skip-unscoped "$@" </dev/null || status=$?# all --skip-unscoped "$@" </dev/null || status=0#' "$MUTANT/scripts/pre-push"
-rm -f -- "$MUTANT/scripts/pre-push.bak"
-MUTANT_AFTER="$(cat -- "$MUTANT/scripts/pre-push")"
-assert_eq "the mutant edit took" "rewritten" \
-  "$(if [ "$MUTANT_BEFORE" = "$MUTANT_AFTER" ]; then echo unchanged; else echo rewritten; fi)"
-
-MUTATED=""
-drift_repo MUTATED mutated "$MUTANT"
-assert_eq "must-fail: with the batch's verdict dropped, the same breach pushes" \
-  "rc=0 pre-push: step=base:<oid>;todo-ban: index-count=1:0:tools/todo-ban-excludes;pre-push: result=0" \
-  "$(push_ref "$MUTATED" topic)"
 
 # ------------------------------------------------------ the destination
 #
@@ -451,507 +359,5 @@ assert_eq "must-fail: judged from the shared ancestor, that growth reads as a sh
   "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
   "$(push_ref "$THREEDOTTED" topic --force-with-lease)"
 
-# ------------------------------------------------------- the restack
-#
-# A branch already on the remote, restacked onto a base that gained a commit
-# the changelog rule refuses: a major bump with no Breaking entry, landed with
-# no hook. Two dots from the remote head would hold that base commit, which
-# the branch never authored; changelog-entries judges only what the branch
-# adds over the base. byte-ceiling keeps the remote head. Mode 2 is the
-# follow-up push instead: the branch's own major already on the remote, no
-# restack, and one clean commit on top.
-restacked() { # VAR NAME MODE(0 clean|1 own major|2 follow-up) [SKILL-SOURCE] — VAR gets a repo whose topic was restacked or followed up
-  local __v="$1" r=""
-  new_repo r "$2" "${4:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "byte-ceiling changelog-entries"\nCOMMIT_GUARDS_BYTE_CEILING_KB = "1"\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "app.json lib.json"\n' \
-    >"$r/kendex.settings.toml"
-  printf '{"version":"1.0.0"}\n' >"$r/app.json"
-  printf '{"version":"1.0.0"}\n' >"$r/lib.json"
-  q git -C "$r" add kendex.settings.toml app.json lib.json
-  q git -C "$r" commit -q -m "feat: seed"
-  q git -C "$r" push -q origin main
-  # What a clone records and the history boundary reads: the remote's default.
-  q git -C "$r" remote set-head origin main
-  q git -C "$r" checkout -q -b topic
-  mkdir -p "$r/changelog.d/fixed"
-  printf -- '- A fix.\n' >"$r/changelog.d/fixed/topic.md"
-  q git -C "$r" add changelog.d/fixed/topic.md
-  q git -C "$r" commit -q -m "fix: the branch's own change"
-  if [ "$3" -ge 1 ]; then
-    printf '{"version":"2.0.0"}\n' >"$r/lib.json"
-    q git -C "$r" add lib.json
-    q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the branch's own major"
-  fi
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
-  if [ "$3" -eq 2 ]; then
-    printf 'more\n' >"$r/other.txt"
-    q git -C "$r" add other.txt
-    q git -C "$r" commit -q -m "feat: a clean follow-up"
-    eval "$__v=\$r"
-    return 0
-  fi
-  q git -C "$r" checkout -q main
-  printf '{"version":"2.0.0"}\n' >"$r/app.json"
-  q git -C "$r" add app.json
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the base's major"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  q git -C "$r" checkout -q topic
-  q git -C "$r" rebase -q main
-  eval "$__v=\$r"
-}
-
-# What byte-ceiling's verdict names as its range, unmasked, for the tree
-# control: the remote head the force push replaces, or the oid it names.
-tree_ref() { # REPO -> "remote-head" or the oid byte-ceiling judged against
-  local rc=0 out="" head=""
-  head="$(git -C "$1" rev-parse origin/topic)"
-  out="$(git -C "$1" push --dry-run --force-with-lease origin topic 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C sed -n 's/^byte-ceiling: result=.*:against:\([0-9a-f]*\)$/\1/p')"
-  if [ "$out" = "$head" ]; then echo remote-head; else echo "${out:-none}"; fi
-}
-
-RESTACK_PASS="rc=0 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: checked=1;pre-push: result=0"
-RESTACKED=""
-restacked RESTACKED restacked 0
-assert_eq "the tree guard still judges against the remote head" "remote-head" "$(tree_ref "$RESTACKED")"
-assert_eq "a restacked branch is not refused for a base commit that breaks the changelog rule" \
-  "$RESTACK_PASS" "$(push_ref "$RESTACKED" topic --force-with-lease)"
-
-OWN_MAJOR=""
-restacked OWN_MAJOR own-major 1
-assert_eq "a branch commit that breaks the changelog rule is still refused, and the base's is not named" \
-  "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
-  "$(push_ref "$OWN_MAJOR" topic --force-with-lease)"
-
-# A follow-up push on a branch whose own major is already on the remote: the
-# remote head is newer than the default branch's merge base, so it stays the
-# baseline and the major is not judged again.
-FOLLOW_UP=""
-restacked FOLLOW_UP follow-up 2
-assert_eq "a follow-up push keeps the remote head as the baseline when it is the newer one" \
-  "rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: checked=1;pre-push: result=0" \
-  "$(push_ref "$FOLLOW_UP" topic)"
-
-# The must-fail controls. A copy with no history boundary judges the
-# changelog rule from the remote head, and refuses the restack for the base's
-# major. A copy that hands every lane the boundary moves byte-ceiling off the
-# remote head.
-RANGES="$TMP/.ranges/commit-guards"
-mkdir -p "$(dirname "$RANGES")"
-cp -R "$SKILL_TEMPLATE" "$RANGES"
-RANGES_LANE="$RANGES/scripts/pre-push"
-RANGES_KEPT="$TMP/pre-push.ranges.kept"
-cp -- "$RANGES_LANE" "$RANGES_KEPT"
-sed -i.bak 's#^  default="$(git symbolic-ref --quiet .*$#  return 1#' "$RANGES_LANE"
-rm -f -- "$RANGES_LANE.bak"
-assert_eq "the boundary edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
-UNBOUNDED=""
-restacked UNBOUNDED unbounded 0 "$RANGES"
-assert_eq "must-fail: with no history boundary, the restack is refused for the base's major" \
-  "rc=1 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=app.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
-  "$(push_ref "$UNBOUNDED" topic --force-with-lease)"
-
-cp -- "$RANGES_KEPT" "$RANGES_LANE"
-sed -i.bak 's#--against "$remote_oid" --history "$history"#--against "$history"#' "$RANGES_LANE"
-rm -f -- "$RANGES_LANE.bak"
-assert_eq "the whole-batch edit took" "rewritten" \
-  "$(if cmp -s "$RANGES_KEPT" "$RANGES_LANE"; then echo unchanged; else echo rewritten; fi)"
-WHOLE_BATCH=""
-restacked WHOLE_BATCH whole-batch 0 "$RANGES"
-assert_eq "must-fail: with the boundary handed to every lane, byte-ceiling leaves the remote head" \
-  "$(git -C "$WHOLE_BATCH" rev-parse main)" "$(tree_ref "$WHOLE_BATCH")"
-
-# And a copy that always takes the default branch's merge base judges the
-# follow-up from the fork point, refusing the major already on the remote.
-cp -- "$RANGES_KEPT" "$RANGES_LANE"
-sed -i.bak 's#|| pushed="$base"$#; pushed="$base"#' "$RANGES_LANE"
-rm -f -- "$RANGES_LANE.bak"
-assert_eq "the fork-point edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
-FORK_POINT=""
-restacked FORK_POINT fork-point 2 "$RANGES"
-assert_eq "must-fail: always from the fork point, the follow-up is refused for the major already pushed" \
-  "rc=1 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=lib.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1" \
-  "$(push_ref "$FORK_POINT" topic)"
-
-# With no recorded default branch the remote head stays the baseline: another
-# tracking ref names no base. A topic restacked onto a side branch that
-# carries a major, while the destination still holds the old version, lands
-# that major there, and it is refused.
-side_stacked() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose topic sits on a side branch's major
-  local __v="$1" side_repo=""
-  new_repo side_repo "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "byte-ceiling changelog-entries"\nCOMMIT_GUARDS_BYTE_CEILING_KB = "1"\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "app.json"\n' \
-    >"$side_repo/kendex.settings.toml"
-  printf '{"version":"1.0.0"}\n' >"$side_repo/app.json"
-  q git -C "$side_repo" add kendex.settings.toml app.json
-  q git -C "$side_repo" commit -q -m "feat: seed"
-  q git -C "$side_repo" push -q origin main
-  q git -C "$side_repo" checkout -q -b topic
-  mkdir -p "$side_repo/changelog.d/fixed"
-  printf -- '- A fix.\n' >"$side_repo/changelog.d/fixed/topic.md"
-  q git -C "$side_repo" add changelog.d/fixed/topic.md
-  q git -C "$side_repo" commit -q -m "fix: the branch's own change"
-  q git -C "$side_repo" -c core.hooksPath=/dev/null push -q origin topic
-  q git -C "$side_repo" checkout -q -b side main
-  printf '{"version":"2.0.0"}\n' >"$side_repo/app.json"
-  q git -C "$side_repo" add app.json
-  q git -C "$side_repo" -c core.hooksPath=/dev/null commit -q -m "feat: the side branch's major"
-  q git -C "$side_repo" -c core.hooksPath=/dev/null push -q origin side
-  q git -C "$side_repo" checkout -q topic
-  q git -C "$side_repo" rebase -q side
-  eval "$__v=\$side_repo"
-}
-SIDE_LINE="rc=1 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=app.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1"
-SIDE=""
-side_stacked SIDE side
-assert_eq "with no recorded default branch, a topic stacked on a side branch's major is refused" \
-  "$SIDE_LINE" "$(push_ref "$SIDE" topic --force-with-lease)"
-
-# The must-fail control: a copy that falls back to the newest commit any
-# tracking ref holds takes the side branch's tip as the baseline and lets the
-# major onto the destination unjudged.
-cp -- "$RANGES_KEPT" "$RANGES_LANE"
-sed -i.bak 's#^  default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1$#  default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || { local_boundary pushed HEAD \&\& eval "$__v=\\$pushed"; return; }#' "$RANGES_LANE"
-rm -f -- "$RANGES_LANE.bak"
-assert_eq "the any-ref edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
-ANY_REF=""
-side_stacked ANY_REF any-ref "$RANGES"
-assert_eq "must-fail: a baseline from any tracking ref lets the side branch's major through" \
-  "rc=0 pre-push: step=against:<oid>:history:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: checked=1;pre-push: result=0" \
-  "$(push_ref "$ANY_REF" topic --force-with-lease)"
-
-# The same restack pushed through a pushurl the tracking refs were not fetched
-# from: refs/remotes/origin/HEAD describes another spelling, so it sets no
-# baseline and the changelog check keeps the remote head, refusing the base's
-# major as it did before the boundary existed.
-ELSEWHERE_LINE="rc=1 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;changelog-entries: major-breaking=app.json:1.0.0:2.0.0;changelog-entries: violations=1:1;pre-push: result=1"
-ELSEWHERE=""
-restacked ELSEWHERE elsewhere 0
-q git -C "$ELSEWHERE" config remote.origin.pushurl "file://$TMP/elsewhere.git"
-assert_eq "a push to a URL the tracking refs do not describe takes no default-branch baseline" \
-  "$ELSEWHERE_LINE" "$(push_ref "$ELSEWHERE" topic --force-with-lease)"
-
-# The must-fail control: a copy whose boundary skips that URL test reads the
-# default branch anyway, and the same push passes on a baseline from refs that
-# describe somewhere else.
-cp -- "$RANGES_KEPT" "$RANGES_LANE"
-perl -0pi -e 's/(history_boundary\(\) \{[^\n]*\n[^\n]*\n)  tracking_describes_push \|\| return 1\n/$1/' "$RANGES_LANE"
-assert_eq "the URL-test edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^<')"
-UNCHECKED=""
-restacked UNCHECKED unchecked 0 "$RANGES"
-q git -C "$UNCHECKED" config remote.origin.pushurl "file://$TMP/unchecked.git"
-assert_eq "must-fail: without the URL test, refs describing another spelling set the baseline" \
-  "$RESTACK_PASS" "$(push_ref "$UNCHECKED" topic --force-with-lease)"
-
-# ------------------------------------------------ the markdown lanes at push
-#
-# The index-drift refusal above guarantees nothing is staged by the time the
-# batch runs, so these lanes' bare scope would open no file. Where this lane
-# HAS a range to hand them they take it and judge what the branch changed,
-# which is how a document a replay carried in reaches a verdict at all. Where
-# it has none the whole tree is the scope, and imposing that absolute sweep on
-# them would refuse every push in a repository holding markdown that predates
-# the guard, so they are withheld and named instead.
-wrapped() { # VAR NAME [SKILL-SOURCE] [SETTINGS-LINE] — VAR gets a repo whose HEAD carries an unended document
-  local __v="$1" r=""
-  new_repo r "$2" "${3:-}"
-  # %b for the caller's line: it arrives with its own escapes, as every other
-  # fixture in this file writes them.
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\n%b' "${4:-}" >"$r/kendex.settings.toml"
-  q git -C "$r" add kendex.settings.toml
-  q git -C "$r" commit -q -m "feat: seed"
-  q git -C "$r" push -q origin main
-  q git -C "$r" checkout -q -b topic
-  printf '# Title\n\n```\nan unclosed fence\n' >"$r/DOC.md"
-  q git -C "$r" add DOC.md
-  # Committed with no hook, which is the state a replay leaves.
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: add the document"
-  eval "$__v=\$r"
-}
-
-# The same shape for md-refs, whose subject is a reference rather than a
-# shape: a document naming a file this repository does not track. The name is
-# AGENTS.md because that is what md-refs' default path globs select.
-dangling() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a dead reference
-  local __v="$1" r=""
-  new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-refs"\n' >"$r/kendex.settings.toml"
-  q git -C "$r" add kendex.settings.toml
-  q git -C "$r" commit -q -m "feat: seed"
-  q git -C "$r" push -q origin main
-  q git -C "$r" checkout -q -b topic
-  printf '# Title\n\nSee [the guide](docs/gone.md).\n' >"$r/AGENTS.md"
-  q git -C "$r" add AGENTS.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: add the document"
-  eval "$__v=\$r"
-}
-
-WRAPPED=""
-wrapped WRAPPED wrapped
-assert_eq "a replayed malformed document is judged under the range scope the push hands the lane" \
-  "rc=1 pre-push: step=base:<oid>;md-type: summary=findings=0 introduced=0 unended=1 files=1 scope=range skipped=0;pre-push: result=1" \
-  "$(push_ref "$WRAPPED" topic)"
-
-DANGLING=""
-dangling DANGLING dangling
-assert_eq "and a replayed dead reference is judged there too, across the configured documents" \
-  "rc=1 pre-push: step=base:<oid>;md-refs: link-target=AGENTS.md:3:](docs/gone.md):docs/gone.md;pre-push: result=1" \
-  "$(push_ref "$DANGLING" topic)"
-
-# The must-fail control for both: a copy of the batch that no longer hands
-# these lanes a range. They fall back to their bare scope, which stages
-# nothing here, so each is withheld again and the same replayed defect leaves
-# the machine under a clean verdict.
-NARROW="$TMP/.narrow/commit-guards"
-mkdir -p "$(dirname "$NARROW")"
-cp -R "$SKILL_TEMPLATE" "$NARROW"
-q test ! -L "$NARROW/scripts/commit-guards"
-NARROW_BEFORE="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2
-NARROW_MATCHES="$(awk '$0 == "RANGE_SCOPED_CHECKS=\"byte-ceiling changelog-entries md-type md-refs py-names secrets\"" { matches++ } END { print matches+0 }' \
-  "$NARROW/scripts/commit-guards")" || exit 2
-assert_eq "the narrowed edit matches one assignment" "1" "$NARROW_MATCHES"
-sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-type md-refs py-names secrets"$#RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries py-names secrets"#' \
-  "$NARROW/scripts/commit-guards"
-rm -f -- "$NARROW/scripts/commit-guards.bak"
-NARROW_AFTER="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2
-assert_eq "the narrowed edit took" "rewritten" \
-  "$(if [ "$NARROW_BEFORE" = "$NARROW_AFTER" ]; then echo unchanged; else echo rewritten; fi)"
-
-NARROWED_FORMAT=""
-wrapped NARROWED_FORMAT narrowed-format "$NARROW"
-assert_eq "must-fail: with the range scope gone, md-type is withheld and the document pushes" \
-  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
-  "$(push_ref "$NARROWED_FORMAT" topic)"
-
-NARROWED_REFS=""
-dangling NARROWED_REFS narrowed-refs "$NARROW"
-assert_eq "must-fail: and md-refs likewise, so the dead reference pushes" \
-  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-refs;commit-guards: withheld-all=md-refs;pre-push: result=0" \
-  "$(push_ref "$NARROWED_REFS" topic)"
-
-# Where no base can be vouched for the scope is the whole tree, which hands
-# these lanes nothing: the absolute sweep is the project's call, not this
-# lane's. A push spelled as a URL matches no tracking ref and lands there.
-push_url() { # REPO REFSPEC -> the run's one line on stdout
-  local rc=0 out=""
-  out="$(git -C "$1" push "$TMP/${1##*/}.git" "$2" 2>&1)" || rc=$?
-  said "$rc" "$out"
-}
-
-UNBASED=""
-wrapped UNBASED unbased
-assert_eq "with no base to vouch for, the lane is named rather than folded into a clean verdict" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
-  "$(push_url "$UNBASED" topic)"
-
-# The must-fail control for that: the same push with the old batch call, which
-# counts the lane clean over a document it never opened.
-FOLDED="$TMP/.folded/commit-guards"
-mkdir -p "$(dirname "$FOLDED")"
-cp -R "$SKILL_TEMPLATE" "$FOLDED"
-FOLDED_BEFORE="$(cat -- "$FOLDED/scripts/pre-push")"
-sed -i.bak 's# all --skip-unscoped "$@" </dev/null# all "$@" </dev/null#' "$FOLDED/scripts/pre-push"
-rm -f -- "$FOLDED/scripts/pre-push.bak"
-assert_eq "the folded edit took" "rewritten" \
-  "$(if [ "$FOLDED_BEFORE" = "$(cat -- "$FOLDED/scripts/pre-push")" ]; then echo unchanged; else echo rewritten; fi)"
-
-FOLDED_REPO=""
-wrapped FOLDED_REPO folded "$FOLDED"
-assert_eq "must-fail: folded back in, the same push reports that document clean" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-type: staged-count=0;pre-push: result=0" \
-  "$(push_url "$FOLDED_REPO" topic)"
-
-# md-type is change-scoped: its bare run measures the pushed tree against
-# HEAD, which is that tree, so even under the sweep setting the whole-tree
-# scope, with no range to hand it, names it withheld rather than clean.
-SWEEPING=""
-wrapped SWEEPING sweeping "" 'COMMIT_GUARDS_MD_SCOPE = "all"\n'
-assert_eq "under the sweep setting the whole-tree scope still withholds md-type by name" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
-  "$(push_url "$SWEEPING" topic)"
-
-# md-type asks what a change introduced, so it takes the range a push hands
-# it even where the project configured the sweep: at push the index equals
-# HEAD, and a sweep would measure every finding against itself and block
-# nothing. A README that gains a value table refuses the push; one that only
-# carries the table it already had passes with the finding inherited.
-tabled() { # VAR NAME ADDS [SKILL-SOURCE] — VAR gets a repo whose topic edits a README; ADDS=1 adds the table there
-  local __v="$1" r="" table='| Key | Default |\n|---|---|\n| poll | 30 |\n'
-  new_repo r "$2" "${4:-}"
-  cp -R "$DOCS_WRITING" "$r/.agents/skills/docs-writing"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\nCOMMIT_GUARDS_MD_SCOPE = "all"\n' >"$r/kendex.settings.toml"
-  printf '# Tool\n\nA tool for people.\n\n## Setup\n\n' >"$r/README.md"
-  [ "$3" = 1 ] || printf "$table" >>"$r/README.md"
-  q git -C "$r" add kendex.settings.toml README.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  q git -C "$r" checkout -q -b topic
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
-  if [ "$3" = 1 ]; then printf "$table" >>"$r/README.md"; else printf '\nMore setup.\n' >>"$r/README.md"; fi
-  q git -C "$r" add README.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: edit the README"
-  eval "$__v=\$r"
-}
-DOCS_WRITING="$SKILL_DIR/../docs-writing"
-FINDING_KEEP='s/ rule=[^ ]* / /'
-
-ADDED=""
-tabled ADDED table-added 1
-assert_eq "under the sweep setting a push that adds a value table to a README is refused" \
-  "rc=1 pre-push: step=against:<oid>;md-type: finding=value-table path=README.md type=readme line=7 count=1 baseline=0 introduced=yes section=Setup;md-type: summary=findings=1 introduced=1 unended=0 files=1 scope=range skipped=0;pre-push: result=1" \
-  "$(push_ref "$ADDED" topic | sed "$FINDING_KEEP")"
-
-INHERITED=""
-tabled INHERITED table-inherited 0
-assert_eq "and a push that edits a README carrying a table its base had passes, the finding inherited" \
-  "rc=0 pre-push: step=against:<oid>;md-type: finding=value-table path=README.md type=readme line=7 count=1 baseline=1 introduced=no section=Setup;md-type: summary=findings=1 introduced=0 unended=0 files=1 scope=range skipped=0;pre-push: result=0" \
-  "$(push_ref "$INHERITED" topic | sed "$FINDING_KEEP")"
-
-# md-type asks what the branch introduced, so a restack takes its baseline
-# from the history boundary, as changelog-entries does. The base gains
-# pkg/README.md with a value table, landed with no hook, after the remote
-# head; two dots from that head would hold it against the branch. The branch
-# edits README.md: cleanly, which pushes, or adding a table, which is refused
-# naming README.md alone.
-md_restacked() { # VAR NAME ADDS — VAR gets a restacked repo whose topic edits README.md; ADDS=1 adds a table there
-  local __v="$1" r="" table='| Key | Default |\n|---|---|\n| poll | 30 |\n'
-  new_repo r "$2"
-  cp -R "$DOCS_WRITING" "$r/.agents/skills/docs-writing"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\n' >"$r/kendex.settings.toml"
-  printf '# Tool\n\nA tool for people.\n\n## Setup\n\nRun it.\n' >"$r/README.md"
-  q git -C "$r" add kendex.settings.toml README.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  q git -C "$r" remote set-head origin main
-  q git -C "$r" checkout -q -b topic
-  if [ "$3" = 1 ]; then printf "\n$table" >>"$r/README.md"; else printf '\nMore setup.\n' >>"$r/README.md"; fi
-  q git -C "$r" add README.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: edit the README"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
-  q git -C "$r" checkout -q main
-  mkdir -p "$r/pkg"
-  printf "# Pkg\n\nA package.\n\n## Setup\n\n$table" >"$r/pkg/README.md"
-  q git -C "$r" add pkg/README.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the base's README"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  q git -C "$r" checkout -q topic
-  q git -C "$r" rebase -q main
-  eval "$__v=\$r"
-}
-
-MD_RESTACKED=""
-md_restacked MD_RESTACKED md-restacked 0
-assert_eq "a restacked branch is not refused for a README its base added after the remote head" \
-  "rc=0 pre-push: step=against:<oid>:history:<oid>;md-type: summary=findings=0 introduced=0 unended=0 files=1 scope=range skipped=0;pre-push: result=0" \
-  "$(push_ref "$MD_RESTACKED" topic --force-with-lease)"
-
-MD_OWN_TABLE=""
-md_restacked MD_OWN_TABLE md-own-table 1
-assert_eq "a restacked branch that adds a table to its own README is refused, and the base's is not named" \
-  "rc=1 pre-push: step=against:<oid>:history:<oid>;md-type: finding=value-table path=README.md type=readme line=9 count=1 baseline=0 introduced=yes section=Setup;md-type: summary=findings=1 introduced=1 unended=0 files=1 scope=range skipped=0;pre-push: result=1" \
-  "$(push_ref "$MD_OWN_TABLE" topic --force-with-lease | sed "$FINDING_KEEP")"
-
-# ------------------------------------------------- two dots against three
-#
-# The markdown lanes take a range under their default scope, and a push asks
-# --against: two dots, REF's own tree against HEAD. Three dots would answer
-# what the branch adds over the ancestor the two share. On history that has
-# not diverged the two select the same files and no row can tell them apart,
-# so both fixtures below diverge on purpose, each in the shape where the
-# difference decides.
-
-# md-type's shape: the destination FIXED the document and this branch was
-# rewritten off the fork point, so it still carries the malformed one. Two
-# dots see DOC.md differ between the destination's tree and HEAD and judge it.
-# Three dots ask what the branch adds since the fork, where DOC.md is
-# untouched, and select nothing — so the force push would land the old
-# malformed document over the fix, unjudged.
-reverting() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose force push would undo a fix
-  local __v="$1" r="" fork=""
-  new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\n' >"$r/kendex.settings.toml"
-  printf '# Title\n\n```\nan unclosed fence\n' >"$r/DOC.md"
-  q git -C "$r" add kendex.settings.toml DOC.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a malformed document"
-  fork="$(git -C "$r" rev-parse HEAD)"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  # The destination's branch: the fence closed, which md-type passes.
-  q git -C "$r" checkout -q -b topic
-  printf '# Title\n\n```\na closed fence\n```\n' >"$r/DOC.md"
-  q git -C "$r" add DOC.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: reflow the document"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
-  # The rewrite: back to the fork point, where the document is still malformed,
-  # plus one commit touching no markdown. Only a force push can land it.
-  q git -C "$r" reset -q --hard "$fork"
-  printf 'unrelated\n' >"$r/other.txt"
-  q git -C "$r" add other.txt
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: a change touching no markdown"
-  eval "$__v=\$r"
-}
-
-REVERTING=""
-reverting REVERTING reverting
-assert_eq "a force push that would land a malformed document over the destination's fix is refused" \
-  "rc=1 pre-push: step=against:<oid>;md-type: summary=findings=0 introduced=0 unended=1 files=1 scope=range skipped=0;pre-push: result=1" \
-  "$(push_ref "$REVERTING" topic --force-with-lease)"
-
-# md-refs' shape: the destination is AHEAD, so the force push rolls it back and
-# DELETES the file the remote added. Two dots see that deletion and widen the
-# check to every configured document, which is what a removed target is for.
-# Three dots take the merge base, which IS this HEAD, so they see an empty
-# range and judge nothing.
-rolling_back() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose force push would roll the remote back
-  local __v="$1" r="" fork=""
-  new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-refs"\n' >"$r/kendex.settings.toml"
-  printf '# Title\n\nSee [the guide](docs/gone.md).\n' >"$r/AGENTS.md"
-  q git -C "$r" add kendex.settings.toml AGENTS.md
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a dead reference"
-  fork="$(git -C "$r" rev-parse HEAD)"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  q git -C "$r" checkout -q -b topic
-  printf 'somebody else\n' >"$r/theirs.txt"
-  q git -C "$r" add theirs.txt
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: a commit the remote has"
-  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
-  # Back to the fork point: HEAD is now an ancestor of the destination, so the
-  # push deletes what the destination added.
-  q git -C "$r" reset -q --hard "$fork"
-  eval "$__v=\$r"
-}
-
-ROLLING=""
-rolling_back ROLLING rolling
-assert_eq "a force push that deletes what the destination holds is a change in range, so the references are swept" \
-  "rc=1 pre-push: step=against:<oid>;md-refs: link-target=AGENTS.md:3:](docs/gone.md):docs/gone.md;pre-push: result=1" \
-  "$(push_ref "$ROLLING" topic --force-with-lease)"
-
-# The must-fail control for both: a copy whose --against range is spelled with
-# three dots. Each push then answers what the branch adds over the ancestor
-# instead of what it does to the destination, and both defects reach the
-# remote under a clean verdict.
-DOTS="$TMP/.dots/commit-guards"
-mkdir -p "$(dirname "$DOTS")"
-cp -R "$SKILL_TEMPLATE" "$DOTS"
-DOTS_LIB="$DOTS/scripts/lib/configured-paths.sh"
-DOTS_BEFORE="$(cat -- "$DOTS_LIB")"
-sed -i.bak 's#^    against) dots="\.\." ;;$#    against) dots="..." ;;#' "$DOTS_LIB"
-rm -f -- "$DOTS_LIB.bak"
-assert_eq "the two-dot edit took" "rewritten" \
-  "$(if [ "$DOTS_BEFORE" = "$(cat -- "$DOTS_LIB")" ]; then echo unchanged; else echo rewritten; fi)"
-
-DOTTED_FORMAT=""
-reverting DOTTED_FORMAT dotted-format "$DOTS"
-assert_eq "must-fail: with three dots, the reverted document is outside the range and pushes" \
-  "rc=0 pre-push: step=against:<oid>;md-type: no-match=range:*.md;pre-push: result=0" \
-  "$(push_ref "$DOTTED_FORMAT" topic --force-with-lease)"
-
-DOTTED_REFS=""
-rolling_back DOTTED_REFS dotted-refs "$DOTS"
-assert_eq "must-fail: with three dots, the rollback is an empty range and the references go unswept" \
-  "rc=0 pre-push: step=against:<oid>;pre-push: result=0" \
-  "$(push_ref "$DOTTED_REFS" topic --force-with-lease)"
-
-printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

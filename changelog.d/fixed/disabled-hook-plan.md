@@ -1,1 +1,0 @@
-- Hook plans describe disabled installations and registration removal to match the actions apply performs.

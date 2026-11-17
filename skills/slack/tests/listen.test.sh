@@ -188,11 +188,9 @@ answer_origins() { # ASSERTION ROOT CHANNEL PREFIX [ROW]
       "1" "[$prefix-$name] consumes closure once across restart"
   done <<'ANSWER_ORIGINS'
 empty-explicit|none|none|explicit|||[]
-slack-explicit|slack|none|explicit|||["send"]
 slack-note|slack|none|text|||["send","resolve"]
 chat-note|none|none|text||Answered in the chat: approve|["resolve"]
 chat-explicit|chat|none|explicit|Answered in the chat: approve|Answered in the chat: approve|["send"]
-slack-chat-explicit|slack|chat|explicit|Answered in the chat: cancel|Answered in the chat: cancel|["send","send"]
 slack-chat-note|slack|chat|text|Answered in the chat: cancel|Answered in the chat: cancel|["send","send","resolve"]
 chat-slack-note|chat|slack|text|Answered in the chat: approve|Answered in the chat: approve|["send","send","resolve"]
 ANSWER_ORIGINS
@@ -581,10 +579,7 @@ while read -r mode close; do
   LATE_TS="$(sk_state ".messages.${LATE_CH}[-1].ts")"
   assert_eq "$(jq -c .open_asks "$LATE/tmp/slack/status.json")" "[\"$LATE_ASK\"]" "$mode/$close: the posted ask is open before closure"
   args=(--item overseer --id "$LATE_ASK")
-  case "$close" in
-    text) args+=(--text "$(sk_text late-answer b)") ;;
-    default) args+=(--default) ;;
-  esac
+  [ "$close" != text ] || args+=(--text "$(sk_text late-answer b)")
   sk_lm "$LATE" resolve "${args[@]}" >/dev/null
   if [ "$mode" = legacy ]; then
     jq -c 'select(.kind != "resolution") | del(.closes)' "$(sk_box "$LATE")/to-lane.jsonl" >"$SK_TMP/legacy-close.jsonl"
@@ -603,9 +598,7 @@ while read -r mode close; do
   assert_has "$(directives "$LATE")" "$LATE_CH:$LATE_REPLY after close" "$mode/$close: the retained close routes a later reply as a directive"
 done <<'ROWS'
 current explicit
-current default
 legacy text
-legacy default
 ROWS
 
 # --- daily compaction: envelope age and thread activity are separate ------------------

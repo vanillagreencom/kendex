@@ -14,5 +14,5 @@ set -euo pipefail
 
 # Kept so a consumer on kendex 1.10.1 that still declares the hook keeps
 # refreshing; remove it one minor release after the release that carries the
-# KEN-2779 retire route.
+# retire route.
 exit 0

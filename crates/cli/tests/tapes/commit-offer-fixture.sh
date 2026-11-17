@@ -19,7 +19,7 @@ project() { # NAME
   mkdir -p "$project"
   git init -q --bare "$remote"
   cat >"$project/kendex.toml" <<TOML
-schema = 7
+schema = 8
 
 [sources.cat]
 path = "$catalog"

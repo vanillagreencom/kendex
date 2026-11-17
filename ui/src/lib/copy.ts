@@ -96,6 +96,30 @@ export const startManagingAllLabel = (count: number): string =>
 export const adoptedToastLabel = (name: string): string =>
   `Now managing ${name}`;
 
+// A write that landed and a step behind it that did not: the render of the
+// project's configuration, or the settle after an adopt or a fork. Said
+// beside whatever the surface already said for the write, never in place
+// of it, so the line under the title is the half that stands.
+export const unfinishedTitle = (subject: string): string =>
+  `${subject}: a step after the change failed`;
+export const UNFINISHED_STEP =
+  "The change itself is in place, and the page shows what is on disk now.";
+// The error dialog's title over several failures said before the person
+// dismissed it, each under its own title beneath it. Some may be writes that landed with a
+// step behind them failing and others refusals, so it claims neither. The
+// count says how many there are, because the list scrolls and a person who
+// reads only the first ones would not know about the rest. Several means two
+// or more.
+export const severalFailuresTitle = (count: number): string =>
+  `Not everything finished: ${count} problems`;
+// A write whose answer never came back: the call failed on its way, so
+// nothing says whether the write ran. Never "nothing changed", and never
+// "done" — the page read after it is the only account there is.
+export const unknownCompletionTitle = (subject: string): string =>
+  `kendex couldn't tell whether ${subject} finished`;
+export const UNKNOWN_COMPLETION_STEP =
+  "The page shows what is on disk now. Check it before you try again.";
+
 export const RECENT_ACTIVITY_EMPTY =
   "No package files have changed on this computer yet.";
 

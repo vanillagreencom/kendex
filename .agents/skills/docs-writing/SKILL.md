@@ -52,16 +52,16 @@ Do not hand-copy code-owned inventories or defaults. A reference may define a co
 
 ## Layout
 
-This is the default repository layout. A rewrite moves what it finds onto it. A material departure needs an owner-approved decision under the decider bar. A supported naming or location variant needs no separate decision. A rewrite keeps and cites an approved departure.
+This is the default layout for a repository with no established structure. A repository's existing structure wins: a rewrite keeps the locations and names it finds and does not move established documents onto this layout.
 
 | Path | Reader | Holds | Required |
 |---|---|---|---|
 | `README.md` | a person choosing or using it | the sections [references/readme.md](references/readme.md) orders | yes |
-| `AGENTS.md` | every agent, at session start | what the repo is, the commands, the conventions, and task routes to principle docs, directly or through named nested instructions | yes |
+| `AGENTS.md` | every agent, at session start | what the repo is, the commands, the conventions every agent needs, and task routes to principle docs, directly or through named nested instructions | yes |
 | `DEVELOPMENT.md` | a maintainer | build, run, test and debug: only what the tooling does not show | where needed |
 | `LICENSE` | a person | the licence | yes |
 | `CHANGELOG.md`, `changelog.d/` | a person reading a release | release notes | released packages |
-| `<dir>/AGENTS.md` | an agent working in that folder | the folder's commands, rules no linked principle doc owns, and task triggers for the principle docs that govern it | where a folder has its own rules |
+| `<dir>/AGENTS.md` | an agent working in that folder | the folder's commands, rules every agent there needs that no linked principle doc owns, and task triggers for the principle docs that govern it | where a folder has its own rules |
 | `docs/architecture/<name>.md` | an agent about to do the work the doc governs | one principle: the approach, why, the rules, one code example | where a principle exists |
 | `docs/decisions/INDEX.md` and `<DECISION_ID>-<slug>.md` (names and locations follow decider) | a reviewer or agent about to reverse a choice | decision records: the choice, why, the rejected option, when to revisit | where such choices exist |
 | `docs/images/` | a reader of a README or doc | the screenshots and images those files show | when used |
@@ -149,4 +149,4 @@ A software implementation plan, research report, measurement or handoff is not r
 
 ## Writing
 
-A focused change edits the affected text and verifies each claim against its owning source. Use code where code owns the claim. Preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example its table names for the file type.
+A focused change edits the affected text and verifies each claim against its owning source. A focused change whose paragraph adds a fact first takes § One home per fact. Use code where code owns the claim. Preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example its table names for the file type.

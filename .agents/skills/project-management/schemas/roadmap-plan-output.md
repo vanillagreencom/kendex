@@ -96,6 +96,7 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
   "action": "create",
   "target": null,
   "reason": "L0 foundation issue, no duplicates found",
+  "supersession": "none found; searched: request router, routing",
   "obsolete": null,
   "is_bundle_parent": false,
   "parent_title": null,
@@ -111,7 +112,18 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
 
 Sorted by ascending `position`. `layer` and `priority` are assigned, and `position` computed, per [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 4; consumers never recompute them. `critical_path: true` when the issue blocks 2+ others.
 
-`action` is `create`, `skip`, `expand`, `supersede`, or `cancel`, with `target` naming the existing issue for `expand`/`supersede` and `reason` explaining the choice. `obsolete` carries `{evidence: {completed_by[], files_verified[]}, confidence}` or null.
+`action` is `create`, `skip`, `expand`, `supersede`, or `cancel`, with `target` naming the existing issue for `expand`/`supersede` or an exact-duplicate `skip`, and `reason` explaining the choice. `obsolete` carries `{evidence: {completed_by[], files_verified[]}, confidence}` or null.
+
+Every entry retains `supersession` from the planning comparison, including generated parents and architecture gaps. It uses [audit-output.md § ISSUE Mode](audit-output.md#issue-mode)'s record form. Planning records proposed dispositions; roadmap-create's authorization outcomes and audit-issues' execution make them actual. Save the field with the plan JSON unchanged; roadmap-create consumes it without reconstructing search terms.
+
+| Comparison outcome | Saved record |
+|---|---|
+| No matched open item needs a disposition, including an obsolete proposal supported only by closed work | `none found; searched: [TERMS]`, naming the actual title, target and component terms compared against the already-read rows and searches |
+| Exact duplicate, proposal skipped | `duplicate [ISSUE_ID]`, with that covering issue as `target` |
+| Existing scope expanded or descoped | `re-scoped [ISSUE_ID]`, naming the scope change |
+| Existing work replaced | `superseded [ISSUE_ID]`, with the replacement's `target` identifying it |
+
+Closed rows are evidence and take no disposition. Multiple proposed actions retain their separate entries; a match kept only as related has no action entry. A later consumer preserves executed entries, carries pending authorized actions through the existing audit writer, and omits withheld actions with the affected replacement. It never turns refusal into `none found`. Older saved output without this field must return to roadmap planning before any tracker write; the conversion cannot invent its provenance.
 
 A bundle parent sets `is_bundle_parent: true` with `estimate: null`; its children set `parent_title` to the parent's title. Keep each blocking relation on the issue that waits under linear SKILL.md § Blocked Label vs Issue Relations. A valid leaf wait on another bundle stays on that leaf. A parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents.
 

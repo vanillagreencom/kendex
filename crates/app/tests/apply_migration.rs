@@ -55,10 +55,11 @@ fn migration_preview_is_read_only_and_apply_keeps_its_note() {
     let applied = apply_scope(&f.env, &f.scope, false).unwrap();
     assert!(applied.error.is_none());
     assert!(applied.notes.ends_with(&loaded.migration_notes));
-    assert_eq!(loaded.migration_notes.len(), 1);
+    // One account per step from schema 6.
+    assert_eq!(loaded.migration_notes.len(), 2);
     assert_eq!(
         fs::read_to_string(&f.manifest_path).unwrap(),
-        original.replacen("schema = 6", "schema = 7", 1)
+        original.replacen("schema = 6", "schema = 8", 1)
     );
     let again = view(&f.env, &f.scope);
     assert!(

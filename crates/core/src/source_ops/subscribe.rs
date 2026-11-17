@@ -79,6 +79,69 @@ pub fn subscribe_and_install(
     Ok(subscribed(report, name, decl, lead))
 }
 
+/// Match an already typed declaration without parsing its display reference.
+pub(crate) fn matching_subscription(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    decl: &SourceDecl,
+) -> Option<String> {
+    let identity =
+        super::declared_identity(env, scope, decl.repo.as_deref(), decl.path.as_deref())?;
+    manifest.sources.iter().find_map(|(name, existing)| {
+        (existing.repo.is_some() == decl.repo.is_some()
+            && super::declared_identity(
+                env,
+                scope,
+                existing.repo.as_deref(),
+                existing.path.as_deref(),
+            )
+            .as_ref()
+                == Some(&identity))
+        .then(|| name.clone())
+    })
+}
+
+/// Subscribe using an already selected declaration without reclassifying its text.
+pub(crate) fn subscribe_decl(
+    env: &Env,
+    scope: &Scope,
+    decl: SourceDecl,
+    request: Option<&crate::engine::ops::AddRequest>,
+) -> Result<Subscribed> {
+    let reference = decl
+        .repo
+        .as_deref()
+        .or(decl.path.as_deref())
+        .unwrap_or_default()
+        .to_owned();
+    let manifest = crate::engine::ops::manifest_for_reading(env, scope)?;
+    let alias = matching_subscription(env, scope, &manifest, &decl);
+    let Declared {
+        mut manifest,
+        name,
+        decl,
+        lead,
+    } = declared_source(env, scope, decl, None, &reference, alias.as_deref())?;
+    let mut report = match request {
+        Some(request) => crate::engine::ops::add_seeded(
+            env,
+            scope,
+            &crate::engine::ops::AddRequest {
+                source: Some(name.clone()),
+                ..request.clone()
+            },
+            Some((name.clone(), decl.clone())),
+        )?,
+        None => {
+            manifest.sources.insert(name.clone(), decl.clone());
+            persist_and_plan(env, scope, manifest)?
+        }
+    };
+    announce_subscriptions(env, &mut report, scope, [(name.as_str(), &decl)]);
+    Ok(subscribed(report, name, decl, lead))
+}
+
 fn subscribed(
     report: EngineReport,
     name: String,
@@ -167,8 +230,19 @@ pub(super) fn declared(
             )
         }
     };
+    declared_source(env, scope, decl, lead, reference, alias)
+}
+
+fn declared_source(
+    env: &Env,
+    scope: &Scope,
+    decl: SourceDecl,
+    lead: Option<String>,
+    reference: &str,
+    alias: Option<&str>,
+) -> Result<Declared> {
     let manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
-    check_subscription(&manifest, alias, &decl, reference)?;
+    check_subscription(env, scope, &manifest, alias, &decl, reference)?;
     let name = match alias {
         Some(name) => name.to_owned(),
         None => {
@@ -213,7 +287,7 @@ pub fn subscribe_project_to(
         .clone()
         .or_else(|| decl.path.clone())
         .unwrap_or_default();
-    check_subscription(&manifest, Some(source_name), &decl, &reference)?;
+    check_subscription(env, &scope, &manifest, Some(source_name), &decl, &reference)?;
     manifest
         .sources
         .insert(source_name.to_owned(), decl.clone());
@@ -269,7 +343,7 @@ pub fn install_project_carrying(
         .clone()
         .or_else(|| decl.path.clone())
         .unwrap_or_default();
-    check_subscription(&project, Some(source_name), &decl, &reference)?;
+    check_subscription(env, &scope, &project, Some(source_name), &decl, &reference)?;
     // The install reads from this subscription and no other: the context is
     // the subscription itself, so a bare name never wanders to another source.
     let request = crate::engine::ops::AddRequest {
@@ -341,6 +415,8 @@ fn carried(env: &Env, decl: &SourceDecl) -> SourceDecl {
 /// declared from it. The same alias pointing at the same repository may
 /// re-declare (that is how a tracked revision changes).
 fn check_subscription(
+    env: &Env,
+    scope: &Scope,
     manifest: &Manifest,
     alias: Option<&str>,
     decl: &SourceDecl,
@@ -373,7 +449,10 @@ fn check_subscription(
             (Some(new), Some(old), _, _) => {
                 crate::source_ref::repo_identity(new) == crate::source_ref::repo_identity(old)
             }
-            (None, None, Some(new), Some(old)) => new == old,
+            (None, None, Some(new), Some(old)) => {
+                crate::paths::slashed(&crate::source::path_root(env, scope, new))
+                    == crate::paths::slashed(&crate::source::path_root(env, scope, old))
+            }
             _ => false,
         };
         if !same {

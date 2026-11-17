@@ -43,7 +43,7 @@ repo-effects:
 .agents/skills/bot-instructions/scripts/bot-instructions retire   # revoke kendex automatic rendering on removal
 ```
 
-Flags: `--repo`, `--spec`, `--staged`, `--output full|local`, `--dry-run`, `--discover`; `bot-instructions --help`. Python 3.11+.
+Flags: `--repo`, `--spec`, `--staged`, `--output full|local`, `--dry-run`, `--discover`; `bot-instructions --help`. Python 3.11 or newer, for `tomllib`, and no third-party package: every repo that vendors this package renders and checks with what it already has.
 
 `render --discover` lists, for kendex's commit-offer discovery, the files and region a render may replace, and writes nothing. A hand-written file or region at a generated path is left out of the list.
 
@@ -106,7 +106,7 @@ Version and marker semantics: [schemas/renders.md](schemas/renders.md) § Common
 
 ## Doctrine
 
-Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the default is the running package. End the section at the next level-one or level-two heading. Keep each `###` block ID unchanged and unique. Keep every block non-empty. Write text that YAML and TOML scalars can carry verbatim. Put repo names, paths, issues, and repo-specific rules in `[bot-instructions]`.
+Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the default is the running package. End the section at the next level-one or level-two heading. A `###` heading outside the section is not a doctrine block, whatever its name, so a project-instructions block a harness injects after the frontmatter never parses as doctrine. A second `## Doctrine` line anywhere in the file is refused. Keep each `###` block ID unchanged and unique. Keep every block non-empty. Write text that YAML and TOML scalars can carry verbatim. Put repo names, paths, issues, and repo-specific rules in `[bot-instructions]`.
 
 ### scope
 

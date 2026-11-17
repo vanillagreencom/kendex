@@ -11,6 +11,34 @@ use crate::test_util::{rooted, source_path};
 
 use super::{git_ok, install_package, install_package_undeclared, repo, run, said};
 
+/// Callers use the help's exit-status contract to decide whether commits are gated.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_help_states_the_three_exit_statuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let output = run(&home, &home, "kendex", &["guard", "check", "--help"]);
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    for line in [
+        "0 armed",
+        "1 not armed (drifted, absent, or core.hooksPath switching hooks off)",
+        "2 the check could not run (no commit-guards package in the repository, an unreadable hooks directory, a core.hooksPath outside the check's reach, or a repository git refuses to read)",
+    ] {
+        assert!(
+            help.split("\n\n").any(|paragraph| {
+                paragraph
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim_end_matches('.')
+                    == line
+            }),
+            "missing: {line}"
+        );
+    }
+}
+
 /// Disarming removes only the helper and the package's own marked line;
 /// the hook someone else wrote survives it.
 #[test]
@@ -260,7 +288,7 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
     std::fs::write(
         root.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n",
+            "schema = 8\n\n[sources.cat]\n{}\n",
             source_path(&home.join("catalog"))
         ),
     )

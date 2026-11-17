@@ -362,10 +362,16 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
 }
 
 /// Whether the installed package refused `--discover` as an unknown flag,
-/// so it was installed before the flag existed (KEN-3521) and its
-/// `--dry-run` is still the owned-only listing discovery reads. A project
-/// keeps such a copy until an apply refreshes the package, and without this
-/// its commit offer would fail on every discovery.
+/// so it was installed before the flag existed (KEN-3521; the catalog
+/// package at 33dd66732 is such a producer) and its `--dry-run` is still
+/// the owned-only listing discovery reads.
+///
+/// This discovery owns the fallback, for the installed packages kendex
+/// wrote. A project keeps such a copy until an apply refreshes the package,
+/// and the app's commit offer plans without applying before it runs
+/// discovery, so a raised catalog `min_kendex` does not replace the copy
+/// first. Without this, commit-offer discovery, commit and restore fail on
+/// every such project.
 ///
 /// The package's documented refusal protocol is a first stderr line
 /// `<name>: usage=<argv>` and exit 2. kendex passes only the declared

@@ -9,10 +9,12 @@
 use std::path::Path;
 
 use kendex_core::check_catalog::{CHECK_SCHEMA, CatalogCheck, CheckFinding};
+use kendex_core::decision::Need;
 use kendex_core::source_read::SealedSource;
 
-use super::advisory::print_advisory;
-use super::{CliResult, answer, say};
+use super::advisory::advisory_lines;
+use super::{CliResult, answer};
+use crate::ui::{self, Span, Status, Style};
 
 pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
     let sealed = SealedSource::open(catalog)?;
@@ -31,7 +33,7 @@ pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
                 &kendex_core::source::bundles::names(&config),
             )?;
         }
-        false => lines(&report),
+        false => ui::stderr(&lines(&ui::style(), &report, failing)),
     }
     match failing {
         0 => Ok(()),
@@ -59,35 +61,72 @@ fn machine(report: &CatalogCheck, ok: bool, bundles: &[String]) -> CliResult {
 /// One finding and its fix. The line rides beside the path here rather
 /// than inside it: `file` is what something opens, and `PATH:LINE` is how a
 /// terminal spells a place.
-fn say_finding(finding: &kendex_core::check_catalog::CheckFinding) {
+fn finding_lines(style: &Style, finding: &CheckFinding) -> Vec<String> {
     let at = match finding.line {
         Some(line) => format!("{}:{line}", finding.file),
         None => finding.file.clone(),
     };
-    say(&format!(
-        "[{}] {}: {at}: {}",
-        finding.severity, finding.pass, finding.message
-    ));
-    say(&format!("    fix: {}", finding.fix));
+    let mut lines = style.report_row(
+        Status::of(need(finding)),
+        &[
+            Span::Prose(&format!("[{}] {}: ", finding.severity, finding.pass)),
+            Span::Command(&at),
+            Span::Prose(&format!(": {}", finding.message)),
+        ],
+        "",
+    );
+    lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Prose(&finding.fix)], "    "));
+    lines
+}
+
+/// What a structural finding asks of the author: breakage keeps the
+/// marketplace from installing, a warning is theirs to weigh, and a note
+/// is the check saying what it could not read.
+fn need(finding: &CheckFinding) -> Need {
+    match (finding.is_breakage(), finding.is_note()) {
+        (true, _) => Need::Blocked,
+        (false, true) => Need::Notice,
+        (false, false) => Need::Decision,
+    }
 }
 
 /// The structural pass prints first and carries a fix line: a loader that
 /// will not hold an item is a thing the author does something about. The
 /// safety pass prints a score for every item and a line for every finding,
-/// fix lines left out — the score decides nothing here either.
-fn lines(report: &CatalogCheck) {
+/// fix lines left out — the score decides nothing here either. The tally
+/// closes the run, a failure where `failing` findings fail it.
+fn lines(style: &Style, report: &CatalogCheck, failing: usize) -> Vec<String> {
+    let mut lines = Vec::new();
     for finding in &report.catalog {
-        say_finding(finding);
+        lines.extend(finding_lines(style, finding));
     }
     for item in &report.items {
         for finding in &item.structural {
-            say_finding(finding);
+            lines.extend(finding_lines(style, finding));
         }
-        print_advisory(item.kind, &item.name, &item.file, &item.advisory);
+        lines.extend(advisory_lines(
+            style,
+            item.kind,
+            &item.name,
+            &item.file,
+            &item.advisory,
+        ));
     }
     let tally = report.tally();
-    say(&format!(
-        "{} package(s): {} breakage, {} advisory, {} safety finding(s)",
-        tally.items, tally.breakage, tally.advisory, tally.findings
+    let status = match (failing, tally.advisory + tally.findings) {
+        (0, 0) => Status::Done,
+        (0, _) => Status::of(Need::Decision),
+        (_, _) => Status::of(Need::Blocked),
+    };
+    lines.extend(style.summary(
+        status,
+        &format!(
+            "{} package(s): {} breakage, {} advisory, {} safety finding(s)",
+            tally.items, tally.breakage, tally.advisory, tally.findings
+        ),
     ));
+    lines
 }
+
+#[cfg(test)]
+mod tests;

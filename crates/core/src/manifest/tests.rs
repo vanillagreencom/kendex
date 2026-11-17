@@ -28,6 +28,8 @@ fn save_migrates_hand_edited_text_before_folding_the_mutation() {
             (7, "\r\n", "\n", false),
             (6, "\n", "\r\n", true),
             (7, "\n", "\r\n", true),
+            (8, "\n", "\n", false),
+            (8, "\r\n", "\n", true),
         ] {
             for final_newline in [false, true] {
                 let value = value.replace('\n', string_newline);
@@ -48,19 +50,20 @@ fn save_migrates_hand_edited_text_before_folding_the_mutation() {
                 }
                 std::fs::write(&path, &original).unwrap();
                 let mut manifest = load_current(&path).unwrap().unwrap();
-                let mut expected = original
-                    .replacen("schema = 6", "schema = 7", 1)
-                    .replace("enabled = true", "enabled = false");
+                let current = original.replacen(
+                    &format!("schema = {schema}"),
+                    &format!("schema = {MANIFEST_SCHEMA}"),
+                    1,
+                );
+                let mut expected = current.replace("enabled = true", "enabled = false");
                 if !final_newline {
                     expected.push_str(newline);
                 }
-                if schema == 6 {
-                    assert_eq!(
-                        manifest.migrated_text.as_deref(),
-                        Some(original.replacen("schema = 6", "schema = 7", 1).as_str()),
-                        "{form} migration"
-                    );
-                }
+                assert_eq!(
+                    manifest.migrated_text.as_deref(),
+                    (schema < MANIFEST_SCHEMA).then_some(current.as_str()),
+                    "{form} migration from {schema}"
+                );
                 manifest.skills.get_mut("gh").unwrap().enabled = false;
                 save(&path, &manifest).unwrap();
                 assert_eq!(
@@ -136,7 +139,7 @@ fn a_shared_text_token_loads_and_saves_as_written() {
     std::fs::write(
         &path,
         format!(
-            "schema = 7\n\n[sources.cat]\nrepo = 'owner/catalog'\n\n[skills.gh]\nsource = 'cat'\n\n[skill-instructions]\ngh = '{token}'\n\n[shared-text]\ndelivery = '{paragraph}'\n"
+            "schema = 8\n\n[sources.cat]\nrepo = 'owner/catalog'\n\n[skills.gh]\nsource = 'cat'\n\n[skill-instructions]\ngh = '{token}'\n\n[shared-text]\ndelivery = '{paragraph}'\n"
         ),
     )
     .unwrap();
@@ -197,7 +200,7 @@ fn bot_instructions_survive_manifest_and_app_round_trips() {
 #[test]
 fn round_trips_the_binding_skeleton() {
     let text = r#"
-schema = 7
+schema = 8
 
 [model-bindings.codex]
 standard = "gpt-6.1-sol"
@@ -240,7 +243,7 @@ github = "prefer gh cli"
     let ManifestFile::Current(manifest) = load(&path).unwrap() else {
         panic!("expected current manifest");
     };
-    assert_eq!(manifest.schema, 7);
+    assert_eq!(manifest.schema, MANIFEST_SCHEMA);
     assert_eq!(manifest.model_bindings["codex"]["standard"], "gpt-6.1-sol");
     assert_eq!(
         manifest.sources["kendex"].repo.as_deref(),

@@ -229,9 +229,8 @@ pub fn install(
 /// Neither read can refuse the install, so this returns an `Installed`
 /// whatever they say. Both of their failures where both failed: they are
 /// two reads and either fails on its own. What the write left is not
-/// folded in the way `repo_effects::after_writing` folds it — `undone`
-/// rides back on this same answer and the caller says it, so repeating it
-/// here would say it twice.
+/// repeated in that failure: `undone` rides back on this same answer and
+/// the caller says it.
 fn landed(
     undone: Vec<String>,
     offers: Result<Offers, String>,

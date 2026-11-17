@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Installs Ubuntu packages on a GitHub-hosted Linux runner for CI's "System
+# dependencies" steps and the release build's webview dependencies, from one
+# mirror and then, only on failure, another.
+#
+# On an amd64 runner the first try reads archive.ubuntu.com, because the
+# image's Azure mirror is slow. When its update or its install fails, the
+# second try reads the image's own sources, its mirror list included, so an
+# archive.ubuntu.com outage does not fail the job. archive.ubuntu.com serves
+# no arm64 packages, so any other architecture makes only the second try.
+# Each try is one `apt-get update` and one `apt-get install`, bounded by apt's
+# own acquire options from APT_ACQUIRE_OPTIONS; nothing here retries beyond
+# those options or waits on a dead mirror.
+#
+# Both tries keep the image's suites and signing key and leave out the
+# runner's third-party sources. The image's sources file is read, never
+# changed: the first try reads a rewritten copy under RUNNER_TEMP.
+#
+# Usage: tools/apt-install PACKAGE...
+# Environment: APT_ACQUIRE_OPTIONS (apt-get -o options, word-split), RUNNER_TEMP,
+#   APT_IMAGE_SOURCES (the image's sources file; the suite points it at a
+#   fixture).
+# Exit: 0 installed, 1 no try installed, 2 usage.
+# A refusal opens with `apt-install: <key>=<value>` on stderr. A failed try
+# reads `<try>=<verb>:<status>`: the apt-get verb that failed and its exit
+# status. A fallback prints a `::warning` annotation for the run's summary
+# naming the same verb and status.
+set -euo pipefail
+
+[ "$#" -gt 0 ] || { echo 'apt-install: usage=tools/apt-install PACKAGE...' >&2; exit 2; }
+image_sources="${APT_IMAGE_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources}"
+read -r -a acquire <<<"$APT_ACQUIRE_OPTIONS"
+arch="$(dpkg --print-architecture)" || { echo 'apt-install: arch=unreadable' >&2; exit 1; }
+
+failed=() failed_verb='' failed_status=''
+install_from() { # TRY SOURCES PACKAGE...
+  local try="$1"
+  local options=("${acquire[@]}" -o "Dir::Etc::sourcelist=$2" -o Dir::Etc::sourceparts=/dev/null)
+  shift 2
+  failed_verb=update
+  sudo apt-get "${options[@]}" update || { failed_status=$?; failed+=("$try=update:$failed_status"); return 1; }
+  failed_verb=install
+  sudo apt-get "${options[@]}" install -y "$@" || { failed_status=$?; failed+=("$try=install:$failed_status"); return 1; }
+}
+
+if [ "$arch" = amd64 ]; then
+  official="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")" || {
+    echo 'apt-install: scratch=mktemp-failed' >&2; exit 1; }
+  trap 'rm -f -- "$official"' EXIT
+  sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+    -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+    -- "$image_sources" >"$official" || {
+    printf 'apt-install: sources=unreadable path=%s\n' "$image_sources" >&2; exit 1; }
+  install_from official "$official" "$@" && exit 0
+  printf "::warning title=apt mirror::apt-get %s from archive.ubuntu.com sources exited %s, retrying with the runner image's sources\n" \
+    "$failed_verb" "$failed_status"
+fi
+install_from image "$image_sources" "$@" && exit 0
+printf 'apt-install: install=failed %s\n' "${failed[*]}" >&2
+exit 1

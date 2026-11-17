@@ -113,6 +113,26 @@ describe("packageVersionActions", () => {
     expect(toast.success).toHaveBeenCalledWith("Updated gh");
   });
 
+  it("says a step behind a landed switch that failed, beside the switch", async () => {
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: {
+        view: { ...VIEW, unfinished: "render bot instructions: disk full" },
+        heldBack: [],
+        removed: [],
+        moved: [stale("claude")],
+      },
+    } as never);
+    actions(false).updateToLatest(version("b".repeat(40)));
+    await vi.waitFor(() => expect(showError).toHaveBeenCalled());
+    expect(toast.success).toHaveBeenCalledWith("Updated gh");
+    expect(showError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "render bot instructions: disk full",
+      }),
+    );
+  });
+
   it("says what was held back rather than claiming the package moved", async () => {
     vi.mocked(commands.packageUpdate).mockResolvedValue(
       answer({ heldBack: [conflict("claude")] }),

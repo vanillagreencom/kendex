@@ -9,6 +9,9 @@ readonly ISSUE_BLOCKED_BY_NODE_FIELDS='id type issue { id identifier title state
 readonly ISSUE_BLOCKS_FIELDS="relations { pageInfo { hasNextPage endCursor } nodes { $ISSUE_BLOCKS_NODE_FIELDS } }"
 readonly ISSUE_BLOCKED_BY_FIELDS="inverseRelations { pageInfo { hasNextPage endCursor } nodes { ${ISSUE_BLOCKED_BY_NODE_FIELDS} } }"
 readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
+# Linear's closed workflow-state types. A team's Duplicate state answers type
+# duplicate (tests/lib/fixtures/recorded/statuses-list.json).
+readonly STATE_TYPE_CLOSED_JQ='def state_type_closed: IN("completed", "canceled", "duplicate");'
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
 def issue_blocks_launch: issue_is_open and .state.name != "Verifying";
@@ -590,3 +593,37 @@ format_project_labels_list() {
 linear_public_result() {
     jq 'walk(if type == "object" then del(.pageInfo) else . end)' <<<"$1"
 }
+
+# Issue fields around one project slot, shared by the mutation responses
+# (ISSUE_RETURN_FIELDS, which also read the team), the full list
+# (ISSUE_LIST_FIELDS) and the audit inventory (ISSUE_INVENTORY_FIELDS, which
+# reads each project's state; lib/pages.sh linear_inventory).
+readonly ISSUE_FIELDS_HEAD='
+    id
+    identifier
+    title
+    description
+    state { name type }
+    assignee { name }
+'
+readonly ISSUE_FIELDS_MIDDLE='    projectMilestone { id name }
+    cycle { id name number }
+    parent { id identifier title }
+'
+readonly ISSUE_FIELDS_TAIL='    labels { pageInfo { hasNextPage endCursor } nodes { name } }
+    priority
+    estimate
+    sortOrder
+    url
+    createdAt
+    updatedAt
+    archivedAt
+    trashed
+'"$ISSUE_RELATION_FIELDS"
+readonly ISSUE_RETURN_FIELDS="$ISSUE_FIELDS_HEAD    project { id name }
+$ISSUE_FIELDS_MIDDLE    team { name }
+$ISSUE_FIELDS_TAIL"
+readonly ISSUE_LIST_FIELDS="$ISSUE_FIELDS_HEAD    project { id name }
+$ISSUE_FIELDS_MIDDLE$ISSUE_FIELDS_TAIL"
+readonly ISSUE_INVENTORY_FIELDS="$ISSUE_FIELDS_HEAD    project { id name state }
+$ISSUE_FIELDS_MIDDLE$ISSUE_FIELDS_TAIL"

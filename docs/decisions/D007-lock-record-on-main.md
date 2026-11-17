@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-26
 
-**Status**: Active
+**Status**: Active (landing route → D033)
 
 **Research**: KEN-1877
 

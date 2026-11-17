@@ -7,7 +7,7 @@
 # this repo's own install state to a sibling kendex-local.toml, so nothing a
 # maintainer installs for local use lands in the published catalog.
 is_source_catalog = true
-min_kendex = "1.20.0"
+min_kendex = "1.21.0"
 
 [marketplace]
 name = "kendex"
@@ -83,6 +83,7 @@ hooks = [
   "lane-mail-compact",
   "critical-path-deny",
   "docs-writing-note",
+  "docs-writing-bash-note",
 ]
 
 [bundles.orchestration]
@@ -163,6 +164,7 @@ hooks = [
   "session-drift-check",
   "task-completed-check",
   "docs-writing-note",
+  "docs-writing-bash-note",
 ]
 skills = [
   "commit-guards",

@@ -1,8 +1,8 @@
 //! The trusted repository catalog must install files its shipped lanes accept.
 //!
 //! Its own target rather than a module of `catalog_check`: installing every
-//! package on every harness and linting the result costs more than the rest of
-//! this crate's tests together, so it answers to a step bound of its own in
+//! package on every harness and linting the result takes minutes on a macOS
+//! runner, so it answers to a step bound of its own in
 //! `.github/workflows/skill-tests.yml`.
 #![cfg(unix)]
 
@@ -48,18 +48,14 @@ fn scoped_command(
         .env_clear()
         .envs(test_util::fixture_env(home))
         .env("PATH", std::env::var("PATH").unwrap())
-        // Include extensionless scripts and hooks. The shipped extractor
-        // decides which installed files have a comment grammar.
-        .env("COMMIT_GUARDS_COMMENT_PATHS", scope)
-        // A source-only control must not parse shell code as Markdown.
+        // A glob scope's Markdown is its `.md` files. A source-only control
+        // must not parse shell code as Markdown.
         .env(
             "COMMIT_GUARDS_MD_REFS_PATHS",
-            if scope == "*" {
-                "*.md"
-            } else if scope.ends_with(".md") {
-                scope
-            } else {
-                "__no_markdown__"
+            match scope.strip_suffix('*') {
+                Some(prefix) => format!("{prefix}*.md"),
+                None if scope.ends_with(".md") => scope.to_owned(),
+                None => "__no_markdown__".to_owned(),
             },
         )
         .env("COMMIT_GUARDS_MD_REFS_SOURCE_PATHS", scope)
@@ -81,7 +77,7 @@ fn success(output: Output) {
 /// directory, and each top-level file under its own name. Read out of the
 /// staged paths, so a harness directory the renderer gains later takes a scope
 /// with no edit here, and every staged path falls in exactly one.
-fn comment_scopes(staged: &[String]) -> Vec<String> {
+fn lane_scopes(staged: &[String]) -> Vec<String> {
     let mut scopes: Vec<String> = staged
         .iter()
         .map(|path| match path.split_once('/') {
@@ -92,51 +88,6 @@ fn comment_scopes(staged: &[String]) -> Vec<String> {
     scopes.sort_unstable();
     scopes.dedup();
     scopes
-}
-
-/// How many staged paths one `comments` run's globs admitted, read off the
-/// one terminal line it ends on. Index mode ends on one of four keyed lines
-/// and the three that carry an admitted count are all accounted for here: a
-/// run that admitted nothing would otherwise read as a scope with no paths
-/// and hide them.
-///
-/// - `summary=… files=M … skipped=K` — M scanned plus K with no grammar
-/// - `unmeasured-count=N` — N admitted, none of them with a grammar
-/// - `no-match=<globs>` — the globs admitted nothing
-///
-/// The fourth, `incomplete=`, is the lane's extraction failure and exits 2.
-/// It carries no admitted count, and it never reaches here: the caller
-/// asserts the run succeeded before parsing, so a scope that could not be
-/// scanned fails the test rather than contributing a count to it.
-///
-/// `None` when the run ended on none of the three, which is a protocol the
-/// lane changed rather than a scope that reached zero.
-fn reached(stdout: &str) -> Option<usize> {
-    for line in stdout.lines() {
-        let Some((_, keyed)) = line.split_once("comments: ") else {
-            continue;
-        };
-        if let Some(rest) = keyed.strip_prefix("summary=") {
-            let mut files = None;
-            let mut skipped = None;
-            for field in rest.split_whitespace() {
-                if let Some(value) = field.strip_prefix("files=") {
-                    files = value.parse::<usize>().ok();
-                }
-                if let Some(value) = field.strip_prefix("skipped=") {
-                    skipped = value.parse::<usize>().ok();
-                }
-            }
-            return Some(files? + skipped?);
-        }
-        if let Some(value) = keyed.strip_prefix("unmeasured-count=") {
-            return value.trim().parse::<usize>().ok();
-        }
-        if keyed.starts_with("no-match=") {
-            return Some(0);
-        }
-    }
-    None
 }
 
 #[allow(clippy::unwrap_used)]
@@ -178,7 +129,7 @@ fn install_whole_catalog(home: &Path, project: &Path) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n[sources.catalog]\n{}\n",
+            "schema = 8\n[sources.catalog]\n{}\n",
             test_util::source_path(&catalog)
         ),
     )
@@ -192,164 +143,112 @@ fn install_whole_catalog(home: &Path, project: &Path) {
     ));
 }
 
-/// One planted defect per lane, each staged alone, so a failure names that
-/// output and an unrelated catalog finding cannot pass the control.
-#[allow(clippy::unwrap_used)]
-fn each_lane_names_its_own_planted_defect(home: &Path, project: &Path, scripts: &Path) {
-    let controls = [
-        (
-            "comments",
-            "comments: issue-number=",
-            ".claude/skills/review-gate/templates/kendex-refresh.yml",
-            "# Regression history: #2107\n",
-        ),
-        (
-            "comments",
-            "comments: issue-number=",
-            ".claude/hooks/command-safety.sh",
-            "# Regression history: #2107\n",
-        ),
-        (
-            "comments",
-            "comments: issue-number=",
-            ".claude/skills/commit-guards/scripts/install-git-hooks",
-            "# Regression history: #2107\n",
-        ),
-        (
-            "prose",
-            "prose: match=history reference:",
-            ".claude/skills/review-gate/SKILL.md",
-            "Regression history: #2107\n",
-        ),
-    ];
-    for (lane, record, relative, defect) in controls {
-        let path = project.join(relative);
-        let original = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("installed control {relative}: {error}"));
-        let planted = format!("{original}\n{defect}");
-        fs::write(&path, &planted).unwrap();
-        success(command(
-            home,
-            project,
-            Path::new("git"),
-            &["add", "--", relative],
-        ));
-        let output = command(home, project, &scripts.join(lane), &[]);
-        assert_eq!(output.status.code(), Some(1), "{output:?}");
-        let said = String::from_utf8_lossy(&output.stdout);
-        let line = planted.lines().count();
-        let source = defect.strip_prefix('#').unwrap_or(defect).trim_end();
-        let expected = format!("{record}{relative}:{line}:{source}");
-        assert_eq!(said.lines().next(), Some(expected.as_str()), "{said}");
-        fs::write(path, original).unwrap();
-        success(command(
-            home,
-            project,
-            Path::new("git"),
-            &["rm", "--cached", "-f", "--", relative],
-        ));
-    }
-}
-
-/// The whole staged tree through both lanes. The comments lane costs a fork
-/// per installed file and is this crate's slowest work on macOS, so it runs
-/// once per scope, concurrently, rather than once over the tree. The scopes
-/// partition the staged set and the lanes' own reached counts must add back
-/// up to it: that, not the exit statuses alone, is what says no scope quietly
-/// dropped a path.
+/// One run of a lane per scope, all at once, in scope order.
 #[allow(clippy::expect_used)]
-fn every_staged_path_passes_both_lanes(home: &Path, project: &Path, scripts: &Path) {
-    // Git discovers the complete installed tree. No catalog or harness path
-    // allowlist can hide a newly shipped file from an applicable lane.
-    success(command(home, project, Path::new("git"), &["add", "-A"]));
-    success(command(home, project, &scripts.join("prose"), &[]));
-
-    let staged = staged_paths(project);
-    assert!(!staged.is_empty(), "the installed tree staged no path");
-    let scopes = comment_scopes(&staged);
-    let comments = scripts.join("comments");
-    let outputs = std::thread::scope(|threads| {
+fn each_scope(
+    home: &Path,
+    project: &Path,
+    program: &Path,
+    args: &[&str],
+    scopes: &[String],
+) -> Vec<Output> {
+    std::thread::scope(|threads| {
         let handles: Vec<_> = scopes
             .iter()
-            .map(|scope| threads.spawn(|| scoped_command(home, project, &comments, &[], scope)))
+            .map(|scope| threads.spawn(|| scoped_command(home, project, program, args, scope)))
             .collect();
         handles
             .into_iter()
-            .map(|handle| handle.join().expect("a comments lane thread finishes"))
-            .collect::<Vec<_>>()
-    });
+            .map(|handle| handle.join().expect("a lane thread finishes"))
+            .collect()
+    })
+}
 
-    let mut total = 0;
-    for (scope, output) in scopes.iter().zip(&outputs) {
-        let said = String::from_utf8_lossy(&output.stdout);
+/// The whole staged tree through the reference lane. It costs a fork or more
+/// per file it reads and is this crate's slowest work on macOS, so it runs
+/// once per scope, concurrently, rather than once over the tree. The scopes
+/// partition the staged set and the lane's own reached counts must add back up
+/// to it: that, not the exit statuses alone, is what says no scope quietly
+/// dropped a path. A scope narrows only which files the lane reads for
+/// citations; it resolves each citation against the whole index, so a
+/// citation into another scope is still judged.
+fn every_staged_path_passes_the_reference_lane(home: &Path, project: &Path, scripts: &Path) {
+    // Git discovers the complete installed tree. No catalog or harness path
+    // allowlist can hide a newly shipped file from the lane.
+    success(command(home, project, Path::new("git"), &["add", "-A"]));
+
+    let staged = staged_paths(project);
+    assert!(!staged.is_empty(), "the installed tree staged no path");
+    let scopes = lane_scopes(&staged);
+    let references = each_scope(
+        home,
+        project,
+        &scripts.join("md-refs"),
+        &["--all", "--strict"],
+        &scopes,
+    );
+    assert_reference_coverage(&references, &staged);
+    for (scope, output) in scopes.iter().zip(&references) {
         assert!(
             output.status.success(),
-            "scope {scope}: {said}\n{}",
+            "scope {scope}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        total += reached(&said)
-            .unwrap_or_else(|| panic!("scope {scope} ended on no keyed line: {said}"));
     }
-    assert_eq!(
-        total,
-        staged.len(),
-        "the {} comment scopes reached {total} of {} staged paths",
-        scopes.len(),
-        staged.len()
-    );
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn installed_catalog_passes_comment_and_prose_lanes() {
+fn installed_catalog_passes_reference_lane() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = home.join("consumer");
     install_whole_catalog(&home, &project);
     let scripts = project.join(".claude/skills/commit-guards/scripts");
-    each_lane_names_its_own_planted_defect(&home, &project, &scripts);
-    every_staged_path_passes_both_lanes(&home, &project, &scripts);
-    let references = command(
-        &home,
-        &project,
-        &scripts.join("md-refs"),
-        &["--all", "--strict"],
-    );
-    assert_reference_coverage(&references, &staged_paths(&project));
-    success(references);
+    every_staged_path_passes_the_reference_lane(&home, &project, &scripts);
     install_reference_controls(&home, &project, &scripts);
 }
 
 /// These callers select every staged Markdown file for the document pass.
-/// Markdown, source, and skipped counts must cover the selected paths.
-/// Counts plus the hook and extensionless controls reject a scan that admits
-/// too few files.
-fn assert_reference_coverage(output: &Output, staged: &[String]) {
-    let said = String::from_utf8_lossy(&output.stdout);
-    let summary = said
-        .lines()
-        .find_map(|line| line.strip_prefix("md-refs: summary="))
-        .unwrap_or_else(|| panic!("reference scan has no summary: {output:?}"));
-    let count = |name: &str| {
-        summary
-            .split_whitespace()
-            .find_map(|field| {
-                field
-                    .strip_prefix(name)
-                    .and_then(|value| value.parse::<usize>().ok())
-            })
-            .unwrap_or_else(|| panic!("reference scan has no {name} count: {summary}"))
-    };
+/// Markdown, source, and skipped counts, summed over the runs that partition
+/// the staged set, must cover the selected paths. Counts plus the hook and
+/// extensionless controls reject a scan that admits too few files.
+fn assert_reference_coverage(outputs: &[Output], staged: &[String]) {
+    let mut markdown = 0;
+    let mut reached = 0;
+    for output in outputs {
+        let said = String::from_utf8_lossy(&output.stdout);
+        let summary = said
+            .lines()
+            .find_map(|line| line.strip_prefix("md-refs: summary="))
+            .unwrap_or_else(|| panic!("reference scan has no summary: {output:?}"));
+        let count = |name: &str| {
+            summary
+                .split_whitespace()
+                .find_map(|field| {
+                    field
+                        .strip_prefix(name)
+                        .and_then(|value| value.parse::<usize>().ok())
+                })
+                .unwrap_or_else(|| panic!("reference scan has no {name} count: {summary}"))
+        };
+        markdown += count("markdown=");
+        reached += count("markdown=") + count("sources=") + count("skipped=");
+    }
     assert!(!staged.is_empty(), "installed catalog staged no files");
     assert_eq!(
-        count("markdown=") + count("sources=") + count("skipped="),
+        reached,
         staged.len(),
-        "{summary}"
+        "{} reference scans reached {reached} of {} staged paths",
+        outputs.len(),
+        staged.len()
     );
     assert_eq!(
-        count("markdown="),
+        markdown,
         staged.iter().filter(|path| path.ends_with(".md")).count(),
-        "{summary}"
+        "{} reference scans selected {markdown} Markdown files",
+        outputs.len()
     );
 }
 
@@ -387,7 +286,7 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             &["--all", "--strict"],
             relative,
         );
-        assert_reference_coverage(&output, &expected_paths);
+        assert_reference_coverage(std::slice::from_ref(&output), &expected_paths);
         success(output);
 
         success(command(
@@ -403,7 +302,7 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             &["--all", "--strict"],
             relative,
         );
-        assert_reference_coverage(&output, &expected_paths);
+        assert_reference_coverage(std::slice::from_ref(&output), &expected_paths);
         assert_eq!(output.status.code(), Some(1), "{output:?}");
         let expected = format!("md-refs: citation-target={relative}:");
         assert!(
@@ -431,7 +330,7 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             &["--all", "--strict"],
             relative,
         );
-        assert_reference_coverage(&output, &expected_paths);
+        assert_reference_coverage(std::slice::from_ref(&output), &expected_paths);
         success(output);
         fs::write(path, original).unwrap();
         success(command(
@@ -455,72 +354,6 @@ fn the_scope_partition_accounts_for_every_staged_path() {
     .map(|path| (*path).to_owned())
     .collect();
 
-    let scopes = comment_scopes(&staged);
+    let scopes = lane_scopes(&staged);
     assert_eq!(scopes, vec![".claude/*", ".opencode/*", "kendex.toml"]);
-
-    // Each row is one scope set and what its runs reported. The whole set
-    // accounts for all four staged paths. A dropped scope falls short, each
-    // of the lane's three counting lines is read, and a run ending on neither
-    // those nor any keyed line at all is no count rather than a silent zero.
-    // The lane's fourth line, `incomplete=`, carries no admitted count and
-    // must not be read as one; the caller refuses its exit 2 before parsing.
-    let rows: [(&str, &[&str], Option<usize>); 6] = [
-        (
-            "every scope reports a summary",
-            &[
-                "comments: summary=violations=0 files=1 scope=index skipped=1",
-                "comments: summary=violations=0 files=1 scope=index skipped=0",
-                "comments: summary=violations=0 files=1 scope=index skipped=0",
-            ],
-            Some(4),
-        ),
-        (
-            "a scope dropped",
-            &[
-                "comments: summary=violations=0 files=1 scope=index skipped=1",
-                "comments: summary=violations=0 files=1 scope=index skipped=0",
-            ],
-            Some(3),
-        ),
-        (
-            "a scope whose paths carry no comment grammar",
-            &[
-                "comments: summary=violations=0 files=2 scope=index skipped=0",
-                "comments: unmeasured=.gitignore:grammar\n\
-                 comments: unmeasured-count=2",
-            ],
-            Some(4),
-        ),
-        (
-            "a scope whose globs admitted nothing",
-            &[
-                "comments: summary=violations=0 files=4 scope=index skipped=0",
-                "comments: no-match=range:*",
-            ],
-            Some(4),
-        ),
-        (
-            "an extraction failure carries no count to add",
-            &[
-                "comments: summary=violations=0 files=4 scope=index skipped=0",
-                "comments: incomplete=files=2 violations=0 scanned=3 skipped=1",
-            ],
-            None,
-        ),
-        (
-            "a run ending on no terminal line at all",
-            &[
-                "comments: summary=violations=0 files=4 scope=index skipped=0",
-                "nothing keyed",
-            ],
-            None,
-        ),
-    ];
-    for (name, stdouts, want) in rows {
-        let got = stdouts
-            .iter()
-            .try_fold(0, |sum, stdout| reached(stdout).map(|n| sum + n));
-        assert_eq!(got, want, "{name}");
-    }
-    assert_eq!(staged.len(), 4);
 }

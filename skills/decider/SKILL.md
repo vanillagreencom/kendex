@@ -37,7 +37,7 @@ Warranted:
 Not warranted:
 
 - A local implementation choice: a lock taken before a cleanup is registered is a comment at the code.
-- A restated convention: shell stays Bash 3.2 compatible is an `AGENTS.md` line.
+- A restated convention: shell stays Bash 3.2 compatible is a `[skill-instructions].code-quality` line in the consumer's `kendex.toml`, or in `kendex-local.toml` in a source-catalog checkout.
 - A choice no one would revisit: a file format version field, a naming scheme.
 - A record of what was done: git history holds it.
 

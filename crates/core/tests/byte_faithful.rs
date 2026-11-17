@@ -70,6 +70,95 @@ struct Fixture {
     project: std::path::PathBuf,
 }
 
+/// Copilot's script and registry use these two operations. A reader that
+/// opened the old version must retain its complete bytes across replacement.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn rendered_file_replacements_keep_open_readers_and_permission_bits() {
+    use std::io::Read as _;
+
+    let f = fixture();
+    for (name, old, bytes, edits) in [
+        ("script", b"old\xff".as_slice(), b"new\xfe".as_slice(), None),
+        (
+            "registry",
+            b"[features]\n".as_slice(),
+            b"[features]\nhooks = true\n".as_slice(),
+            Some(vec![ConfigEdit::CodexEnableHooksFeature]),
+        ),
+    ] {
+        let path = f.project.join(name);
+        fs::write(&path, old).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o751)).unwrap();
+        let mut reader = fs::File::open(&path).unwrap();
+        let pre = apply::Pre::HashIs {
+            hash: kendex_core::hash::hash_tree(&path).unwrap(),
+        };
+        let op = match edits {
+            Some(edits) => apply::Op::EditFile {
+                path: path.clone(),
+                edits,
+                pre,
+            },
+            None => apply::Op::WriteFile {
+                path: path.clone(),
+                bytes: bytes.to_vec(),
+                pre,
+            },
+        };
+        let plan = apply::Plan::landed(
+            f.scope.clone(),
+            vec![apply::PlannedOp {
+                description: "replace a rendered file".into(),
+                op,
+            }],
+        )
+        .unwrap();
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            let destination = &path;
+            let observer = scope.spawn(move || {
+                let check = || {
+                    let observed = fs::read(destination).unwrap();
+                    assert!(observed == old || observed == bytes);
+                };
+                check();
+                ready_tx.send(()).unwrap();
+                // Fixed probe work; a writer unwind disconnects the channel
+                // and must also let this observer finish.
+                for _ in 0..1024 {
+                    if !matches!(
+                        done_rx.try_recv(),
+                        Err(std::sync::mpsc::TryRecvError::Empty)
+                    ) {
+                        break;
+                    }
+                    check();
+                }
+                check();
+            });
+            ready_rx.recv().unwrap();
+            let result = apply::execute(&f.env, &plan);
+            // The observer may already have exhausted its fixed probe budget.
+            let _ = done_tx.send(());
+            observer.join().unwrap();
+            result.unwrap();
+        });
+        let mut observed = Vec::new();
+        reader.read_to_end(&mut observed).unwrap();
+        assert_eq!(
+            observed, old,
+            "an already open reader retains the old complete file"
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o751
+        );
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
@@ -87,7 +176,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -213,7 +302,7 @@ fn a_written_tree_keeps_shebang_files_executable() {
 /// below asserts the whole file.
 fn kept_manifest(source: &std::path::Path) -> String {
     format!(
-        "# what this project installs\nschema = 7\n\n# the catalog we read\n[sources.cat]\nenabled = true\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n# the one we actually use\n[skills.gh]\nsource = \"cat\"   # from the catalog\nnote = \"why I keep this\"\nenabled = true\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nenabled = true   # still on\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n",
+        "# what this project installs\nschema = 8\n\n# the catalog we read\n[sources.cat]\nenabled = true\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n# the one we actually use\n[skills.gh]\nsource = \"cat\"   # from the catalog\nnote = \"why I keep this\"\nenabled = true\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nenabled = true   # still on\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n",
         source_path(source)
     )
 }
@@ -310,7 +399,7 @@ fn a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes() {
     let k = kept();
     let older = k
         .original
-        .replacen("schema = 7", "schema = 6   # pinned", 1);
+        .replacen("schema = 8", "schema = 6   # pinned", 1);
     fs::write(&k.manifest, &older).unwrap();
     let report = kendex_core::engine::ops::add(
         &k.env,
@@ -324,7 +413,7 @@ fn a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes() {
     .unwrap();
     apply::execute(&k.env, &report.plan).unwrap();
     let expected = declaring(
-        &older.replacen("schema = 6", "schema = 7", 1),
+        &older.replacen("schema = 6", "schema = 8", 1),
         "[skills.fmt]\nsource = \"cat\"\n",
     );
     assert_eq!(fs::read_to_string(&k.manifest).unwrap(), expected);
@@ -384,7 +473,10 @@ fn adopting_a_skill_edits_kendex_toml_in_place() {
 
     assert_eq!(
         fs::read_to_string(&k.manifest).unwrap(),
-        declaring(&k.original, "[skills.mine]\nsource = \"in-place\"\n")
+        declaring(
+            &k.original,
+            "[skills.mine]\nsource = \"in-place\"\nlinks = \"shared-tree\"\n"
+        )
     );
 }
 
@@ -425,10 +517,15 @@ const HOOK_COMMENT: &str = "# guards every bash call";
 /// The declaration after a verb rebinds it to the person's own copy: the
 /// one value changed, the comment beside it untouched.
 fn rebound(manifest: &str) -> String {
-    manifest.replace(
-        "source = \"cat\"   # from the catalog",
-        "source = \"local\"   # from the catalog",
-    )
+    manifest
+        .replace(
+            "source = \"cat\"   # from the catalog",
+            "source = \"local\"   # from the catalog",
+        )
+        .replace(
+            "note = \"why I keep this\"\nenabled = true\n",
+            "note = \"why I keep this\"\nenabled = true\nlinks = \"shared-tree\"\n",
+        )
 }
 
 /// The `[forks.skill.gh]` block a fork records. Checked rather than

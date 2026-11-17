@@ -26,7 +26,9 @@ fn the_blocked_refresh_keeps_the_plain_output_hierarchy() {
         .collect();
     assert_eq!(
         shape,
-        [0, 2, 4, 4, 4, 2, 0, 2, 4, 2, 4, 0, 2, 2, 0, 2, 2, 2],
+        [
+            0, 2, 4, 4, 4, 2, 0, 2, 4, 2, 4, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2
+        ],
         "{printed}"
     );
     assert!(FRAMING.into_iter().all(|symbol| !printed.contains(symbol)));
@@ -104,7 +106,7 @@ fn a_failed_installer_keeps_the_applied_files_and_drift_record() {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = \
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = \
              [\"claude\"]\nmethod = \"copy\"\n\n[skills.armed]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),

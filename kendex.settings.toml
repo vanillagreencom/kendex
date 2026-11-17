@@ -67,6 +67,7 @@ REVIEWER_SLOT_BUDGET = "0"
 # means: skills/orch/references/communication-modes.md.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
+ORCH_REPORT_QUIET_HOURS = "21-8"
 
 # Post-PR choices: "auto-recommended" continues within each budget; "ask" prompts.
 ORCH_DECISION_MODE = "auto-recommended"
@@ -103,8 +104,8 @@ ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
 # waits for a slot before it refuses as host-busy.
 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
-# The kendex owner program spends a live Claude API grant first, as a Pi lane on anthropic/; a grant past its end reads walled, so the walk then takes Claude cloud, with Codex on its own accounts as fallback.
-ORCH_LANE_PREFERENCE = "pi:anthropic/claude-opus-5-5:high,claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
+# Claude accounts with room, then Codex; the shared Copilot seat is the last choice.
+ORCH_LANE_PREFERENCE = "claude:standard:high,codex:gpt-6.1-sol:high,pi:github-copilot/gpt-6.1-sol:high:last"
 
 # Accounts a cloud-session pick may hand a kendex lane: each entry states the
 # repository the account was given access to, and the pick refuses any other
@@ -141,6 +142,8 @@ AGENT_RUNTIME_ACCOUNT_MAX_PCT = "95"
 
 AGENT_RUNTIME_CODEX_CREDIT_FLOOR = "0"
 
+AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium,codex:standard:medium"
+
 # The overseer moves before its account walls when its current binding bucket
 # reaches 5 percent headroom or its projected wall is within 20 minutes. A
 # seat account (one an overseer or Jarvis session runs on) keeps this headroom
@@ -152,6 +155,9 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 # A lane whose account reaches 97 percent used is marked for handoff, which
 # follows skills/orch/references/skill-rules.md § Round Closure.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
+
+ORCH_HANDOFF_CONTEXT_PCT = "90"
+ORCH_HANDOFF_CONTEXT_TOKENS = "650000"
 
 # The watch relaunches a lane its account walled where it can; when it does,
 # and what it reports:

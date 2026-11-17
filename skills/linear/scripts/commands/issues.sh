@@ -6,8 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Help is answered before the libraries load: common.sh sources the repo's
-# .env.local as shell code and resolves API auth, and help needs neither.
+# Help is answered before the libraries load: common.sh loads the repo's
+# settings and .env.local and resolves API auth, and help needs neither.
 show_help() {
     cat <<'EOF'
 Issue Operations
@@ -88,6 +88,14 @@ List Options:
                         --all-projects
   --include-archived    Include archived issues
   --with-relations      Include blocking info (use --format=raw for analyzed output)
+  --inventory <file>    Answer from one audit pass's team inventory: read FILE
+                        when it exists, else read the team's every issue in
+                        every state to its last page into FILE. Needs --team
+                        and --max; takes only --state, --all-projects, --select
+                        full and --format beside them, and refuses any other
+                        option before a read. A FILE that is unreadable,
+                        malformed, another team's or read with other fields
+                        refuses inventory-unread and lists nothing.
 
 Get:
   issues.sh get <id>    Get by UUID or identifier (PROJ-42)
@@ -151,15 +159,24 @@ Create Options:
   [env], create refuses a description with no `Reached by:` line, and a
   `--review-born --priority 2` one with no `Symptom:`; a placeholder or null
   token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
+  It also refuses a description with no `Supersession:` record: each matched
+  open item as `superseded`, `duplicate` or `re-scoped` with its identifier,
+  entries separated by `;`, or `none found; searched: <terms>`. Template:
+  project-management templates/issue-description-template.md.
   Under the same key, create, update --description/--description-file,
-  and bulk-update --description refuse a Post-merge Done-when box whose
+  and bulk-update --description refuse a checkbox outside "## Done when",
+  naming its line and text, and a Post-merge Done-when box whose
   release trigger names no repository or whose Deadline is invalid. They
   also refuse when the body does not open with nonempty quoted blocks starting
   with `> **Story:**` then `> **Why this matters:**`, after any optional owner
   action line (`**Name, what you do:** ...`), with an unquoted blank line
   between the blocks and before the first heading, if any. A header line over
   500 characters prints one `linear: advisory=issue-header-length line=N
-  length=N` line on stderr, and the write proceeds.
+  length=N` line on stderr, and the write proceeds. A quoted opening holding
+  a file path, a Slack message ts, a mailbox id or a UTC time stamp prints one
+  `linear: advisory=issue-opening-detail line=N kinds=KIND[,KIND]` line naming
+  the description template and the reader rule, and the write proceeds; the
+  body below the opening is not read for it.
   Unfilled placeholders count as empty. Authors and reviewers
   judge the prose. Update judges the body after it reads the issue: a body
   equal to the stored one apart from a leading owner action line, which it
@@ -192,6 +209,10 @@ Update Options:
                         LINEAR_REQUIRE_REACH empty; otherwise the opening
                         and stored-body owner-action rules above apply.
   --description-file <path>  Read new description from file (preferred for markdown)
+  --synced-description  Allow update/bulk-update/complete to write a description
+                        shared with a GitHub issue by Linear sync, including
+                        image appends and completion checklist/evidence edits.
+                        Otherwise refused before any upload or write.
   --project <name|uuid> Move to project (name or UUID, auto-resolved)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
@@ -293,7 +314,8 @@ Complete Options:
                         latest merge commit. A merge or time trigger also
                         takes a UTC deadline at most 72 hours after it.
                         Every completion reads the checklist, with or without
-                        this option. Open branch boxes refuse. Post-merge boxes
+                        this option. Open branch boxes, and open boxes outside
+                        "## Done when", refuse. Post-merge boxes
                         follow the phase above. Ticked boxes require a
                         nonblank Evidence: line indented directly below them.
                         A reading with a comparator (<=, >=, <, >, =) before
@@ -360,7 +382,8 @@ Validate-Completion:
   state other than Verifying
   when the shared checklist parser proves every branch box and every checked
   box has evidence. A started child needs a checklist; post-merge boxes are
-  optional. Open branch work or invalid post-merge metadata fails state_ok.
+  optional. Open branch work, an open box outside "## Done when", or invalid
+  post-merge metadata fails state_ok.
   Canceled children are excluded from the expansion:
   abandoned work can never be "Done" and is not a pending gap. Each validated
   issue must also have a comment containing "Completion Summary" or
@@ -451,7 +474,7 @@ _help_takes_value() {
     case "$1" in
         --agent | --assignee | --attach | --blocked-by | --blocks | --by | \
             --cycle | --description | --description-file | --duplicate | \
-            --estimate | --format | --include-children-of | --label | \
+            --estimate | --format | --include-children-of | --inventory | --label | \
             --labels | --limit | --milestone | --parent | --priority | \
             --project | --reason | --related | --search | --sort-order | \
             --state | --status | --summary | --summary-file | --team | \
@@ -481,30 +504,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 source "$SCRIPT_DIR/../lib/issue-validation.sh"
 
-# Shared issue fields for mutation responses, the list query's fields
-ISSUE_RETURN_FIELDS='
-    id
-    identifier
-    title
-    description
-    state { name type }
-    assignee { name }
-    project { id name }
-    projectMilestone { id name }
-    cycle { id name number }
-    parent { id identifier title }
-    team { name }
-    labels { pageInfo { hasNextPage endCursor } nodes { name } }
-    priority
-    estimate
-    sortOrder
-    url
-    createdAt
-    updatedAt
-    archivedAt
-    trashed
-'"$ISSUE_RELATION_FIELDS"
-
 read_description_file() {
     local description_file="$1"
     if [[ -z "$description_file" ]]; then
@@ -518,9 +517,39 @@ read_description_file() {
     description=$(<"$description_file")
 }
 
+# An inventory answers only the reads the audit pass makes of it: one team,
+# every page, state names and the full selection. Any other option would need a
+# filter Linear applies and this list does not, so it refuses before any read.
+# Usage: list_inventory_scope WITH_RELATIONS SEARCH_GIVEN SELECTION FILTER_ARGS...
+list_inventory_scope() {
+    local option="" team=false
+    [[ "$1" == false ]] || option=--with-relations
+    [[ "$2" == false ]] || option=--search
+    [[ "$3" == full ]] || option=--select
+    shift 3
+    while [[ -z "$option" && $# -gt 0 ]]; do
+        case "$1" in
+        --team | --state | --status)
+            [[ "$1" != --team ]] || team=true
+            # parse_filter refuses a missing value; skip whatever follows.
+            shift
+            [[ $# -eq 0 ]] || shift
+            ;;
+        --all-projects) shift ;;
+        --*) option="$1" ;;
+        *) shift ;;
+        esac
+    done
+    if [[ -z "$option" && "$LINEAR_LIST_BOUND" != all ]]; then option=--max; fi
+    if [[ -z "$option" && "$team" == false ]]; then option=--team; fi
+    [[ -n "$option" ]] || return 0
+    jq -cn --arg option "$option" '{error: ("inventory-unsupported option=" + $option + ": issues list --inventory takes --team and --max, and only --state, --all-projects, --select full and --format beside them")}' >&2
+    return 1
+}
+
 list_issues() {
     local with_relations="false"
-    local selection=full page=75 fields
+    local selection=full page=$ISSUE_FULL_PAGE fields inventory=""
     linear_list_reset
     local search_pattern=""
     local search_given="false"
@@ -539,6 +568,11 @@ list_issues() {
             ;;
         --max)
             linear_list_option --max
+            ;;
+        --inventory)
+            linear_inventory_option "$@" || return 1
+            inventory="$2"
+            shift
             ;;
         --format)
             # A following option token is a missing value, not a format:
@@ -594,6 +628,9 @@ list_issues() {
         fi
     fi
 
+    if [[ -n "$inventory" ]]; then
+        list_inventory_scope "$with_relations" "$search_given" "$selection" ${args[@]+"${args[@]}"} || return 1
+    fi
     parse_filter ${args[@]+"${args[@]}"} || return 1
     linear_require_format "$selection" full triage owed || return 1
     [[ "$selection" == full ]] || linear_require_format "$FORMAT" safe || return 1
@@ -604,7 +641,7 @@ list_issues() {
 '"$ISSUE_BLOCKED_BY_FIELDS"
         page=250
         ;;
-    full) fields="${ISSUE_RETURN_FIELDS/    team \{ name \}/}" ;;
+    full) fields=$ISSUE_LIST_FIELDS ;;
     esac
 
     # Server-side search: pipe-separated terms, each matched as a
@@ -634,9 +671,21 @@ list_issues() {
         }
     }'
 
-    local result variables
+    local result variables team_id
     variables="{\"filter\": $FILTER_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON}"
-    result=$(linear_list_read "$query" "$variables" issues "$page") || return 1
+    if [[ -n "$inventory" ]]; then
+        team_id=$(jq -r '.team.id.eq' <<<"$FILTER_JSON") || return 1
+        # The state filter Linear would apply, on the rows the read returns
+        # with no project state, so each format prints what the live read does.
+        result=$(linear_inventory "$inventory" "$team_id" |
+            jq -c --argjson filter "$FILTER_JSON" '
+                ($filter.state.name // null) as $state
+                | {issues: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.[]
+                    | select($state == null or .state.name == $state.eq or (.state.name | IN(($state.in // [])[])))
+                    | if .project != null then .project |= del(.state) else . end]}}') || return 1
+    else
+        result=$(linear_list_read "$query" "$variables" issues "$page") || return 1
+    fi
 
     if [[ "$selection" == triage ]]; then
         jq '[.issues.nodes[] | {id: .identifier, created_at: .createdAt}]' <<<"$result"
@@ -781,6 +830,8 @@ bulk_update_issues() {
     local update_args=()
     local attach_paths=()
     local description="" description_set="false" state="" project=""
+    local description_write="false"
+    local synced_description="false"
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -814,6 +865,11 @@ bulk_update_issues() {
                 description="$_val"
                 description_set="true"
             fi
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
+            update_args+=("$1")
             shift
             ;;
         --remove-parent | --clear-cycle | --clear-estimate)
@@ -855,6 +911,7 @@ bulk_update_issues() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
+    description_write=$(issue_description_write "$description_set" ${attach_paths[@]+"${attach_paths[@]}"}) || return 1
     # Each issue's update repeats this check against its stored body and prints
     # its own advisories; this pass keeps only a refusal, before any write.
     if [[ "$description_set" == "true" ]]; then
@@ -876,7 +933,7 @@ bulk_update_issues() {
     # update_issue still refuses per issue in the write loop below (a
     # --milestone missing from that issue's project, a label for that issue's
     # team), after earlier issues are written. This loop reads each issue at
-    # most once, and only when the state check or the issue's team needs it:
+    # most once when the state, description write or project lookup needs it:
     # the guard above pins every issue to LINEAR_TEAM when one is set. The map
     # project is judged in each issue's own team; issue_project_id keeps each
     # team's result for the update_issue subshells below.
@@ -885,14 +942,15 @@ bulk_update_issues() {
         linear_own_team || return 1
         own_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
     fi
-    if [[ -n "$state" || -n "$project_map" ]]; then
+    if [[ -n "$state" || -n "$project_map" || ( "$description_write" == true && "$synced_description" == false ) ]]; then
         local preflight_failed=0 issue_result effective_description team_id
         for id in "${identifiers[@]}"; do
             issue_result=""
-            if [[ -n "$state" || -z "$own_team_id" ]] && ! issue_result=$(get_issue "$id" --format=raw); then
+            if [[ -n "$state" || -z "$own_team_id" || "$description_write" == true ]] && ! issue_result=$(get_issue "$id" --format=raw); then
                 preflight_failed=1
                 continue
             fi
+            require_unsynced_description "$id" "$issue_result" "$description_write" "$synced_description" || preflight_failed=1
             if [ -n "$state" ]; then
                 effective_description="$description"
                 if [ "$description_set" != true ]; then
@@ -1026,6 +1084,7 @@ get_issue() {
                 updatedAt
                 archivedAt
                 trashed
+                syncedWith { metadata { ... on ExternalEntityInfoGithubMetadata { owner repo number } } }
                 parent { id identifier title }
                 children { pageInfo { hasNextPage endCursor } nodes { id identifier title state { name } } }
 '"$ISSUE_RELATION_FIELDS"'
@@ -1845,12 +1904,40 @@ create_issue() {
     return "$attach_failed"
 }
 
+pending_issue_descendants() {
+    local issue_result="$1" issue_id
+    local frontier next_frontier child_parent children descendants seen
+    issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
+    # Terminal ancestors can still contain open work. Keep every unfiltered
+    # frontier until the whole subtree is read, as dependencies.md requires.
+    frontier="$issue_id"
+    descendants='[]'
+    seen=$(jq -c '[.issue.identifier]' <<<"$issue_result") || return 1
+    while [ -n "$frontier" ]; do
+        next_frontier=""
+        while IFS= read -r child_parent; do
+            children=$(list_children "$child_parent") || return 1
+            children=$(jq -c --argjson seen "$seen" \
+                '.issue.children.nodes | map({id: .identifier, state_type: .state.type})
+                | unique_by(.id) | map(select(.id as $id | $seen | index($id) | not))' <<<"$children") || return 1
+            descendants=$(jq -c --argjson children "$children" '. + $children' <<<"$descendants") || return 1
+            seen=$(jq -c --argjson children "$children" '. + ($children | map(.id))' <<<"$seen") || return 1
+            children=$(jq -r '.[].id' <<<"$children") || return 1
+            if [ -n "$children" ]; then
+                next_frontier="${next_frontier:+$next_frontier$'\n'}$children"
+            fi
+        done <<<"$frontier"
+        frontier="$next_frontier"
+    done
+    jq -r "$STATE_TYPE_CLOSED_JQ"'.[] | select(.state_type | state_type_closed | not) | .id' <<<"$descendants"
+}
+
 # Both update routes use the description that will be written. Completion can
 # therefore tick verified boxes and set Done in one mutation, without a bypass.
 # FLT-1168 reached update from Verifying with an open post-merge box.
 resolve_issue_update_state() {
     local issue_result="$1" state="$2" description="$3"
-    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes state_type
+    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes outside_lines errors state_type closing pending_children
     issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
     team_id=$(jq -r '.issue.team.id // empty' <<<"$issue_result") || return 1
     if [ -z "$team_id" ]; then
@@ -1858,11 +1945,25 @@ resolve_issue_update_state() {
         return 1
     fi
     resolved=$(resolve_state_id "$state" "$team_id" raw) || return 1
+    state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
+    # Every closing type but completed (Canceled, Duplicate) closes the parent
+    # without judging its children; completed is held by its checklist below.
+    closing=$(jq -r "$STATE_TYPE_CLOSED_JQ"'(.type // "") | state_type_closed and . != "completed"' <<<"$resolved") || return 1
+    if [ "$closing" = true ]; then
+        pending_children=$(pending_issue_descendants "$issue_result") || return 1
+        if [ -n "$pending_children" ]; then
+            printf 'linear: refused=open-children issue=%s children=%s fix=detach-or-cancel-children\n' "$issue_id" "${pending_children//$'\n'/,}" >&2
+            printf 'Keep a child with issues update CHILD --remove-parent, or authorize, comment and cancel each child before its parent.\n' >&2
+            return 1
+        fi
+    fi
     parsed=$(done_when_parse "$description" '[]') || return 1
-    open_boxes=$(jq -c '[.boxes[] | select(.checked | not) | .number]' <<<"$parsed") || return 1
-    missing_evidence_boxes=$(jq -c '.missing_evidence_boxes' <<<"$parsed") || return 1
-    if [ "$open_boxes" != '[]' ] || [ "$missing_evidence_boxes" != '[]' ]; then
-        state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
+    # The completion answer `issues complete` reads decides; the keys below
+    # only name its cause.
+    if ! jq -e '.completion_state == "Done"' <<<"$parsed" >/dev/null; then
+        open_boxes=$(jq -c '[.boxes[] | select(.checked | not) | .number]' <<<"$parsed") || return 1
+        missing_evidence_boxes=$(jq -c '.missing_evidence_boxes' <<<"$parsed") || return 1
+        outside_lines=$(jq -c '[.outside_boxes[] | select(.checked | not) | .line]' <<<"$parsed") || return 1
         if [ -z "$state_type" ]; then
             printf 'linear: refused=state-type-unavailable issue=%s state=%s\n' "$issue_id" "$state" >&2
             return 1
@@ -1876,9 +1977,49 @@ resolve_issue_update_state() {
                 printf 'linear: refused=done-when-evidence issue=%s missing_evidence_boxes=%s fix=issues complete\n' "$issue_id" "$missing_evidence_boxes" >&2
                 return 1
             fi
+            if [ "$outside_lines" != '[]' ]; then
+                printf 'linear: refused=done-when-outside issue=%s outside_lines=%s fix=issues complete\n' "$issue_id" "$outside_lines" >&2
+                return 1
+            fi
+            errors=$(jq -c '.errors' <<<"$parsed") || return 1
+            printf 'linear: refused=post-merge-checklist issue=%s errors=%s fix=issues complete\n' "$issue_id" "$errors" >&2
+            return 1
         fi
     fi
     jq -r '.id' <<<"$resolved"
+}
+
+# Uploads use this same content-type classifier when deciding which files
+# append embeds to the description rather than creating separate attachments.
+issue_description_write() {
+    local description_set="$1" content_type path
+    shift
+    if [ "$description_set" = true ]; then
+        printf 'true\n'
+        return 0
+    fi
+    for path in "$@"; do
+        content_type=$(attach_upload_content_type "$path") || return 1
+        case "$content_type" in
+        image/*) printf 'true\n'; return 0 ;;
+        esac
+    done
+    printf 'false\n'
+}
+
+# Linear's GitHub sync propagates description writes to the linked issue.
+# Classify the internal write read without extending the public bundle format.
+require_unsynced_description() {
+    local issue_id="$1" issue_result="$2" description_write="$3" consent="$4" formatted links
+    [[ "$description_write" == true && "$consent" == false ]] || return 0
+    formatted=$(jq -c '{github_sync: [(.issue.syncedWith // [])[] | (.metadata // {})
+        | select(.owner and .repo and .number)
+        | "\(.owner | ascii_downcase)/\(.repo | ascii_downcase)#\(.number)"]}' <<<"$issue_result") || return 1
+    links=$(jq -r '(.github_sync // []) | join(",")' <<<"$formatted") || return 1
+    if [ -n "$links" ]; then
+        printf 'linear: refused=synced-description issue=%s github=%s override=--synced-description\n' "$issue_id" "$links" >&2
+        return 1
+    fi
 }
 
 update_issue() {
@@ -1891,6 +2032,7 @@ update_issue() {
     local description=""
     local description_set="false"
     local description_file=""
+    local synced_description="false"
     local project=""
     local priority=""
     local assignee=""
@@ -1981,6 +2123,10 @@ update_issue() {
         --description=*)
             description="${1#*=}"
             description_set="true"
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
             shift
             ;;
         --description-file)
@@ -2137,6 +2283,9 @@ update_issue() {
     # Get issue to find its team for state and label lookup - use raw format
     local issue_result
     issue_result=$(get_issue "$issue_id" --format=raw) || return 1
+    local description_write
+    description_write=$(issue_description_write "$description_set" ${attach_paths[@]+"${attach_paths[@]}"}) || return 1
+    require_unsynced_description "$issue_id" "$issue_result" "$description_write" "$synced_description" || return 1
     # The header shape is judged against the stored body, which an owner
     # action line may be placed on, replaced on or removed from. The sentinel
     # keeps the stored body's trailing newlines through the capture.
@@ -2246,16 +2395,8 @@ update_issue() {
     # seed it from the issue's current one so the embed is an append, not a
     # wipe. Non-images queue for attachmentCreate after the update.
     if [ ${#attach_paths[@]} -gt 0 ]; then
-        if [[ "$description_set" == "false" ]]; then
-            local has_image_attach=0 attach_probe
-            for attach_probe in "${attach_paths[@]}"; do
-                case "$(attach_upload_content_type "$attach_probe")" in
-                image/*) has_image_attach=1 ;;
-                esac
-            done
-            if [ "$has_image_attach" = "1" ]; then
-                description=$(echo "$issue_result" | jq -r '.issue.description // empty')
-            fi
+        if [[ "$description_set" == false && "$description_write" == true ]]; then
+            description=$(jq -r '.issue.description // empty' <<<"$issue_result") || return 1
         fi
         upload_attach_paths "${attach_paths[@]}" || return $?
     fi
@@ -3253,38 +3394,19 @@ unblock_issue() {
 complete_superseded_issues() {
     local replacement="$1"
     shift
-    local superseded_id superseded_result superseded_terminal disposition_result pending_children
-    local frontier next_frontier child_parent children descendants seen
+    local superseded_id superseded_result superseded_terminal superseded_closed disposition_result pending_children
     for superseded_id in "$@"; do
         if ! superseded_result=$(get_issue "$superseded_id" --format=raw); then
             jq -cn --arg issue "$superseded_id" '{error: "supersession-read", issue: $issue}' >&2
             return 1
         fi
         superseded_terminal=$(jq -er '.issue.state.type | strings' <<<"$superseded_result") || return 1
-        case "$superseded_terminal" in completed|canceled) continue ;; esac
+        superseded_closed=$(jq -nr --arg type "$superseded_terminal" "$STATE_TYPE_CLOSED_JQ"'$type | state_type_closed') || return 1
+        if [ "$superseded_closed" = true ]; then
+            continue
+        fi
         linear_guard_issue_team complete "$superseded_id" || return 1
-        # Terminal ancestors can still contain open work. Keep every unfiltered
-        # frontier until the whole subtree is read, as dependencies.md requires.
-        frontier="$superseded_id"
-        descendants='[]'
-        seen=$(jq -c '[.issue.identifier]' <<<"$superseded_result") || return 1
-        while [ -n "$frontier" ]; do
-            next_frontier=""
-            while IFS= read -r child_parent; do
-                children=$(list_children "$child_parent") || return 1
-                children=$(jq -c --argjson seen "$seen" \
-                    '.issue.children.nodes | map({id: .identifier, state_type: .state.type})
-                    | unique_by(.id) | map(select(.id as $id | $seen | index($id) | not))' <<<"$children") || return 1
-                descendants=$(jq -c --argjson children "$children" '. + $children' <<<"$descendants") || return 1
-                seen=$(jq -c --argjson children "$children" '. + ($children | map(.id))' <<<"$seen") || return 1
-                children=$(jq -r '.[].id' <<<"$children") || return 1
-                if [ -n "$children" ]; then
-                    next_frontier="${next_frontier:+$next_frontier$'\n'}$children"
-                fi
-            done <<<"$frontier"
-            frontier="$next_frontier"
-        done
-        pending_children=$(jq -r '.[] | select(.state_type != "completed" and .state_type != "canceled") | .id' <<<"$descendants") || return 1
+        pending_children=$(pending_issue_descendants "$superseded_result") || return 1
         if [ -n "$pending_children" ]; then
             jq -cn --arg issue "$superseded_id" --arg children "$pending_children" \
                 '{error: "supersession-children", issue: $issue, children: ($children | split("\n")), remedy: "Disposition the open children before retrying completion."}' >&2
@@ -3316,7 +3438,8 @@ complete_issue() {
     local issue_id="$1"
     shift
 
-    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>] [--done-when-waived <N[,N...]>] [--done-when-superseded <N[,N...]>] [--evidence-file <path>] [--post-merge-at <UTC>]"
+    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>] [--done-when-waived <N[,N...]>] [--done-when-superseded <N[,N...]>] [--evidence-file <path>] [--post-merge-at <UTC>] [--synced-description]"
+    local synced_description="false"
     local summary=""
     local summary_file=""
     local done_when_met=""
@@ -3336,6 +3459,10 @@ complete_issue() {
         --format=*)
             output_format="${1#*=}"
             linear_require_format "$output_format" ids || return 1
+            shift
+            ;;
+        --synced-description)
+            synced_description="true"
             shift
             ;;
         --evidence-file)
@@ -3513,6 +3640,14 @@ complete_issue() {
             '{error: ("Done-when box not found in " + $id + ": " + (.missing | map(tostring) | join(",")) + ". Issue state unchanged."), missing}' <<<"$tick" >&2
         return 1
     fi
+    # An item filed before the write check can hold an open box no completion
+    # reader numbers; it holds both Done and Verifying until it is moved.
+    if jq -e 'any(.outside_boxes[]; .checked | not)' <<<"$tick" >/dev/null; then
+        jq -c --arg id "$issue_id" \
+            '{error: "done-when-outside", issue: $id, boxes: [.outside_boxes[] | select(.checked | not) | {line, text}],
+              fix: "Move each box under ## Done when. Issue state unchanged."}' <<<"$tick" >&2
+        return 1
+    fi
     completion_state=$(jq -r '.completion_state // ""' <<<"$tick") || return 1
     if [ -z "$completion_state" ]; then
         jq -c '{error: "post-merge-checklist", errors, unmet_branch_boxes, missing_evidence_boxes}' <<<"$tick" >&2
@@ -3583,9 +3718,11 @@ complete_issue() {
     if jq -e '.changed' <<<"$tick" >/dev/null; then
         local ticked_description
         ticked_description=$(jq -r '.description + "."' <<<"$tick") || return 1
+        require_unsynced_description "$issue_id" "$issue_result" true "$synced_description" || return 1
         update_args+=(--description "${ticked_description%.}")
     fi
 
+    [ "$synced_description" != true ] || update_args+=(--synced-description)
     update_args+=(--state "$completion_state")
 
     if [ -n "$summary" ]; then
@@ -3629,6 +3766,7 @@ complete_issue() {
             # The retry drops only the summary options: the comment is posted,
             # and the Done-when boxes still ride the update that sets Done.
             local retry="'issues.sh complete $issue_id"
+            [ "$synced_description" != true ] || retry+=" --synced-description"
             if [ -n "$done_when_met" ]; then
                 retry+=" --done-when-met $done_when_met"
             fi
@@ -3660,6 +3798,7 @@ complete_issue() {
         replacement=$(jq -er '.issue.identifier' <<<"$issue_result") || return 1
         if ! complete_superseded_issues "$replacement" ${superseded_ids[@]+"${superseded_ids[@]}"}; then
             local retry_options='[]'
+            [ "$synced_description" != true ] || retry_options='["--synced-description"]'
             if [ -n "$done_when_met" ]; then
                 retry_options=$(jq -c --arg value "$done_when_met" '. + ["--done-when-met", $value]' <<<"$retry_options") || return 1
             fi

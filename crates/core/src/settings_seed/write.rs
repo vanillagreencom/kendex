@@ -1,14 +1,14 @@
 //! Writing entries into the consumer's settings file.
 //!
 //! Split from the reading beside it because the two answer different
-//! questions. Everything here is byte-faithful: the inserted block is the
-//! only change, and inside it the comment lines take the destination
+//! questions. Everything here is byte-faithful: only inserted blocks and
+//! proven orphan comment spans move. Inserted comment lines take the destination
 //! file's terminator while a value's own newlines are copied as the
 //! template wrote them.
 
 use std::collections::BTreeSet;
 
-use crate::settings_toml::Row;
+use crate::settings_toml::{Line, Row};
 
 use super::{SeededEnv, Seeding, assigned_keys, env_blocked, opens_env, table_row, written_for};
 
@@ -50,14 +50,72 @@ fn render_entries(entries: &[&SeededEnv], eol: &str) -> String {
         // comment lines are the file's own structure and take its
         // terminator; the value goes out byte for byte, because the
         // newlines inside it are content the template chose.
-        for line in &seeded.entry.comment {
-            out.push_str(line);
-            out.push_str(eol);
-        }
+        out.push_str(&render_comment(&seeded.entry.comment, eol));
         out.push_str(&seeded.entry.assignment);
         out.push_str(eol);
     }
     out
+}
+
+fn render_comment(comment: &[String], eol: &str) -> String {
+    let mut out = String::new();
+    for line in comment {
+        out.push_str(line);
+        out.push_str(eol);
+    }
+    out
+}
+
+/// Remove only complete, maximal orphan runs equal to comments seeding
+/// could have emitted. Separators and every unproved byte stay untouched.
+pub(crate) fn remove_orphan_comments(
+    original: &str,
+    entries: &[SeededEnv],
+) -> (String, Vec<String>) {
+    let rows = crate::settings_toml::rows(original);
+    let Some((start, end)) = env_section(&rows) else {
+        return (original.to_owned(), Vec::new());
+    };
+    let eol = file_eol(&rows);
+    let known: Vec<_> = entries
+        .iter()
+        .filter(|seeded| seeded.entry.complete() && !seeded.entry.comment.is_empty())
+        .map(|seeded| {
+            (
+                render_comment(&seeded.entry.comment, eol),
+                &seeded.entry.key,
+            )
+        })
+        .collect();
+    let mut out = String::new();
+    let mut removed = Vec::new();
+    let mut copied = 0;
+    let mut index = start + 1;
+    while index < end {
+        if rows[index].kind != Line::Comment {
+            index += 1;
+            continue;
+        }
+        let from = rows[index].at;
+        while index < end && rows[index].kind == Line::Comment {
+            index += 1;
+        }
+        // Even a different or unreadable live key owns its preceding prose.
+        if index < end && rows[index].assignment().is_some() {
+            continue;
+        }
+        let to = rows[index - 1].at + rows[index - 1].raw.len();
+        if let Some((_, key)) = known
+            .iter()
+            .find(|(comment, _)| *comment == original[from..to])
+        {
+            out.push_str(&original[copied..from]);
+            copied = to;
+            removed.push((*key).clone());
+        }
+    }
+    out.push_str(&original[copied..]);
+    (out, removed)
 }
 
 /// Merge into the settings text the entries `seeding` admits, byte-

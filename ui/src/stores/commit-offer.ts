@@ -2,11 +2,13 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import {
   type ChangeSelection,
+  type Choice,
   commands,
   type ProjectBaseline,
   type ProjectFlag,
   type ProjectOffer,
   type Refused,
+  type Route,
   type StalePackage,
 } from "@/bindings";
 import {
@@ -22,7 +24,10 @@ import { useProblemsStore } from "./problems";
 
 /** Which of the three the person picked. `leave` is not one: leaving is
  *  dismissing, and nothing runs for it. */
-export type Route = "commit" | "push" | "pr";
+export type Picked = Exclude<Route, "leave">;
+
+/** A choice that runs something: every one the offer carries but leave. */
+export type PickedChoice = Choice & { route: Picked };
 
 /** Which pending changes the picked route is about.
  *
@@ -34,16 +39,37 @@ export type Route = "commit" | "push" | "pr";
  *  reader just did. */
 export type Scoped = "action" | "all";
 
+/** The step of a setup chosen at a held offer that failed: a package's
+ *  installer, named, or offering the commit again after every installer
+ *  ran. That offer reads the whole project again, so its failure says
+ *  nothing about which part of the read failed. */
+export type SetUpStep =
+  | { kind: "installer"; name: string }
+  | { kind: "offerAgain" };
+
+/** A package whose installer the setup ran to the end: it is set up in
+ *  the repository whatever failed after it, and these are its words. */
+export interface SetUpArmed {
+  name: string;
+  said: string[];
+}
+
 /** Where the dialog is. Each state carries exactly what its own copy
  *  draws, so no view has to guess which fields apply to it. */
 export type Stage =
   | { at: "offer" }
-  | { at: "busy"; step: Route }
+  | { at: "busy"; step: Picked }
   /** The setup a held offer carries is running. */
   | { at: "settingUp" }
-  /** The setup's installer, or the read after it, failed: what went
-   *  wrong, and nothing was committed. */
-  | { at: "setUpFailed"; error: string }
+  /** A package's installer failed, or offering the commit again after
+   *  every installer ran did: which step, the packages set up before it with what each
+   *  installer said, and what went wrong. Nothing was committed. */
+  | {
+      at: "setUpFailed";
+      step: SetUpStep;
+      armed: SetUpArmed[];
+      error: string;
+    }
   /** The setup ran and the fresh reading still holds the commit. The
    *  head is that reading, so what [`heldBy`] reads off it is what the
    *  state draws. */
@@ -52,17 +78,17 @@ export type Stage =
       at: "commitRefused";
       refused: Refused;
       stillStaged: number | null;
-      /** The commit refused on the `pr` route and the branch kendex made
+      /** The commit refused on the `pullRequest` route and the branch kendex made
        *  is gone again, which the state says in one added line. */
       abandoned: boolean;
-      /** The commit refused on the `pr` route and the way back refused
+      /** The commit refused on the `pullRequest` route and the way back refused
        *  too: the checkout is still on the new branch, and this carries
        *  the words of the step that would have put it back. Null on every
        *  other path. */
       notPutBack: Refused | null;
     }
   | { at: "branchRefused"; refused: Refused }
-  /** Nothing was left to commit on the `pr` route and the switch back
+  /** Nothing was left to commit on the `pullRequest` route and the switch back
    *  then refused: no commit to report, and the checkout is still on the
    *  branch kendex made, so kendex stops there. */
   | { at: "notPutBack"; refused: Refused }
@@ -79,7 +105,7 @@ export type Stage =
       before: string | null;
       /** GitHub refused the push for want of a pull request: the commands
        *  that open one from this commit by hand, the words the recovery
-       *  runs. `null` for any other refusal, and on the `pr` route, where
+       *  runs. `null` for any other refusal, and on the `pullRequest` route, where
        *  the commit is already on a branch of its own. */
       byHand: string[] | null;
     }
@@ -89,7 +115,7 @@ export type Stage =
       sha: string;
       branch: string;
       url: string;
-      /** The checkout moved to the branch, which the `pr` route does and
+      /** The checkout moved to the branch, which the `pullRequest` route does and
        *  the refused-push recovery does not. */
       moved: boolean;
       /** Where the checkout did not move, the commit the person can put
@@ -103,7 +129,7 @@ interface CommitOfferState {
    *  Each is asked on its own and answered on its own. */
   queue: ProjectOffer[];
   stage: Stage;
-  route: Route;
+  route: Picked;
   /** Which pending changes the picked route is about. Reset to `action`
    *  whenever the head of the line changes: the choice belongs to the offer
    *  in front of the reader, not to the store. */
@@ -165,7 +191,7 @@ interface CommitOfferState {
   openFor: (root: string) => Promise<OpenedFor>;
   /** The held scan failure has been reported; drop it. */
   scanFailureSaid: () => void;
-  pick: (route: Route) => void;
+  pick: (route: Picked) => void;
   /** Pick which pending changes the route is about. */
   scope: (scoped: Scoped) => void;
   /** Say yes to the earlier edits riding along with this action's work. */
@@ -270,15 +296,13 @@ export function ready(state: {
   return offer.tangled.length === 0 || state.accepted;
 }
 
-/** The choices this offer carries, in the order the design fixes. */
-export function routesFor(offer: ProjectOffer): Route[] {
-  const routes: Route[] = ["commit"];
-  if (offer.push === null) routes.push("push");
-  // Where a pull request is already open for this branch, `pr` is not
-  // offered: the branch already has one.
-  if (offer.pullRequest === null && offer.openNumber === null)
-    routes.push("pr");
-  return routes;
+/** The choices the dialog draws as segments, in core's order: every one
+ *  the offer carries but leave, which is the dialog's own dismiss. Which
+ *  choice stands is core's `Offer::choices`, never decided here. */
+export function pickable(offer: ProjectOffer): PickedChoice[] {
+  return offer.choices.filter(
+    (choice): choice is PickedChoice => choice.route !== "leave",
+  );
 }
 
 export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
@@ -408,7 +432,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
   let answered = 0;
 
   /** The last step of both pull-request routes. `moved` says whether the
-   *  checkout is now on the branch, which the `pr` route does and the
+   *  checkout is now on the branch, which the `pullRequest` route does and the
    *  refused-push recovery deliberately does not. */
   const open = async (
     offer: ProjectOffer,
@@ -421,7 +445,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
   ) => {
     const repo = offer.repo;
     if (repo === null) return;
-    set({ stage: { at: "busy", step: "pr" } });
+    set({ stage: { at: "busy", step: "pullRequest" } });
     const opened = await commands.commitOfferOpenPullRequest(
       repo,
       branch,
@@ -660,7 +684,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       // branch back to, and after the commit it is no longer HEAD.
       const previous = await commands.commitOfferPreviousHead(offer.root);
       const before = previous.status === "ok" ? previous.data : null;
-      if (route === "pr") {
+      if (route === "pullRequest") {
         const started = await commands.commitOfferStartBranch(
           offer.root,
           offer.newBranch,
@@ -694,7 +718,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
         // commit that dropped only some of them gives.
         const gone = committed.data.dropped;
         if (gone.length > 0) toast.info(droppedToast(gone));
-        if (route === "pr") {
+        if (route === "pullRequest") {
           // The checkout was switched to the new branch before the commit
           // and no commit landed on it, so without this the branch would
           // be left empty with the checkout on it.
@@ -715,7 +739,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       if (committed.data.kind === "refused") {
         const { refused, stillStaged } = committed.data;
         let abandoned = false;
-        if (route === "pr") {
+        if (route === "pullRequest") {
           // The branch carries no commit of its own, so kendex clears its
           // own leftover: back to where the person was, and the empty
           // branch removed.
@@ -768,20 +792,20 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
         transport("kendex has no remote to push to in this project.");
         return;
       }
-      const branch = route === "pr" ? offer.newBranch : offer.branch;
+      const branch = route === "pullRequest" ? offer.newBranch : offer.branch;
       set({ stage: { at: "busy", step: "push" } });
       const pushed = await commands.commitOfferPush(
         offer.root,
         remote,
         branch,
-        route === "pr" ? false : offer.tracked,
+        route === "pullRequest" ? false : offer.tracked,
       );
       if (pushed.status === "error") return transport(pushed.error);
       if (pushed.data.kind === "refused") {
         const refused = pushed.data.refused;
-        // On the `pr` route the commit is already on a branch of its own,
+        // On the `pullRequest` route the commit is already on a branch of its own,
         // which is what the recovery would have made.
-        const recovers = route !== "pr";
+        const recovers = route !== "pullRequest";
         let byHand: string[] | null = null;
         if (recovers && refused.pullRequestRequired && offer.repo !== null) {
           const lines = await commands.commitOfferByHand(
@@ -803,7 +827,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
             sha,
             branch,
             files,
-            canOpen: recovers && offer.pullRequest === null,
+            canOpen: recovers && offer.recoversRefusedPush,
             before,
             byHand,
           },
@@ -831,21 +855,34 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       // refused. The offer that lifecycle asks for reads this project
       // against the same reading as the read below, and leaves the head
       // alone while its answer is on screen.
+      // Each package set up is kept as it lands: one that fails after it
+      // leaves it set up in the repository, and the failure says so.
+      const armed: SetUpArmed[] = [];
       const refused = await writingRepo(
         async () => {
           for (const one of held) {
-            const armed = await commands.repoEffectsApply(
+            const answer = await commands.repoEffectsApply(
               { scope: "project", root: offer.root },
               one.disclosure.declared,
             );
-            if (armed.status === "error") return armed.error;
+            if (answer.status === "error")
+              return { name: one.name, error: answer.error };
+            const { stderr, stdout } = answer.data;
+            armed.push({ name: one.name, said: [...stderr, ...stdout] });
           }
           return null;
         },
         () => set({ stage: { at: "settingUp" } }),
       );
       if (refused !== null) {
-        set({ stage: { at: "setUpFailed", error: refused } });
+        set({
+          stage: {
+            at: "setUpFailed",
+            step: { kind: "installer", name: refused.name },
+            armed,
+            error: refused.error,
+          },
+        });
         return;
       }
       const read = await reread(offer.root, since);
@@ -874,7 +911,14 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
           advance();
           return;
         case "failed":
-          set({ stage: { at: "setUpFailed", error: read.error } });
+          set({
+            stage: {
+              at: "setUpFailed",
+              step: { kind: "offerAgain" },
+              armed,
+              error: read.error,
+            },
+          });
           return;
       }
     },
@@ -885,7 +929,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       if (!offer || stage.at !== "pushRefused") return;
       const remote = offer.remote;
       if (remote === null) return;
-      set({ stage: { at: "busy", step: "pr" } });
+      set({ stage: { at: "busy", step: "pullRequest" } });
       const pushed = await commands.commitOfferPushHead(
         offer.root,
         remote,

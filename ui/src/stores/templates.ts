@@ -6,6 +6,7 @@
 // what installing one writes — those are core's answers, reached through
 // the commands.
 import { useMemo } from "react";
+import { toast } from "sonner";
 import { create } from "zustand";
 import {
   type Chosen,
@@ -26,6 +27,7 @@ type Method = "symlink" | "copy";
 
 import { writingRepo } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
+import { sayWritten } from "@/lib/undone";
 
 export type Template = Template_Serialize;
 export type Draft = Draft_Serialize;
@@ -119,9 +121,14 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => {
         commands.templateCreateFromSelection(name, members),
       ),
     createFromProject: (project, chosen) =>
-      write(set, get, () =>
-        commands.templateCreateFromProject(project, chosen),
-      ),
+      write(set, get, async () => {
+        const answer = await commands.templateCreateFromProject(
+          project,
+          chosen,
+        );
+        if (answer.status === "ok") sayWritten(answer.data.warnings);
+        return answer;
+      }),
     addMembers: (name, members) =>
       write(set, get, () => commands.templateAddMembers(name, members)),
     removeMembers: (name, members) =>
@@ -134,9 +141,19 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => {
     // like every other write that reaches the engine.
     install: (name, destination) =>
       writingRepo(() =>
-        write(set, get, () =>
-          commands.templateInstall(name, destination, null, null),
-        ),
+        write(set, get, async () => {
+          const answer = await commands.templateInstall(
+            name,
+            destination,
+            null,
+            null,
+          );
+          if (answer.status === "ok") {
+            for (const note of answer.data.notes) toast.message(note);
+            sayWritten(answer.data.warnings);
+          }
+          return answer;
+        }),
       ),
 
     clearRefusal: () => set({ refused: null }),
@@ -185,6 +202,8 @@ export async function installTemplate(
     ),
   );
   if (answer.status === "error") return { ok: false, reason: answer.error };
+  for (const note of answer.data.notes) toast.message(note);
+  sayWritten(answer.data.warnings);
   // A run that stopped short landed part of the template and says why it
   // went no further. Both halves, because both are true: the dialog
   // already draws a place that took some of an install and refused the

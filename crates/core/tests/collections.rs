@@ -132,7 +132,7 @@ fn scoped(manifest: &str) -> (tempfile::TempDir, Env, Scope) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_scope_subscribes_each_repo_at_the_snapshot() {
-    let (_tmp, env, scope) = scoped("schema = 7\n");
+    let (_tmp, env, scope) = scoped("schema = 8\n");
     let collection = Collection {
         id: "i".to_owned(),
         name: "starter".to_owned(),
@@ -220,7 +220,7 @@ fn a_malformed_manifest_refuses_collection_planning() {
 #[allow(clippy::unwrap_used)]
 fn an_existing_subscription_is_reused_when_its_pin_matches() {
     let (_tmp, env, scope) = scoped(
-        "schema = 7\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"ab12cd34ef12345678901234567890123456abcd\"\n",
+        "schema = 8\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"ab12cd34ef12345678901234567890123456abcd\"\n",
     );
     let collection = Collection {
         id: "i".to_owned(),
@@ -244,7 +244,7 @@ fn an_existing_subscription_is_reused_when_its_pin_matches() {
 #[allow(clippy::unwrap_used)]
 fn a_mismatched_pin_refuses_naming_both_halves() {
     let (_tmp, env, scope) =
-        scoped("schema = 7\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"1111111111\"\n");
+        scoped("schema = 8\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"1111111111\"\n");
     let collection = Collection {
         id: "i".to_owned(),
         name: "starter".to_owned(),
@@ -269,7 +269,7 @@ fn a_mismatched_pin_refuses_naming_both_halves() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_repo_pinned_at_two_commits_is_not_a_snapshot() {
-    let (_tmp, env, scope) = scoped("schema = 7\n");
+    let (_tmp, env, scope) = scoped("schema = 8\n");
     let collection = Collection {
         id: "i".to_owned(),
         name: "starter".to_owned(),
@@ -358,7 +358,7 @@ fn collection_replacements_and_retained_readings_are_checked_before_installation
         let first_repo = format!("file://{}", first.display());
         let last_repo = format!("file://{}", last.display());
         fs::write(project.join("kendex.toml"), format!(
-            "schema = 7\n[sources.first]\nrepo = '{first_repo}'\nrev = 'main'\n[sources.last]\nrepo = '{last_repo}'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.held]\nsource = 'last'\n{}",
+            "schema = 8\n[sources.first]\nrepo = '{first_repo}'\nrev = 'main'\n[sources.last]\nrepo = '{last_repo}'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.held]\nsource = 'last'\n{}",
             if retained { "[skills.retained]\nsource = 'last'\n" } else { "" })).unwrap();
         let scope = Scope::Project {
             root: project.clone(),
@@ -471,7 +471,7 @@ fn agent_collection_fixture(held: bool) -> AgentCollectionFixture {
         String::new()
     };
     fs::write(project.join("kendex.toml"), format!(
-        "schema = 7\n[sources.cat]\nrepo = '{repo}'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.automatic]\nsource = 'cat'\n{pin}")).unwrap();
+        "schema = 8\n[sources.cat]\nrepo = '{repo}'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.automatic]\nsource = 'cat'\n{pin}")).unwrap();
     let scope = Scope::Project { root: project };
     remote::sync(&env, &repo, Some(&first)).unwrap();
     remote::sync(&env, &repo, None).unwrap();

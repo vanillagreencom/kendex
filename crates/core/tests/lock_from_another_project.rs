@@ -73,7 +73,7 @@ fn declare(root: &Path, catalog: &Path) {
     put(
         &root.join("kendex.toml"),
         &format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.ship]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.ship]\nsource = \"cat\"\n",
             source_path(catalog)
         ),
     );

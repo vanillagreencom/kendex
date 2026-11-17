@@ -41,8 +41,12 @@ Whose words count:
   author association OWNER, MEMBER or COLLABORATOR, and is not the PR
   author. A reply counts when its author is the PR author or the identity
   this check runs as (the token's GraphQL viewer), whatever its actor type,
-  or has one of those associations. An account is its numeric id (REST
-  user.id, GraphQL databaseId), never its login: an account named like an
+  or has one of those associations, or is declared in
+  GH_REVIEW_REPLY_ACCOUNT_IDS. GitHub's PR and commit reads expose no
+  current-head pusher; this consumer setting declares automation accounts
+  whose replies count, as whitespace-separated positive numeric account
+  ids, empty by default. Invalid values reach no verdict. An account is its
+  numeric id (REST user.id, GraphQL databaseId), never its login: an account named like an
   app is not the app. Anyone else's review or reply is read as if it were
   not there.
 
@@ -250,7 +254,7 @@ AUTHOR_TRUST_DEF='def rest_actor: {id: (.user.id // null), login: (.user.login /
   def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";
   def same_account($account): .id != null and .id == $account.id;
   def finding_source($author): (same_account($author) | not) and (.bot or member);
-  def reply_source($author; $viewer): same_account($author) or same_account($viewer) or member;
+  def reply_source($author; $viewer): same_account($author) or same_account($viewer) or member or (.id as $id | $automation | index($id) != null);
 '
 
 # The two thread rules, over every review thread node the reader returned:
@@ -557,10 +561,19 @@ viewer_read=$(jq -r "$ACCOUNT_DEF"'account(.databaseId)' <<<"$viewer_json" 2>/de
 VIEWER_ACCOUNT="${viewer_read%%$'\n'*}"
 VIEWER_NAMED="${viewer_read#*$'\n'}"
 
+# PR and Commit expose no current-head pusher (not their self-written GitActor):
+# https://docs.github.com/en/graphql/reference/pulls#pullrequest
+# https://docs.github.com/en/graphql/reference/commits#commit
+# Until GitHub exposes that relation, consumers declare automation account ids.
+AUTOMATION_IDS=$(jq -cn --arg ids "${GH_REVIEW_REPLY_ACCOUNT_IDS:-}" '
+  [$ids | scan("[^[:space:]]+")
+    | if test("^[1-9][0-9]*$") then tonumber else error("invalid account id") end]' 2>/dev/null) ||
+  refuse "invalid-reply-account-ids" "$PR_NUMBER" "GH_REVIEW_REPLY_ACCOUNT_IDS must contain whitespace-separated positive numeric account ids"
+
 threads=$(gh_graphql_threads "$OWNER" "$NAME" "$PR_NUMBER" '
                           comments(first: 100) { totalCount nodes { author { login __typename ... on User { databaseId } ... on Bot { databaseId } } authorAssociation body } }' 2>"$READ_ERR") ||
   refuse "read-failed" "$PR_NUMBER" "the review thread read failed: $(reader_said)"
-thread_counts=$(jq -r --argjson author "$AUTHOR_ACCOUNT" --argjson viewer "$VIEWER_ACCOUNT" "$THREAD_RULES_JQ" <<<"$threads" 2>/dev/null) ||
+thread_counts=$(jq -r --argjson author "$AUTHOR_ACCOUNT" --argjson viewer "$VIEWER_ACCOUNT" --argjson automation "$AUTOMATION_IDS" "$THREAD_RULES_JQ" <<<"$threads" 2>/dev/null) ||
   refuse "read-malformed" "$PR_NUMBER" "the review thread read could not be judged"
 read -r truncated untracked unreasoned <<<"$thread_counts"
 case "$truncated:$untracked:$unreasoned" in
@@ -586,7 +599,7 @@ elif [ "$supp_mismatched" != 0 ]; then
   supp_state=mismatch
 elif [ "$supp_entries" != 0 ]; then
   comments=$(read_collection "issue comments" "repos/$SLUG/issues/$PR_NUMBER/comments?per_page=100") || exit 2
-  supp_disp=$(jq -r --arg sha "$HEAD_SHA" --argjson author "$AUTHOR_ACCOUNT" --argjson viewer "$VIEWER_ACCOUNT" --arg floor "$SHA_FLOOR" \
+  supp_disp=$(jq -r --arg sha "$HEAD_SHA" --argjson author "$AUTHOR_ACCOUNT" --argjson viewer "$VIEWER_ACCOUNT" --argjson automation "$AUTOMATION_IDS" --arg floor "$SHA_FLOOR" \
     --arg entries "$supp_list" "$SUPP_DISPOSITION_JQ" <<<"$comments" 2>/dev/null) ||
     refuse "read-malformed" "$PR_NUMBER" "the disposition comments could not be read"
   read -r supp_entries supp_ignored <<<"${supp_disp%%$'\n'*}"
@@ -630,7 +643,7 @@ case "$supp_state" in
       # expression.
       read -r -a ignored_logins <<<"$supp_ignored"
       for login in ${ignored_logins[@]+"${ignored_logins[@]}"}; do
-        printf 'suppressed-findings: ignored-author login=%s\n  its head-bound disposition comment does not count: the author is not the PR author (%s), not the identity this check runs as (%s), and not an OWNER, MEMBER or COLLABORATOR\n' "$login" "$AUTHOR_NAMED" "$VIEWER_NAMED" >&2
+        printf 'suppressed-findings: ignored-author login=%s\n  its head-bound disposition comment does not count: the author is not the PR author (%s), not the identity this check runs as (%s), not an OWNER, MEMBER or COLLABORATOR, and not a declared automation account\n' "$login" "$AUTHOR_NAMED" "$VIEWER_NAMED" >&2
       done
     fi
     ;;

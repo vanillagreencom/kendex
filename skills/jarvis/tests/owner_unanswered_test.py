@@ -342,9 +342,14 @@ class OwnerUnanswered(MailWorld):
                      "state/archive/INDEX.md": ("# Archive\n\n- a.md kind=x dates=%s..%s\n" % (old, now)).encode()},
                   [], 0, [], []),
                  ("pruned in the window", {"state/archive/INDEX.md": ("- gone.md dates=%s..%s\n" % (old, now)).encode()},
-                  [], 0, ["owner-unanswered: archive-pruned=%s" % (archive / "gone.md")], ["waiting"]),
+                  [], 0, ["owner-unanswered: archive-pruned=1 first=%s last=%s" % (archive / "gone.md", archive / "gone.md")], ["waiting"]),
                  ("pruned with an unread end", {"state/archive/INDEX.md": b"- gone.md dates=soon\n"},
-                  [], 0, ["owner-unanswered: archive-pruned=%s" % (archive / "gone.md")], ["waiting"]),
+                  [], 0, ["owner-unanswered: archive-pruned=1 first=%s last=%s" % (archive / "gone.md", archive / "gone.md")], ["waiting"]),
+                 ("three pruned undated archives", {"state/archive/INDEX.md":
+                     b"- c.md dates=unread..unread\n- a.md dates=unread..unread\n- b.md dates=unread..unread\n"},
+                  ["--since", mid_minute], 0,
+                  ["owner-unanswered: archive-pruned=3 first=%s last=%s" % (archive / "a.md", archive / "c.md")],
+                  ["waiting"]),
                  ("pruned before the window", {"state/archive/INDEX.md": ("- gone.md dates=%s..%s\n" % (old, old)).encode()},
                   [], 0, [], ["waiting"]))
         for name, files, args, code, stderr, listed in cases:

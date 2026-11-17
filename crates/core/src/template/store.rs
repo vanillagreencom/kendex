@@ -88,8 +88,11 @@ fn held_copies(template: &Template) -> impl Iterator<Item = (&str, &[String])> {
         .members
         .iter()
         .filter_map(|member| match &member.source {
-            MemberSource::Copy { copy, notices, .. } => Some((copy.as_str(), notices.as_slice())),
-            MemberSource::Marketplace { .. } => None,
+            MemberSource::Copy { copy, notices, .. }
+            | MemberSource::SharedCopy { copy, notices, .. } => {
+                Some((copy.as_str(), notices.as_slice()))
+            }
+            MemberSource::Marketplace { .. } | MemberSource::Catalog { .. } => None,
         })
 }
 

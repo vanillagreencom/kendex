@@ -65,8 +65,22 @@ pub type CliResult = Result<(), Box<dyn std::error::Error>>;
 /// The verb and the scopes it acts on, above a converted verb's report.
 /// Chrome: a plain run draws nothing.
 pub fn header(verb: &str, scopes: &[Scope]) {
-    let target: Vec<String> = scopes.iter().map(Scope::label).collect();
-    crate::ui::stderr(&crate::ui::style().header(verb, &target.join(", ")));
+    let labels: Vec<String> = scopes.iter().map(Scope::label).collect();
+    crate::ui::stderr(&crate::ui::style().header(verb, &scope_target(&labels)));
+}
+
+/// Scope labels as a header's target: each label whole, since a project's
+/// root is a path a person copies and may hold a space, and the joining
+/// text prose.
+pub fn scope_target(labels: &[String]) -> Vec<crate::ui::Span<'_>> {
+    let mut spans = Vec::new();
+    for (at, label) in labels.iter().enumerate() {
+        if at > 0 {
+            spans.push(crate::ui::Span::Prose(", "));
+        }
+        spans.push(crate::ui::Span::Command(label));
+    }
+    spans
 }
 
 /// A scope as a human line names it. The label is a path somebody chose,
@@ -256,6 +270,24 @@ fn start_a_project_here(here: &std::path::Path, yes: bool) -> CliResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each scope label in a header is whole: a project root with a space
+    /// in it, past the room beside the title, starts the line under it in
+    /// one piece, and the joining text stays prose beside it.
+    #[test]
+    fn a_header_draws_each_scope_label_whole() {
+        let root = "/home/me/dev/a project folder whose name takes up most/of the line";
+        let labels = [root.to_owned(), "global".to_owned()];
+        assert_eq!(
+            crate::ui::testing::tagged(
+                &crate::ui::testing::rich(80).header("refresh", &scope_target(&labels))
+            ),
+            [
+                "<1;34>kendex refresh</>  ".to_owned(),
+                format!("  <90>{root}, global</>"),
+            ]
+        );
+    }
 
     /// The whole rule, over both answers the walk can give. An established
     /// project is the destination however deep the command was typed; with

@@ -167,6 +167,8 @@ step() {
       git -C "$MAIN" worktree add -q -b pending "$ROOT/trees/pending" main
       TREES="$TREES pending"
       ;;
+    # An unstaged edit to a tracked file, which the restack admission refuses.
+    dirty) printf 'edit\n' >>"$ROOT/trees/topic/base.txt" ;;
     claim-self) claim topic ISSUE-1 ;;
     claim-other) claim topic OTHER-SESSION ;;
     claim-issue) claim topic topic ;;
@@ -290,6 +292,7 @@ cleanup rejects a non-numeric --ttl-minutes|merged|self|cleanup --stale --ttl-mi
 cleanup --help prints usage and collects nothing|merged|self|cleanup --help|0|usage|-|topic=present/branch/3
 an unavailable guard is announced once and cleanup proceeds unguarded|merged free no-guard|self|cleanup|0|cleaned-both|unguarded|topic=absent/no-branch/1 free=absent/no-branch/1
 create --reuse refuses a foreign lease as active work|created claim-other|self|create topic --reuse|75|-|reuse-foreign:OTHER-SESSION|topic=present/branch/OTHER-SESSION
+create --restack refuses a foreign lease on a dirty tree as active work, before the dirty-tree admission|created dirty claim-other|self|create topic --restack|75|-|reuse-foreign:OTHER-SESSION|topic=present/branch/OTHER-SESSION
 create --reuse under its own lease succeeds and keeps it|created claim-self|self|create topic --reuse|0|path|-|topic=present/branch/ISSUE-1
 '
 

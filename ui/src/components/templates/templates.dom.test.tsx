@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AppSettings,
@@ -52,6 +53,7 @@ vi.mock("@/bindings", () => ({
     templateFiles: vi.fn(),
     templateFile: vi.fn(),
     templateAddMembers: vi.fn(),
+    templateCatalogSource: vi.fn(),
     templateCreateFromSelection: vi.fn(),
     scanMachine: vi.fn().mockResolvedValue({ status: "ok", data: null }),
     auditAll: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -66,7 +68,9 @@ vi.mock("@/bindings", () => ({
     projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
+}));
 
 /** The project every case here installs into or reads a draft from. */
 const ACME_ROOT = "/work/acme";
@@ -95,6 +99,12 @@ const RUST_SERVICE: Template_Serialize = {
   customizations: {},
 };
 
+const SAVED_CATALOG = {
+  kind: "repository" as const,
+  repo: "vanillagreencom/kendex",
+  origin: { origin: "declared" as const, scope: { scope: "global" as const } },
+};
+
 const DRAFT: Draft_Serialize = {
   project: "/work/acme",
   suggestedName: "acme",
@@ -108,6 +118,7 @@ const DRAFT: Draft_Serialize = {
       requiredBy: [],
       origin: {
         origin: "marketplace",
+        catalog: SAVED_CATALOG,
         repo: "vanillagreencom/kendex",
         source: "kendex",
         rev: null,
@@ -137,6 +148,12 @@ const DRAFT: Draft_Serialize = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(commands.templateCatalogSource).mockImplementation(
+    async (_catalog, rev) => ({
+      status: "ok",
+      data: { held: "catalog", catalog: SAVED_CATALOG, rev },
+    }),
+  );
   useTemplatesStore.setState({
     templates: [],
     everRead: false,
@@ -170,6 +187,17 @@ beforeEach(() => {
     data: [],
   });
 });
+
+/** A link a write kept as written, with its fix: what a save or an install
+ *  reports about its copies and nothing read afterwards can say. */
+const kept = {
+  kind: "skill" as const,
+  name: "stray",
+  message:
+    "SKILL.md links to ../../memory/x.md, which may no longer reach its file",
+  remediation: "Use an absolute path.",
+  detail: "skill-link-kept: SKILL.md: ../../memory/x.md",
+};
 
 /** Everything on screen, the dialogs included: a dialog renders into a
  *  portal, so its text is on the document rather than under the mount. */
@@ -338,6 +366,41 @@ describe("creating a template from a project", () => {
     );
   });
 
+  // Only the save can say which links its copies kept, and the dialog
+  // closes on it, so each one must reach the window as a toast.
+  it.each([
+    { name: "a link was kept", warnings: [kept], calls: 1 },
+    { name: "every link converted", warnings: undefined, calls: 0 },
+  ])("toasts what the save kept: $name", async ({ warnings, calls }) => {
+    vi.mocked(commands.templateDraft).mockResolvedValue({
+      status: "ok",
+      data: DRAFT,
+    });
+    vi.mocked(commands.templateCreateFromProject).mockResolvedValue({
+      status: "ok",
+      data: { ...RUST_SERVICE, warnings },
+    });
+    mount(
+      <CreateTemplateDialog
+        project="/work/acme"
+        place="acme"
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    await settle();
+    await act(async () => button(document, NEW_TEMPLATE_LABEL).click());
+    await settle();
+
+    const toasted = vi.mocked(toast.message).mock.calls;
+    expect(toasted).toHaveLength(calls);
+    for (const [title, options] of toasted) {
+      expect(String(title)).toContain(kept.name);
+      expect(String(title)).toContain(kept.message);
+      expect(options?.description).toBe(kept.remediation);
+    }
+  });
+
   // A project kendex manages nothing in still offers its local packages,
   // under no heading for a list with nothing in it.
   it("heads no included packages where the project has none", async () => {
@@ -417,6 +480,7 @@ describe("installing a template into a place", () => {
         declared: [],
         copied: [],
         notes: [],
+        warnings: [kept],
         stopped: null,
       },
     });
@@ -442,6 +506,12 @@ describe("installing a template into a place", () => {
       null,
     );
     expect(useInstallFlow.getState().outcome?.places[0]?.wrote).toBe(true);
+    // The guided install closes on the run, so what the renders kept
+    // reaches the window as a toast with its fix.
+    expect(toast.message).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`${kept.name}.*${kept.message}`)),
+      expect.objectContaining({ description: kept.remediation }),
+    );
   });
 
   // A refused install is reported at the place that refused it, not
@@ -480,7 +550,7 @@ describe("saving a marketplace selection into a template", () => {
       status: "ok",
       data: RUST_SERVICE,
     });
-    const saveable = membersFor(
+    const saveable = await membersFor(
       [
         {
           catalog: {
@@ -509,8 +579,8 @@ describe("saving a marketplace selection into a template", () => {
         name: "gh",
         enabled: true,
         source: {
-          held: "marketplace",
-          repo: "vanillagreencom/kendex",
+          held: "catalog",
+          catalog: SAVED_CATALOG,
           rev: null,
         },
       },
@@ -544,6 +614,7 @@ describe("a template install that stopped part-way", () => {
         declared: ["skill code-quality"],
         copied: [],
         notes: [],
+        warnings: [],
         stopped: "skill 'house-style' is already here with different bytes",
       },
     });
@@ -570,12 +641,15 @@ describe("a marketplace selection nothing can name", () => {
       status: "ok",
       data: [RUST_SERVICE],
     });
-    // A row from a bare repository: no subscription, so no repository a
-    // template could record it under.
-    const saveable = membersFor(
+    // No subscription read has landed for the selected catalog.
+    const saveable = await membersFor(
       [
         {
-          catalog: { by: "repo", repo: "someone/unsubscribed" },
+          catalog: {
+            by: "subscription",
+            scope: { scope: "global" },
+            source: "missing",
+          },
           row: { kind: "skill", name: "stranger" } as never,
           recordsUnreadable: false,
         },
@@ -616,6 +690,7 @@ describe("an edited marketplace package in the modal", () => {
             requiredBy: [],
             origin: {
               origin: "choice",
+              catalog: SAVED_CATALOG,
               repo: "vanillagreencom/kendex",
               source: "kendex",
               rev: null,
@@ -781,20 +856,26 @@ describe("the revision a marketplace selection is saved at", () => {
       } as never,
     ] as never;
 
-  it("keeps the pin the ticked row carries, and none where there is none", () => {
-    const pinned = membersFor(ticked("kendex"), subscribed("kendex", "v2.1.0"));
+  it("keeps the pin the ticked row carries, and none where there is none", async () => {
+    const pinned = await membersFor(
+      ticked("kendex"),
+      subscribed("kendex", "v2.1.0"),
+    );
     expect(pinned.members[0]?.source).toEqual({
-      held: "marketplace",
-      repo: "vanillagreencom/kendex",
+      held: "catalog",
+      catalog: SAVED_CATALOG,
       rev: "v2.1.0",
     });
 
     // The inverse: an unpinned subscription saves no pin, so the row above
     // cannot pass over a conversion that writes some revision regardless.
-    const following = membersFor(ticked("kendex"), subscribed("kendex", null));
+    const following = await membersFor(
+      ticked("kendex"),
+      subscribed("kendex", null),
+    );
     expect(following.members[0]?.source).toEqual({
-      held: "marketplace",
-      repo: "vanillagreencom/kendex",
+      held: "catalog",
+      catalog: SAVED_CATALOG,
       rev: null,
     });
   });
@@ -861,6 +942,7 @@ describe("a choice made while the refresh behind an open is still out", () => {
         declared: [],
         copied: [],
         notes: [],
+        warnings: [],
         stopped: null,
       },
     });
@@ -881,7 +963,7 @@ describe("a choice made while the refresh behind an open is still out", () => {
       status: "ok",
       data: OTHER,
     });
-    const saveable = membersFor(
+    const saveable = await membersFor(
       [
         {
           catalog: {

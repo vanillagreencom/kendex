@@ -1,14 +1,16 @@
 # Home layout
 
-Read when setting up a Jarvis home, choosing a home path, starting a continuing session or reaching the managed session from a terminal.
+Read when setting up a Jarvis home, adding an agent, skill or workstream, choosing a home path, starting a continuing session or reaching the managed session from a terminal.
 
 ## Paths
 
 | Path | Git status | Reason |
 |---|---|---|
 | `AGENTS.md` | Committed | Your standing instructions travel with you. |
-| `skills/own/` | Committed | You are the source. kendex installs your skills from here. |
+| `skills/NAME/` | Committed | You are the source. Follow [Customize](../README.md#customize) to declare the home source and install your skills. |
+| `agents/NAME.md` | Committed | Your own agent source, declared through [Personal additions](home-contract.md#personal-additions). |
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](memory.md). |
+| `memory/workstreams.md` | Committed | Workstream intent, scope, owner and tracker references under [Personal additions](home-contract.md#personal-additions). Active work stays in the tracker. |
 | `state/handoff.md` | Committed | Default current handoff. `jarvis-session succeed` saves and hands over this file only; `progress-log` and `owner-unanswered` select another through `--handoff PATH` under [Handoff](long-session.md#handoff). |
 | `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](long-session.md#handoff). `jarvis-session succeed` saves its own copy of the handoff as `handoff-<generation>-<id>.md`. |
 | `state/archive/INDEX.md` | Committed | `progress-log --archived` adds one dated line for each file the session's handoff replacement step archives, under [Handoff](long-session.md#handoff). `owner-unanswered` reads any file it does not list, such as the copy `jarvis-session succeed` saves. |
@@ -31,7 +33,7 @@ A folder qualifies when it is its own Git root, lies inside no other Git work tr
 - kendex's `kendex.toml`, `kendex.settings.toml`, `.kendex-lock.json`, `.kendex-generated.json`, `.cache`, `.kendex` and `.kendex-local`;
 - the harness folders and files kendex writes: `.agents`, `.claude`, `.codex`, `.github`, `.pi`, `.opencode`, `.cursor`, `.gemini`, `.mcp.json`, `opencode.json` and `opencode.jsonc`.
 
-Make the home a new folder outside any project and run `git init` before `kendex add`, so `kendex add` can set up the commit-guards hooks. `git init` alone does not separate a folder inside a project from that project. When the enclosing project has kendex or harness files, `kendex add` there installs into the enclosing project; otherwise it installs into the folder, and this step refuses the folder as `inside-work-tree`.
+Make the home a new folder outside any project and run `git init` before `kendex add`, so `kendex add` can offer to commit the files it writes and to set up the commit-guards hooks. [Install](../README.md#install) lists the questions `kendex add` asks and the answer each one needs. `git init` alone does not separate a folder inside a project from that project. When the enclosing project has kendex or harness files, `kendex add` there installs into the enclosing project; otherwise it installs into the folder, and this step refuses the folder as `inside-work-tree`.
 
 In a qualifying folder the step creates each missing starting file and keeps each existing one unchanged:
 
@@ -61,7 +63,7 @@ The record also keeps the private brief that the [session command](../workflows/
 
 ## Attach
 
-A tmux picker such as sesh lists only your default server, so it does not show the managed session. Your route to it is `jarvis-session attach --home HOME`, from the Jarvis package installed in HOME. Outside tmux, the command attaches your terminal to the recorded socket and session. Inside tmux, it opens the attach in a new window of your terminal and leaves your tmux client where it is. The terminal is `$TERMINAL` when it names a command on PATH, otherwise `xdg-terminal-exec`. The command succeeds once the new window's client is on the managed session. With `$TERMINAL` unset and no `xdg-terminal-exec`, it prints one line and attaches inside the current pane. Its refusals are listed under the [session command](../workflows/session.md#session-command).
+A tmux picker such as sesh lists only your default server, so it does not show the managed session. Your route to it is `jarvis-session attach --home HOME`, from the Jarvis package installed in HOME. Outside tmux, the command attaches your terminal to the recorded socket and session. Inside tmux, it opens the attach in a new window of your terminal and leaves your tmux client where it is. It opens that window through `xdg-terminal-exec`, which picks your terminal from your terminal list and the terminals' desktop entries; `$TERMINAL` is not read. The command succeeds once the new window's client is on the managed session. With no `xdg-terminal-exec` on PATH, it refuses inside tmux. Its refusals are listed under the [session command](../workflows/session.md#session-command).
 
 To reach Jarvis from a picker, add an entry that runs the attach command. kendex does not write your picker's configuration. One sesh session entry serves both sesh and television's sesh channel, which lists sesh's configured sessions and connects through `sesh connect`; bind that channel to a key such as Ctrl+Shift+S. Put HOME's absolute path in place of HOME:
 
@@ -72,4 +74,4 @@ path = "HOME"
 startup_command = "HOME/.agents/skills/jarvis/scripts/jarvis-session attach --home HOME && exit"
 ```
 
-The picker creates a session on your server and runs the command in it. The `&& exit` closes that session once the window opens, or once you detach from a nested attach. tmux's `detach-on-destroy` option then decides where your client goes. A refusal leaves its line on screen.
+The picker creates a session on your server and runs the command in it. The `&& exit` closes that session once the window opens. tmux's `detach-on-destroy` option then decides where your client goes. A refusal leaves its line on screen.

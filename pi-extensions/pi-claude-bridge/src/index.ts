@@ -345,30 +345,20 @@ export function resolveMcpTools(context: Context, excludeToolName?: string): {
 	return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
 
-// The notice fires at most once per process: a turn that resolves no pi tools is
-// a provider-contract or configuration mismatch that holds for every turn of the
-// run, so a per-query toast would repeat while telling the reader nothing new.
+// The integrity entry is written at most once per process, so a host that sends
+// every turn without tools does not grow its session by one entry per turn.
 let reportedToolBridgeGap = false;
 
 /**
- * Announce that a user turn resolved no pi tools, and what the child was left
- * with. Without connectors the substitution half of the built-in denylist is
- * dropped, so the child falls back to Claude Code's own file and shell tools;
- * with connectors those stay denied as a security boundary and the turn has
- * only the account's connector tools.
+ * Record that a user turn resolved no pi tools. A host may send no tools on
+ * purpose, so this is an observation for diagnostics, not a user notice: the
+ * child runs without Claude Code's file and shell tools either way.
  */
-export function reportToolBridgeGap(messageCount: number, builtinIsolationApplied: boolean): void {
-	debug(`provider: no bridged custom-tools server for a ${messageCount}-message context; built-in isolation ${builtinIsolationApplied ? "kept" : "dropped"}`);
+export function reportToolBridgeGap(messageCount: number): void {
+	debug(`provider: no bridged custom-tools server for a ${messageCount}-message context`);
 	if (reportedToolBridgeGap) return;
 	reportedToolBridgeGap = true;
-	appendIntegrityEntry("bridged_tools_absent", { messageCount, builtinIsolationApplied });
-	safeNotify(
-		(builtinIsolationApplied
-			? "Pi Claude found no pi tools to bridge. Claude Code's own file and shell tools stay disabled in a connectors session, so this turn has only the account's connector tools. "
-			: "Pi Claude found no pi tools to bridge, so this session uses Claude Code's own file and shell tools instead. ") +
-		"Usually a pi version whose provider contract the bridge has not adopted yet; update @vanillagreen/pi-claude-bridge.",
-		"warning",
-	);
+	appendIntegrityEntry("bridged_tools_absent", { messageCount });
 }
 
 // finalizeToolUseTurnFromMcpInvocation moved to assistant-stream.ts: it is now
@@ -1171,11 +1161,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		resumeSessionId,
 		mcpServers,
 		claudeExecutable,
-		piOneShot,
 	});
 	const { queryOptions } = built;
 	// A one-shot has no tools by design, so its empty set is not a gap to report.
-	if (!built.bridgedToolsPresent && !piOneShot) reportToolBridgeGap(context.messages.length, built.builtinIsolationApplied);
+	if (!built.bridgedToolsPresent && !piOneShot) reportToolBridgeGap(context.messages.length);
 
 	debug("provider: fresh query",
 		`model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,

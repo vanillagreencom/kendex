@@ -3,6 +3,7 @@ use kendex_core::drift::report::{
 };
 
 use super::{screen, verdict};
+use crate::ui::Span;
 use crate::ui::testing::{plain, rich, tagged};
 
 fn line(class: Class, text: &str, remedy: Option<Remedy>) -> Line {
@@ -116,7 +117,7 @@ fn the_check_draws_every_kind_of_row_rich() {
     let drawn = screen(
         &rich(100),
         &every_kind(),
-        "/home/me/dev/app",
+        &[Span::Command("/home/me/dev/app")],
         Verbosity::Default,
     );
     assert_eq!(
@@ -166,7 +167,12 @@ fn the_check_draws_every_kind_of_row_rich() {
 /// than leaving `--scope project --yes` to read as a second command.
 #[test]
 fn a_narrow_terminal_keeps_the_next_steps_command_whole() {
-    let drawn = screen(&rich(40), &every_kind(), "here", Verbosity::Default);
+    let drawn = screen(
+        &rich(40),
+        &every_kind(),
+        &[Span::Command("here")],
+        Verbosity::Default,
+    );
     let at = drawn
         .report
         .iter()
@@ -209,7 +215,15 @@ fn a_command_in_an_item_is_never_broken() {
         project_target: None,
         deep_pass_owed: false,
     };
-    let rows = tagged(&screen(&rich(80), &report, "here", Verbosity::Default).report);
+    let rows = tagged(
+        &screen(
+            &rich(80),
+            &report,
+            &[Span::Command("here")],
+            Verbosity::Default,
+        )
+        .report,
+    );
     assert_eq!(
         rows,
         [
@@ -221,7 +235,13 @@ fn a_command_in_an_item_is_never_broken() {
         ]
     );
     assert_eq!(
-        screen(&plain(), &report, "here", Verbosity::Default).report,
+        screen(
+            &plain(),
+            &report,
+            &[Span::Command("here")],
+            Verbosity::Default
+        )
+        .report,
         ["stale:".to_owned(), format!("  {text}")]
     );
 }
@@ -233,7 +253,7 @@ fn the_check_draws_every_kind_of_row_plain() {
     let drawn = screen(
         &plain(),
         &every_kind(),
-        "/home/me/dev/app",
+        &[Span::Command("/home/me/dev/app")],
         Verbosity::Default,
     );
     assert!(drawn.head.is_empty(), "{:?}", drawn.head);
@@ -267,7 +287,12 @@ fn the_check_draws_every_kind_of_row_plain() {
 /// shown, and closes on the all-clear.
 #[test]
 fn a_clean_check_draws_only_the_all_clear() {
-    let rich_run = screen(&rich(100), &clean(), "global", Verbosity::Default);
+    let rich_run = screen(
+        &rich(100),
+        &clean(),
+        &[Span::Command("global")],
+        Verbosity::Default,
+    );
     assert!(rich_run.report.is_empty(), "{:?}", rich_run.report);
     assert_eq!(
         tagged(&rich_run.verdict),
@@ -276,7 +301,12 @@ fn a_clean_check_draws_only_the_all_clear() {
             "<32>✓</> <1>all clear — every install matches its source</>"
         ]
     );
-    let plain_run = screen(&plain(), &clean(), "global", Verbosity::Default);
+    let plain_run = screen(
+        &plain(),
+        &clean(),
+        &[Span::Command("global")],
+        Verbosity::Default,
+    );
     assert!(plain_run.report.is_empty(), "{:?}", plain_run.report);
     assert_eq!(
         plain_run.verdict,
@@ -288,7 +318,12 @@ fn a_clean_check_draws_only_the_all_clear() {
 /// decision, not a failure.
 #[test]
 fn a_drift_check_closes_on_a_decision() {
-    let drawn = screen(&rich(100), &many(2), "here", Verbosity::Default);
+    let drawn = screen(
+        &rich(100),
+        &many(2),
+        &[Span::Command("here")],
+        Verbosity::Default,
+    );
     assert_eq!(
         tagged(&drawn.verdict),
         [
@@ -360,7 +395,7 @@ fn a_check_left_waiting_on_the_refresh_never_claims_all_clear() {
                 Some(crate::ui::Status::Notice)
             );
             for style in [plain(), rich(100)] {
-                let drawn = screen(&style, &waiting, "here", verbosity);
+                let drawn = screen(&style, &waiting, &[Span::Command("here")], verbosity);
                 assert!(!drawn.report.is_empty());
                 assert!(!drawn.verdict.is_empty());
             }
@@ -404,9 +439,14 @@ fn an_explicit_check_draws_every_item_while_the_session_hook_stays_bounded() {
     assert!(hook.contains("see: kendex check"), "{hook}");
     assert!(!hook.contains("item-11"), "{hook}");
 
-    let explicit = screen(&plain(), &report, "here", Verbosity::Default)
-        .report
-        .join("\n");
+    let explicit = screen(
+        &plain(),
+        &report,
+        &[Span::Command("here")],
+        Verbosity::Default,
+    )
+    .report
+    .join("\n");
     assert!(explicit.contains("item-11"), "{explicit}");
     assert!(!explicit.contains("more — see:"), "{explicit}");
 }
@@ -429,7 +469,7 @@ fn informational_notices_are_visible_in_each_report_mode_and_exit_clean() {
         );
         assert!(render_plain(&report, verbosity).contains("fixture-command-notice"));
         assert!(
-            screen(&plain(), &report, "fixture", verbosity)
+            screen(&plain(), &report, &[Span::Command("fixture")], verbosity)
                 .report
                 .iter()
                 .any(|line| line.contains("fixture-command-notice"))

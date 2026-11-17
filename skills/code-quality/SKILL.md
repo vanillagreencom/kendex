@@ -26,7 +26,7 @@ Every rule here serves an outcome: correct results for the user, reliability und
 
 ## Correctness
 
-- Fix the cause in its existing owner. When the correct fix exceeds the scope, report that conflict instead of adding a workaround.
+- Fix the cause in its existing owner. When the correct fix exceeds the scope, report that conflict instead of adding a workaround. When the cause is in software the organization does not own, build the workaround in our own code, with one comment at its place that names the upstream report and the release or condition that removes it, and let no item wait for the upstream release.
 - A defect has a class: the rule the code broke, not the line that broke it. Name the class and fix it once in its owner, so code that goes through the owner cannot repeat it, and never widen that fix to a route § Core Principle calls unreached. An instance that recurs after the fix is a design finding, not a bug to patch: restate what the fix serves and who it is against before widening it.
 - Unreadable evidence is not evidence. A dependency failure, an unreadable input or an unevaluated check never becomes a passing result, a default value or a zero. A required gate refuses with the cause; an advisory check reports unavailable with the cause. A decision over a set of candidates stands only when every candidate was read. An absent or unknown application input is a separate contract choice; state why refusing it is necessary where that choice is made.
 - A relation to an external system that code or its tests rely on, such as how a tool builds a row, what an API field means or which identifier is unique, is cited to that system's source, its documentation or a recorded run of it, never modeled from memory. A relation with none of these is not relied on.
@@ -76,6 +76,7 @@ A must-fail control ([§ Tests](#tests)) proves that an instrument detects the d
 - Where checks are selected by what changed, select them through the one existing suite entry point, from direct and indirect inputs: source, dependencies, fixtures, generated inputs, configuration and build settings. Add no parallel selector, cache, runner, workflow or hand-kept dependency table. A change to a shared input, such as the entry point, the assertion library, a shared fixture or a test harness, selects the checks whose direct or indirect inputs reach the changed part, as that entry point traces them. Missing or unreadable selection evidence, a test whose inputs cannot be identified and a shared-input change whose reach the entry point cannot trace each run every check in the requested area. A full or release run runs every test. An aggregate entry point runs every member and, on any failure, exits non-zero naming each failed member. Review validation time periodically, never as a per-change limit or merge gate: optimize demonstrated waste while keeping protection against real failures, and narrow no inputs and split no suite to meet a time target.
 - Inject time for clock-dependent logic. Prove concurrency order and producer progress with barriers or acknowledgements; a sleep with a reason proves neither. Bound potentially blocking code with a parent-process deadline, since an executor timeout cannot interrupt code that never yields. Real elapsed time belongs to timer-wiring or performance tests, with their limited claim stated.
 - Pin a fixture's bytes against checkout conversion: under git, `text eol=lf` for text a test parses or compares byte for byte, `binary` for an image or archive, `-text` where CRLF bytes are the input under test. A parser of checked-out text normalizes CRLF or refuses it by name.
+- A test that replaces `HOME` points `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` under it too and runs no sign-in that writes the user's real keyring, since an inherited XDG path or a system keyring service can reach past a replaced `HOME`.
 - Test process-id parsing and mapping as pure functions with synthetic ids. Test liveness only against a process the test started and still holds, never an invented id or a reaped child's id.
 - A delete or replace of a file another process may hold open accepts only success or the platform's held-file error, such as a Windows sharing violation, asserts the guarantee of the branch it took and fails on any other error. Reap owned processes before removing their scratch root.
 
@@ -101,6 +102,8 @@ Remove unused code rather than leaving renamed variables, commented blocks, remo
 ## Finding Evaluation
 
 A finding of bad code or test practice, bloat, unnecessary machinery or scope, patchwork or non-holistic design carries one evaluation line. These classes are examples for judgement, not a checklist: a finding qualifies when its cost comes from how the code or test was decided. Other findings carry no line.
+
+A documentation finding, such as a false claim, a fact kept in two homes or prose that breaks the writing rules, carries the same line, and under `missing` its owner is a [docs-writing](../docs-writing/SKILL.md) section.
 
 ```text
 code-quality: [misled|missing|not followed]: [reason]; owner: [guidance or route]

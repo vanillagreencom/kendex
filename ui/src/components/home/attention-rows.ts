@@ -1,4 +1,5 @@
 import type {
+  Need,
   ScanResult,
   ScanWarning,
   UnreadableScope,
@@ -63,6 +64,21 @@ export const CLASS_TONES = {
   done: "good",
   failed: "critical",
 } as const satisfies Record<AttentionClass | "done" | "failed", StatusTone>;
+
+/** The class of an item core classed by what it needs from the person:
+ *  one that blocks kendex until something outside the run changes is a
+ *  Problem. The producer decides the need; this decides only where it
+ *  draws. */
+export function needClass(need: Need): AttentionClass {
+  switch (need) {
+    case "blocked":
+      return "problem";
+    case "decision":
+      return "decision";
+    case "notice":
+      return "notice";
+  }
+}
 
 /** The Problems card an item keeps. An item without one draws there as
  *  its row. */

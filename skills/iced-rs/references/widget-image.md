@@ -1,138 +1,55 @@
 # Image
 
-> `iced::widget::image` · iced 0.14.0
+> `iced::widget::image` · iced 0.14.0 · feature = `image`
 
-Displays a raster image (PNG, JPEG, etc.) with configurable sizing, content fitting, filtering, rotation, opacity, scaling, cropping, and border radius.
+Read when displaying raster images or choosing their sizing, filtering, cropping or transforms. The pinned [widget source] owns `Image` and its builders. The [core image source] owns `Handle`, `FilterMethod` and the advanced renderer image. The [ContentFit source] owns fitting behavior.
 
-## API
+## Image data
 
-### `Image` struct
+Use `image(path)` for a file, `image(image::Handle::from_bytes(bytes))` for encoded PNG/JPEG data, or `image(image::Handle::from_rgba(width, height, pixels))` for decoded RGBA pixels. RGBA data must contain `width * height * 4` bytes. Prefer these constructors to constructing `Handle` variants; each variant also carries an image ID.
 
-```rust
-pub struct Image<Handle = image::Handle> { /* private fields */ }
+Handles identify cached image data. The same path produces the same ID; separate `from_bytes` and `from_rgba` calls create new IDs. Keep or clone a handle when reusing its data.
 
-impl<Handle> Image<Handle> {
-    pub fn new(handle: impl Into<Handle>) -> Self;
+## Sizing and fitting
 
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn expand(self, expand: bool) -> Self;
-    pub fn content_fit(self, content_fit: ContentFit) -> Self;
-    pub fn filter_method(self, filter_method: FilterMethod) -> Self;
-    pub fn rotation(self, rotation: impl Into<Rotation>) -> Self;
-    pub fn opacity(self, opacity: impl Into<f32>) -> Self;
-    pub fn scale(self, scale: impl Into<f32>) -> Self;
-    pub fn crop(self, region: Rectangle<u32>) -> Self;
-    pub fn border_radius(self, border_radius: impl Into<Radius>) -> Self;
-}
-```
+Set the widget bounds with `.width(...)` and `.height(...)`. `.expand(true)` uses available space while preserving aspect ratio without adding blank space on a `Shrink` axis.
 
-### `Handle` enum
-
-```rust
-pub enum Handle {
-    Path(PathBuf),
-    Bytes(Bytes),
-    Rgba {
-        width: u32,
-        height: u32,
-        pixels: Bytes,
-    },
-}
-
-impl Handle {
-    pub fn from_path(path: impl Into<PathBuf>) -> Handle;
-    pub fn from_bytes(bytes: impl Into<Bytes>) -> Handle;
-    pub fn from_rgba(width: u32, height: u32, pixels: impl Into<Bytes>) -> Handle;
-}
-```
-
-### `FilterMethod` enum
-
-```rust
-pub enum FilterMethod {
-    Linear,   // Bilinear interpolation (smooth, default)
-    Nearest,  // Nearest-neighbor (pixelated, sharp)
-}
-```
-
-### `ContentFit` enum (re-exported)
-
-```rust
-pub enum ContentFit {
-    Contain,    // Scale to fit, preserving aspect ratio (default)
-    Cover,      // Scale to fill, preserving aspect ratio, cropping excess
-    Fill,       // Stretch to fill exactly
-    None,       // No scaling
-    ScaleDown,  // Like Contain but never upscale
-}
-```
-
-### Functions
-
-```rust
-pub fn image<Handle>(handle: impl Into<Handle>) -> Image<Handle>;
-```
-
-## Patterns
-
-### Display from file path
+`ContentFit::Contain` preserves aspect ratio and fits the whole image inside the bounds. `Cover` fills the bounds and crops excess. `Fill` stretches to the bounds. `None` keeps the original size. `ScaleDown` behaves like `Contain` without enlarging a smaller image. `Contain` is the default.
 
 ```rust
 use iced::widget::image;
+use iced::ContentFit;
 
 image("assets/logo.png")
     .width(200)
     .height(100)
+    .content_fit(ContentFit::Cover)
 ```
 
-### Display from bytes (e.g., downloaded image)
+## Filtering and transforms
+
+`FilterMethod::Linear` uses bilinear interpolation and is the default. Use `Nearest` for pixel art:
 
 ```rust
 use iced::widget::image;
 
-image(image::Handle::from_bytes(raw_png_bytes))
-    .content_fit(ContentFit::Cover)
-```
-
-### Pixel art with nearest-neighbor filtering
-
-```rust
 image("sprite.png")
     .filter_method(image::FilterMethod::Nearest)
     .scale(4.0)
 ```
 
-### Rotated and semi-transparent
+`.scale(...)` scales the drawn image around its center. `.rotation(iced::Radians::from(iced::Degrees(45.0)))` rotates it. `.opacity(0.7)` changes transparency; opacity zero still leaves the widget's layout allocation.
 
-```rust
-use iced::Rotation;
+`.crop(iced::Rectangle { x: 0, y: 0, width: 32, height: 32 })` selects a region in source-image pixels before fitting or transforms. Coordinates are clamped to the image dimensions.
 
-image("photo.jpg")
-    .rotation(Rotation::from_degrees(45.0))
-    .opacity(0.7)
-```
-
-### Crop a region
-
-```rust
-use iced::Rectangle;
-
-image("spritesheet.png")
-    .crop(Rectangle { x: 0, y: 0, width: 32, height: 32 })
-```
-
-## Gotchas
-
-- The `image` feature must be enabled in your `iced` dependency.
-- Images are cached by handle identity. Two `Handle::from_path("same.png")` calls share the same decoded texture.
-- `FilterMethod::Nearest` + `snap(true)` (on the advanced `Image` type) prevents sub-pixel blurring for pixel art.
-- `content_fit` defaults to `Contain` -- the image scales to fit without cropping. Use `Cover` for fill-and-crop behavior.
-- `opacity(0.0)` makes the image fully transparent but it still participates in layout.
-- `border_radius` currently applies only to the clip bounds, not a visible rounded border.
+`.border_radius(...)` applies around the image's rectangular bounding box; it does not add a visible border. The widget passes pixel snapping to the renderer. For a custom renderer primitive, the advanced `iced::advanced::image::Image` has `.snap(true)`; that method is not a widget builder. Snapping and nearest filtering address different sources of blur.
 
 ## See also
 
-- `widget-svg.md` -- vector graphics (scales without quality loss)
-- `canvas.md` -- drawing raster images on a canvas via `Frame::draw_image`
-- `widgets.md` -- widget catalog
+- [SVG](widget-svg.md): vector graphics.
+- [Canvas](canvas.md): `Frame::draw_image`.
+- [Widget catalog](widgets.md).
+
+[widget source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/image.rs
+[core image source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/image.rs
+[ContentFit source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/content_fit.rs

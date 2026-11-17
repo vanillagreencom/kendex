@@ -95,7 +95,7 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || notice unclaimed "$PWD" \
   "Cannot resolve the worktree root; repair the checkout before starting work." "git-exit=$?"
 
 # The skill's record is read here rather than asked of the skill's scripts,
-# which load the repository's settings and `.env.local` as shell.
+# which load the repository's settings and `.env.local`.
 [ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0
 
 # The guard comes from this hook's own install, by the walk

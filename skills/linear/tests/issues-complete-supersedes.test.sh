@@ -53,6 +53,7 @@ case "$query" in
     type=started
     [[ "$SCENARIO" != retry || "$id" != CC-720 || ! -e "$TRACKER_STATE.done" ]] || type=completed
     [[ "$SCENARIO" != terminal || "$id" != CC-721 ]] || type=completed
+    [[ "$SCENARIO" != terminal-duplicate || "$id" != CC-721 ]] || type=duplicate
     children='[]'
     if [[ "$id" = CC-721 && ( "$SCENARIO" = children-fail || "$SCENARIO" = closed-children ) ]]; then
       child_type=started
@@ -85,7 +86,7 @@ printf '___HTTP_CODE___200'
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-for scenario in done closed-children deep-closed-children related-only malformed held terminal comment-fail cancel-fail complete-fail unreadable-fail children-fail deep-children-fail deep-read-fail retry; do
+for scenario in done closed-children deep-closed-children related-only malformed held terminal terminal-duplicate comment-fail cancel-fail complete-fail unreadable-fail children-fail deep-children-fail deep-read-fail retry; do
   description="$TMP_ROOT/description"
   printf '%s\n' 'Related: CC-999' '**Supersedes**:' '' '- CC-721 (at-completion): Replaced scope' >"$description"
   case "$scenario" in
@@ -136,8 +137,9 @@ for scenario in done closed-children deep-closed-children related-only malformed
     assert "$scenario names all open descendants for disposition" jq -se --argjson pending "$pending" 'any(.[]; .error == "supersession-children" and .issue == "CC-721" and (.children | sort) == $pending)' "$TMP_ROOT/err"
   fi
   if [ "$scenario" = deep-closed-children ]; then
-    assert "terminal descendants are all read once before cancellation" jq -se '
-      [.[] | select(.query | test("query GetChildren(Recursive)?\\(")) | .variables.id] | sort
+    assert "terminal descendants are all read before the disposition comment" jq -se '
+      .[:(map(.query | contains("commentCreate")) | index(true))]
+      | [.[] | select(.query | test("query GetChildren(Recursive)?\\(")) | .variables.id] | sort
       == ["CC-721","CC-722","CC-723","CC-724","CC-725","CC-726","CC-727","CC-728","CC-729"]' "$log"
   fi
   if [ "$scenario" = retry ]; then

@@ -11,6 +11,7 @@
 mod test_util;
 
 mod add_from_local;
+mod adopt_links;
 mod adopt_many_tools;
 mod adopt_pinned;
 mod agent_aliases;

@@ -125,11 +125,12 @@ def validate_environment(repository, config):
             refuse("secrets")
         # GitHub's same-name environment precedence cannot prevent an
         # outside value from filling a name absent from that environment.
-        # Both token steps read fixed names, including the FLEET issue pair.
-        # Only Actions repository/organization secrets can reach these
-        # caller mappings.
+        # Every token step reads fixed names, including the FLEET issue pair
+        # and the optional landing pair. Only Actions repository/organization
+        # secrets can reach these caller mappings.
         names = ["KENDEX_APP_ID", "KENDEX_APP_PRIVATE_KEY",
-                 "FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY"] if "pairs" in config else config["names"]
+                 "FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY",
+                 "KENDEX_LAND_APP_ID", "KENDEX_LAND_APP_PRIVATE_KEY"] if "pairs" in config else config["names"]
         namespaces = [("repository", "repos/" + repository + "/actions/secrets")]
         if owner_type == "Organization":
             namespaces.append(("organization", "orgs/" + repository.split("/", 1)[0] + "/actions/secrets"))

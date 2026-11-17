@@ -16,8 +16,12 @@ An attacker who can serve the feed could offer a genuine older download, or anot
 - Do fail a release lane that produced no signature rather than publish a command no client can verify.
 - Do pin one updater key in two places that rotate together, `crates/app/tauri.conf.json` and `crates/core/src/update_feed.rs`, held equal by `crates/app/tests/tauri_config.rs`.
 - Do replace a command only where its path is writable and outside a package-manager prefix, and name the manager that owns one: a Homebrew prefix or the Nix store by the prefix alone, a distro prefix by the package pacman, dpkg or rpm names. The card says which.
+- Do run the update notice's feed check off the launch path, one at a time across every kendex process, and automatically at most every six hours, while a manual `refresh` fetches at once (`crates/core/src/app_update.rs`); gate nothing on it. A reply that is not a feed leaves the last valid document standing, and a symlinked cache entry is replaced without touching its target.
 - Do keep release-only bundle settings in the overlays under `crates/app/release/`, never in `tauri.conf.json`, which tauri-build reads at compile time.
 - Do let `inside_the_app` in `crates/core/src/install_channel.rs` be the one judge of a command an installer put inside the desktop app: it is the app's to update, and no verb records it as the installed command.
+- Never replace in place a Linux desktop build that is not an AppImage, whatever its permissions: the updater downloads AppImages (`crates/core/src/install_channel.rs`).
+- Never let a tagged release read the main channel except through `kendex update --git`. That run, and `install.sh --git` over an installed command, refuse a main build whose version core is behind the installed one. A tagged desktop app never replaces a recorded main command with a release command.
+- Never let the macOS command link write past what it judged: the privileged step in `crates/core/src/command_link.rs` checks the link again before it writes with `ln -sn`, and writes nothing under `/opt/homebrew`.
 - Never let a release build honour `KENDEX_UPDATE_FEED`; a debug build alone does.
 - Never move the channel pointer backwards: `tools/release-channel-point` changes the pointer only to a newer build. On the main channel it authenticates the current and candidate documents and orders their build numbers; on the candidate channel it only orders their versions.
 

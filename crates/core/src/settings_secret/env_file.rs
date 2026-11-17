@@ -1,16 +1,18 @@
 //! The project's private env file, as data.
 //!
-//! Two loaders read this file and neither is this one. Linear's shared
-//! `kendex-env.sh` `source`s it, so every byte of it is shell. Deep
-//! Research's `loadEnvFile` matches `NAME=rest` per line and strips one
-//! matching pair of surrounding quotes. kendex reads it a third way, as
-//! text, and never runs it: sourcing a file to find out what is in it
-//! would execute whatever somebody put there, on the app's own account,
-//! to answer a question about presence.
+//! Two loaders read this file and neither is this one. The shared
+//! `kendex-env.sh` reads it as data and never runs it: each line is blank,
+//! a `#` comment or `[export ]KEY=VALUE`, the value read as the shell would
+//! read it, and any other line fails the load. Deep Research's
+//! `loadEnvFile` matches `NAME=rest` per line and strips one matching pair
+//! of surrounding quotes. kendex reads it a third way, as text, and never
+//! runs it: sourcing a file to find out what is in it would execute
+//! whatever somebody put there, on the app's own account, to answer a
+//! question about presence.
 //!
 //! So the writing shape is chosen to mean the same thing to all three.
-//! `KEY='value'` is a POSIX single-quoted string — bash takes every byte
-//! inside it literally, Deep Research strips the pair and takes the rest
+//! `KEY='value'` is a POSIX single-quoted string — `kendex-env.sh` takes
+//! every byte inside it literally, Deep Research strips the pair and takes the rest
 //! literally, and this module reads it back the same way. A single quote
 //! is the one byte such a string cannot hold, and a value carrying one is
 //! refused rather than escaped: the escape spellings the two loaders
@@ -19,7 +21,7 @@
 //!
 //! What kendex may rewrite is narrower than what it can read. A line this
 //! module did not write — an `export`, an expansion, a value carrying a
-//! comment — means something to the shell that the replacement would drop,
+//! comment — means something to a loader that the replacement would drop,
 //! so the key is reported and left alone rather than rewritten into
 //! kendex's own shape.
 

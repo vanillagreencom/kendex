@@ -75,7 +75,7 @@ fn installed(global: bool) -> (tempfile::TempDir, Installed) {
     .unwrap();
     fs::write(
         &manifest_path,
-        "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n",
+        "schema = 8\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n",
     )
     .unwrap();
     let applied = kendex(&home, &project, &["apply", "--scope", scope_name, "--yes"]);
@@ -217,7 +217,7 @@ fn a_check_names_the_take_over_only_from_a_fresh_plan() {
         .unwrap();
     }
     let manifest = format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.sk]\nsource = \"cat\"\n",
+        "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.sk]\nsource = \"cat\"\n",
         test_util::source_path(&catalog)
     );
     fs::write(project.join("kendex.toml"), &manifest).unwrap();
@@ -334,7 +334,7 @@ fn commit(dir: &Path, message: &str) {
     );
 }
 
-const MANIFEST: &str = "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n";
+const MANIFEST: &str = "schema = 8\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.cat]\npath = \"catalog\"\n[skills.deploy]\nsource = \"cat\"\n";
 
 /// Where a checkout stands once `Arrange` has run in a repository on the
 /// default branch.

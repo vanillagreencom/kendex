@@ -26,8 +26,8 @@ emit_notice() { # KEY FIELD=VALUE EXPLANATION
   printf '%s\n' "$*" >&2
 }
 
-# Help is answered before project configuration is read: sourcing a repo's
-# .env.local under --help would execute repository-controlled shell code.
+# Help is answered before project configuration is read: loading a repo's
+# settings and .env.local under --help would take repository-controlled values.
 show_help() {
   cat << 'EOF'
 Decision Lookup Tool
@@ -75,9 +75,13 @@ Options:
   --limit N            Max search results (default: 5)
 
 Output (JSON):
-  search:  [{id, decision, path}] (keyword mode adds score)
+  search:  [{id, decision, status, rationale, path}] (keyword mode adds
+           score); status and rationale are the INDEX cells verbatim. A
+           Removed row has no document: its path is "", its body is not
+           searched, and its rationale names where the reason lives
   list:    [{id, decision, path}]
-  get:     {id, decision, status, date, path}
+  get:     {id, research, decision, rationale, status, date, path}; a
+           Removed row's path is "" and its date is unknown
   check:   nothing on stdout; each finding is an error= record on
            stderr, exit 1; a notice= record (base-unverified,
            decisions-dir-absent) leaves exit 0
@@ -269,6 +273,13 @@ parse_index() {
     return
   fi
   parse_rows "$(<"$INDEX_FILE")" "$INDEX_FILE" "$DECISIONS_DIR/"
+}
+
+# The rows search and get answer with. A Removed row's document is deleted, so
+# its path is empty and its rationale names where the reason lives; check keeps
+# the parsed path, which names the deleted file across branches.
+result_rows() {
+  parse_index | jq -c 'map(if .status == "Removed" then .path = "" else . end)'
 }
 
 # ROW_INVALID_KIND is notice, or error under check, which may pass only an
@@ -602,7 +613,7 @@ search_decisions() {
   fi
 
   local all
-  all=$(parse_index)
+  all=$(result_rows)
 
   if [[ -n "$issue" ]]; then
     # Negative lookahead prevents PROJ-18 matching PROJ-189.
@@ -612,7 +623,7 @@ search_decisions() {
     fi
     echo "$all" | jq --arg issue "$issue" '[
       .[] | select(.research | test($issue + "(?![0-9])"; "i")) |
-      {id, decision, path}
+      {id, decision, status, rationale, path}
     ]'
     return 0
   fi
@@ -630,7 +641,7 @@ search_decisions() {
         (.rationale | test($q; "i")) or
         (.id | test($q; "i")) or
         (($bodies[.path] // []) | length > 0)
-      ) | {id, decision, path}
+      ) | {id, decision, status, rationale, path}
     ] | .[:$limit]'
     return 0
   fi
@@ -661,7 +672,7 @@ search_decisions() {
           (if ($rat | test($t)) then 1 else 0 end) +
           (if ($body_terms | index($t) != null) then 0.5 else 0 end)
         ] | add) as $score |
-        {id: $row.id, decision: $row.decision, path: $row.path, score: $score}
+        {id: $row.id, decision: $row.decision, status: $row.status, rationale: $row.rationale, path: $row.path, score: $score}
       else empty end
     ] | sort_by(-.score) | .[:$limit]
   '
@@ -771,7 +782,7 @@ cmd_get() {
   local id="$1"
 
   local matches count match fields
-  matches=$(parse_index | jq -c --arg id "$id" '[.[] | select(.id == $id)]')
+  matches=$(result_rows | jq -c --arg id "$id" '[.[] | select(.id == $id)]')
   # jq's own diagnostic names a failed count.
   if ! count=$(jq 'length' <<<"$matches"); then
     return 1

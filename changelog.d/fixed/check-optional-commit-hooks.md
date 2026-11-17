@@ -1,1 +1,0 @@
-- `kendex check` no longer reports an optional commit-guards installation as needing attention before local adoption; missing helpers after recorded adoption and unreadable state remain findings.

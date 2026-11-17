@@ -27,6 +27,7 @@ pub mod command_link;
 pub mod command_update;
 pub mod commit_offer;
 pub mod configedit;
+pub mod decision;
 pub mod discover;
 pub mod drift;
 pub mod engine;

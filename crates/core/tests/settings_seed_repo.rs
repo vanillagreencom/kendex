@@ -3,12 +3,11 @@
 //!
 //! A template applies once, when its skill arrives, and writes only the
 //! keys it marks `# required` — the ones the consumer has to decide.
-//! Every later pass writes nothing, so a refresh leaves the file
-//! byte-identical and a key the consumer deleted stays deleted.
+//! Every later seed pass inserts nothing, so a key the consumer deleted
+//! stays deleted. Refresh's orphan cleanup is separate from this merge.
 //!
 //! Arrival is the manifest gaining the declaration, which only `add`
-//! does. A block already in the file is never revisited — nothing follows
-//! a template revision in — so there is no second write to model here.
+//! does. A template revision never replaces a live comment block.
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};

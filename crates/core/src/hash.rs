@@ -70,8 +70,19 @@ fn hash_into(hasher: &mut Sha256, path: &Path, rel: &Path, depth: usize) -> Resu
 /// `hash_tree`: the journal snapshots a moved directory by copying it,
 /// and a copy of a reader-less pipe never returns.
 pub fn hash_tree_as_is(path: &Path) -> Result<String> {
+    hash_tree_as_is_replacing(path, &[])
+}
+
+/// [`hash_tree_as_is`] of the tree as it will stand once each regular file
+/// at a relative path in `replacements` holds the bytes beside it: what a
+/// move planned after edits to its source binds to. Every other entry is
+/// read as it sits.
+pub fn hash_tree_as_is_replacing(
+    path: &Path,
+    replacements: &[(PathBuf, Vec<u8>)],
+) -> Result<String> {
     let mut hasher = Sha256::new();
-    hash_as_is_into(&mut hasher, path, Path::new(""))?;
+    hash_as_is_into(&mut hasher, path, Path::new(""), replacements)?;
     Ok(hex(&hasher.finalize()))
 }
 
@@ -85,7 +96,12 @@ fn frame(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes);
 }
 
-fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
+fn hash_as_is_into(
+    hasher: &mut Sha256,
+    path: &Path,
+    rel: &Path,
+    replacements: &[(PathBuf, Vec<u8>)],
+) -> Result<()> {
     let refuse = |why: &str| CoreError::io(path, std::io::Error::other(why.to_owned()));
     let kind = fs::symlink_metadata(path)
         .map_err(|e| CoreError::io(path, e))?
@@ -109,10 +125,13 @@ fn hash_as_is_into(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
             let Some(name) = entry.file_name() else {
                 continue;
             };
-            hash_as_is_into(hasher, &entry, &rel.join(name))?;
+            hash_as_is_into(hasher, &entry, &rel.join(name), replacements)?;
         }
     } else if kind.is_file() {
-        let bytes = fs::read(path).map_err(|e| CoreError::io(path, e))?;
+        let bytes = match replacements.iter().find(|(replaced, _)| replaced == rel) {
+            Some((_, bytes)) => bytes.clone(),
+            None => fs::read(path).map_err(|e| CoreError::io(path, e))?,
+        };
         hasher.update([AS_IS_FILE]);
         frame(hasher, name);
         frame(hasher, &bytes);
@@ -662,6 +681,15 @@ pub fn relevant_sections(
                         &manifest.expand_shared_text(text),
                     );
                 }
+            }
+            // The reading the stored links hold decides every converted
+            // copy's bytes; an untagged declaration adds nothing, so its
+            // hash inputs stay what they were.
+            match manifest.skills.get(name).and_then(|decl| decl.links) {
+                Some(crate::manifest::SkillLinks::SharedTree) => {
+                    push("skills", name, "links=shared-tree");
+                }
+                None => {}
             }
         }
         ItemKind::Command => {

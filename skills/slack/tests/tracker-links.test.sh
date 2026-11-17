@@ -8,8 +8,8 @@ ROOT="$(sk_tracker_root linear '' '')"
 sk_bind "$ROOT"
 sk_poll "$ROOT"
 CH="$(sk_channel "$ROOT")"
-LINK='[KEN-1](https://linear.app/workspace/issue/KEN-1)'
-SLACK_LINK='<https://linear.app/workspace/issue/KEN-1|KEN-1>'
+LINK='**[\[KEN-1\]](https://linear.app/workspace/issue/KEN-1)**'
+SLACK_LINK='*<https://linear.app/workspace/issue/KEN-1|[KEN-1]>*'
 
 sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text notice 'Notice KEN-1')" >/dev/null
 sk_poll "$ROOT"
@@ -48,7 +48,8 @@ for edge in post update notice; do
       ;;
   esac
   if [ "$edge" = notice ]; then
-    assert_eq "$RC=$(sk_state ".messages.${CH}[-1] | [.body_arg, (.text | endswith(\"$LINK\"))] | join(\" \")")" '0=markdown_text true' 'relay continues linked Markdown across the cap'
+    TEXT="$(sk_state ".messages.${CH}[-1].text")"
+    assert_eq "$RC=$(sk_state ".messages.${CH}[-1].body_arg") $([[ $TEXT == *"$LINK" ]] && echo true)" '0=markdown_text true' 'relay continues linked Markdown across the cap'
   else
     assert_eq "$RC=${ERR1%%=*}" '2=slack: text-too-long' "$edge retains its single-message refusal after link expansion"
   fi
@@ -75,15 +76,20 @@ mv "$SK_LINEAR_STUB/scripts/moved.sh" "$SK_LINEAR_STUB/scripts/linear.sh"
 GH="$(sk_tracker_root github '' org/repo)"
 sk_run -- post --root "$GH" --channel C777 --text '#2 org/other#3 KEN-1'
 assert_eq "$RC=$(sk_state '.messages.C777[-1].text')" "0=[#2](https://github.com/org/repo/pull/2) [org/other#3](https://github.com/org/other/pull/3) $LINK" 'post with no team links workspace ids and sending repository PRs'
-git -C "$GH" -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty --no-gpg-sign -qm fixture || exit 1
+# Fixed dates fix the hash, so its short form holds the letter a commit needs.
+GIT_AUTHOR_DATE='@1800000000 +0000' GIT_COMMITTER_DATE='@1800000000 +0000' \
+  git -C "$GH" -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty --no-gpg-sign -qm fixture || exit 1
 COMMIT="$(git -C "$GH" rev-parse HEAD)" || exit 1
 SHORT="${COMMIT:0:7}"
+case "$SHORT" in *[abcdef]*) ;; *) echo "fixture: short commit $SHORT holds no letter" >&2; exit 1 ;; esac
 sk_run -- post --root "$GH" --channel C777 --text "repo#2 $SHORT unknown#3"
 assert_eq "$RC=$(sk_state '.messages.C777[-1].text')" "0=[repo#2](https://github.com/org/repo/pull/2) [$SHORT](https://github.com/org/repo/commit/$COMMIT) unknown#3" 'post delivers PR and commit links with unresolved text'
 assert_eq "$(printf '%s\n' "$ERR" | grep -c '^slack: reference-link-unavailable=unknown#3 ')" '1' 'post reports the unresolved reference on stderr'
 
-# The detector fixture is not an authenticated credential. Its commit suffix
-# must stay intact so both callers refuse the original secret-pattern match.
+# The detector fixture is not an authenticated credential. Its tracker-id
+# suffix must stay intact so both callers refuse the original secret-pattern
+# match: a commit after a hyphen never links, a tracker id does.
+SECRET='xoxb-KEN-1234567890'
 sk_bind "$GH"
 sk_poll "$GH"
 GH_CH="$(sk_channel "$GH")"
@@ -95,12 +101,12 @@ for mode in original control; do
     BEFORE="$(sk_state ".messages.$GH_CH | length")"
     case "$edge" in
       post)
-        sk_run -- post --root "$GH" --text "xoxb-$COMMIT"
+        sk_run -- post --root "$GH" --text "$SECRET"
         GOT="$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")=$(sk_state ".messages.$GH_CH | length")"
         WANT="2=slack: secret-value=text=$BEFORE"
         ;;
       notice)
-        sk_lm "$GH" notice --item overseer --to owner --file "$(sk_text "commit-secret-$mode" "$mode xoxb-$COMMIT")" > "$SK_TMP/notice.out"
+        sk_lm "$GH" notice --item overseer --to owner --file "$(sk_text "tracker-secret-$mode" "$mode $SECRET")" > "$SK_TMP/notice.out"
         ID="$(field "$(cat "$SK_TMP/notice.out")" id)"
         sk_poll "$GH"
         STATE="$(jq -r --arg id "$ID" 'select(.t == "out" and .id == $id and .state != "inflight") | [.state, (.reason // "")] | join(" ")' "$(sk_journal "$GH")")"
@@ -109,7 +115,7 @@ for mode in original control; do
         ;;
     esac
     if [ "$mode" = original ]; then
-      assert_eq "$GOT" "$WANT" "$edge refuses a matching value before commit expansion"
+      assert_eq "$GOT" "$WANT" "$edge refuses a matching value before tracker expansion"
     else
       sk_assert_red "$GOT" "$WANT" "control: $edge refusal fails when expansion hides the match"
     fi

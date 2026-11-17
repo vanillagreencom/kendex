@@ -28,6 +28,7 @@
 ## Tools and records
 
 - Judge a send by the sending tool's exit status. Never pipe a send through a filter. Redirect its output to a scratch file, record the send's exit status, then read the file. A filter failure can make a successful send look failed and cause a duplicate on retry. Record success only after the tool succeeds. Treat an unconfirmed result as unconfirmed before retrying.
+- A mailbox append that a relay forwards proves only the append: claim a delivery only after the slack relay journal holds an `out` line for the envelope id in a state its [journal lines](../../slack/schemas/journal.md#journal-lines) define as a landed post or upload, or a read of the destination channel, such as the slack skill's `read`, shows the message.
 - Turn a recurring manual operation into a tool when its repeated use justifies it. Extend an existing tool that already owns the operation.
 - Associate a recurring question with a named tool that reads its answer from the source.
 - Keep durable corrections in the instructions or tool that own them. Keep unfinished work in the tracker, with the check that closes it, under [long-session.md:Homes](long-session.md#homes).

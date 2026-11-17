@@ -35,7 +35,7 @@
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
 #                  for the same diff
 #   CHANGED_PATHS  the changed paths, one per line
-#   EVENT          pull_request|merge_group|push, the event the selection is
+#   EVENT          pull_request|merge_group|push|schedule, the event the selection is
 #                  for. The first two select the same lanes and shards for
 #                  the same class, docs verdict and paths, which
 #                  --event-parity checks. The workflow classifies on
@@ -805,6 +805,9 @@ select_shards() { # BUILD(true|false)
   want=" "
   set --
   while IFS= read -r path; do
+    # The install record changes installed revisions, not suite inputs.
+    # Suites naming it construct private records in their fixture trees.
+    [ "$path" != .kendex-lock.json ] || continue
     case "$path" in
       .bun-version) whole="$whole node" ;;
       hooks/tests/* | *.md) ;;

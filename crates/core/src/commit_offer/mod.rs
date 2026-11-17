@@ -43,6 +43,7 @@ use crate::process::{DEFAULT_TIMEOUT, INTERACTIVE_TIMEOUT};
 
 mod candidate;
 mod changes;
+mod choice;
 mod gh;
 pub(crate) mod git;
 mod message;
@@ -55,6 +56,7 @@ mod run;
 mod stale;
 
 pub use changes::{Changed, Changes, ModeChange, file_changes};
+pub use choice::{Choice, Route, RouteEffect, Withheld};
 pub use gh::{OpenPullRequest, probe};
 pub use git::previous_head;
 pub(crate) use git::{committed, committed_inventory};

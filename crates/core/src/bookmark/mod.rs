@@ -119,7 +119,8 @@ impl Bookmark {
     /// What tells one bookmark from another: the marketplace folded to one
     /// string, what kind of thing it is, and its name.
     ///
-    /// The repository goes through [`crate::source_ref::repo_identity`],
+    /// An absolute folder reference keeps its resolved, slashed directory;
+    /// a repository goes through [`crate::source_ref::repo_identity`],
     /// this repository's one judge of whether two references name one
     /// marketplace — the same value subscription dedup, update grouping and
     /// template membership compare. A stored `repo` is a reference to
@@ -130,7 +131,13 @@ impl Bookmark {
     /// same name stay two.
     pub fn identity(&self) -> (String, BookmarkItem, &str) {
         (
-            crate::source_ref::repo_identity(&self.repo),
+            if std::path::Path::new(&self.repo).is_absolute() {
+                // Folder bookmarks store the resolved directory, including
+                // a possible `.git` suffix, rather than a folded identity.
+                crate::paths::slashed(std::path::Path::new(&self.repo))
+            } else {
+                crate::source_ref::repo_identity(&self.repo)
+            },
             self.item,
             self.name.as_str(),
         )

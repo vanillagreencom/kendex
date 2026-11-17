@@ -3,8 +3,8 @@
 //! admits merge into the project's settings file, write-if-absent per key:
 //! comment blocks travel with their key. What it admits is a narrow set,
 //! [`Seeding`] states it, and `docs/authoring/settings.md` states which
-//! operations reach a consumer's file and when. Seeding on refresh leaves
-//! it byte-identical and keeps deleted keys absent; the compatibility pass
+//! operations reach a consumer's file and when. Seeding keeps deleted
+//! keys absent; the compatibility pass
 //! in `crate::engine::settings_write` can still update legacy agent
 //! labels. A key nobody answers is named by [`notes`] rather than written.
 //!
@@ -30,12 +30,9 @@
 //! spelled the destination's way, an LF template seeded into a CRLF file
 //! hands the consumer a different string from the one it declared.
 //!
-//! Nothing here ever revisits a block it wrote. A comment a consumer
-//! carries is theirs from the moment it lands, and a later template
-//! revision does not follow it in:
-//! that would be a write into a tracked file on a pass nobody asked to
-//! write. Every write is byte-faithful — the inserted block is the only
-//! change — so CRLF files and missing-terminator state survive untouched.
+//! Live comments remain the consumer's. Refresh can remove an orphan
+//! only when its complete bytes match a proven template block. Every
+//! other byte, including separators and missing terminators, survives.
 
 use crate::settings_toml::{Line, Row};
 
@@ -45,6 +42,7 @@ mod write;
 pub use env::{EnvBlocked, env_blocked};
 pub use notes::{Answered, conflict_notes, seed_notes, unterminated_notes};
 pub use write::merge;
+pub(crate) use write::remove_orphan_comments;
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
 pub const SETTINGS_TEMPLATE: &str = "kendex.settings.toml.example";
@@ -299,8 +297,8 @@ pub fn writable_all<'a>(
 /// A template applies ONCE, when its skill arrives. What it writes then is
 /// the keys it marks `# required` — the ones the consumer has to decide,
 /// which have no answer a default could stand in for. Every later pass
-/// over the same scope writes none of it, so a refresh leaves the file as
-/// it found it and a key the consumer deleted stays deleted.
+/// over the same scope inserts none of it, so a key the consumer deleted
+/// stays deleted.
 ///
 /// A key this pass sets a value on is the other reason. It may be one no
 /// seed ever wrote, and a value needs an assignment to land on, so the

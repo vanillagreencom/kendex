@@ -30,7 +30,17 @@ kendex add vanillagreencom/kendex --bundle jarvis --harness codex
 .agents/skills/jarvis/scripts/jarvis-session attach --home .
 ```
 
-- `kendex add` asks whether to install into this folder and whether to set up the commit-guards hooks. Answer yes to both. List each assistant you use in `--harness`, comma-separated.
+In a new home, `kendex add` asks these questions in this order:
+
+1. `install into this folder?`: type `y`.
+2. `write N changes?`: press `y`. Enter answers no and cancels the install.
+3. `N files kendex wrote are not committed`: press `c` to commit them. Enter leaves them as diffs.
+4. `message:`: press Enter to use the message shown, or `e` to type another one. `kendex add` asks this only after you press `c`.
+5. `make the repository changes of N packages?`: press `y` so the packages make the repository changes they declare, such as the commit-guards hooks. Enter answers no.
+
+To answer all of them without being asked, add `--yes --commit --allow-repo-effects` to the `kendex add` command. Add `--message TEXT` to commit with your own message.
+
+- List each assistant you use in `--harness`, comma-separated.
 - The first `start` writes the starting files, an `AGENTS.md` that loads the [persona](persona.md), the memory index and `state/`, and then starts the session. It uses the account folder your assistant uses, such as `~/.codex` or the folder `CODEX_HOME` names; add `--account DIR` for another one. In a folder that is not a new home of its own, it refuses and names what to do. [Initialize](references/home-layout.md#initialize) has the details.
 - `attach` puts your terminal on the running session. Before the first start with Copilot CLI, follow [Copilot folder trust](references/home-layout.md#copilot-folder-trust).
 
@@ -42,7 +52,7 @@ Jarvis runs as a session of your coding assistant in your Jarvis home. You give 
 - **Jarvis Voice** is the VGS voice session on any computer.
 - **Jarvis main** is the computer that runs Jarvis.
 - **Jarvis satellite** is a computer that runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward) are described separately.
-- **Jarvis home** is `~/dev/jarvis`, the folder with Jarvis's instructions, skills and memory. Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
+- **Jarvis home** is the folder with Jarvis's instructions, skills and memory: `~/jarvis` if you followed [Install](#install). Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
 
 | Your question | Read |
 |---|---|
@@ -60,8 +70,10 @@ Jarvis runs as a session of your coding assistant in your Jarvis home. You give 
 Your own files sit in the Jarvis home beside the package, and package updates leave them as they are. The [home layout](references/home-layout.md) lists every file and whether Git keeps it.
 
 - `AGENTS.md` holds your standing instructions: who decides what, and which work Jarvis may do without asking.
-- `skills/own/` holds skills you write. Create `skills/own/my-task/SKILL.md` with a frontmatter `name: my-task` and a `description` that says when to read it, then the instructions below it. Install it from your Jarvis home with `kendex add ./skills/own/my-task --skill my-task --harness codex --yes`, naming your harnesses in `--harness`.
+- `skills/NAME/` holds skills you write. Create `skills/my-task/SKILL.md` with a frontmatter `name: my-task` and a `description` that says when to read it, then the instructions below it. In your home's `kendex.toml`, declare `[sources."."]` with `path = "."`, then list the skill under `[skills.my-task]` with `source = "."`. Run `kendex refresh` from your home to install it.
+- `agents/NAME.md` holds agents you write. Give the agent a frontmatter `name` and `description`, followed by its scope and instructions. Reuse the same home source and list it under `[agents.NAME]` with `source = "."`. Refresh from your home and check the agent in each selected supported assistant. Change an installed agent through the manifest's agent overrides or `kendex fork`, rather than editing its generated file.
 - `memory/` holds facts and preferences under [Memory](references/memory.md). Keep secrets in a password manager, never in memory.
+- Ask Jarvis to remember a fact or establish a workstream through [Personal additions](references/home-contract.md#personal-additions). Workstream notes keep the goal, scope, owner and tracker links; tasks and waiting conditions stay in the tracker.
 - `kendex.settings.toml` holds shared settings under `[env]`, such as the report cadence, quiet hours, time zone and report folder. The [settings example](kendex.settings.toml.example) lists them.
 - `.env.local` holds secrets and settings for one computer only. Its values override `kendex.settings.toml`.
 

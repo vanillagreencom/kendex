@@ -12,6 +12,8 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 
 `HARNESS_CI_UNREAD_PATHS` is a base-only key too: `change-class` drops it from its environment and reads it from the `[env]` tables of the commit `--base` names alone.
 
+`HARNESS_CI_DOCS_PATHS` and `HARNESS_CI_UNREAD_PATHS` are base-only keys too: `change-class` drops them from its environment and reads them from the `[env]` tables of the commit `--base` names alone.
+
 ## Tests
 
 `tests/` runs in kendex CI on every change to this repository; run one locally with `bash skills/harness-ci/tests/queue-only.test.sh`. The suites source change-scope's `tests/lib/sandbox.sh`, which lays out both packages.

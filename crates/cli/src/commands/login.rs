@@ -12,7 +12,7 @@ use kendex_core::registry::{CurlFetch, base_url};
 
 pub fn login() -> Result<()> {
     let style = ui::style();
-    ui::stderr(&style.header("login", &base_url()));
+    ui::stderr(&style.header("login", &[Span::Prose(&base_url())]));
     let fetch = CurlFetch;
     let store = KeyringStore;
     // A store that refuses the read is not a machine with no credential:
@@ -53,7 +53,7 @@ pub fn login() -> Result<()> {
 
 pub fn logout() -> Result<()> {
     let style = ui::style();
-    ui::stderr(&style.header("logout", &base_url()));
+    ui::stderr(&style.header("logout", &[Span::Prose(&base_url())]));
     if !me::sign_out(&Env::detect()?, &CurlFetch, &KeyringStore)? {
         ui::stderr(&outcome(&style, Outcome::NotSignedIn));
         return Ok(());

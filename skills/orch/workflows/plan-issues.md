@@ -47,6 +47,8 @@ For every accepted item, before its create:
 - Search existing issues, in every state, for the same problem or component change. Flag a likely duplicate to the user, with a related relation and a comment, instead of creating blind.
 - Write `[BODY]` from the project-management skill's `templates/issue-description-template.md`, its `**Reached by**` line naming what the plan says arrives at the work. Write it with the harness file tool to `tmp/plan-issue-[ITEM].md`, and bind that path as `[BODY_FILE]`.
 
+Beside `Reached by:`, write `Supersession:` from the search above: each matched open item with its action and identifier, else `none found; searched: [TERMS]`.
+
 **Linear only.** Give every item a priority, 1 to 4 from the plan's order and 3 where the plan states none, and an estimate of 1 to 5 points for its one pull request. Create in dependency order, and attach each item's blocking relations right after its own create, never after all the creates:
 
 ```bash

@@ -35,7 +35,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         &agent.model_classes,
         &agent.model_bindings,
     );
-    warnings.extend(resolved.warning.map(crate::render::RenderWarning::new));
+    warnings.extend(resolved.warning);
     // Claude spells inherit-the-session-model literally.
     push(format!(
         "model: {}",

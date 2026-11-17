@@ -4,7 +4,7 @@
 
 **Date**: 2026-10-17
 
-**Status**: Active
+**Status**: Active (landing app bypass → D033)
 
 **Research**: [KEN-4249](https://linear.app/vanillagreen/issue/KEN-4249); fleet's D095 ([FLT-1355](https://linear.app/vanillagreen/issue/FLT-1355)), the organization rule that removed every app bypass from the organization's rulesets
 

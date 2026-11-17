@@ -220,6 +220,43 @@ def toml_loads(text):
     return tomllib.loads(text)
 
 
+LOCAL_LANE = "COMMIT_GUARDS_PRE_COMMIT_LOCAL"
+HOME_CHECK = ".agents/skills/jarvis/scripts/progress-log"
+
+
+def local_lane(text):
+    text = text or ""
+    data = toml_loads(text)
+    env = data.get("env", {})
+    if not isinstance(env, dict):
+        raise Unmergeable("env")
+    current = env.get(LOCAL_LANE)
+    if current is not None and not isinstance(current, str):
+        raise Unmergeable(LOCAL_LANE)
+    if current:
+        return None
+    expected = copy.deepcopy(data)
+    expected.setdefault("env", {})[LOCAL_LANE] = HOME_CHECK
+    newline = line_ending(text)
+    assignment = LOCAL_LANE + ' = "' + HOME_CHECK + '"'
+    if current is not None:
+        # Only a flat empty assignment can be replaced without rewriting
+        # consumer layout or comments. Other TOML forms stay with their owner.
+        pattern = r"(?m)^([ \t]*" + LOCAL_LANE + r"[ \t]*=[ \t]*)(?:\"\"|'')"
+        updated, count = re.subn(pattern, lambda match: match[1] + '"' + HOME_CHECK + '"', text)
+        if count != 1:
+            raise Unmergeable(LOCAL_LANE)
+    elif "env" not in data:
+        separator = "" if not text else (newline if text.endswith("\n") else newline * 2)
+        updated = text + separator + "[env]" + newline + assignment + newline
+    else:
+        header = re.search(r"(?m)^[ \t]*\[env\][ \t]*(?:#[^\r\n]*)?(?=\r?\n|\Z)", text)
+        if not header:
+            raise Unmergeable("env")
+        updated = text[:header.end()] + newline + assignment + text[header.end():]
+    return updated, expected
+
+
 def init(home):
     """Write the missing starting files of a dedicated HOME and report each one."""
     home = Path(home).resolve(strict=True)
@@ -249,7 +286,7 @@ def init(home):
             kept.append(relative)
         except OSError as failure:
             raise Failed(type(failure).__name__, relative, created)
-    settings = []
+    settings = [merge(home, "kendex.settings.toml", LOCAL_LANE, local_lane, toml_loads)]
     # A harness directory kendex wrote says the home uses that harness.
     if (home / ".claude").is_dir():
         settings.append(merge(home, CLAUDE_SETTINGS, "autoMemoryEnabled", claude_settings, json.loads))
@@ -260,4 +297,6 @@ def init(home):
 
 def settings_lines(report):
     return ["jarvis-session: init-settings=refused path=" + row["path"] + " cause=" + row["cause"]
-            for row in report["settings"] if row["outcome"] == "refused"]
+            for row in report["settings"] if row["outcome"] == "refused"] + [
+        "jarvis-session: init-local-lane=kept check=" + HOME_CHECK
+        for row in report["settings"] if row["key"] == LOCAL_LANE and row["outcome"] == "kept"]

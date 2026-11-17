@@ -1,5 +1,71 @@
 use super::*;
 
+#[cfg(unix)]
+thread_local! {
+    // One-shot, thread-local inspection of the real writer before it
+    // restores the final mode. Other tests and production carry no observer.
+    static TEMPORARY_OBSERVER: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(unix)]
+pub(super) fn observe_temporary(path: &Path) {
+    if let Some(observe) = TEMPORARY_OBSERVER.take() {
+        observe(path);
+    }
+}
+
+/// MCP/config edits copy retained private values through this writer. Observe
+/// the actual temporary while it holds those bytes, before final chmod/rename.
+#[cfg(unix)]
+#[test]
+fn replacement_temporaries_are_private_before_publication_and_new_files_keep_defaults() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let ordinary = root.join("ordinary");
+    fs::write(&ordinary, "baseline").unwrap();
+    let default_mode = fs::metadata(&ordinary).unwrap().permissions().mode() & 0o777;
+    let path = root.join("config");
+    for write in [atomic_write, atomic_write_durable, atomic_write_no_follow] {
+        for mode in [None, Some(0o600), Some(0o751)] {
+            if let Some(mode) = mode {
+                fs::write(&path, "old").unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            }
+            TEMPORARY_OBSERVER.set(Some(if mode.is_some() {
+                |temporary| {
+                    let mode = fs::metadata(temporary).unwrap().permissions().mode();
+                    assert_eq!(
+                        mode & 0o177,
+                        0,
+                        "replacement contents are owner-only before publication"
+                    );
+                    assert_eq!(fs::read(temporary).unwrap(), b"retained configuration");
+                }
+            } else {
+                |temporary| {
+                    let baseline = temporary.parent().unwrap().join("ordinary");
+                    assert_eq!(
+                        fs::metadata(temporary).unwrap().permissions().mode() & 0o777,
+                        fs::metadata(baseline).unwrap().permissions().mode() & 0o777
+                    );
+                }
+            }));
+            write(&path, "retained configuration").unwrap();
+            assert!(
+                TEMPORARY_OBSERVER.take().is_none(),
+                "pre-publication inspection ran"
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"retained configuration");
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                mode.unwrap_or(default_mode)
+            );
+            fs::remove_file(&path).unwrap();
+        }
+    }
+}
+
 /// A link is a leaf of the tree it sits in: the durable copy reproduces
 /// the link and never reads through it, so nothing on the far side is
 /// opened or synced. Pinned with a link to a directory outside the tree

@@ -1,0 +1,37 @@
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+  Autopilot  Read README.md, DEVELOPMENT.md and crates/AGENTS.md, then summarize each in fou…                      1m
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                    │
+│  ╭─╮╭─╮                             │  Getting started                                                             │
+│  ╰─╯╰─╯  Copilot v1.0.109 uses AI.  │  Use the tabs above to explore your sessions and pull requests               │
+│  █ ▘▝ █  Check for mistakes.        │  /model — Switch models across providers, or use Copilot Fusion              │
+│   ▔▔▔▔                              │                                                                              │
+│                                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ! Connected Connectors could not be loaded; existing local and self-hosted MCP servers remain available.
+
+ ❯ Read README.md, DEVELOPMENT.md and crates/AGENTS.md, then summarize each in four sentences. Change no file    04:03
+   and run no command.
+
+ ● skill(communication)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ~/project [⎇ main]                                                                       Session: 5.8 AIC used · YOLO
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Autopilot · Allow All · ◎ Working · 30 B ctrl+c interrupt                                    GPT-6.1 Sol · High · (9%)

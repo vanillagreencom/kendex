@@ -107,7 +107,7 @@ fx_linked() { # a linked worktree with no render of its own, the main checkout's
   git -C "$R" worktree add -q "$TMP/wt-linked" -b wt-linked
   W="$TMP/wt-linked"
   blank_baked
-  printf '# %s: nope\n' "$TD" >"$W/c.py"
+  printf '%s nope\n' "$CM" >"$W/c.py"
   git -C "$W" add c.py
 }
 fx_symlinked() { # the checkout reached through a symlink, the baked path blanked
@@ -147,7 +147,7 @@ fx_vendored() {
   stage AGENTS.md "$(head -c 1025 /dev/zero | tr '\0' x)"
 }
 run_rows \
-  "a package moved under .claude/skills is rediscovered and its chain runs the commit|fx_copy_clean|$ONE|commit|feat: add a|rc=0 $CHAIN;$CHAIN_OK;${MSG_OK}feat: add a|" \
+  "a package moved under .claude/skills is rediscovered and its chain runs the commit|fx_copy_clean|$ONE|commit|feat: add a|rc=0 $CHAIN;$CHAIN_OK|" \
   "control: the rediscovered chain still blocks|fx_copy_marker|$ONE|commit|feat: add b|rc=1 $CHAIN;$BLOCKED|" \
   "a package beside an external git directory is not this repository's: the checkout's own package gates|fx_separate|$ONE|commit|feat: separate|rc=1 $BLOCKS|" \
   "a package under the git directory's parent inside the work tree is not the main checkout's|fx_inside|$ONE|commit|feat: inside|rc=1 $BLOCKS|" \
@@ -168,7 +168,7 @@ fx_mode_kept() { over mode-kept '#!/bin/sh\necho mine\n' 0700; }
 run_rows \
   "uninstall restores a hook with no final newline byte for byte|fx_noeol_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh~echo mine<noeol> commit-msg=absent pre-push=absent hooksPath=<unset>" \
   "a hook that is only a newline-less shebang takes the delegate on its own line|fx_shebang_only||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
-  "control: that hook runs the chain|fx_shebang_only_commit|$ONE|commit|feat: add a|rc=0 $CLEAN;${MSG_OK}feat: add a|" \
+  "control: that hook runs the chain|fx_shebang_only_commit|$ONE|commit|feat: add a|rc=0 $CLEAN|" \
   "a consumer's shebang-only hook is restored, not deleted, while the hook we created goes|fx_shebang_nl_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh commit-msg=absent pre-push=absent hooksPath=<unset>" \
   "a rewritten hook keeps its own mode and content|fx_mode_kept||install||rc=0 $ARMED|helper=$OURS pre-commit=rwx------:#!/bin/sh~@PRE@~echo mine commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
@@ -202,10 +202,10 @@ fx_pf_dies() {
 }
 PF_LANES_TAIL="$BATCH;$LOCAL_NONE"
 run_rows \
-  "the first commit states the preflight skip instead of blocking|fx_pf_first|$ONE|commit|feat: add ok|rc=0 $DL;$PF_FIRST;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
+  "the first commit states the preflight skip instead of blocking|fx_pf_first|$ONE|commit|feat: add ok|rc=0 $DL;$PF_FIRST;$PF_LANES_TAIL;$CHAIN_OK|" \
   "a staged fail-open script blocks through preflight|fx_pf_blocks|$ONE|commit|feat: add loose|rc=1 $DL;$PF_RAN;$PF_LANES_TAIL;$BLOCKED|" \
-  "control: clean staged content commits through a run preflight|fx_pf_clean|$ONE|commit|feat: add ok|rc=0 $DL;$PF_RAN;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
-  "a dangling preflight install is named unrun, never a silent skip, and the commit lands|fx_pf_dangling|$ONE|commit|feat: add d|rc=0 $DL;pre-commit: package-incomplete=<repo>/.agents/skills/preflight/scripts/preflight;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add d|" \
+  "control: clean staged content commits through a run preflight|fx_pf_clean|$ONE|commit|feat: add ok|rc=0 $DL;$PF_RAN;$PF_LANES_TAIL;$CHAIN_OK|" \
+  "a dangling preflight install is named unrun, never a silent skip, and the commit lands|fx_pf_dangling|$ONE|commit|feat: add d|rc=0 $DL;pre-commit: package-incomplete=<repo>/.agents/skills/preflight/scripts/preflight;$PF_LANES_TAIL;$CHAIN_OK|" \
   "a preflight that dies at run time is a step that did not complete, and blocks|fx_pf_dies|$ONE|commit|feat: add d|rc=1 $DL;$PF_RAN;pre-commit: step-incomplete=preflight:2;$PF_LANES_TAIL;$ERRORS|"
 
 echo "=== a repo-local doc-limits replacement is judged like the skill, and blocks when it does not complete ==="

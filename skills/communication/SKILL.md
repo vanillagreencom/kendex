@@ -1,6 +1,6 @@
 ---
 name: communication
-description: "Load before writing a message to a person: a reply, report, briefing, decision request, or issue or comment addressed to the user."
+description: "Load before writing a message to a person: a reply, report, briefing, decision request, or work-item description or comment."
 summary: "Plain-language messages, reader modes, decision questions, reports, threads and spoken replies."
 license: MIT
 user-invocable: true
@@ -16,7 +16,7 @@ tags: [communication]
 
 ## Scope
 
-Use this package for messages to a person. Agent-to-agent messages, literal return formats, tool prompts, documentation and text sent as the user follow their own owners. The caller owns authority, delivery and report schedules.
+Use this package for messages to a person. Agent-to-agent messages, literal return formats, tool prompts, documentation and text sent as the user follow their own owners. The caller owns authority, delivery and report schedules. It selects the [presentation choices](references/messages.md#reader-modes) from its own settings.
 
 ## Reading routes
 

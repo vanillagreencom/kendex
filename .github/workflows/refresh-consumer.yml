@@ -4,13 +4,13 @@
 # called workflow the github context is the caller's, so every github.*
 # value below names the consumer.
 #
-# An inline input check runs first with the caller's GitHub token. When saved
-# inputs and source coverage remain current and no rolling pull request is
-# open, it skips the render step, and every later step unless one merged in
-# the last 24 hours, whose review threads the review step still answers. A
-# review-only or full run checks out the workflow commit, the one
-# job.workflow_sha names, and installs the one stable vN.Y.Z release tagged on
-# that commit, where vN is the tag the caller named, and stops before any
+# The job checks out its defining workflow commit, the one job.workflow_sha
+# names, then runs the shared input checker with the caller's GitHub token.
+# When saved inputs and source coverage remain current and no rolling pull
+# request is open, it skips the render step and the remaining steps unless one
+# merged in the last 24 hours, whose review threads the review step still
+# answers. A review-only or full run installs the one stable vN.Y.Z release
+# tagged on that commit, where vN is the tag the caller named, and stops before any
 # install when the commit carries no such tag or more than one. The default
 # catalog follows main, with the engine's compatibility refusal selecting the
 # release catalog. A declared rev takes precedence. Later steps run their
@@ -31,16 +31,16 @@ name: refresh-consumer
         type: string
         default: kendex
       app-id-secret-name:
-        description: Deprecated compatibility input; the shared job reads only the two fixed environment pairs.
+        description: Deprecated compatibility input; the shared job's repository token reads only the two fixed credential pairs.
         type: string
         default: FLEET_GH_APP_ID
       app-private-key-secret-name:
-        description: Deprecated compatibility input; the shared job reads only the two fixed environment pairs.
+        description: Deprecated compatibility input; the shared job's repository token reads only the two fixed credential pairs.
         type: string
         default: FLEET_GH_APP_PRIVATE_KEY
     # GitHub loads environment secrets when the called job starts. A caller
     # cannot select an environment on its calling job.
-    # Adoption refuses outside Actions copies of all four fixed names;
+    # Adoption refuses outside Actions copies of all six fixed names;
     # otherwise a missing environment name could receive a caller value.
     secrets:
       KENDEX_APP_ID:
@@ -57,6 +57,12 @@ name: refresh-consumer
         required: false
       FLEET_GH_APP_PRIVATE_KEY:
         required: false
+      # The landing app's pair, optional: without it every update keeps the
+      # rolling pull request.
+      KENDEX_LAND_APP_ID:
+        required: false
+      KENDEX_LAND_APP_PRIVATE_KEY:
+        required: false
 
 jobs:
   refresh:
@@ -64,9 +70,24 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
+    # A step condition cannot read secrets, so the job carries only whether
+    # the landing pair is complete, and whether either name is set, which
+    # refresh-consumer.sh reads to report a token that did not arrive; never
+    # their values.
+    env:
+      KENDEX_LAND_PAIR: ${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
+      KENDEX_LAND_CONFIGURED: ${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
     # Inherit the caller's grants. Older callers have contents:read only;
     # their unreadable review/record evidence must select a full refresh.
     steps:
+      # job.workflow_sha binds co-located code to the defining reusable workflow,
+      # not the consumer commit. See GitHub's contexts reference, job context.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: kendex
+          persist-credentials: false
       # The REST jobs reader recognizes this name when a skipped run has no record.
       - name: refresh-input-check
         id: inputs
@@ -77,125 +98,13 @@ jobs:
           WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import datetime, io, json, os, pathlib, re, subprocess, tempfile, urllib.parse, zipfile
-          def command(*args):
-              return subprocess.check_output(args, timeout=15, stderr=subprocess.PIPE)
-          def api(path):
-              return json.loads(command('gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/' + path))
-          output = pathlib.Path(os.environ['GITHUB_OUTPUT'])
-          with output.open('a') as stream:
-              stream.write('route=full\n')
-          try:
-              # GitHub's public git refs and REST APIs need no checkout or app token.
-              refs = command('git', 'ls-remote', 'https://github.com/vanillagreencom/kendex.git',
-                             'refs/heads/main', 'refs/tags/v1.*').decode().splitlines()
-              main = [row.split()[0] for row in refs if row.split()[1] == 'refs/heads/main']
-              tags = sorted(row for row in refs if re.fullmatch(r'refs/tags/v1\.[0-9]+\.[0-9]+(?:\^\{\})?', row.split()[1]))
-              head = api('commits/' + urllib.parse.quote(os.environ['DEFAULT_BRANCH'], safe=''))['sha']
-              assert len(main) == 1 and tags
-              assert all(re.fullmatch('[0-9a-f]{40}', sha) for sha in (main[0], head, os.environ['WORKFLOW_SHA']))
-              inputs = dict(catalog=main[0], workflow=os.environ['WORKFLOW_SHA'], tags=tags, consumer=head)
-              current = dict(inputs=inputs, run=int(os.environ['GITHUB_RUN_ID']), attempt=int(os.environ['GITHUB_RUN_ATTEMPT']))
-              assert current['run'] > 0 and current['attempt'] > 0
-              record = pathlib.Path(tempfile.mkdtemp(prefix='kendex-refresh-', dir=os.environ['RUNNER_TEMP'])) / 'record.json'
-              record.write_text(json.dumps(current, sort_keys=True))
-              with output.open('a') as stream:
-                  stream.write('record-path=' + str(record) + '\n')
-              owner = os.environ['GH_REPO'].split('/')[0]
-              query = urllib.parse.urlencode(dict(state='all', head=owner + ':kendex/refresh', per_page=100))
-              pages = json.loads(command('gh', 'api', '--paginate', '--slurp', 'repos/' + os.environ['GH_REPO'] + '/pulls?' + query))
-              cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)
-              pulls = [pr for page in pages for pr in page]
-              # Only the render step closes, pushes, re-describes or arms an
-              # open rolling pull request, so one keeps the full path.
-              if any(pr['state'] == 'open' for pr in pulls):
-                  print('refresh-check=full cause=open-pull-request')
-                  raise SystemExit(0)
-              # The review step reads a pull request merged in this window.
-              reviews = any(pr['merged_at'] and datetime.datetime.fromisoformat(pr['merged_at'].replace('Z', '+00:00')) >= cutoff
-                            for pr in pulls)
-              artifacts = api('actions/artifacts?name=kendex-refresh-current&per_page=100')['artifacts']
-              # A fork or feature-branch artifact cannot attest the default branch.
-              artifacts = [a for a in artifacts if not a['expired'] and
-                           a['workflow_run']['head_branch'] == os.environ['DEFAULT_BRANCH'] and
-                           a['workflow_run']['head_repository_id'] == a['workflow_run']['repository_id']]
-              latest = max(artifacts, key=lambda a: a['created_at'])
-              archive = command('gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/actions/artifacts/' + str(latest['id']) + '/zip')
-              with zipfile.ZipFile(io.BytesIO(archive)) as saved:
-                  previous = json.loads(saved.read('record.json'))
-              run = api('actions/runs/' + str(latest['workflow_run']['id']))
-              assert run['conclusion'] == 'success' and run['path'] == '.github/workflows/kendex-refresh.yml'
-              # Reruns keep their run ID and can retain earlier attempts' artifacts.
-              # A newer attempt without its own record cannot reuse that proof.
-              assert type(previous['attempt']) is int and previous['attempt'] > 0
-              assert previous['run'] == run['id'] and previous['attempt'] == run['run_attempt']
-              saved_at = datetime.datetime.fromisoformat(latest['created_at'].replace('Z', '+00:00'))
-              now = datetime.datetime.now(datetime.timezone.utc)
-              assert datetime.timedelta(0) <= now - saved_at <= datetime.timedelta(hours=24)
-              # GitHub allows rerun requests for 30 days, then waiting or running for 35.
-              # Read that whole window, independent of list order. Partition it
-              # so an hourly caller stays below GitHub's 1,000-result search cap.
-              split = saved_at - datetime.timedelta(days=30)
-              history = {}
-              for start, end in ((saved_at - datetime.timedelta(days=65), split), (split, now)):
-                  query = urllib.parse.urlencode(dict(branch=os.environ['DEFAULT_BRANCH'],
-                                                      created=start.isoformat() + '..' + end.isoformat(), per_page=100))
-                  pages = json.loads(command('gh', 'api', '--paginate', '--slurp',
-                                            'repos/' + os.environ['GH_REPO'] + '/actions/workflows/kendex-refresh.yml/runs?' + query))
-                  batch = [recent for page in pages for recent in page['workflow_runs']]
-                  assert 0 <= pages[0]['total_count'] == len(batch) < 1000
-                  assert len({recent['id'] for recent in batch}) == len(batch)
-                  for recent in batch:
-                      assert recent['id'] not in history or history[recent['id']] == recent
-                      history[recent['id']] = recent
-              assert run['id'] in history
-              assert current['attempt'] == 1
-              for recent in history.values():
-                  if recent['id'] == current['run']:
-                      assert recent['run_attempt'] == current['attempt']
-                      continue
-                  if recent['id'] == run['id']:
-                      assert recent['run_attempt'] == previous['attempt']
-                      continue
-                  if datetime.datetime.fromisoformat(recent['updated_at'].replace('Z', '+00:00')) < saved_at:
-                      continue
-                  # Latest-attempt jobs cannot prove what an earlier attempt did.
-                  # Keep rerun history on the full path instead of walking attempts.
-                  assert type(recent['run_attempt']) is int and recent['run_attempt'] == 1
-                  assert recent['status'] == 'completed' and recent['conclusion'] == 'success'
-                  report = api('actions/runs/' + str(recent['id']) + '/attempts/1/jobs?per_page=100')
-                  jobs = report['jobs']
-                  assert report['total_count'] == len(jobs)
-                  # A review-only run checks out and installs too, so only its
-                  # skipped render step proves it left the record's render alone.
-                  steps = [step for job in jobs for step in job['steps']]
-                  assert [step['conclusion'] for step in steps if step['name'] == 'refresh-input-check'] == ['success']
-                  assert [step['conclusion'] for step in steps if step['name'] == 'Refresh and arm the rolling pull request'] == ['skipped']
-              if previous['inputs'] != inputs:
-                  print('refresh-check=full cause=changed')
-              else:
-                  route = 'reviews' if reviews else 'skip'
-                  with output.open('a') as stream:
-                      stream.write('route=' + route + '\n')
-                  print('refresh-check=' + route + ' cause=current')
-          except (AssertionError, AttributeError, IndexError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-              # Missing grants, expired artifacts and failed reads cannot authorize a skip.
-              print('refresh-check=full cause=unreadable')
-          PY
+          exec python3 "$GITHUB_WORKSPACE/kendex/refresh/check-inputs.py"
       - if: steps.inputs.outputs.route != 'skip'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: consumer
           fetch-depth: 0
-          persist-credentials: false
-      - if: steps.inputs.outputs.route != 'skip'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: kendex
           persist-credentials: false
       - name: Install the release tagged on this commit
         if: steps.inputs.outputs.route != 'skip'
@@ -273,6 +182,23 @@ jobs:
           permission-environments: read
           permission-secrets: read
           permission-organization-secrets: ${{ github.event.repository.owner.type != 'User' && 'read' || '' }}
+      # The landing app's token, which pushes a render the refresh committed
+      # to the default branch, where the rulesets there let that app
+      # through, and which refresh-consumer.sh uses for nothing else. It
+      # holds contents: write alone. A caller without the pair, or a failed
+      # mint, leaves the token empty and every update on the rolling pull
+      # request.
+      - name: Mint the landing token
+        if: steps.inputs.outputs.route == 'full' && env.KENDEX_LAND_PAIR == 'true'
+        id: land-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.KENDEX_LAND_APP_ID }}
+          private-key: ${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
       # The REST jobs reader recognizes this name: its skip proves a run left
       # the recorded render alone.
       - name: Refresh and arm the rolling pull request
@@ -283,6 +209,7 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           REFRESH_APP_SLUG: ${{ steps.token.outputs.app-slug }}
+          KENDEX_LAND_TOKEN: ${{ steps.land-token.outputs.token }}
         run: |
           set -euo pipefail
           exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-consumer.sh"

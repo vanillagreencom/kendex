@@ -74,9 +74,17 @@ const offer = {
   tangled: [],
   message: "add gh",
   branch: null,
+  choices: [
+    {
+      route: "commit",
+      effect: { kind: "commit", branch: "main" },
+      default: false,
+    },
+    { route: "leave", effect: { kind: "leave" }, default: true },
+  ],
+  recoversRefusedPush: false,
   push: null,
   pullRequest: null,
-  openNumber: null,
   shared: [],
   stale: [],
   staleAction: [],

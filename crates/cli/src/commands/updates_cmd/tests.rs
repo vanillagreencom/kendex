@@ -199,12 +199,15 @@ fn inspection_updates_snapshots() {
     );
 }
 
+/// Rich keeps each line within 80 cells, but for the scope's folder: a
+/// path is drawn whole, so one wider than the line stands on its own.
 #[test]
 fn inspection_updates_wraps_scope_and_notes() {
+    let root = format!("/{}", "long-path-".repeat(12));
     let report = UpdatesReport {
         rows: vec![UpdateRow {
             scope: Scope::Project {
-                root: format!("/{}", "long-path-".repeat(12)).into(),
+                root: root.clone().into(),
             },
             name: "long-name-".repeat(12),
             blocked_by_local_edit: true,
@@ -215,8 +218,13 @@ fn inspection_updates_wraps_scope_and_notes() {
         last_fetched: None,
     };
     let lines = screen(&rich(80), &report, false);
+    let place = format!("[{root}]");
+    let alone = |line: &String| console::strip_ansi_codes(line).trim() == place;
+    assert!(lines.iter().any(alone), "{place} is not whole: {lines:?}");
     assert!(
-        lines.iter().all(|line| visible_width(line) <= 80),
+        lines
+            .iter()
+            .all(|line| visible_width(line) <= 80 || alone(line)),
         "{lines:?}"
     );
     assert!(

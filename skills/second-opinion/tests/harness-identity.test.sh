@@ -64,7 +64,7 @@ a project-sourced identity is refused in a Cursor session|ps:cursor-agent proj:s
 control: the same value exported in the session's own environment is honoured in a Pi session|ps:pi current:codex proj:settings:codex models:codex+claude|review|0|<out>|$CODEX_SESSION
 a set-but-empty export takes the undeclared path, not the project file's|ps:pi current:empty proj:settings:codex|review|1|-|undeclared:pi refused:undeclared:1|$NONE
 .env.local is named when it supplied the value|ps:pi proj:envlocal:codex|review|1|-|project:codex:pi:.env.local refused:codex:1|$NONE
-a set-but-empty export suppresses .env.local's value too, which is sourced wholesale|ps:pi current:empty proj:envlocal:codex|review|1|-|undeclared:pi refused:undeclared:1|$NONE
+a set-but-empty export suppresses .env.local's value too, which loads every key it holds|ps:pi current:empty proj:envlocal:codex|review|1|-|undeclared:pi refused:undeclared:1|$NONE
 .kendex/settings.toml is named when it supplied the value|ps:pi proj:local:codex|review|1|-|project:codex:pi:.kendex/settings.toml refused:codex:1|$NONE
 the agreeing-value exemption survives the recursive lane launch|ps:codex proj:settings:codex $FANOUT|review|0|<out>|$UNION
 control: a caller-exported identity still fans out to the lanes|ps:pi current:codex $FANOUT models:claude+my-model+codex|review|0|<out>|$UNION

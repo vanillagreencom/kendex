@@ -499,9 +499,12 @@ export const commands = {
 	/**
 	 *  Unsubscribe, removing or keeping the packages that would leave. `keep`
 	 *  converts them to local forks; otherwise they are uninstalled, and
-	 *  `discard_edits` takes their hand edits along instead of refusing.
+	 *  `discard_edits` takes their hand edits along instead of refusing. A
+	 *  refusal leaves the scope as it was; a keep that landed before the render
+	 *  after it failed has kept the packages, and what keeping them reported
+	 *  comes with the cause.
 	 */
-	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, string>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
+	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, LandingStopped_Serialize>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
 	/**
 	 *  The directory as the tab shows it. `refresh` forces a revalidation;
 	 *  otherwise the cached list is served within its TTL.
@@ -533,7 +536,7 @@ export const commands = {
 	mineCreate: (request: CreateRequest) => typedError<MineRow, string>(__TAURI_INVOKE("mine_create", { request })),
 	mineForget: (path: string) => typedError<null, string>(__TAURI_INVOKE("mine_forget", { path })),
 	mineImportInventory: () => typedError<ImportCandidate[], string>(__TAURI_INVOKE("mine_import_inventory")),
-	mineImportApply: (target: string, selections: ImportSelection[]) => typedError<ImportOutcome, string>(__TAURI_INVOKE("mine_import_apply", { target, selections })),
+	mineImportApply: (target: string, selections: ImportSelection[]) => typedError<ImportOutcome_Serialize, string>(__TAURI_INVOKE("mine_import_apply", { target, selections })),
 	mineAcceptManifest: (path: string, name: string, description: string, authorName: string) => typedError<MineRow, string>(__TAURI_INVOKE("mine_accept_manifest", { path, name, description, authorName })),
 	mineAcceptWorkflow: (path: string) => typedError<MineRow, string>(__TAURI_INVOKE("mine_accept_workflow", { path })),
 	/**
@@ -592,9 +595,11 @@ export const commands = {
 	packageFork: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("package_fork", { scope, kind, name, harness })),
 	/**
 	 *  Keep an edited install as a local fork under another name, leave the
-	 *  original on its source, then render both.
+	 *  original on its source, then render both. A refusal wrote nothing, so
+	 *  another name may well go through; a fork the scope recorded but could
+	 *  not render needs an apply, not a different name.
 	 */
-	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, ForkBesideError>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
+	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, LandingStopped_Serialize>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
 	/**
 	 *  Discard one package's edits and re-render it — the door back to "the
 	 *  catalog's version wins". Scoped to the package the user named twice
@@ -665,12 +670,18 @@ export const commands = {
 	 *  saved and the project is not touched.
 	 */
 	templateDraft: (project: string) => typedError<Draft_Serialize, string>(__TAURI_INVOKE("template_draft", { project })),
-	templateCreateFromProject: (project: string, chosen: Chosen) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_project", { project, chosen })),
+	/**
+	 *  The saved template, with the links its copies kept as written beside
+	 *  it: the save's own report, which nothing read later can give.
+	 */
+	templateCreateFromProject: (project: string, chosen: Chosen) => typedError<SavedTemplate_Serialize, string>(__TAURI_INVOKE("template_create_from_project", { project, chosen })),
 	/**
 	 *  Save a template from packages picked in a marketplace. Every member is
 	 *  a marketplace identity; no bytes are copied.
 	 */
 	templateCreateFromSelection: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_selection", { name, members })),
+	/**  Resolve a selected catalog while its declaration kind and scope are available. */
+	templateCatalogSource: (catalog: Catalog, rev: string | null) => typedError<MemberSource_Serialize, string>(__TAURI_INVOKE("template_catalog_source", { catalog, rev })),
 	templateAddMembers: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_add_members", { name, members })),
 	templateRemoveMembers: (name: string, members: MemberRef[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_remove_members", { name, members })),
 	templateRename: (name: string, to: string) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_rename", { name, to })),
@@ -680,8 +691,8 @@ export const commands = {
 	 *  repositories its marketplace members come from with the version each
 	 *  resolves to, the copies it owns, and the members nothing can reach.
 	 */
-	templateResolve: (name: string) => typedError<Resolution, string>(__TAURI_INVOKE("template_resolve", { name })),
-	templateInstall: (name: string, destination: Scope, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<TemplateInstall, string>(__TAURI_INVOKE("template_install", { name, destination, harnesses, method })),
+	templateResolve: (name: string) => typedError<Resolution_Serialize, string>(__TAURI_INVOKE("template_resolve", { name })),
+	templateInstall: (name: string, destination: Scope, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<TemplateInstall_Serialize, string>(__TAURI_INVOKE("template_install", { name, destination, harnesses, method })),
 	/**  The files a template owns, for the tree that inspects its copies. */
 	templateFiles: (name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("template_files", { name })),
 	templateFile: (name: string, path: string) => typedError<string, string>(__TAURI_INVOKE("template_file", { name, path })),
@@ -722,7 +733,7 @@ export const events = {
 /* Constants */
 export const LEGAL = {"version":2,"termsUrl":"https://kendex.ai/legal/terms","privacyUrl":"https://kendex.ai/legal/privacy"} as const;
 
-export const MANIFEST_SCHEMA = 7 as const;
+export const MANIFEST_SCHEMA = 8 as const;
 
 export const PACKAGE_CHECK_HARNESSES = ["claude","pi"] as const;
 
@@ -935,6 +946,14 @@ export type AuditView_Deserialize = {
 	notes: string[],
 	warnings: ItemWarning_Deserialize[],
 	/**
+	 *  What the write this response settles reported about itself: the
+	 *  links an adopt or a fork kept as written. A result of that one
+	 *  write, not standing state, so the next read of the scope carries
+	 *  none; `warnings` is what the scope says every time it is read.
+	 *  Left off the wire when the write reported nothing.
+	 */
+	written: ItemWarning_Deserialize[],
+	/**
 	 *  Every installation here, scored — the clean ones included, so a
 	 *  package with nothing found still has a score to show. Each row
 	 *  carries two scores that are never combined: safety and quality.
@@ -962,6 +981,15 @@ export type AuditView_Deserialize = {
 	 */
 	undone: string[],
 	/**
+	 *  What a step behind the write failed with: the configuration owner's
+	 *  render (`kendex_core::bot_instructions::render`), or, behind an adopt
+	 *  or a fork, the settle of the scope that follows it (`settle_after`).
+	 *  The write stands either way: this is why its account is short, never
+	 *  why the action is reported as refused. Left off the wire on a plain
+	 *  read and on a write whose every step finished.
+	 */
+	unfinished: string | null,
+	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
 	 *  failure never blanks every other scope's audit (drift/plan/notes/
@@ -980,6 +1008,14 @@ export type AuditView_Serialize = {
 	plan: string[],
 	notes: string[],
 	warnings: ItemWarning_Serialize[],
+	/**
+	 *  What the write this response settles reported about itself: the
+	 *  links an adopt or a fork kept as written. A result of that one
+	 *  write, not standing state, so the next read of the scope carries
+	 *  none; `warnings` is what the scope says every time it is read.
+	 *  Left off the wire when the write reported nothing.
+	 */
+	written?: ItemWarning_Serialize[],
 	/**
 	 *  Every installation here, scored — the clean ones included, so a
 	 *  package with nothing found still has a score to show. Each row
@@ -1007,6 +1043,15 @@ export type AuditView_Serialize = {
 	 *  read, and left off the wire entirely when it is empty.
 	 */
 	undone?: string[],
+	/**
+	 *  What a step behind the write failed with: the configuration owner's
+	 *  render (`kendex_core::bot_instructions::render`), or, behind an adopt
+	 *  or a fork, the settle of the scope that follows it (`settle_after`).
+	 *  The write stands either way: this is why its account is short, never
+	 *  why the action is reported as refused. Left off the wire on a plain
+	 *  read and on a write whose every step finished.
+	 */
+	unfinished?: string | null,
 	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
@@ -1353,6 +1398,17 @@ operation: string | null } |
  *  nothing is known about this project at all.
  */
 { kind: "unreadable"; said: string[] };
+
+/**  A choice the offer puts to a person. */
+export type Choice = {
+	route: Route,
+	effect: RouteEffect,
+	/**
+	 *  The choice an answer that names none takes. Leaving the files is
+	 *  always the default: no other choice is taken unasked.
+	 */
+	default: boolean,
+};
 
 /**  The modal's answers. */
 export type Chosen = {
@@ -1954,7 +2010,7 @@ export type DraftOrigin =
  *  Saving records the identity; the bytes come from the marketplace at
  *  install time.
  */
-{ origin: "marketplace"; repo: string; 
+{ origin: "marketplace"; catalog: TemplateCatalog; repo: string; 
 /**
  *  The subscription alias the project declared, for the row to
  *  name a marketplace the person recognizes.
@@ -1974,7 +2030,7 @@ hash: string } |
  *  marketplace package this was installed from, and the edited copy on
  *  disk. Saving requires the choice.
  */
-{ origin: "choice"; repo: string; source: string; rev: string | null; 
+{ origin: "choice"; catalog: TemplateCatalog; repo: string; source: string; rev: string | null; 
 /**
  *  Where the edited copy is, or null where its current rendering
  *  is not something a template can store.
@@ -2381,13 +2437,6 @@ export type FlagReason = { kind: "noBranch" } |
 { kind: "unreadable"; said: string[] };
 
 /**
- *  Why installing beside did not finish, by phase: a refusal wrote
- *  nothing, so another name may well go through; a fork the scope already
- *  recorded but could not render needs an apply, not a different name.
- */
-export type ForkBesideError = { phase: "refused"; message: string } | { phase: "recorded"; message: string };
-
-/**
  *  Where a fork came from. A fork keeps the item's installed name — the
  *  declaration just switches to the local source, so nothing that depends
  *  on the name breaks — and this records what it replaced. A fork made
@@ -2614,10 +2663,30 @@ export type ImportCandidate = {
 };
 
 /**  What one apply wrote, for the wizard's summary line. */
-export type ImportOutcome = {
+export type ImportOutcome = ImportOutcome_Serialize | ImportOutcome_Deserialize;
+
+/**  What one apply wrote, for the wizard's summary line. */
+export type ImportOutcome_Deserialize = {
 	written: string[],
 	/**  Selections whose exact bytes were already at the destination. */
 	alreadyPresent: string[],
+	/**
+	 *  The links a copied skill kept as written because no spelling from
+	 *  the catalog reaches their targets inside it.
+	 */
+	warnings?: ItemWarning_Deserialize[],
+};
+
+/**  What one apply wrote, for the wizard's summary line. */
+export type ImportOutcome_Serialize = {
+	written: string[],
+	/**  Selections whose exact bytes were already at the destination. */
+	alreadyPresent: string[],
+	/**
+	 *  The links a copied skill kept as written because no spelling from
+	 *  the catalog reaches their targets inside it.
+	 */
+	warnings?: ItemWarning_Serialize[],
 };
 
 /**  What the wizard chose for one candidate. */
@@ -2845,6 +2914,14 @@ export type ItemDecl_Deserialize = {
 	 *  alone; validation refuses it on every other table.
 	 */
 	env?: { [key in string]: string } | null,
+	/**
+	 *  Where a scope-owned skill's stored relative links are read from.
+	 *  Written by the kendex writers that convert links as they store a
+	 *  tree; absent, the bytes are carried as delivered. Read on a
+	 *  `[skills.<name>]` table whose source is `local` or `in-place` alone;
+	 *  validation refuses it everywhere else.
+	 */
+	links?: SkillLinks | null,
 };
 
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */
@@ -2867,6 +2944,14 @@ export type ItemDecl_Serialize = {
 	 *  alone; validation refuses it on every other table.
 	 */
 	env?: { [key in string]: string } | null,
+	/**
+	 *  Where a scope-owned skill's stored relative links are read from.
+	 *  Written by the kendex writers that convert links as they store a
+	 *  tree; absent, the bytes are carried as delivered. Read on a
+	 *  `[skills.<name>]` table whose source is `local` or `in-place` alone;
+	 *  validation refuses it everywhere else.
+	 */
+	links?: SkillLinks | null,
 };
 
 export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | 
@@ -2928,8 +3013,11 @@ export type ItemWarning_Deserialize = {
 	remediation: string | null,
 	/**
 	 *  The technical cause, verbatim: the failed command and what it
-	 *  printed. `message` says what it means to a person; this is for
-	 *  `--verbose` and `--json`.
+	 *  printed, or the keyed diagnostic line a reader tells the warning
+	 *  apart by. `message` says what it means to a person. The terminal
+	 *  prints this line beneath the warning and its fix, if any; a
+	 *  model-resolution warning prints this line alone, once per run. An
+	 *  updates listing shows it beneath the warning with `--verbose`.
 	 */
 	detail?: string | null,
 };
@@ -2946,8 +3034,11 @@ export type ItemWarning_Serialize = {
 	remediation?: string | null,
 	/**
 	 *  The technical cause, verbatim: the failed command and what it
-	 *  printed. `message` says what it means to a person; this is for
-	 *  `--verbose` and `--json`.
+	 *  printed, or the keyed diagnostic line a reader tells the warning
+	 *  apart by. `message` says what it means to a person. The terminal
+	 *  prints this line beneath the warning and its fix, if any; a
+	 *  model-resolution warning prints this line alone, once per run. An
+	 *  updates listing shows it beneath the warning with `--verbose`.
 	 */
 	detail?: string | null,
 };
@@ -2977,6 +3068,68 @@ export type KindCaps = {
 	 */
 	enforcement: Enforcement,
 };
+
+/**
+ *  Why a write that lands in two steps did not finish, by phase. A refusal
+ *  wrote nothing, so the person may change the request and ask again. A
+ *  write the scope already recorded, whose step after it failed, needs an
+ *  apply rather than another request, and what the landed step reported
+ *  about itself comes with the cause, because nothing else reads it.
+ * 
+ *  One type for every command that answers it, rather than one per command:
+ *  the window reads the phase in one place, and a second spelling of it is
+ *  a dialog that answers differently about the same partial landing.
+ * 
+ *  Its serde phase strings (`refused`, `recorded`) are the wire contract
+ *  the window branches on, so renaming one is a bindings change.
+ */
+export type LandingStopped = LandingStopped_Serialize | LandingStopped_Deserialize;
+
+/**
+ *  Why a write that lands in two steps did not finish, by phase. A refusal
+ *  wrote nothing, so the person may change the request and ask again. A
+ *  write the scope already recorded, whose step after it failed, needs an
+ *  apply rather than another request, and what the landed step reported
+ *  about itself comes with the cause, because nothing else reads it.
+ * 
+ *  One type for every command that answers it, rather than one per command:
+ *  the window reads the phase in one place, and a second spelling of it is
+ *  a dialog that answers differently about the same partial landing.
+ * 
+ *  Its serde phase strings (`refused`, `recorded`) are the wire contract
+ *  the window branches on, so renaming one is a bindings change.
+ */
+export type LandingStopped_Deserialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the step that landed reported about itself, as the
+ *  command's own answer carries it on a write that finished: the
+ *  links a fork's capture or a keep held as written, say. Left off
+ *  the wire when it reported nothing.
+ */
+written: ItemWarning_Deserialize[] };
+
+/**
+ *  Why a write that lands in two steps did not finish, by phase. A refusal
+ *  wrote nothing, so the person may change the request and ask again. A
+ *  write the scope already recorded, whose step after it failed, needs an
+ *  apply rather than another request, and what the landed step reported
+ *  about itself comes with the cause, because nothing else reads it.
+ * 
+ *  One type for every command that answers it, rather than one per command:
+ *  the window reads the phase in one place, and a second spelling of it is
+ *  a dialog that answers differently about the same partial landing.
+ * 
+ *  Its serde phase strings (`refused`, `recorded`) are the wire contract
+ *  the window branches on, so renaming one is a bindings change.
+ */
+export type LandingStopped_Serialize = ({ phase: "refused"; message: string }) & { written?: never } | { phase: "recorded"; message: string; 
+/**
+ *  What the step that landed reported about itself, as the
+ *  command's own answer carries it on a write that finished: the
+ *  links a fork's capture or a keep held as written, say. Left off
+ *  the wire when it reported nothing.
+ */
+written?: ItemWarning_Serialize[] };
 
 export type License = "mit" | "apache2" | 
 /**  Valid locally forever; blocks submission until chosen. */
@@ -3278,7 +3431,7 @@ export type MarketplaceRow = {
 	/**
 	 *  Where that folder is on this machine, from
 	 *  [`kendex_core::source::path_root`]: the declaration resolved against
-	 *  the place that declares it, slashed. What `repo_identity` folds for
+	 *  the place that declares it, slashed. What `repo_identity` carries for
 	 *  a folder, and what a bookmark of one records. Two directories
 	 *  never share a string, which the spelling alone cannot promise:
 	 *  rootedness is the running platform's answer, and a POSIX-rooted path
@@ -3354,7 +3507,7 @@ export type MemberRef = {
 export type MemberSource = MemberSource_Serialize | MemberSource_Deserialize;
 
 /**  Where a member's content comes from when the template is installed. */
-export type MemberSource_Deserialize = 
+export type MemberSource_Deserialize = ({ held: "catalog"; catalog: TemplateCatalog; rev?: string | null }) & { copy?: never; from?: never; notices?: never; repo?: never } | 
 /**
  *  A marketplace, named the way a source declaration names it: the
  *  repository, or the folder a path source points at. Saved rather
@@ -3366,7 +3519,7 @@ export type MemberSource_Deserialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
+rev?: string | null }) & { catalog?: never; copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3392,10 +3545,28 @@ from?: string | null;
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
  */
-notices?: string[] }) & { repo?: never; rev?: never };
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never } | 
+/**
+ *  A skill copy whose relative links were converted into the saving
+ *  project's shared-tree reading, so it installs tagged
+ *  `links = "shared-tree"` and reads relative to whichever scope
+ *  installs it. Its own variant rather than a field on [`Self::Copy`],
+ *  so a kendex that predates it refuses the index before its writer
+ *  could save it back without the distinction.
+ */
+({ held: "shared-copy"; 
+/**  The copy's path inside the template's store, slash-separated. */
+copy: string; 
+/**  The marketplace the copied bytes came from, as for a copy. */
+from?: string | null; 
+/**
+ *  The licence and attribution files these bytes came under, as for
+ *  a copy.
+ */
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never };
 
 /**  Where a member's content comes from when the template is installed. */
-export type MemberSource_Serialize = 
+export type MemberSource_Serialize = ({ held: "catalog"; catalog: TemplateCatalog; rev?: string | null }) & { copy?: never; from?: never; notices?: never; repo?: never } | 
 /**
  *  A marketplace, named the way a source declaration names it: the
  *  repository, or the folder a path source points at. Saved rather
@@ -3407,7 +3578,7 @@ export type MemberSource_Serialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
+rev?: string | null }) & { catalog?: never; copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3433,21 +3604,39 @@ from?: string | null;
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
  */
-notices?: string[] }) & { repo?: never; rev?: never };
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never } | 
+/**
+ *  A skill copy whose relative links were converted into the saving
+ *  project's shared-tree reading, so it installs tagged
+ *  `links = "shared-tree"` and reads relative to whichever scope
+ *  installs it. Its own variant rather than a field on [`Self::Copy`],
+ *  so a kendex that predates it refuses the index before its writer
+ *  could save it back without the distinction.
+ */
+({ held: "shared-copy"; 
+/**  The copy's path inside the template's store, slash-separated. */
+copy: string; 
+/**  The marketplace the copied bytes came from, as for a copy. */
+from?: string | null; 
+/**
+ *  The licence and attribution files these bytes came under, as for
+ *  a copy.
+ */
+notices?: string[] }) & { catalog?: never; repo?: never; rev?: never };
 
 /**
  *  Which member a reference means, where a template holds more than one
  *  under a kind and a name.
  * 
- *  Three states, because the domain has three: a template may hold the
- *  same kind and name from two marketplaces and as a copy of its own, all
- *  at once — [`add_members`] permits it deliberately. A two-state
- *  reference could not tell "the copy" from "every one of them", so
- *  removing a copy took every marketplace member with it. The state is
- *  carried rather than inferred so a caller physically cannot ask for one
- *  and be given the other.
+ *  A catalog reference preserves its saved format so removal reaches the
+ *  intended member when typed and legacy records share one catalog.
  */
-export type MemberWhich = 
+export type MemberWhich = { of: "catalog"; catalog: TemplateCatalog } | 
+/**
+ *  A source the person typed, retaining the literal address of an old
+ *  member when no declaration remains to give it a catalog reading.
+ */
+{ of: "catalog-selection"; catalog: TemplateCatalog; reference: string } | 
 /**
  *  Every member of this kind and name, whatever it came from. What a
  *  caller means when it has no way to tell them apart and wants them
@@ -3567,6 +3756,21 @@ export type MissingWhy =
  *  packages here" over one of these would be.
  */
 { kind: "unreadable"; said: string };
+
+/**
+ *  How much an item needs from the person. The producer decides which: a
+ *  renderer draws the class it is handed and never infers it from words.
+ */
+export type Need = 
+/**
+ *  The run cannot go on with this item until something outside the run
+ *  changes. Drawn as a failure, with the way out where there is one.
+ */
+"blocked" | 
+/**  The run waits on a choice among the ways it offers. */
+"decision" | 
+/**  Information. Nothing to choose. */
+"notice";
 
 /**
  *  Why a file has no preview beside it. A reason rather than silence: a
@@ -4168,6 +4372,11 @@ export type ProjectChanges = {
 export type ProjectFlag = {
 	root: string,
 	count: number,
+	/**
+	 *  What the state needs from the person, as core classes it: every
+	 *  state that allows no offer is blocked until it changes.
+	 */
+	need: Need,
 	reason: FlagReason,
 };
 
@@ -4217,11 +4426,20 @@ export type ProjectOffer = {
 	others: number,
 	branch: string,
 	remote: string | null,
+	/**
+	 *  The choices this offer carries, in the order they are drawn, each
+	 *  bound to what it changes: `commit_offer::Offer::choices`, the list
+	 *  the terminal keys. Leave is last and is the default.
+	 */
+	choices: Choice[],
+	/**
+	 *  Whether a refused push can be recovered by opening a pull request
+	 *  from a branch of its own.
+	 */
+	recoversRefusedPush: boolean,
 	/**  `null` where the choice stands; the reason otherwise. */
 	push: Why | null,
 	pullRequest: Why | null,
-	/**  The pull request already open for this branch. */
-	openNumber: number | null,
 	message: string,
 	newBranch: string,
 	/**  The repository every `gh` call is bound to, from the chosen remote. */
@@ -4525,15 +4743,30 @@ export type ReportRouteView = {
 	warnings: string[],
 };
 
+export type RepositoryOrigin = { origin: "declared"; scope: Scope } | { origin: "direct" };
+
 /**  What a template installs, as it stands on this machine now. */
-export type Resolution = {
+export type Resolution = Resolution_Serialize | Resolution_Deserialize;
+
+/**  What a template installs, as it stands on this machine now. */
+export type Resolution_Deserialize = {
 	groups: ResolvedGroup[],
-	copies: ResolvedCopy[],
+	copies: ResolvedCopy_Deserialize[],
+	missing: MissingMember[],
+};
+
+/**  What a template installs, as it stands on this machine now. */
+export type Resolution_Serialize = {
+	groups: ResolvedGroup[],
+	copies: ResolvedCopy_Serialize[],
 	missing: MissingMember[],
 };
 
 /**  One copy the template owns. */
-export type ResolvedCopy = {
+export type ResolvedCopy = ResolvedCopy_Serialize | ResolvedCopy_Deserialize;
+
+/**  One copy the template owns. */
+export type ResolvedCopy_Deserialize = {
 	kind: ItemKind,
 	name: string,
 	enabled: boolean,
@@ -4541,6 +4774,21 @@ export type ResolvedCopy = {
 	copy: string,
 	/**  The marketplace the bytes came from, where they came from one. */
 	from: string | null,
+	/**  The reading the copy's links hold, which its declaration records. */
+	links?: SkillLinks | null,
+};
+
+/**  One copy the template owns. */
+export type ResolvedCopy_Serialize = {
+	kind: ItemKind,
+	name: string,
+	enabled: boolean,
+	/**  The copy's path inside the template's store. */
+	copy: string,
+	/**  The marketplace the bytes came from, where they came from one. */
+	from: string | null,
+	/**  The reading the copy's links hold, which its declaration records. */
+	links?: SkillLinks | null,
 };
 
 /**
@@ -4548,6 +4796,9 @@ export type ResolvedCopy = {
  *  it right now.
  */
 export type ResolvedGroup = {
+	catalog: TemplateCatalog | null,
+	which: MemberWhich,
+	scope: Scope | null,
 	/**  The repository or folder, as the template saved it. */
 	repo: string,
 	/**
@@ -4585,6 +4836,7 @@ export type ResolvedGroup = {
 
 /**  One package a resolved group installs. */
 export type ResolvedItem = {
+	which: MemberWhich,
 	kind: ItemKind,
 	name: string,
 	enabled: boolean,
@@ -4595,6 +4847,7 @@ export type ResolvedItem = {
  *  switched on.
  */
 export type ResolvedSet = {
+	which: MemberWhich,
 	name: string,
 	enabled: boolean,
 	/**
@@ -4651,6 +4904,28 @@ export type RestoreResult = { kind: "effect"; effect: RestoreEffect } |
  *  writing anything.
  */
 { kind: "refused"; refused: Refused; done: RestoreEffect };
+
+/**  One of the four ways an offer is answered. */
+export type Route = "commit" | "push" | "pullRequest" | "leave";
+
+/**  What a route changes, and where: the target the choice is bound to. */
+export type RouteEffect = 
+/**  A commit of the files on the branch the checkout is on. */
+{ kind: "commit"; branch: string } | 
+/**  That commit, pushed to the branch of the same name on the remote. */
+{ kind: "push"; remote: string; branch: string } | 
+/**
+ *  That commit, pushed to the branch a pull request is already open
+ *  for, which adds the commit to it.
+ */
+{ kind: "addToPullRequest"; remote: string; branch: string; number: number } | 
+/**
+ *  A commit on a new branch, pushed, and a pull request from it into
+ *  the branch the checkout was on, which the checkout moves to.
+ */
+{ kind: "openPullRequest"; branch: string; base: string } | 
+/**  Nothing: the files stay as diffs. */
+{ kind: "leave" };
 
 /**
  *  What one installation of an item is waiting on, and what may be done
@@ -4754,11 +5029,10 @@ export type Said = {
 export type SavedItem = {
 	bookmark: Bookmark,
 	/**
-	 *  The marketplace folded to one string, from
-	 *  [`crate::source_ref::repo_identity`] — for a folder, over the
-	 *  directory the bookmark records, which is what
-	 *  [`crate::source_ops::declared_identity`] folds a declaration of that
-	 *  folder to. Carried rather than left to
+	 *  The marketplace identity from [`Bookmark::identity`]: a repository
+	 *  folded by [`crate::source_ref::repo_identity`], or the resolved
+	 *  directory a folder bookmark records, matching
+	 *  [`crate::source_ops::declared_identity`]. Carried rather than left to
 	 *  the reader: a surface deciding whether the row it is drawing is
 	 *  saved compares this against its own marketplace's identity, and a
 	 *  second spelling of that fold outside core is a second answer.
@@ -4773,6 +5047,34 @@ export type SavedItem = {
 	catalog: Catalog | null,
 	reach: Reach,
 };
+
+/**
+ *  A template a save wrote, with the links its copies kept as written
+ *  because no spelling from the saving project's shared tree reaches their
+ *  targets inside the project. The template is what every caller reads,
+ *  so the type reads as one; the warnings are the save's own report.
+ */
+export type SavedTemplate = SavedTemplate_Serialize | SavedTemplate_Deserialize;
+
+/**
+ *  A template a save wrote, with the links its copies kept as written
+ *  because no spelling from the saving project's shared tree reaches their
+ *  targets inside the project. The template is what every caller reads,
+ *  so the type reads as one; the warnings are the save's own report.
+ */
+export type SavedTemplate_Deserialize = {
+	warnings: ItemWarning_Deserialize[],
+} & Template_Deserialize;
+
+/**
+ *  A template a save wrote, with the links its copies kept as written
+ *  because no spelling from the saving project's shared tree reaches their
+ *  targets inside the project. The template is what every caller reads,
+ *  so the type reads as one; the warnings are the save's own report.
+ */
+export type SavedTemplate_Serialize = {
+	warnings?: ItemWarning_Serialize[],
+} & Template_Serialize;
 
 /**
  *  What kept a surface from being read, by shape rather than by parser
@@ -5258,6 +5560,15 @@ export type SkillLines =
  */
 "rewritten";
 
+/**  The reading a tagged scope-owned skill's links hold. */
+export type SkillLinks = 
+/**
+ *  Links mean what they reach from the scope's shared tree,
+ *  `<scope root>/.agents/skills/<canonical name>`, and every other
+ *  position the tree lands at is converted to keep those targets.
+ */
+"shared-tree";
+
 export type SkillSettings = {
 	skill: string,
 	template: SkillTemplate,
@@ -5355,39 +5666,37 @@ export type SourceReadRefused =
 /**  Anything else that stopped the read, in core's words. */
 { kind: "failed"; message: string };
 
-/**  Everything the Sources page shows for one declared source in one scope. */
-export type SourceRow = {
-	scope: Scope,
-	name: string,
-	reference: string,
-	isRemote: boolean,
-	enabled: boolean,
-	/**  Cache HEAD for remotes — freshness display. */
-	head: string | null,
-	declaredItems: string[],
-};
-
 /**
- *  What a source action leaves: every declared source across every scope,
- *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
+ *  What a source action leaves: the account of the write
+ *  (`crates/app/src/repo_effects.rs::execute`).
+ * 
+ *  Nothing is read back behind the write. The window reads every
+ *  subscription again itself once the toggle answers, so a read here would
+ *  only be a way for a written toggle to be reported as refused.
  */
 export type SourcesAfter = SourcesAfter_Serialize | SourcesAfter_Deserialize;
 
 /**
- *  What a source action leaves: every declared source across every scope,
- *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
+ *  What a source action leaves: the account of the write
+ *  (`crates/app/src/repo_effects.rs::execute`).
+ * 
+ *  Nothing is read back behind the write. The window reads every
+ *  subscription again itself once the toggle answers, so a read here would
+ *  only be a way for a written toggle to be reported as refused.
  */
 export type SourcesAfter_Deserialize = {
-	sources: SourceRow[],
 	undone: string[],
 };
 
 /**
- *  What a source action leaves: every declared source across every scope,
- *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
+ *  What a source action leaves: the account of the write
+ *  (`crates/app/src/repo_effects.rs::execute`).
+ * 
+ *  Nothing is read back behind the write. The window reads every
+ *  subscription again itself once the toggle answers, so a read here would
+ *  only be a way for a written toggle to be reported as refused.
  */
 export type SourcesAfter_Serialize = {
-	sources: SourceRow[],
 	undone?: string[],
 };
 
@@ -5632,6 +5941,9 @@ export type TangledFile = {
 /**  One saved selection. */
 export type Template = Template_Serialize | Template_Deserialize;
 
+/**  A saved catalog, preserving declaration kind and resolution context. */
+export type TemplateCatalog = { kind: "repository"; repo: string; origin: RepositoryOrigin } | { kind: "folder"; root: string; origin: Scope };
+
 /**  A defect at a place in the template, with what to do about it. */
 export type TemplateFinding = {
 	/**  1-based line; 0 where the whole file is the subject. */
@@ -5644,7 +5956,13 @@ export type TemplateFinding = {
  *  What one template install did. Read after the write: the parts are
  *  what landed, not what was asked for.
  */
-export type TemplateInstall = {
+export type TemplateInstall = TemplateInstall_Serialize | TemplateInstall_Deserialize;
+
+/**
+ *  What one template install did. Read after the write: the parts are
+ *  what landed, not what was asked for.
+ */
+export type TemplateInstall_Deserialize = {
 	/**
 	 *  The repositories subscribed to along the way, in the order they
 	 *  were.
@@ -5665,6 +5983,44 @@ export type TemplateInstall = {
 	copied: string[],
 	/**  What a step said while it worked. */
 	notes: string[],
+	warnings: ItemWarning_Deserialize[],
+	/**
+	 *  Why the run stopped short of the whole template, or null where it
+	 *  finished. What `subscribed` and `declared` name is on disk either
+	 *  way, and `copied` names bytes that may sit ahead of a render that
+	 *  refused — that is what makes this an account rather than a
+	 *  refusal, and it is why a run that stopped still answers rather
+	 *  than throwing its own record away.
+	 */
+	stopped: string | null,
+};
+
+/**
+ *  What one template install did. Read after the write: the parts are
+ *  what landed, not what was asked for.
+ */
+export type TemplateInstall_Serialize = {
+	/**
+	 *  The repositories subscribed to along the way, in the order they
+	 *  were.
+	 */
+	subscribed: string[],
+	/**
+	 *  Packages installed, by kind and name: each declared in the
+	 *  destination's manifest and rendered by an add that committed.
+	 */
+	declared: string[],
+	/**
+	 *  Copies written into the destination's own local packages, by kind
+	 *  and name: bytes in the local slot, declared from there in the same
+	 *  write. Not a package installed: the add that renders a copy runs
+	 *  after this write and can refuse, so a name here that `declared`
+	 *  lacks is local bytes and a declaration with no render behind them.
+	 */
+	copied: string[],
+	/**  What a step said while it worked. */
+	notes: string[],
+	warnings: ItemWarning_Serialize[],
 	/**
 	 *  Why the run stopped short of the whole template, or null where it
 	 *  finished. What `subscribed` and `declared` name is on disk either
@@ -5761,6 +6117,11 @@ export type Unsubscribed = Unsubscribed_Serialize | Unsubscribed_Deserialize;
  *  than a bare list.
  */
 export type Unsubscribed_Deserialize = {
+	/**
+	 *  What keeping the packages and rendering them again warned about,
+	 *  each with its fix: a link the kept copy holds as written, say.
+	 */
+	warnings: ItemWarning_Deserialize[],
 	undone: string[],
 };
 
@@ -5772,6 +6133,11 @@ export type Unsubscribed_Deserialize = {
  *  than a bare list.
  */
 export type Unsubscribed_Serialize = {
+	/**
+	 *  What keeping the packages and rendering them again warned about,
+	 *  each with its fix: a link the kept copy holds as written, say.
+	 */
+	warnings: ItemWarning_Serialize[],
 	undone?: string[],
 };
 

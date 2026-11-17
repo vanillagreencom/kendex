@@ -33,6 +33,7 @@ pub enum DraftOrigin {
     /// Saving records the identity; the bytes come from the marketplace at
     /// install time.
     Marketplace {
+        catalog: super::TemplateCatalog,
         repo: String,
         /// The subscription alias the project declared, for the row to
         /// name a marketplace the person recognizes.
@@ -51,6 +52,7 @@ pub enum DraftOrigin {
     /// marketplace package this was installed from, and the edited copy on
     /// disk. Saving requires the choice.
     Choice {
+        catalog: super::TemplateCatalog,
         repo: String,
         source: String,
         rev: Option<String>,
@@ -196,6 +198,8 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
             continue;
         }
         let origin = origin_of(
+            env,
+            &scope,
             &crate::manifest::manifest_file_name(env, &scope),
             &manifest,
             &row.decl,
@@ -224,6 +228,8 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
             derived: false,
             required_by: Vec::new(),
             origin: origin_of(
+                env,
+                &scope,
                 &crate::manifest::manifest_file_name(env, &scope),
                 &manifest,
                 decl,
@@ -297,7 +303,13 @@ fn fingerprint(
         field(&mut text, &member.key);
         field(&mut text, switch(member.enabled));
         match &member.origin {
-            DraftOrigin::Marketplace { repo, source, rev } => {
+            DraftOrigin::Marketplace {
+                catalog,
+                repo,
+                source,
+                rev,
+            } => {
+                field(&mut text, &format!("{catalog:?}"));
                 field(&mut text, "marketplace");
                 field(&mut text, repo);
                 field(&mut text, source);
@@ -309,6 +321,7 @@ fn fingerprint(
                 field(&mut text, hash);
             }
             DraftOrigin::Choice {
+                catalog,
                 repo,
                 source,
                 rev,
@@ -319,6 +332,7 @@ fn fingerprint(
                 license_recognized,
             } => {
                 field(&mut text, "choice");
+                field(&mut text, &format!("{catalog:?}"));
                 field(&mut text, repo);
                 field(&mut text, source);
                 maybe(&mut text, rev.as_deref());
@@ -507,6 +521,8 @@ fn offered_locally(
 
 /// What the template would record for one declared package.
 fn origin_of(
+    env: &Env,
+    scope: &Scope,
     manifest_file: &str,
     manifest: &Manifest,
     decl: &crate::manifest::ItemDecl,
@@ -540,7 +556,7 @@ fn origin_of(
             ),
         };
     };
-    let Some(repo) = saved_repo(source, std::path::MAIN_SEPARATOR) else {
+    let Some(catalog) = super::TemplateCatalog::declared(env, scope, source) else {
         return DraftOrigin::Unresolved {
             why: format!(
                 "the marketplace '{}' names neither a repository nor a folder",
@@ -548,6 +564,7 @@ fn origin_of(
             ),
         };
     };
+    let repo = catalog.reference().to_owned();
     let rev = decl.rev.clone().or_else(|| source.rev.clone());
     // An installed copy whose bytes have drifted from the marketplace's is
     // two things under one name. Neither may be picked for the person:
@@ -556,6 +573,7 @@ fn origin_of(
     // never offered.
     match candidate.and_then(edited_bytes) {
         Some(edited) => DraftOrigin::Choice {
+            catalog,
             repo,
             source: decl.source.clone(),
             rev,
@@ -566,33 +584,11 @@ fn origin_of(
             license_recognized: edited.license_recognized,
         },
         None => DraftOrigin::Marketplace {
+            catalog,
             repo,
             source: decl.source.clone(),
             rev,
         },
-    }
-}
-
-/// The one spelling a template saves a marketplace under, or `None` where
-/// the source names neither a repository nor a folder.
-///
-/// A repository reference is text and travels as it stands. A folder is a
-/// path, and a path a manifest declares carries whatever separator the
-/// machine that wrote it builds paths with — so it is spelled here the way
-/// kendex spells every path it hands out. That one spelling is what the
-/// member's identity, the grouping an install does over it, the
-/// subscription that install makes and the row a person reads all key off:
-/// on Windows two members of one folder marketplace saved under two
-/// spellings would group apart, subscribe twice and read as two.
-///
-/// `separator` is what the declaration's own machine builds paths with,
-/// passed in the way [`crate::paths`] passes it, so a Windows-shaped
-/// declaration is provable on any host.
-pub(super) fn saved_repo(source: &crate::manifest::SourceDecl, separator: char) -> Option<String> {
-    match (&source.repo, &source.path) {
-        (Some(repo), _) => Some(repo.clone()),
-        (None, Some(path)) => Some(crate::paths::slashed_over(path, separator)),
-        (None, None) => None,
     }
 }
 

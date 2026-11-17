@@ -99,7 +99,8 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
     // The control: a commit the armed chain would block goes through, so
     // the assertion above is about a repository nothing is gating rather
     // than about a file git was never going to run.
-    fs::write(world.at("b.rs"), "// TO".to_owned() + "DO: not yet\n").unwrap();
+    // A conflict marker, spelled in halves so this file carries none.
+    fs::write(world.at("b.rs"), "<<<<".to_owned() + "<<< ours\n").unwrap();
     let commit = git_without_kendex(&world.project, &["add", "-A"]);
     assert!(commit.status.success(), "{}", spoke(&commit));
     let commit = git_without_kendex(&world.project, &["commit", "-m", "chore: unguarded"]);
@@ -136,13 +137,14 @@ fn the_yes_to_a_repository_effect_is_spent_where_it_is_given() {
     );
 
     // Armed means gating, with no kendex in the picture.
-    fs::write(world.at("b.rs"), "// TO".to_owned() + "DO: not yet\n").unwrap();
+    // A conflict marker, spelled in halves so this file carries none.
+    fs::write(world.at("b.rs"), "<<<<".to_owned() + "<<< ours\n").unwrap();
     let staged = git_without_kendex(&world.project, &["add", "-A"]);
     assert!(staged.status.success(), "{}", spoke(&staged));
     let blocked = git_without_kendex(&world.project, &["commit", "-m", "chore: marked"]);
     assert!(
         !blocked.status.success(),
-        "the armed chain passed a banned marker:\n{}",
+        "the armed chain passed a conflict marker:\n{}",
         spoke(&blocked)
     );
 

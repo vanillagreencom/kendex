@@ -1,11 +1,12 @@
 //! A skill's frontmatter names the hooks its install brings. The catalog's
-//! own docs-writing skill and docs-writing-note hook are the fixture, so
+//! own docs-writing skill and its hook closure are the fixture, so
 //! the rows read the declaration consumers install.
 
 use super::hooks::{findings_on, messages};
 use super::*;
 
 const HOOK: &str = "docs-writing-note";
+const COMPANION: &str = "docs-writing-bash-note";
 const ALL: &str = "\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\", \"gemini\", \"copilot\", \"antigravity\"";
 /// The edge the docs-writing skill declares; a row without it is the
 /// control that the hook arrives by this line and nothing else.
@@ -13,7 +14,8 @@ const EDGE: &str = "  hooks: [docs-writing-note]\n";
 
 /// Every project file that arms the hook, its script or its settings entry,
 /// on the tools its own `harnesses` line names.
-const ARMED: [&str; 6] = [
+const ARMED: [&str; 7] = [
+    ".claude/hooks/docs-writing-bash-note.sh",
     ".claude/hooks/docs-writing-note.sh",
     ".claude/settings.json",
     ".codex/hooks.json",
@@ -101,11 +103,18 @@ fn a_skill_brings_the_hooks_its_frontmatter_names_where_each_hook_runs() {
                 name: "docs-writing".to_owned(),
                 harness: *tool,
             };
-            assert_eq!(
-                entry.reasons,
-                BTreeSet::from([Reason::RequiredBy { by }]),
-                "{tool:?}"
-            );
+            let mut reasons = BTreeSet::from([Reason::RequiredBy { by }]);
+            if *tool == HarnessId::Claude {
+                reasons.insert(Reason::RequiredBy {
+                    by: kendex_core::lock::InstallRef {
+                        source: "cat".to_owned(),
+                        kind: ItemKind::Hook,
+                        name: COMPANION.to_owned(),
+                        harness: *tool,
+                    },
+                });
+            }
+            assert_eq!(entry.reasons, reasons, "{tool:?}");
         }
     }
 }
@@ -147,7 +156,7 @@ fn naming_the_hook(f: &Fixture) -> BTreeSet<String> {
     found
 }
 
-/// The catalog's own docs-writing skill and docs-writing-note hook, the
+/// The catalog's own docs-writing skill and its hook closure, the
 /// skill's `hooks` line dropped where `edge` is false, installed into a
 /// project that declares only the skill for every tool.
 #[allow(clippy::unwrap_used)]
@@ -169,16 +178,18 @@ pub(super) fn world(edge: bool, extra: &str) -> Fixture {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("SKILL.md"), skill_md).unwrap();
     fs::create_dir_all(f.source.join("hooks")).unwrap();
-    fs::write(
-        f.source.join(format!("hooks/{HOOK}.sh")),
-        fs::read(checkout.join(format!("hooks/{HOOK}.sh"))).unwrap(),
-    )
-    .unwrap();
+    for hook in [HOOK, COMPANION] {
+        fs::write(
+            f.source.join(format!("hooks/{hook}.sh")),
+            fs::read(checkout.join(format!("hooks/{hook}.sh"))).unwrap(),
+        )
+        .unwrap();
+    }
     fs::write(f.source.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
     fs::write(
         f.project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{ALL}]\nmethod = \"copy\"\n\n[skills.docs-writing]\nsource = \"cat\"\n\n{extra}",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{ALL}]\nmethod = \"copy\"\n\n[skills.docs-writing]\nsource = \"cat\"\n\n{extra}",
             source_path(&f.source)
         ),
     )

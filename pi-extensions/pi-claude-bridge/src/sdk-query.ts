@@ -2,7 +2,7 @@
 // the provider entry (index.ts) and the account host spawn children through
 // the same seam — tests swap the factory once and every spawn path honors it.
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk/core";
 
 export type SdkQueryFactory = typeof query;
 

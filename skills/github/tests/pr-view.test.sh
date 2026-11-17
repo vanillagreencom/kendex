@@ -7,7 +7,9 @@
 #
 # A row is `label|world|argv|rc|out|op|calls`:
 #   world  `pr:<no_pr|auth|hang>` gh pr view's answer, `auth-sleep` and
-#          `api-user-sleep` the auth calls outliving their bound, `auth:fail`
+#          `api-user-sleep` the auth calls outliving their bound,
+#          `api-user:<403|502>` gh api user answering that HTTP status,
+#          `auth:fail`
 #          gh refusing every credential, `status:fail` gh auth status failing
 #          on its own, `token-only` gh accepting one token and nothing else,
 #          `op:<ok|slow|fail>` what op does with a reference, `file:bot-op` a
@@ -16,9 +18,10 @@
 #          for none
 #   argv   pr-view's arguments as written; `json` for `--json number,state`
 #   out    stdout: a PR answer as `pr=<number>`, an error answer as
-#          `status=<s>[ names=<bound>][ detail=<d>]` (the bound the error
-#          sentence names; the detail as it stands, except the remedy
-#          sentence unsupported_flag carries), `-` when empty
+#          `status=<s>[ names=<bound>][ source=<s> failure=<f>][ detail=<d>]`
+#          (the bound the error sentence names; the auth record's
+#          auth_source and auth_failure; the detail as it stands, except the
+#          remedy sentence unsupported_flag carries), `-` when empty
 #   op     how many times the row called op
 #   calls  every gh call by kind, in order: auth (auth status), user (api
 #          user; a selected token is validated once by the router, and the
@@ -84,8 +87,14 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   "api user")
+    # --include puts the status line and headers on stdout, a blank line
+    # ahead of the body.
     [[ "${STUB_API_USER_SLEEP:-0}" == 0 ]] || exec sleep 2
-    _auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+    case "${STUB_API_USER:-}" in
+      403) printf 'HTTP/1.1 403 Forbidden\nX-Ratelimit-Remaining: 4999\n\n'; echo "gh: Must have admin rights to Repository. (HTTP 403)" >&2; exit 1 ;;
+      502) printf 'HTTP/1.1 502 Bad Gateway\n\n'; echo "gh: Server Error (HTTP 502)" >&2; exit 1 ;;
+    esac
+    _auth_ok || { printf 'HTTP/1.1 401 Unauthorized\n\n'; echo "HTTP 401: Bad credentials" >&2; exit 1; }
     echo test-user
     exit 0
     ;;
@@ -129,6 +138,7 @@ build() {
       pr:*) W_ENV+=("STUB_PR_MODE=${w#pr:}") ;;
       auth-sleep) W_ENV+=(STUB_AUTH_SLEEP=1) ;;
       api-user-sleep) W_ENV+=(STUB_API_USER_SLEEP=1) ;;
+      api-user:*) W_ENV+=("STUB_API_USER=${w#api-user:}") ;;
       auth:fail) W_ENV+=(STUB_AUTH_OK=0) ;;
       status:fail) W_ENV+=(STUB_AUTH_STATUS_FAIL=1) ;;
       token-only) W_ENV+=(STUB_TOKEN_ONLY=1) ;;
@@ -169,6 +179,7 @@ out_text() {
   jq -r '
     "status=" + .status
     + ([.error | match("KENDEX_GITHUB_[A-Z_]*TIMEOUT"; "g").string] | if length == 0 then "" else " names=" + join(",") end)
+    + (if has("auth_source") then " source=" + .auth_source + " failure=" + .auth_failure else "" end)
     + (if .detail == "" or .status == "unsupported_flag" then "" else " detail=" + .detail end)' <<<"$text"
 }
 
@@ -177,7 +188,7 @@ calls() {
   while IFS= read -r line; do
     case "$line" in
       "auth status") out="$out,auth" ;;
-      "api user --jq .login") out="$out,user" ;;
+      "api user --include --jq .login") out="$out,user" ;;
       *) out="$out,$line" ;;
     esac
   done <"$TMP_ROOT/gh.calls"
@@ -210,8 +221,8 @@ VIEW="pr view --json number,state"
 
 native_view_contract() {
   run_table "native bounded children" "\
-the auth preflight outliving its bound exits 124|auth-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|auth
-a selected token's user probe outliving the bound exits 124 too|env:GH_TOKEN=ghs_VALIDBOT123 api-user-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout|0|user,user
+the auth preflight outliving its bound exits 124|auth-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout source=keyring failure=timeout|0|auth
+a selected token's user probe outliving the bound exits 124 too|env:GH_TOKEN=ghs_VALIDBOT123 api-user-sleep env:KENDEX_GITHUB_AUTH_TIMEOUT=0.2|json|124|status=auth_timeout source=GH_TOKEN failure=timeout|0|user,user
 gh pr view outliving its bound exits 124|pr:hang env:KENDEX_GITHUB_PR_VIEW_TIMEOUT=0.2|json|124|status=gh_timeout|0|auth,$VIEW
 op outliving its bound exits 3 with the timeout status and the auth preflight's detail|file:bot-op auth:fail op:slow env:KENDEX_GITHUB_OP_TIMEOUT=0.2|json|3|status=token_resolution_timeout detail=gh auth failed|1|auth
 "
@@ -238,6 +249,17 @@ the same in GITHUB_TOKEN|env:GITHUB_TOKEN=op://vault/github/user|json|0|pr=42|1|
 a leading-zero op bound is read|file:bot-op token-only op:ok env:KENDEX_GITHUB_OP_TIMEOUT=08|json|0|pr=42|1|user,$VIEW
 a reference op cannot resolve, with no keyring behind it, exits 3|file:bot-op auth:fail op:fail|json|3|status=token_resolution_failed detail=1Password item not available|1|auth
 the plain answer|-|json|0|pr=42|0|auth,$VIEW
+"
+
+# The selected token survives the router's keyring fallback in each row: the
+# keyring fails too (auth:fail, status:fail), or a bot token keeps its
+# identity. A value the router probed and refused reaches pr-view with no
+# selection, so the preflight names the variable gh read.
+run_table "the auth preflight's record of the source tried and why it failed" "\
+a refused GH_TOKEN is a rejected credential|env:GH_TOKEN=ghs_VALIDBOT123 auth:fail|json|3|status=auth_error source=GH_TOKEN failure=rejected_credential detail=HTTP 401: Bad credentials|0|user,auth,user
+a GH_BOT_TOKEN answered 403 is a permission refusal|env:GH_BOT_TOKEN=ghs_VALIDBOT123 api-user:403|json|3|status=auth_error source=GH_BOT_TOKEN failure=permission_refusal detail=gh: Must have admin rights to Repository. (HTTP 403)|0|user,user
+a GITHUB_TOKEN answered 502 is a server failure|env:GITHUB_TOKEN=ghs_VALIDBOT123 api-user:502 status:fail|json|3|status=auth_error source=GITHUB_TOKEN failure=server_failure detail=gh: Server Error (HTTP 502)|0|user,auth,user
+a value the router refused reaches pr-view as the GH_TOKEN gh read|env:GH_TOKEN=placeholder-value auth:fail|json|3|status=auth_error source=GH_TOKEN failure=rejected_credential detail=HTTP 401: Bad credentials|0|user,user,auth,user
 "
 
 run_table "the argv handed to gh" "\

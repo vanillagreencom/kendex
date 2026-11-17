@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
-import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
@@ -24,6 +23,7 @@ import { groupUpdates } from "@/lib/update-groups";
 import { UpdatesPage } from "@/pages/updates";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
+import { useProblemsStore } from "@/stores/problems";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 import { mount, settle } from "@/test/dom";
@@ -76,6 +76,7 @@ beforeEach(() => {
     checking: false,
   });
   useUpdatesView.setState({ showVersion: false });
+  useProblemsStore.getState().closeError();
   vi.clearAllMocks();
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
@@ -185,7 +186,7 @@ describe("installing beside an edited place, from the row", () => {
   });
 
   // Once the fork is recorded, the name field has nothing left to fix:
-  // the dialog closes and the toast says what landed.
+  // the dialog closes and the error dialog carries the engine's reason.
   it("closes on a failure after the fork was recorded, rather than asking for another name", async () => {
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
@@ -202,9 +203,9 @@ describe("installing beside an edited place, from the row", () => {
     );
     await settle();
     expect(dialog()).toBeNull();
-    expect(toast.info).toHaveBeenCalledWith(
-      expect.stringContaining("render refused"),
-    );
+    const error = useProblemsStore.getState().dialog;
+    expect(error.open).toBe(true);
+    expect(error.message).toBe("render refused");
   });
 
   it("holds the button while nothing can be kept but keeps an empty name out", async () => {

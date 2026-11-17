@@ -230,9 +230,9 @@ impl std::fmt::Display for ExecuteError {
 /// `crate::trash::tidy` runs and its lines join the account
 /// (`docs/architecture/trash.md` § Rules).
 ///
-/// Once `execute` has returned, everything a command reads back is
-/// enrichment — `after_writing` is how that read's failure carries the
-/// account rather than replacing it.
+/// Once `execute` has returned, everything a command runs or reads behind
+/// it is enrichment: its failure rides on the command's answer beside the
+/// account (`crate::audit::settle_report`), never in place of it.
 ///
 /// A package whose uninstaller fails stops the plan with the files still
 /// in place, so the person can run it by hand and remove again. The other
@@ -276,26 +276,6 @@ pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
     execute(env, report).map_err(|error| error.to_string())
 }
 
-/// Fold the account into whatever an enrichment read failed with.
-///
-/// Once `execute` has returned, the uninstallers have run and the plan is
-/// committed. Everything a command does after that — reading back the
-/// sources, the sets, the packages — is enrichment, and a `?` on one of
-/// those discards the account with the answer it was riding on. The person
-/// is then shown a listing error over a repository that was disarmed a
-/// moment earlier, with no word of what ran.
-///
-/// Carried on the error rather than dropped, and never at the cost of the
-/// error itself: an irreversible side effect is not made reversible by
-/// swallowing what came after it. The lines go first because they are what
-/// changed on disk; the failure follows, saying what could not be read.
-pub fn after_writing<T>(undone: &[String], read: Result<T, String>) -> Result<T, String> {
-    read.map_err(|error| match undone.is_empty() {
-        true => error,
-        false => format!("{}\n{error}", undone.join("\n")),
-    })
-}
-
 /// The same write for a caller whose plan must take nothing away, and
 /// which has nowhere to say what a removal ran or what the trash pass did.
 ///
@@ -321,46 +301,4 @@ pub fn write_nothing_leaving(env: &Env, report: &EngineReport) -> Result<(), Str
         ));
     }
     write(env, report).map(|_| ())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::after_writing;
-
-    /// The shape every post-write read shares: the account of what the write
-    /// undid rides on a failed read, the failure is not swallowed to carry
-    /// it, a write that undid nothing adds nothing, and a read that worked
-    /// is handed straight back. One row per pair.
-    #[test]
-    fn the_account_of_the_write_rides_on_a_failed_read_only() {
-        let undone = ["guards: running scripts/arm --uninstall".to_owned()];
-        let refused = || Err::<u8, String>("the source list could not be read".to_owned());
-        type Row<'a> = (
-            &'a str,
-            &'a [String],
-            Result<u8, String>,
-            Result<u8, String>,
-        );
-        let rows: [Row; 3] = [
-            (
-                "a failed read after a write that undid something",
-                &undone,
-                refused(),
-                Err(
-                    "guards: running scripts/arm --uninstall\nthe source list could not be read"
-                        .to_owned(),
-                ),
-            ),
-            (
-                "a failed read after a write that undid nothing",
-                &[],
-                refused(),
-                Err("the source list could not be read".to_owned()),
-            ),
-            ("a read that worked", &undone, Ok(7), Ok(7)),
-        ];
-        for (what, undone, read, expected) in rows {
-            assert_eq!(after_writing(undone, read), expected, "{what}");
-        }
-    }
 }

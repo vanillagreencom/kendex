@@ -35,8 +35,8 @@ _MAILBOX_ID = r"\d{10,}-\d+-\d+"
 _TRACKER_ID = r"[A-Z][A-Z0-9]*-[1-9]\d*"
 _ID = re.compile(r"(?<![\w-])(?:(?P<mailbox>%s)|(?P<slack>%s)|(?P<tracker>%s))(?![\w-])"
                  % (_MAILBOX_ID, SLACK_KEY.pattern, _TRACKER_ID))
-# The Linear package's closed states: formatters.sh issue_is_open.
-CLOSED_TYPES = ("completed", "canceled")
+# The Linear package's closed states: formatters.sh state_type_closed.
+CLOSED_TYPES = ("completed", "canceled", "duplicate")
 
 
 def handoff_path(home, selected):
@@ -199,7 +199,10 @@ def state_entries(lines):
     found, current = [], None
     for index in range(start + 1, end):
         line = lines[index]
-        if index in heads:
+        # Agent-written checkpoint and predecessor pointers are session
+        # metadata (long-session.md Handoff), not addressable State entries.
+        metadata = re.match(r"^\s*(?:- )?(?:\*\*)?(?:Checkpoint|Predecessor(?: archive)?)(?::\*\*|\*\*:|:)", line, re.I)
+        if index in heads or metadata:
             current = None
         elif not line.strip():
             continue
@@ -209,6 +212,48 @@ def state_entries(lines):
             current = (index + 1, [line])
             found.append(current)
     return [(number, "".join(text)) for number, text in found]
+
+
+def change_state(lines, change, identity):
+    """Apply one progress record's replacement to State, using its shared entry reader.
+
+    Successors replay the same recorded change with its original record id.
+    A legacy entry names its durable id on the opening line; indented account
+    text belongs to that entry and is replaced with it.
+    """
+    if change == "none":
+        return lines
+    match = re.fullmatch(r"(set|remove) State (\S+)(?: ([^\r\n]+))?", change)
+    if not match or (match[1] == "set") != bool(match[3] and match[3].strip()):
+        raise ValueError("state-change-invalid", change)
+    action, key, next_action = match.groups()
+    entries = state_entries(lines)
+    token = re.compile(r"(?<![\w=:-])" + re.escape(key) + r"(?![\w=:-])")
+    matches = []
+    for number, text in entries:
+        opening = text.splitlines()[0]
+        named = re.match(r"^- (\S+):(?: |$)", opening)
+        if (named and named[1] == key) or (not named and token.search(opening)):
+            matches.append((number, text))
+    if len(matches) > 1:
+        raise ValueError("state-entry-ambiguous", key)
+    replacement = ["- %s: %s (record=%s)\n" % (key, next_action.strip(), identity)] if action == "set" else []
+    updated = list(lines)
+    if matches:
+        number, text = matches[0]
+        # state_entries omits blank separators; remove just the entry's own lines.
+        occupied = sum(bool(line.strip()) for line in text.splitlines())
+        end = number - 1
+        while occupied:
+            occupied -= bool(lines[end].strip())
+            end += 1
+        updated[number - 1:end] = replacement
+    elif replacement:
+        _, end = section(lines, "State")
+        if end and not lines[end - 1].endswith("\n"):
+            updated[end - 1] += "\n"
+        updated[end:end] = replacement + ["\n"]
+    return updated
 
 
 def state_ids(text):

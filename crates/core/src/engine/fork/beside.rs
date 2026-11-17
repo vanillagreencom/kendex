@@ -5,10 +5,11 @@
 //! the user chose.
 
 use super::{
-    Capture, Captured, ForkOf, capture, capture_ops, edited_rendering, forkable_kind, named_bytes,
-    provenance, vacant_name,
+    Capture, Captured, ForkOf, capture, capture_ops, edited_rendering, forkable_kind,
+    kept_warnings, named_bytes, provenance, vacant_name,
 };
 use crate::apply::{Op, Plan, PlannedOp, Pre};
+use crate::engine::WritePlan;
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
 use crate::engine::ops::manifest_for_mutation;
 use crate::env::Env;
@@ -39,7 +40,7 @@ pub fn fork_beside(
     harness: HarnessId,
     new_name: &str,
     rev: Option<&str>,
-) -> Result<Plan> {
+) -> Result<WritePlan> {
     // Before the name is judged: every question below is asked in terms of
     // how this kind renders, and the capture refuses an unsupported one
     // several statements later, by which point the name has already been
@@ -80,8 +81,11 @@ pub fn fork_beside(
         files,
         carry,
         read_at,
+        links,
+        kept,
         ..
     } = captured;
+    let warnings = kept_warnings(new_name, &kept);
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
     let provenance = provenance(&manifest, &decl, read_at.clone());
     // An agent's configuration is keyed by its installed name, so a copy
@@ -97,6 +101,7 @@ pub fn fork_beside(
     let mut own = decl;
     own.source = LOCAL_SOURCE_NAME.to_owned();
     own.rev = None;
+    own.links = links;
     manifest.declared_mut(kind).insert(new_name.to_owned(), own);
     manifest
         .forks
@@ -135,7 +140,10 @@ pub fn fork_beside(
             manifest: Box::new(manifest),
         },
     });
-    Plan::landed(scope.clone(), ops)
+    Ok(WritePlan {
+        plan: Plan::landed(scope.clone(), ops)?,
+        warnings,
+    })
 }
 
 /// The captured bytes answering to `new_name` — [`named_bytes`] over the

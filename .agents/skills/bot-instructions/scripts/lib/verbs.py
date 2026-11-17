@@ -21,7 +21,7 @@ def _cause(exc):
     return str(exc) or type(exc).__name__
 
 
-def render_verb(ctx, root, dry_run=False):
+def render_verb(ctx, root, dry_run=False, discover=False):
     """Validate, then write. A validator failure leaves the repo untouched."""
     run.require_clean(ctx)
     # A marked file the TOML no longer produces is removed after the writes,
@@ -30,14 +30,20 @@ def render_verb(ctx, root, dry_run=False):
     orphans = validators_repo.orphan_files(ctx)
     gone = validators_repo.removed_orphans(ctx, tree.Index(root))
     paths = sorted(ctx.build.files)
-    if dry_run:
+    region = ctx.build.region_body is not None
+    if discover:
         paths = [path for path in paths if writer.inspect(root, path)[1]]
-    region = ctx.build.region_body is not None and (not dry_run or _region_owned(root))
+        region = region and _region_owned(root)
+    elif dry_run:
+        for path in paths:
+            writer.replace(root, path, ctx.build.files[path], dry_run=True)
+        if region:
+            _splice(ctx, root, dry_run=True)
     nothing = [] if paths or region else [
         "nothing to render: every [bot-instructions.bots] flag is false" if ctx.build.remote else
         "nothing to render: local output needs [bot-instructions.bots] codex = true"
     ]
-    if dry_run:
+    if dry_run or discover:
         lines = [f"would write {p}" for p in paths]
         if region:
             lines.append(
@@ -75,7 +81,7 @@ def render_verb(ctx, root, dry_run=False):
     return lines + nothing + ctx.skipped
 
 
-def _splice(ctx, root):
+def _splice(ctx, root, dry_run=False):
     """Replace the region in the bytes the write phase itself opened.
 
     Nothing outside the region is carried through the build, so an edit
@@ -102,7 +108,8 @@ def _splice(ctx, root):
             )
         return render.splice(existing, ctx.build.region_body)
 
-    writer.replace(root, "AGENTS.md", transform=transform, require_marker=False)
+    writer.replace(root, "AGENTS.md", transform=transform, require_marker=False,
+                   dry_run=dry_run)
 
 
 def _region_owned(root):
@@ -181,7 +188,8 @@ def _adopt_file(ctx, root, path, dry_run=False):
         held.append(existing)
         return marker.insert(existing, ctx.model.marker(marker.style_for(path)))
 
-    if not writer.replace(root, path, transform=transform, require_marker=False, dry_run=dry_run):
+    if not writer.replace(root, path, transform=transform, require_marker=False,
+                          dry_run=dry_run, reject_symlink=dry_run):
         return None
     return held[0]
 
@@ -211,7 +219,7 @@ def _adopt_region(ctx, root, pointers, findings, dry_run=False):
         return render.splice(existing, body)
 
     wrote = writer.replace(root, "AGENTS.md", transform=transform, require_marker=False,
-                           dry_run=dry_run)
+                           dry_run=dry_run, reject_symlink=dry_run)
     if seen:
         _region_finding(ctx, seen[0], findings, dry_run)
     if not wrote:
