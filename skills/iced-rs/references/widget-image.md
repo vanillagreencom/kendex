@@ -38,7 +38,7 @@ image("sprite.png")
     .scale(4.0)
 ```
 
-`.scale(...)` scales the drawn image around its center. `.rotation(iced::Rotation::from_degrees(45.0))` rotates it. `.opacity(0.7)` changes transparency; opacity zero still leaves the widget's layout allocation.
+`.scale(...)` scales the drawn image around its center. `.rotation(iced::Radians::from(iced::Degrees(45.0)))` rotates it. `.opacity(0.7)` changes transparency; opacity zero still leaves the widget's layout allocation.
 
 `.crop(iced::Rectangle { x: 0, y: 0, width: 32, height: 32 })` selects a region in source-image pixels before fitting or transforms. Coordinates are clamped to the image dimensions.
 
