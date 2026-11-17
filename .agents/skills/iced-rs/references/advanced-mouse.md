@@ -2,85 +2,17 @@
 
 > `iced::advanced::mouse` · iced 0.14.0
 
-`Cursor` enum for hit testing and cursor positioning in custom widgets. `Interaction` enum for system cursor selection. The `position_*`/`is_over` methods require the `advanced` crate feature.
+`Cursor` enum for hit testing and cursor positioning in custom widgets. `Interaction` enum for system cursor selection. The cursor methods are available through `iced::mouse::Cursor` too; only the `iced::advanced` access path requires `advanced`.
 
-## API
+Read when implementing or debugging mouse behavior in a custom widget or backend. Enable Iced’s `advanced` feature for the `iced::advanced` paths used here.
 
-### `Cursor` enum
+## Declarations
 
-```rust
-pub enum Cursor {
-    Available(Point),
-    Levitating(Point),
-    Unavailable,
-}
-```
+Pinned Iced 0.14.0 declarations, signatures, defaults and implementation:
 
-- **`Available(Point)`** — The cursor has a defined position on the current layer.
-- **`Levitating(Point)`** — The cursor has a defined position, but it is "levitating" over a layer above — for example, an overlay is above the normal widget tree and the cursor belongs to the overlay layer, not the normal widget. Normal widgets should treat this like `Unavailable` unless they deliberately want to peek through the overlay.
-- **`Unavailable`** — The cursor is currently out of bounds or busy.
-
-### Cursor methods (advanced only)
-
-```rust
-impl Cursor {
-    pub fn position(self) -> Option<Point>;
-    pub fn position_over(self, bounds: Rectangle) -> Option<Point>;
-    pub fn position_in(self, bounds: Rectangle) -> Option<Point>;
-    pub fn position_from(self, origin: Point) -> Option<Point>;
-
-    pub fn is_over(self, bounds: Rectangle) -> bool;
-    pub fn is_levitating(self) -> bool;
-
-    pub fn levitate(self) -> Cursor;
-    pub fn land(self) -> Cursor;
-}
-```
-
-- **`position()`** — Absolute position of the `Cursor`, if available.
-- **`position_over(bounds)`** — Returns the **absolute** position of the cursor if it is inside `bounds`, otherwise `None`.
-- **`position_in(bounds)`** — Returns the **relative** position of the cursor inside `bounds` (subtracting `bounds.position()`), or `None` if the cursor is not over the bounds. This is what you usually want for drawing hover indicators or computing fractional position inside a widget.
-- **`position_from(origin)`** — Returns the relative position of the cursor from the given `origin`, if available.
-- **`is_over(bounds)`** — Returns `true` if the cursor is over `bounds`. Convenience shortcut for `position_over(bounds).is_some()`.
-- **`is_levitating()`** — Returns `true` if the cursor is on a layer above the current one.
-- **`levitate()`** — Returns a copy of the cursor that is "levitated" onto a layer above the current one.
-- **`land()`** — Returns a copy that is "landed" back onto the current layer.
-
-### `Interaction` enum
-
-```rust
-pub enum Interaction {
-    None,
-    Hidden,
-    Idle,
-    ContextMenu,
-    Help,
-    Pointer,
-    Progress,
-    Wait,
-    Cell,
-    Crosshair,
-    Text,
-    Alias,
-    Copy,
-    Move,
-    NoDrop,
-    NotAllowed,
-    Grab,
-    Grabbing,
-    ResizingHorizontally,
-    ResizingVertically,
-    ResizingDiagonallyUp,
-    ResizingDiagonallyDown,
-    ResizingColumn,
-    ResizingRow,
-    AllScroll,
-    ZoomIn,
-    ZoomOut,
-}
-```
-
-27 variants. Common ones: `None` (default), `Pointer`, `Text`, `Grab`/`Grabbing`, `Crosshair`, `ResizingHorizontally`/`ResizingVertically`, `NotAllowed`.
+- [core/src/mouse/cursor.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/mouse/cursor.rs).
+- [core/src/mouse/interaction.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/mouse/interaction.rs).
+- [core/src/mouse/click.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/mouse/click.rs).
 
 ## Patterns
 
@@ -122,45 +54,13 @@ fn mouse_interaction(
 
 ## Gotchas
 
-- `Cursor::Unavailable` and `Cursor::Levitating(_)` both cause `is_over(bounds)` / `position_in(bounds)` to return `false` / `None` for most widgets. If you are writing an overlay, call `cursor.land()` on the cursor you get so it behaves as "available" relative to the overlay layer.
+- `Cursor::Unavailable` and `Cursor::Levitating(_)` both cause `is_over(bounds)` / `position_in(bounds)` to return `false` / `None` unconditionally. Use `land()` only when deliberately bringing a levitating cursor onto the current layer; it does not make an unavailable cursor available.
 - `position_over` returns **absolute** coordinates and `position_in` returns **relative** coordinates. Mixing them up is a common bug.
 - `is_over(bounds)` doesn't clip against the viewport — if the widget has been scrolled out of view but the cursor coincidentally hovers where it would be, this still returns `true`. Combine with a viewport rect check if you need strict visibility.
 - `Interaction::None` is distinct from `Interaction::Idle` — `None` means "don't care, inherit from context", `Idle` means "explicitly the default cursor". Use `None` in most widgets.
 - No built-in "cursor entered/left" helper -- diff between frames in widget state.
 
 ## Click detection
-
-### `Click` struct
-
-```rust
-pub struct Click { /* private fields */ }
-
-impl Click {
-    /// Creates a new Click. Pass the previous Click to enable
-    /// double/triple-click detection based on timing and position.
-    pub fn new(
-        position: Point,
-        button: Button,
-        previous: Option<Click>,
-    ) -> Click;
-
-    /// Returns the Kind of click (Single, Double, Triple).
-    pub fn kind(&self) -> Kind;
-
-    /// Returns the position where the click occurred.
-    pub fn position(&self) -> Point;
-}
-```
-
-### `Kind` enum
-
-```rust
-pub enum Kind {
-    Single,
-    Double,
-    Triple,
-}
-```
 
 ### Click detection pattern
 
@@ -179,7 +79,7 @@ match click.kind() {
 self.last_click = Some(click);
 ```
 
-The runtime promotes `Single` to `Double` to `Triple` based on position proximity and timing threshold.
+`Click::new` classifies consecutive clicks by button, position and elapsed time. Store the previous click yourself; after a triple click, another consecutive click becomes a double click.
 
 ## See also
 

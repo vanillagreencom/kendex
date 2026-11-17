@@ -4,70 +4,20 @@
 
 The `Highlighter` trait defines the contract for syntax highlighting in text editors. Highlighters process lines sequentially and must be notified when lines change so subsequent lines can be re-highlighted.
 
-## API
+Read when implementing or debugging text highlighter behavior in a custom widget or backend. Enable Iced’s `advanced` feature for the `iced::advanced` paths used here.
 
-### `Highlighter` trait
+## Declarations
 
-```rust
-pub trait Highlighter: 'static {
-    type Settings: PartialEq + Clone;
-    type Highlight;
-    type Iterator<'a>: Iterator<Item = (Range<usize>, Self::Highlight)>
-        where Self: 'a;
+Pinned Iced 0.14.0 declarations, signatures, defaults and implementation:
 
-    fn new(settings: &Self::Settings) -> Self;
-    fn update(&mut self, new_settings: &Self::Settings);
-    fn change_line(&mut self, line: usize);
-    fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_>;
-    fn current_line(&self) -> usize;
-}
-```
-
-- **`Settings`** -- configuration type (e.g., language, theme name). Compared with `PartialEq` to detect when re-initialization is needed.
-- **`Highlight`** -- the output token type. Mapped to `Format<Font>` by the widget.
-- **`Iterator<'a>`** -- yields `(Range<usize>, Highlight)` pairs: byte range + highlight token for each segment of a line.
-- **`new(settings)`** -- construct from settings.
-- **`update(new_settings)`** -- apply new settings without full reconstruction.
-- **`change_line(line)`** -- notify that the line at `line` was modified. The highlighter resets its internal state to at most this line index.
-- **`highlight_line(line)`** -- highlight one line, returning an iterator of range-highlight pairs. Called sequentially from `current_line()` forward.
-- **`current_line()`** -- the line index the highlighter is currently positioned at.
-
-### `Format<Font>` struct
-
-```rust
-pub struct Format<Font> {
-    pub color: Option<Color>,
-    pub font: Option<Font>,
-}
-```
-
-The output format applied to each highlighted span. `color` overrides the default text color; `font` overrides the default font (e.g., to switch to bold/italic variants).
-
-### `PlainText` struct (no-op highlighter)
-
-```rust
-pub struct PlainText;
-
-impl Highlighter for PlainText {
-    type Settings = ();
-    type Highlight = ();
-    type Iterator<'a> = std::iter::Empty<(Range<usize>, ())>;
-
-    fn new(_settings: &()) -> Self { PlainText }
-    fn update(&mut self, _new_settings: &()) {}
-    fn change_line(&mut self, _line: usize) {}
-    fn highlight_line(&mut self, _line: &str) -> Self::Iterator<'_> {
-        std::iter::empty()
-    }
-    fn current_line(&self) -> usize { 0 }
-}
-```
-
-Used as the default when no highlighting is configured. `TextEditor::new()` uses `PlainText` internally.
+- [core/src/text/highlighter.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/text/highlighter.rs).
+- [widget/src/text_editor.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/text_editor.rs).
 
 ## Patterns
 
 ### Custom keyword highlighter
+
+This stateless example matches whitespace-separated words, including UTF-8 byte offsets. It does not tokenize punctuation or carry syntax state across lines. Returning line zero asks the backend to revisit visible lines; a stateful highlighter must track and reset its current line.
 
 ```rust
 use iced::advanced::text::highlighter::{self, Format, Highlighter};
@@ -99,7 +49,14 @@ impl Highlighter for KeywordHighlighter {
 
     fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
         let mut spans = Vec::new();
-        // ... tokenize `line`, push (range, is_keyword) pairs ...
+        let mut offset = 0;
+        for token in line.split_inclusive(char::is_whitespace) {
+            let word = token.trim_end();
+            if self.keywords.iter().any(|keyword| keyword == word) {
+                spans.push((offset..offset + word.len(), true));
+            }
+            offset += token.len();
+        }
         spans.into_iter()
     }
 
