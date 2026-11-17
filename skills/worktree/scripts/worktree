@@ -2524,6 +2524,23 @@ release_own_session_lease() {
 reuse_respects_session_lease() {
   local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc=0
   REUSE_LEASE_OWNER=""
+  # Relaunch and start-worktree both reuse this tree. Orch owns activity
+  # detection: moving its branch here would invalidate a running proof.
+  # Partial installs may lack the live reader.
+  local orch_scripts="$SCRIPT_DIR/../../orch/scripts" activity_cause="" live_answer=""
+  if [[ -e "$orch_scripts/dev-validate-run" || -L "$orch_scripts/dev-validate-run" ]]; then
+    rc=0
+    live_answer="$("$orch_scripts/dev-validate-run" --live --worktree "$wt" 2>/dev/null)" || rc=$?
+    case "$rc" in
+      0) activity_cause=run-live ;;
+      1) [[ "$live_answer" == live=none ]] || activity_cause=activity-unreadable ;;
+      *) activity_cause=activity-unreadable ;;
+    esac
+  fi
+  if [[ -n "$activity_cause" ]]; then
+    worktree_message resume-held "path=$wt cause=$activity_cause" "The lane's activity holds this worktree; refusing to reuse it before that activity ends and can be read." >&2
+    return 1
+  fi
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
   if [[ "$env_owner" == "$issue_owner" ]]; then
