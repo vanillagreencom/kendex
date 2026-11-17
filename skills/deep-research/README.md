@@ -6,7 +6,7 @@ A research CLI that sends questions to Exa Deep Search. It writes a findings rep
 
 - Produce research reports from a question.
 - Select lite, standard or full research.
-- Validate a report against its saved provider response.
+- Check report structure and saved-response metadata.
 - Return the provider response as JSON.
 
 ## Install
@@ -17,7 +17,7 @@ kendex add vanillagreencom/kendex --skill deep-research
 
 ## How it works
 
-You give the CLI a question and a research mode. It sends the request to Exa. It writes the findings to markdown and saves the response in a JSON file. The validation command checks the report against that saved response.
+You give the CLI a question and a research mode. It sends the request to Exa. It writes the findings to markdown and saves the response in a JSON file. The validation command checks the report's structure and the saved response's metadata. It does not verify the findings against their sources.
 
 ## Setup
 
