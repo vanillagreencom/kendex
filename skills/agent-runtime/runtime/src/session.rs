@@ -443,7 +443,7 @@ fn user_text(harness: Harness, row: &Value) -> Option<String> {
             row.get("message")?
                 .get("content")?
                 .as_str()
-                .map(str::to_owned)
+                .map(claude_user_text)
         }
         Harness::Codex => {
             let payload = row.get("payload")?;
@@ -470,6 +470,32 @@ fn user_text(harness: Harness, row: &Value) -> Option<String> {
             text_parts(message.get("content")?)
         }
     }
+}
+
+fn claude_user_text(text: &str) -> String {
+    let mut remaining = text;
+    let mut unwrapped = String::new();
+    while let Some(start) = remaining.find("<pasted_content") {
+        let Some((id, body)) = remaining[start..]
+            .strip_prefix("<pasted_content id=\"")
+            .and_then(|tag| tag.split_once("\">\n"))
+        else {
+            return text.to_owned();
+        };
+        if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return text.to_owned();
+        }
+        let closing = format!("\n</pasted_content id=\"{id}\">");
+        let Some((inner, after)) = body.split_once(&closing) else {
+            return text.to_owned();
+        };
+        let before = &remaining[..start];
+        unwrapped.push_str(before.strip_suffix("\n\n").unwrap_or(before));
+        unwrapped.push_str(inner);
+        remaining = after.strip_prefix('\n').unwrap_or(after);
+    }
+    unwrapped.push_str(remaining);
+    unwrapped
 }
 
 fn text_parts(content: &Value) -> Option<String> {
@@ -1075,6 +1101,97 @@ mod tests {
             fixed_file(Harness::Codex, Path::new("/h"), Path::new("/w"), &id),
             None
         );
+    }
+
+    #[test]
+    fn claude_paste_wrappers_are_removed_only_when_well_formed() {
+        let rows = [
+            (
+                "whole row",
+                "\n\n<pasted_content id=\"634f\">\nfirst\r\n second \t\n</pasted_content id=\"634f\">\n",
+                "first\n second",
+            ),
+            (
+                "between typed text",
+                "before \n\n<pasted_content id=\"a1\">\npasted\n</pasted_content id=\"a1\">\n after",
+                "before pasted after",
+            ),
+            (
+                "multiple blocks",
+                "\n\n<pasted_content id=\"a1\">\nfirst\n</pasted_content id=\"a1\">\n + \n\n<pasted_content id=\"b2\">\nsecond\n</pasted_content id=\"b2\">\n",
+                "first + second",
+            ),
+            (
+                "no outer newlines",
+                "<pasted_content id=\"a1\">\npasted\n</pasted_content id=\"a1\">",
+                "pasted",
+            ),
+            (
+                "unclosed block",
+                "\n\n<pasted_content id=\"a1\">\npasted",
+                "\n\n<pasted_content id=\"a1\">\npasted",
+            ),
+            (
+                "different closing id",
+                "\n\n<pasted_content id=\"a1\">\npasted\n</pasted_content id=\"b2\">\n",
+                "\n\n<pasted_content id=\"a1\">\npasted\n</pasted_content id=\"b2\">",
+            ),
+            (
+                "missing opening LF",
+                "\n\n<pasted_content id=\"a1\">pasted\n</pasted_content id=\"a1\">\n",
+                "\n\n<pasted_content id=\"a1\">pasted\n</pasted_content id=\"a1\">",
+            ),
+            (
+                "missing closing LF",
+                "\n\n<pasted_content id=\"a1\">\npasted</pasted_content id=\"a1\">\n",
+                "\n\n<pasted_content id=\"a1\">\npasted</pasted_content id=\"a1\">",
+            ),
+            (
+                "nonhex id",
+                "\n\n<pasted_content id=\"word\">\npasted\n</pasted_content id=\"word\">\n",
+                "\n\n<pasted_content id=\"word\">\npasted\n</pasted_content id=\"word\">",
+            ),
+            (
+                "empty id",
+                "\n\n<pasted_content id=\"\">\npasted\n</pasted_content id=\"\">\n",
+                "\n\n<pasted_content id=\"\">\npasted\n</pasted_content id=\"\">",
+            ),
+            (
+                "malformed block after a valid block",
+                "\n\n<pasted_content id=\"a1\">\nfirst\n</pasted_content id=\"a1\">\n\n\n<pasted_content id=\"b2\">\nsecond",
+                "\n\n<pasted_content id=\"a1\">\nfirst\n</pasted_content id=\"a1\">\n\n\n<pasted_content id=\"b2\">\nsecond",
+            ),
+        ];
+        for (name, text, expected) in rows {
+            let row = serde_json::json!({"type":"user", "message":{"content":text}});
+            assert_eq!(
+                normalize_user_text(&user_text(Harness::Claude, &row).unwrap()),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_harnesses_keep_paste_wrapper_text() {
+        let text = "\n\n<pasted_content id=\"634f\">\npasted\n</pasted_content id=\"634f\">\n";
+        let rows = [
+            (
+                Harness::Codex,
+                serde_json::json!({"type":"event_msg", "payload":{"type":"item_completed", "item":{"type":"UserMessage", "content":[{"type":"text", "text":text}]}}}),
+            ),
+            (
+                Harness::Copilot,
+                serde_json::json!({"type":"user.message", "data":{"content":text}}),
+            ),
+            (
+                Harness::Pi,
+                serde_json::json!({"type":"message", "message":{"role":"user", "content":[{"type":"text", "text":text}]}}),
+            ),
+        ];
+        for (harness, row) in rows {
+            assert_eq!(user_text(harness, &row).unwrap(), text, "{harness:?}");
+        }
     }
 
     /// The sessions that appeared since the window opened are

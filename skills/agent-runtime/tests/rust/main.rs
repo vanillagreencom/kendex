@@ -811,6 +811,12 @@ fn deliver_matches_only_the_sent_text_after_the_cursor_on_readback() {
         (&["another prompt", "you have mail"], 0, "you have mail", ""),
         (&["  first\nsecond"], 0, "  first \r\nsecond\t\r\n", ""),
         (&[" first\nsecond"], 0, "  first\nsecond", "turn-unmatched"),
+        (
+            &["\n\n<pasted_content id=\"634f\">\nfirst\nsecond\n</pasted_content id=\"634f\">\n"],
+            0,
+            "first\nsecond",
+            "",
+        ),
     ];
     for (texts, cursor, sent, cause) in rows {
         let content: String = texts
