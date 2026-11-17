@@ -173,7 +173,7 @@ Each line is tab-separated `key=value` fields:
 |---|---|
 | `account` | Required: the config directory `create --account` receives. |
 | `harness` | Required: `claude`, `codex`, `pi` or `copilot`. |
-| `status` | The listing's status word; `ok` when absent. |
+| `status` | The listing's status word; `ok` when absent. Only `ok` and `rate_limited` rows are measured: a row whose usage read backs off says `rate_limited` with its last reading's percentages while that reading is fresh, and any other word leaves the account unmeasured, so a pick passes over it. |
 | `detail` | The provider's text for the status, carried into the record as written. A `detail` starting `api-credit-` marks a Pi row as an API grant. |
 | `weekly-pct`, `model-pct`, `monthly-pct` | Whole numbers `0` to `100`. |
 | `model-label` | The model window's label. |
