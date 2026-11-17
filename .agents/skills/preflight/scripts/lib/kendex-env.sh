@@ -323,11 +323,16 @@ kendex_load_settings_file() { # FILE [-- NAME...]
 # own string (kendex_decode_value), except where the shell reads a quoted
 # value differently: a `#` touching the closing quote is part of the value
 # there, and double quotes expand `$` and backticks.
-kendex_env_line_value() { # OUT_VAR RAW — value assigned to OUT_VAR; 1 = outside the grammar, OUT_VAR untouched
+kendex_env_line_value() { # OUT_VAR RAW [FORM] — value assigned to OUT_VAR; 1 = outside the grammar, OUT_VAR untouched
   local _kendex_line_decoded
-  local _kendex_line_bare='^([A-Za-z0-9_./:@%+,=-]*)([[:space:]]+#.*)?$'
+  local _kendex_line_bare='^([^[:space:]"'\''$`\\&;|()<>]*)([[:space:]]+#.*)?$'
   local _kendex_line_glued="^('[^']*'|\"[^\"]*\")#"
+  # Assignment words have no pathname expansion, brace expansion or word
+  # splitting. Tildes expand only at the start or immediately after a colon.
   if [[ "$2" =~ $_kendex_line_bare ]]; then
+    [[ "${BASH_REMATCH[1]}" != \~* && "${BASH_REMATCH[1]}" != *:\~* ]] || return 1
+    # Export arguments can brace-expand; keep that form quoted as data.
+    [[ "${3-}" != export || "${BASH_REMATCH[1]}" != *'{'* ]] || return 1
     printf -v "$1" '%s' "${BASH_REMATCH[1]}"
     return 0
   fi
@@ -366,7 +371,7 @@ kendex_read_env_file() { # FILE [-- NAME...] — 0 = read, an absent FILE includ
     if [[ "$_kendex_env_line" =~ $_kendex_env_assignment ]]; then
       _kendex_env_key="${BASH_REMATCH[1]}"
       kendex_asked "$_kendex_env_key" || continue
-      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" || _kendex_env_key=""
+      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" "$_kendex_env_form" || _kendex_env_key=""
     fi
     if [[ -z "$_kendex_env_key" ]]; then
       kendex_env_message private-env-line "$1" "$_kendex_env_lineno" >&2

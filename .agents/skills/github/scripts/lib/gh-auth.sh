@@ -21,26 +21,8 @@ kendex_github_is_resolved_token() {
   _KENDEX_GITHUB_REFUSED_TOKEN="$token"
   return 1
 }
-# Never inherited: a refusal counts only for a probe this shell ran, and so
-# does the class of a failed probe (`kendex_github_failure_class`), which
-# KENDEX_GITHUB_TOKEN_FAILURE holds for a token and KENDEX_GITHUB_KEYRING_FAILURE
-# for the keyring.
-unset _KENDEX_GITHUB_REFUSED_TOKEN KENDEX_GITHUB_TOKEN_FAILURE KENDEX_GITHUB_KEYRING_FAILURE
-
-# Print the class of a failed credential probe from what gh wrote, never the
-# text itself: `absent` gh holds no sign-in; `expired` GitHub answered 401,
-# or gh calls its stored token invalid (gh 2.103.3 says so for any refusal
-# of it short of a timeout); `refused` GitHub answered any other HTTP error;
-# `unreadable` no answer from GitHub (killed at the bound, unreachable,
-# never run).
-kendex_github_failure_class() { # DETAIL
-  case "$1" in
-    *"HTTP 401"* | *" is invalid."*) printf 'expired' ;;
-    *"not logged into any"*) printf 'absent' ;;
-    *"HTTP "[1-5][0-9][0-9]*) printf 'refused' ;;
-    *) printf 'unreadable' ;;
-  esac
-}
+# Never inherited: these records describe probes this shell ran.
+unset _KENDEX_GITHUB_REFUSED_TOKEN KENDEX_GITHUB_TOKEN_AUTH_FAILURE KENDEX_GITHUB_KEYRING_STATE
 
 _GH_AUTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bounded.sh
@@ -80,18 +62,8 @@ _kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
     _kendex_github_api_probe "$auth_timeout" "$stdout_file" "$stderr_file" installation/repositories '.total_count' || status=$?
   fi
   if [[ "$status" -ne 0 ]]; then
-    detail="$(<"$stderr_file")" || detail=""
-    if _kendex_github_is_integration_refusal "$detail"; then
-      status=0
-      kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count' || status=$?
-      if [[ "$status" -ne 0 ]]; then
-        detail="$(<"$stderr_file")" || detail=""
-      fi
-    fi
-    if [[ "$status" -ne 0 ]]; then
-      KENDEX_GITHUB_TOKEN_FAILURE="$(kendex_github_failure_class "$detail")"
-      return "$status"
-    fi
+    _kendex_github_record_auth_failure "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-$source}" "$status" "$_KENDEX_GITHUB_API_FAILURE"
+    return "$status"
   fi
   export KENDEX_GITHUB_VALIDATED_TOKEN="$token"
 }
@@ -108,6 +80,7 @@ _kendex_github_record_auth_failure() { # SOURCE STATUS CATEGORY
   [[ "$2" -ne 124 ]] || failure=timeout
   KENDEX_GITHUB_AUTH_SOURCE="$1"
   KENDEX_GITHUB_AUTH_FAILURE="$failure"
+  [[ "$1" == keyring ]] || KENDEX_GITHUB_TOKEN_AUTH_FAILURE="$failure"
 }
 
 # Run `gh api ENDPOINT --jq QUERY` under the bound with --include, which gh's
@@ -233,7 +206,18 @@ kendex_github_keyring_auth_status() {
   local auth_timeout="${KENDEX_GITHUB_AUTH_TIMEOUT:-10}" output="" status=0
   output="$(kendex_github_run_bounded "$auth_timeout" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status 2>&1)" || status=$?
   [[ "$status" -ne 0 ]] || return 0
-  KENDEX_GITHUB_KEYRING_FAILURE="$(kendex_github_failure_class "$output")"
+  _kendex_github_record_auth_failure keyring "$status" unknown
+  # gh auth status has no HTTP response. Its CLI diagnostics distinguish a
+  # missing sign-in from a stored token gh calls invalid, without exposing it.
+  KENDEX_GITHUB_KEYRING_STATE=unknown
+  if [[ "$status" -eq 124 ]]; then
+    KENDEX_GITHUB_KEYRING_STATE=timeout
+  else
+    case "$output" in
+      *"not logged into any"*) KENDEX_GITHUB_KEYRING_STATE=no_login ;;
+      *" is invalid."*) KENDEX_GITHUB_KEYRING_STATE=invalid_token ;;
+    esac
+  fi
   return "$status"
 }
 
@@ -349,7 +333,7 @@ kendex_github_select_auth_token_source() { # MODE OUT_VAR
 
   for _select_var in "${_select_order[@]}"; do
     _select_token="${!_select_var:-}"
-    if kendex_github_is_resolved_token "$_select_token"; then
+    if KENDEX_GITHUB_SELECTED_TOKEN_SOURCE="$_select_var" kendex_github_is_resolved_token "$_select_token"; then
       printf -v "$_select_out" '%s' "$_select_var"
       return 0
     fi
@@ -437,9 +421,8 @@ kendex_github_load_project_env_preserving_caller() {
 }
 
 # Print MODE's token from the caller's environment, else from the project's
-# env files. Finding none, it returns 1 with KENDEX_GITHUB_TOKEN_FAILURE the
-# class: `absent`, `unreadable` (an env file or a 1Password reference that
-# could not be read), or the class of the caller's own value GitHub refused.
+# env files. Finding none, it returns 1 with a token-load failure of `absent`
+# or `unreadable`, or the authentication record of a value GitHub refused.
 kendex_github_load_token() {
   local project_root="${1:?kendex_github_load_token: project_root required}"
   local mode="${2:-default}"
@@ -448,7 +431,7 @@ kendex_github_load_token() {
   local selected=""
   local load_status=0
 
-  unset KENDEX_GITHUB_TOKEN_FAILURE
+  unset KENDEX_GITHUB_TOKEN_LOAD_FAILURE KENDEX_GITHUB_TOKEN_AUTH_FAILURE
   if kendex_github_select_auth_token_source "$mode" selected; then
     token="${!selected}"
   fi
@@ -472,9 +455,9 @@ kendex_github_load_token() {
 
   if [[ -z "$token" ]]; then
     if [[ "$load_status" -eq 3 ]]; then
-      KENDEX_GITHUB_TOKEN_FAILURE="unreadable"
+      KENDEX_GITHUB_TOKEN_LOAD_FAILURE=unreadable
     else
-      KENDEX_GITHUB_TOKEN_FAILURE="${KENDEX_GITHUB_TOKEN_FAILURE:-absent}"
+      [[ -n "${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-}" ]] || KENDEX_GITHUB_TOKEN_LOAD_FAILURE=absent
     fi
     return 1
   fi
@@ -482,12 +465,12 @@ kendex_github_load_token() {
     if kendex_github_resolve_op_reference_to_var "$token" "GitHub token" resolved; then
       token="$resolved"
     else
-      KENDEX_GITHUB_TOKEN_FAILURE="unreadable"
+      KENDEX_GITHUB_TOKEN_LOAD_FAILURE=unreadable
       return 1
     fi
     # Select already checked any value it returned; only a resolved one is new.
     if ! kendex_github_is_resolved_token "$token"; then
-      KENDEX_GITHUB_TOKEN_FAILURE="${KENDEX_GITHUB_TOKEN_FAILURE:-unreadable}"
+      [[ -n "${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-}" ]] || KENDEX_GITHUB_TOKEN_LOAD_FAILURE=unreadable
       return 1
     fi
   fi

@@ -17,8 +17,8 @@
 #       Exit 0 a candidate works; 2 nothing works, its last line on stderr
 #       `gh-auth-ladder: auth-failed service=github env=CLASS
 #       [keyring=CLASS] bot-token=CLASS`, each source tried with the class
-#       of its failure: absent, expired, refused or unreadable (lib/gh-auth.sh's
-#       `kendex_github_failure_class`), keyring only where it was asked; 3 usage.
+#       of its failure: absent, expired, refused or unreadable, keyring only
+#       where it was asked; 3 usage.
 #   gh-auth-ladder --help
 set -euo pipefail
 
@@ -54,8 +54,19 @@ auth_status() {
   return "$status"
 }
 
+failure_class() { # AUTH_FAILURE_OR_LOAD_FAILURE
+  case "$1" in
+    absent | no_login) printf absent ;;
+    rejected_credential | invalid_token) printf expired ;;
+    permission_refusal | server_failure) printf refused ;;
+    *) printf unreadable ;;
+  esac
+}
+
 refuse() { # BOT_TOKEN_CLASS
-  echo "gh-auth-ladder: auth-failed service=github env=$ENV_CLASS${KENDEX_GITHUB_KEYRING_FAILURE:+ keyring=$KENDEX_GITHUB_KEYRING_FAILURE} bot-token=$1" >&2
+  local keyring=""
+  [[ -z "${KENDEX_GITHUB_KEYRING_STATE:-}" ]] || keyring=" keyring=$(failure_class "$KENDEX_GITHUB_KEYRING_STATE")"
+  echo "gh-auth-ladder: auth-failed service=github env=$ENV_CLASS$keyring bot-token=$1" >&2
   exit 2
 }
 
@@ -64,16 +75,16 @@ ENV_HELD=""
 kendex_github_has_env_token && ENV_HELD=1
 kendex_github_sanitize_gh_env
 if ! auth_status; then
-  [[ -z "$ENV_HELD" ]] || ENV_CLASS="${KENDEX_GITHUB_TOKEN_FAILURE:-unreadable}"
-  unset GH_TOKEN GITHUB_TOKEN KENDEX_GITHUB_TOKEN_FAILURE
+  [[ -z "$ENV_HELD" ]] || ENV_CLASS="$(failure_class "${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-unknown}")"
+  unset GH_TOKEN GITHUB_TOKEN KENDEX_GITHUB_TOKEN_AUTH_FAILURE
   # The bot token where one loads, else its class, told apart by the status.
   if ! loaded="$(kendex_github_load_token "$PROJECT" default || {
-    printf '%s' "${KENDEX_GITHUB_TOKEN_FAILURE:-absent}"
+    failure_class "${KENDEX_GITHUB_TOKEN_LOAD_FAILURE:-${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-absent}}"
     exit 1
   })"; then
     refuse "$loaded"
   fi
   export GH_TOKEN="$loaded"
-  auth_status || refuse "${KENDEX_GITHUB_TOKEN_FAILURE:-unreadable}"
+  auth_status || refuse "$(failure_class "${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-unknown}")"
 fi
 printf 'GH_TOKEN=%s\nGITHUB_TOKEN=%s\n' "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"

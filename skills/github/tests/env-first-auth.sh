@@ -94,6 +94,7 @@ _token_ok() {
 # a user or a granted permission reaches. A dtn_APP value is a sandbox
 # placeholder the proxy swaps for an installation token.
 _integration_403() {
+  [[ " $* " != *' --include '* ]] || printf 'HTTP/2.0 403 Forbidden\r\nContent-Type: application/json\r\n\r\n'
   echo '{"message":"Resource not accessible by integration","status":"403"}'
   echo "gh: Resource not accessible by integration (HTTP 403)" >&2
   exit 1
@@ -121,15 +122,24 @@ case "${1:-}" in
     ;;
   api)
     if [[ "${2:-}" == "user" ]]; then
-      [[ "${GH_TOKEN:-}" != ghs_APP* && "${GH_TOKEN:-}" != dtn_APP* ]] || _integration_403
-      _token_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      if [[ "${GH_TOKEN:-}" == ghp_THROTTLED ]]; then
+        printf 'HTTP/2.0 403 Forbidden\r\nX-Ratelimit-Remaining: 0\r\n\r\n{"message":"API rate limit exceeded"}\n'
+        echo 'gh: API rate limit exceeded (HTTP 403)' >&2
+        exit 1
+      fi
+      [[ "${GH_TOKEN:-}" != ghs_APP* && "${GH_TOKEN:-}" != dtn_APP* ]] || _integration_403 "$@"
+      _token_ok || {
+        [[ " $* " != *' --include '* ]] || printf 'HTTP/2.0 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{"message":"Bad credentials"}\n'
+        echo "HTTP 401: Bad credentials" >&2
+        exit 1
+      }
       echo "test-user"
       exit 0
     fi
     if [[ "${2:-}" == "installation/repositories" ]]; then
       # A case can have the bound kill the installation's endpoint alone.
       [[ -z "${STUB_GH_INSTALLATION_TIMEOUT:-}" ]] || exit 124
-      _token_ok || _integration_403
+      _token_ok || _integration_403 "$@"
       echo 24
       exit 0
     fi
@@ -530,6 +540,9 @@ ladder_said() { # the planted values and answers the ladder's stderr repeats
 assert_eq "$(ladder_refusal GH_TOKEN=ghp_REVOKED111 STUB_KEYRING_STATE=absent)|$(ladder_said)" \
   "rc=2|gh-auth-ladder: auth-failed service=github env=expired keyring=absent bot-token=absent|" \
   "an env token GitHub answers 401 is expired, a keyring with no sign-in absent"
+assert_eq "$(ladder_refusal GH_TOKEN=ghp_THROTTLED STUB_KEYRING_STATE=absent)|$(ladder_said)" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=unreadable keyring=absent bot-token=absent|" \
+  "a throttled credential gives the watch no expired-token renewal instruction"
 assert_eq "$(ladder_refusal GH_TOKEN=dtn_APPDENIED STUB_KEYRING_STATE=invalid GH_BOT_TOKEN=op://vault/github/missing)|$(ladder_said)" \
   "rc=2|gh-auth-ladder: auth-failed service=github env=refused keyring=expired bot-token=unreadable|" \
   "a token both endpoints answer 403 is refused, an invalid keyring expired, an unresolved reference unreadable"

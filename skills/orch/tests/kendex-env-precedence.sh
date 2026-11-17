@@ -514,6 +514,14 @@ S10_MARK="$TMP_ROOT/private-file-ran"
 S10_ROWS='a single-quoted value keeps every byte|S10_VALUE='\''a b"c#d $e'\''|value=a b"c#d $e exported=no ran=no|value=a b"c#d $e exported=no ran=no
 an export line exports a double-quoted value|export S10_VALUE="a b#c"|value=a b#c exported=yes ran=no|value=a b#c exported=yes ran=no
 a bare word|S10_VALUE=op://vault/item:f@x%+,=-.|value=op://vault/item:f@x%+,=-. exported=no ran=no|value=op://vault/item:f@x%+,=-. exported=no ran=no
+square brackets in a login|S10_VALUE=example-app[bot]|value=example-app[bot] exported=no ran=no|value=example-app[bot] exported=no ran=no
+pathname patterns in an assignment|S10_VALUE=*?[]|value=*?[] exported=no ran=no|value=*?[] exported=no ran=no
+braces in an assignment|S10_VALUE={one,two}|value={one,two} exported=no ran=no|value={one,two} exported=no ran=no
+an export line refuses unquoted opening braces|export S10_VALUE={one,two}|refused lineno=1 ran=no|value=two exported=yes ran=no
+single quotes keep export braces as data|export S10_VALUE='\''{one,two}'\''|value={one,two} exported=yes ran=no|value={one,two} exported=yes ran=no
+hash and history punctuation|S10_VALUE=#!^|value=#!^ exported=no ran=no|value=#!^ exported=no ran=no
+non-ASCII text|S10_VALUE=café|value=café exported=no ran=no|value=café exported=no ran=no
+literal tilde positions|S10_VALUE=a~:b~|value=a~:b~ exported=no ran=no|value=a~:b~ exported=no ran=no
 an empty value|S10_VALUE=|value= exported=no ran=no|value= exported=no ran=no
 comments, blank lines and indentation|# note\n\n  S10_VALUE=kept # why|value=kept exported=no ran=no|value=kept exported=no ran=no
 a CRLF line ending|S10_VALUE=crlf\r|value=crlf exported=no ran=no|value=crlf<CR> exported=no ran=no
@@ -522,6 +530,13 @@ a command after an assignment|S10_VALUE=ok\ntouch MARK|refused lineno=2 ran=no|v
 a bare command substitution|S10_VALUE=$(touch MARK)|refused lineno=1 ran=no|value= exported=no ran=yes
 a double-quoted command substitution|S10_VALUE="$(touch MARK)"|refused lineno=1 ran=no|value= exported=no ran=yes
 a backtick substitution|S10_VALUE=`touch MARK`|refused lineno=1 ran=no|value= exported=no ran=yes
+a leading tilde|S10_VALUE=~|refused lineno=1 ran=no|value=HOME exported=no ran=no
+a tilde after a colon|S10_VALUE=prefix:~|refused lineno=1 ran=no|value=prefix:HOME exported=no ran=no
+a bare parameter expansion|S10_VALUE=$S10_FROM_PARENT|refused lineno=1 ran=no|value=parent-text exported=no ran=no
+a literal dollar sign stays outside the unquoted grammar|S10_VALUE=end$|refused lineno=1 ran=no|value=end$ exported=no ran=no
+arithmetic expansion|S10_VALUE=$((1+2))|refused lineno=1 ran=no|value=3 exported=no ran=no
+quote removal in a bare word|S10_VALUE=a"b"|refused lineno=1 ran=no|value=ab exported=no ran=no
+backslash removal|S10_VALUE=a\\b|refused lineno=1 ran=no|value=ab exported=no ran=no
 a parameter expansion|S10_VALUE="${S10_FROM_PARENT}"|refused lineno=1 ran=no|value=parent-text exported=no ran=no
 an assignment prefixing a command|S10_VALUE=ok touch MARK|refused lineno=1 ran=no|value=unset exported=no ran=yes
 an empty assignment prefixing a command|S10_VALUE= touch MARK|refused lineno=1 ran=no|value=unset exported=no ran=yes
@@ -558,6 +573,7 @@ s10_private() { # LIB BODY — the load's observed result
 }
 
 while IFS='|' read -r s10_label s10_body s10_data s10_run; do
+  s10_run="${s10_run//HOME/$HOME}"
   s10_data="${s10_data/#refused /kendex-env: private-env-line file=$PROJ10/chosen.env }"
   assert_eq "$(s10_private "$LIB" "$s10_body")" "$s10_data" "scenario 10: $s10_label"
   assert_eq "$(s10_private "$RUNS_FILE_SCRIPTS/lib/kendex-env.sh" "$s10_body")" "$s10_run" \
@@ -869,8 +885,8 @@ done <<<"$S14_ROWS"
 JUDGEMENT_FIRST_SCRIPTS="$(mutant_scripts judgement-first lib/kendex-env.sh)" || exit 1
 mutate_file "$JUDGEMENT_FIRST_SCRIPTS/lib/kendex-env.sh" \
   '      kendex_asked "$_kendex_env_key" || continue
-      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" || _kendex_env_key=""' \
-  '      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" || _kendex_env_key=""
+      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" "$_kendex_env_form" || _kendex_env_key=""' \
+  '      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" "$_kendex_env_form" || _kendex_env_key=""
       [[ -z "$_kendex_env_key" ]] || kendex_asked "$_kendex_env_key" || continue'
 S15_MARK="$TMP_ROOT/judgement-ran"
 S15_ROWS='an unasked private value out of the grammar|private|S15_ASKED|S15_OTHER=$(touch MARK)\nS15_ASKED=asked|loaded asked=asked other=unset ran=no
