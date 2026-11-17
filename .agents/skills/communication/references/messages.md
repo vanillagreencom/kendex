@@ -102,7 +102,7 @@ Standard Markdown:
 **Installed plugins**
 
 - **Tailscale plugin:** The plugin is installed.
-- **[\[KEN-123\]](https://linear.app/vanillagreen/issue/KEN-123)** records the change to `kendex.toml`.
+- **[\[KEN-123\]](https://linear.app/<workspace>/issue/KEN-123)** records the change to `kendex.toml`.
 ```
 
 The same text as a file comment, in the mrkdwn the slack package posts:
@@ -111,7 +111,7 @@ The same text as a file comment, in the mrkdwn the slack package posts:
 *Installed plugins*
 
 • *Tailscale plugin:* The plugin is installed.
-• *<https://linear.app/vanillagreen/issue/KEN-123|[KEN-123]>* records the change to `kendex.toml`.
+• *<https://linear.app/<workspace>/issue/KEN-123|[KEN-123]>* records the change to `kendex.toml`.
 ```
 
 Slack supports underline in structured `rich_text` text styles. The current post and relay routes send `markdown_text` or `mrkdwn` text, whose supported formats have no underline syntax. Use bold headers on this route; add no Unicode imitation. See Slack's [text element styles](https://docs.slack.dev/reference/block-kit/block-elements/text-element/), [Markdown block formats](https://docs.slack.dev/reference/block-kit/blocks/markdown-block/) and [mrkdwn styles](https://docs.slack.dev/messaging/formatting-message-text/#basic-visual-styles).
