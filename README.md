@@ -36,7 +36,7 @@ yay -S kendex-bin
 
 Windows: the installer at [kendex.ai/download](https://kendex.ai/download). The script installs the app and the CLI on Linux, and the CLI on macOS, where Homebrew installs the app. The other channels, including the deb and rpm downloads and a Nix flake for the CLI, are in [packaging](packaging/README.md).
 
-Set `KENDEX_GITHUB_TOKEN` for authenticated release downloads. The installer accepts GitHub App installation tokens, including `-` and `.`, and refuses quotes, backslashes and control bytes.
+Set `KENDEX_GITHUB_TOKEN` for authenticated release downloads.
 
 kendex reads a remote package with git; a package on a local path needs no git. On Windows, `kendex guard` runs the commit guards through the `sh` that Git for Windows ships.
 
@@ -68,7 +68,7 @@ The full per-tool facts are in [docs/adapters](docs/adapters/README.md).
 
 ## How it works
 
-You list what you want in a `kendex.toml` file: one for your personal setup, and one inside any project that needs its own. kendex reads the customizations already sitting in each coding tool's folders, compares them with your list, and shows you the difference. When you apply, it writes the files each tool reads and records what it installed, and where each package came from, so it can update or remove it later. The desktop app and the CLI read and write the same setup, so a change made in one shows up in the other. Delete a package from your list and the next apply removes its files, except ones you edited by hand and Pi extensions, which kendex keeps and reports.
+You list what you want in a `kendex.toml` file: one for your personal setup, and one inside any project that needs its own. kendex reads the customizations already sitting in each coding tool's folders, compares them with your list, and shows you the difference. When you apply, it writes the files each tool reads and records what it installed, and where each package came from, so it can update or remove it later. The desktop app and the CLI read and write the same setup, so a change made in one shows up in the other. Delete a package from your list and the next apply removes its files, except ones you edited by hand, which kendex keeps and reports.
 
 ## Packages
 
