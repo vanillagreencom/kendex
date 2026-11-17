@@ -16,6 +16,7 @@ SANDBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # scripts come from the catalog whichever package's suite sources this file.
 CHANGE_SCOPE_PACKAGE="$(cd "$SANDBOX_LIB_DIR/../.." && pwd)"
 HARNESS_CI_PACKAGE="$(cd "$CHANGE_SCOPE_PACKAGE/../harness-ci" && pwd)"
+BOT_INSTRUCTIONS_PACKAGE="${CHANGE_SCOPE_PACKAGE%/*}/bot-instructions"
 HARNESS_ONLY="${HARNESS_ONLY_UNDER_TEST:-$CHANGE_SCOPE_PACKAGE/scripts/harness-only}"
 CHANGE_SCOPE="${CHANGE_SCOPE_UNDER_TEST:-$CHANGE_SCOPE_PACKAGE/scripts/change-scope}"
 CHANGE_CLASS="${CHANGE_CLASS_UNDER_TEST:-$HARNESS_CI_PACKAGE/scripts/change-class}"

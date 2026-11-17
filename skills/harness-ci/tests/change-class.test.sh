@@ -138,7 +138,7 @@ out="$(PATH="$no_kendex_path" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD \
   --output "$output_file" 2>/dev/null)"
 assert_eq "the verdict reaches the output file" \
-  "change_class=trivial queue_only=true lanes=false lanes_cause=trivial stdout=change_class=trivial" \
+  "change_class=trivial queue_only=true lanes=false lanes_cause=trivial lane_verdicts<<__change_class_lane_verdicts_end__ __change_class_lane_verdicts_end__ stdout=change_class=trivial" \
   "$(tr '\n' ' ' <"$output_file")stdout=$out"
 
 # No flag asserts a class, and the flags the readers take are not this

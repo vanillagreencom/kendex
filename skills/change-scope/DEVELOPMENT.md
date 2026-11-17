@@ -26,7 +26,7 @@ Run the classifier against a local range and read its stderr:
 skills/change-scope/scripts/change-scope --event pull_request --base origin/main --head HEAD --repo .
 ```
 
-stderr carries the `changed-path:`, `base-rev:` and `head-rev:` lines `harness-only` read, a `harness-note:` line for its cause, the render proof's `render-verifier:`, `render-proof:`, `render-stale:`, `render-coverage:` and `render-position:` lines, any `settings-admission:` line, then `quick-proof:` and the `class:` line. A refused render prints the verify rows it weighed, so the log answers without a second `kendex verify` run.
+stderr carries the `changed-path:`, `base-rev:` and `head-rev:` lines `harness-only` read, a `harness-note:` line for its cause, the render proof's `render-verifier:`, `render-proof:`, `render-stale:`, `render-coverage:` and `render-position:` lines, any `settings-admission:`, `manifest-admission:` or `light-ci:` line, then `quick-proof:` and the `class:` line. A refused render prints the verify rows it weighed, so the log answers without a second `kendex verify` run.
 
 ## Invariants
 

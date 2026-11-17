@@ -364,10 +364,15 @@ unread_case() { # ROW, through the action at ACTION_ROOT
   write_row "$name" "$base" "$paths" 3
   [ "$environment" = - ] || export HARNESS_CI_UNREAD_PATHS="$environment"
   run_action merge_group "$base" "$SANDBOX/default" true
+  run_local "${LOCAL_COMMAND:-$CHANGE_CLASS}" merge_group "$base" "$SANDBOX/default" true
   unset HARNESS_CI_UNREAD_PATHS
   assert_eq "$name: lane verdicts" "$expected" "$(verdicts)"
   assert_eq "$name: other lane's cause" "lane: name=other $other" \
     "$(sed -n '/^lane: name=other /p' "$SANDBOX/action-stderr")"
+  assert_eq "$name: local per-lane evidence" "$expected" "$(verdicts "$SANDBOX/local-output")"
+  assert_eq "$name: local and action causes agree" \
+    "$(sed -n '/^lane: /p' "$SANDBOX/action-stderr")" \
+    "$(sed -n '/^lane: /p' "$SANDBOX/local-stderr")"
 }
 rows=0
 while IFS= read -r row; do
@@ -375,6 +380,17 @@ while IFS= read -r row; do
   unread_case "$row"
 done < <(unread_rows)
 require_rows unread-paths "$rows"
+# The local carrier must include the base declaration in its lane evidence.
+local_unread_mutant="$(mutant local-unread-omitted change-class \
+  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n%s\n'\'' "$queue_line" "$per_push_line" "$unread_line"; } >"$work/class-log"' \
+  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n'\'' "$queue_line" "$per_push_line"; } >"$work/class-log"')"
+control_status=0
+(PASS=0; FAIL=0; LOCAL_COMMAND="$local_unread_mutant"
+  unread_case "$(unread_rows | sed -n '/^only-unread|/p')"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/local-unread-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: local unread evidence rejects an omitted declaration" 1 "$control_status"
+assert_eq "the local carrier control reaches the unclaimed fallback" \
+  lane_check=true,lane_other=true,lane_mac=false "$(verdicts "$SANDBOX/local-output")"
 # The control ignores the declaration and must reach the unclaimed fallback.
 unread_mutant="$(mutant unread-ignored lib/change-class.sh \
   '  unread_list_match "$1" "$unread_globs" || return 0' '  return 0')"

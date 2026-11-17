@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # The lane rules shared by the installed change-class and the change-class
 # action, over the path rules and shared helpers of change-scope's library,
-# which this file loads from the package installed beside this one so every
-# sourcer of this file keeps the names it read here before the move:
+# loaded from the package installed beside this one. Its callers also read
 # HARNESS_CI_REFRESH_CALLER, change_class_path and its loaders, and
 # names_only_roots_rendered. Sourced with extglob enabled.
 #
@@ -22,17 +21,6 @@ if [ ! -r "$CHANGE_SCOPE_LIB" ]; then
 fi
 # shellcheck source=../../../change-scope/scripts/lib/change-scope.sh
 . "$CHANGE_SCOPE_LIB" || return 1
-
-# The unread rule's queue list and globs take the list grammar, extglob on,
-# for this match alone: the change-class action sources this file with it
-# off. The caller's setting is restored.
-unread_list_match() { # PATH GLOBS
-  local extglob=true status=0
-  shopt -q extglob || { extglob=false; shopt -s extglob; }
-  change_class_path_match "$1" "$2" || status=$?
-  [ "$extglob" = true ] || shopt -u extglob
-  return "$status"
-}
 
 # The unread rule's queue list and globs take the list grammar, extglob on,
 # for this match alone: the change-class action sources this file with it
@@ -94,6 +82,8 @@ per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
 # own. An absent record declares none.
 unread_globs="$(sed -n 's/^unread-paths://p' "${work:?}/class-log" | tail -n 1 | tr ' ' '\n')" ||
   die "cause=unread-record-unreadable" "could not read change-class's unread-paths line"
+light="$(sed -n 's/^light-ci: kind=//p' "${work:?}/class-log")" ||
+  die "cause=light-record-unreadable" "could not read change-scope's light-ci line"
 unread_hit=""
 # A path the shipped queue list names is a CI input no declaration takes out
 # of the lanes: change-class's queue-only rule reads that list from

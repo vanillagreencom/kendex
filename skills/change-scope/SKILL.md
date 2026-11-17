@@ -39,15 +39,16 @@ tags: [automation, review]
 The classes, narrowest first: `render`, `trivial`, `micro`, `small`, `standard`. The first that a rule proves wins; anything unproved is `standard`.
 
 - `render`: every surviving changed path is owned by a passing row of `kendex verify --scope project --json`, run in a private checkout of the head, or by the caller proof in § Shared refresh caller ownership.
-- `trivial`: every changed path is in the docs set, and the diff is within `HARNESS_CI_TRIVIAL_MAX_LINES`. `HARNESS_CI_TRIVIAL_PATHS`, where set, replaces the docs set with the repository's own globs. A changed `kendex.settings.toml` or `.kendex/settings.toml` joins the set where it changes only comments, blank lines and the `[env]` keys the base's `HARNESS_CI_TRIVIAL_SETTINGS` names. A diff of admitted settings files alone has no line ceiling.
+- `trivial`: every changed path is in the docs set, and the diff is within `HARNESS_CI_TRIVIAL_MAX_LINES`. `HARNESS_CI_TRIVIAL_PATHS`, where set, replaces the docs set with the repository's own globs. A changed `kendex.settings.toml` or `.kendex/settings.toml` joins the set where it changes only comments, blank lines and the `[env]` keys the base admits through installed `# ci: unread` declarations and its `HARNESS_CI_TRIVIAL_SETTINGS` adjustments. A diff of admitted settings files alone has no line ceiling.
 - `micro`: production additions within `micro_max_production` in `references/narrow-change.conf`.
 - `small`: one subsystem, production additions within `small_max_production`. A path's subsystem is its first directory past a render root. Test, fixture and docs-set paths belong to no subsystem.
 - `standard`: everything else, and every diff the classifier cannot read.
 
 `lib/branch-growth.sh` measures production, test and render-mirror lines over the range. It sets test paths aside by its built-in rule and `ORCH_SIZE_TEST_PATHS`. `references/narrow-change.conf` holds the path rules that refuse the narrow classes, the `instruction` globs, the protection markers and the two ceilings. `HARNESS_CI_STANDARD_PATHS` adds the repository's own exclusions.
 
-Two floors lift a diff that earns `trivial` or `micro` to `small`:
+Three floors lift a diff that earns `trivial` or `micro` to `small`:
 
+- An admitted consumer manifest answers `cause=consumer-manifest`; `change-scope --help` states its admission.
 - A changed agent instruction file, an `instruction` glob (`AGENTS.md`, `SKILL.md`), answers `cause=instruction-file`.
 - A diff that removes test protection answers `cause=protection-removed`, by the list's `case`, `skip` and `selection` lines counted over the whole range. A failed read of that protection answers `standard`, `cause=protection-unreadable`.
 
