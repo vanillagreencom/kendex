@@ -15,6 +15,11 @@
 # (<skills>/agent-runtime); a copy outside that layout is refused here,
 # exit 2, before anything is read or built:
 #   orch-runtime-setup: dependency-absent skill=agent-runtime path=<setup>
+# A lane-host provider in another repository of this organization (Fleet)
+# runs this script in each consumer clone before its harness install. A
+# change to this path, to its arguments or to what it prints and exits with
+# breaks that install with no failure here: tell that provider's overseer
+# before the change lands.
 set -euo pipefail
 
 here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"

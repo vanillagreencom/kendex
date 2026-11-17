@@ -23,6 +23,13 @@
 # that depend on this one, never executed. Bash 3.2-safe. The caller defines
 # `refuse KEY VALUE...` for the diagnostics: digest-tool-missing,
 # inputs-missing, inputs-unreadable, manifest-unreadable, digest-failed.
+#
+# A lane-host provider in another repository of this organization (Fleet)
+# keeps a protected copy of this file, computes the same keys with it and
+# installs the binaries its workers built at <cache>/bin/<name>-<key>. Its
+# copy cannot follow a change it was not told of: a change to the key's rule,
+# to this file's path or to the cache layout is told to that provider's
+# overseer before it lands.
 
 # agent_runtime_digest reads stdin and prints its sha256 hex. sha256sum is
 # coreutils; macOS ships shasum instead.
