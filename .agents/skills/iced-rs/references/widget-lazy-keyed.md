@@ -1,147 +1,56 @@
-# Lazy & Keyed Column
+# Lazy and keyed columns
 
 > `iced::widget::lazy` + `iced::widget::keyed` · iced 0.14.0
 
-`Lazy` caches a widget subtree and only rebuilds when its dependency changes. `keyed::Column` is a column where each child has a stable key for efficient diffing when items are inserted, removed, or reordered.
+Read when caching an expensive widget subtree or keeping list-item state associated with stable keys. The pinned [Lazy source] owns dependency hashing and subtree lifetimes. The [keyed column source] owns its constructors, builders and key bounds.
 
-## API
+## Lazy subtrees
 
-### `Lazy` struct
+Enable the `lazy` feature. `lazy(dependency, view)` accepts a `Hash` dependency and a closure that builds the subtree. The widget builds the subtree initially and rebuilds it when the dependency hash changes. Include every value that changes the subtree in the dependency, or use a version that changes with those values.
 
-```rust
-pub struct Lazy<'a, Message, Theme, Renderer, Dependency, View>
-where
-    Dependency: Hash + 'a,
-    View: Into<Element<'static, Message, Theme, Renderer>> + 'static,
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer, Dependency, View>
-    Lazy<'a, Message, Theme, Renderer, Dependency, View>
-where
-    Dependency: Hash + 'a,
-    View: Into<Element<'static, Message, Theme, Renderer>> + 'static,
-    Message: 'static,
-    Theme: 'static,
-    Renderer: Renderer + 'static,
-{
-    pub fn new(
-        dependency: Dependency,
-        view: impl Fn(&Dependency) -> View + 'a,
-    ) -> Self;
-}
-```
-
-### `lazy` function
+The resulting subtree must convert into `Element<'static, ...>`. The dependency and closure may borrow application state, but widgets returned by the closure cannot retain those borrows. Build owned text or clone data into the returned widgets.
 
 ```rust
-pub fn lazy<'a, Message, Theme, Renderer, Dependency, View>(
-    dependency: Dependency,
-    view: impl Fn(&Dependency) -> View + 'a,
-) -> Lazy<'a, Message, Theme, Renderer, Dependency, View>
-where
-    Dependency: Hash + 'a,
-    View: Into<Element<'static, Message, Theme, Renderer>> + 'static,
-    Message: 'static,
-    Theme: 'static,
-    Renderer: Renderer + 'static;
-```
-
-### `keyed::Column` struct
-
-```rust
-pub struct Column<'a, Key, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Key: Copy + PartialEq,
-{ /* private fields */ }
-
-impl<'a, Key, Message, Theme, Renderer> Column<'a, Key, Message, Theme, Renderer>
-where
-    Key: Copy + PartialEq + 'static,
-    Renderer: Renderer,
-{
-    pub fn new() -> Self;
-    pub fn with_children(
-        children: impl IntoIterator<Item = (Key, Element<'a, Message, Theme, Renderer>)>,
-    ) -> Self;
-    pub fn with_capacity(capacity: usize) -> Self;
-    pub fn from_vecs(
-        keys: Vec<Key>,
-        children: Vec<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-
-    pub fn push(
-        self,
-        key: Key,
-        child: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-    pub fn push_maybe(
-        self,
-        key: Key,
-        child: Option<impl Into<Element<'a, Message, Theme, Renderer>>>,
-    ) -> Self;
-    pub fn extend(
-        self,
-        children: impl IntoIterator<Item = (Key, Element<'a, Message, Theme, Renderer>)>,
-    ) -> Self;
-
-    pub fn spacing(self, amount: impl Into<Pixels>) -> Self;
-    pub fn padding<P: Into<Padding>>(self, padding: P) -> Self;
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn max_width(self, max_width: impl Into<Pixels>) -> Self;
-    pub fn align_items(self, align: Alignment) -> Self;
-}
-```
-
-## Patterns
-
-### Lazy: skip rebuild when data unchanged
-
-```rust
-use iced::widget::lazy;
+use iced::widget::{column, lazy, text};
 
 lazy(&self.expensive_data, |data| {
-    // This closure only runs when `data` hash changes
-    column(data.iter().map(|item| text(item).into())).into()
+    column(data.iter().map(|item| text(item.to_string()).into()))
 })
 ```
 
-### Keyed column: stable identity for list items
+Use the [Lazy source] and [lazy helper source] for exact generic bounds, including the `'static` message, theme, renderer and returned-view requirements for widget conversion. The enclosing lazy widget can still have a shorter lifetime.
+
+## Keyed columns
+
+`keyed::Column` associates children with keys during tree reconciliation. Use stable keys that are unique within the column, such as item IDs. Its widget implementation requires `Key: Copy + PartialEq + 'static`; `u64` or `usize` can serve as keys. Duplicate keys cannot distinguish item identity. A regular column reconciles by position, so inserts, removals and reorderings can associate state with a different item.
 
 ```rust
-use iced::widget::keyed;
+use iced::widget::{keyed, text};
 
 keyed::Column::with_children(
-    self.items.iter().map(|item| {
-        (item.id, text(&item.name).into())
-    })
+    self.items.iter().map(|item| (item.id, text(&item.name).into()))
 )
 .spacing(4)
 ```
 
-### Keyed column with conditional items
+Use `new()` for an empty column, `with_capacity(...)` to reserve space or `with_children(...)` for keyed elements. `push(key, child)`, `push_maybe(key, option)` and `extend(...)` add keyed children. Conditional children keep their own stable keys:
 
 ```rust
 let mut col = keyed::Column::new();
 for item in &self.items {
-    col = col.push_maybe(
-        item.id,
-        item.visible.then(|| text(&item.name).into()),
-    );
+    col = col.push_maybe(item.id, item.visible.then(|| text(&item.name)));
 }
 ```
 
-## Gotchas
-
-- `Lazy` requires `Dependency: Hash`. The widget tree is rebuilt only when the dependency's hash changes. Use a version counter or content hash as the dependency.
-- `Lazy` produces `Element<'static, ...>` -- the view closure cannot borrow from `self`. Clone or move data into the closure.
-- `keyed::Column` requires `Key: Copy + PartialEq + 'static`. Use simple types like `u64` or `usize` as keys.
-- Keys must be unique within a single `keyed::Column`. Duplicate keys cause incorrect diffing.
-- For non-keyed lists, a regular `column` re-diffs by index position, which breaks widget state when items are reordered.
+`from_vecs(keys, children)` accepts preallocated vectors. Keep corresponding keys and children together. This constructor does not infer sizing from children; set the column's width or height when a child uses `Fill`. The usual spacing, padding, width, height, maximum width and alignment builders are declared in the [keyed column source].
 
 ## See also
 
-- `widget-responsive.md` -- rebuilds based on available size
-- `advanced-tree.md` -- `Tree` diffing that keyed columns optimize
-- `guide-animated-layout.md` -- keyed identity in reordered/layered views
-- `widgets.md` -- widget catalog
+- [Responsive](widget-responsive.md): rebuilding from available size.
+- [Widget tree](advanced-tree.md): reconciliation.
+- [Animated layout](guide-animated-layout.md): keyed identity in layered and reordered views.
+- [Widget catalog](widgets.md).
+
+[Lazy source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/lazy.rs
+[lazy helper source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/lazy/helpers.rs
+[keyed column source]: https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/keyed/column.rs
