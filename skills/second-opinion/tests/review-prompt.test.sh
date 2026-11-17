@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The review prompt: its lens list, the output schema, the diff embedded for a
-# target whose SECOND_OPINION_<NAME>_INLINE_DIFF is 1 and for no other, and the repository's
+# target whose SECOND_OPINION_<NAME>_INLINE_DIFF is 1 or defaults on, and the repository's
 # own instruction files appended to it, chosen by the setting's globs (the
 # default set, a custom list, the empty list), with the nested AGENTS.md
 # files governing the changed paths after their parents, symlinks and
@@ -66,6 +66,12 @@ suite_reset() {
 
 suite_word() {
   case "$1" in
+    stock-claude)
+      W_SCRIPT="$ROW/stock-claude"
+      printf '#!/usr/bin/env bash\nunset SECOND_OPINION_CLAUDE_CMD SECOND_OPINION_CLAUDE_INLINE_DIFF\nexec %q "$@"\n' "$HERMETIC" >"$W_SCRIPT"
+      chmod +x "$W_SCRIPT"
+      ;;
+    stock-claude-off) W_ENV+=(SECOND_OPINION_CLAUDE_CMD=) ;;
     # every default glob matched, two nested AGENTS.md over a changed path, a
     # non-matching file beside a matching one, a file for a custom glob
     layout:full)
@@ -230,6 +236,8 @@ FULL="AGENTS.md(RULE-AGENTS),review-bots.md(RULE-ALPHA),.github/instructions/she
 OK="0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=-"
 ALLMISS="AGENTS.md,review-bots.md,.github/instructions/code-review.md,.github/instructions/*.instructions.md,.github/copilot-instructions.md"
 run_table "the review prompt" "capture" "\
+the stock Claude entry gets the diff with its inline setting unset|stock-claude|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+world
+the stock Claude entry respects an explicit non-1 value|stock-claude-off env:SECOND_OPINION_CLAUDE_INLINE_DIFF=0|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 the default globs: every matching file in the setting's order, the nested AGENTS.md files over a changed path parents first, the non-matching file left out, the unmatched default pattern reported|layout:full|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head> diff=-
 no instruction files: no block, every default pattern and the empty prompt reported, the lenses and the schema still|-|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 the default globs collect the bot-instructions render alone|layout:botrender|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=.github/instructions/code-review.md(RULE-GOLF) miss=AGENTS.md,review-bots.md,.github/instructions/*.instructions.md,.github/copilot-instructions.md none=- head=<head> diff=-
@@ -248,4 +256,22 @@ a deletion past the cap is in the owner-only file the marker names, readable whi
 another target's setting leaves this target's prompt without the diff|env:SECOND_OPINION_CODEX_INLINE_DIFF=1|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 BSD utilities that refuse -- still build the whole prompt|layout:full bsd|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head> diff=-
 "
+build must-fail capture stock-claude
+# Keep the default's text while disabling its Claude arm in the disposable copy.
+python3 - "$HERMETIC" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert not p.is_symlink()
+s = p.read_text()
+old = '[[ "$cmd_var" == SECOND_OPINION_CLAUDE_CMD && -z "${!cmd_var:-}" ]] ||'
+assert s.count(old) == 1
+changed = s.replace(old, old.replace(']] ||', ']] && false ||'))
+assert changed != s
+p.write_text(changed)
+PY
+run review >/dev/null
+control_rc=0
+(assert_eq "$(inline_diff "$ROW/prompts/prompt-1.txt")" +world 'must-fail: Claude default'; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
+assert_eq "$control_rc" 1 'omitting Claude from the default turns the inline-diff row red'
 finish
