@@ -44,7 +44,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::mailbox::{Envelope, Mailbox, Replied, Resolved};
+use crate::mailbox::{Envelope, Mailbox, OwnerImportRead, OwnerImportReceipt, Resolved};
 use crate::ops::{self, CloseOwnedResources, Delivery, Request, Terminal};
 use crate::settings::Settings;
 use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, TerminalVerdict};
@@ -433,36 +433,7 @@ struct ChildNode {
 /// (`lib/formatters.sh`'s `COMMENT_SAFE_JQ`).
 #[derive(Debug, Clone, Deserialize)]
 struct CommentRow {
-    id: String,
-    body: String,
-    user_email: String,
     created_at: String,
-}
-
-/// `issues list --assignee … --label … --format=safe`: the fields the
-/// owner-tracker read uses (`lib/formatters.sh`'s `format_issues_list`).
-#[derive(Debug, Clone, Deserialize)]
-struct OwnerItem {
-    id: String,
-    #[serde(default)]
-    assignee: String,
-    #[serde(default)]
-    description: Nullable<String>,
-}
-
-/// The repaired item read back: whether its description carries the repair.
-const OWNER_ITEM: &str =
-    "query OwnerItem($id: String!) { issue(id: $id) { identifier description } }";
-
-#[derive(Debug, Deserialize)]
-struct OwnerReadBack {
-    issue: OwnerReadBackIssue,
-}
-
-#[derive(Debug, Deserialize)]
-struct OwnerReadBackIssue {
-    identifier: String,
-    description: Option<String>,
 }
 
 /// `done-when parse`: the boxes of a description's Done-when section.
@@ -1291,7 +1262,7 @@ fn inventory_of(
 enum OwnerRead {
     Disabled,
     Read,
-    Unread(&'static str),
+    Unread(String),
 }
 
 /// `owner_action_line` (`mailbox-append.sh`): the owner's first name,
@@ -1301,12 +1272,6 @@ fn owner_action_line(assignee: &str, action: &str, description: &str) -> Option<
     let name = assignee.split_whitespace().next()?;
     let body = strip_action_line(description);
     Some(format!("**{name}, what you do:** {action}\n\n{body}"))
-}
-
-/// Whether a description opens with an action line
-/// (`^\*\*[^*\r\n]+, what you do:\*\* `).
-fn has_action_line(description: &str) -> bool {
-    action_line_end(description).is_some()
 }
 
 /// The byte past the action line's `** ` where the description opens with
@@ -1357,31 +1322,6 @@ fn strip_action_line(description: &str) -> String {
     rest.to_owned()
 }
 
-/// The owner's answer text handed to the mailbox program through the one
-/// form it takes, a file beside the watch's records.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the tracker duty's one scratch file: the owner's answer text the mailbox program reads with --file, beside the watch's own records, overwritten per answer"
-)]
-fn write_answer(path: &Path, text: &str) -> Result<()> {
-    std::fs::write(path, text).map_err(|e| {
-        Error::Runtime(agent_runtime::Error::io(
-            "write-answer",
-            path.to_path_buf(),
-            e,
-        ))
-    })
-}
-
-/// The owner's tracker answers: the posted owner asks' labels, the owner's
-/// items under each, the description repair (`owner_action_line`) of an
-/// item whose posted ask has an action and whose description lost its
-/// action line, the comments of those items in one batch, and each owner
-/// comment after the posted question handed back as the ask's answer under
-/// the comment's delivery id, then marked delivered by a reply under it. A
-/// quota receipt is the answer; a read that fails is named once and ends
-/// the read as unread. A repair or a delivery mark that did not land is an
-/// `owner-ask-unmarked` line and stops nothing.
 fn read_owner_tracker_answers(
     linear: &Linear,
     ctx: &Context,
@@ -1393,172 +1333,67 @@ fn read_owner_tracker_answers(
     let Some(owner) = &ctx.settings.reads.owner_tracker else {
         return Ok(Answered::Value(OwnerRead::Disabled));
     };
-    let unread = |cause: &'static str| {
+    let unread = |cause: &str| {
         let _ = writeln!(std::io::stderr(), "owner-tracker-unread cause={cause}");
-        Ok(Answered::Value(OwnerRead::Unread(cause)))
+        Ok(Answered::Value(OwnerRead::Unread(cause.to_owned())))
     };
-    let asks = match mailbox.pending_owner_asks(root) {
-        Ok(asks) => asks,
-        Err(_) => return unread("asks"),
+    let imported = match mailbox.owner_answers(
+        root,
+        &ctx.settings.reads.tracker_cli,
+        &owner.email,
+        &owner.label,
+    ) {
+        Ok(imported) => imported,
+        Err(_) => return unread("mailbox"),
     };
-    let posted: Vec<&Envelope> = asks
-        .iter()
-        .filter(|a| a.tracker_posted == Some(true))
-        .collect();
-    if posted.is_empty() {
-        return Ok(Answered::Value(OwnerRead::Read));
-    }
-    let labels: BTreeSet<&str> = posted
-        .iter()
-        .map(|a| a.tracker_label.as_deref().unwrap_or(owner.label.as_str()))
-        .collect();
-    let mut items: BTreeMap<String, OwnerItem> = BTreeMap::new();
-    for label in labels {
-        let listed = linear.json::<Vec<OwnerItem>>(
-            "owner-items",
-            &[
-                "issues",
-                "list",
-                "--assignee",
-                &owner.email,
-                "--label",
-                label,
-                "--max",
-                "--format=safe",
-            ],
-        );
-        let listed: Vec<OwnerItem> = match listed {
-            Ok(Answered::Value(items)) => items,
-            Ok(Answered::Quota(quota)) => return Ok(Answered::Quota(quota)),
-            Err(e) if e.key() == "tracker-list-invalid" => return unread("issues-format"),
-            Err(_) => return unread("issues"),
-        };
-        for item in listed {
-            items.entry(item.id.clone()).or_insert(item);
-        }
-    }
-    // The description repair.
-    for item in items.values() {
-        let ask = posted.iter().rev().find(|a| {
-            a.issue.as_deref() == Some(item.id.as_str())
-                && a.action.as_deref().is_some_and(|d| !d.is_empty())
-        });
-        let Some(ask) = ask else { continue };
-        let description = match &item.description {
-            Nullable::Present(d) => d.as_str(),
-            Nullable::Absent | Nullable::Null => "",
-        };
-        if has_action_line(description) {
-            owner_pass.line_outcome(tick, ask, &item.id, None)?;
-            continue;
-        }
-        let Some(repaired) = owner_action_line(
-            &item.assignee,
-            ask.action.as_deref().unwrap_or(""),
-            description,
-        ) else {
-            return unread("issues-format");
-        };
-        if let Ok(Answered::Quota(quota)) = linear.call(
-            "owner-repair",
-            &["issues", "update", &item.id, "--description", &repaired],
-        ) {
-            return Ok(Answered::Quota(quota));
-        }
-        // The write's own reply can be lost or claim a write that did not
-        // land: the item read back says whether it carries the repair. A
-        // tracker write is advisory, so one that did not land is said and
-        // holds none of the owner's answers; the next pass reads the
-        // description again and repairs only one still missing.
-        let variables = serde_json::json!({ "id": item.id }).to_string();
-        let unlanded = match linear.json::<OwnerReadBack>(
-            "owner-repair-read-back",
-            &["graphql", "--query", OWNER_ITEM, "--variables", &variables],
-        ) {
-            Ok(Answered::Value(OwnerReadBack { issue })) => (issue.identifier != item.id
-                || issue.description.as_ref() != Some(&repaired))
-            .then(|| "unlanded".to_owned()),
-            Ok(Answered::Quota(quota)) => return Ok(Answered::Quota(quota)),
-            Err(e) => Some(e.key().to_owned()),
-        };
-        owner_pass.line_outcome(tick, ask, &item.id, unlanded)?;
-    }
-    if items.is_empty() {
-        return Ok(Answered::Value(OwnerRead::Read));
-    }
-    let mut args = vec!["comments", "bulk-list"];
-    args.extend(items.keys().map(String::as_str));
-    args.push("--format=safe");
-    let comments: BTreeMap<String, Vec<CommentRow>> = match linear.json("owner-comments", &args) {
-        Ok(Answered::Value(comments)) => comments,
-        Ok(Answered::Quota(quota)) => return Ok(Answered::Quota(quota)),
-        Err(e) if e.key() == "tracker-list-invalid" => return unread("comments-format"),
-        Err(_) => return unread("comments"),
-    };
-    let answer_file = ctx
-        .fleet
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("oversee-watch.tracker-answer");
-    let email = owner.email.to_ascii_lowercase();
-    for ask in posted {
-        let Some(issue) = ask.issue.as_deref() else {
-            continue;
-        };
-        let mut rows: Vec<&CommentRow> = comments
-            .get(issue)
-            .map(|r| r.iter().collect())
-            .unwrap_or_default();
-        rows.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        // A record with no comment id finds its comment by its ask= line.
-        let question = rows.iter().find(|c| match &ask.tracker_comment {
-            Some(id) => c.id == *id,
-            None => c.body.lines().any(|l| l == format!("ask={}", ask.id())),
-        });
-        let Some(question) = question else { continue };
-        for comment in &rows {
-            if comment.user_email.to_ascii_lowercase() != email
-                || comment.created_at <= question.created_at
-                || comment.id == question.id
-            {
-                continue;
+    let mut quota = None;
+    for receipt in imported.receipts {
+        match receipt {
+            OwnerImportReceipt::Line { ask, issue, cause } => {
+                owner_pass.line_outcome(tick, &ask, &issue, cause)?;
             }
-            write_answer(&answer_file, &comment.body)?;
-            let delivery = format!("linear:{}", comment.id);
-            match mailbox.send_answer(root, ask.id(), &delivery, &answer_file) {
-                Ok(Replied::Sent { .. }) => {
-                    let marked = linear.call(
-                        "owner-delivered",
-                        &[
-                            "comments",
-                            "create",
-                            issue,
-                            "--parent",
-                            &comment.id,
-                            "--body",
-                            DELIVERED,
-                        ],
-                    );
-                    // The answer is handed over once: a mark that did not
-                    // land is said, never tried again.
-                    let cause = match &marked {
-                        Ok(Answered::Value(_)) => continue,
-                        Ok(Answered::Quota(_)) => "quota",
-                        Err(e) => e.key(),
-                    };
+            OwnerImportReceipt::Delivered {
+                ask,
+                issue,
+                comment,
+            } => {
+                // An import can deliver several answers before a mark hits
+                // the quota. Name every unmarked delivery without more writes.
+                if quota.is_some() {
                     owner_pass
                         .events
-                        .push(unmarked(ask.id(), issue, OwnerMark::Delivery, cause));
-                    if let Ok(Answered::Quota(quota)) = marked {
-                        return Ok(Answered::Quota(quota));
-                    }
+                        .push(unmarked(&ask, &issue, OwnerMark::Delivery, "quota"));
+                    continue;
                 }
-                Ok(Replied::Repeated { .. }) => {}
-                Err(_) => return unread("delivery"),
+                let marked = linear.call(
+                    "owner-delivered",
+                    &[
+                        "comments", "create", &issue, "--parent", &comment, "--body", DELIVERED,
+                    ],
+                );
+                let cause = match &marked {
+                    Ok(Answered::Value(_)) => continue,
+                    Ok(Answered::Quota(_)) => "quota",
+                    Err(e) => e.key(),
+                };
+                owner_pass
+                    .events
+                    .push(unmarked(&ask, &issue, OwnerMark::Delivery, cause));
+                if let Ok(Answered::Quota(receipt)) = marked {
+                    quota = Some(receipt);
+                }
             }
         }
     }
-    Ok(Answered::Value(OwnerRead::Read))
+    if let Some(quota) = quota {
+        return Ok(Answered::Quota(quota));
+    }
+    match imported.read {
+        OwnerImportRead::Disabled => Ok(Answered::Value(OwnerRead::Disabled)),
+        OwnerImportRead::Read => Ok(Answered::Value(OwnerRead::Read)),
+        OwnerImportRead::Unread(cause) => unread(&cause),
+        OwnerImportRead::Quota(quota) => Ok(Answered::Quota(quota)),
+    }
 }
 
 /// The due tracker asks: every due owner ask posted to the tracker closed
@@ -1727,19 +1562,19 @@ impl OwnerPass {
     fn line_outcome(
         &mut self,
         tick: &Tick,
-        ask: &Envelope,
+        ask: &str,
         issue: &str,
         cause: Option<String>,
     ) -> Result<()> {
-        let mut marks = Marks::of_marks_row(tick.baseline.get(OWNER_MARK_ROW, ask.id()))?;
+        let mut marks = Marks::of_marks_row(tick.baseline.get(OWNER_MARK_ROW, ask))?;
         if let Some(cause) = &cause
             && marks.line.as_ref() != Some(cause)
         {
             self.events
-                .push(unmarked(ask.id(), issue, OwnerMark::Line, cause));
+                .push(unmarked(ask, issue, OwnerMark::Line, cause));
         }
         marks.line = cause;
-        self.keep_marks(tick, ask.id(), &marks);
+        self.keep_marks(tick, ask, &marks);
         Ok(())
     }
 }
@@ -2320,8 +2155,8 @@ mod tests {
             owner_action_line("Maya Owner", action, body),
             Some(line.clone())
         );
-        assert!(has_action_line(&line));
-        assert!(!has_action_line(body));
+        assert!(action_line_end(&line).is_some());
+        assert!(action_line_end(body).is_none());
         let replaced = format!("**Previous, what you do:** Old action.\n\n{body}");
         assert_eq!(
             owner_action_line("Maya Owner", action, &replaced),

@@ -343,13 +343,33 @@ pub enum Resolved {
     Already { id: String },
 }
 
-/// How a `send --re` reply to an overseer ask ended.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Replied {
-    /// Appended to the overseer's mailbox under `id`.
-    Sent { id: String },
-    /// The delivery id already stood there: a retry of a reply that landed.
-    Repeated { id: String },
+#[derive(Debug)]
+pub enum OwnerImportRead {
+    Disabled,
+    Read,
+    Unread(String),
+    Quota(crate::watch::tracker::Quota),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum OwnerImportReceipt {
+    Line {
+        ask: String,
+        issue: String,
+        cause: Option<String>,
+    },
+    Delivered {
+        ask: String,
+        issue: String,
+        comment: String,
+    },
+}
+
+#[derive(Debug)]
+pub struct OwnerImport {
+    pub read: OwnerImportRead,
+    pub receipts: Vec<OwnerImportReceipt>,
 }
 
 /// How a `send --directive` ended.
@@ -824,55 +844,64 @@ impl Mailbox {
             .collect()
     }
 
-    /// `send --item overseer --re ASK --delivery-id ID --file F`: an answer
-    /// handed back to the overseer under
-    /// the ask it answers; one that landed before under the same delivery
-    /// id is `Replied::Repeated`, no failure.
-    pub fn send_answer(
+    pub fn owner_answers(
         &self,
         root: &Path,
-        ask: &str,
-        delivery_id: &str,
-        file: &Path,
-    ) -> Result<Replied, Refusal> {
-        const VERB: &str = "send";
-        let root = root.display().to_string();
-        let file = file.display().to_string();
-        let answer = self.call(
+        tracker: &Path,
+        email: &str,
+        label: &str,
+    ) -> Result<OwnerImport, Refusal> {
+        const VERB: &str = "owner-answers";
+        let root_text = root.display().to_string();
+        let env = [
+            ("OVERSEE_WATCH_TRACKER", tracker.as_os_str()),
+            ("ORCH_OWNER_EMAIL", std::ffi::OsStr::new(email)),
+            ("ORCH_OWNER_ASK_LABEL", std::ffi::OsStr::new(label)),
+        ];
+        let answer = self.call_in(
             VERB,
-            &[
-                "--item",
-                "overseer",
-                "--root",
-                &root,
-                "--re",
-                ask,
-                "--delivery-id",
-                delivery_id,
-                "--file",
-                &file,
-            ],
+            &["--item", "overseer", "--root", &root_text],
+            &env,
+            Some(root),
         )?;
         if !answer.success {
-            if let Some(keyed) = answer.keyed()
-                && let Some(rest) = keyed_value(&keyed, "delivery-repeated")
-                && let Some(id) = id_field(rest)
-            {
-                return Ok(Replied::Repeated { id });
-            }
             return Err(answer.refused(VERB));
         }
-        // The reply's receipt, `lane-mail: sent item=<item> id=<id> bytes=<n>
-        // to=<lane> ref=<ask>`: the reply form carries no monitor word.
-        let line = answer
-            .stdout
-            .lines()
-            .find(|l| l.starts_with("lane-mail: sent item="))
-            .ok_or_else(|| reply(VERB, "receipt", &answer.stdout))?;
-        line.split(' ')
-            .find_map(|field| field.strip_prefix("id="))
-            .map(|id| Replied::Sent { id: id.to_owned() })
-            .ok_or_else(|| reply(VERB, "receipt", line))
+        let quota = crate::watch::tracker::Quota::of_stderr(&answer.stderr);
+        let mut receipts = Vec::new();
+        let mut read = None;
+        for line in answer.stdout.lines() {
+            let state = if line == "owner-answers: tracker=absent"
+                || line == "owner-answers: read=disabled"
+            {
+                OwnerImportRead::Disabled
+            } else if line == "owner-answers: read=read" {
+                OwnerImportRead::Read
+            } else if line == "owner-answers: read=unread" {
+                let cause = answer
+                    .stderr
+                    .lines()
+                    .find_map(|l| l.strip_prefix("KEN-3624-unread cause="))
+                    .unwrap_or("read");
+                OwnerImportRead::Unread(cause.to_owned())
+            } else if line.starts_with("EVENT tracker-quota ") && quota.is_some() {
+                continue;
+            } else {
+                receipts.push(
+                    serde_json::from_str(line)
+                        .map_err(|_| reply(VERB, "owner-answer-receipt", line))?,
+                );
+                continue;
+            };
+            if read.replace(state).is_some() {
+                return Err(reply(VERB, "owner-answer-state", line));
+            }
+        }
+        let read = match quota {
+            Some(quota) => OwnerImportRead::Quota(quota),
+            None => read.ok_or_else(|| reply(VERB, "owner-answer-state", &answer.stdout))?,
+        };
+        Ok(OwnerImport { read, receipts })
     }
 
     /// `resolve --item overseer --id ID --default`: close a due ask with its

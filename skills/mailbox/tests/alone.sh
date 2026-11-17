@@ -70,7 +70,7 @@ owner_rows() {
       memory-ascii-boundary) python3 -c 'print("x" * 256)' > "$REPO/tmp/owner-message" ;;
       memory-utf8-boundary) python3 -c 'print("é" * 128)' > "$REPO/tmp/owner-message" ;;
     esac
-    if [[ $verb == ask ]]; then extra+=(--options approve,deny --recommend deny); fi
+    if [[ $verb == ask ]]; then extra+=(--options approve,deny --recommend deny --effect none); fi
     rc=0
     lm "$verb" --item overseer --to owner --file "$REPO/tmp/owner-message" ${extra[@]+"${extra[@]}"}
     rc=$RC
@@ -90,7 +90,7 @@ owner_rows() {
   done
   for row in purpose-unknown memory-ascii-over memory-utf8-over http multiple no-host newline bad-port notice-purpose ask-open lane-open peer-open; do
     printf '%s\n' "$row" > "$REPO/tmp/owner-message"
-    args=(ask --item overseer --to owner --options approve,deny --recommend deny)
+    args=(ask --item overseer --to owner --options approve,deny --recommend deny --effect none)
     key=purpose-invalid
     case "$row" in
       purpose-unknown) args+=(--purpose other) ;;
@@ -144,6 +144,7 @@ if [ "${1:-}" = --reader-row ]; then
   exit
 fi
 
+owner_rows
 lm ask --item overseer --to owner --wait 0 --options proceed,hold --recommend hold --effect none --file "$TMP_ROOT/message"
 assert_eq "$RC" 0 'owner ask works alone'
 ASK="${OUT#id=}"

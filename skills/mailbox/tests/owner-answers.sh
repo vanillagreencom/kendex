@@ -47,17 +47,32 @@ with tempfile.TemporaryDirectory(dir=repo / 'tmp') as scratch:
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FIXTURE/calls"
 if [[ -e "$FIXTURE/quota" ]]; then
-  printf '%s\\n' '{"code":"RATELIMITED","quota":{"status":"missing","reset":"unavailable","reset_epoch":null,"limit":"requests"}}' >&2
+  cat "$FIXTURE/quota" >&2
   exit 1
 fi
 case "$1:$2" in
   users:list) printf '[{"id":"owner","name":"Owner","email":"owner@example.test","display_name":"owner"}]\\n' ;;
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\\n' ;;
-  issues:get) printf '{"labels":[],"description":"Body"}\\n' ;;
-  issues:list) printf '[{"id":"KEN-7","description":"Body","assignee":"Owner"}]\\n' ;;
-  issues:update) printf '{}\\n' ;;
+  issues:list)
+    if [[ -e "$FIXTURE/items" ]]; then cat "$FIXTURE/items"
+    else printf '[{"id":"KEN-7","description":"Body","assignee":"Owner"}]\\n'; fi ;;
+  issues:update)
+    if [[ "${4:-}" == --description ]]; then
+      jq -cn --arg id "$3" --arg description "$5" '{issue:{identifier:$id,description:$description}}' > "$FIXTURE/repair"
+    fi
+    printf '{}\\n' ;;
+  graphql:--query)
+    case "$3" in
+      'query OwnerTracker('*) printf '{"issue":{"description":"Body","assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}\\n' ;;
+      'query OwnerItem('*)
+        if [[ -e "$FIXTURE/readback" ]]; then cat "$FIXTURE/readback"
+        else cat "$FIXTURE/repair"; fi ;;
+      *) exit 1 ;;
+    esac ;;
   comments:create) printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n' ;;
-  comments:bulk-list) cat "$FIXTURE/comments" ;;
+  comments:bulk-list)
+    [[ ! -e "$FIXTURE/unread-comments" ]] || exit 1
+    cat "$FIXTURE/comments" ;;
   *) exit 1 ;;
 esac
 ''')
@@ -65,7 +80,7 @@ esac
     message = root / 'message'
     message.write_text('Approve this change?\n')
     call('ask', '--item', 'overseer', '--to', 'owner', '--issue', 'KEN-7', '--do', 'Approve change',
-         '--options', 'approve,hold', '--recommend', 'approve', '--wait', '5', '--file', str(message),
+         '--options', 'approve,hold', '--recommend', 'approve', '--effect', 'none', '--wait', '5', '--file', str(message),
          cwd=worktree / 'subdir')
     comments = [dict(id='question', body='Question', user_email='bot@example.test', created_at='2026-01-02T00:00:00Z')]
     # A single input table covers the author/time contract.
@@ -83,6 +98,7 @@ esac
     for cwd, options in root_cases:
         result = call('owner-answers', '--item', 'overseer', *options, cwd=cwd)
         assert not result.stderr, result
+        assert result.stdout.splitlines()[-1] == 'owner-answers: read=read', result
         rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek', cwd=cwd).stdout.splitlines() if line.startswith("{")]
         assert [row['text'] for row in rows] == ['answer'], rows
     call('owner-answers', '--item', 'overseer')
@@ -91,17 +107,57 @@ esac
     calls = (root / 'calls').read_text().splitlines()
     assert sum(line.startswith('comments bulk-list ') for line in calls) == len(root_cases) + 1
     assert any(line.startswith('issues update KEN-7 --description **Owner, what you do:** Approve change') for line in calls)
-    (root / 'quota').touch()
-    refused = call('owner-answers', '--item', 'overseer')
-    assert json.loads(refused.stderr)['code'] == 'RATELIMITED', refused
-    assert refused.stdout == 'EVENT tracker-quota status=missing reset=unavailable limit=requests\n', refused
-    assert [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')] == rows
+    for name, malformed in [('non-string-id', [dict(id=42, description='Body', assignee='Owner')]),
+                             ('non-string-description', [dict(id='KEN-7', description=42, assignee='Owner')]),
+                             ('false-description', [dict(id='KEN-7', description=False, assignee='Owner')]),
+                             ('blank-assignee', [dict(id='KEN-7', description='Body', assignee='')])]:
+        (root / 'items').write_text(json.dumps(malformed))
+        unread = call('owner-answers', '--item', 'overseer')
+        assert unread.stdout.splitlines()[-1] == 'owner-answers: read=unread', (name, unread)
+        assert unread.stderr == 'KEN-3624-unread cause=issues-format\n', unread
+    (root / 'items').unlink()
+    for name, description, cause in [('invalid-repair-readback', 42, 'tracker-list-invalid'),
+                                      ('false-repair-readback', False, 'tracker-list-invalid'),
+                                      ('unlanded-repair', 'Body', 'unlanded')]:
+        (root / 'readback').write_text(json.dumps(dict(issue=dict(identifier='KEN-7', description=description))))
+        result = call('owner-answers', '--item', 'overseer')
+        receipts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
+        assert receipts[0]['kind'] == 'line' and receipts[0]['cause'] == cause, (name, result)
+        assert result.stdout.splitlines()[-1] == 'owner-answers: read=read', result
+    (root / 'readback').unlink()
+    for status, reset, epoch, limit in [('missing', 'unavailable', None, 'requests'),
+                                        ('invalid', 'unavailable', None, 'unknown'),
+                                        ('future', '2100-01-01T00:00:00Z', 4102444800, 'complexity'),
+                                        ('elapsed', '2000-01-01T00:00:00Z', 946684800, 'endpoint')]:
+        receipt = dict(code='RATELIMITED', requests_reset='2100-01-01T00:01:00Z',
+                       quota=dict(status=status, reset=reset, reset_epoch=epoch, limit=limit))
+        (root / 'quota').write_text(json.dumps(receipt) + '\n')
+        refused = call('owner-answers', '--item', 'overseer')
+        assert json.loads(refused.stderr) == receipt, refused
+        assert refused.stdout == f'EVENT tracker-quota status={status} reset={reset} limit={limit}\n', refused
+        assert [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')] == rows
     (root / 'quota').unlink()
+    (root / 'unread-comments').touch()
+    unread = call('owner-answers', '--item', 'overseer')
+    assert unread.stdout.splitlines()[-1] == 'owner-answers: read=unread', unread
+    assert unread.stderr == 'KEN-3624-unread cause=comments\n', unread
+    (root / 'unread-comments').unlink()
+    for malformed in ['', 'null', '[]', '{"KEN-7":[{"id":"broken"}]}']:
+        (root / 'comments').write_text(malformed)
+        unread = call('owner-answers', '--item', 'overseer')
+        assert unread.stdout.splitlines()[-1] == 'owner-answers: read=unread', unread
+        assert unread.stderr == 'KEN-3624-unread cause=comments-format\n', unread
+    comments.append(dict(id='later-answer', body='later', user_email='owner@example.test', created_at='2026-01-04T00:00:00Z'))
+    (root / 'comments').write_text(json.dumps({'KEN-7': comments}))
+    for _ in range(2):
+        call('owner-answers', '--item', 'overseer')
+        rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')]
+        assert [row['text'] for row in rows] == ['answer', 'later'], rows
     message.write_text('Approve the explicit-root change?\n')
     call('ask', '--item', 'overseer', '--root', str(worktree), '--to', 'owner', '--issue', 'KEN-7',
          '--do', 'Approve explicit-root change', '--options', 'approve,hold', '--recommend', 'approve',
-         '--wait', '5', '--file', str(message))
-    comments[-1].update(id='explicit', body='explicit')
+         '--effect', 'none', '--wait', '5', '--file', str(message))
+    comments = [comments[0], dict(id='explicit', body='explicit', user_email='owner@example.test', created_at='2026-01-04T00:00:00Z')]
     (root / 'comments').write_text(json.dumps({'KEN-7': comments}))
     call('owner-answers', '--item', 'overseer', '--root', str(worktree))
     explicit = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--root', str(worktree), '--peek').stdout.splitlines() if line.startswith('{')]
@@ -143,6 +199,20 @@ PY
   MAILBOX_UNDER_TEST="$TMP_ROOT" "$BASH" "$ROOT/skills/mailbox/tests/owner-answers.sh" >"$TMP_ROOT/root-control.log" 2>&1 || rc=$?
   assert_eq "$rc" 1 'caller-directory root selection fails the fixture'
   assert_file_contains "$TMP_ROOT/root-control.log" 'AssertionError: []' 'the root control reaches the missing-answer assertion'
+  cp "$ROOT/skills/mailbox/scripts/lane-mail" "$TMP_ROOT/scripts/lane-mail"
+  python3 - "$TMP_ROOT/scripts/lane-mail" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+old = '  cat -- "$1" >&2'
+assert source.count(old) == 1
+path.write_text(source.replace(old, '  : # ' + old.strip()))
+PY
+  rc=0
+  MAILBOX_UNDER_TEST="$TMP_ROOT" "$BASH" "$ROOT/skills/mailbox/tests/owner-answers.sh" >"$TMP_ROOT/quota-control.log" 2>&1 || rc=$?
+  assert_eq "$rc" 1 'a dropped quota receipt fails the fixture'
+  assert_file_contains "$TMP_ROOT/quota-control.log" 'JSONDecodeError' 'the quota control reaches the reset receipt assertion'
 fi
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

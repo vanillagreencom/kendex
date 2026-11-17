@@ -4143,6 +4143,50 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         "a refused ask read reads no tracker item: {linear_log}"
     );
     assert_eq!(closes(&later), Vec::<Value>::new());
+
+    let quota_due = ask("KEN-10", "question-4");
+    world.linear(
+        "issues list --assignee",
+        json!({"body": [{"id": "KEN-10", "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner"}]}),
+    );
+    world.linear("comments bulk-list", json!({"exit": 1}));
+    pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1600).unwrap();
+    assert_eq!(
+        closes(&quota_due),
+        Vec::<Value>::new(),
+        "an unread comment import cannot close a due ask"
+    );
+    let reset = SINCE_EPOCH + 2000;
+    let quota = json!({"limit": "endpoint", "status": "future",
+        "reset": agent_runtime::clock::iso_utc(reset), "reset_epoch": reset});
+    let receipt = json!({"code": "RATELIMITED", "requests_reset": "unavailable", "quota": quota});
+    world.linear(
+        "comments bulk-list",
+        json!({"exit": 1, "stderr": receipt.to_string()}),
+    );
+    let limited = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1720).unwrap();
+    assert_eq!(
+        rendered(&limited),
+        [format!(
+            "EVENT tracker-quota status=future reset={} limit=endpoint",
+            agent_runtime::clock::iso_utc(reset)
+        )]
+    );
+    let stored: Value =
+        serde_json::from_str(baseline.get(tracker::QUOTA_ROW, "fleet").unwrap()).unwrap();
+    assert_eq!(
+        stored, quota,
+        "the importer hands the reset to the fleet unchanged"
+    );
+    assert_eq!(closes(&quota_due), Vec::<Value>::new());
+    let read_count = world.linear_calls().len();
+    pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1800).unwrap();
+    assert_eq!(
+        world.linear_calls().len(),
+        read_count,
+        "the fleet holds tracker reads until the imported reset"
+    );
+    assert_eq!(closes(&quota_due), Vec::<Value>::new());
 }
 
 /// A posted owner ask closed by any route gets its tracker marks from the
