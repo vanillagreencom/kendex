@@ -599,6 +599,7 @@
   ".agents/skills/jarvis/workflows/setup-fleet-machine.md",
   ".agents/skills/jarvis/workflows/setup-github.md",
   ".agents/skills/jarvis/workflows/setup-linear.md",
+  ".agents/skills/jarvis/workflows/setup-publishers.md",
   ".agents/skills/jarvis/workflows/setup-slack.md",
   ".agents/skills/jarvis/workflows/tasks.md",
   ".agents/skills/linear/README.md",
