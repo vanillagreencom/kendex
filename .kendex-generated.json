@@ -3,7 +3,6 @@
   ".agents/skills/bot-instructions/SKILL.md",
   ".agents/skills/bot-instructions/references/checklist.md",
   ".agents/skills/bot-instructions/references/limits.md",
-  ".agents/skills/bot-instructions/references/validators.md",
   ".agents/skills/bot-instructions/schemas/renders.md",
   ".agents/skills/bot-instructions/schemas/repo-toml.md",
   ".agents/skills/bot-instructions/schemas/validators.md",
