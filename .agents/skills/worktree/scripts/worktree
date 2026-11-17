@@ -2525,8 +2525,8 @@ reuse_respects_session_lease() {
   local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc=0
   REUSE_LEASE_OWNER=""
   # Relaunch and start-worktree both reuse this tree. Orch owns activity
-  # detection: moving its branch here would invalidate a running proof or
-  # the base of an unreturned fix round. Partial installs may lack either reader.
+  # detection: moving its branch here would invalidate a running proof.
+  # Partial installs may lack the live reader.
   local orch_scripts="$SCRIPT_DIR/../../orch/scripts" activity_cause="" live_answer=""
   if [[ -e "$orch_scripts/dev-validate-run" || -L "$orch_scripts/dev-validate-run" ]]; then
     rc=0
@@ -2534,22 +2534,6 @@ reuse_respects_session_lease() {
     case "$rc" in
       0) activity_cause=run-live ;;
       1) [[ "$live_answer" == live=none ]] || activity_cause=activity-unreadable ;;
-      *) activity_cause=activity-unreadable ;;
-    esac
-  fi
-  if [[ -z "$activity_cause" && ( -e "$orch_scripts/worktree-push" || -L "$orch_scripts/worktree-push" ) ]]; then
-    local -a round_args
-    round_args=(--check-live-round --worktree "$wt" --issue "$issue_owner")
-    # SSH launches keep their workflow state beside the lane's round files.
-    # Select that state when present; the owner still judges its contents.
-    if [[ -e "$wt/tmp/workflow-state-$issue_owner.json" || -L "$wt/tmp/workflow-state-$issue_owner.json" ]]; then
-      round_args+=(--state-dir "$wt/tmp")
-    fi
-    rc=0
-    (cd -- "$wt" && "$orch_scripts/worktree-push" "${round_args[@]}") >/dev/null 2>&1 || rc=$?
-    case "$rc" in
-      0) ;;
-      3) activity_cause=round-live ;;
       *) activity_cause=activity-unreadable ;;
     esac
   fi

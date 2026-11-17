@@ -652,11 +652,10 @@ while IFS='|' read -r label fixture command rc out err want_state; do
 done <<<"$ROWS"
 
 # Activity admission belongs to reuse, before either remote fast-forward or
-# base restack. Use orch's real readers: a child with the validation owner's
-# argv contract, and the same workflow state/round records fix delegation emits.
+# base restack. Use orch's real live reader with a child that follows the
+# validation owner's argv contract.
 activity_rows() {
-  local row activity flags want cause before rc child="" orch_scripts round ready state_path
-  orch_scripts="$PACKAGE_DIR/../orch/scripts"
+  local row activity flags want cause before rc child="" ready
   while IFS='|' read -r row activity flags want cause; do
     build "activity-$row" plain
     before="$(git -C "$WT" rev-parse HEAD)"
@@ -669,23 +668,6 @@ activity_rows() {
         child=$!
         read -r ready <"$ROOT/ready"
         printf '%s\n' "$child" >"$WT/tmp/dev-validate-planted/pid"
-        ;;
-      round|bad-state)
-        (cd "$WT" && "$orch_scripts/workflow-state" init topic --worktree "$WT" >/dev/null)
-        mkdir -p "$WT/tmp"
-        if [[ "$activity" == round ]]; then
-          round="$(cd "$WT" && "$orch_scripts/workflow-state" new-round-id topic dev_round_id)"
-          printf '{}\n' >"$WT/tmp/dev-round-topic-$round.json"
-        else
-          state_path="$(cd "$WT" && "$orch_scripts/workflow-state" path topic)"
-          printf 'invalid json\n' >"$state_path"
-        fi
-        ;;
-      hosted-round)
-        mkdir -p "$WT/tmp"
-        (cd "$WT" && "$orch_scripts/workflow-state" --state-dir "$WT/tmp" init topic --worktree "$WT" >/dev/null)
-        round="$(cd "$WT" && "$orch_scripts/workflow-state" --state-dir "$WT/tmp" new-round-id topic dev_round_id)"
-        printf '{}\n' >"$WT/tmp/dev-round-topic-$round.json"
         ;;
     esac
     rc=0
@@ -708,12 +690,8 @@ activity_rows() {
   done <<'ACTIVITY'
 run-relaunch|run|--reuse --keep-on-conflict|75|run-live
 run-restack|run|--restack|75|run-live
-round-relaunch|round|--reuse --keep-on-conflict|75|round-live
-round-restack|round|--restack|75|round-live
-round-hosted-only|hosted-round|--reuse --keep-on-conflict|75|round-live
 idle-reuse|none|--reuse|0|-
 idle-restack|none|--restack|0|-
-unreadable-state|bad-state|--restack|75|activity-unreadable
 ACTIVITY
 }
 activity_rows
