@@ -11,7 +11,7 @@ use agent_runtime::clock;
 use agent_runtime::effects::Reach;
 use serde::Serialize;
 
-use super::{KILL_GRACE, apply, item_of_run_dir, load};
+use super::{KILL_GRACE, apply, ci_env, item_of_run_dir, load};
 use crate::error::{Error, Result};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
 use crate::ops::{self, ReconcileRound, Request, job_ended, run_id_of};
@@ -237,6 +237,7 @@ pub fn execute(
         )
         .env("DEV_VALIDATE_MODE", field("validate-mode"))
         .env("DEV_VALIDATE_PATHS", &paths)
+        .envs(ci_env(field("ci-event"), field("ci-fallback")))
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(log)

@@ -587,8 +587,31 @@ struct Preview {
     expected_secs: Option<u64>,
 }
 
+/// The CI admission the selector reads in its preview and in its run alike,
+/// so it can tell which of its checks the admitted CI run covers:
+/// `DEV_VALIDATE_CI_EVENT` the event CI proves the head on, empty where CI
+/// does not take the run, and `DEV_VALIDATE_CI_ADMISSION` `admitted` or the
+/// fallback's cause, empty where no admission was read.
+fn ci_env<'a>(event: &'a str, fallback: &'a str) -> [(&'static str, &'a str); 2] {
+    [
+        ("DEV_VALIDATE_CI_EVENT", event),
+        (
+            "DEV_VALIDATE_CI_ADMISSION",
+            if event.is_empty() {
+                fallback
+            } else {
+                "admitted"
+            },
+        ),
+    ]
+}
+
 /// Run the selector once over the classification, as `preview_selection`
 /// does; a failed or ambiguous preview grants no permission to skip.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is a separate input of the selector's environment"
+)]
 fn preview_selection(
     settings: &Settings,
     worktree: &Path,
@@ -596,13 +619,14 @@ fn preview_selection(
     paths_file: &Path,
     base: &str,
     requested: ValidateMode,
+    ci: [(&'static str, &str); 2],
     log: &mut String,
 ) -> Result<Preview> {
     let Some(cmd) = &settings.validate.selection_cmd else {
         return Ok(Preview::default());
     };
     let docs = if class.docs_only { "true" } else { "false" };
-    let env: Vec<(&str, &OsStr)> = vec![
+    let mut env: Vec<(&str, &OsStr)> = vec![
         ("DEV_VALIDATE_CLASS", OsStr::new(&class.class)),
         ("DEV_VALIDATE_DOCS_ONLY", OsStr::new(docs)),
         ("DEV_VALIDATE_PATHS", paths_file.as_os_str()),
@@ -610,6 +634,7 @@ fn preview_selection(
         ("DEV_VALIDATE_MODE", OsStr::new(requested.word())),
         ("DEV_VALIDATE_SCOPED", OsStr::new("false")),
     ];
+    env.extend(ci.map(|(name, value)| (name, OsStr::new(value))));
     let answer = run_in(
         "bash",
         Path::new("/bin/bash"),
@@ -1116,6 +1141,7 @@ fn settle(
                             &paths_file,
                             &base_sha,
                             requested,
+                            ci_env(&ci_event, ""),
                             &mut log,
                         )?;
                         if matches!(
@@ -1178,6 +1204,7 @@ fn settle(
             &paths_file,
             &base_sha,
             requested,
+            ci_env(&ci_event, ci_fallback.as_deref().unwrap_or_default()),
             &mut log,
         )?;
         let all = preview.selection.as_deref() == Some("selection=all");
@@ -1255,6 +1282,7 @@ fn settle(
                 &paths_file,
                 "",
                 ValidateMode::Docs,
+                ci_env("", ""),
                 &mut log,
             )?
         } else {

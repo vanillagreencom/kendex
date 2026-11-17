@@ -649,11 +649,17 @@ fn bypass_consent(
 // Copilot
 // ---------------------------------------------------------------------------
 
+/// The launcher's own `HOME`, which the lane's Copilot inherits: a launch
+/// sets the harness's home variable and never `HOME`.
+fn launcher_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 /// The directory the context reader leaves each session's pending marker
-/// in, under the launcher's own home, which the lane's Copilot inherits;
-/// the extension spells it again from its own `os.homedir()`.
+/// in, under the launcher's own home; the extension spells it again from
+/// its own `os.homedir()`.
 fn pending_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache/lane-mail/copilot-usage"))
+    launcher_home().map(|home| home.join(".cache/lane-mail/copilot-usage"))
 }
 
 fn reader_refused(detail: &str, file: &Path, cause: Option<&str>) -> Error {
@@ -709,7 +715,7 @@ fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
     )
     .map_err(|(file, (detail, cause))| reader_refused(detail, &file, cause.as_deref()))?;
     if let Flag::Off = flag {
-        return match status_line(home) {
+        return match status_line(home, launcher_home().as_deref()) {
             Ok(()) => Ok(Prepared {
                 route: Route::AllowAllEnv,
                 home: home.to_path_buf(),
@@ -862,7 +868,7 @@ pub fn copilot_reader(home: &Path) -> std::result::Result<(), &'static str> {
     if fs::File::open(&extension).is_ok() && enabled() {
         return Ok(());
     }
-    status_line(home)
+    status_line(home, launcher_home().as_deref())
 }
 
 /// The file a path names through its links, hop by hop, at most forty.
@@ -887,9 +893,10 @@ fn link_target(path: &Path) -> Option<PathBuf> {
 /// Whether `home` runs `copilot-statusline` as its status line often enough
 /// for the fallback session record to stay fresh: `statusLine` a command
 /// whose first word is that script, an executable file, with a whole-second
-/// `refreshInterval` above 0 and below the record's age bound. The first
-/// thing that fails names the cause.
-fn status_line(home: &Path) -> std::result::Result<(), &'static str> {
+/// `refreshInterval` above 0 and below the record's age bound. A first word
+/// under `~/` names a file under `user_home`, the `HOME` Copilot runs the
+/// command with. The first thing that fails names the cause.
+fn status_line(home: &Path, user_home: Option<&Path>) -> std::result::Result<(), &'static str> {
     let settings = home.join("settings.json");
     let text = match present(&settings) {
         Present::File => fs::read_to_string(&settings).map_err(|_| "settings-unreadable")?,
@@ -905,7 +912,9 @@ fn status_line(home: &Path) -> std::result::Result<(), &'static str> {
     if Path::new(first).file_name() != Some(OsStr::new("copilot-statusline")) {
         return Err("other-command");
     }
-    let resolved = if first.contains('/') {
+    let resolved = if let Some(under) = first.strip_prefix("~/") {
+        user_home.map(|h| h.join(under))
+    } else if first.contains('/') {
         Some(PathBuf::from(first))
     } else {
         std::env::var_os("PATH").and_then(|path| {
@@ -1469,5 +1478,44 @@ mod tests {
             fs::symlink_metadata(&extension).is_err(),
             "the reader is never installed"
         );
+    }
+
+    /// A Copilot home whose status line runs `~/bin/copilot-statusline`,
+    /// and the user home `~/` stands for there.
+    fn home_relative_line(root: &Path) -> (PathBuf, PathBuf) {
+        let home = root.join(".copilot");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("settings.json"),
+            "{\"statusLine\": {\"type\": \"command\", \"command\": \"~/bin/copilot-statusline --fast\", \"refreshInterval\": 30}}\n",
+        )
+        .unwrap();
+        let user = root.join("user");
+        fs::create_dir_all(user.join("bin")).unwrap();
+        (home, user)
+    }
+
+    #[test]
+    fn a_home_relative_status_line_runs_the_script_under_the_launchers_home() {
+        let root = tempfile::tempdir().unwrap();
+        let (home, user) = home_relative_line(root.path());
+        crate::host::write_executable(&user.join("bin/copilot-statusline"), "#!/bin/sh\n");
+        assert_eq!(status_line(&home, Some(&user)), Ok(()));
+    }
+
+    #[test]
+    fn a_home_relative_status_line_with_no_script_or_no_home_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let (home, user) = home_relative_line(root.path());
+        // The script stands under the Copilot home, never the user home.
+        fs::create_dir_all(home.join("bin")).unwrap();
+        crate::host::write_executable(&home.join("bin/copilot-statusline"), "#!/bin/sh\n");
+        for user_home in [Some(user.as_path()), None] {
+            assert_eq!(
+                status_line(&home, user_home),
+                Err("command-missing"),
+                "{user_home:?}"
+            );
+        }
     }
 }

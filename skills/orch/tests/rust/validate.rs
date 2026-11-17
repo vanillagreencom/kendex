@@ -3899,6 +3899,80 @@ fn ambiguous_selector_answers_do_not_admit_ci() {
     }
 }
 
+/// A selector that writes the CI admission it reads: its preview into
+/// `$PREVIEW_FILE`, its scoped run into the run's log as `ci=`; it answers
+/// `$SEL`.
+const CI_READING_SELECTOR: &str = "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo \"ci=$DEV_VALIDATE_CI_EVENT|$DEV_VALIDATE_CI_ADMISSION\"; echo 'validate: lanes=unit selection=subset'; else printf '%s|%s\\n' \"$DEV_VALIDATE_CI_EVENT\" \"$DEV_VALIDATE_CI_ADMISSION\" > \"$PREVIEW_FILE\"; echo \"selection=$SEL\"; fi";
+
+/// A start in the CI world `world` over one change to `file`, its selector
+/// [`CI_READING_SELECTOR`] answering `sel`: the run directory and the
+/// preview's reading.
+fn ci_reading_start(
+    world: &str,
+    file: &str,
+    sel: &str,
+    ci_request: bool,
+) -> (World, String, String) {
+    let w = World::new();
+    let (path, replies, log) = ci_world(&w, world);
+    let base = w.base_with(&[]);
+    w.commit(file);
+    let preview = w.root.join("preview-ci").display().to_string();
+    let extra = [
+        ("PATH", path.as_str()),
+        ("GH_FAKE_REPLIES", replies.as_str()),
+        ("GH_FAKE_LOG", log.as_str()),
+        ("GH_REPO", "o/r"),
+        ("ORCH_DELIVERY", "pr"),
+        ("DEV_VALIDATE_CI_CONTEXT", "CI"),
+        ("DEV_VALIDATE_RANGE_CMD", "echo range"),
+        ("DEV_VALIDATE_SELECTION_CMD", CI_READING_SELECTOR),
+        ("SEL", sel),
+        ("PREVIEW_FILE", preview.as_str()),
+    ];
+    let mut args = vec![];
+    if ci_request {
+        args.extend(["--validate-mode", "ci", "--base", base.as_str()]);
+    }
+    let out = w.local(&args, &extra);
+    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
+    let dir = directory(&out);
+    let read = fs::read_to_string(&preview).unwrap_or_default();
+    (w, dir, read.trim_end().to_owned())
+}
+
+#[test]
+fn the_selectors_preview_reads_a_merge_group_admission() {
+    let (_w, _dir, preview) = ci_reading_start("queue-required", "queue.rs", "subset", true);
+    assert_eq!(preview, "merge_group|admitted");
+}
+
+#[test]
+fn the_selectors_run_reads_the_admission_its_start_recorded() {
+    // An admitted round's scoped run reads the event its preview read; a
+    // pre-open whole selection's scoped run reads the fallback's cause.
+    for (world, file, sel, ci_request, want) in [
+        (
+            "queue-required",
+            "queue.rs",
+            "subset",
+            true,
+            "merge_group|admitted",
+        ),
+        ("pr-not-open", "source.rs", "all", false, "|pr-not-open"),
+    ] {
+        let (w, dir, _preview) = ci_reading_start(world, file, sel, ci_request);
+        let record = read_record(&w, &dir);
+        assert_eq!(field(&record, "scoped"), "true", "{world}: {record}");
+        let log = run_file(&dir, "log");
+        assert_eq!(
+            log.lines().find_map(|l| l.strip_prefix("ci=")),
+            Some(want),
+            "{world}: {log}"
+        );
+    }
+}
+
 #[test]
 fn reconcile_round_reads_a_started_run_by_its_job_identity_never_the_bare_pid() {
     let w = World::new();
