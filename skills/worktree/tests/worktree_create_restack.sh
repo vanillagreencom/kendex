@@ -681,6 +681,12 @@ activity_rows() {
           printf 'invalid json\n' >"$state_path"
         fi
         ;;
+      hosted-round)
+        mkdir -p "$WT/tmp"
+        (cd "$WT" && "$orch_scripts/workflow-state" --state-dir "$WT/tmp" init topic --worktree "$WT" >/dev/null)
+        round="$(cd "$WT" && "$orch_scripts/workflow-state" --state-dir "$WT/tmp" new-round-id topic dev_round_id)"
+        printf '{}\n' >"$WT/tmp/dev-round-topic-$round.json"
+        ;;
     esac
     rc=0
     # shellcheck disable=SC2086
@@ -704,6 +710,7 @@ run-relaunch|run|--reuse --keep-on-conflict|75|run-live
 run-restack|run|--restack|75|run-live
 round-relaunch|round|--reuse --keep-on-conflict|75|round-live
 round-restack|round|--restack|75|round-live
+round-hosted-only|hosted-round|--reuse --keep-on-conflict|75|round-live
 idle-reuse|none|--reuse|0|-
 idle-restack|none|--restack|0|-
 unreadable-state|bad-state|--restack|75|activity-unreadable
@@ -736,6 +743,15 @@ assert_eq "$bad_live_rc" 75 "failed live read: reuse refuses"
 assert_eq "$(git -C "$WT" rev-parse HEAD)" "$bad_live_head" "failed live read: head stays put"
 assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
   "path=$WT cause=activity-unreadable" "failed live read: structured hold cause"
+printf '#!/bin/bash\nexit 1\n' >"$TMP_ROOT/activity-packages/orch/scripts/dev-validate-run"
+build activity-live-startup-failed plain
+startup_head="$(git -C "$WT" rev-parse HEAD)"
+startup_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || startup_rc=$?
+assert_eq "$startup_rc" 75 "live reader exit1 without idle answer: reuse refuses"
+assert_eq "$(git -C "$WT" rev-parse HEAD)" "$startup_head" "live reader exit1 without idle answer: HEAD stays put"
+assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
+  "path=$WT cause=activity-unreadable" "live reader exit1 without idle answer: structured hold cause"
 
 # Must-fail control: suppress only the refusal, preserving its matched text.
 python3 - "$WORKTREE_SCRIPT" <<'CONTROL'
