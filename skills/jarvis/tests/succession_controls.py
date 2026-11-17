@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[3]
 SESSION = "jarvis/scripts/lib/session.py"
 # Each planted defect proves succession_test.py goes red on its own case.
 DEFECTS = (
+    ("setup readiness", SESSION, "    if not ready:\n", "    if False:\n", "test_successor_setup_readiness"),
+    ("spent account", SESSION, '**({"exclude_account": recorded["account"]} if mark == "headroom" else {})',
+     '**({} if mark == "headroom" else {})', "test_successor_setup_readiness"),
     # Without the repeat, an unproved first successor ends the hand-over.
     ("repeat", SESSION, "if attempted and attempted in marked:", "if False:",
      "test_a_successor_that_cannot_sign_in_is_passed_for_the_next_account"),

@@ -71,6 +71,23 @@ def start_brief(private):
     return START_BRIEF + " " + private if private else START_BRIEF
 
 
+def setup_problem(harness, account):
+    # Trust preparation writes the onboarding marker. Read it before that
+    # write: only the account owner can finish the harness's first-run UI.
+    if harness != "claude":
+        return None
+    path = Path(account) / ".claude.json"
+    try:
+        ready = json.loads(path.read_text()).get("hasCompletedOnboarding") is True
+    except FileNotFoundError:
+        ready = False
+    except (OSError, ValueError, AttributeError) as failure:
+        raise Refusal("record-unreadable", str(path) + ": " + str(failure)) from failure
+    if not ready:
+        return "open claude once with CLAUDE_CONFIG_DIR=" + shlex.quote(str(account)) + " and finish its first-run setup, then retry"
+    return None
+
+
 def environment(harness=None, *, policy=False):
     # Keep desktop and transport access. Credentials and parent harness
     # identity come from the selected account, never the calling session.
@@ -341,8 +358,8 @@ class Session:
         if not terminal:
             raise Refusal("no-controller")
         argv = ["tmux", "-S", terminal["server"], "attach-session", "-t", "=" + terminal["session"]]
-        # The caller's own environment holds its live desktop and its
-        # $TERMINAL. A window holding its TMUX or TMUX_PANE reads as a pane of
+        # The caller's own environment holds its live desktop. A window
+        # holding its TMUX or TMUX_PANE reads as a pane of
         # the caller's server, so the terminal starts without them.
         own = {key: value for key, value in os.environ.items() if key not in ("TMUX", "TMUX_PANE")}
         if os.environ.get("TMUX"):
@@ -353,20 +370,11 @@ class Session:
                 opened = self.backend("open-window", terminal["server"], terminal["session"], check=False, env=own)
             except (OSError, subprocess.TimeoutExpired) as failure:
                 raise Refusal("terminal-launch-failed", str(failure))
-            if opened.returncode == 4:
+            if opened.returncode == 3:
                 raise Refusal("terminal-unresolved", opened.stderr.strip())
-            if opened.returncode not in (0, 3):
+            if opened.returncode != 0:
                 raise Refusal("terminal-launch-failed", opened.stderr.strip())
-            print(opened.stderr, end="", file=sys.stderr)
-            if opened.returncode == 0:
-                return
-            print("No terminal is set in TERMINAL and xdg-terminal-exec is not on PATH, so Jarvis opens inside this tmux pane.",
-                  file=sys.stderr)
-        # tmux refuses a client only from a pane of the server it attaches to
-        # (server_client_check_nested), so the caller's TMUX stays: the nested
-        # client crosses servers, and a pane on the home's own server is
-        # refused rather than shown inside itself.
-        sys.stderr.flush()
+            return
         os.execvp("tmux", argv)
 
     def _emit(self, answer):
@@ -430,9 +438,36 @@ class Session:
         if read.returncode == 0 and read.stdout.strip():
             return read.stdout.strip()
         # The server's environment is what every window it opens inherits.
-        made = self.run(["tmux", "-L", self.label, "new-session", "-d", "-s", SESSION_NAME, "-n", SESSION_NAME,
-                         "-c", self.home, "-P", "-F", "#{socket_path}"], env=environment(harness, policy=True))
+        env = environment(harness, policy=True)
+        made = self.run([*self.server_scope(env), "tmux", "-L", self.label, "new-session", "-d", "-s", SESSION_NAME, "-n", SESSION_NAME,
+                         "-c", self.home, "-P", "-F", "#{socket_path}"], env=env)
         return made.stdout.strip()
+
+    def server_scope(self, env):
+        # A service's stop must not stop the server it started. A login
+        # session keeps its own lifetime, independent of the user manager.
+        try:
+            cgroup = Path("/proc/self/cgroup").read_text()
+        except OSError:
+            return []
+        own = next((line[3:] for line in cgroup.splitlines() if line.startswith("0::")), "")
+        parts = own.split("/")
+        manager = next((i for i, part in enumerate(parts) if part == "user@" + str(os.getuid()) + ".service"), None)
+        if manager is None:
+            return []
+        slice_name = next((part for part in reversed(parts[manager + 1:]) if part.endswith(".slice")), None)
+        if not slice_name:
+            return []
+        scope = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--slice=" + slice_name]
+        try:
+            probe = self.run([*scope, "true"], check=False, env=env)
+            cause = None if probe.returncode == 0 else (probe.stderr.strip().split("\n")[0] or "exit=" + str(probe.returncode))
+        except OSError as failure:
+            cause = type(failure).__name__ + ": " + str(failure)
+        if cause is None:
+            return scope
+        print("jarvis-session: tmux-scope=unavailable slice=" + slice_name + " cause=" + json.dumps(cause), file=sys.stderr)
+        return []
 
     def unattended(self, harness):
         # The home names the harnesses whose managed session runs with nobody
@@ -442,6 +477,29 @@ class Session:
             print(result.stderr, end="", file=sys.stderr)
             raise Refusal("record-unreadable")
         return "named" in result.stdout.split()
+
+    def ready_successor(self, *args, recorded=None):
+        words = list(args)
+        while True:
+            result, code, refusal, errors = self.runtime(*words)
+            successor = (result or {}).get("successor")
+            if code or not successor:
+                return result, code, refusal, errors
+            account = successor.get("account") or self.env["HOME"]
+            problem = setup_problem(successor["harness"], account)
+            if not problem:
+                return result, code, refusal, errors
+            name = Path(account).name
+            excluded = self.env.get("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "").split(",")
+            if name in excluded:
+                raise Refusal("selection-conflict", "The setup exclusion did not reach " + account + ".")
+            self.env["AGENT_RUNTIME_ACCOUNT_EXCLUDE"] = ",".join([*filter(None, excluded), name])
+            print("jarvis-session: successor-lane-excluded account=" + account
+                  + " reason=harness-setup-pending fix=" + problem, file=sys.stderr)
+            # A context mark keeps its caller's account unpicked. An account
+            # that cannot finish setup must instead leave that seat.
+            if account == (recorded or {}).get("account") and "--mark" in words:
+                words[words.index("--mark") + 1] = "headroom"
 
     def choose(self, args, recorded):
         """The pending a start opens: the recorded launch resumed where the
@@ -468,8 +526,9 @@ class Session:
             # The walk is the one judge of an account and the one reader of a
             # model's class; a stated account takes the walk's model alone.
             entry = ":".join([args.harness] + ([args.model, args.effort] if args.model is not None else []))
-            result, code, refusal, errors = self.runtime("controller", "successor", "--record", self.fleet(),
-                                                         "--cwd", self.home, "--preference", entry)
+            chooser = self.ready_successor if args.account is None else self.runtime
+            result, code, refusal, errors = chooser("controller", "successor", "--record", self.fleet(),
+                                                    "--cwd", self.home, "--preference", entry)
             if code or not result.get("successor"):
                 sys.stderr.write(errors)
                 print("jarvis-session: selection-failed walk=" + json.dumps((result or {}).get("walk")), file=sys.stderr)
@@ -540,6 +599,9 @@ class Session:
                 recorded = (status or {}).get("recorded") or {}
             self.initialized_fleet()
             pending, reason = self.choose(args, recorded)
+            problem = setup_problem(pending["harness"], pending.get("account") or self.env["HOME"])
+            if problem:
+                raise Refusal("trust-required", problem)
             socket = self.server(pending["harness"])
             private = self.private_brief(args)
             record.update(origin=args.origin, app_off=False, report_started_at=int(time.time()), private_brief=private,
@@ -705,9 +767,9 @@ class Session:
         try:
             while True:
                 recorded = self.status(reconcile=False)["recorded"]
-                choice, code, refusal, errors = self.runtime("controller", "successor", "--record", self.fleet(),
+                choice, code, refusal, errors = self.ready_successor("controller", "successor", "--record", self.fleet(),
                                                              "--cwd", self.home, "--predecessor", recorded["pane"],
-                                                             "--mark", mark, "--handoff", handoff)
+                                                             "--mark", mark, "--handoff", handoff, recorded=recorded)
                 if code:
                     sys.stderr.write(errors)
                     raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
@@ -719,7 +781,8 @@ class Session:
                 successor = dict(choice["successor"], window=SESSION_NAME, seat=SEAT)
                 request.write_text(json.dumps({"expected": choice["expected"], "successor": successor,
                                                "brief_file": str(brief), "session": SESSION_NAME,
-                                               "cause": "walled" if mark == "headroom" else "live"}))
+                                               "cause": "walled" if mark == "headroom" else "live",
+                                               **({"exclude_account": recorded["account"]} if mark == "headroom" else {})}))
                 result, code, refusal, errors = self.runtime("controller", "transfer", *self.reach(socket),
                                                              "--request", request, "--effect-exit", timeout=3600)
                 print(errors, end="", file=sys.stderr)

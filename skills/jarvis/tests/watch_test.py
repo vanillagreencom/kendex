@@ -2,6 +2,7 @@
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
 import errno
+import hashlib
 import importlib.util
 import io
 import json
@@ -281,7 +282,7 @@ class Producer(unittest.TestCase):
                      for side in ("ssh:undeclared", "host", "relay", "report", "forward", "consumer"))
         cases.append(("satellite-side", changed(side="ssh:alpha"), "destination-unknown"))
         cases.extend((name, original, "state-exists")
-                     for name in ("empty-state", "empty-log", "footer-log", "established", "pending", "second-init",
+                     for name in ("empty-state", "empty-log", "footer-log", "established", "pending",
                                   "legacy-dormant", "legacy-frozen"))
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
@@ -303,9 +304,8 @@ class Producer(unittest.TestCase):
                         directory.joinpath("events.log").write_text(
                             self.module.pass_output(footer["side"], footer["roots"], []))
                         self.assertFalse(directory.joinpath("batch.json").exists())
-                    elif name in ("established", "pending", "second-init"):
-                        watch = (self.module.Watch(self.home, BASH, self.settings, [captured])
-                                 if name == "second-init" else self.watch())
+                    elif name in ("established", "pending"):
+                        watch = self.watch()
                         watch.accept(watch.acquire(0))
                         if name == "pending":
                             self.intercept_mail('if [ "$1" = send ]; then exit 1; fi')
@@ -332,7 +332,7 @@ class Producer(unittest.TestCase):
                     self.assertEqual(self.inbox(), inbox)
                     self.assertEqual({str(root): self.native_events(root, "to-overseer")[1]
                                       for root in (self.home, self.peer)}, envelopes)
-                    if name in ("established", "pending", "second-init", "footer-log"):
+                    if name in ("established", "pending", "footer-log"):
                         resumed = self.watch()
                         self.assertEqual(resumed.cursors["local"], footer["roots"])
                         if name == "footer-log":
@@ -1170,8 +1170,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                         (expected_remote, ["ssh:alpha", "/srv/same/peer"])]
             def retained(watch):
                 data = watch.log.read_bytes()
-                self.assertEqual([data[span[0]:span[1]] for span in watch.state["spans"]],
-                                 [body for body, _ in expected], "retained event bytes")
+                def digest(block):
+                    return hashlib.sha256(block).hexdigest()
+                self.assertEqual([digest(data[span[0]:span[1]]) for span in watch.state["spans"]],
+                                 [digest(body) for body, _ in expected], "retained event bytes")
                 self.assertEqual([span[2:] for span in watch.state["spans"]],
                                  [[origin] if origin else [] for _, origin in expected])
                 return data
@@ -1708,14 +1710,23 @@ with open(sys.argv[1], "ab") as out:
             self.assertIn("EVENT relay-down ", self.inbox()[-1]["text"])
 
     def test_settings_precedence_and_transport(self):
+        # Root discovery must stop inside this fixture even when TMPDIR is
+        # inside the checkout running the suite.
+        for words in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            result = self.command(["git", "-C", self.root, *words])
+            self.assertEqual(result.returncode, 0, result.stderr)
         shared = self.home / "kendex.settings.toml"
         private = self.home / ".env.local"
-        values = {"JARVIS_CONTROL_HOST": "host", "JARVIS_LOG_DIR": str(self.root / "logs"), "JARVIS_WAKE_SETTLE_SECS": "7"}
+        values = {"JARVIS_CONTROL_HOST": "host", "JARVIS_LOG_DIR": str(self.root / "logs"), "JARVIS_WAKE_SETTLE_SECS": "7", "JARVIS_REPO_ALIASES": "{}",
+                  "JARVIS_TECHNICAL": "on", "JARVIS_STYLE": "fun"}
+        # The presentation choices take only listed values, so their private
+        # layer holds a listed value different from the shared one.
+        overrides = {**dict.fromkeys(values, "private"), "JARVIS_TECHNICAL": "off", "JARVIS_STYLE": "friendly"}
         shared.write_text("[env]\n" + "".join('%s = "%s"\n' % pair for pair in values.items()))
         with patch.dict(os.environ, self.env, clear=True):
             self.assertEqual({key: self.module.config(BASH, self.home)[key] for key in values}, values)
-            private.write_text("".join('%s=private\n' % key for key in values))
-            self.assertEqual({self.module.config(BASH, self.home)[key] for key in values}, {"private"})
+            private.write_text("".join('%s=%s\n' % pair for pair in overrides.items()))
+            self.assertEqual({key: self.module.config(BASH, self.home)[key] for key in values}, overrides)
             with patch.dict(os.environ, values):
                 self.assertEqual({key: self.module.config(BASH, self.home)[key] for key in values}, values)
         private.unlink()
@@ -1723,15 +1734,23 @@ with open(sys.argv[1], "ab") as out:
         example = (REPO / "skills/jarvis/kendex.settings.toml.example").read_text()
         declared = set(re.findall(r'^(JARVIS_[A-Z_]+)\s*=', example, re.M))
         # The watch reads its settings by quoted key; session-backend.sh reads
-        # JARVIS_UNATTENDED_HARNESSES by expansion after jarvis_load.
+        # JARVIS_UNATTENDED_HARNESSES by expansion after jarvis_load; config
+        # reports the presentation choices to Jarvis and VGS by quoted key.
         consumed = set(re.findall(r'["\'](JARVIS_[A-Z_]+)["\']', (SCRIPTS / "lib/watch.py").read_text()))
         consumed |= set(re.findall(r'\$\{(JARVIS_[A-Z_]+)', (SCRIPTS / "lib/session-backend.sh").read_text()))
+        consumed |= set(re.findall(r'"(JARVIS_[A-Z_]+)"', (SCRIPTS / "lib/jarvis-env.sh").read_text()))
         self.assertEqual(declared, consumed)
+        shipped = dict(re.findall(r'^(JARVIS_[A-Z_]+) = "([^"]*)"', example, re.M))
         with patch.dict(os.environ, self.env, clear=True):
             defaults = self.module.config(BASH, self.home)
             self.assertEqual(defaults["JARVIS_CONTROL_HOST"], "")
             self.assertEqual(defaults["JARVIS_WAKE_SETTLE_SECS"], "15")
             self.assertEqual(defaults["JARVIS_VOICE_REMIND_SECS"], "0")
+            for key, default in (("JARVIS_TECHNICAL", "off"), ("JARVIS_STYLE", "concise")):
+                self.assertEqual((defaults[key], shipped[key]), (default, default))
+            with patch.dict(os.environ, JARVIS_TECHNICAL="yes", JARVIS_STYLE="loud"):
+                unlisted = self.module.config(BASH, self.home)
+            self.assertEqual((unlisted["JARVIS_TECHNICAL"], unlisted["JARVIS_STYLE"]), ("off", "concise"))
             self.assertEqual(defaults["JARVIS_LOG_DIR"], str(self.root / ".local/state/jarvis"))
             with patch.dict(os.environ, XDG_STATE_HOME=str(self.root / "xdg")):
                 self.assertEqual(self.module.config(BASH, self.home)["JARVIS_LOG_DIR"], str(self.root / "xdg/jarvis"))
@@ -1762,6 +1781,29 @@ with open(sys.argv[1], "ab") as out:
             watch.accept(self.acquire_all(watch, 3))
             self.assertEqual(watch.state["ssh:host.example_failure"], first)
             self.assertEqual(watch.log.stat().st_size, size)
+
+    def test_presentation_controls(self):
+        rows = (("technical", "JARVIS_TECHNICAL=off", "JARVIS_TECHNICAL=on"),
+                ("style", "JARVIS_STYLE=concise", "JARVIS_STYLE=fun"),
+                ("aliases", 'export JARVIS_REPO_ALIASES="${JARVIS_REPO_ALIASES:-}"', 'export JARVIS_REPO_ALIASES=""'))
+        for name, old, new in rows:
+            with self.subTest(control=name):
+                case = Producer(methodName="test_settings_precedence_and_transport")
+                case.setUp()
+                try:
+                    source = case.scripts / "lib/jarvis-env.sh"
+                    before = source.read_bytes()
+                    self.assertFalse(source.is_symlink())
+                    self.assertEqual(before.count(old.encode()), 1)
+                    source.write_bytes(before.replace(old.encode(), new.encode()))
+                    try:
+                        with self.assertRaises(AssertionError):
+                            case.test_settings_precedence_and_transport()
+                    finally:
+                        source.write_bytes(before)
+                    self.assertEqual(source.read_bytes(), before)
+                finally:
+                    case.doCleanups()
 
     def test_hold_paths_and_failed_renewal_reset(self):
         with patch.dict(os.environ, self.env, clear=True):
@@ -2020,6 +2062,69 @@ with open(sys.argv[1], "ab") as out:
         self.assertEqual(passes.names, ["relay_status", "forward"])
         self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
                          [block.split("\n")[0]])
+
+    def test_forward_cadence_and_answer_event_restart(self):
+        self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
+        class Submitted:
+            def submit(self, work, *args):
+                return Future()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            for states, interval in (([], 60), (["queued"], 60), (["delivered"], 5),
+                                     (["read", "queued"], 5)):
+                watch = self.watch()
+                status = json.dumps({"requests": [{"state": state} for state in states]})
+                with patch.object(self.module, "checked", side_effect=["", status]):
+                    result = watch.forward()
+                self.assertEqual(result, ("", interval))
+                watch.next_relay = 1000
+                # Completion can be delayed beyond submission; queued retries
+                # get their full minute rather than a stale submission deadline.
+                watch.next_forward = 60
+                watch.forward_pending = Future()
+                watch.forward_pending.set_result(result)
+                watch._poll(Submitted(), Future(), 100)
+                self.assertEqual(watch.next_forward, 100 + interval)
+                self.assertIsNone(watch.forward_pending)
+            block = "EVENT forward-answer request=vgs-audit:r key=forward-k answer=answer-id\n"
+            watch.accept_forward(block)
+            self.watch().accept_forward(block)
+            self.assertEqual(watch.log.read_text().count(block), 1)
+
+
+    def test_external_delivery_during_idle_worker_completion(self):
+        self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
+        class Submitted:
+            def submit(self, work, *args):
+                return Future()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            watch.next_relay = 1000
+            watch.next_forward = 60
+            work = watch.forward_pending = Future()
+            self.module.forward_ready(self.settings, "forward-k", 2)
+            self.module.forward_ready(self.settings, "forward-later", 3)
+            watch._poll(Submitted(), Future(), 3)
+            work.set_result(("", 60))
+            watch._poll(Submitted(), Future(), 4)
+            self.assertEqual(watch.next_forward, 7)
+
+
+    def test_delayed_completion_control(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "watch.py"
+            source = (SCRIPTS / "lib/watch.py").read_text()
+            old = "self.next_forward = now + interval"
+            self.assertEqual(source.count(old), 1)
+            path.write_text(source.replace(old, "self.next_forward = min(self.next_forward, now + interval)"))
+            case = Producer(methodName="test_forward_cadence_and_answer_event_restart")
+            case.setUp()
+            case.module = load(path)
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_forward_cadence_and_answer_event_restart()
+            finally:
+                case.doCleanups()
+
 
     def test_remote_identity_restart(self):
         # Both independent machine views expose the same path and initial

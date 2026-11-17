@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 
-from session import BASH, SESSION_NAME, Refusal, Session
+from session import BASH, SESSION_NAME, Refusal, Session, setup_problem
 
 
 # A pane agent-runtime reads under this cause stands on no server the task's
@@ -123,6 +123,9 @@ class Task(Session):
                     chosen = json.loads(self.backend("task-model", args.harness, args.model, args.effort,
                                                      self.home).stdout)
                     account = self.account(chosen, args, parent.fleet())
+                    problem = setup_problem(chosen["harness"], account)
+                    if problem:
+                        raise Refusal("harness-setup-pending", "fix=" + problem)
                     record.update(harness=chosen["harness"], model=chosen["model"] or "native-default",
                                   account=account, effort=chosen["effort"])
                     if not shutil.which(chosen["harness"], path=self.env["PATH"]):
@@ -195,10 +198,13 @@ class Task(Session):
                     if self.launched.exists():
                         self.close_window(record)
                         self.launched.unlink()
+                    self.stop_browser(record)
                     shutil.rmtree(scratch)
                     record["cleanup"] = {"at": time.time(), "state": "done"}
                 except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
-                    record["cleanup"]["reason"] = type(teardown).__name__
+                    record["cleanup"]["reason"] = teardown.reason if isinstance(teardown, Refusal) else type(teardown).__name__
+                    if isinstance(teardown, Refusal) and teardown.detail:
+                        record["cleanup"]["detail"] = teardown.detail
                 if recorded:
                     try:
                         self.write(record)
@@ -262,6 +268,16 @@ class Task(Session):
         if live and live["server"] == terminal["server"] and controller["server_pid"] == record["server_pid"]:
             self.tmux("select-window", "-t", live["window"], socket=terminal["server"], check=False)
 
+    def stop_browser(self, record):
+        # A browser started in its own session can outlive the task window
+        # and write its profile back into scratch after cleanup.
+        if record["browser_profile"]:
+            env = dict(self.env, JARVIS_BROWSER_PROFILE=record["browser_profile"], JARVIS_BROWSER_PORT="0")
+            stopped = self.run([sys.executable, "-I", "-B", str(Path(__file__).resolve().parents[1] / "jarvis-browser"),
+                                "--stop"], check=False, env=env)
+            if stopped.returncode:
+                raise Refusal("browser-running", stopped.stderr.strip())
+
     def complete(self, outcome):
         with self.locked():
             record = self.read()
@@ -281,6 +297,7 @@ class Task(Session):
                 if self.launched.exists():
                     self.close_window(record)
                     self.launched.unlink()
+                self.stop_browser(record)
                 scratch = Path(record["scratch"])
                 if scratch.exists():
                     shutil.rmtree(scratch)

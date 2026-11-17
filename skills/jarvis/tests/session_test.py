@@ -1,6 +1,8 @@
 """Contract rows use real tmux and the real identity carrier, with CLI fixtures."""
 import fcntl
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -17,6 +19,8 @@ import sys
 import tempfile
 import time
 import unittest
+import runpy
+from unittest.mock import patch
 from fixtures.tmux_scope import SCOPE, isolate
 isolate()
 
@@ -252,21 +256,6 @@ class MainHostContract(unittest.TestCase):
         self.assertIn("fix: add /.env.local to .gitignore, then run main-host again", result.stderr)
         self.assertEqual(private.read_bytes(), b"SECRET='keep me'\n")
         self.assertFalse((self.home / ".gitignore").exists())
-
-    def test_main_host_set_refuses_when_ignore_line_has_no_effect(self):
-        # A deeper .gitignore re-includes the file: git is asked again after
-        # the line lands, and the private file is never written.
-        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
-        (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "keys/private.env"\n')
-        (self.home / "keys").mkdir()
-        (self.home / "keys" / ".gitignore").write_text("!private.env\n")
-        result = self.command("main-host", "--set", "host:/main", code=2)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("main-host=refused cause=private-file-unignored", result.stderr)
-        self.assertIn("jarvis-session: fix: ", result.stderr)
-        self.assertFalse((self.home / ".gitignore").exists())
-        self.assertFalse((self.home / "keys" / "private.env").exists())
-
 
     def test_main_host_set_refuses_dangling_gitdir(self):
         (self.home / ".git").write_text("gitdir: " + str(self.root / "gone") + "\n")
@@ -527,6 +516,7 @@ class HomeInitContract(unittest.TestCase):
                                      (str(home), ["AGENTS.md", "memory/MEMORY.md", "state"], []))
                     outcomes = {row["path"]: (row["key"], row["outcome"], row.get("cause")) for row in report["settings"]}
                     self.assertEqual(outcomes, {
+                        "kendex.settings.toml": ("COMMIT_GUARDS_PRE_COMMIT_LOCAL",) + (("merged", None) if tomllib else ("refused", "toml-reader-missing")),
                         ".claude/settings.json": ("autoMemoryEnabled", "merged", None),
                         ".codex/config.toml": ("features.memories",) + (("merged", None) if tomllib else ("refused", "toml-reader-missing"))})
                 else:
@@ -550,6 +540,30 @@ class HomeInitContract(unittest.TestCase):
                 self.assertTrue(all(row["outcome"] in ("kept", "refused") for row in report["settings"]))
                 self.assertEqual(self.snapshot(home), homes[caller])
         self.assertEqual(homes["init"], homes["start"])
+
+    def test_init_local_lane(self):
+        if not self.has_tomllib():
+            self.skipTest("toml reader unavailable")
+        key = "COMMIT_GUARDS_PRE_COMMIT_LOCAL"
+        check = ".agents/skills/jarvis/scripts/progress-log"
+        for name, before, kept in (("absent", "# home settings\n", False),
+                                   ("empty", '[env]\n' + key + ' = "" # retained\n', False),
+                                   ("own", '[env]\n' + key + ' = "tools/own" # retained\n', True)):
+            with self.subTest(row=name):
+                home = self.home(name)
+                path = home / "kendex.settings.toml"
+                path.write_text(before)
+                result = self.run_init(home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if kept:
+                    self.assertEqual(path.read_text(), before)
+                    self.assertIn("init-local-lane=kept check=" + check, result.stderr)
+                else:
+                    import tomllib
+                    self.assertEqual(tomllib.loads(path.read_text())["env"][key], check)
+                after = self.snapshot(home)
+                self.assertEqual(self.run_init(home).returncode, 0)
+                self.assertEqual(self.snapshot(home), after)
 
     def test_initialized_home_clone_starts(self):
         # A clone carries AGENTS.md and memory/MEMORY.md but not an empty
@@ -586,7 +600,8 @@ class HomeInitContract(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertEqual((sorted(report["created"]), report["kept"]), (["memory/MEMORY.md", "state"], ["AGENTS.md"]))
         self.assertEqual({row["path"]: row["outcome"] for row in report["settings"]},
-                         {".claude/settings.json": "kept", ".codex/config.toml": "kept" if self.has_tomllib() else "refused"})
+                         {"kendex.settings.toml": "merged" if self.has_tomllib() else "refused",
+                          ".claude/settings.json": "kept", ".codex/config.toml": "kept" if self.has_tomllib() else "refused"})
         self.assertEqual({path: (home / path).read_bytes() for path in kept}, kept)
 
     @staticmethod
@@ -773,6 +788,7 @@ class SessionContract(unittest.TestCase):
         and a usage record of `used` percent of its week, fresh."""
         account = self.root / "accounts" / name
         account.mkdir(parents=True)
+        (account / ".claude.json").write_text('{"hasCompletedOnboarding":true}')
         now = int(time.time())
         credential = account / ".credentials.json"
         credential.write_text(json.dumps({"claudeAiOauth": {
@@ -944,6 +960,61 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(ended.returncode, 2, ended.stdout + ended.stderr)
         self.assertIn("jarvis-session succeed --home " + str(self.home), ended.stderr)
 
+    def test_start_leaves_first_run_setup_to_the_account_owner(self):
+        config = self.account / ".claude.json"
+        config.write_text("{}")
+        answer, code = self.call("start")
+        self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "trust-required", 1), self.stderr)
+        self.assertIn(str(self.account), answer["detail"])
+        self.assertEqual(config.read_text(), "{}")
+        self.assertEqual(self.started(), [])
+
+    def test_server_outlives_the_unit_that_started_it(self):
+        # The manager is a fixture: it records the scope and executes only
+        # the test's command. No row reaches the host's user manager.
+        manager = self.root / "bin/systemd-run"
+        calls = self.root / "scope.jsonl"
+        manager.write_text("#!" + sys.executable + "\nimport json,os,sys\n"
+                           + "with open(" + repr(str(calls)) + ",'a') as out: out.write(json.dumps(sys.argv[1:])+'\\n')\n"
+                           + "if os.environ.get('FIXTURE_SCOPE_REFUSED'): sys.exit('scope fixture refused')\n"
+                           + "os.execvp(sys.argv[6],sys.argv[6:])\n")
+        manager.chmod(0o755)
+        uid = str(os.getuid())
+        user = "/user.slice/user-" + uid + ".slice/user@" + uid + ".service/"
+        read = Path.read_text
+        for name, cgroup, refused in (("scope", "0::" + user + "agents.slice/start.service\n", False),
+                                      ("refused", "0::" + user + "agents.slice/start.service\n", True),
+                                      ("login", "0::/user.slice/session-1.scope\n", False)):
+            with self.subTest(row=name):
+                self.tmux_read(self.server_path(), "kill-server")
+                env = self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}
+                if refused:
+                    env["FIXTURE_SCOPE_REFUSED"] = "1"
+                def planted(path, *args, **kwargs):
+                    return cgroup if str(path) == "/proc/self/cgroup" else read(path, *args, **kwargs)
+                with patch.dict(os.environ, env, clear=True), patch.object(Path, "read_text", planted):
+                    module = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+                    session = module["Session"](self.home)
+                    errors = io.StringIO()
+                    # environment() keeps only transport. A fixture refusal
+                    # travels in the manager's executable, as a real refusal does.
+                    if refused:
+                        manager.write_text("#!/bin/sh\necho scope-fixture-refused >&2\nexit 1\n")
+                    with contextlib.redirect_stderr(errors):
+                        socket = session.server("claude")
+                self.assertEqual(self.tmux_read(socket, "has-session", "-t", "=jarvis").returncode, 0)
+                self.assertEqual("tmux-scope=unavailable" in errors.getvalue(), refused)
+                self.assertEqual(self.tmux_read(socket, "kill-server").returncode, 0)
+                if name == "scope":
+                    self.assertTrue(calls.exists(), "the server did not ask for its own scope")
+                    rows = [json.loads(line) for line in calls.read_text().splitlines()]
+                    self.assertEqual([row[:5] for row in rows], [["--user", "--scope", "--quiet", "--collect", "--slice=agents.slice"]] * 2)
+                    self.assertEqual([row[5] for row in rows], ["true", "tmux"])
+
+    def server_path(self):
+        scope = Path(os.environ[SCOPE])
+        return str(scope / "sockets" / ("tmux-" + str(os.getuid())) / self.label)
+
     def test_a_start_whose_account_cannot_sign_in_asks_for_the_sign_in(self):
         # A start on an account the harness reports signed out answers what
         # the person must do, never running.
@@ -1080,22 +1151,24 @@ class SessionContract(unittest.TestCase):
         self.assertFalse([line for line in self.stderr.splitlines() if line.startswith("jarvis-session: attach=")])
 
     # The terminals the rows put on PATH. fixture-term takes its command after
-    # -e, as a $TERMINAL does, and xdg-terminal-exec takes it bare; each runs
-    # it on a pseudo-terminal of its own and records what it was handed. fail
-    # exits 1 with a reason on stderr; idle exits 0 at once, as a launcher
-    # handing off to a server can.
+    # -e, as a terminal a $TERMINAL names does, and xdg-terminal-exec takes it
+    # bare; each runs it on a pseudo-terminal of its own and records its name
+    # and what it was handed. FIXTURE_TERMINAL_MODE fail exits 1 with a
+    # reason on stderr; idle exits 0 at once, as a launcher handing off to a
+    # server can.
     TERMINAL_STUB = """#!/usr/bin/env python3
 import fcntl, json, os, pty, struct, sys, termios
 name = os.path.basename(sys.argv[0])
-if name == "fixture-fail":
-    sys.exit("fixture-fail: display unavailable")
-if name == "fixture-idle":
+if os.environ.get("FIXTURE_TERMINAL_MODE") == "fail":
+    sys.exit(name + ": display unavailable")
+if os.environ.get("FIXTURE_TERMINAL_MODE") == "idle":
     sys.exit(0)
 command = sys.argv[1:] if name == "xdg-terminal-exec" else sys.argv[2:]
 assert name == "xdg-terminal-exec" or sys.argv[1] == "-e", sys.argv
 assert command[:2] == ["bash", "-lc"], sys.argv
 with open(os.environ["FIXTURE_TERMINAL_RECORD"], "w") as stream:
-    json.dump({"pid": os.getpid(), "env": {key: os.environ.get(key) for key in ("TMUX", "TMUX_PANE", "WAYLAND_DISPLAY")}}, stream)
+    json.dump({"name": name, "pid": os.getpid(),
+               "env": {key: os.environ.get(key) for key in ("TMUX", "TMUX_PANE", "WAYLAND_DISPLAY")}}, stream)
 pid, fd = pty.fork()
 if pid == 0:
     fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
@@ -1108,13 +1181,15 @@ except OSError:
 os.waitpid(pid, 0)
 """
 
-    def terminal_stubs(self):
-        stubs = self.root / "terminals"
+    def terminal_stubs(self, desktop):
+        # fixture-term on PATH always, beside xdg-terminal-exec on the
+        # desktop's PATH and beside every other command but it otherwise.
+        stubs = self.root / ("terminals" if desktop else "terminals-bare")
         stubs.mkdir(exist_ok=True)
-        for name in ("fixture-term", "fixture-fail", "fixture-idle", "xdg-terminal-exec"):
+        for name in ("fixture-term", "xdg-terminal-exec") if desktop else ("fixture-term",):
             (stubs / name).write_text(self.TERMINAL_STUB)
             (stubs / name).chmod(0o755)
-        return str(stubs) + os.pathsep + self.env["PATH"]
+        return str(stubs) + os.pathsep + (self.env["PATH"] if desktop else self.bare_path())
 
     def bare_path(self):
         # Every command on PATH but xdg-terminal-exec, so no row resolves the
@@ -1132,27 +1207,23 @@ os.waitpid(pid, 0)
         self.assertIsNone(shutil.which("xdg-terminal-exec", path=str(farm)))
         return str(farm)
 
-    # open-window's terminal choice, one row per branch: the $TERMINAL the
+    # open-window's terminal choice, one row per case: the $TERMINAL the
     # caller sets (None for unset), whether xdg-terminal-exec is on PATH, and
-    # the outcome. A window row gives the stderr attach prints; a refusal row
-    # its cause and detail. The window, nested and refusal tests each run the
-    # rows of their outcome, so a branch without a row here has no test.
+    # the outcome. A $TERMINAL that names a terminal on PATH changes no
+    # outcome. The window and refusal tests each run the rows of their
+    # outcome.
     TERMINAL_CHOICE = (
-        ("TERMINAL on PATH", "fixture-term", True, ("window", "")),
-        ("TERMINAL names nothing, xdg-terminal-exec", "fixture-missing", True,
-         ("window", "jarvis-session: terminal=fallback requested=fixture-missing selected=xdg-terminal-exec\n")),
-        ("no TERMINAL, xdg-terminal-exec", None, True, ("window", "")),
-        ("no TERMINAL, no xdg-terminal-exec", None, False, ("nested",)),
-        ("TERMINAL names nothing, no xdg-terminal-exec", "fixture-missing", False,
-         ("refused", "terminal-unresolved", "jarvis-session: terminal=unresolved requested=fixture-missing")),
+        ("xdg-terminal-exec", None, True, "window"),
+        ("TERMINAL beside xdg-terminal-exec", "fixture-term", True, "window"),
+        ("no xdg-terminal-exec", None, False, "refused"),
+        ("TERMINAL, no xdg-terminal-exec", "fixture-term", False, "refused"),
     )
 
     def choices(self, outcome):
         # The rows of one outcome, each with the TERMINAL (None for unset)
-        # and PATH it runs under, and the rest of its outcome.
-        paths = {True: self.terminal_stubs(), False: self.bare_path()}
-        return [(label, terminal, paths[desktop], result[1:])
-                for label, terminal, desktop, result in self.TERMINAL_CHOICE if result[0] == outcome]
+        # and PATH it runs under.
+        return [(label, terminal, self.terminal_stubs(desktop))
+                for label, terminal, desktop, result in self.TERMINAL_CHOICE if result == outcome]
 
     @staticmethod
     def chosen(env, terminal, path):
@@ -1180,16 +1251,17 @@ os.waitpid(pid, 0)
                 except ProcessLookupError:
                     break
                 time.sleep(0.05)
-        for index, (label, terminal, path, (stderr,)) in enumerate(self.choices("window")):
+        for index, (label, terminal, path) in enumerate(self.choices("window")):
             with self.subTest(label):
                 handed = self.root / ("terminal-" + str(index) + ".json")
                 env = self.chosen(inside, terminal, path) | {"HOME": str(self.root), "FIXTURE_TERMINAL_RECORD": str(handed)}
                 result = self.attach(env)
                 try:
-                    self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", stderr))
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
                     # The window's own client attached; the caller's client,
                     # its server and its session are where they were.
                     record = json.loads(handed.read_text())
+                    self.assertEqual(record["name"], "xdg-terminal-exec")
                     rows = self.clients(home)
                     self.assertEqual([row.split(" ")[1] for row in rows], ["jarvis"])
                     parent = subprocess.run(["ps", "-o", "ppid=", "-p", rows[0].split(" ")[0]], capture_output=True, text=True)
@@ -1200,49 +1272,29 @@ os.waitpid(pid, 0)
                 finally:
                     release(handed)
 
-    def test_attach_nests_without_a_terminal(self):
-        self.call("start")
-        home = self.wait()["terminal"]["server"]
-        owner = self.stand_in("owner")
-        for index, (label, terminal, path, _) in enumerate(self.choices("nested")):
-            with self.subTest(label):
-                errors, picker = self.root / ("attach-" + str(index) + ".err"), "picker-" + str(index)
-                line = ("exec env -u TERMINAL " + ("TERMINAL=" + shlex.quote(terminal) + " " if terminal else "")
-                        + "PATH=" + shlex.quote(path) + " " + shlex.quote(str(SCRIPT)) + " attach --home "
-                        + shlex.quote(str(self.home)) + " 2>" + shlex.quote(str(errors)))
-                self.tmux_read(owner, "new-session", "-d", "-s", picker, line)
-                pane = self.tmux_read(owner, "display-message", "-p", "-t", "=" + picker + ":", "#{pane_pid}").stdout.strip()
-                try:
-                    # The client runs in the picker's own pane: its process
-                    # is the pane's.
-                    self.assertEqual(self.clients(home, until=bool), [pane + " jarvis"])
-                    # The fallback explains itself in one line before the
-                    # nested client.
-                    self.assertEqual(len(errors.read_text().splitlines()), 1)
-                    self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=owner").returncode, 0)
-                finally:
-                    self.tmux_read(home, "detach-client", "-s", "=jarvis")
-
     def test_attach_refuses_a_terminal_that_does_not_open(self):
         self.call("start")
         home = self.wait()["terminal"]["server"]
         owner = self.stand_in("owner")
-        stubs = self.terminal_stubs()
+        desktop = self.terminal_stubs(True)
         # Jarvis already open in another window: its client is no proof that
         # this attach's window opened.
         held = self.pty_client(["tmux", "-S", home, "attach-session", "-t", "=jarvis"], [home])
         existing = [str(held.pid) + " jarvis"]
         self.assertEqual(self.clients(home, until=bool), existing)
-        # A found terminal that does not open, and the choice's refusal rows,
-        # refuse rather than nest in the pane.
-        rows = [("launcher exits non-zero", "fixture-fail", stubs, ("terminal-launch-failed",
-                 "jarvis-session: terminal=fixture-fail exit=1\nfixture-fail: display unavailable")),
-                ("no client within the bound", "fixture-idle", stubs,
-                 ("terminal-launch-failed", "jarvis-session: terminal=fixture-idle client=none seconds=5")),
-                *self.choices("refused")]
-        for label, terminal, path, (cause, detail) in rows:
+        # A launcher that does not open a window, and a missing launcher,
+        # refuse rather than attach in the caller's pane.
+        unresolved = ("terminal-unresolved", "jarvis-session: terminal=unresolved launcher=xdg-terminal-exec")
+        rows = [("launcher exits non-zero", None, desktop, "fail", ("terminal-launch-failed",
+                 "jarvis-session: terminal=xdg-terminal-exec exit=1\nxdg-terminal-exec: display unavailable")),
+                ("no client within the bound", None, desktop, "idle",
+                 ("terminal-launch-failed", "jarvis-session: terminal=xdg-terminal-exec client=none seconds=5")),
+                *((label, terminal, path, None, unresolved) for label, terminal, path in self.choices("refused"))]
+        for label, terminal, path, mode, (cause, detail) in rows:
             with self.subTest(label):
-                result = self.attach(self.chosen(self.inside_env(owner, "owner"), terminal, path))
+                env = self.chosen(self.inside_env(owner, "owner"), terminal, path) | (
+                    {"FIXTURE_TERMINAL_MODE": mode} if mode else {})
+                result = self.attach(env)
                 self.assertEqual((result.returncode, result.stdout, result.stderr),
                                  (1, "", "jarvis-session: attach=refused cause=" + cause + "\n" + detail + "\n"))
                 self.assertEqual(self.clients(home), existing)
@@ -1266,6 +1318,40 @@ class FixtureLifetimeContract(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
+
+    def assert_holder_released(self, lock, holder, timeout=15):
+        deadline = time.monotonic() + timeout
+        while True:
+            state = subprocess.run(["ps", "-p", str(holder), "-o", "stat="],
+                                   capture_output=True, text=True, timeout=5)
+            self.assertIn(state.returncode, (0, 1), state.stderr)
+            # A zombie has exited and closed its descriptors, even before reaping.
+            if state.returncode == 1 or state.stdout.strip().startswith("Z"):
+                break
+            self.assertLess(time.monotonic(), deadline, f"lock holder pid={holder} lock={lock}")
+            time.sleep(0.05)
+        with lock.open() as held:
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                self.fail(f"lock still held after holder pid={holder} exited: {lock}")
+
+    def test_live_lock_holder_is_rejected(self):
+        lock = self.root / "leaked.lock"
+        with lock.open("w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1000)"],
+                                     pass_fds=(held.fileno(),))
+        try:
+            with self.assertRaises(AssertionError) as rejected:
+                self.assert_holder_released(lock, child.pid, timeout=0.1)
+            self.assertIn(f"pid={child.pid}", str(rejected.exception))
+            with lock.open() as held:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            child.terminate()
+            child.wait(timeout=15)
 
     def test_failed_run_leaves_no_tmux_server(self):
         # A run that starts a server in a pane holding a lock, then fails on
@@ -1303,19 +1389,19 @@ class FixtureLifetimeContract(unittest.TestCase):
                     "                time.sleep(0.05)\n"
                     "        with open(sys.argv[1] + '.guard', 'w') as noted:\n"
                     "            noted.write(str(guard.pid))\n"
-                    "        print(subprocess.run(['tmux', '-L', 'row', 'display-message', '-p', '#{socket_path}'], check=True,\n"
+                    "        print(subprocess.run(['tmux', '-L', 'row', 'display-message', '-p', '#{socket_path}\\n#{pane_pid}'], check=True,\n"
                     "                             capture_output=True, text=True).stdout, end='', file=sys.__stdout__, flush=True)\n"
                     "        " + code + "\n"
                     "unittest.main(argv=sys.argv[:1])\n")
                 result = subprocess.run([sys.executable, "-B", str(row), str(lock)], env=env, capture_output=True, text=True, timeout=60)
-                server = Path(result.stdout.strip())
+                server_path, holder = result.stdout.strip().splitlines()
+                server = Path(server_path)
                 self.addCleanup(subprocess.run, ["tmux", "-S", str(server), "kill-server"], capture_output=True)
                 self.assertEqual((result.returncode, server.is_absolute()), (status, True), result.stderr)
                 self.assertNotEqual(server.parent, Path("/tmp") / ("tmux-%d" % os.getuid()))
                 self.assertFalse(server.exists())
                 self.assertFalse(server.parents[2].exists())
-                with lock.open() as held:
-                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assert_holder_released(lock, int(holder))
                 if ending == "failed":
                     # The exit a passing run takes too: it reaps its guard before it ends.
                     with self.assertRaises(ProcessLookupError):

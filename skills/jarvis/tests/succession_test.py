@@ -71,6 +71,52 @@ class SuccessionContract(SessionContract):
         archived = list((self.home / "state/archive").glob("handoff-*.md"))
         self.assertEqual([path.read_text() for path in archived], ["# Handoff\nWhere the work stands.\n"])
 
+    def test_live_window_stays_in_front_through_handover(self):
+        before = self.running()
+        server = before["server_socket"]
+        helper = self.tmux_read(server, "new-window", "-d", "-t", "=jarvis:", "-n", "helper", "-P", "-F",
+                                "#{window_id}", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc").stdout.strip()
+        self.assertTrue(helper)
+        for shown in ("live", "live", "helper"):
+            with self.subTest(shown=shown):
+                if shown == "helper":
+                    self.assertEqual(self.tmux_read(server, "select-window", "-t", helper).returncode, 0)
+                answer, code = self.succeed()
+                self.assertEqual((answer["state"], code), ("running", 0), self.stderr)
+                after = self.handed_over(before)
+                front = self.tmux_read(server, "display-message", "-p", "-t", "=jarvis:",
+                                       "#{window_id}\t#{window_name}").stdout.strip()
+                window = self.tmux_read(server, "display-message", "-p", "-t", after["pane"], "#{window_id}").stdout.strip()
+                self.assertEqual(front, window + "\tjarvis" if shown == "live" else helper + "\thelper")
+                before = after
+
+    def test_successor_setup_readiness(self):
+        for runner_up in (False, True):
+            with self.subTest(runner_up=runner_up):
+                pending = self.plant_account("pending-" + str(runner_up), 1)
+                ready = self.plant_account("ready-" + str(runner_up), 20) if runner_up else self.account
+                self.call("start")
+                self.wait()
+                before = self.controller()
+                config = pending / ".claude.json"
+                config.write_text("{}")
+                # The caller's own entry walks accounts in room order.
+                answer, code = self.succeed(account_walled=True)
+                if not runner_up:
+                    self.assertEqual((answer["state"], code), ("failed", 1), self.stderr)
+                    self.assertEqual(self.controller()["pane"], before["pane"])
+                else:
+                    self.assertEqual((answer["state"], answer["account"], code), ("running", str(ready), 0), self.stderr)
+                self.assertIn("reason=harness-setup-pending", self.stderr)
+                self.assertIn("fix=", self.stderr)
+                self.assertEqual(config.read_text(), "{}")
+                self.assertNotIn(str(pending), [row["account"] for row in self.started()])
+                self.call("stop")
+                self.settled()
+                self.accounts.remove(str(pending))
+                if runner_up:
+                    self.accounts.remove(str(ready))
+
     def test_a_successor_that_cannot_sign_in_is_passed_for_the_next_account(self):
         # Wanted outcome 2: the first successor account cannot be proved, so
         # the one command goes on to another eligible account, never needing
