@@ -722,6 +722,10 @@ standalone_rc=0
 (cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --restack >"$ROOT/out" 2>"$ROOT/err") || standalone_rc=$?
 assert_eq "$standalone_rc" 0 "without orch: standalone restack still succeeds"
 mkdir -p "$TMP_ROOT/activity-packages/orch/scripts"
+build activity-partial-orch plain
+partial_orch_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || partial_orch_rc=$?
+assert_eq "$partial_orch_rc" 0 "partial orch without activity readers: reuse still succeeds"
 printf '#!/bin/bash\nexit 2\n' >"$TMP_ROOT/activity-packages/orch/scripts/dev-validate-run"
 chmod +x "$TMP_ROOT/activity-packages/orch/scripts/dev-validate-run"
 build activity-bad-live plain

@@ -2526,28 +2526,29 @@ reuse_respects_session_lease() {
   REUSE_LEASE_OWNER=""
   # Relaunch and start-worktree both reuse this tree. Orch owns activity
   # detection: moving its branch here would invalidate a running proof or
-  # the base of an unreturned fix round. Standalone installs have no orch.
+  # the base of an unreturned fix round. Partial installs may lack either reader.
   local orch_scripts="$SCRIPT_DIR/../../orch/scripts" activity_cause=""
-  if [[ -d "$orch_scripts" ]]; then
+  if [[ -e "$orch_scripts/dev-validate-run" || -L "$orch_scripts/dev-validate-run" ]]; then
     rc=0
     "$orch_scripts/dev-validate-run" --live --worktree "$wt" >/dev/null 2>&1 || rc=$?
     case "$rc" in
       0) activity_cause=run-live ;;
-      1)
-        rc=0
-        (cd -- "$wt" && "$orch_scripts/worktree-push" --check-live-round --worktree "$wt" --issue "$issue_owner") >/dev/null 2>&1 || rc=$?
-        case "$rc" in
-          0) ;;
-          3) activity_cause=round-live ;;
-          *) activity_cause=activity-unreadable ;;
-        esac
-        ;;
+      1) ;;
       *) activity_cause=activity-unreadable ;;
     esac
-    if [[ -n "$activity_cause" ]]; then
-      worktree_message resume-held "path=$wt cause=$activity_cause" "The lane's activity holds this worktree; refusing to reuse it before that activity ends and can be read." >&2
-      return 1
-    fi
+  fi
+  if [[ -z "$activity_cause" && ( -e "$orch_scripts/worktree-push" || -L "$orch_scripts/worktree-push" ) ]]; then
+    rc=0
+    (cd -- "$wt" && "$orch_scripts/worktree-push" --check-live-round --worktree "$wt" --issue "$issue_owner") >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+      0) ;;
+      3) activity_cause=round-live ;;
+      *) activity_cause=activity-unreadable ;;
+    esac
+  fi
+  if [[ -n "$activity_cause" ]]; then
+    worktree_message resume-held "path=$wt cause=$activity_cause" "The lane's activity holds this worktree; refusing to reuse it before that activity ends and can be read." >&2
+    return 1
   fi
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
