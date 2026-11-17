@@ -1,6 +1,6 @@
 # Lane details
 
-What each lane fails on, its exclusions, the settings and the exit codes are in `preflight --help`. This file holds the grammars that do not fit a help entry: how the diff is taken, how `unwired-suite` reads a runner, and which globs `data-syntax`, `applied-migration-edited` and the strict-mode shape of `fail-open` ship.
+What each lane fails on, its exclusions, the settings and the exit codes are in `preflight --help`. This file holds the grammars that do not fit a help entry: how the diff is taken, how `unwired-suite` reads a runner, and how the glob settings affect `data-syntax`, `applied-migration-edited` and the strict-mode shape of `fail-open`.
 
 ## Diff construction
 
@@ -32,22 +32,22 @@ A leading `**/` matches at any depth and is the only depth crossing, so a `*` ne
 
 ## `data-syntax` JSONC paths
 
-The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` instead, and `PREFLIGHT_JSONC_GLOBS` names those paths. The shipped set is `**/tsconfig*.json`, `**/jsconfig*.json`, `**/.vscode/*.json`, `**/.devcontainer/*.json` and `**/*-color-theme.json`, which is VS Code's convention plus the two TypeScript manifests.
+The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` instead, and `PREFLIGHT_JSONC_GLOBS` names those paths. `JSONC_GLOBS` in `scripts/preflight` declares the shipped set.
 
 The lane has no JSONC parser and leaves these files to the producer that declares the dialect.
 
 ## Sourced-library trees
 
-`PREFLIGHT_SOURCED_LIB_GLOBS` names directories, not files: a path is in a sourced-library tree when one of its parent directories matches a glob, so the tree's whole depth is covered. The shipped set is `**/lib`, a directory named `lib` at any depth, such as `scripts/lib`, `bin/lib` or a root `lib`: by convention it holds libraries, not entry points. A project that keeps its libraries elsewhere, such as `tools/sh`, lists that directory, and lists `**/lib` beside it to keep the shipped tree.
+`PREFLIGHT_SOURCED_LIB_GLOBS` names directories, not files: a path is in a sourced-library tree when one of its parent directories matches a glob, so the tree's whole depth is covered. `SOURCED_LIB_GLOBS` in `scripts/preflight` declares the shipped set. A project that keeps its libraries elsewhere, such as `tools/sh`, lists that directory and retains any shipped trees it still needs.
 
 For a non-executable file in these trees, `fail-open` omits the strict-mode preamble check and `shellcheck-errors` omits SC2168: a caller can source the file inside a function, where `local` is valid. Other ShellCheck errors still fail. Executable files keep both checks. Staged scope reads the executable bit from the index.
 
-A consumer whose harness sources rows inside a function from `scripts/smoke/rows` adds that directory to `PREFLIGHT_SOURCED_LIB_GLOBS`, beside `**/lib` if it keeps the shipped tree. A row outside the configured trees keeps standalone checks.
+A consumer whose harness sources rows inside a function from `scripts/smoke/rows` adds that directory to `PREFLIGHT_SOURCED_LIB_GLOBS`, beside any shipped trees it keeps. A row outside the configured trees keeps standalone checks.
 
 ## `applied-migration-edited` glob set
 
 refinery and Flyway record a checksum over a versioned migration's name and text, and refuse to run against a database whose recorded checksum moved.
 
-The shipped set is `**/migrations/V*__*.sql` and `**/db/migration/V*__*.sql`: those two runners' filename shape under the two directory names they use, Flyway's own being the singular one, and nothing else. A runner that records an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in, sqlx and Flyway repeatable migrations (`R__*`) included.
+`MIGRATION_GLOBS` in `scripts/preflight` declares the shipped set. A runner that records an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in, sqlx and Flyway repeatable migrations (`R__*`) included.
 
 A migration this branch added and then corrected is not the shape: the staged scope diffs against HEAD and qualifies each hit against the base for exactly that.

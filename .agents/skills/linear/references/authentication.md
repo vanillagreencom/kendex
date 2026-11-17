@@ -12,7 +12,7 @@ Credential precedence is `LINEAR_APP_TOKEN`, then the client pair, then `LINEAR_
 
 With `LINEAR_APP_TOKEN`, the skill sends a Bearer header and never mints, renews or caches the token. HTTP 401 reports that the token is expired or revoked. A configured client pair does not provide a fallback.
 
-The client credentials grant always requests scope exactly `read,write,issues:create,comments:create,timeSchedule:write,initiative:read,initiative:write,customer:read,customer:write`: every scope Linear documents for an application except `admin`, which an `app` actor token cannot hold, and `app:assignable` and `app:mentionable`, which change how the application appears in Linear and grant no data access. See [agent scopes](https://linear.app/developers/agents#actor-and-scopes). Linear revokes existing app tokens when an application requests a different scope set. See [client credentials tokens](https://linear.app/developers/oauth-2-0-authentication#client-credentials-tokens).
+The client credentials grant uses the fixed scope set declared by `_LINEAR_APP_SCOPE` in `scripts/lib/auth.sh`. It does not request `admin` or the optional agent mention and assignment scopes. See [agent scopes](https://linear.app/developers/agents#actor-and-scopes). Keep the same set across minters: changing it revokes existing app-actor tokens. See [client credentials tokens](https://linear.app/developers/oauth-2-0-authentication#client-credentials-tokens).
 
 ## Client-pair token store
 
