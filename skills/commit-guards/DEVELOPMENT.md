@@ -23,6 +23,10 @@ When changing the installer, use `tests/install-git-hooks-check.test.sh` for the
 
 Before investigating a push refusal, read [Pre-push scope](references/hooks-and-settings.md#pre-push-scope). It states which refs and scopes are judged and the limits of local tracking-ref evidence. `scripts/pre-push` owns ref collection; `scripts/commit-guards` owns check selection. Inspect those owners instead of inferring push coverage from a successful commit.
 
+## The pre-commit chain
+
+Before changing hook order or diagnosing a missing check, read [Commit chain](references/hooks-and-settings.md#commit-chain).
+
 ## Markdown checks
 
 When changing Markdown parsing, inspect the shared block and shape parsers in `scripts/lib/md-blocks.awk` and `scripts/lib/md-shapes.awk` before changing an individual lane. Their callers run POSIX awk under `LC_ALL=C`. Keep portability checks against that dialect.
