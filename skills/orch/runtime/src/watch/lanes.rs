@@ -1446,7 +1446,7 @@ fn observe_one(
                 let api_error = cause.as_deref() == Some("api-error");
                 let asked = get(wake::RESUME_KIND)
                     .is_some_and(|row| matches!(row.split('|').next(), Some("api-error" | "told")));
-                if api_error && !asked && wake::reaches(obs.lane) {
+                if api_error && !asked && wake::reaches(obs.lane, hosts.of(obs.lane).ok()) {
                     out.changes
                         .push(set(wake::RESUME_KIND, lane, format!("api-error|{key}")));
                     return reading;

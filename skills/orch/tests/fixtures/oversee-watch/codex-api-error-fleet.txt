@@ -1,0 +1,11 @@
+• Ran .agents/skills/orch/scripts/workflow-state set-now FLT-1736 dev_delegated…
+  └ (no output)
+    + Show details
+• Ran .agents/skills/orch/scripts/spawn-adapter slots
+  └ {"config_path":"/home/dev/.codex/config.toml","config_present":true,"effect…
+    + 1 line (^t to expand)
+■ {"detail":"Bad Request"}
+› Ask Codex to do anything
+  Context 73% left · ~/dev/.worktrees/fleet/flt-1736 · GPT-6.1-Sol high · flt-
+  1736 · 475K window · Standard · PR #2006 · +5 -3 · never · weekly 77% left
+  ← for agents · ? for shortcuts                      ⚠ 3 warnings · f2 to view

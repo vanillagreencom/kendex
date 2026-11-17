@@ -37,8 +37,10 @@
 //! provider's `send --file` once the watch's judge reads the provider's
 //! capture idle. Nothing here reads either turn: the paste is said
 //! `wake-unconfirmed cause=session-hosted`, the mark is final for the unread
-//! state, and the lane's own mailbox read is the confirmation. No hosted lane
-//! is resumed.
+//! state, and the lane's own mailbox read is the confirmation. An API
+//! error's resume reaches either kind by the same route and is final as
+//! typed; a provider read that refuses it is told once. A wall's resume is
+//! local alone.
 //!
 //! The duty starts no detached process: nothing new charges the lane cap.
 //!
@@ -161,14 +163,14 @@ impl Resume {
         })
     }
 
-    /// Whether the wake resumes `lane` for this cause: a wall's resume
-    /// spends an account its reading measures, an API error's any lane the
-    /// wake types into.
-    fn reaches(&self, lane: &Lane) -> bool {
+    /// Whether the wake resumes `lane`, whose host declares `caps`, for this
+    /// cause: a wall's resume spends an account its reading measures, an API
+    /// error's any lane the wake types into.
+    fn reaches(&self, lane: &Lane, caps: Option<Capabilities>) -> bool {
         if self.wall {
             resumable(lane)
         } else {
-            reaches(lane)
+            reaches(lane, caps)
         }
     }
 
@@ -183,11 +185,11 @@ impl Resume {
     }
 }
 
-/// Whether the wake types into `lane` at all; the lanes duty asks an API
-/// error's resume for such a lane alone.
-pub fn reaches(lane: &Lane) -> bool {
+/// Whether the wake types into `lane`, whose host declares `caps`, at all;
+/// the lanes duty asks an API error's resume for such a lane alone.
+pub fn reaches(lane: &Lane, caps: Option<Capabilities>) -> bool {
     // The socket only names where a paste would go.
-    lane_target(lane, Path::new("")).is_some()
+    target_of(lane, Path::new(""), || caps).is_some()
 }
 
 /// Whether the wake resumes `lane` at a passed wall: a lane it types into,
@@ -343,6 +345,35 @@ fn hosted_target(lane: &Lane, caps: Capabilities, socket: &Path) -> Option<Targe
         route,
         ..target
     })
+}
+
+/// A lane as the wake's target: its window here, else a hosted lane's under
+/// the line `line` gives, asked only where no local window answers.
+fn target_of(
+    lane: &Lane,
+    socket: &Path,
+    line: impl FnOnce() -> Option<Capabilities>,
+) -> Option<Target> {
+    lane_target(lane, socket).or_else(|| hosted_target(lane, line()?, socket))
+}
+
+/// The line `lane`'s host declares, read once per pass into `lines`; none
+/// for a local lane or a line that could not be read.
+fn host_line(
+    lines: &mut BTreeMap<String, std::result::Result<Capabilities, String>>,
+    scripts: &Path,
+    lane: &Lane,
+) -> Option<Capabilities> {
+    let host = hosted::host_of(lane);
+    if host == crate::provider::LOCAL {
+        return None;
+    }
+    lines
+        .entry(host.to_owned())
+        .or_insert_with(|| hosted::capabilities(scripts, host))
+        .as_ref()
+        .ok()
+        .copied()
 }
 
 /// Whether `lane`'s standing mark is the one for `unread` on its recorded
@@ -635,6 +666,10 @@ impl Wake {
         };
         let socket = self.socket(&fleet)?;
         let host = crate::ops::Host::kernel();
+        let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+        // Each host's line, read once per pass and only for a hosted lane
+        // whose unread state or resume no mark stands for yet.
+        let mut lines = BTreeMap::new();
         // A resume goes first: its line runs the inbox read too, so the
         // unread state it types for stands marked when the mail is served.
         for (name, row) in resumes {
@@ -645,17 +680,21 @@ impl Wake {
                 .lanes
                 .iter()
                 .find(|l| super::lanes::lane_name(l) == name)
-                .filter(|l| resume.reaches(l) && !crate::ops::wake::turn_runs(l, &host))
+                .filter(|l| !crate::ops::wake::turn_runs(l, &host))
             else {
                 continue;
             };
-            let Some(target) = lane_target(lane, &socket) else {
-                continue;
-            };
-            let marked = record.get(&target.name);
+            let marked = record.get(&lane.item);
             if marked.and_then(|m| m.resume.as_deref()) == Some(row.as_str()) {
                 continue;
             }
+            let caps = host_line(&mut lines, &scripts, lane);
+            if !resume.reaches(lane, caps) {
+                continue;
+            }
+            let Some(target) = target_of(lane, &socket, || caps) else {
+                continue;
+            };
             // The local listing: the wake types into local lanes alone.
             if resume.wall
                 && crate::effects::account_room(
@@ -684,11 +723,6 @@ impl Wake {
                 &mut produced,
             )?;
         }
-        let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
-        // Each host's line, read once per pass and only for a hosted lane
-        // whose unread state no mark stands for yet.
-        let mut lines: BTreeMap<String, std::result::Result<Capabilities, String>> =
-            BTreeMap::new();
         for (name, state) in unread {
             let target = if name == OVERSEER_TARGET {
                 fleet
@@ -697,25 +731,14 @@ impl Wake {
                     .and_then(|o| overseer_target(o, &socket))
             } else {
                 fleet.lanes.iter().find(|l| l.item == name).and_then(|l| {
-                    let host_name = hosted::host_of(l);
-                    let target = match lane_target(l, &socket) {
-                        Some(target) => Some(target),
-                        // A hosted mark is final: nothing here reads the
-                        // turn it typed for, so its state asks no provider
-                        // again.
-                        None if host_name == crate::provider::LOCAL
-                            || marked(&record, l, &state) =>
-                        {
-                            None
-                        }
-                        None => lines
-                            .entry(host_name.to_owned())
-                            .or_insert_with(|| hosted::capabilities(&scripts, host_name))
-                            .as_ref()
-                            .ok()
-                            .and_then(|caps| hosted_target(l, *caps, &socket)),
+                    // A hosted mark is final: nothing here reads the turn it
+                    // typed for, so its state asks no provider again.
+                    let line = || {
+                        (!marked(&record, l, &state))
+                            .then(|| host_line(&mut lines, &scripts, l))
+                            .flatten()
                     };
-                    target.filter(|_| !crate::ops::wake::turn_runs(l, &host))
+                    target_of(l, &socket, line).filter(|_| !crate::ops::wake::turn_runs(l, &host))
                 })
             };
             let Some(target) = target else {
@@ -1047,15 +1070,15 @@ impl Wake {
         let read = match &target.route {
             // A hosted lane's harness is read through its provider, and no
             // turn count exists here: an exited or unread harness is the
-            // lanes duty's to name. A transport window's screen is judged by
-            // the paste itself; a provider-held session's screen is the
-            // provider's capture, read by the watch's one judge, and only an
-            // idle one is sent its line.
+            // lanes duty's to name, and a resume refused on it is told once.
+            // A transport window's screen is judged by the paste itself; a
+            // provider-held session's screen is the provider's capture, read
+            // by the watch's one judge, and only an idle one is sent its line.
             Route::Transport { host } => {
                 let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
                 match hosted::status(&scripts, host, &name, target.harness.name()) {
                     Ok(HostStatus::Running) => Read::Idle { turns: 0 },
-                    Ok(HostStatus::Exited) | Err(_) => return Ok(()),
+                    Ok(HostStatus::Exited) | Err(_) => Read::Refused,
                 }
             }
             Route::Send { lane, .. } => {
@@ -1068,7 +1091,7 @@ impl Wake {
                     | LaneState::Asking
                     | LaneState::RateLimitSwitch
                     | LaneState::Working
-                    | LaneState::Unjudged { .. } => return Ok(()),
+                    | LaneState::Unjudged { .. } => Read::Refused,
                 }
             }
             Route::Pane => self.read(target, room)?,

@@ -1495,19 +1495,18 @@ fn codex_api_error_screen() -> PathBuf {
         .join("fixtures/oversee-watch/codex-api-error.txt")
 }
 
-/// A Codex turn its provider's API ended, on a hosted lane, which the wake
-/// does not type into, is no finished return: the idle line carries
-/// `cause=api-error`, once, and no resume is asked.
+/// A Codex turn its provider's API ended, on a hosted lane whose window the
+/// wake types into (`pane=local`, `status=verb`), is no finished return: it
+/// asks the wake for one resume (`resume=api-error|<key>`) with no line; the
+/// resumed turn ending on an API error again is told once and its row asks
+/// nothing more (`told|<key>`).
 #[test]
 fn a_codex_api_error_turn_end_is_no_finished_return() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let line = format!(
-        "cat {}; exec bash --norc --noprofile",
-        codex_api_error_screen().display()
-    );
-    let pane = server.open_window("gh-7", dir.path(), &line);
+    let first = std::fs::read_to_string(codex_api_error_screen()).unwrap();
+    let (pane, _client) = redrawing(&server, dir.path(), "gh-7", "ssh", &first);
     await_drawn(&server, &pane, "Bad Request");
     let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-7"]);
     let _lane = host.lead("KEN-7", "codex");
@@ -1520,12 +1519,78 @@ fn a_codex_api_error_turn_end_is_no_finished_return() {
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();
+    let resume = |driver: &LaneDriver<'_>| driver.baseline.get("resume", "gh-7").map(str::to_owned);
+    let asked = |row: Option<String>, word: &str| {
+        row.as_deref()
+            .is_some_and(|r| r.starts_with(&format!("{word}|")))
+    };
+    let told = |driver: &mut LaneDriver<'_>| -> Vec<String> {
+        (0..3)
+            .flat_map(|_| event_lines(&driver.pass(&state)))
+            .filter(|l| l.starts_with("EVENT idle-after-return"))
+            .collect()
+    };
+    assert_eq!(told(&mut driver), Vec::<String>::new());
+    assert!(asked(resume(&driver), "api-error"), "{:?}", resume(&driver));
+    redraw(
+        &server,
+        &pane,
+        dir.path(),
+        "gh-7-screen-1.txt",
+        "\u{203a} Resume the orch workflow for KEN-7\n\u{25a0} {\"detail\":\"Bad Request\"}\n\u{203a} Ask Codex to do anything\n",
+        "Resume the orch",
+    );
+    assert_eq!(
+        told(&mut driver),
+        vec!["EVENT idle-after-return gh-7 cause=api-error"]
+    );
+    assert!(asked(resume(&driver), "told"), "{:?}", resume(&driver));
+}
+
+/// A hosted Codex lane's API-error stop as its provider's `capture`
+/// returned it for a `pane=verb`, `status=verb` lane: the error line
+/// directly above the composer, the status rows under it.
+fn codex_api_error_capture() -> PathBuf {
+    codex_api_error_screen().with_file_name("codex-api-error-fleet.txt")
+}
+
+/// A `pane=verb` Codex lane whose provider's capture is that stop
+/// ([`codex_api_error_capture`]), its window here a viewer's: the lanes
+/// duty reads it idle with `cause=api-error` and asks the wake for one
+/// resume (`resume=api-error|<key>`) with no line.
+#[test]
+fn a_pane_verb_codex_api_error_capture_asks_one_resume_with_no_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let viewer = server.open_window("gh-9", dir.path(), "exec bash --norc --noprofile");
+    let mut hosted = hosted_lane(dir.path(), "KEN-9", "gh-9", "/remote/lane");
+    hosted["harness"] = json!("codex");
+    hosted["viewer"] = json!(true);
+    hosted["launch"] = json!({"pane": viewer, "server": server.pid});
+    fleet.set_lanes(vec![hosted]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path(), &server, &fleet);
+    let capture = std::fs::read_to_string(codex_api_error_capture()).unwrap();
+    world.plant_host(&[
+        ("capabilities", ok(VERB_LINE)),
+        ("status --item KEN-9 --harness codex", ok("running\n")),
+        ("capture --item KEN-9", ok(&capture)),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
     let told: Vec<String> = (0..3)
         .flat_map(|_| event_lines(&driver.pass(&state)))
         .filter(|l| l.starts_with("EVENT idle-after-return"))
         .collect();
-    assert_eq!(told, vec!["EVENT idle-after-return gh-7 cause=api-error"]);
-    assert_eq!(driver.baseline.get("resume", "gh-7"), None);
+    assert_eq!(told, Vec::<String>::new(), "{:?}", world.host_log());
+    let row = driver.baseline.get("resume", "gh-9").map(str::to_owned);
+    assert!(
+        row.as_deref().is_some_and(|r| r.starts_with("api-error|")),
+        "{row:?} {:?}",
+        world.host_log()
+    );
 }
 
 /// A Codex turn its provider's API ended, on a local lane the wake types
@@ -5694,6 +5759,10 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
     }
 }
 
+/// The SSH kind's line of a provider that owns its harness's session
+/// (`pane=verb`).
+const VERB_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb";
+
 /// A lane on a provider that owns its harness's session (`pane=verb`),
 /// walled by its Pi session rows read through the provider, has its harness
 /// stopped through the provider's `stop --item --harness` before the relaunch
@@ -5703,7 +5772,6 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
 /// starts.
 #[test]
 fn a_walled_pane_verb_lane_is_stopped_through_its_provider_before_its_relaunch() {
-    const VERB_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb";
     for (stop, refused) in [
         (ok("stopped item=KEN-4 processes=1\n"), None),
         (
