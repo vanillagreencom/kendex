@@ -5,7 +5,7 @@ summary: "Git worktree management: create, list, remove isolated working copies 
 license: MIT
 user-invocable: true
 dependencies:
-  optional: [github]
+  optional: [github, orch]
 argument-hint: "create <ID> [<branch>] [--base <branch>|--from <ref>|--pr <N>] [--reuse [--keep-on-conflict]|--restack] [--replay] [--hosted] | create <ID> --transfer <branch> (not with <branch>, --base, --from, --pr, --reuse, --restack, or --replay) | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
   author: vanillagreen
