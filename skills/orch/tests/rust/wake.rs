@@ -830,6 +830,77 @@ fn a_paste_whose_answer_was_lost_reads_delivered_from_its_later_turn_and_types_n
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
 }
 
+#[test]
+fn a_wake_receipt_matches_the_marked_text_for_a_repeat_and_a_lost_outcome() {
+    for outcome in [
+        None,
+        Some(WakeOutcome::Unconfirmed {
+            cause: "turn-pending".into(),
+        }),
+    ] {
+        let fleet = Fleet::new();
+        let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
+        fleet.server.await_composer(&pane.id);
+        fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
+        let clock = FakeClock::new();
+        let mut body = fleet.body();
+        let state = unread(&[("KEN-1", "m-1")]);
+        let first = run_once(&mut body, &state, &clock).unwrap();
+        assert_eq!(
+            rendered(&first),
+            vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
+        );
+        let sent = fleet.turns("lead-1").remove(0);
+        let mut mark = fleet.mark("KEN-1").unwrap();
+        assert_eq!(
+            mark.line_digest,
+            agent_runtime::record::cksum(
+                agent_runtime::session::normalize_user_text(&sent).as_bytes()
+            )
+        );
+        mark.turns_before = 1;
+        mark.outcome = outcome;
+        let mut record = WakeRecord::default();
+        record.set("KEN-1", mark);
+        std::fs::write(fleet.record_file(), serde_json::to_vec(&record).unwrap()).unwrap();
+        let row =
+            |text: &str| json!({"type": "user", "message": {"content": text}}).to_string() + "\n";
+        let unrelated = row(&sent) + &row("another user prompt");
+        std::fs::write(fleet.session_file("lead-1"), &unrelated).unwrap();
+        let repeat = run_once(&mut body, &state, &clock).unwrap();
+        assert_eq!(
+            rendered(&repeat),
+            vec!["EVENT wake-unconfirmed KEN-1 cause=turn-unmatched"]
+        );
+        assert_eq!(
+            fleet.mark("KEN-1").and_then(|m| m.outcome),
+            Some(WakeOutcome::Unconfirmed {
+                cause: "turn-unmatched".into()
+            })
+        );
+        let again = run_once(&mut body, &state, &clock).unwrap();
+        assert_eq!(rendered(&again), Vec::<String>::new());
+        assert_eq!(
+            std::fs::read_to_string(fleet.session_file("lead-1")).unwrap(),
+            unrelated
+        );
+        std::fs::write(
+            fleet.session_file("lead-1"),
+            unrelated + &row(&format!("{sent} \r\n")),
+        )
+        .unwrap();
+        let matched = run_once(&mut body, &state, &clock).unwrap();
+        assert_eq!(rendered(&matched), vec!["EVENT wake-delivered KEN-1"]);
+        assert_eq!(
+            fleet.mark("KEN-1").and_then(|m| m.outcome),
+            Some(WakeOutcome::Delivered { turns_after: 3 })
+        );
+        let again = run_once(&mut body, &state, &clock).unwrap();
+        assert_eq!(rendered(&again), Vec::<String>::new());
+        assert_eq!(fleet.turns("lead-1").len(), 3);
+    }
+}
+
 /// A mark with no outcome on `pane` of the fleet's server for the unread
 /// state `unread`, carrying `resume`, planted as the target's one mark.
 fn plant_lost(fleet: &Fleet, target: &str, pane: &str, unread: &str, resume: Option<&str>) {
@@ -842,6 +913,7 @@ fn plant_lost(fleet: &Fleet, target: &str, pane: &str, unread: &str, resume: Opt
             server_start: Some(fleet.server.start),
             unread: unread.to_owned(),
             turns_before: 0,
+            line_digest: 0,
             at: 1,
             outcome: None,
             owner: None,
@@ -958,6 +1030,7 @@ fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
         server_start: Some(fleet.server.start),
         unread: "m-0".into(),
         turns_before: 0,
+        line_digest: 0,
         at: 1,
         outcome: Some(WakeOutcome::Delivered { turns_after: 0 }),
         owner: None,
@@ -2204,6 +2277,7 @@ fn an_idle_overseer_with_watch_lines_past_its_last_follow_and_none_running_is_ty
                 server_start: Some(fleet.server.start),
                 unread: "m-1".into(),
                 turns_before: 0,
+                line_digest: 0,
                 at: 1,
                 outcome: Some(WakeOutcome::Delivered { turns_after: 1 }),
                 owner: None,

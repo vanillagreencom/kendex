@@ -919,13 +919,9 @@ fn gone_server(runner: &Runner) -> Server {
 
 /// A `delivered` phase bound to `file`, the runner's own session file.
 fn delivered(server: &Server, pane: &str, since_ms: u64, file: &Path) -> Value {
-    let mut phase = phase(
-        "delivered",
-        server,
-        pane,
-        since_ms,
-        Some(Path::new("/h/handoff.md")),
-    );
+    let brief = server.socket.parent().unwrap().join("handoff.md");
+    std::fs::write(&brief, "HANDOFF\n").unwrap();
+    let mut phase = phase("delivered", server, pane, since_ms, Some(&brief));
     phase["turns_before"] = json!(0);
     phase["session"] = json!({
         "session_id": file.file_stem().unwrap().to_str().unwrap(),

@@ -93,12 +93,15 @@ enum Verb {
     Deliver {
         #[arg(long, conflicts_with = "harness")]
         record: Option<PathBuf>,
-        /// The text to type, from a file.
+        /// The text to type or match, from a file.
         #[arg(long, conflicts_with = "line")]
         file: Option<PathBuf>,
-        /// The text to type, as given.
+        /// The text to type or match, as given.
         #[arg(long)]
         line: Option<String>,
+        /// The checksum of normalized text for a wake's stored receipt.
+        #[arg(long, requires = "no_paste", conflicts_with_all = ["file", "line", "key"])]
+        line_digest: Option<u32>,
         /// Press one key (Enter, Up, Down, C-c or a digit), only where the
         /// screen reads a dialog (`asking` or `rate-limit-switch`) and the
         /// pane's foreground is the harness, or the transport's client.
@@ -157,10 +160,11 @@ enum Verb {
         session_id: Option<String>,
         /// The file's user-turn count before the paste, as an earlier
         /// `--no-paste` read it; read now when omitted. The delivery is
-        /// confirmed by a turn beyond it.
+        /// confirmed by matching text beyond it.
         #[arg(long)]
         turns_before: Option<u64>,
-        /// Read the state and the turn count alone: nothing is typed.
+        /// Read the state and count, or match the supplied text after the
+        /// cursor, without typing.
         #[arg(long)]
         no_paste: bool,
         /// How long the confirming turn is waited for after the paste.
@@ -1466,7 +1470,7 @@ fn recorded_session(path: &Path) -> Result<(Session, Judged)> {
 }
 
 /// How a delivery ended. A paste alone settles nothing: `confirmed` is a
-/// user turn the harness wrote to the session's own file after the paste,
+/// matching text the harness wrote in a user turn after the cursor,
 /// `unconfirmed` the bound passed with no such turn, `limit` a session with
 /// no confirmable route, into which nothing is typed, `pasted` a line typed
 /// into a transport's pane, which nothing here can confirm.
@@ -1483,7 +1487,8 @@ enum Delivery {
         outcome: Outcome,
         route: &'static str,
         pane: String,
-        bytes: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        bytes: Option<usize>,
         file: PathBuf,
         turns_before: u64,
         turns_after: u64,
@@ -1514,16 +1519,20 @@ enum Delivery {
 /// How often the session file is read for the confirming turn.
 const TURN_POLL: Duration = Duration::from_millis(250);
 
-/// Type `text` into the session's pane when `judged` read it idle, and
-/// confirm the delivery by a user turn in its own file within `bound`; a
-/// transport's paste is confirmed by nothing here and answers `pasted`.
-/// `None` text reads the state and the turn count alone. `turns_before` is
-/// the count an earlier read gave, else the file is counted now, before
-/// the paste.
+#[derive(Clone, Copy)]
+enum DeliveryInput<'a> {
+    Read,
+    Paste(&'a str),
+    Match(&'a str),
+    Digest(u32),
+}
+
+/// A receipt matches text in the bound session after the cursor. Checking
+/// a receipt needs no idle composer because it types nothing.
 fn deliver(
     session: &Session,
     judged: Judged,
-    text: Option<&str>,
+    input: DeliveryInput<'_>,
     force: bool,
     turns_before: Option<u64>,
     bound: Duration,
@@ -1539,7 +1548,10 @@ fn deliver(
             ));
         }
     }
-    if !force && judged.state != State::Idle {
+    if !force
+        && matches!(input, DeliveryInput::Read | DeliveryInput::Paste(_))
+        && judged.state != State::Idle
+    {
         let word = serde_json::to_value(&judged.state)
             .ok()
             .and_then(|v| v.get("state").and_then(|s| s.as_str()).map(str::to_owned))
@@ -1550,6 +1562,12 @@ fn deliver(
         ));
     }
     let harness = session.harness;
+    let text = match input {
+        DeliveryInput::Paste(text) | DeliveryInput::Match(text) => {
+            Some(text.trim_end_matches('\n'))
+        }
+        DeliveryInput::Read | DeliveryInput::Digest(_) => None,
+    };
     // A line that never reached the pane is refused as unsent, so the
     // caller may type it again; a paste asked and not answered may stand in
     // the pane, and only its turn says whether it went in.
@@ -1615,15 +1633,19 @@ fn deliver(
         Some(n) => n,
         None => session::user_turns(harness, &file)? as u64,
     };
-    let Some(text) = text else {
+    if matches!(input, DeliveryInput::Read) {
         return Ok(Delivery::Read {
             state: judged.state,
             file,
             turns: before,
         });
+    }
+    let expected = text.map(session::normalize_user_text);
+    let pasted = if let DeliveryInput::Paste(_) = input {
+        load(text.expect("a paste has text"))?.paste()
+    } else {
+        Ok(())
     };
-    let text = text.trim_end_matches('\n');
-    let pasted = load(text)?.paste();
     let deadline = Instant::now() + bound;
     let unconfirmed = |cause: &'static str| Delivery::Unconfirmed {
         outcome: Outcome::Unconfirmed,
@@ -1636,16 +1658,24 @@ fn deliver(
         return Ok(unconfirmed("paste-unanswered"));
     }
     loop {
-        let after = session::user_turns(harness, &file)? as u64;
-        if after > before {
+        let rows = session::user_texts_after(harness, &file, before)?;
+        if rows.iter().any(|row| match input {
+            DeliveryInput::Paste(_) | DeliveryInput::Match(_) => Some(row) == expected.as_ref(),
+            DeliveryInput::Digest(digest) => record::cksum(row.as_bytes()) == digest,
+            DeliveryInput::Read => unreachable!("a count read returns before matching"),
+        }) {
             return Ok(Delivery::Confirmed {
                 outcome: Outcome::Confirmed,
-                route: "pane-paste",
+                route: if matches!(input, DeliveryInput::Paste(_)) {
+                    "pane-paste"
+                } else {
+                    "session-read"
+                },
                 pane: pane_id.to_owned(),
-                bytes: text.len(),
+                bytes: text.map(str::len),
                 file,
                 turns_before: before,
-                turns_after: after,
+                turns_after: before + rows.len() as u64,
             });
         }
         match tmux::pane_fields(&session.pane.server, pane_id) {
@@ -1654,7 +1684,11 @@ fn deliver(
             Reading::Unreadable { .. } => return Ok(unconfirmed("pane-unreadable")),
         }
         if Instant::now() >= deadline {
-            return Ok(unconfirmed("turn-pending"));
+            return Ok(unconfirmed(if rows.is_empty() {
+                "turn-pending"
+            } else {
+                "turn-unmatched"
+            }));
         }
         std::thread::sleep(TURN_POLL);
     }
@@ -1988,6 +2022,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             record: record_path,
             file,
             line,
+            line_digest,
             key,
             force,
             account_room,
@@ -2013,17 +2048,17 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             {
                 return Err(Error::refused("key-invalid", &[("key", key)]));
             }
-            let text = match (&file, line, no_paste) {
+            let text = match (&file, line) {
                 _ if key.is_some() => None,
-                (_, _, true) => None,
-                (Some(file), None, false) => {
+                (Some(file), None) => {
                     Some(std::fs::read_to_string(file).map_err(|e| Error::io("read", file, e))?)
                 }
-                (None, Some(line), false) => Some(line),
-                (None, None, false) => {
+                (None, Some(line)) => Some(line),
+                (None, None) if no_paste => None,
+                (None, None) => {
                     return Err(Error::refused("deliver-text-missing", &[]));
                 }
-                (Some(_), Some(_), false) => unreachable!("clap refuses --file with --line"),
+                (Some(_), Some(_)) => unreachable!("clap refuses --file with --line"),
             };
             let (session, judged) = match (record_path, harness) {
                 (Some(path), None) => recorded_session(&path)?,
@@ -2108,7 +2143,13 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             Ok(serde_json::to_value(deliver(
                 &session,
                 judged,
-                text.as_deref(),
+                match (text.as_deref(), no_paste, line_digest) {
+                    (_, true, Some(digest)) => DeliveryInput::Digest(digest),
+                    (Some(text), true, None) => DeliveryInput::Match(text),
+                    (Some(text), false, None) => DeliveryInput::Paste(text),
+                    (None, true, None) => DeliveryInput::Read,
+                    _ => unreachable!("clap and the text read constrain the delivery input"),
+                },
                 force,
                 turns_before,
                 Duration::from_secs(bound_secs),

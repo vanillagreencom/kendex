@@ -67,7 +67,7 @@ pub fn turn_runs(lane: &Lane, host: &Host) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "wake", rename_all = "kebab-case")]
 pub enum WakeOutcome {
-    /// A user turn beyond `turns_before` in the bound session file.
+    /// The sent text in a user turn beyond the bound session's cursor.
     Delivered { turns_after: u64 },
     /// The paste went in and the bound passed with no such turn; a repeat
     /// re-reads the file and never types again. A hosted lane's paste is
@@ -81,8 +81,8 @@ pub enum WakeOutcome {
 
 /// The mark a wake writes before it types: the pane it types into by its
 /// exact key on its server, the unread state the wake is for
-/// (the mail duty's row value), the bound file's user-turn count the
-/// delivery is confirmed against, the epoch second of the mark, the
+/// (the mail duty's row value), the bound file's cursor and the normalized
+/// sent text's digest, the epoch second of the mark, the
 /// outcome once known (none only between the mark's write and the send's
 /// answer), and, for the overseer alone, where the owner's turn
 /// stands for an outcome that left the mail unread (`watch::owner_alert`):
@@ -99,6 +99,7 @@ pub struct WakeMark {
     pub server_start: Option<u64>,
     pub unread: String,
     pub turns_before: u64,
+    pub line_digest: u32,
     pub at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<WakeOutcome>,
@@ -159,6 +160,7 @@ mod tests {
             server_start: Some(7),
             unread: unread.to_owned(),
             turns_before: 2,
+            line_digest: 0,
             at: 1_769_700_000,
             outcome,
             owner: None,

@@ -56,7 +56,7 @@ pub enum Polled {
 }
 
 /// What a wait for the runner to record the delivered turn settled on:
-/// the user turn appeared in its session file, its pane went
+/// the brief appeared in a user turn in its session file, its pane went
 /// (the harness exited), the pane could not be read, or the bound passed.
 pub enum TurnConfirm {
     Recorded,
@@ -588,9 +588,8 @@ impl Operation<'_> {
         }
     }
 
-    /// Wait for the runner to record a user turn beyond `turns_before` in its
-    /// own session file `file`, within the launch bound: the
-    /// delivered brief confirmed by the harness's own record. The pane gone is
+    /// A receipt must name the delivered brief in the runner's own session,
+    /// beyond the cursor recorded before the paste. The pane gone is
     /// the harness exited; a pane the host does not answer for is retried and
     /// reported past the bound; the bound passed is `Pending`. The wait is a
     /// handle method, so no poll of this loop runs outside the handle.
@@ -600,10 +599,15 @@ impl Operation<'_> {
         pane: &Pane,
         file: &Path,
         turns_before: u64,
+        brief: &str,
     ) -> Result<TurnConfirm> {
         let deadline = self.now() + self.run.settings.verify.get()?;
+        let expected = crate::session::normalize_user_text(brief);
         loop {
-            if self.user_turns(harness, file)? > turns_before {
+            if crate::session::user_texts_after(harness, file, turns_before)?
+                .iter()
+                .any(|text| text == &expected)
+            {
                 return Ok(TurnConfirm::Recorded);
             }
             match self.pane_pid(pane)? {
@@ -897,5 +901,82 @@ impl Operation<'_> {
         let recovered = recovered_failed("nothing-opened", Some(cause), &self.obligations);
         self.write()?;
         Ok(recovered)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_brief_wait_requires_the_brief_after_its_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = tmux::Private::start(dir.path());
+        let Reading::Live(fields) = tmux::pane_fields(&server.0, "%0") else {
+            panic!("the private pane is live");
+        };
+        let mut settings = crate::effects::testing::settings(dir.path());
+        settings.verify = crate::settings::Judged::of("verify", Ok(std::time::Duration::ZERO));
+        let env = crate::journal::Env {
+            now_secs: 1_769_700_000,
+            now_nanos: 1_769_700_000_000_000_000,
+            nonce: 77,
+            owner: None,
+        };
+        let path = dir.path().join(crate::record::FLEET_FILE_NAME);
+        let run = crate::effects::testing::run(
+            &path,
+            &settings,
+            &env,
+            dir.path(),
+            dir.path().join("lane-mail"),
+            &crate::clock::SystemClock,
+        );
+        let intent = serde_json::from_value(json!({
+            "id": "launch-session:KEN-T:1-1", "op": "launch-session", "target": "KEN-T",
+            "revision": 0, "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+            "obligations": {"standing": [], "discharged": []}
+        }))
+        .unwrap();
+        let mut operation = Operation::open(
+            &run,
+            &intent,
+            crate::effects::Bootstrap::Launch {
+                launch: None,
+                harness: Some(Harness::Claude),
+                auxiliary: None,
+            },
+        )
+        .unwrap();
+        let file = dir.path().join("session.jsonl");
+        for (texts, cursor, recorded) in [
+            (vec!["brief", "other"], 1, false),
+            (vec!["other", "brief"], 0, true),
+            (vec!["brief"], 1, false),
+            (vec!["prefix brief suffix"], 0, false),
+            (vec!["brief \r\n"], 0, true),
+        ] {
+            let rows: String = texts
+                .iter()
+                .map(|text| {
+                    json!({"type": "user", "message": {"content": text}}).to_string() + "\n"
+                })
+                .collect();
+            std::fs::write(&file, rows).unwrap();
+            let answer = operation
+                .await_delivered_turn(Harness::Claude, &fields.pane, &file, cursor, "brief")
+                .unwrap();
+            if recorded {
+                assert!(
+                    matches!(answer, TurnConfirm::Recorded),
+                    "{texts:?} cursor={cursor}"
+                );
+            } else {
+                assert!(
+                    matches!(answer, TurnConfirm::Pending),
+                    "{texts:?} cursor={cursor}"
+                );
+            }
+        }
     }
 }

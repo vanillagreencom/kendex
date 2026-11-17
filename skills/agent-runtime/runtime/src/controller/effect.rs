@@ -1191,26 +1191,31 @@ fn succeed(
             }
         };
     let file = PathBuf::from(&session.file);
-    let unconfirmed =
-        match operation.await_delivered_turn(successor.harness, &pane, &file, turns_before)? {
-            TurnConfirm::Recorded => None,
-            TurnConfirm::PaneGone => {
-                return runner_gone_before_retirement(
-                    operation,
-                    &opened,
-                    Some(runner_id),
-                    "successor-exited",
-                    "pane-gone",
-                );
-            }
-            TurnConfirm::PaneUnobservable { cause } => {
-                Some(("pane-unobservable", json!({"cause": cause})))
-            }
-            TurnConfirm::Pending => Some((
-                "brief-unconfirmed",
-                json!({"turns_before": turns_before, "file": session.file}),
-            )),
-        };
+    let unconfirmed = match operation.await_delivered_turn(
+        successor.harness,
+        &pane,
+        &file,
+        turns_before,
+        &read_brief(held)?,
+    )? {
+        TurnConfirm::Recorded => None,
+        TurnConfirm::PaneGone => {
+            return runner_gone_before_retirement(
+                operation,
+                &opened,
+                Some(runner_id),
+                "successor-exited",
+                "pane-gone",
+            );
+        }
+        TurnConfirm::PaneUnobservable { cause } => {
+            Some(("pane-unobservable", json!({"cause": cause})))
+        }
+        TurnConfirm::Pending => Some((
+            "brief-unconfirmed",
+            json!({"turns_before": turns_before, "file": session.file}),
+        )),
+    };
     if let Some((note, observation)) = unconfirmed {
         return waiting.unready(operation, Some(session.session_id), note, observation);
     }
@@ -1556,12 +1561,21 @@ fn complete_transfer(
             };
         }
     };
-    // The delivery is confirmed by the harness's own record: a user turn
-    // beyond the count before the paste, in the one file bound above.
+    // The delivery needs the brief in a user turn after its recorded cursor.
     // The runner then works that brief, so it is
     // published idle or working, never held at a dialog.
     let file = Path::new(&session.file);
-    match operation.await_delivered_turn(successor.harness, pane, file, turns_before)? {
+    let brief = opened
+        .brief
+        .as_deref()
+        .ok_or_else(|| Error::refused("brief-missing", &[]))?;
+    match operation.await_delivered_turn(
+        successor.harness,
+        pane,
+        file,
+        turns_before,
+        &read_brief(Path::new(brief))?,
+    )? {
         TurnConfirm::Recorded => publish(
             operation,
             successor,

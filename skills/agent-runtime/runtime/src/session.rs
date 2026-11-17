@@ -391,59 +391,95 @@ pub fn identify(harness: Harness, file: &Path, cwd: Option<&Path>) -> Result<Opt
 /// [`SessionRef::file`] names: Copilot's workspace.yaml, whose events sit
 /// beside it.
 pub fn user_turns(harness: Harness, file: &Path) -> Result<usize> {
+    Ok(user_texts_after(harness, file, 0)?.len())
+}
+
+pub fn normalize_user_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_owned()
+}
+
+pub fn user_texts_after(harness: Harness, file: &Path, cursor: u64) -> Result<Vec<String>> {
     let rows_file = match harness {
         Harness::Copilot => file.with_file_name("events.jsonl"),
         Harness::Claude | Harness::Codex | Harness::Pi => file.to_path_buf(),
     };
     let f = match fs::File::open(&rows_file) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(Error::io("open", &rows_file, e)),
     };
-    let mut turns = 0;
+    let mut turns = 0_u64;
+    let mut texts = Vec::new();
     for line in BufReader::new(f).lines() {
         let line = line.map_err(|e| Error::io("read", &rows_file, e))?;
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if is_user_turn(harness, &row) {
+        if let Some(text) = user_text(harness, &row) {
             turns += 1;
+            if turns > cursor {
+                texts.push(normalize_user_text(&text));
+            }
         }
     }
-    Ok(turns)
+    Ok(texts)
 }
 
-fn is_user_turn(harness: Harness, row: &Value) -> bool {
+fn user_text(harness: Harness, row: &Value) -> Option<String> {
     let kind = row.get("type").and_then(Value::as_str);
     match harness {
         Harness::Claude => {
-            kind == Some("user")
-                && row.get("isSidechain").and_then(Value::as_bool) != Some(true)
-                && row
-                    .get("message")
-                    .and_then(|m| m.get("content"))
-                    .is_some_and(Value::is_string)
+            if kind != Some("user") || row.get("isSidechain").and_then(Value::as_bool) == Some(true)
+            {
+                return None;
+            }
+            row.get("message")?
+                .get("content")?
+                .as_str()
+                .map(str::to_owned)
         }
         Harness::Codex => {
-            kind == Some("event_msg")
-                && row.get("payload").is_some_and(|p| {
-                    p.get("type").and_then(Value::as_str) == Some("item_completed")
-                        && p.get("item")
-                            .and_then(|i| i.get("type"))
-                            .and_then(Value::as_str)
-                            == Some("UserMessage")
-                })
+            let payload = row.get("payload")?;
+            let item = payload.get("item")?;
+            if kind != Some("event_msg")
+                || payload.get("type")?.as_str()? != "item_completed"
+                || item.get("type")?.as_str()? != "UserMessage"
+            {
+                return None;
+            }
+            text_parts(item.get("content")?)
         }
-        Harness::Copilot => kind == Some("user.message"),
+        Harness::Copilot => {
+            if kind != Some("user.message") {
+                return None;
+            }
+            row.get("data")?.get("content")?.as_str().map(str::to_owned)
+        }
         Harness::Pi => {
-            kind == Some("message")
-                && row
-                    .get("message")
-                    .and_then(|m| m.get("role"))
-                    .and_then(Value::as_str)
-                    == Some("user")
+            let message = row.get("message")?;
+            if kind != Some("message") || message.get("role")?.as_str()? != "user" {
+                return None;
+            }
+            text_parts(message.get("content")?)
         }
     }
+}
+
+fn text_parts(content: &Value) -> Option<String> {
+    let parts: Vec<_> = content
+        .as_array()?
+        .iter()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 /// A session file a store lists for a cwd, with the modification time read
@@ -983,12 +1019,36 @@ mod tests {
             };
             fs::write(&rows_file, text).unwrap();
             assert_eq!(user_turns(harness, &file).unwrap(), expected, "{harness:?}");
+            let prompts = ["Create probe-1.txt", "Now create probe-2.txt"];
+            for cursor in 0..=expected {
+                assert_eq!(
+                    user_texts_after(harness, &file, cursor as u64).unwrap(),
+                    prompts[cursor..expected],
+                    "{harness:?} cursor={cursor}"
+                );
+            }
+            assert!(user_texts_after(harness, &file, 99).unwrap().is_empty());
         }
         // A session whose file is not written yet has no turns.
         assert_eq!(
             user_turns(Harness::Claude, &dir.path().join("none.jsonl")).unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn user_text_normalization_keeps_leading_space_and_normalizes_line_ends() {
+        for (text, expected) in [
+            (
+                "  first  \r\nsecond\t\rthird \n\n",
+                "  first\nsecond\nthird",
+            ),
+            ("first\nsecond", "first\nsecond"),
+            ("\r\n \t", ""),
+            ("", ""),
+        ] {
+            assert_eq!(normalize_user_text(text), expected);
+        }
     }
 
     #[test]

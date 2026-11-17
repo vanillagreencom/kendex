@@ -773,6 +773,123 @@ fn deliver_on(
     (reply, out.status.code().unwrap_or(-1))
 }
 
+#[test]
+#[cfg(unix)]
+fn deliver_matches_only_the_sent_text_after_the_cursor_on_readback() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let pane = PrivatePane::start(dir.path());
+    let keeps = turns_stub(dir.path(), &home, false);
+    pane.tmux(&[
+        "respawn-pane",
+        "-k",
+        "-t",
+        &pane.pane,
+        &format!("{} --session-id receipt", keeps.display()),
+    ]);
+    pane.await_row(&|l| l == "\u{276f}\u{a0}");
+    let file = home
+        .join("projects")
+        .join(agent_runtime::session::claude_slug(dir.path()))
+        .join("receipt.jsonl");
+    type Row<'a> = (&'a [&'a str], u64, &'a str, &'a str);
+    let rows: &[Row] = &[
+        (&["another prompt"], 0, "you have mail", "turn-unmatched"),
+        (
+            &["you have mail", "another prompt"],
+            1,
+            "you have mail",
+            "turn-unmatched",
+        ),
+        (
+            &["you have", "prefix you have mail suffix", "have mail"],
+            0,
+            "you have mail",
+            "turn-unmatched",
+        ),
+        (&["you have mail"], 1, "you have mail", "turn-pending"),
+        (&["another prompt", "you have mail"], 0, "you have mail", ""),
+        (&["  first\nsecond"], 0, "  first \r\nsecond\t\r\n", ""),
+        (&[" first\nsecond"], 0, "  first\nsecond", "turn-unmatched"),
+    ];
+    for (texts, cursor, sent, cause) in rows {
+        let content: String = texts
+            .iter()
+            .map(|text| {
+                serde_json::json!({"type":"user", "message":{"content":text}}).to_string() + "\n"
+            })
+            .collect();
+        std::fs::write(&file, &content).unwrap();
+        let sent_file = dir.path().join("sent.txt");
+        std::fs::write(&sent_file, sent).unwrap();
+        let digest = agent_runtime::record::cksum(
+            agent_runtime::session::normalize_user_text(sent).as_bytes(),
+        )
+        .to_string();
+        for (flag, value) in [
+            ("--line", sent.to_string()),
+            ("--file", sent_file.display().to_string()),
+            ("--line-digest", digest),
+        ] {
+            let (answer, code) = deliver_on(
+                &pane,
+                &home,
+                &[
+                    "--session-id",
+                    "receipt",
+                    "--no-paste",
+                    "--turns-before",
+                    &cursor.to_string(),
+                    flag,
+                    &value,
+                    "--bound-secs",
+                    "0",
+                ],
+            );
+            assert_eq!(code, 0, "{flag}: {answer}");
+            if cause.is_empty() {
+                assert_eq!(
+                    answer["result"]["delivery"], "confirmed",
+                    "{flag}: {answer}"
+                );
+                assert_eq!(answer["result"]["route"], "session-read", "{answer}");
+                assert_eq!(answer["result"]["turns_after"], texts.len(), "{answer}");
+            } else {
+                assert_eq!(
+                    answer["result"]["delivery"], "unconfirmed",
+                    "{flag}: {answer}"
+                );
+                assert_eq!(answer["result"]["cause"], *cause, "{flag}: {answer}");
+            }
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), content);
+        }
+    }
+    pane.run_stub(dir.path(), "claude", "printf 'starting up\\n'\n");
+    pane.await_row(&|l| l == "starting up");
+    std::fs::write(
+        &file,
+        "{\"type\":\"user\",\"message\":{\"content\":\"you have mail\"}}\n",
+    )
+    .unwrap();
+    let (answer, code) = deliver_on(
+        &pane,
+        &home,
+        &[
+            "--session-id",
+            "receipt",
+            "--no-paste",
+            "--turns-before",
+            "0",
+            "--line",
+            "you have mail",
+            "--bound-secs",
+            "0",
+        ],
+    );
+    assert_eq!(code, 0, "{answer}");
+    assert_eq!(answer["result"]["delivery"], "confirmed", "{answer}");
+}
+
 /// A `--no-paste` read gives the idle state and the fixed file's turn
 /// count; a paste into a stub that records the line is confirmed by that
 /// file; a paste into one that records nothing is `unconfirmed` once the

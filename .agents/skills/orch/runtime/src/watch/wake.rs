@@ -131,6 +131,10 @@ fn line_for(target: &str) -> String {
     )
 }
 
+fn line_digest(line: &str) -> u32 {
+    agent_runtime::record::cksum(agent_runtime::session::normalize_user_text(line).as_bytes())
+}
+
 /// The follow wake's line: `start` is the claim's start command, its
 /// `[RUN_DIR]` and `[NEXT_LINE]` the session's own to fill.
 fn follow_line(start: &str) -> String {
@@ -480,6 +484,13 @@ enum Paste {
     },
     /// Refused before anything was typed: the pane was no longer idle, or
     /// gone or unreadable, or the line never reached it.
+    Refused,
+}
+
+enum Confirmation {
+    Matched { turns_after: u64 },
+    Unconfirmed { cause: String },
+    Limit { harness: String, cause: String },
     Refused,
 }
 
@@ -881,9 +892,14 @@ impl Wake {
         }
         // The paste may have gone in: the file alone says whether the turn
         // arrived, and nothing is typed again for this mark.
-        match self.read(target, false)? {
-            Read::Idle { turns } if turns > mark.turns_before => {
-                mark.outcome = Some(WakeOutcome::Delivered { turns_after: turns });
+        let confirmation = match self.read(target, false)? {
+            Read::Idle { .. } => self.confirm(target, &mark)?,
+            Read::Limit { harness, cause } => Confirmation::Limit { harness, cause },
+            Read::Refused => Confirmation::Refused,
+        };
+        match confirmation {
+            Confirmation::Matched { turns_after } => {
+                mark.outcome = Some(WakeOutcome::Delivered { turns_after });
                 // Woken after all: nothing is owed to the owner.
                 mark.owner = None;
                 self.write(record, &name, Some(mark))?;
@@ -892,15 +908,35 @@ impl Wake {
                     .extend(delivered(&name, resume.map(str::to_owned)));
                 Ok(())
             }
-            Read::Idle { .. } if mark.outcome.is_none() => {
+            Confirmation::Unconfirmed { cause } if cause == "turn-unmatched" => {
+                let outcome = WakeOutcome::Unconfirmed {
+                    cause: cause.clone(),
+                };
+                if mark.outcome.as_ref() == Some(&outcome) {
+                    return self.owner_turn(target, mark, record);
+                }
+                let had_outcome = mark.outcome.is_some();
+                mark.outcome = Some(outcome);
+                if !had_outcome {
+                    mark.owner = owner_word(&name, &mark);
+                }
+                self.write(record, &name, Some(mark))?;
+                produced.events.push(Event::WakeUnconfirmed {
+                    target: name,
+                    cause,
+                    resume: resume.map(str::to_owned),
+                });
+                Ok(())
+            }
+            Confirmation::Unconfirmed { .. } if mark.outcome.is_none() => {
                 self.lost(&name, mark, resume, record, produced)
             }
             // Still idle and unwoken: the owner's turn.
-            Read::Idle { .. } => self.owner_turn(target, mark, record),
+            Confirmation::Unconfirmed { .. } => self.owner_turn(target, mark, record),
             // Not idle, or the pane gone or unreadable: the reading the
             // alert would stand on is not there this pass.
-            Read::Refused => Ok(()),
-            Read::Limit { harness, cause } => {
+            Confirmation::Refused => Ok(()),
+            Confirmation::Limit { harness, cause } => {
                 mark.outcome = Some(WakeOutcome::Limit {
                     harness: harness.clone(),
                     cause: cause.clone(),
@@ -1006,12 +1042,14 @@ impl Wake {
     ) -> Result<()> {
         let name = target.name.clone();
         let standing = record.get(&name).cloned();
+        let line = follow_line(start);
         let mut mark = WakeMark {
             pane: target.pane.clone(),
             server: target.server,
             server_start: target.server_start,
             unread: String::new(),
             turns_before: 0,
+            line_digest: line_digest(&line),
             at: now,
             outcome: None,
             owner: None,
@@ -1035,7 +1073,7 @@ impl Wake {
                 mark.turns_before = turns;
                 // The mark is on disk before anything is typed.
                 self.write(record, &name, Some(mark.clone()))?;
-                match self.paste(target, &follow_line(start), turns, false)? {
+                match self.paste(target, &line, turns, false)? {
                     Paste::Confirmed { turns_after } => {
                         mark.outcome = Some(WakeOutcome::Delivered { turns_after });
                         delivered(&name, None).into_iter().collect()
@@ -1122,12 +1160,14 @@ impl Wake {
     ) -> Result<()> {
         let name = target.name.clone();
         let standing = record.get(&name).cloned();
+        let line = resume.map_or_else(|| line_for(&name), |r| r.line(&name));
         let mut mark = WakeMark {
             pane: target.pane.clone(),
             server: target.server,
             server_start: target.server_start,
             unread: unread.to_owned(),
             turns_before: 0,
+            line_digest: line_digest(&line),
             at: now,
             outcome: None,
             owner: None,
@@ -1192,7 +1232,6 @@ impl Wake {
                 mark.turns_before = turns;
                 // The mark is on disk before anything is typed.
                 self.write(record, &name, Some(mark.clone()))?;
-                let line = resume.map_or_else(|| line_for(&name), |r| r.line(&name));
                 match self.paste(target, &line, turns, room)? {
                     Paste::Confirmed { turns_after } => {
                         mark.outcome = Some(WakeOutcome::Delivered { turns_after });
@@ -1297,8 +1336,42 @@ impl Wake {
         }
     }
 
-    /// Type `line` into the target through `deliver`, confirmed by a user
-    /// turn beyond `turns_before`; `room` as [`Wake::read`] takes it. A
+    fn confirm(&self, target: &Target, mark: &WakeMark) -> Result<Confirmation> {
+        let mut args = self.target_args(target, false)?;
+        args.extend([
+            "--no-paste".to_owned(),
+            "--line-digest".to_owned(),
+            mark.line_digest.to_string(),
+            "--turns-before".to_owned(),
+            mark.turns_before.to_string(),
+            "--bound-secs".to_owned(),
+            "0".to_owned(),
+        ]);
+        match self.call(&args)? {
+            Answer::Refused => Ok(Confirmation::Refused),
+            Answer::Result(result) => match result.get("delivery").and_then(Value::as_str) {
+                Some("confirmed") => Ok(Confirmation::Matched {
+                    turns_after: result
+                        .get("turns_after")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| {
+                            protocol_error("a confirmation without its turn count", &result)
+                        })?,
+                }),
+                Some("unconfirmed") => Ok(Confirmation::Unconfirmed {
+                    cause: word(&result, "cause")?,
+                }),
+                Some("limit") => Ok(Confirmation::Limit {
+                    harness: word(&result, "harness")?,
+                    cause: word(&result, "cause")?,
+                }),
+                Some(_) | None => Err(protocol_error("not a confirmation", &result)),
+            },
+        }
+    }
+
+    /// Type `line` into the target through `deliver`, confirmed by equal
+    /// text after `turns_before`; `room` as [`Wake::read`] takes it. A
     /// hosted target's paste is confirmed by nothing here. A provider-held
     /// session is sent the line through its provider's `send` instead:
     /// only a send that typed nothing, refused at the provider-call bound,
@@ -1329,6 +1402,10 @@ impl Wake {
             );
         }
         let mut args = self.target_args(target, room)?;
+        args.extend([
+            "--bound-secs".to_owned(),
+            self.settings.engine.verify.get()?.as_secs().to_string(),
+        ]);
         if matches!(target.route, Route::Pane) {
             args.extend(["--turns-before".to_owned(), turns_before.to_string()]);
         }
@@ -1368,8 +1445,6 @@ impl Wake {
             target.pane.clone(),
             "--cwd".to_owned(),
             target.cwd.display().to_string(),
-            "--bound-secs".to_owned(),
-            self.settings.engine.verify.get()?.as_secs().to_string(),
         ];
         if let Some(start) = target.server_start {
             args.extend(["--server-start".to_owned(), start.to_string()]);
