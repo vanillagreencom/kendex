@@ -19,19 +19,15 @@ kendex add vanillagreencom/kendex --skill commit-guards
 
 ## How it works
 
-You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. At push, only an explicitly enabled byte-ceiling judges what the push would do to the destination. The default check set runs no content check at push. A failed check stops the commit or the push and prints the problem.
+You select checks in the project settings and install the Git hooks. The checks run when you commit and report a problem before the commit completes. If you enable binary growth checks, they also run before a push. A failed check stops the commit or push.
 
-Git runs no commit hook when it replays a commit. CI must judge replayed commits, including document limits, Markdown shape and references, changelog changes and credentials. Push reads no record or cache of earlier hook results. Check ownership and destination scopes: [references/hooks-and-settings.md § Pre-push scope](references/hooks-and-settings.md#pre-push-scope).
-
-## Git hooks
-
-The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. How they layer with the harness pre-commit hook: [references/hooks-and-settings.md § Hook layering](references/hooks-and-settings.md#hook-layering).
-
-Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).
+Replaying commits does not run these commit checks. Keep CI checks enabled for replayed changes. Check coverage and push limits: [hooks and settings](references/hooks-and-settings.md#pre-push-scope).
 
 ## Setup
 
-Requires Git, awk, jq 1.7 or newer (jq 1.6 refuses every generated-path inventory) and standard POSIX tools, plus ruff or pyflakes in a repository with Python files, and gitleaks 8.19 or newer for the credential scan. Where those tools are installed in CI is in [CHECKS.md § py-names](CHECKS.md#py-names) and [CHECKS.md § secrets](CHECKS.md#secrets). Bash 3.2 is supported. Run `bash .agents/skills/commit-guards/scripts/install-git-hooks`, which needs no kendex, or `kendex guard install` in each fresh clone, then `bash .agents/skills/commit-guards/scripts/install-git-hooks --check` or `kendex guard check` to check the hooks. Git never clones hooks: until they are armed, commits run no Git checks. The `pre-commit-check` harness hook allows the command and reports the setup route. Obtain the repository owner’s consent before setup runs repository scripts.
+Requires Git, awk, jq 1.7 or newer and standard POSIX tools. Bash 3.2 is supported. Python checks need ruff or pyflakes; credential checks need gitleaks 8.19 or newer. Tool requirements and CI setup: [CHECKS.md](CHECKS.md).
+
+Obtain the repository owner’s consent before setup runs repository scripts. In each fresh clone, run `kendex guard install`, or `bash .agents/skills/commit-guards/scripts/install-git-hooks` without kendex. Check the installation with `kendex guard check` or the installer's `--check` option. Git does not clone hooks; commits run no Git checks until setup is armed. Hook layering and setup limits: [hooks and settings](references/hooks-and-settings.md#hook-layering).
 
 Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Set keys under `[env]` in committed `kendex.settings.toml`. Resolution order and the settings-file grammar: [references/hooks-and-settings.md](references/hooks-and-settings.md).
 
@@ -42,6 +38,8 @@ COMMIT_GUARDS_CHECKS = "conflict-markers"
 ```
 
 `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names a project check the pre-commit hook runs last. Writing that check: [references/hooks-and-settings.md § Repo-local check](references/hooks-and-settings.md#repo-local-check).
+
+Maintainer testing and debugging: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).
 
 ## Licence
 
