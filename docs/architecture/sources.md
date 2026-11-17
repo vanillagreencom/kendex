@@ -50,7 +50,7 @@ The directory is a remote, so it gets a catalog's distrust and a mirror's offlin
 
 ## The canonical example
 
-`crates/core/src/source_read.rs`: `SealedSource` is the door, and `crates/core/tests/sealed_source.rs` plants each hostile shape and watches it refused. A new reader of catalog bytes takes a `SealedSource` and nothing else.
+`SealedSource` in `crates/core/src/source_read.rs` binds catalog reads to the canonical source root and its budgets. A new reader of catalog bytes takes a `SealedSource` and nothing else.
 
 ## Revisit when
 

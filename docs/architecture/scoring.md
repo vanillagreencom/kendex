@@ -24,7 +24,7 @@ A catalog is someone else's repository, so a person deserves to see what a packa
 
 ## The canonical example
 
-`crates/core/src/quality/rules/` holds one rule per file, each reading typed per-kind input and saying when it cannot read, and `crates/core/tests/quality/mentions.rs` plants each quotation shape and watches it stay a mention. A new rule copies a rule file and adds its mention and finding rows there.
+`crates/core/src/quality/rules/secrets.rs::PlaintextSecrets` reads typed input and reports only a credential fingerprint. A new rule follows the typed-input boundary in `crates/core/src/quality/rules/mod.rs`; its mention and finding cases belong in `crates/core/tests/quality/mentions.rs`.
 
 ## Revisit when
 

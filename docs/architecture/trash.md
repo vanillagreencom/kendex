@@ -22,7 +22,7 @@ A person who removes a package, or whose package kendex replaced, can get the by
 
 ## The canonical example
 
-`crates/core/src/trash.rs`: `move_to_trash` is the writer and `retain` the pass, and `crates/core/src/trash/tests.rs` plants each bound and each failure. A verb that removes something calls the writer and closes on the pass as `tidy_trash` in `crates/cli/src/commands/engine_common.rs` does.
+`crates/cli/src/commands/engine_common.rs::tidy_trash` applies the retention pass after a writing verb. A new removal uses `crates/core/src/trash.rs::move_to_trash` and closes on that same pass.
 
 ## Revisit when
 
