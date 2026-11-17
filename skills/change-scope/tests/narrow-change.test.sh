@@ -167,6 +167,7 @@ the Pi extension that runs every hook is excluded|class=standard measured=true c
 a preflight script is excluded|class=standard measured=true cause=excluded-path|skills/preflight/scripts/run.sh=2
 a doc-limits script is excluded|class=standard measured=true cause=excluded-path|skills/doc-limits/scripts/check.sh=2
 a guard chain script is excluded|class=standard measured=true cause=excluded-path|skills/commit-guards/scripts/chain.sh=2
+the commit hook's review-file check is excluded|class=standard measured=true cause=excluded-path|skills/github-repository-settings/scripts/github-repository-settings=2
 the lane host dispatcher is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/provider.rs=2
 the lane host's ssh carrier is excluded|class=standard measured=true cause=excluded-path|skills/orch/scripts/lane-host-ssh=2
 the lane launch request is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/ops/lane.rs=2

@@ -211,6 +211,8 @@ A stopped round whose failed receipt already exists uses the same qualification 
 
 For this validation gate, run no proof, rerun, receipt, isolation step, or approval step outside this list. Investigation runs follow [dev SKILL.md § Validation](../SKILL.md#validation). If an agent believes the list misses a rule, it records the proposal once under `### Proposed Rules` in the completion summary and in the matching return line. The orchestrator puts it once in the PR body. Neither role performs the proposed rule.
 
+Where `orch-runtime validate policy --stage git-hooks`, with `--base-checkout` naming the main checkout, answers `run`, and `.agents/skills/commit-guards/scripts/install-git-hooks --check --repo [WORKTREE_PATH]` exits 0, the round's commit through those hooks runs preflight and doc-limits, so this gate runs neither. Otherwise the two stage routes below decide.
+
 Where `orch-runtime validate policy --stage preflight`, with `--base-checkout` naming the main checkout, answers `run`, run preflight when installed (`test -x .agents/skills/preflight/scripts/preflight`) through the orch job runner per [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation). Where it answers `skip`, run no preflight:
 
 ```bash
