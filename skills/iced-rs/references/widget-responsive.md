@@ -6,34 +6,7 @@ A widget that receives its available size and can conditionally build different 
 
 ## API
 
-### `Responsive` struct
-
-```rust
-pub struct Responsive<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Responsive<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer,
-{
-    pub fn new(
-        view: impl Fn(Size) -> Element<'a, Message, Theme, Renderer> + 'a,
-    ) -> Self;
-
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-}
-```
-
-### Functions
-
-```rust
-pub fn responsive<'a, Message, Theme, Renderer>(
-    view: impl Fn(Size) -> Element<'a, Message, Theme, Renderer> + 'a,
-) -> Responsive<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/responsive.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/responsive.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -72,7 +45,7 @@ responsive(|size| build_content(size))
 ## Gotchas
 
 - `Responsive` fills all available parent space by default. If the parent has unbounded space (e.g., inside a `Shrink` column), the `Size` received will be very large. Set explicit `width`/`height` to constrain it.
-- The `view` closure is called during layout, not during `view()`. This means it cannot directly access `&self` from your application state. Pass state through captures.
+- The `view` closure runs during layout. Capture application state in the closure; the `Size` argument comes from the layout limits.
 - Avoid expensive computation inside the `view` closure -- it runs on every layout pass. Use `lazy` wrapping if the content only depends on a hashable subset of state.
 - The `Size` parameter is the maximum available space, not the final rendered size.
 

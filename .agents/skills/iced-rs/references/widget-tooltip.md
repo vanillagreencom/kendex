@@ -6,82 +6,7 @@ A hover-triggered popup that displays extra information over a hoverable element
 
 ## API
 
-### `Tooltip` struct
-
-```rust
-pub struct Tooltip<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Theme: Catalog,
-    Renderer: Renderer,
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Tooltip<'a, Message, Theme, Renderer>
-where
-    Theme: Catalog,
-    Renderer: Renderer,
-{
-    pub fn new(
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
-        tooltip: impl Into<Element<'a, Message, Theme, Renderer>>,
-        position: Position,
-    ) -> Self;
-
-    pub fn gap(self, gap: impl Into<Pixels>) -> Self;
-    pub fn padding(self, padding: impl Into<Pixels>) -> Self;
-    pub fn delay(self, delay: Duration) -> Self;
-    pub fn snap_within_viewport(self, snap: bool) -> Self;
-
-    pub fn style(self, style: impl Fn(&Theme) -> Style + 'a) -> Self
-    where
-        <Theme as Catalog>::Class<'a>: From<Box<dyn Fn(&Theme) -> Style + 'a>>;
-
-    pub fn class(self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self; // feature = "advanced"
-}
-```
-
-### `Position` enum
-
-```rust
-pub enum Position {
-    Top,
-    Bottom,
-    Left,
-    Right,
-    FollowCursor,  // default
-}
-```
-
-### `Style` struct
-
-The tooltip's style type is re-exported from `container::Style`:
-
-```rust
-pub type Style = container::Style;
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog: container::Catalog {
-    fn default<'a>() -> <Self as Catalog>::Class<'a>;
-}
-```
-
-Styling delegates to `container::Catalog` — the tooltip's popup box is a container under the hood.
-
-### Functions & type aliases
-
-```rust
-pub fn tooltip<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    tooltip: impl Into<Element<'a, Message, Theme, Renderer>>,
-    position: Position,
-) -> Tooltip<'a, Message, Theme, Renderer>;
-
-pub fn default(theme: &Theme) -> Style;
-
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> Style + 'a>;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/tooltip.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/tooltip.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -150,11 +75,10 @@ tooltip(
 
 ## Gotchas
 
-- `FollowCursor` is the **default** if you don't specify `Position::...`. Most trading UIs prefer a fixed position (Top/Bottom) for consistency.
-- `snap_within_viewport(true)` (the default) flips the tooltip to stay inside the window — e.g., a `Top` tooltip near the top edge becomes a `Bottom` tooltip.
-- `delay(Duration::ZERO)` shows the tooltip immediately on hover. The default is a short delay to avoid flicker when the cursor just passes through.
+- The constructor requires a `Position`. Choose `FollowCursor` explicitly to place the tooltip relative to the cursor.
+- `snap_within_viewport(true)` constrains the popup to the viewport and shifts its bounds at an edge; it does not switch `Top` to `Bottom`.
+- The default delay is `Duration::ZERO`. Set a positive delay when hover should wait before showing the tooltip.
 - The `tooltip` element is another full `Element` — can be any widget, not just text. Use `container(...).style(container::rounded_box)` for a boxed popup.
-- Nesting tooltips doesn't work well — the overlay layer only shows one tooltip at a time per hover path.
 
 ## See also
 

@@ -6,120 +6,7 @@ A horizontal bar with a draggable handle for picking a numeric value from a rang
 
 ## API
 
-### `Slider` struct
-
-```rust
-pub struct Slider<'a, T, Message, Theme = Theme>
-where
-    Theme: Catalog,
-{ /* private fields */ }
-
-impl<'a, T, Message, Theme> Slider<'a, T, Message, Theme>
-where
-    T: Copy + From<u8> + PartialOrd,
-    Message: Clone,
-    Theme: Catalog,
-{
-    pub const DEFAULT_HEIGHT: f32 = 16f32;
-
-    pub fn new<F>(range: RangeInclusive<T>, value: T, on_change: F) -> Self
-    where
-        F: 'a + Fn(T) -> Message;
-
-    pub fn default(self, default: impl Into<T>) -> Self;
-    pub fn on_release(self, on_release: Message) -> Self;
-
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Pixels>) -> Self;
-
-    pub fn step(self, step: impl Into<T>) -> Self;
-    pub fn shift_step(self, shift_step: impl Into<T>) -> Self;
-
-    pub fn style(self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self
-    where
-        <Theme as Catalog>::Class<'a>: From<Box<dyn Fn(&Theme, Status) -> Style + 'a>>;
-
-    pub fn class(self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self; // feature = "advanced"
-}
-```
-
-### `Status` enum
-
-```rust
-pub enum Status {
-    Active,
-    Hovered,
-    Dragged,
-}
-```
-
-### `Style`, `Rail`, `Handle`, `HandleShape`
-
-```rust
-pub struct Style {
-    pub rail: Rail,
-    pub handle: Handle,
-}
-
-impl Style {
-    pub fn with_circular_handle(self, radius: impl Into<Pixels>) -> Style;
-}
-
-pub struct Rail {
-    pub backgrounds: (Background, Background), // (filled, unfilled)
-    pub width: f32,
-    pub border: Border,
-}
-
-pub struct Handle {
-    pub shape: HandleShape,
-    pub background: Background,
-    pub border_width: f32,
-    pub border_color: Color,
-}
-
-pub enum HandleShape {
-    Circle { radius: f32 },
-    Rectangle { width: u16, border_radius: Radius },
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style;
-}
-```
-
-### Functions & type aliases
-
-```rust
-pub fn slider<'a, T, Message, Theme>(
-    range: RangeInclusive<T>,
-    value: T,
-    on_change: impl Fn(T) -> Message + 'a,
-) -> Slider<'a, T, Message, Theme>;
-
-pub fn default(theme: &Theme, status: Status) -> Style;
-
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme, Status) -> Style + 'a>;
-```
-
-### Vertical variant
-
-```rust
-// iced::widget::vertical_slider
-pub struct VerticalSlider<'a, T, Message, Theme> { /* ... */ }
-
-pub fn vertical_slider<'a, T, Message, Theme>(
-    range: RangeInclusive<T>,
-    value: T,
-    on_change: impl Fn(T) -> Message + 'a,
-) -> VerticalSlider<'a, T, Message, Theme>;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/slider.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/slider.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -171,9 +58,9 @@ slider(0.0..=1.0, state.value, Message::Changed)
 
 ## Gotchas
 
-- `on_change` fires **while the slider is being dragged** — every mouse move while the handle is held. If that's too many events (e.g., triggering expensive computation), capture only the preview in `on_change` and commit in `on_release`.
+- Use `on_change` for value changes during interaction. Capture a preview there and commit expensive work in `on_release`.
 - `T` must be `Copy + From<u8> + PartialOrd`. Works with `f32`, `f64`, `i32`, `u32`, etc.
-- `DEFAULT_HEIGHT = 16.0` pixels — for denser UIs, set `.height(8.0)` or similar.
+- Set `.height(8.0)` for a compact slider.
 - The `default(value)` method enables ctrl-click (cmd-click on macOS) reset — useful for fine-tuning controls.
 - `vertical_slider` is a separate widget with its own constructor; it doesn't reuse `Slider`.
 

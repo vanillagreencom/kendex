@@ -6,97 +6,7 @@ A circular button representing a mutually-exclusive choice. Put several radios t
 
 ## API
 
-### `Radio` struct
-
-```rust
-pub struct Radio<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Theme: Catalog,
-    Renderer: Renderer,
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Radio<'a, Message, Theme, Renderer>
-where
-    Message: Clone,
-    Theme: Catalog,
-    Renderer: Renderer,
-{
-    pub const DEFAULT_SIZE: f32 = 16f32;
-    pub const DEFAULT_SPACING: f32 = 8f32;
-
-    pub fn new<F, V>(
-        label: impl Into<String>,
-        value: V,
-        selected: Option<V>,
-        f: F,
-    ) -> Self
-    where
-        V: Eq + Copy,
-        F: FnOnce(V) -> Message;
-
-    pub fn size(self, size: impl Into<Pixels>) -> Self;
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn spacing(self, spacing: impl Into<Pixels>) -> Self;
-    pub fn text_size(self, text_size: impl Into<Pixels>) -> Self;
-    pub fn text_line_height(self, line_height: impl Into<LineHeight>) -> Self;
-    pub fn text_shaping(self, shaping: Shaping) -> Self;
-    pub fn text_wrapping(self, wrapping: Wrapping) -> Self;
-    pub fn font(self, font: impl Into<<Renderer as Renderer>::Font>) -> Self;
-
-    pub fn style(self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self;
-    pub fn class(self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self;
-}
-```
-
-### `Status` enum
-
-```rust
-pub enum Status {
-    Active   { is_selected: bool },
-    Hovered  { is_selected: bool },
-    Disabled { is_selected: bool },
-}
-```
-
-### `Style` struct
-
-```rust
-pub struct Style {
-    pub background: Background,
-    pub dot_color: Color,
-    pub border_width: f32,
-    pub border_color: Color,
-    pub text_color: Option<Color>,
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style;
-}
-```
-
-### Functions & type aliases
-
-```rust
-pub fn radio<'a, Message, Theme, Renderer, F, V>(
-    label: impl Into<String>,
-    value: V,
-    selected: Option<V>,
-    f: F,
-) -> Radio<'a, Message, Theme, Renderer>
-where
-    V: Eq + Copy,
-    F: FnOnce(V) -> Message;
-
-pub fn default(theme: &Theme, status: Status) -> Style;
-
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme, Status) -> Style + 'a>;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/radio.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/radio.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -139,9 +49,9 @@ row![
 
 - The `value: V` type must implement `Eq + Copy`. Enums with `derive(Clone, Copy, PartialEq, Eq)` work naturally.
 - Each radio takes the **full group's** `selected: Option<V>` — not a per-radio boolean. The widget compares its own value to `selected` internally.
-- Radio does **not** have an `on_toggle_maybe`-style conditional API — unlike checkbox/toggler, there's no disabled-via-None pattern. To disable, wrap in a conditional (acceptable here because the whole radio is effectively one widget, not a composite of state).
-- `DEFAULT_SPACING = 8.0` is the gap between the circle and the label; configure with `.spacing(...)` for denser/looser layouts.
-- No separate "unselect" interaction — clicking an already-selected radio doesn't fire a message. Use checkbox if users need to toggle off.
+- Radio has no optional callback API for disabling it. Its constructor requires the selection message producer.
+- `spacing` sets the gap between the circle and the label.
+- Pressing an already-selected radio still publishes its selection message. The radio does not clear the selection.
 
 ## See also
 

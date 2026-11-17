@@ -6,40 +6,7 @@ Positions content at fixed coordinates inside its boundaries. Use when you need 
 
 ## API
 
-### `Pin` struct
-
-```rust
-pub struct Pin<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Renderer: Renderer,
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Pin<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer,
-{
-    pub fn new(
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-
-    pub fn position(self, position: impl Into<Point>) -> Self;
-    pub fn x(self, x: impl Into<Pixels>) -> Self;
-    pub fn y(self, y: impl Into<Pixels>) -> Self;
-}
-```
-
-### Functions
-
-```rust
-pub fn pin<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Pin<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/pin.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/pin.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -82,7 +49,7 @@ stack![
 
 - `Pin` positions content relative to its own boundaries, not the window. Combine with `stack` or a fill-sized container to get window-relative positioning.
 - If neither `x`/`y` nor `position` is set, content defaults to (0, 0).
-- Content is not clipped by default. If the pinned content overflows the pin's bounds, it will draw outside.
+- Drawing passes the intersection of the pin bounds and the parent viewport to the content.
 
 ## See also
 
