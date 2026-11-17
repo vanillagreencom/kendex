@@ -24,6 +24,21 @@ def armed(root, name):
     environment = dict(os.environ)
     for key in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         environment.pop(key, None)
+    # Match released core's absent-repository rule before reading its record:
+    # https://github.com/vanillagreencom/kendex/blob/v1.21.0/crates/core/src/repo_effects.rs#L174-L189
+    # https://github.com/vanillagreencom/kendex/blob/v1.21.0/crates/core/src/guard/repo.rs#L32-L41
+    environment["LC_ALL"] = "C"
+    probe = subprocess.run(["git", "-C", root, "rev-parse", "--is-inside-work-tree"],
+                           env=environment, capture_output=True, text=True)
+    if probe.returncode:
+        if any(phrase in probe.stderr for phrase in
+               ("not a git repository (or any ", "not a working tree")):
+            return False
+        raise OSError(f"probe repository {root}: {probe.stderr.strip()}")
+    if probe.stdout.strip() == "false":
+        return False
+    if probe.stdout.strip() != "true":
+        raise OSError(f"probe repository {root}: unexpected answer {probe.stdout!r}")
     result = subprocess.run(["git", "-C", root, "rev-parse", "--absolute-git-dir"],
                             env=environment, capture_output=True, text=True)
     if result.returncode:
