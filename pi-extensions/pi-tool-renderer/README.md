@@ -31,13 +31,13 @@ Pi runs a tool and gives its call and result to the display extension. The exten
 
 ## Memory use
 
-- User messages keep at most 256 weakly held Markdown layouts. Each keeps one width and at most 65,536 characters each of source text and rendered lines. Larger messages render without retention. The layouts do not keep message components alive and are cleared at session shutdown.
+- The display retains at most 256 user-message layouts, with at most 65,536 characters each of message text and displayed lines. Larger messages still display. Closing the session releases the layouts.
 - Grouped tool calls are tracked only while `stackToolCalls` is on.
 - At most 256 grouped calls are kept, in groups of at most 64; older groups are dropped. Each keeps at most 16,384 characters of its result for the preview: the start for read and search calls, the end for bash.
 - A dropped call that Pi draws again (ctrl+o, a resize) is shown on its own and is not kept.
 - Grouped calls and the list of tool displays to refresh are cleared when a session starts or ends. A tool display Pi no longer shows is not kept alive.
 - With `pendingStatusAnimation` on, a running tool row blinks until its result arrives, the agent run ends or the session ends. A row the agent run ended without a result does not blink again when Pi draws it again. The ids of those rows are kept until the session ends.
-- A write diff reads at most 700 KB of the old file and builds no diff for more than 700 KB of new content; past either limit the row says the diff was skipped. In a UI session, at most 256 in-flight writes keep old-file snapshots; a result, error or session reset releases them. A write row's call preview also drops its old text when the write finishes or the agent run ends. Headless sessions load no old-file snapshots for display.
+- A write diff is skipped if the old file or new content exceeds 700 KB. The row reports the skip. At most 256 writes retain old content for display until they finish, the agent run ends or the session resets. Sessions without a UI retain none.
 - An edit's result diff comes from the patch Pi's edit tool returns, so the renderer reads no file for it. A patch over 700 KB is not shown, and the row says the diff was skipped.
 
 ## Setup
