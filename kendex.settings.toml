@@ -5,7 +5,7 @@
 
 [env]
 
-# The owner's order for this organization's repositories: Claude CLI, GPT through the Copilot seat, Codex CLI as fallback (Slack1793558900.347579,2026-11-01).
+# The owner's order for this organization's repositories: Claude CLI, GPT through the Copilot seat, Codex CLI as fallback.
 SECOND_OPINION_MODELS = "claude pi-copilot-gpt codex"
 
 # A lane publishes a draft and runs internal review while CI is pending, the
@@ -59,7 +59,8 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # Total concurrent agent-session budget, counting the primary; "0" =
 # unlimited. How reviews fit it:
 # skills/orch/references/skill-rules.md § Reviewer persistence is budget-conditional.
-# On the Codex runtime, set the cap `spawn-adapter slots` reports.
+# On the Codex runtime, set the effective_cap that
+# `agent-runtime subagent room --harness codex` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
 # Who the overseer is talking to: "ceo" or "engineer"; what each value
