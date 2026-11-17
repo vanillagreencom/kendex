@@ -52,7 +52,7 @@ For pnpm or Next.js, leave `node_modules` out of `WORKTREE_SYMLINKS` and set `WO
 
 Hosted creates run this command on the lane host. The provider must deliver private files before the create that runs setup.
 
-For each key's full semantics, default-branch fallback and refusal conditions, setup requirements and retries, read `scripts/worktree --help`. For links beside tracked files, read `scripts/worktree fix-links --help`.
+For each key's full semantics, default-branch fallback and refusal conditions, setup requirements and retries, read `.agents/skills/worktree/scripts/worktree --help`. For links beside tracked files, read `.agents/skills/worktree/scripts/worktree fix-links --help`.
 
 Wiring the Codex Desktop and Claude Code worktree hooks: [references/hooks.md](references/hooks.md).
 
