@@ -292,9 +292,14 @@ pub fn inherited(server: &Server, session: &str, name: &str) -> Result<Option<St
 
 /// `name` as a window name that keeps its spelling: tmux expands formats in
 /// a window's `-n` name, so a name spelling a format would show its
-/// expansion, another window's name among them.
+/// expansion, another window's name among them. A trailing semicolon must
+/// be escaped for tmux's command parser to keep it in the argument.
 fn literal(name: &str) -> String {
-    name.replace('#', "##")
+    let mut name = name.replace('#', "##");
+    if name.ends_with(';') {
+        name.insert(name.len() - 1, '\\');
+    }
+    name
 }
 
 /// Open a new window in `session` at the default shell, detached, named
@@ -1072,6 +1077,25 @@ impl Drop for Private {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_windows_keep_literal_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(dir.path());
+        let server = &private.0;
+        for name in ["helper;", "helper-#{window_name}"] {
+            let pane = new_window(server, "t", name, dir.path())
+                .unwrap_or_else(|error| panic!("{name:?}: {error:?}"));
+            let Reading::Live(windows) = list_windows(server, "t") else {
+                panic!("{name:?}: the windows must read");
+            };
+            assert_eq!(
+                windows.iter().find(|(window, _, _)| window == &pane.window),
+                Some(&(pane.window.clone(), pane.id.clone(), name.to_owned())),
+                "{name:?}"
+            );
+        }
+    }
 
     /// A pane the live server does not have reads gone, by its exact id; a
     /// pane the server keeps after its process exited reads dead, with its
