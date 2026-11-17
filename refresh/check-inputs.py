@@ -1,13 +1,19 @@
 # The release and refresh jobs use this one conservative input proof.
 import datetime, io, json, os, pathlib, re, subprocess, tempfile, time, urllib.parse, zipfile
 proof = 'output'
+# Release has five minutes including cancellation and checkout; reserve two
+# for those steps and completion so unreadable proof can still return full.
+deadline = time.monotonic() + 180
 def command(*args):
     # Fleet's 636-run history read took 14.5s at the old 15s bound (KEN-5181).
     # Keep complete pagination bounded separately from single-object reads.
     timeout = 120 if '--paginate' in args and '--slurp' in args else 15
     started = time.monotonic()
+    remaining = deadline - started
     try:
-        return subprocess.check_output(args, timeout=timeout, stderr=subprocess.PIPE)
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(args, 0)
+        return subprocess.check_output(args, timeout=min(timeout, remaining), stderr=subprocess.PIPE)
     finally:
         if args[:2] == ('gh', 'api'):
             print(f'refresh-read proof={proof} seconds={time.monotonic() - started:.3f} path={args[-1]}')

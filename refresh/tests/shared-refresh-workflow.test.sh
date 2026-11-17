@@ -315,7 +315,8 @@ bin_dir.mkdir()
     '    @classmethod\n'
     '    def now(cls, tz=None): return cls(2026, 10, 17, tzinfo=datetime.timezone.utc)\n'
     'datetime.datetime = Clock\n'
-    'exec(compile(sys.stdin.read(), "<production-step>", "exec"))\n')
+    'exec(compile(sys.stdin.read(), "<production-step>", "exec"))\n'
+    'print("refresh-test-elapsed=" + str(elapsed))\n')
 (bin_dir / 'python3').chmod(0o755)
 transport = '''#!@PYTHON@
 import datetime, io, json, os, pathlib, sys, urllib.parse, zipfile
@@ -370,7 +371,13 @@ world['record'] = dict(inputs=tuple_record, run=8, attempt=1)
 now = datetime.datetime(2026, 10, 17, tzinfo=datetime.timezone.utc)
 recent = (now - datetime.timedelta(hours=1)).isoformat()
 old = (now - datetime.timedelta(hours=25)).isoformat()
-cases = [('paginated-over-15', {'read_seconds': {'/actions/workflows/': 16}}, 'skip'),
+cases = [('cumulative-successful-reads', {'read_seconds': {'/actions/workflows/': 31},
+                                          'expected_proof': 'history-window', 'expected_exception': 'TimeoutExpired',
+                                          'expected_elapsed': 180}, 'full'),
+         ('exhausted-before-next-read', {'read_seconds': {'/actions/workflows/': 30},
+                                         'expected_proof': 'history-window', 'expected_exception': 'TimeoutExpired',
+                                         'expected_elapsed': 180}, 'full'),
+         ('paginated-over-15', {'read_seconds': {'/actions/workflows/': 16}}, 'skip'),
          ('paginated-over-120', {'read_seconds': {'/actions/workflows/': 121},
                                  'expected_proof': 'history-window', 'expected_exception': 'TimeoutExpired'}, 'full'),
          ('single-over-15', {'read_seconds': {'/commits/': 16},
@@ -512,6 +519,9 @@ def execute_check(body, name, overrides, route):
     for field in ('proof', 'exception'):
         if 'expected_' + field in overrides:
             assert field + '=' + overrides['expected_' + field] in result.stdout, ('wrong-diagnostic', name, result.stdout)
+    if 'expected_elapsed' in overrides:
+        observed = float(re.search(r'^refresh-test-elapsed=(\S+)$', result.stdout, re.M).group(1))
+        assert observed == overrides['expected_elapsed'], ('cumulative-deadline', name, observed)
     if name == 'paginated-over-15':
         assert re.search(r'refresh-read proof=history-window seconds=16\.000 ', result.stdout), ('missing-read-time', name, result.stdout)
     if name == 'old-record':
@@ -539,6 +549,14 @@ case = next(row for row in cases if row[0] == 'paginated-over-15')
 try: execute_check(broken, 'control-short-pagination-timeout', case[1], 'skip')
 except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
 else: raise AssertionError('must-fail control missed short pagination timeout')
+original = 'remaining = deadline - started'
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, "remaining = float('inf') # " + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'cumulative-successful-reads')
+try: execute_check(broken, 'control-no-cumulative-deadline', case[1], 'full')
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed cumulative read deadline')
 original = 'end = min(start + datetime.timedelta(days=7), now)'
 assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, original.replace('days=7', 'days=35') + ' # ' + original)

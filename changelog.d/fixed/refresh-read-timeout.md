@@ -1,1 +1,1 @@
-- Give paginated consumer refresh input reads more time to finish, and report each read’s duration and the failed proof and exception when a read cannot complete.
+- Give paginated consumer refresh input reads more time to finish within a shared read budget that leaves time for the full-refresh fallback, and report each read’s duration and the failed proof and exception when a read cannot complete.
