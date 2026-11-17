@@ -601,7 +601,7 @@ macroscope = false
     assert (root / "personal.bin").read_bytes() == bytes(range(256))
     # Compare with an executing ordinary old full render on the same inputs.
     ordinary = subprocess.run([bash, str(root / ".agents/skills/bot-instructions/scripts/bot-instructions"),
-                               "render", "--repo", str(root)], env=env, capture_output=True, text=True)
+                               "render", "--repo", str(root)], cwd=root, env=env, capture_output=True, text=True)
     assert ordinary.returncode == 0 and review_files() == canonical, ordinary
 
 
