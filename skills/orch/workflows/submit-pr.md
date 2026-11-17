@@ -78,7 +78,7 @@ fi
 SUBMIT_PROOF_WORD="$(jq -r '.result.proof' <<<"$SUBMIT_PROOF")"
 ```
 
-Where the item's dev round closed `pass-excused`, write that round's `exception` object from its row in the item's `stages` (`orch-runtime state get --item [ISSUE_ID] /stages`) to `[WORKTREE_PATH]/tmp/exception-[ISSUE_ID].json` with the harness file tool, and add `--exception-file [WORKTREE_PATH]/tmp/exception-[ISSUE_ID].json` to the `read-proof` line.
+Where the item's dev round closed `pass-excused`, write that round's `exception` object from its row in the item's `stages` (`orch-runtime state get --item [ISSUE_ID] /stages`) to `[WORKTREE_PATH]/tmp/round-exception-[ISSUE_ID].json` with the harness file tool, and add `--exception-file [WORKTREE_PATH]/tmp/round-exception-[ISSUE_ID].json` to the `read-proof` line.
 
 | `SUBMIT_PROOF_WORD` | Action |
 |---|---|

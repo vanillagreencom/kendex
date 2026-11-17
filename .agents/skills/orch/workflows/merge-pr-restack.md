@@ -126,6 +126,8 @@ With `ORCH_DELIVERY=push-base` no pull request exists: skip step 1. Run step 2 t
    fi
    ```
 
+   Where the item's dev round closed `pass-excused`, add `--exception-file [WORKTREE_PATH]/tmp/round-exception-[STATE_KEY].json` to the `read-proof` line: [dev-start.md § The exception file](dev-start.md#the-exception-file).
+
    A nonzero exit hands back with the printed reply and keeps the PR unarmed, on submit-pr's steps 1-3 route too, before its create or update can arm the queue. Keep the reader's reply, its `proof` word and the rows it names, with the merge decision. A `missing` reply names in `lacks` the tree and the narrowest mode the project declares. A `pending` reply stays pending until the exact-head CI wait or the queue proves it.
 
 4. **Return to the merge.** The head changed. Re-confirm the gate mode, then return to merge-pr.md § 5 step 1, which reads the new exact head, repeats its proof read, waits for CI and takes the merge route again.

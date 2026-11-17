@@ -326,7 +326,7 @@ pub(crate) fn room_measured(lane: &Lane, harness: Option<Harness>) -> Option<(&s
     }
 }
 
-/// A walled lane's account read (`lanes pick --lane` in process), the one
+/// A walled lane's account read (`agent-runtime accounts pick --account` in process), the one
 /// reading a wall's lift and the watch's resume weigh: for the model the
 /// record names, the whole account where it names none, the widest reading,
 /// so it lifts no wall the model's own would keep; under the record's host

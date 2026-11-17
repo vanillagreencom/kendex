@@ -289,7 +289,7 @@ pub struct Relaunch {
 /// [`super::overseer::Judges`] reads.
 pub struct WallRoute<'a> {
     pub relaunch: WallRelaunch,
-    /// `lanes pick --harness H --native-model M --exclude-lane SPENT --json`.
+    /// `agent-runtime accounts pick --harness H --native-model M --exclude-account SPENT`.
     pub pick: &'a dyn Fn(Harness, &str, &str) -> Pick,
     /// Start the relaunch detached through the one runner; `Err` is the
     /// launcher's refusal.

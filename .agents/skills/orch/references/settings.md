@@ -134,20 +134,20 @@ A local lane on Linux runs confined, except a Copilot CLI lane, which runs uncon
 
 ## Accounts
 
-The account judge, `orch-runtime accounts pick`, reads these through agent-runtime.
+The account judge, `orch-runtime lane pick`, reads these through agent-runtime.
 
 | Key | What it changes | Default |
 |---|---|---|
-| <a id="orch-lane-dirs"></a>`AGENT_RUNTIME_ACCOUNT_DIRS` | `:`-separated account folders, each absolute or relative to `HOME`: the accounts the judge picks among. An entry's harness is read from the credential it holds. | unset: no local account is a candidate |
+| `AGENT_RUNTIME_ACCOUNT_DIRS` | `:`-separated account folders, each absolute or relative to `HOME`: the accounts the judge picks among. An entry's harness is read from the credential it holds. | unset: no local account is a candidate |
 | `AGENT_RUNTIME_ACCOUNT_ALIASES` | `<discovered name>=<alias>` pairs, the names the roster and the judge use. | unset |
-| <a id="orch-lane-exclude"></a>`AGENT_RUNTIME_ACCOUNT_EXCLUDE` | Comma-separated account names, never paths. The judge still measures an excluded account and refuses it `excluded` for every pick. | unset |
-| <a id="orch-lane-retire"></a>`AGENT_RUNTIME_ACCOUNT_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs: the account is picked until that UTC day and measured after it. | unset |
-| <a id="orch-lane-max-pct"></a>`AGENT_RUNTIME_ACCOUNT_MAX_PCT` | The usage share at or above which a pick refuses an account, read on the window that binds the lane. A launch is judged on that window's projected room: the window charged, for each live lane on the account and the candidate, the burn below until the window's reset. A pick's `--max-pct` replaces it. | `95` |
-| <a id="orch-lane-burn-pct-per-hour"></a>`AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR` | A live session's hourly spend, in points of five hours' room, where its account measured no rate: a week is charged 5/168 of it an hour, a month 5/720. It is charged over the hours left to the window's reset, at least one and at most the window's length, one where no reset is known. A rate the account measured on that window, shared among the spenders at the sample, replaces it; where no lane was live at the sample, a lane is charged no less than this. `0` turns the charge off. | `5` |
-| <a id="orch-overseer-headroom-pct"></a>`AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` | The headroom a controller hands off at, and so the room an overseer's seat keeps for it: a worker's pick holds a seat to `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - this)`. | `5` |
+| `AGENT_RUNTIME_ACCOUNT_EXCLUDE` | Comma-separated account names, never paths. The judge still measures an excluded account and refuses it `excluded` for every pick. | unset |
+| `AGENT_RUNTIME_ACCOUNT_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs: the account is picked until that UTC day and measured after it. | unset |
+| `AGENT_RUNTIME_ACCOUNT_MAX_PCT` | The usage share at or above which a pick refuses an account, read on the window that binds the lane. A launch is judged on that window's projected room: the window charged, for each live lane on the account and the candidate, the burn below until the window's reset. A pick's `--max-pct` replaces it. | `95` |
+| `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR` | A live session's hourly spend, in points of five hours' room, where its account measured no rate: a week is charged 5/168 of it an hour, a month 5/720. It is charged over the hours left to the window's reset, at least one and at most the window's length, one where no reset is known. A rate the account measured on that window, shared among the spenders at the sample, replaces it; where no lane was live at the sample, a lane is charged no less than this. `0` turns the charge off. | `5` |
+| `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` | The headroom a controller hands off at, and so the room an overseer's seat keeps for it: a worker's pick holds a seat to `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - this)`. | `5` |
 | `AGENT_RUNTIME_CODEX_CREDIT_FLOOR` | The Codex credit balance above which a walled window still leaves the account pickable. | `5000` |
-| <a id="orch-lane-cloud-credit-floor"></a>`AGENT_RUNTIME_CLOUD_CREDIT_FLOOR` | The dollars a cloud or API credit grant must exceed to be picked. A grant pool is judged on its grant's verdict alone. | `10` |
-| <a id="orch-lane-copilot-pool"></a>`AGENT_RUNTIME_COPILOT_POOL` | `<pi root>=<used>/<granted>` pairs: the Copilot pool each Pi root spends, as you state it, where no login or provider row reads it. | unset |
+| `AGENT_RUNTIME_CLOUD_CREDIT_FLOOR` | The dollars a cloud or API credit grant must exceed to be picked. A grant pool is judged on its grant's verdict alone. | `10` |
+| `AGENT_RUNTIME_COPILOT_POOL` | `<pi root>=<used>/<granted>` pairs: the Copilot pool each Pi root spends, as you state it, where no login or provider row reads it. | unset |
 | `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | The account records' root: the usage cache and the wall records. Absolute or `~/`. | `kendex/agent-runtime/accounts` under `$XDG_STATE_HOME`, else `~/.local/state` |
 | `AGENT_RUNTIME_USAGE_TTL` | Seconds a cached usage figure is served; `0` declines every cached figure. | `300` |
 | `AGENT_RUNTIME_USAGE_MAX_AGE` | A caller's own pass interval, which widens the cache window and never narrows it. | unset |

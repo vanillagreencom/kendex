@@ -45,7 +45,7 @@ Copy this shape for a new crossing: orch decides and records, agent-runtime acts
 ## Reading route
 
 - [skills/orch/DEVELOPMENT.md](../../skills/orch/DEVELOPMENT.md): the runtime's stack, its tests and the rule for adding an effect-boundary allowance.
-- [skills/agent-runtime/SKILL.md](../../skills/agent-runtime/SKILL.md): the execution contract, its verbs, outcomes and stop by identity; [skills/agent-runtime/DEVELOPMENT.md](../../skills/agent-runtime/DEVELOPMENT.md) for its build, native probe and lint.
+- [skills/agent-runtime/SKILL.md](../../skills/agent-runtime/SKILL.md): the execution contract, its verbs, outcomes and stop by identity; [skills/agent-runtime/DEVELOPMENT.md](../../skills/agent-runtime/DEVELOPMENT.md) for its build and lint.
 - [skills/mailbox/SKILL.md](../../skills/mailbox/SKILL.md) and `lane-mail --help`: the verbs, envelopes, receipts and refusal keys.
 
 ## Revisit when

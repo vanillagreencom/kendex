@@ -794,7 +794,7 @@ pub(super) fn apply_request(
 }
 
 /// The accounts judge over this fleet's charges for one request, read with
-/// the kernel's readers (`lanes pick` in process).
+/// the kernel's readers (`agent-runtime accounts pick` in process).
 pub(super) fn pick_account(
     settings: &Settings,
     path: &Path,

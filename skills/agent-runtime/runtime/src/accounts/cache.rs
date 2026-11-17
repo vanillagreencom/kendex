@@ -95,8 +95,8 @@ impl Record {
     }
 
     /// The fall the record holds: the one written, else the one between its
-    /// displaced sample and its figure, which the shell `lanes` writes
-    /// without keeping `drop`.
+    /// displaced sample and its figure, for a record written without
+    /// `drop`.
     fn held_fall(&self) -> Option<Fall> {
         self.fall.clone().or_else(|| {
             let prior = self.prior.as_ref()?;

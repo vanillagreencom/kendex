@@ -163,7 +163,7 @@ The fleet record `workflow-state-oversee.json` holds the init object and the mem
 | Field | Type | Owner | Meaning |
 |---|---|---|---|
 | `lanes` | object[] | `launch-lane`, `close-lane`, `park-lane`, `reserve-lane`, `release-lane`, `admit`, `state merge`, `record-surface-lane`, the watch | One record per lane, [§ Lane records](#lane-records). |
-| `tmux` | object | `launch-lane` | `{session}`: the tmux session the fleet's lane windows open in, written by the first launch and read by later launches where `ORCH_TMUX_SESSION` names none ([lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session)). |
+| `tmux` | object | `launch-lane` | `{session}`: the tmux session the fleet's lane windows open in, written by the first launch and read by later launches where `AGENT_RUNTIME_TMUX_SESSION` names none ([lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session)). |
 | `controller` | object | agent-runtime's controller transitions, `orch-runtime register --fleet` | The overseer session, [§ Controller](#controller). |
 | `intents` | object[] | agent-runtime's journal | One row per lane or controller operation with a live effect: its phase, obligations and outcome. `orch-runtime state inspect --fleet` lists the open ones under `open_intents`. |
 | `handoff` | object | `record-overseer-ledger` entry `handoff` | The overseer's own hand-off: `{handoff_file, pane_key, session_id, context, written_at}`, `written_at` stamped under the fleet log's time rule. |

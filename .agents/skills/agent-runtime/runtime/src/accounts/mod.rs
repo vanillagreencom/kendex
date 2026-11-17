@@ -797,7 +797,7 @@ fn unbilled_answer(req: &PickRequest) -> PickAnswer {
     }
 }
 
-/// What a caller asks the judge: `lanes pick`'s own words.
+/// What a caller asks the judge: `agent-runtime accounts pick`'s own words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickRequest {
     pub harness: Harness,
@@ -1069,8 +1069,8 @@ fn window_hours(bucket: &str) -> f64 {
 /// `room` is the headroom the lanes may spend: on a seat, the headroom less
 /// `kept` and the headroom its limit holds back below the bound.
 ///
-/// The selection score (`with_lane_selection_score`, `lanes --help`
-/// § pick) is no charge: it is `room` weighted by the reset bonus
+/// The selection score (`with_lane_selection_score`, `agent-runtime
+/// accounts pick`) is no charge: it is `room` weighted by the reset bonus
 /// `1 + 1 / (1 + hours to the binding reset)`, bounded to twice the room,
 /// so among accounts with room the sooner reset is tried first and no
 /// reset time buys a launch past the bound.
@@ -1229,7 +1229,7 @@ fn reset_bonus(hours: Option<f64>) -> f64 {
     hours.map_or(1.0, |h| 1.0 + 1.0 / (1.0 + h))
 }
 
-/// A grant judged (`with_lane_tier`, `lanes --help` § pick tier 0): the
+/// A grant judged (`with_lane_tier`, `agent-runtime accounts pick` tier 0): the
 /// cloud credit of a `cloud-credit` host or a Pi `anthropic/` model's API
 /// credit, an allowance that expires and does not refill. Read where the
 /// row's `credits` carry a dollar limit and remainder and an end `E` (the
@@ -1325,7 +1325,7 @@ pub struct Judged {
     pub grant: Option<Grant>,
     pub score: Option<f64>,
     /// On the chooser's answer, the room rows the choice was made among
-    /// (`lanes pick --json`'s `qualifying_count`), the figure the succession
+    /// (`agent-runtime accounts pick`'s `qualifying_count`), the figure the succession
     /// walk's successor bound and the mark judge's capacity row read; a
     /// named account's judgement counts none.
     pub qualifying: Option<u32>,
@@ -1335,7 +1335,7 @@ pub struct Judged {
 /// fraction as it is. The shell callers read the record's `wall`,
 /// `effective_headroom_pct` and `need` by the pattern `^[0-9]{1,3}$`
 /// (the hook's seat line), the spelling
-/// `lanes pick --json` gives an integer percentage; `60.0` is unreadable
+/// `agent-runtime accounts pick` gives an integer percentage; `60.0` is unreadable
 /// to them.
 fn figure(n: f64) -> Value {
     if n.fract() == 0.0 && n.abs() < 9.0e15 {
@@ -1347,7 +1347,7 @@ fn figure(n: f64) -> Value {
 
 impl Judged {
     /// The record a caller reads: the reader's row with the judgement's
-    /// fields over it, as `lanes pick --json` prints them, every integral
+    /// fields over it, as `agent-runtime accounts pick` prints them, every integral
     /// figure spelled as an integer ([`figure`]); the rate fields of the
     /// window `wall` names, which are the reader's where that window is
     /// its binding and `one-sample` otherwise (the reader rated no other
@@ -1461,8 +1461,8 @@ impl Judged {
         }
     }
 
-    /// The order key of a room row (`lane_selection`, `lanes --help`
-    /// § pick): the tier, a grant first (the allowance that expires
+    /// The order key of a room row (`lane_selection`, `agent-runtime
+    /// accounts pick`): the tier, a grant first (the allowance that expires
     /// first), plan windows, Codex credits last; then the grant's end, the
     /// higher score, fewer claims, more room after a seat's reserve, the
     /// lower wall.
@@ -1477,7 +1477,7 @@ impl Judged {
     }
 }
 
-/// The judge's answer, `lanes pick`'s exits by name.
+/// The judge's answer, `agent-runtime accounts pick`'s exits by name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PickAnswer {
     /// Exit 0: the account to spend.
@@ -1537,7 +1537,7 @@ pub enum PickAnswer {
 }
 
 impl PickAnswer {
-    /// `lanes pick`'s exit status for this answer.
+    /// `agent-runtime accounts pick`'s exit status for this answer.
     pub fn exit(&self) -> i32 {
         match self {
             PickAnswer::Lane(_) => 0,
@@ -1556,7 +1556,7 @@ impl PickAnswer {
     }
 
     /// The reply a caller reads: the answer's word, the exit it maps to,
-    /// and the record or the counts `lanes pick --json` prints.
+    /// and the record or the counts `agent-runtime accounts pick` prints.
     pub fn reply(&self) -> Value {
         let (answer, record) = match self {
             PickAnswer::Lane(j) => ("lane", j.record()),
@@ -1954,7 +1954,7 @@ pub fn pick(
 /// A `--lane` pick's answer from its one judgement: the word's refusal
 /// where the word refused it (an end nobody can read is no verdict, so it
 /// is unjudged with the cause), else the windows' answer by
-/// `lanes pick --lane`'s exits.
+/// `agent-runtime accounts pick --account`'s exits.
 fn named_answer(judged: Judged, req: &PickRequest, today: &str) -> PickAnswer {
     match standing_for(&judged.row, req, today) {
         Standing::Reserved => PickAnswer::Reserved(judged),

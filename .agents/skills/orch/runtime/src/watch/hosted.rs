@@ -102,7 +102,7 @@ const MERGED_ROW: &str = super::github::MERGED_ROW;
 /// settings, whose repositories a lane naming none is read in.
 pub struct Reads<'a> {
     pub gh: &'a Path,
-    /// `lanes list --json` (`accounts::roster`), read once per pass and
+    /// `agent-runtime accounts roster` (`accounts::roster`), read once per pass and
     /// only for a cloud lane whose pull request is a draft.
     pub roster: &'a dyn Fn() -> Result<Roster, String>,
     /// The fleet's checkout, whose own repository comes first.

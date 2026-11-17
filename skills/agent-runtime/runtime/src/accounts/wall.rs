@@ -34,7 +34,7 @@ pub fn account_wall_path(account_state: &Path, config_dir: &str) -> PathBuf {
         .join(format!("{}.json", cksum(canon.as_bytes())))
 }
 
-/// The wall `lanes` reads: the account and the epoch second its weekly
+/// The wall `agent-runtime accounts` reads: the account and the epoch second its weekly
 /// window resets at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountWall {
@@ -97,7 +97,7 @@ pub struct AccountWallWrite {
 /// Record the wall where it is one (`account_wall_record`): a named
 /// account, a reset ahead of `now`, the harness's own weekly report. The
 /// path written, or `None` where nothing is. Renamed into place whole, so
-/// `lanes` never reads half a record.
+/// `agent-runtime accounts` never reads half a record.
 #[allow(
     clippy::disallowed_methods,
     reason = "the account wall record, under the account records' root, read for the sighting it holds and written whole and renamed into place, the bytes the account walk reads"
@@ -149,7 +149,7 @@ pub fn record_account_wall(
 mod tests {
     use super::*;
 
-    /// The checksum `lanes` names the record by, pinned to one run of the
+    /// The checksum `agent-runtime accounts` names the record by, pinned to one run of the
     /// host's `cksum` over the fixture account (`printf '%s'
     /// '/home/me/.eclaude' | cksum` gives `2455569205 17`).
     #[test]

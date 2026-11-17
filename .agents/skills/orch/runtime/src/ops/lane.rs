@@ -956,8 +956,8 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
 }
 
 /// The account's room: a
-/// launch that asks (`judge_account`) and names an account `lanes`
-/// measures is judged on that account's projection through the accounts
+/// launch that asks (`judge_account`) and names an account `agent-runtime
+/// accounts` measures is judged on that account's projection through the accounts
 /// judge, with the charge of the lane this relaunch replaces, its own
 /// record, left out, since the relaunch takes that record's slot (its
 /// reservation goes with the relaunch patch): a replacement adds no lane.

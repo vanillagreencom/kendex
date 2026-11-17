@@ -8,7 +8,7 @@
 //! The account record is written only for a wall the duty judged current
 //! for the live identity (`watch/lanes.rs`, `wall`): a banner an earlier
 //! process drew never reaches this writer, which is how the record is keyed
-//! to the process identity while its bytes stay what `lanes` reads. The
+//! to the process identity while its bytes stay what `agent-runtime accounts` reads. The
 //! lane wall is a fleet transition dispatched under its [`super::Request`]
 //! variant, applied by the observation duty through
 //! `ops::apply`.

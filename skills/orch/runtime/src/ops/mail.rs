@@ -23,7 +23,7 @@ pub enum Word {
     Unread,
 }
 
-/// The account's cloud credit as `lanes list` read it at the send, or the
+/// The account's cloud credit as `agent-runtime accounts roster` read it at the send, or the
 /// word `unread` (the two forms the mailbox's `lm_send_record` writes). The
 /// dollars stay the number the listing printed, `0` or `12.5`, so the close
 /// row that prints them reads as the released record's.
