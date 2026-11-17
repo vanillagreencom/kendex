@@ -42,7 +42,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_JOURNAL_DIR` | Explicit absolute directory for a bounded observation session; unset or empty keeps collection off. See [request journal](references/request-journal.md). |
 | `LINEAR_JOURNAL_CALLER` | Known parent script identifier, without arguments; otherwise the journal names the Linear command script |
 | `LINEAR_JOURNAL_ITEM` | Known carrying issue identifier or `owner/repo#number`; absent or invalid stays unread |
-| `KENDEX_USER_EMAIL` | Your email address, in the project's private env file; `issues activate` assigns an unassigned issue to the Linear user with that address |
+| `KENDEX_USER_EMAIL` | Your Linear account email address, in the project's private env file |
 
 Set application credentials in `.env.local` unless `KENDEX_ENV_FILE` names another private file. Enable client credentials tokens in the application's Linear settings. Credential selection and precedence, expiry and attribution: [references/authentication.md](references/authentication.md).
 
@@ -50,9 +50,7 @@ On a host with the real client pair, run `scripts/linear.sh auth-mint`. It print
 
 Client-pair token storage: [references/authentication.md § Client-pair token store](references/authentication.md#client-pair-token-store). Delete stale token files an earlier version left under a checkout's `.cache/linear/oauth/`.
 
-Set `KENDEX_USER_EMAIL` to the address your Linear account signs in with. The app's Customize tab writes it to the private env file, never to `kendex.settings.toml`. Matching ignores case and uses the whole address. Empty or absent assigns nobody.
-
-A worktree whose `WORKTREE_SYMLINKS` lists `.env.local` links that file to its main checkout, so a value set there reaches the sessions a person runs in such a worktree. The orch skill launches every lane, local or hosted, with `KENDEX_USER_EMAIL` exported empty, which wins over the linked file, so a lane assigns nobody.
+Set `KENDEX_USER_EMAIL` to the address your Linear account signs in with. The app's Customize tab writes it to the private env file. With your email configured, `issues activate` can assign an unassigned issue to you. An orch-launched lane assigns nobody. See [SKILL.md § Option Behavior](SKILL.md#option-behavior) for assignment details.
 
 `LINEAR_CACHE_ROOT` is retired with the local store: set in the environment or a project file, even empty, it fails every command with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove it.
 
