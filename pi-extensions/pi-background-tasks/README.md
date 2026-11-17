@@ -46,7 +46,7 @@ Open `/extensions:settings`; settings appear under the **Background Tasks** tab.
 - `enabled`: package toggle; `glyphStyle` picks Unicode or ASCII symbols, and `pi-tool-renderer`'s global override wins when set.
 - Auto-backgrounding: `autoBackgroundBash`, `autoBackgroundPatterns`, `forcedBackgroundWindowSeconds`, `forcedBackgroundNotifyOnOutput`.
 - Execution: `defaultTimeoutSeconds`, `forceKillGraceMs`, and the `resourceControl*` group control task deadlines, termination grace and priority. Resource controls use `nice-ionice` by default, keeping Pi's environment. `auto` can select `systemd-run`, which uses the user manager's environment; commands available to Pi may be missing there.
-- Wakes and output: `outputSettleMs`, `outputAlertMaxChars`, `outputWakeBudgetMaxWakes`, `outputWakeBudgetMaxBytes`, `outputBufferMaxChars`, `logTailMaxChars` control notification timing, inline output and memory. Full output stays in the task log.
+- Wakes and output: `outputSettleMs`, `outputAlertMaxChars`, `outputWakeBudgetMaxWakes`, `outputWakeBudgetMaxBytes`, `outputBufferMaxChars`, `logTailMaxChars` control notification timing, inline output and memory.
 - UI: `showWidget`, `widgetPlacement`, `widgetDefaultMode`, `widgetFinishedRetentionSeconds`, `toolRenderMode`, `toolExpandedLogLines`, `dashboardOutputMaxLines`.
 - Shortcuts: `backgroundBashShortcut`, `widgetToggleShortcut`, `dashboardShortcut`; `none` disables one, and a change takes effect on restart.
 - Storage: `taskDir`; the `PI_BG_TASK_DIR` environment variable overrides it.
