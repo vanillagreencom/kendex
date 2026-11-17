@@ -120,5 +120,16 @@ else
   bad 'control removes the test-import role'
 fi
 
+if mutant_guard 's/none | test-module | test-import) return 4/none | test-module) return 4/'; then
+  attr_change unused-module
+  attr_selection "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ -z "$PLAN" ] \
+    && ! grep -q '^guard-note: suites=all reason=unidentified ' <<<"$OUT" \
+    && ok 'control: an unmapped import treated as mapped drops its importer coverage' \
+    || bad 'control: an unmapped import treated as mapped drops its importer coverage' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control changes the unmapped import rule'
+fi
+
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

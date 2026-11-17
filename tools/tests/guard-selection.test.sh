@@ -85,7 +85,7 @@ step_line='validate-step: name=tools/tests/demo-tool.test.sh command=run-all.sh 
 grep -Fxq "$step_line" <<<"$OUT" \
   && ok 'a scoped run names each suite it starts as its step' \
   || bad 'a scoped run names each suite it starts as its step' "$OUT"
-if mutant_guard 's/^      step "\$t" .*$/      :/'; then
+if mutant_guard '/RUN_ALL_PENDING_SUITES=\$pool_pending /s/ --local / /'; then
   preview range true "$MUTANT_TOOLS/guard"
   ! grep -Fxq "$step_line" <<<"$OUT" && [ "$(cat "$SUITE_LOG")" = tool ] \
     && ok 'control: a suite started with no step line turns the step row red' \

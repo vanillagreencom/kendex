@@ -368,7 +368,15 @@ entry_points_executable
 git -C "$R" commit -qm cancellation
 BASE="$(git -C "$R" rev-parse HEAD)"
 printf '# changed\n' >> "$R/skills/orch/scripts/launcher"
-if python3 - "$R" "$GUARD" "$BASE" "$TMP" <<'PY'
+CANCEL="$TMP/cancel"
+mkdir -p "$CANCEL/tools" "$CANCEL/skills/orch/tests/lib" "$CANCEL/skills/github/scripts/lib"
+cp -R "$MUTANT_TOOLS/." "$CANCEL/tools/"
+cp "$GUARD" "$CANCEL/tools/guard"
+ln -s "$REPO/.agents" "$CANCEL/.agents"
+cp "$REPO/skills/orch/tests/run-all.sh" "$CANCEL/skills/orch/tests/"
+cp "$REPO/skills/orch/tests/lib/"{git-env,suite-process}.sh "$CANCEL/skills/orch/tests/lib/"
+cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$CANCEL/skills/github/scripts/lib/"
+if python3 - "$R" "$CANCEL/tools/guard" "$BASE" "$TMP" <<'PY'
 import errno
 import os
 from pathlib import Path
@@ -405,16 +413,16 @@ read -r line < "$FIFO"
 npm.chmod(0o755)
 shell_suites = ["skills/orch/tests/direct.sh", "skills/orch/tests/helper.sh",
                 "skills/orch/tests/launcher.test.sh", "tools/tests/later.sh"]
-complete_plan = ["hooks/tests/startup.sh", *packages, *shell_suites]
+hooks = ["hooks/tests/startup.sh"]
+complete_plan = [*hooks, *packages, *shell_suites]
 # Each row stops a different execution state. The fallback consumes these
 # machine-read suite paths, including later package batteries.
 for phase, expected in (
-    ("npm", [packages[1], *shell_suites]),
-    ("standalone", [*packages, *shell_suites]),
-    ("npm-probe", [*packages, *shell_suites]),
-    ("npm-later", shell_suites),
-    ("loading", shell_suites),
-    ("running", ["helper", "launcher.test", "tools/tests/later.sh"]),
+    ("npm", [*hooks, packages[1], *shell_suites]),
+    ("npm-probe", [*hooks, *packages, *shell_suites]),
+    ("npm-later", [*hooks, *shell_suites]),
+    ("loading", [*hooks, *shell_suites]),
+    ("running", ["orch--helper", "orch--launcher.test", "tools--later"]),
 ):
   fifo = Path(scratch) / (phase + "-hold")
   os.mkfifo(fifo)

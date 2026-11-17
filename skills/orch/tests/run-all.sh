@@ -750,6 +750,10 @@ while [ "$finished" -lt "$RUN" ]; do
       { [ -z "$DEADLINE" ] || [ "$SECONDS" -lt "$DEADLINE" ]; }; then
       printf 'start suite=%s\n' "${SUITES[next]}"
       suite_file="${SUITE_FILES[next]}"
+      if [ "$LOCAL_SUITES" -eq 1 ]; then
+        suite_step="${suite_file#"$PWD"/}"
+        printf 'validate-step: name=%s command=run-all.sh --local --suite %s\n' "$suite_step" "$suite_step"
+      fi
       suite_args=("$suite_file")
       suite_environment "$suite_file" || { status=$?; stop_suites; exit "$status"; }
       PATH="$SUITE_PATH" "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &

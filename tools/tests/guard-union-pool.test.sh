@@ -34,7 +34,6 @@ mkdir -p "$W/skills/a/tests" "$W/skills/b/tests" "$W/skills/orch/tests/lib" "$W/
 git -C "$W" init -q
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$W/skills/orch/tests/lib/"
 printf '#!/usr/bin/env bash\n:\n' > "$W/skills/orch/tests/lib/git-env.sh"
-cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$W/skills/orch/scripts/lib/"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$W/skills/github/scripts/lib/"
 for s in skills/a/tests/same.test skills/b/tests/same.test skills/b/tests/other.test \
   skills/orch/tests/held skills/orch/tests/pooled hooks/tests/held.test; do
@@ -121,25 +120,16 @@ if [ "rc=$RC $STARTED" = "rc=0 hooks--held.test orch--held orch--pooled a--same.
   ok "control: a --battery run that drops the list pools every ALONE suite"
 else bad "control: a --battery run that drops the list pools every ALONE suite" "rc=$RC started=$STARTED"; fi
 
-echo "=== a runner reached through a symlink keeps its family aliases and ALONE list ==="
-# tools/guard calls the runner through its own path and names batteries from
-# git's physical toplevel. =dev_validate_run brings its _selection part only
-# where the battery is the runner's own directory.
-for s in dev_validate_run dev_validate_run_selection; do
-  printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' > "$W/skills/orch/tests/$s.sh"
-done
+echo "=== a runner reached through a symlink keeps physical ALONE paths ==="
 ln -s "$W" "$TMP/pool-link"
-alone_order "$TMP/pool-link/skills/orch/tests/run-all.runner" =dev_validate_run =held =held.test =same.test
-case "rc=$RC $STARTED" in
-  "rc=0 orch--dev_validate_run orch--dev_validate_run_selection a--same.test hooks--held.test orch--held" | \
-  "rc=0 orch--dev_validate_run_selection orch--dev_validate_run a--same.test hooks--held.test orch--held")
-    ok "through a symlink the alias family runs and the ALONE suites start last" ;;
-  *) bad "through a symlink the alias family runs and the ALONE suites start last" "rc=$RC started=$STARTED" ;;
-esac
-alone_order "$TMP/pool-link/skills/orch/tests/logical.runner" =dev_validate_run =held =held.test =same.test
-if [ "rc=$RC $STARTED" = "rc=0 hooks--held.test orch--dev_validate_run orch--held a--same.test" ]; then
-  ok "control: logical runner paths drop the family and pool the ALONE suites"
-else bad "control: logical runner paths drop the family and pool the ALONE suites" "rc=$RC started=$STARTED"; fi
+alone_order "$TMP/pool-link/skills/orch/tests/run-all.runner" =held =held.test =same.test
+if [ "rc=$RC $STARTED" = "rc=0 a--same.test hooks--held.test orch--held" ]; then
+  ok "through a symlink the ALONE suites start last"
+else bad "through a symlink the ALONE suites start last" "rc=$RC started=$STARTED"; fi
+alone_order "$TMP/pool-link/skills/orch/tests/logical.runner" =held =held.test =same.test
+if [ "rc=$RC $STARTED" = "rc=0 hooks--held.test orch--held a--same.test" ]; then
+  ok "control: logical runner paths pool the ALONE suites"
+else bad "control: logical runner paths pool the ALONE suites" "rc=$RC started=$STARTED"; fi
 
 # --- the guard ----------------------------------------------------------------
 # skills/alpha and skills/beta each hold same.test.sh. A change to both

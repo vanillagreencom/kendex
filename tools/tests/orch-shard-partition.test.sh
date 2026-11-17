@@ -1213,12 +1213,10 @@ else
   bad "must-fail: a matrix dropping one macOS exclude disagrees with ci-job-set"
 fi
 
-# The macOS legs' fallback list, which the nightly job declares and the
-# queue job aliases, and which runs where nothing classified, names the
-# shard roster less the shards excluded as Linux-only.
+# The queue fallback names the full roster less the native exclusions.
 queue_fallback_shards() { # queue_fallback_shards <workflow>
   awk '/^  [A-Za-z0-9_-]+:/ { job = $1 }
-       job == "skill-suites-macos:" && /^        shard: / { print }' "$1" |
+       job == "skill-suites-macos-queue:" && /^        shard: / { print }' "$1" |
     sed -n "s/.*'\(\[[^]]*\]\)'.*/\1/p" | tr -d '[]" ' | tr ',' '\n' | grep . | sort -u
 }
 queue_shards="$(queue_fallback_shards "$WORKFLOW")"
@@ -1728,7 +1726,7 @@ check "must-fail: a linear roster without its retention loses its unresolved sui
 # on both loses the rest of the family on macOS; releasing on neither runs
 # each suite twice on Linux; a macOS rest blind to those paths runs the two
 # twice there. A deleted path step returns its suite to macOS rest.
-jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.test.sh" ;;'
+jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;'
 jarvis_skip='                grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")'
 jarvis_moved="$(printf '%s\n' skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession.test.sh | sort)"
 (cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.test.sh) > "$TMP/jarvis-suites"
@@ -1762,7 +1760,7 @@ while IFS='|' read -r os major fault target expected replacement; do
   check "must-fail: a Jarvis rest $target changed leaves the $expected Jarvis suites $fault on $os" \
     "$want" "$got"
 done <<'ROWS'
-macos-latest|3|lost|arm|unmoved|              jarvis) needle="skills/$x/tests/*.test.sh" ;;
+macos-latest|3|lost|arm|unmoved|              jarvis) needle="skills/$x/tests/*.sh" ;;
 ubuntu-latest|4|duplicated|arm|family|              jarvis) needle="" ;;
 macos-latest|3|duplicated|skip|moved|                unclaimed+=("$t")
 ROWS

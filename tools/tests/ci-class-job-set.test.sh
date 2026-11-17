@@ -89,20 +89,16 @@ ROWS
 check "a path no target can depend on runs none" '[]' \
   "$(selection micro false "$UNREAD_DOC" | field rust_targets)"
 
-# The shards are the reach's projection and the skips the rest: the lock
-# record runs the two orch suites that read it, in the orch shards that hold
-# them on either runner, and skips every other orch suite; the github
-# package's group-leader.sh runs the runtime's target that runs it, and a
+# The shards are the reach's projection and the skips the rest. The install
+# record changes no suite input. The github package's group-leader.sh runs
+# the runtime's target that runs it, and a
 # path a suite's input note names for a read the scan cannot see runs that
 # suite (the required members of the derived reach and of the notes).
 # A runtime source runs every Jarvis suite that runs that built runtime.
 lock="$(selection micro false .kendex-lock.json)"
-kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$lock")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | grep -v '/run-all\.sh$' | tr '\n' ' ')"
-check "the lock record keeps the orch suites that read it, and no other" \
-  "skills/orch/tests/post_merge.sh skills/orch/tests/sync_base.sh " "$kept_orch"
-keeping="$(for os in Linux macOS; do printf '%s\n' skills/orch/tests/post_merge.sh skills/orch/tests/sync_base.sh | RUNNER_OS=$os bash "$ROOT/skills/orch/tests/run-all.sh" --shard-of; done | cut -d' ' -f1 | sort -u | tr '\n' ' ')"
-check "and starts the orch legs that hold them, and no other" "$keeping" \
-  "$(field shards <<<"$lock" | grep -o 'orch-[a-z]*' | sort | tr '\n' ' ')"
+kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$lock")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | awk '!/\/run-all\.sh$/' | tr '\n' ' ')"
+check "the install record keeps no orch suite" "" "$kept_orch"
+check "the install record starts no shard" '[]' "$(field shards <<<"$lock")"
 leader="$(selection micro false skills/github/scripts/lib/group-leader.sh)"
 check "group-leader.sh runs the runtime target that runs it" true \
   "$(jq 'index("orch/validate") != null' <<<"$(field rust_targets <<<"$leader")")"
@@ -161,7 +157,7 @@ sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-read
 while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
 # A lane source decides which lanes `CI` waits on, so a change to one runs in
 # a merge group: harness-ci's change-class answers it queue-only, off the
-# `queue` group of orch's narrow-change.conf.
+# `queue` group of change-scope's narrow-change.conf.
 while IFS= read -r p; do
   check "lane source $p is queue-only" "queue_only=true inputs=run cause=queue-path path=$p" \
     "$(queue_only_of "$p" | sed 's/ glob=.*//')"

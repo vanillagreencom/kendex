@@ -46,52 +46,31 @@
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #   CI_SELECTION   the file a class selection writes its skips and targets
 #                  to, where set
+#   PUSH_BEFORE, PUSH_AFTER  the actual main push endpoints
+#   MAIN_ONLY_SUITES  the workflow-owned dedicated declarations as JSON
+#   GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_RUN_ID  the proof lookup identity
 #
-# THE PUSH ROUTE, for EVENT=push, which the workflow runs on main alone. A
-# main push carries the head its merge group proved, and its shell shards run
-# the same steps with the same filters, so the push owes only what no
-# same-head merge-group run proved. It reads this workflow's merge-group runs
-# for GITHUB_SHA, each run's latest jobs and the selection each run published
-# as the SELECTION_ARTIFACT artifact through `gh api`, as GITHUB_REPOSITORY
-# and GH_TOKEN allow. Each run and job is checked for the event, head and run
-# it claims, because GitHub ignores a query filter it does not recognise.
-# Per runner, a suite is proved where no run's selection left it out and, for
-# every shard whose steps run it there (the projection the class route
-# selects by), at least one job named `Skill suites shard (<shard>,
-# <runner>)` exists across those runs and every such job completed with
-# success. A shard of LISTLESS_SHARDS is proved whole by its jobs alike. A
-# skill runtime Rust target is proved where every run's selection listed it
-# and the `orch-rest` Linux jobs, whose step runs the targets, succeeded. The
-# push emits `skipped_suites=` and `skipped_suites_macos=`, the suites proved
-# on each runner; `shards=` and `queue_macos_shards=`, each roster's shards
-# that run an unproved suite or are an unproved listless shard, `orch-rest`
-# among them where a target is owed; `rust_targets=`, every target less the
-# proved ones, `<package>/*` where none of a package's is proved; and
-# `shell_shards=` and `shell_os=` as emit() derives them, and no other lane.
-# A failed, pending or absent job proves nothing. A read that fails, finds
-# no run or cannot read a run's selection proves nothing either: the step
-# warns, emits the whole rosters, no skip and every target, and exits 0,
-# since a red step on main would report a push failure for an API outage
-# while the whole roster is the safe answer. Its one diagnostic line starts
-# `ci-job-set: main-proof=read|none|unread`.
+# THE PUSH ROUTE, for EVENT=push on main: read PUSH_BEFORE/PUSH_AFTER,
+# then select the range since the latest successful main push of this workflow.
+# Pending pushes may be replaced, so the event before head alone cannot
+# bound catch-up work. An absent, unread or non-ancestor successful head
+# selects every suite, shard and target and cache compilation. An unread
+# event range refuses selection, leaving the workflow full fallback.
 #
-# THE NIGHT ROUTE, for EVENT=schedule, the nightly run on main, runs again no
-# leg a run at the same head already ran green. It reads the push route's
-# merge-group proof and, beside it, this workflow's push runs for GITHUB_SHA
-# and their latest jobs: a suite is also proved on a runner where every push
-# leg that runs it there succeeded, since a push leg runs every suite its
-# group left unproved, and a listless shard where its push legs did. It
-# emits `queue_macos_shards=`, the macOS shards that still run a suite,
-# `skipped_suites_macos=`, `skipped_suites=[]`, `shards=[]` and
-# `rust_targets=[]`, since the night runs no Linux shell leg, and four
-# cargo lanes: `cargo_linux` and `cargo_windows_check`, compile legs, false
-# where every job CARGO_LINUX_JOBS or CARGO_WINDOWS_CHECK_JOBS names across
-# the push and group runs succeeded; `cargo_macos` and `cargo_windows`,
-# whose test steps a push skips, false where every such job of the group
-# runs did. A read that fails or finds neither run runs the whole night:
-# the macOS-capable roster and every cargo lane. Its diagnostic line starts
-# `ci-job-set: night-proof=`. A manual dispatch runs no changes job and so
-# the whole night.
+# tools/guard --suite-reach owns the selected suites and Rust targets.
+# Per runner, subtract only suites the same-head merge groups selections
+# kept and whose every owning shard job completed successfully. Each group
+# must select a Rust target and every orch-rest Linux job must succeed to
+# prove that target. A failed, pending, absent or unread proof subtracts
+# nothing. Lists of suites outside the reach and suites proved by the group
+# become skipped_suites and skipped_suites_macos. main_suites selects the
+# workflow-owned dedicated declarations; cache_compile selects build inputs.
+# main-proof=read|none|unread reports proof availability on stderr.
+#
+# THE NIGHT ROUTE, for EVENT=schedule: nightly=false only where the latest
+# successful scheduled main run of this workflow has GITHUB_SHA. Otherwise
+# nightly=true selects the full night. An unread history retains the night.
+# A manual dispatch runs the full night without a selection.
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
 #
@@ -184,24 +163,24 @@
 #   skipped_suites      the JSON list of shell suites outside the reach, `[]`
 #                       where every shard runs whole; each shell suite step
 #                       leaves the listed suites out of its own. On a push,
-#                       the suites the same-head group proved on Linux.
+#                       also the selected suites the same-head group proved
+#                       on Linux.
 #   skipped_suites_macos
-#                       a push's and a schedule's alone: the suites proved
-#                       on macOS at the head, which their macOS legs leave
-#                       out in place of skipped_suites.
+#                       a push's alone: suites outside its reach and suites
+#                       proved on macOS at the head, which its macOS legs
+#                       leave out in place of skipped_suites.
 #   rust_targets        the JSON list of skill runtime Rust targets the
 #                       reach holds, each `<package>/<target>` (`lib` or a
 #                       [[test]] name), run by one step of the orch-rest Linux
 #                       leg; every target of every skill runtime where a
 #                       lane source changed or the reach could not be read.
-#                       On a push, the targets the same-head group left
+#                       On a push, the selected targets the group left
 #                       unproved.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
 #                       shell bit is false. Merge groups run these on macOS,
-#                       a main push the macOS shards its group left
-#                       unproved, and the nightly run those no run at its
-#                       head proved.
+#                       a main push the selected macOS shards its group left
+#                       unproved. A selected night uses its fixed full matrix.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -399,40 +378,20 @@ runtime_targets() {
   done
 }
 
-# The cargo jobs whose legs a schedule runs, by the job names
-# skill-tests.yml gives them: the compile legs a push or a group ran green
-# prove, the test legs only a group's.
-CARGO_LINUX_JOBS='^Cargo [^ ]+ \(Linux\)$'
-CARGO_WINDOWS_CHECK_JOBS='^Windows cargo \(core and CLI targets compile\)$'
-CARGO_MACOS_JOBS='^macOS cargo '
-CARGO_WINDOWS_JOBS='^Windows cargo \(workspace tests\)$'
-
-# The proof route for EVENT, push or schedule, as the header states it. A
-# read that fails proves nothing, so it emits the whole of what the event
-# runs.
-main_proof() { # EVENT
-  local event=$1 sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
-  local runs ids="" pushes="" push_ids="" id page jobs="" push_jobs="" sels="" listing artifact sel work owed
-  local linux macos skipped skipped_macos rust linux_n macos_n targets_n cargo_linux cargo_macos cargo_windows cargo_windows_check
-  [ "$event" = push ] || mark=night-proof
+# A failed proof read subtracts nothing from the selected work.
+main_proof() {
+  local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
+  local runs ids="" id page jobs="" sels="" listing artifact sel work owed
+  local linux macos skipped skipped_macos rust linux_n macos_n targets_n
   if ! runs="$(gh api --paginate "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100")"; then
     state=unread cause=runs-read-failed
   elif ! ids="$(jq -rs --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
       [.[].workflow_runs[] | select(.event == "merge_group" and .head_sha == $sha and .path == $path) | .id]
       | unique | .[]' <<<"$runs")"; then
     state=unread cause=runs-unparseable ids=""
-  elif [ "$event" = schedule ]; then
-    if ! pushes="$(gh api --paginate "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=push&head_sha=$sha&per_page=100")"; then
-      state=unread cause=push-runs-read-failed
-    elif ! push_ids="$(jq -rs --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
-        [.[].workflow_runs[] | select(.event == "push" and .head_sha == $sha and .path == $path) | .id]
-        | unique | .[]' <<<"$pushes")"; then
-      state=unread cause=push-runs-unparseable push_ids=""
-    fi
   fi
-  if [ "$state" = read ] && [ -z "$ids$push_ids" ]; then
+  if [ "$state" = read ] && [ -z "$ids" ]; then
     state=none cause=no-merge-group-run
-    [ "$event" = push ] || cause=no-same-head-run
   fi
   work="$(mktemp -d)" || die proof-scratch "mktemp could not make the proof's scratch directory"
   # Each run's latest jobs, each checked for the head and run it claims.
@@ -462,38 +421,28 @@ main_proof() { # EVENT
     fi
     sels="$sels$sel"
   done
-  if [ "$state" = read ]; then
-    for id in $push_ids; do
-      run_jobs "$id" || { state=unread; break; }
-      push_jobs="$push_jobs$page"
-    done
-  fi
   linux_n=0 macos_n=0 targets_n=0
   if [ "$state" != read ]; then
     rm -rf -- "$work"
-    # shellcheck disable=SC2086 # the rosters are word lists
-    linux="[$(printf '"%s",' $SHARDS)]" macos="[$(printf '"%s",' $MACOS_SHARDS)]"
-    if [ "$event" = push ]; then
-      emit "${linux/,]/]}" "${macos/,]/]}" '[]' '[]' "$(all_targets)"
-    else
-      emit '[]' "${macos/,]/]}" '[]' '[]' '[]' cargo_linux=true cargo_macos=true cargo_windows=true cargo_windows_check=true
-    fi
+    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" "main_suites=$main_suites" "cache_compile=$main_build"
   else
     jq -cs 'add // []' <<<"$jobs" >"$work/jobs.json" &&
-      jq -cs 'add // []' <<<"$push_jobs" >"$work/push-jobs.json" &&
       jq -cs '.' <<<"$sels" >"$work/selections.json" &&
       suite_map | jq -Rcs 'split("\n") | map(select(length > 0) | split("\t"))' >"$work/map.json" &&
       runtime_targets | jq -Rcs 'split("\n") | map(select(length > 0))' >"$work/targets.json" ||
       die main-proof-unevaluated "the proof's inputs could not be gathered"
     # Per runner the proved suites and the shards that still run one, the
-    # targets left unproved, the cargo lanes left unproved, and the counts:
-    # `<linux> <macos> <skipped> <skipped macos> <rust> <n> <n> <n>
-    # <cargo_linux> <cargo_macos> <cargo_windows> <cargo_windows_check>`.
-    owed="$(jq -rn --slurpfile jobs "$work/jobs.json" --slurpfile pushjobs "$work/push-jobs.json" \
+    # targets left unproved and the counts, as whitespace-separated JSON.
+    owed="$(jq -rn --slurpfile jobs "$work/jobs.json" \
       --slurpfile sels "$work/selections.json" --slurpfile map "$work/map.json" --slurpfile targets "$work/targets.json" \
-      --arg linux "$SHARDS" --arg macos "$MACOS_SHARDS" --arg listless "$LISTLESS_SHARDS" \
-      --arg cl "$CARGO_LINUX_JOBS" --arg cm "$CARGO_MACOS_JOBS" --arg cw "$CARGO_WINDOWS_JOBS" --arg cwc "$CARGO_WINDOWS_CHECK_JOBS" '
-      $jobs[0] as $jobs | $pushjobs[0] as $pushjobs | $sels[0] as $sels | $map[0] as $map | $targets[0] as $targets
+      --argjson selected_linux "$main_linux" --argjson selected_macos "$main_macos" \
+      --argjson selected_skip "$main_skipped" --argjson selected_targets "$main_targets" \
+      --arg listless "$LISTLESS_SHARDS" '
+      $jobs[0] as $jobs | $sels[0] as $sels
+      | [$map[0][] | select(.[2] as $s | $selected_skip | index($s) | not)] as $map
+      | $targets[0] as $universe_targets
+      | [$universe_targets[] | select(. as $t | any($selected_targets[]; . as $e | $e == $t or
+          (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))] as $targets
       | ($listless | split(" ")) as $whole
       | ($sels | length > 0) as $read
       | ([$sels[].skipped_suites[]] | map({(.): true}) | add // {}) as $left
@@ -502,52 +451,45 @@ main_proof() { # EVENT
           [$pool[] | select(.name == "Skill suites shard (\($shard), \($os))")] | all_green;
         def proved($os):
           [$map[] | select(.[0] == $os)] | group_by(.[2])
-          | map(select(($read and ($left[.[0][2]] | not) and all(.[]; green($jobs; .[1]; $os)))
-              or all(.[]; green($pushjobs; .[1]; $os))) | .[0][2]);
+          | map(select($read and ($left[.[0][2]] | not) and all(.[]; green($jobs; .[1]; $os))) | .[0][2]);
         def owed($os; $roster; $proved):
           ($proved | map({(.): true}) | add // {}) as $done
           | ([$map[] | select(.[0] == $os and ($done[.[2]] | not)) | .[1]] | unique) as $need
           | [$roster | split(" ")[] | select(. as $shard
-              | if any($whole[]; . == $shard) then ((green($jobs; $shard; $os) or green($pushjobs; $shard; $os)) | not)
+              | if any($whole[]; . == $shard) then (green($jobs; $shard; $os) | not)
                 else any($need[]; . == $shard) end)];
         def expand: . as $list
           | [$targets[] | select(. as $t
               | any($list[]; . as $e | $e == $t or (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))];
-        def lane_owed($pool; $pattern): [$pool[] | select(.name | test($pattern))] | all_green | not;
       (if $read and green($jobs; "orch-rest"; "ubuntu-latest")
         then [$sels[] | .rust_targets | expand] as $sets
           | [$targets[] | select(. as $t | all($sets[]; any(.[]; . == $t)))]
         else [] end) as $done
       | ($targets - $done) as $open
       | [$targets | map(split("/")[0]) | unique[] as $package
-          | [$targets[] | select(startswith($package + "/"))] as $all
+          | [$universe_targets[] | select(startswith($package + "/"))] as $all
           | [$open[] | select(startswith($package + "/"))] as $mine
           | if ($mine | length) == 0 then empty
             elif ($mine | length) == ($all | length) then "\($package)/*"
             else $mine[] end] as $rust
       | proved("ubuntu-latest") as $pl | proved("macos-latest") as $pm
+      | ($selected_linux | join(" ")) as $linux | ($selected_macos | join(" ")) as $macos
       | owed("ubuntu-latest"; $linux; $pl) as $ol
       | [$linux | split(" ")[] | select(. as $shard | any($ol[]; . == $shard) or ($shard == "orch-rest" and ($rust | length) > 0))] as $ol
       | owed("macos-latest"; $macos; $pm) as $om
-      | "\($ol | tojson) \($om | tojson) \($pl | tojson) \($pm | tojson) \($rust | tojson) \($pl | length) \($pm | length) \($done | length) \(lane_owed($jobs + $pushjobs; $cl)) \(lane_owed($jobs; $cm)) \(lane_owed($jobs; $cw)) \(lane_owed($jobs + $pushjobs; $cwc))"')" ||
+      | "\($ol | tojson) \($om | tojson) \(($pl + $selected_skip | unique) | tojson) \(($pm + $selected_skip | unique) | tojson) \($rust | tojson) \($pl | length) \($pm | length) \($done | length)"')" ||
       die main-proof-unevaluated "jq could not subtract the proved suites and targets"
     rm -rf -- "$work"
-    read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n cargo_linux cargo_macos cargo_windows cargo_windows_check <<<"$owed"
-    if [ "$event" = push ]; then
-      emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust"
-    else
-      linux_n=0 targets_n=0
-      emit '[]' "$macos" '[]' "$skipped_macos" '[]' cargo_linux="$cargo_linux" cargo_macos="$cargo_macos" \
-        cargo_windows="$cargo_windows" cargo_windows_check="$cargo_windows_check"
-    fi
+    read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n <<<"$owed"
+    emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" "main_suites=$main_suites" "cache_compile=$main_build"
   fi
-  ids="$(printf '%s' "$ids $push_ids" | tr -s ' \n' ',,')"
+  ids="$(printf '%s' "$ids" | tr '\n' ',')"
   ids="${ids#,}"
   ids="${ids%,}"
   printf 'ci-job-set: %s=%s runs=%s proved-linux=%d proved-macos=%d proved-targets=%d%s\n' \
     "$mark" "$state" "${ids:-none}" "$linux_n" "$macos_n" "$targets_n" "${cause:+ cause=$cause}" >&2
-  [ -z "$cause" ] || printf '::warning title=%s runs its whole roster::ci-job-set: %s=%s cause=%s\n' \
-    "$event run" "$mark" "$state" "$cause"
+  [ -z "$cause" ] || printf '::warning title=%s runs its selected roster::ci-job-set: %s=%s cause=%s\n' \
+    'main push' "$mark" "$state" "$cause"
 }
 
 # The proof routes read no class and no paths.
@@ -805,9 +747,6 @@ select_shards() { # BUILD(true|false)
   want=" "
   set --
   while IFS= read -r path; do
-    # The install record changes installed revisions, not suite inputs.
-    # Suites naming it construct private records in their fixture trees.
-    [ "$path" != .kendex-lock.json ] || continue
     case "$path" in
       .bun-version) whole="$whole node" ;;
       hooks/tests/* | *.md) ;;
@@ -970,8 +909,62 @@ select_row() { # CLASS DOCS PATHS EVENT
   esac
 }
 
-if [ "$proof_route" = true ]; then
-  main_proof "$EVENT"
+if [ "${EVENT:-}" = schedule ]; then
+  nightly=true
+  if runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=schedule&branch=main&status=success&per_page=100")"; then
+    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
+      [.[].workflow_runs[] | select(.event == "schedule" and .head_branch == "main" and .path == $path
+        and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
+      | sort_by(.created_at) | last | .head_sha | select(type == "string" and length > 0)' <<<"$runs")"; then
+      [ "$previous" != "$GITHUB_SHA" ] || nightly=false
+    fi
+  fi
+  printf 'nightly=%s\n' "$nightly" >>"$GITHUB_OUTPUT"
+  exit 0
+fi
+
+if [ "${EVENT:-}" = push ]; then
+  [[ ${PUSH_BEFORE:-} =~ ^[0-9a-f]{40}$ && ${PUSH_AFTER:-} =~ ^[0-9a-f]{40}$ ]] ||
+    die push-range-unread "the push event endpoints are missing or invalid"
+  paths="$(git diff --name-only --no-renames "$PUSH_BEFORE" "$PUSH_AFTER" --)" ||
+    die push-range-unread "the push event range could not be read"
+  # A queued push can replace an unstarted push. Only a successful main run
+  # bounds all work the newest head must catch up; the event's before alone
+  # cannot prove that its preceding head was tested.
+  range_read=false
+  if runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=push&branch=main&status=success&per_page=100")"; then
+    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
+      [.[].workflow_runs[] | select(.event == "push" and .head_branch == "main" and .path == $path
+        and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
+      | sort_by(.created_at) | last | .head_sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$runs")" &&
+      git merge-base --is-ancestor "$previous" "$PUSH_AFTER" &&
+      paths="$(git diff --name-only --no-renames "$previous" "$PUSH_AFTER" --)"; then
+      range_read=true
+    fi
+  fi
+  main_build=true
+  REACH_READ=false
+  REACH_TARGETS="$(all_targets)"
+  if [ "$range_read" = true ]; then
+    reach_read
+    read_lines="$(reads)" || exit 2
+    main_build=false
+    case "$read_lines" in *build=1*) main_build=true ;; esac
+    any "$LANE_SOURCES" && main_build=true
+  else
+    printf 'ci-job-set: main-range=unread coverage=full\n' >&2
+  fi
+  main_linux="$(select_shards "$main_build")" || exit 2
+  main_skipped="${main_linux#* }"
+  main_linux="${main_linux%% *}"
+  main_targets="$REACH_TARGETS"
+  if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then main_targets="$(all_targets)"; fi
+  main_macos="$(jq -c --arg roster "$MACOS_SHARDS" '[.[] | select(. as $s | $roster | split(" ") | index($s))]' <<<"$main_linux")" || exit 2
+  main_suites="$(jq -ce --argjson selected "$main_linux" '
+    if type != "array" or length == 0 then error("missing main declarations") else
+      [.[] | select(.shard as $s | $selected | index($s))] end' <<<"${MAIN_ONLY_SUITES:-}")" ||
+    die main-suites-unread "the workflow main-only declarations could not be read"
+  main_proof
   exit 0
 fi
 

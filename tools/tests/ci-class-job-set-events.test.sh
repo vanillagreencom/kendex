@@ -104,6 +104,19 @@ check "a class selection writes its skips and targets to CI_SELECTION" \
 DATA="$TEST_DIR/data"
 PUSH_SHA="$(jq -er '.workflow_runs[0].head_sha' "$DATA/main-proof-runs.json")"
 PUSH_RUN="$(jq -er '.workflow_runs[0].id' "$DATA/main-proof-runs.json")"
+PUSH_REPO="$TMP/push-repo"
+git clone -q --shared "$ROOT" "$PUSH_REPO"
+git -C "$PUSH_REPO" config core.hooksPath /dev/null
+git -C "$PUSH_REPO" config gc.auto 0
+git -C "$PUSH_REPO" config maintenance.auto false
+PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+printf '\n# input\n' >>"$PUSH_REPO/tools/guard"
+git -C "$PUSH_REPO" add tools/guard
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm head
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+PUSH_SHA="$PUSH_AFTER"
+MAIN_ONLY_SUITES="$(sed -n "s/^ *MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$ROOT/.github/workflows/skill-tests.yml")"
+export PUSH_BEFORE PUSH_AFTER MAIN_ONLY_SUITES
 mkdir -p "$TMP/gh-stub"
 cat >"$TMP/gh-stub/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -157,10 +170,12 @@ push_world() { # NAME
   local dir="$TMP/push/$1" runs="$DATA/main-proof-runs.json" jobs="$TMP/push-jobs.json"
   local second=$((PUSH_RUN + 1))
   mkdir -p "$dir"
-  cp "$runs" "$dir/runs.json"
-  cp "$jobs" "$dir/jobs-$PUSH_RUN.json"
+  jq --arg sha "$PUSH_SHA" '.workflow_runs[].head_sha = $sha' "$runs" >"$dir/runs.json"
+  jq --arg sha "$PUSH_SHA" '.jobs[].head_sha = $sha' "$jobs" >"$dir/jobs-$PUSH_RUN.json"
+  jq --arg sha "$PUSH_BEFORE" '.workflow_runs = [(.workflow_runs[0] + {id:1,event:"push",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-12T00:00:00Z",head_sha:$sha})]' \
+    "$runs" >"$dir/push-runs.json"
   plant_selection "$dir" "$PUSH_RUN" '[]' "$EVERY_TARGET"
-  edit_jobs() { jq "$1" "$jobs" >"$dir/jobs-$PUSH_RUN.json"; }
+  edit_jobs() { jq --arg sha "$PUSH_SHA" '.jobs[].head_sha = $sha' "$jobs" | jq "$1" >"$dir/jobs-$PUSH_RUN.json"; }
   fail_leg() { edit_jobs ".jobs |= map(if .name == \"Skill suites shard ($1)\" then .conclusion = \"failure\" else . end)"; }
   case "$1" in
     all-proved) ;;
@@ -172,8 +187,8 @@ push_world() { # NAME
     in-progress)
       edit_jobs '.jobs |= map(if .name == "Skill suites shard (guards-scans, ubuntu-latest)" then .status = "in_progress" | .conclusion = null else . end)' ;;
     failed-second-run)
-      jq --argjson id "$second" '.workflow_runs += [.workflow_runs[0] | .id = $id | .run_attempt = 1]' "$runs" >"$dir/runs.json"
-      jq --argjson id "$second" '.jobs |= map(.run_id = $id | if .name == "Skill suites shard (worktree, ubuntu-latest)" then .conclusion = "failure" else . end)' \
+      jq --arg sha "$PUSH_SHA" --argjson id "$second" '.workflow_runs[].head_sha = $sha | .workflow_runs += [.workflow_runs[0] | .id = $id | .run_attempt = 1]' "$runs" >"$dir/runs.json"
+      jq --arg sha "$PUSH_SHA" --argjson id "$second" '.jobs |= map(.head_sha = $sha | .run_id = $id | if .name == "Skill suites shard (worktree, ubuntu-latest)" then .conclusion = "failure" else . end)' \
         "$jobs" >"$dir/jobs-$second.json"
       plant_selection "$dir" "$second" '[]' "$EVERY_TARGET" ;;
     foreign-head-job)
@@ -292,78 +307,12 @@ check "push route: one-target leaves out the proved target" false "$(in_list rus
 check "push route: one-target owes another orch target" true "$(in_list rust_targets orch/watch_reads)"
 check "push route: one-target owes the other runtime whole" true "$(in_list rust_targets 'agent-runtime/*')"
 
-# THE NIGHT ROUTE: the schedule runs again no leg a run at its head ran
-# green. Each night world is a push world, the merge group run and its
-# selection, beside push run PUSH_RUN + 2 at the same head, whose jobs are
-# the same recorded set: every shard leg it owed and the cargo compile legs.
-PUSH_PUSH=$((PUSH_RUN + 2))
-night_world() { # NAME BASE-WORLD
-  local dir="$TMP/push/$1" jobs="$TMP/push-jobs.json"
-  rm -rf -- "$dir"
-  push_world "$2"
-  mv "$TMP/push/$2" "$dir"
-  jq --argjson id "$PUSH_PUSH" '.workflow_runs[0] | {total_count: 1, workflow_runs: [.id = $id | .event = "push"]}' \
-    "$DATA/main-proof-runs.json" >"$dir/push-runs.json"
-  jq --argjson id "$PUSH_PUSH" '.jobs |= map(.run_id = $id)' "$jobs" >"$dir/jobs-$PUSH_PUSH.json"
-  edit_push() { jq "$1" "$dir/jobs-$PUSH_PUSH.json" >"$dir/edited.json" && mv "$dir/edited.json" "$dir/jobs-$PUSH_PUSH.json"; }
-  case "$1" in
-    night-all-proved) ;;
-    # The group left a suite out; the push's macOS leg ran it green.
-    night-push-proves) ;;
-    night-push-red) edit_push '.jobs |= map(if .name == "Skill suites shard (guards-tools, macos-latest)" then .conclusion = "failure" else . end)' ;;
-    # A prose group ran no cargo test; the push compiled every lane.
-    night-group-no-cargo)
-      jq '.jobs |= map(select(.name | test("^(macOS cargo |Windows cargo \\(workspace|Cargo )") | not))' \
-        "$jobs" >"$dir/jobs-$PUSH_RUN.json" ;;
-    night-direct-push) printf '{"total_count":0,"workflow_runs":[]}\n' >"$dir/runs.json" ;;
-    night-no-run)
-      printf '{"total_count":0,"workflow_runs":[]}\n' >"$dir/runs.json"
-      printf '{"total_count":0,"workflow_runs":[]}\n' >"$dir/push-runs.json" ;;
-    night-outage) rm "$dir/push-runs.json" ;;
-    *) echo "no night world named $1" >&2; exit 1 ;;
-  esac
-}
-# `shards=… queue_macos_shards=… skips=<macos> cargo_linux=… cargo_macos=…
-# cargo_windows=… cargo_windows_check=… night-proof=… warned=yes|no`.
-night_select() { # WORLD
-  local out="$TMP/push-out" status=0
-  : >"$out"
-  (cd "$ROOT" && PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/$1" GITHUB_REPOSITORY=vanillagreencom/kendex \
-    GITHUB_SHA="$PUSH_SHA" EVENT=schedule CHANGE_CLASS='' DOCS_ONLY='' CHANGED_PATHS='' GITHUB_OUTPUT="$out" \
-    "$JOB_SET" --event-parity >"$TMP/push-stdout" 2>"$TMP/push-err") || status=$?
-  [ "$status" -eq 0 ] || { printf 'exit=%s' "$status"; return 0; }
-  printf 'shards=%s queue_macos_shards=%s skips=%s' "$(field shards <"$out")" "$(field queue_macos_shards <"$out")" \
-    "$(field skipped_suites_macos <"$out" | jq length)"
-  for lane in cargo_linux cargo_macos cargo_windows cargo_windows_check; do
-    printf ' %s=%s' "$lane" "$(field "$lane" <"$out")"
-  done
-  printf ' %s warned=%s' "$(sed -n 's/^ci-job-set: \(night-proof=[a-z]*\) .*/\1/p' "$TMP/push-err")" \
-    "$(grep -q '^::warning ' "$TMP/push-stdout" && echo yes || echo no)"
-}
-NIGHT_PROVED="cargo_linux=false cargo_macos=false cargo_windows=false cargo_windows_check=false"
-NIGHT_WHOLE="shards=[] queue_macos_shards=$QUEUE_ALL skips=0 cargo_linux=true cargo_macos=true cargo_windows=true cargo_windows_check=true"
-# WORLD|BASE WORLD|EXPECTED
-night_rows=0
-while IFS='|' read -r world base expected; do
-  night_rows=$((night_rows + 1))
-  night_world "$world" "$base"
-  check "night route: $world" "$expected" "$(night_select "$world")"
-done <<ROWS
-night-all-proved|all-proved|shards=[] queue_macos_shards=[] skips=$M $NIGHT_PROVED night-proof=read warned=no
-night-push-proves|kept-subset|shards=[] queue_macos_shards=[] skips=$M $NIGHT_PROVED night-proof=read warned=no
-night-push-red|kept-subset|shards=[] queue_macos_shards=["guards-tools"] skips=$((M - 1)) $NIGHT_PROVED night-proof=read warned=no
-night-group-no-cargo|all-proved|shards=[] queue_macos_shards=[] skips=$M cargo_linux=false cargo_macos=true cargo_windows=true cargo_windows_check=false night-proof=read warned=no
-night-direct-push|all-proved|shards=[] queue_macos_shards=[] skips=$M cargo_linux=false cargo_macos=true cargo_windows=true cargo_windows_check=false night-proof=read warned=no
-night-no-run|all-proved|$NIGHT_WHOLE night-proof=none warned=yes
-night-outage|all-proved|$NIGHT_WHOLE night-proof=unread warned=yes
-ROWS
-[ "$night_rows" -eq 7 ] || { echo "the night table read $night_rows rows" >&2; exit 1; }
-
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
 mkdir -p "$TMP/trusting/tools"
 cp -R "$ROOT/tools/lib" "$TMP/trusting/tools/lib"
 cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/trusting/tools/"
+cp "$ROOT/tools/guard" "$TMP/trusting/tools/"
 awk '{ n += gsub(/select\(\.head_sha == \$sha and \.run_id == \$id\)/, "select(.run_id == $id)") } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/trusting/tools/ci-job-set" ||
   { echo "the job head check is no longer one select in $JOB_SET" >&2; exit 1; }
@@ -402,7 +351,8 @@ PUSH_AFTER="$saved_after"
 mkdir -p "$TMP/main-control/tools"
 cp -R "$ROOT/tools/lib" "$TMP/main-control/tools/lib"
 cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/main-control/tools/"
-awk '/^  main_linux=/ { print "  want_shard $SHARDS"; n++ } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
+cp "$ROOT/tools/guard" "$TMP/main-control/tools/"
+awk -v roster="$ROSTER" '/^  main_linux="\$\{main_linux%% \*\}"$/ { print; print "  main_linux=" sprintf("%c", 39) roster sprintf("%c", 39); n++; next } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
 chmod +x "$TMP/main-control/tools/ci-job-set"
 git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
 printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
@@ -413,13 +363,63 @@ push_select no-run >/dev/null
 check "lock-only push runs no shard" 'shards=[]' "$(grep '^shards=' "$TMP/push-out")"
 push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
 if grep -qxF 'shards=[]' "$TMP/push-out"; then bad 'must-fail: main selection mutant escaped'; else ok 'must-fail: main selection mutant runs forbidden lock-only shards'; fi
+cp "$JOB_SET" "$TMP/main-control/tools/ci-job-set"
+sed '/^    \[ "\$f" != \.kendex-lock\.json \] || continue$/d' "$ROOT/tools/guard" >"$TMP/main-control/tools/guard"
+! cmp -s "$ROOT/tools/guard" "$TMP/main-control/tools/guard" || exit 1
+push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
+check 'control: install record reach runs suites that construct their own records' true "$(in_list shards node)"
+cp "$ROOT/tools/guard" "$TMP/main-control/tools/guard"
+
+# A pending first push can be replaced by a lock-only second push. The
+# successful baseline still precedes both, so the first input remains owed.
+git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
+printf 'fixture\n' >>"$PUSH_REPO/.bun-version"
+git -C "$PUSH_REPO" add .bun-version
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm pending
+PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+git -C "$PUSH_REPO" add .kendex-lock.json
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm newest
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+push_select no-run >/dev/null
+check 'coalesced unproved push retains the replaced heads node work' true "$(in_list shards node)"
+awk '{ n += sub(/git diff --name-only --no-renames "\$previous"/, "git diff --name-only --no-renames \"$PUSH_BEFORE\"") } { print } END { exit n != 1 }' \
+  "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
+push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
+check 'control: event before alone loses the replaced heads node work' false "$(in_list shards node)"
+git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
+printf '\n// input\n' >>"$PUSH_REPO/skills/agent-runtime/runtime/src/lib.rs"
+git -C "$PUSH_REPO" add skills/agent-runtime/runtime/src/lib.rs
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm pending-runtime
+PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+git -C "$PUSH_REPO" add .kendex-lock.json
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm newest-runtime
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+push_select no-run >/dev/null
+check 'coalesced unproved runtime retains the dependent orch targets' true "$(field rust_targets <"$TMP/push-out" | jq 'any(.[]; startswith("orch/"))')"
+push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
+check 'control: event before alone loses the replaced heads Rust targets' '[]' "$(field rust_targets <"$TMP/push-out")"
+cp "$TMP/push/no-run/push-runs.json" "$TMP/successful-push.json"
+for history in absent unread nonancestor; do
+  case "$history" in
+    absent) printf '{"workflow_runs":[]}\n' >"$TMP/push/no-run/push-runs.json" ;;
+    unread) printf 'unread\n' >"$TMP/push/no-run/push-runs.json" ;;
+    nonancestor) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$TMP/successful-push.json" >"$TMP/push/no-run/push-runs.json" ;;
+  esac
+  push_select no-run >/dev/null
+  check "unproved coalesced range $history runs the full roster" "$ROSTER" "$(field shards <"$TMP/push-out")"
+  check "unproved coalesced range $history retains every runtime" "$EVERY_TARGET" "$(field rust_targets <"$TMP/push-out")"
+done
+cp "$TMP/successful-push.json" "$TMP/push/no-run/push-runs.json"
 
 # Only the latest successful scheduled main run can stand a night down.
 # A history with competing heads must reject an older matching success.
-awk '{ n += sub(/sort_by\(\.created_at\) \| last \|/, "sort_by(.created_at) | first |") } { print } END { exit n != 1 }' \
+awk '/length > 0/ { n += sub(/sort_by\(\.created_at\) \| last \|/, "sort_by(.created_at) | first |") } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/trusting/tools/ci-job-set"
+jq --arg sha "$PUSH_SHA" '.workflow_runs[].head_sha = $sha' "$DATA/main-proof-runs.json" >"$TMP/night-runs.json"
 while IFS='|' read -r row mutation expected; do
-  jq "$mutation" "$DATA/main-proof-runs.json" >"$TMP/push/no-run/runs.json"
+  jq "$mutation" "$TMP/night-runs.json" >"$TMP/push/no-run/runs.json"
   : >"$TMP/nightly-out"
   PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-out" "$JOB_SET"
   check "nightly $row" "nightly=$expected" "$(cat "$TMP/nightly-out")"

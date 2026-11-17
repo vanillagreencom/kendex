@@ -15,10 +15,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 
 REACH="$ROOT/tools/ci-reach"
-# The lock record: the orch-rest shard, which holds the two orch suites that
-# read it, and the lanes every measured class runs select it; the UI lane and
-# the orch-state shard, which holds no suite that reads it, do not.
-printf '%s\n' .kendex-lock.json >"$TMP/paths"
+# A suite belongs to orch-rest; its change selects that shard and the lanes
+# every measured class runs, without selecting UI or orch-state.
+printf '%s\n' skills/orch/tests/resolve-base-branch.sh >"$TMP/paths"
 
 reach() { # CLASS NAMES — the answer lines, then `exit=N`
   local status=0 out
@@ -39,6 +38,11 @@ unmapped="Classify the diff"
 check "each check answered by its lane or shard, CI by the others" \
   "within $orch_rest${nl}outside $ui${nl}outside $oversee${nl}within $bot${nl}within $macos${nl}within CI${nl}exit=0" \
   "$(reach micro "$orch_rest$nl$ui$nl$oversee$nl$bot$nl$macos$nl$unmapped${nl}CI")"
+printf '%s\n' .kendex-lock.json >"$TMP/paths"
+check "an install record selects no suite shard" \
+  "outside $orch_rest${nl}outside $oversee${nl}outside CI${nl}exit=0" \
+  "$(reach micro "$orch_rest$nl$oversee${nl}CI")"
+printf '%s\n' skills/orch/tests/resolve-base-branch.sh >"$TMP/paths"
 check "CI outside where every other failed check is" \
   "outside $ui${nl}outside $oversee${nl}outside CI${nl}exit=0" \
   "$(reach micro "$ui$nl$oversee${nl}CI")"

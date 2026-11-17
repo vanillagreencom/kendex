@@ -37,23 +37,14 @@ name: Skill Tests
 # macOS skill suites. GitHub enforces approval and thread resolution
 # independently of CI job selection.
 #
-# A PUSH TO MAIN carries the tree its merge group proved, so its cargo lanes
-# run only the compile steps, which save the compile cache under the merged
-# lockfile for each platform, and the catalog and smoke checks run as on
-# every main run. Its Linux and macOS shell legs run only the suites, and
-# its Rust step only the targets, the same-head merge group did not prove on
-# that runner: the `changes` job reads that group's published selection and
-# its jobs through `tools/ci-job-set`, whose push route states the proof, and
-# an unread, failed, pending or absent proof runs the suite or target. The
-# temporary main-only suites run on every push. Push runs share one
-# concurrency group, so the merges landing during a run share the next. THE
-# NIGHTLY RUN, the daily schedule on main, runs the macOS shell roster, the
-# cargo legs and the Windows tests, each where no merge-group or push run at
-# its head already ran it green: the `changes` job reads those runs through
-# `tools/ci-job-set`, whose night route states the proof. A manual dispatch
-# runs every one of those jobs on demand. A macOS or Windows failure that no
-# run at the head reached surfaces there, and the overseer's watch reports a
-# red scheduled run.
+# A PUSH TO MAIN selects inputs since the latest successful main push, so
+# pushes replaced while pending keep their catch-up coverage. The selector
+# subtracts per-suite and per-Rust-target proof from the same-head group.
+# Missing range evidence selects the full roster; missing group evidence
+# subtracts nothing. Build inputs select cache compilation. Dedicated work
+# retains its own reporting. A schedule stands down only where its head is
+# the latest successful scheduled head; every selected night and manual
+# dispatch runs the full native night roster.
 # Whatever else does NOT run on every event carries its own `if:` saying
 # why. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
 # groups and main pushes.
@@ -109,8 +100,8 @@ name: Skill Tests
 # the list of legs held to 30 minutes, every macOS leg among them; every
 # other leg takes 15. The per-shard figures behind each budget are in the
 # comment above it.
-# Every merge group runs its selected Linux and macOS shards; the nightly
-# run runs the macOS shards no run at its head proved.
+# Every merge group runs its selected Linux and macOS shards. A selected
+# night runs every macOS-capable shard.
 
 "on":
   # Kept for the required `CI` context alone: a pull request runs no lane.
@@ -166,9 +157,9 @@ jobs:
   # to main only the root checkout and the select step run: tools/ci-job-set
   # reads the same-head merge group's jobs and published selection, which
   # `actions: read` admits, and publishes the suites, shards and targets
-  # that group left unproved. On the nightly schedule the same two steps
-  # publish the macOS shards and cargo lanes no same-head group or push run
-  # proved. The root checkout there is main itself.
+  # that group left unproved, selected across the coalesced push range.
+  # A schedule publishes the decision to run the full night. The root
+  # checkout there is main itself.
   changes:
     name: Classify the diff
     if: github.event_name == 'merge_group' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
@@ -200,6 +191,9 @@ jobs:
       skipped_suites: ${{ steps.select.outputs.skipped_suites }}
       skipped_suites_macos: ${{ steps.select.outputs.skipped_suites_macos }}
       rust_targets: ${{ steps.select.outputs.rust_targets }}
+      cache_compile: ${{ steps.select.outputs.cache_compile }}
+      main_suites: ${{ steps.select.outputs.main_suites }}
+      nightly: ${{ steps.select.outputs.nightly }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
     # tools/ci-aggregate run from the group's tree, held by review.
@@ -789,23 +783,14 @@ jobs:
       # retains the binary-dependent skips. The orch, hook, guards-tools, rest
       # and slack legs build the package runtimes on both runners, in the step
       # after kendex's.
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
         if: ((matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis' || matrix.shard == 'mailbox') && runner.os == 'Linux') || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'guards-tools' || matrix.shard == 'rest' || matrix.shard == 'slack'
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
         if: (matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis') && runner.os == 'Linux'
-        run: |
-          # Keep the image's suites and signing key, without its slow Azure mirror
-          # or unrelated third-party sources. Leave the image's sources untouched.
-          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
-          trap 'rm -- "$apt_sources"' EXIT
-          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
-            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
-            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
-          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
-          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev
+        run: tools/apt-install libdbus-1-dev
       - name: kendex from this checkout
         if: (matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis') && runner.os == 'Linux'
         run: |
@@ -1774,19 +1759,15 @@ jobs:
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
 
-  # The nightly macOS roster: the macOS shards no same-head merge group or
-  # push run proved green, as the changes job's `queue_macos_shards` lists
-  # them on the schedule, and the whole macOS-capable roster where that job
-  # did not succeed or a manual dispatch skipped it. The suite steps and
-  # budgets have one owner; the queue job below shares this matrix list.
+  # A selected night and a manual dispatch run the full native roster.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
+    if: ${{ !cancelled() && ((github.event_name == 'schedule' && (needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false')) || github.event_name == 'workflow_dispatch') }}
     strategy:
       fail-fast: false
       matrix:
-        shard: &macos-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: [review-gate, refresh, orch-state, orch-rest, guards-scans, guards-commit, guards-commit-tail, guards-hooks, guards-hooks-tail, guards-tools, guards-tools-tail, linear, linear-controls, worktree, worktree-restack, rest, jarvis, slack, mailbox, node, pi-claude-bridge]
         os: [macos-latest]
         # The native eligibility owner declares unsupported and empty shards,
         # and those whose families another macOS job retains. The partition
@@ -1827,7 +1808,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: *macos-suite-shards
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
@@ -1935,10 +1916,9 @@ jobs:
   # (`--no-run`) so a compile failure reads as one, and on the push to main
   # that step is the whole job on every platform: it saves the compile cache
   # under the merged lockfile, the entry the next group and night restore.
-  # The nightly run compiles on every platform and tests on macOS and
-  # Windows, each lane where no run at its head already ran those steps
-  # green (tools/ci-job-set's night route), which catches a failure no group
-  # at that head tested. Splitting a lane adds legs under `CI` and changes
+  # A selected night compiles on every platform and tests on macOS and
+  # Windows. The selector stands it down only at the latest successful
+  # scheduled head. Splitting a lane adds legs under `CI` and changes
   # no required context name.
   #
   # One compile cache per shard, keyed by the action on the lockfile, the
@@ -1948,7 +1928,7 @@ jobs:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_linux.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2041,7 +2021,7 @@ jobs:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_macos.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2314,7 +2294,7 @@ jobs:
     name: Windows cargo (core and CLI targets compile)
     needs: changes
     # What selects this lane, and why: tools/ci-job-set, cargo_windows_check.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -2344,7 +2324,7 @@ jobs:
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:

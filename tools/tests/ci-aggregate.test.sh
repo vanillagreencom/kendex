@@ -248,14 +248,16 @@ aggregators() { # WORKFLOW — every job whose script calls tools/ci-aggregate
 mkdir -p "$TMP/gh-down"
 printf '#!/bin/sh\nexit 1\n' >"$TMP/gh-down/gh"
 chmod +x "$TMP/gh-down/gh"
-PUSH_SELECTION="$(PATH="$TMP/gh-down:$PATH" GITHUB_REPOSITORY=owner/repo GITHUB_SHA=0 SELECT_EVENT=push selection '' '' '' | sed -n '$p')"
+PUSH_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
+MAIN_DECLARATIONS="$(sed -n "s/^ *MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")"
+PUSH_SELECTION="$(PATH="$TMP/gh-down:$PATH" GITHUB_REPOSITORY=owner/repo GITHUB_SHA="$PUSH_HEAD" PUSH_BEFORE="$PUSH_HEAD" PUSH_AFTER="$PUSH_HEAD" MAIN_ONLY_SUITES="$MAIN_DECLARATIONS" SELECT_EVENT=push selection '' '' '' | sed -n '$p')"
 case "$PUSH_SELECTION" in *" skipped_suites_macos=[] "*) ;; *) echo "a failed push read published '$PUSH_SELECTION'" >&2; exit 1 ;; esac
-PUBLISHED_BY_SCRIPT="$(printf '%s %s' "$(selection standard false 'crates/core/src/lib.rs')" "$PUSH_SELECTION" |
+PUBLISHED_BY_SCRIPT="$(printf '%s %s nightly=true' "$(selection standard false 'crates/core/src/lib.rs')" "$PUSH_SELECTION" |
   tr ' ' '\n' | sed 's/=.*//' | LC_ALL=C sort -u)"
 [ "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" | grep -c .)" -gt 0 ] ||
   { echo "ci-job-set published no lane, so the extractor is broken" >&2; exit 1; }
 check "the changes job publishes exactly the lanes ci-job-set selects" \
-  "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" cache_compile main_suites nightly | LC_ALL=C sort)" "$(published_map "$WORKFLOW" | awk '{ print $1 }' | LC_ALL=C sort)"
+  "$PUBLISHED_BY_SCRIPT" "$(published_map "$WORKFLOW" | awk '{ print $1 }' | LC_ALL=C sort)"
 check "each published lane is the select step's line of the same name" "" \
   "$(published_map "$WORKFLOW" | awk '$1 != $2')"
 check "the gates read exactly the lanes ci-job-set selects" \
@@ -357,7 +359,7 @@ legs() { # WORKFLOW SELECTION [RESULT] [EVENT] [KEY] — what a matrix key expan
 
 # The selected portability job on merge groups.
 MACOS_QUEUE_JOB=skill-suites-macos-queue
-EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
+EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
 # What a merge group runs of it: every lane but the nightly macOS roster,
 # which reads its lane on the schedule alone.
 EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
@@ -408,16 +410,17 @@ event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted
 }
 # A main push runs its fixed jobs and the shell shards its group left
 # unproved: none, some on both runners, or every one where changes failed.
-MAIN_FIXED="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
-MAIN_JOBS="$MAIN_FIXED skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
-PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[]'
-PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"]'
-PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[]'
+MAIN_FIXED="cargo-check-windows catalog changes"
+MAIN_BUILT="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
+MAIN_JOBS="$MAIN_BUILT skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
+PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] cache_compile=false main_suites=[]'
+PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"] cache_compile=true main_suites=[{"suite":"orch-shard-partition.test"}]'
+PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[] cache_compile=false main_suites=[{"suite":"pi-agents-tmux"}]'
 NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos smoke"
 # The night's selections: every leg proved at the head, and one macOS shard
 # and the macOS cargo tests left unproved.
-NIGHT_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] skipped_suites=[] skipped_suites_macos=[] rust_targets=[] cargo_linux=false cargo_macos=false cargo_windows=false cargo_windows_check=false'
-NIGHT_SOME='shell_shards=true shell_os=["macos-latest"] shards=[] queue_macos_shards=["rest"] skipped_suites=[] skipped_suites_macos=[] rust_targets=[] cargo_linux=false cargo_macos=true cargo_windows=false cargo_windows_check=false'
+NIGHT_PROVED='nightly=false cache_compile=false'
+NIGHT_SOME='nightly=true'
 # EVENT|RESULT|SELECTION|EXPECTED. A pull request runs `CI` alone for a
 # Rust-only diff, a docs-only diff and a dead classifier alike.
 event_rows=0
@@ -432,12 +435,12 @@ pull_request|failure|$ALL_OFF|ci
 merge_group|success|$VERIFY_ROW|bot-instructions changes ci markdown preflight
 merge_group|success|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows changes ci markdown preflight
 push|success|$PUSH_PROVED|$MAIN_FIXED smoke
-push|success|$PUSH_REST|$MAIN_FIXED skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke
+push|success|$PUSH_REST|$MAIN_BUILT skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke
 push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-main-only skill-suites-shard smoke
 push|failure|$ALL_OFF|$MAIN_JOBS
 schedule|failure|$ALL_OFF|cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke
-schedule|success|$NIGHT_PROVED|catalog changes smoke
-schedule|success|$NIGHT_SOME|cargo-macos catalog changes skill-suites-macos smoke
+schedule|success|$NIGHT_PROVED|changes
+schedule|success|$NIGHT_SOME|cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke
 workflow_dispatch|skipped|$ALL_OFF|$NIGHTLY_JOBS
 ROWS
 [ "$event_rows" -ge 14 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
@@ -485,9 +488,9 @@ workflow_dispatch|skipped|$ALL_OFF|true
 ROWS
 check "the nightly macOS matrix uses macOS alone" '["macos-latest"]' \
   "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
-check "the nightly run runs the macOS-capable roster where nothing classified" "$QUEUE_ALL" \
+check "a manual night uses the fixed full shard roster" "$ROSTER" \
   "$(gh_eval value "$(context_json workflow_dispatch skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
-check "the nightly run runs the macOS shards no run at its head proved" '["rest"]' \
+check "a selected night runs the fixed full shard roster" "$ROSTER" \
   "$(gh_eval value "$(context_json schedule success "$NIGHT_SOME" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
 # The cargo lanes on the schedule read their selection; a push and a
 # dispatch run them whatever the changes job published.
@@ -501,7 +504,8 @@ cargo-check-windows|schedule|$NIGHT_PROVED|false
 cargo-macos|schedule|$NIGHT_PROVED|false
 cargo-tests-windows|schedule|$NIGHT_PROVED|false
 cargo-macos|schedule|$NIGHT_SOME|true
-cargo-macos|push|$NIGHT_PROVED|true
+cargo-macos|push|$NIGHT_PROVED|false
+cargo-macos|push|cache_compile=true|true
 cargo-macos|workflow_dispatch|$NIGHT_PROVED|true
 ROWS
 
@@ -985,10 +989,9 @@ ROWS
 
 # --- 2b. The must-fail control ----------------------------------------------
 
-# The pre-patch shape of the macOS cargo lane: gated on the event alone. It
-# runs on the one-skill row, which is the full battery the narrowing exists
-# to avoid.
-plant "$WORKFLOW" "!cancelled() && github.event_name != 'pull_request' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true')" \
+# A lane that ignores its selection executes unrelated changes.
+macos_cargo_if="$(job_ifs "$WORKFLOW" | awk -F '\t' '$1 == "cargo-macos" { print $2 }')"
+plant "$WORKFLOW" "$macos_cargo_if" \
   "!cancelled()" "$TMP/wf-ungated.yml"
 case " $(running "$TMP/wf-ungated.yml" "$one_skill" success merge_group) " in
   *" cargo-macos "*) ok "must-fail: a lane condition reading no selection runs on the one-skill row" ;;

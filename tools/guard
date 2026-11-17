@@ -2392,7 +2392,7 @@ mapped_suites() { # DIR REL
     done
   done
   if [ -z "$out" ]; then
-    case "$role" in none | test-module) return 4 ;; module | runtime | rust-target | rust-input) return 0 ;; esac
+    case "$role" in none | test-module | test-import) return 4 ;; module | runtime | rust-target | rust-input) return 0 ;; esac
     # A reach that holds a Rust target maps to it; a needle another tree's
     # file offered that no file here names maps to nothing.
     [ "${#REACH_TARGETS}" -eq "$targets_before" ] || return 0
@@ -2677,6 +2677,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # Suites construct their own install records; revisions are no suite input.
+    [ "$f" != .kendex-lock.json ] || continue
     case "$f" in
       skills/*/* | .agents/skills/*/*)
         x="${f#.agents/}"
@@ -2940,29 +2942,10 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       suite_runs[suite_index]=""
       continue
     fi
-    if [ -f "$d/tests/run-all.sh" ]; then
-      # Family aliases can expand these filters; the runner publishes its selection.
-      echo "=== $d/tests/run-all.sh" ${filters[@]+"${filters[@]}"}
-      step "$d/tests" "$d/tests/run-all.sh --local"
-      active_runner=1
-      RUN_ALL_PENDING_SUITES="$run"$'\n'"$suite_later" bash "$d/tests/run-all.sh" --local ${filters[@]+"${filters[@]}"} || say suite "$d/tests/run-all.sh"
-      suite_runs[suite_index]=""
-      active_runner=0
-      continue
-    fi
-    # The loop walks an array by position, so a suite that reads stdin cannot
-    # take entries from the list. The child gets no stdin: a suite that reads
-    # it must not wait on the terminal of a guard run by hand.
-    direct_suites=()
-    while IFS= read -r t; do direct_suites+=("$t"); done <<<"$run"
-    for ((direct_index = 0; direct_index < ${#direct_suites[@]}; direct_index++)); do
-      t=${direct_suites[direct_index]}
-      # One assignment, so the signal report sees a complete remainder.
-      direct_later=""
-      for ((pending = direct_index + 1; pending < ${#direct_suites[@]}; pending++)); do
-        direct_later+="${direct_suites[pending]}"$'\n'
-      done
-      suite_runs[suite_index]=$direct_later
+    # Shell suites share one pool; Node suites use the direct runner.
+    shell_run=""
+    direct_run=""
+    while IFS= read -r t; do
       [ -f "$t" ] || continue
       case "$t" in
         *.test.mjs) direct_run+="$t"$'\n' ;;
