@@ -28,7 +28,7 @@ Set `DEV_VALIDATE_RANGE_CMD` to a command that validates only the changes since 
 
 Set `DEV_VALIDATE_CI_CONTEXT` to the required status check whose run covers the full command: the merge-group run for a queue-only change, the pull request run otherwise. Covered fix rounds on an open pull request can leave validation to that check. Explicit `ORCH_PR_ORDER=push-first` also lets covered implementation and internal-fix rounds defer validation before publication. The round accepts local edits with CI pending. Submit reuses a pending receipt for the current commit. The merge-group run proves a queue-only change's head before merge, and a red one returns the change to its lane. Uncovered work keeps local validation. `orch-runtime validate entry --help` defines coverage and local fallback.
 
-`DEV_VALIDATE_TIMEOUT_SECS` bounds either local run, one hour by default. The agent's wait ends when the run does. It cannot exceed that bound plus the kill grace and one poll interval.
+A local run has no time limit: the executor ends it as stalled only after the start's `quiet-secs`, 660 seconds, with no output, no new process and no CPU work, and the wait then prints `validate=FAILING cause=stalled`. The agent's wait ends when the run does.
 
 Set project instructions in `kendex.toml` under `[skill-instructions]`. The agent and commit format are described in [SKILL.md](SKILL.md) § Configuration.
 

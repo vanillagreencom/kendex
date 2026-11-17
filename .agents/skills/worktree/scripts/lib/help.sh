@@ -152,8 +152,8 @@ Dependencies:
   Without this setting no worktree command runs a package-manager install.
   An npm project can install in main and link its node_modules. On a
   hosted lane the host provider's create owns that install in its clone:
-  orch's lane-host-ssh runs it for a static SSH host, and any other host
-  provider owes the same step, per orch schemas/lane-host.md. pnpm
+  orch's lane-host-ssh runs it for a static SSH host, and orch requires
+  the step of no other host provider. pnpm
   (ERR_PNPM_UNSAFE_MODULES_DIR) and Turbopack ("Symlink node_modules is
   invalid, it points out of the filesystem root") refuse a node_modules
   resolving outside the project root, so a pnpm or Next.js project leaves it

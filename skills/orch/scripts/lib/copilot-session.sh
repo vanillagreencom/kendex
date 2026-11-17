@@ -24,10 +24,11 @@
 #   copilot_home     the account directory the command ran under
 #   written_at       epoch seconds, for the freshness rule below
 #
-# A reader answers with a record only where every binding it holds agrees: the
-# session id it was handed, the account directory, the transcript path where it
-# has one, and a record no older than COPILOT_SESSION_MAX_AGE_S, an age equal to
-# the bound still fresh. Anything else is unmeasured under a reason the reader
+# agent-runtime's reader (`context.rs` `copilot_record`) answers with a record
+# only where every binding it holds agrees: the session id it was handed, the
+# account directory, the folder that holds the transcript where it has one, and
+# a record no older than its 120-second bound (`COPILOT_RECORD_MAX_AGE`), an age
+# equal to the bound still fresh. Anything else is unmeasured under a reason the reader
 # names, never a figure: a record from another session, or one the CLI stopped
 # refreshing, would read as a session with room for as long as it stood.
 #

@@ -6,7 +6,7 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
-# Reads the Expected delta estimate for item-tier. A missing header is
+# Reads the Expected delta estimate for orch-runtime tier. A missing header is
 # permitted, and a stated zero counts as zero; a header with malformed or no
 # text returns 1 with no numeric result and leaves the text in
 # EXPECTED_DELTA_LINE for the caller's warning.

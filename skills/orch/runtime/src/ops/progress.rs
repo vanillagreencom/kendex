@@ -23,7 +23,7 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
 }
 
-/// The cycles an item runs, as `item-tier` assigns them; a review floor
+/// The cycles an item runs, as `orch-runtime tier` assigns them; a review floor
 /// names one of them too.
 const TIERS: [&str; 3] = ["micro", "small", "standard"];
 

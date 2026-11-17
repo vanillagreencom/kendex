@@ -100,7 +100,7 @@ To enable them on an app:
 
 Register `/lanes` for status output. Slack reserves `/status`; the relay accepts the retired name until kendex 2.0.0 and warns with its replacement. If two apps register the same command name in one workspace, Slack uses the most recently installed app.
 
-A notice that answers the `/report` request with `lane-mail notice --ref` reaches the channel even during a Jarvis session hold. An ordinary `oversee-report write` notice has no request reference: it is held, skipped on resume if the session read it, and not sent during `ORCH_REPORT_QUIET_HOURS`.
+A notice that answers the `/report` request with `lane-mail notice --ref` reaches the channel even during a Jarvis session hold. An ordinary `orch-runtime report write` notice has no request reference: it is held, skipped on resume if the session read it, and not sent during `ORCH_REPORT_QUIET_HOURS`.
 
 ## The Jarvis session hold
 

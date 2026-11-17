@@ -49,6 +49,13 @@ Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PA
       "source_type": "inline"
     }
   ],
+  "tests": [
+    {
+      "test": "tests/token.rs::refresh_rejects_expired",
+      "verdict": "keep|add|remove",
+      "cost": "what each run of it costs, in words; keep and add only"
+    }
+  ],
   "qa_metadata": {}
 }
 ```
@@ -62,6 +69,7 @@ Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PA
 - `blockers[]`: block PR merge — dev must fix (may escalate to issues if unfixable)
 - `suggestions[]`: non-blocking improvements, categorized by the review agent
 - `questions[]`: PR-comment triage only — questions needing a response
+- `tests[]`: optional; each test the review keeps, adds or removes, with its `verdict`; a kept or added test also states its `cost` in words. orch's review-artifact check refuses a kept or added entry with no cost and a verdict outside the three; an artifact with no `tests[]` is not judged
 
 ## Item Fields (blockers/suggestions)
 

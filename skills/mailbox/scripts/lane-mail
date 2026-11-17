@@ -5,7 +5,7 @@
 # on the disk that holds it. Compaction rewrites through that same inode and
 # keeps logical numbers beside it. A message survives a restarted sender
 # and receiver alike. Every reader consumes only newline-terminated
-# lines, so a local or a `lane-host append` write in flight costs one poll and
+# lines, so a local or an `orch-runtime host append` write in flight costs one poll and
 # never a lost or duplicated message; a terminated line that does not parse is
 # counted and not emitted, keeping `--after` and the cursor aligned with the
 # file. A halt is acknowledged by a plain `inbox` read or a `wait` that
@@ -39,7 +39,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
-through `lane-host` for a lane on another host.
+through `orch-runtime host` for a lane on another host.
 
 Lane side, rooted at the lane's own git worktree:
   ask --item ITEM --file PATH [--options a,b]
@@ -334,7 +334,7 @@ Peer side, one other repository's overseer mailbox per call:
               prints, whose item is the `overseer` mailbox it wrote and never
               the repository that holds it. That mailbox has one reader, the
               session REPO's fleet record names by the `server` and `pane` of
-              its `overseer` member (orch schemas/workflow-state.md). A local
+              its `controller` member (orch schemas/workflow-state.md). A local
               send, an answer included, refuses before appending where no
               overseer is recorded here: `lane-mail: overseer-absent=<root>`
               names `orch-runtime register --fleet` in the session that
@@ -382,7 +382,7 @@ Options:
                 on the peer's host, taken as given, and outside that check as
                 it is outside the ownership gate: nothing here can establish
                 whose path it is
-  --host        read and write through `lane-host`, not this disk
+  --host        read and write through `orch-runtime host`, not this disk
   --after N     drain: the read cursor, the count a previous drain printed;
                 events with --box: print only envelopes past logical line N
   --box B       events only: to-lane or to-overseer, the one file to read
@@ -1324,7 +1324,7 @@ lm_box "$ROOT"
 # would carry a read or an append somewhere the lane never wrote, and a
 # checkout can commit one. Judged once, before any verb reads or writes, from
 # tmp/lane-mail down: tmp itself may be a link a worktree setup makes. A hosted
-# mailbox is judged by its provider behind `lane-host cat` and `append`.
+# mailbox is judged by its provider behind `orch-runtime host cat` and `append`.
 lm_plain() {
   local unsafe
   command -v python3 >/dev/null 2>&1 || refuse command-missing python3
@@ -1582,7 +1582,7 @@ lm_sent() {
 # Whether the checkout's overseer mailbox has a reader. Peer delivery reports
 # this after landing; --require-reader refuses before an owner directive. The
 # reader is the one session the checkout's fleet record names under
-# `.overseer`: the lane-mail-check hooks hand the mailbox to that session
+# `.controller`: the lane-mail-check hooks hand the mailbox to that session
 # alone, and a live watch there reads it itself. Whether it still runs is
 # agent-runtime's controller status, which lm_require_overseer read for this
 # root: `live: false` is nobody to read it, and its `controller-unreadable`

@@ -23,8 +23,8 @@ IDENTITY_FILE = "/.git/lane-host-pid"
 # The clone's own runtimes, each built by create for the clone's sources.
 AGENT_RUNTIME = "/.agents/skills/agent-runtime/scripts/agent-runtime"
 ORCH_RUNTIME = "/.agents/skills/orch/scripts/orch-runtime"
-# The static host kind's capability line. lane-host answers it for a provider
-# that predates the verb, so this is its one spelling.
+# The static host kind's capability line, this provider's answer to the
+# `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
                           "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local"))
 

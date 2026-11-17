@@ -413,7 +413,7 @@ fn progress_reports(dir: &Path, cutoff: u64) -> Result<Vec<Unit>> {
 /// The overseer mailbox's session rows files, `session-<server pid>-<pane
 /// number>.jsonl` under `overseer`, whose pane is gone: the server answering
 /// at `server` is that pid and holds no such pane. A file the
-/// fleet record names (`overseer.session_rows`, `overseer.pending.
+/// fleet record names (`controller.session_rows`, `controller.pending.
 /// session_rows`, `pending.session_rows`), a link, a server that does not
 /// answer there and a pane that cannot be read each keep the file.
 #[allow(

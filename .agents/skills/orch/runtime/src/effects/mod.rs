@@ -14,11 +14,11 @@
 //! the handle owns the intent's recorded obligation set and
 //! every primitive that acts on the host, writes the record before each
 //! action and before each wait, and is consumed by
-//! the one terminal outcome the effect reaches. Nothing in `launch`, `stop`
-//! or `transfer` names an obligation, builds a set or calls a tmux, process,
-//! observe, session, receipt or job primitive: the set and its tokens are
-//! private to `operation`, and the compiler's `disallowed-methods` list
-//! (`clippy.toml`) refuses the primitives outside it. The pane an effect
+//! the one terminal outcome the effect reaches. Nothing in `launch` or `stop`
+//! names an obligation, builds a set or calls a tmux, process, observe,
+//! session, receipt or job primitive: the set and its tokens are private to
+//! that handle, which `lane_operation` alone opens here, and the compiler's
+//! `disallowed-methods` list (`clippy.toml`) refuses the primitives outside it. The pane an effect
 //! opens registers itself;
 //! every process and pane read is three-valued;
 //! the identity a receipt proves, or the judge first reads, is the one
@@ -44,7 +44,8 @@
 //!
 //! The effects are grouped by what they do to the host: `launch` opens a
 //! lane's window and confirms the harness in it, `stop` ends a lane's owned
-//! processes and window, `transfer` runs an overseer succession. This module
+//! processes and window, and a controller's start, stop or succession goes to
+//! agent-runtime's controller engine (`controller::run`). This module
 //! holds what they share: the run context, the dispatch, the launch spec and
 //! command, the reconcile dispatch and the record reads. Every enum read
 //! here is matched by its variants; the lint below holds that over the whole

@@ -131,7 +131,8 @@ pub const PR_WATCH_CLI_DEFAULT: &str = ".agents/skills/github/scripts/pr-watch.s
 /// `on`, the default, or `off`.
 pub const SECURITY_ALERTS_KEY: &str = "ORCH_SECURITY_ALERTS";
 /// The file holding the installation token the alert reads run under; no
-/// default, and an unset file reads the alerts with no token.
+/// default, and an unset file reads no alert: the pass records the token
+/// unread (`cause=unset`).
 pub const SECURITY_ALERT_TOKEN_FILE_KEY: &str = "ORCH_SECURITY_ALERT_TOKEN_FILE";
 /// Whether the GitHub duty reports outside contributions: `on`, the
 /// default, or `off`.

@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # The rules a mailbox obeys wherever the file sits: the lane's own disk through
-# `lane-mail`, a provider's host through `lane-host append`, and the fixture
+# `lane-mail`, a provider's host through `orch-runtime host append`, and the fixture
 # that models a provider. One owner for each, because a drift in where a line
 # ends glues two envelopes together or hands over half of one, and a drift in
 # the lock loses a line whenever two writers meet.
@@ -45,7 +45,7 @@ mailbox_terminate() { # FILE
 MAILBOX_TIME_JQ='def at_epoch: try (strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) catch null;'
 
 # The destination's most recent whole-envelope repeat within a minute. Both
-# lane-mail and lane-host append call this under the destination's own lock.
+# lane-mail and a provider's append verb call this under the destination's own lock.
 # Deadline offsets stay equal on a retry even when its timestamp advances.
 # The envelope crosses a file, not argv: a message can exceed one argument's
 # kernel limit. Raw provider appends that are not envelopes remain raw bytes.

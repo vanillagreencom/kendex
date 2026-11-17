@@ -320,7 +320,7 @@ Default commands:
           machine's login. A runtime its setup has not built refuses the
           check (exit 69, its setup command on stderr). An install in no
           repository, such as a global one, has no project root, and the
-          check is unavailable there; it never runs an orch-runtime found
+          check is unavailable there; it never runs an agent-runtime found
           under the working directory.
 
 Output clearing and ownership:

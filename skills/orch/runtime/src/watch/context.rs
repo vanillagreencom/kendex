@@ -39,7 +39,7 @@ pub const STALE_SECS: u64 = 3600;
 /// the pane key: `<gap>|told` then `<gap>|alerted`.
 pub const GAP_ROW: &str = "overseer-context-gap";
 
-/// The record's fields as `lane_context_record` writes them.
+/// The record's fields as the turn end writes them (`turnend/marks.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextRecord {
     pub harness: Option<String>,
@@ -62,7 +62,7 @@ pub struct ContextRecord {
 }
 
 impl ContextRecord {
-    /// The record as `lane_context_record_fields` admits it: an object
+    /// The record as this reader admits it: an object
     /// whose `tokens` is a number with no gap, or whose `tokens` is null
     /// with a non-empty `gap`. Anything else is a record this reader
     /// cannot judge.

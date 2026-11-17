@@ -5,8 +5,9 @@
 //! turn-end hook's, the mark judge's and the close's. One judge and one
 //! limit ([`judge`]) answer them all; no shell judges an account.
 //!
-//! The listing is this module's own ([`listing`]): every account this
-//! machine discovers and the owner states, measured through its credential
+//! The listing is this module's own ([`listing`]): every account the owner
+//! configures on this machine and the accounts its caller names, nothing
+//! found by looking, measured through its credential
 //! at the usage endpoint behind the cache, and beside them the rows a
 //! caller read from a provider ([`Provider`]). The listing applies no exclusion and no retirement: it lists every account
 //! with those words as flags, and the judge refuses by them. What this

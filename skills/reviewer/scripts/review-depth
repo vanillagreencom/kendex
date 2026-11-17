@@ -27,8 +27,9 @@ stdout is one record:
 
 change_class is always the measured class.
 
-none skips package review; bot requires automatic review; full selects the
-normal specialist review. Orch owns the panel, execution and round counters.
+none skips package review; bot runs orch's review, under the small workflow's
+review step where that workflow calls it; full selects the normal specialist
+review. Orch owns the panel, execution and round counters.
 Every class keeps GitHub's native approval and thread requirements.
 This command reads no approval state and grants no approval exemption.
 

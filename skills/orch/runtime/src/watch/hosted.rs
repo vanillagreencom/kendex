@@ -426,7 +426,7 @@ pub enum HostStatus {
 
 /// `status --item ITEM --harness H`: `running` or `exited` on
 /// exit 0; any other
-/// answer is a failed read, never an exit (`schemas/lane-host.md` § `status`).
+/// answer is a failed read, never an exit (`schemas/lane-host.md` § Provider protocol).
 pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<HostStatus, String> {
     let unread = |cause: String| format!("harness-probe-failed item={item} {cause}");
     let out = lane_host(
