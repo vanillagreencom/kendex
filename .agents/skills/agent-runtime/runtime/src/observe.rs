@@ -207,7 +207,7 @@ fn classify(
 }
 
 static WORKING: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom \(|esc interrupt").unwrap()
+    Regex::new(r"to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom \(|esc interrupt|ctrl\+c interrupt").unwrap()
 });
 static ASKING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel").unwrap()

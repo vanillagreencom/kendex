@@ -172,9 +172,24 @@ fn pi_captures_judge_idle_at_rest_and_working_mid_turn() {
 /// exit status; a harness it has no rule for is a refusal, exit 1.
 #[test]
 fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
+    use agent_runtime::effects::prepare::up;
+    use agent_runtime::observe::State;
+
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/rust/fixtures");
-    let ask = |screen: &str, harness: &str| {
-        let screen = fixtures.join(screen);
+    let captured = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../orch/tests/fixtures/oversee-watch");
+    let dir = tempfile::tempdir().unwrap();
+    let setup = dir.path().join("setup.txt");
+    std::fs::write(&setup, "Choose a theme\n❯ 1. Dark\n  2. Light\n").unwrap();
+    let dialog = dir.path().join("dialog.txt");
+    std::fs::write(
+        &dialog,
+        "◉ Working ctrl+c interrupt\nSelect a model\n❯ 1. GPT-6.1 Sol\n  2. Auto\n",
+    )
+    .unwrap();
+    let process_only = dir.path().join("process-only.txt");
+    std::fs::write(&process_only, "Copilot v1.0.109 uses AI.\n").unwrap();
+    let ask = |screen: &std::path::Path, harness: &str| {
         reply_of(&[
             "judge".as_ref(),
             "--screen".as_ref(),
@@ -183,13 +198,49 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
             harness.as_ref(),
         ])
     };
-    let (code, reply) = ask("pi-idle.txt", "pi");
-    assert_eq!(reply["result"]["state"], "idle", "{reply}");
-    assert_eq!(code, Some(0), "{reply}");
-    let (code, reply) = ask("pi-working.txt", "pi");
-    assert_eq!(reply["result"]["state"], "working", "{reply}");
-    assert_eq!(code, Some(0), "{reply}");
-    let (code, reply) = ask("pi-idle.txt", "nope");
+    for (screen, harness, want, ready) in [
+        (fixtures.join("pi-idle.txt"), "pi", "idle", true),
+        (fixtures.join("pi-working.txt"), "pi", "working", true),
+        (
+            fixtures.join("copilot-model-turn-sidebar.txt"),
+            "copilot",
+            "working",
+            true,
+        ),
+        (
+            fixtures.join("copilot-model-turn.txt"),
+            "copilot",
+            "working",
+            true,
+        ),
+        (
+            captured.join("copilot-dialog-trust.txt"),
+            "copilot",
+            "asking",
+            false,
+        ),
+        (setup, "copilot", "asking", false),
+        (
+            captured.join("copilot-idle.txt"),
+            "copilot",
+            "walled",
+            false,
+        ),
+        (dialog, "copilot", "asking", false),
+        (process_only, "copilot", "unjudged", false),
+    ] {
+        let (code, reply) = ask(&screen, harness);
+        assert_eq!(code, Some(0), "{}: {reply}", screen.display());
+        let state: State = serde_json::from_value(reply["result"].clone()).unwrap();
+        assert_eq!(up(&state), ready, "{}: {reply}", screen.display());
+        assert_eq!(
+            reply["result"]["state"],
+            want,
+            "{}: {reply}",
+            screen.display()
+        );
+    }
+    let (code, reply) = ask(&fixtures.join("pi-idle.txt"), "nope");
     assert_eq!(reply["refusal"]["key"], "harness-unknown", "{reply}");
     assert_eq!(code, Some(1), "{reply}");
 }
