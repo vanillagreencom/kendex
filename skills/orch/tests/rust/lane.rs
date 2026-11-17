@@ -4684,6 +4684,320 @@ fn a_park_stops_the_sandbox_and_records_parked() {
     }
 }
 
+fn hold_request() -> Value {
+    json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"hold": true}}})
+}
+
+fn held_lane() -> Value {
+    let mut lane = without("cycle");
+    lane["tracker"] = json!("linear");
+    lane
+}
+
+/// A hold releases compute while keeping the item and its work on disk.
+#[test]
+fn a_hold_park_stops_the_sandbox_and_records_parked_without_a_pull_read() {
+    for status in ["running", "stopped"] {
+        let mut fleet = Fleet::park_world();
+        fleet.answer("CAPABILITIES", VERB_PANE_LINE);
+        let capture = fleet.state_dir().join("idle-screen");
+        std::fs::write(
+            &capture,
+            "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n",
+        )
+        .unwrap();
+        let state = fleet.state_dir().join("harness-state");
+        std::fs::write(&state, "running\n").unwrap();
+        fleet.answer("CAPTURE_FILE", &capture.display().to_string());
+        fleet.answer("HARNESS_STATE_FILE", &state.display().to_string());
+        fleet.answer("STOP_ENDS", "1");
+        let mut lane = held_lane();
+        lane["status"] = json!(status);
+        fleet.write_lanes(vec![lane]);
+        fleet.plant_tracker("KEN-1", "unstarted");
+        let item = item_record(fleet.state_dir(), "KEN-1");
+        let work = r#"{"version":1,"issue_id":"KEN-1","stage":"hold","note":"keep this work"}"#;
+        std::fs::write(&item, work).unwrap();
+        let answer = fleet.close(hold_request());
+        assert_eq!(answer["result"]["word"], "parked", "{status}: {answer}");
+        let lane = fleet.lane("KEN-1");
+        assert_eq!(lane["status"], "parked", "{lane}");
+        assert_eq!(lane["parked"]["hold"], true, "{lane}");
+        assert_eq!(lane["parked"]["head"], "h2", "{lane}");
+        for key in ["pr", "until_pr", "ask"] {
+            assert!(lane["parked"].get(key).is_none(), "{lane}");
+        }
+        assert_eq!(std::fs::read_to_string(item).unwrap(), work);
+        assert!(lane.get("sandbox").is_none(), "{lane}");
+        assert!(lane.get("park_owed").is_none(), "{lane}");
+        let calls = fleet.provider_calls();
+        assert!(
+            calls.iter().any(|c| c == "stop-sandbox --item KEN-1"),
+            "{calls:?}"
+        );
+        assert_eq!(fleet.lines("bin/gh.log"), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn a_hold_park_refuses_an_open_ask_without_signalling() {
+    for state in ["running", "stopped", "exited"] {
+        let mut fleet = Fleet::park_world();
+        let mut lane = held_lane();
+        if state == "stopped" {
+            lane["status"] = json!("stopped");
+        } else {
+            fleet.answer("HARNESS_STATE", state);
+        }
+        fleet.write_lanes(vec![lane]);
+        fleet.disk(MAILBOX, &format!("{ASK_A1}\n"));
+        let before = fleet.lane("KEN-1");
+        let answer = fleet.close(hold_request());
+        assert_eq!(
+            answer["refusal"]["key"], "ask-unanswered",
+            "{state}: {answer}"
+        );
+        assert_eq!(refusal_fields(&answer)["ask"], "a1", "{answer}");
+        assert_eq!(fleet.lane("KEN-1"), before);
+        assert!(
+            !fleet
+                .provider_calls()
+                .iter()
+                .any(|c| c.starts_with("stop ") || c == "stop-sandbox --item KEN-1")
+        );
+        let mailbox = fleet
+            .state_dir()
+            .join("provider-disk")
+            .join(MAILBOX.trim_start_matches('/'));
+        assert_eq!(
+            std::fs::read_to_string(mailbox).unwrap(),
+            format!("{ASK_A1}\n")
+        );
+    }
+}
+
+#[test]
+fn a_hold_park_refuses_dirty_or_unpushed_work_without_signalling() {
+    for reason in ["clean-status-invalid", "unpushed"] {
+        let fleet = Fleet::park_world();
+        fleet.write_lanes(vec![held_lane()]);
+        if reason == "unpushed" {
+            fleet.disk("/w/main/.git/refs/remotes/origin/ken-1", "h1\n");
+        } else {
+            fleet.disk("/w/ken-1/tmp/park-status.json", r#"{"head":"h2","branch":"ken-1","porcelain":" M src/x.rs","at":"2026-01-29T16:00:00Z"}"#);
+        }
+        let before = fleet.lane("KEN-1");
+        let answer = fleet.close(hold_request());
+        assert_eq!(
+            answer["refusal"]["key"], "park-refused",
+            "{reason}: {answer}"
+        );
+        assert_eq!(refusal_fields(&answer)["reason"], reason, "{answer}");
+        assert_eq!(fleet.lane("KEN-1"), before);
+        assert!(
+            !fleet
+                .provider_calls()
+                .iter()
+                .any(|c| c.starts_with("stop ") || c == "stop-sandbox --item KEN-1")
+        );
+    }
+}
+
+#[test]
+fn a_hold_park_on_a_local_lane_refuses_local() {
+    let fleet = Fleet::park_world();
+    let mut lane = held_lane();
+    lane.as_object_mut().unwrap().remove("host");
+    lane["kind"] = json!("local");
+    fleet.write_lanes(vec![lane]);
+    let answer = fleet.close(hold_request());
+    assert_eq!(answer["refusal"]["key"], "park-refused", "{answer}");
+    assert_eq!(refusal_fields(&answer)["reason"], "local", "{answer}");
+    assert_eq!(fleet.lane("KEN-1")["status"], "running");
+    assert!(fleet.provider_calls().is_empty());
+}
+
+#[test]
+fn a_hold_is_the_only_zero_wait_park_and_cannot_name_a_wait() {
+    let fleet = Fleet::park_world();
+    fleet.write_lanes(vec![held_lane()]);
+    for wait in [
+        json!({}),
+        json!({"hold": false}),
+        json!({"hold": true, "pr": 7}),
+        json!({"hold": true, "until_pr": 9}),
+        json!({"hold": true, "until_repo": "o/r"}),
+        json!({"hold": true, "ask": "a1"}),
+    ] {
+        let answer = fleet.close(json!({"op":"close-lane", "item":"KEN-1", "mode":{"park":wait}}));
+        assert_eq!(
+            answer["refusal"]["key"], "request-invalid",
+            "{wait}: {answer}"
+        );
+    }
+    assert!(fleet.provider_calls().is_empty());
+}
+
+#[test]
+fn a_retained_hold_is_valid_but_an_empty_retained_wait_is_invalid() {
+    for hold in [
+        Some(json!(true)),
+        Some(json!(false)),
+        Some(json!("true")),
+        None,
+    ] {
+        let fleet = Fleet::park_world();
+        let mut lane = held_lane();
+        lane["status"] = json!("parked");
+        lane["parked"] = json!({"repo":"o/r", "head":"h2", "at":"2026-01-29T16:00:00Z"});
+        if let Some(value) = &hold {
+            lane["parked"]["hold"] = value.clone();
+        }
+        fleet.write_lanes(vec![lane]);
+        fleet.plant_tracker("KEN-1", "unstarted");
+        let answer =
+            fleet.close(json!({"op":"close-lane", "item":"KEN-1", "mode":"terminal-state"}));
+        if hold == Some(json!(true)) {
+            assert_eq!(answer["result"]["state"], "open", "{answer}");
+        } else {
+            assert_eq!(answer["refusal"]["key"], "tracker-read-failed", "{answer}");
+            assert_eq!(
+                refusal_fields(&answer)["cause"],
+                "parked-record-invalid",
+                "{answer}"
+            );
+        }
+        assert!(fleet.provider_calls().is_empty());
+        assert!(fleet.lines("bin/gh.log").is_empty());
+    }
+}
+
+#[test]
+fn a_hold_owed_after_a_failed_sandbox_stop_keeps_its_hold() {
+    let mut fleet = Fleet::park_world();
+    let mut lane = held_lane();
+    lane["status"] = json!("stopped");
+    fleet.write_lanes(vec![lane]);
+    fleet.answer("SANDBOX_STOP_STATUS", "1");
+    let answer = fleet.close(hold_request());
+    assert_eq!(answer["refusal"]["key"], "park-failed", "{answer}");
+    assert_eq!(
+        fleet.lane("KEN-1")["park_owed"],
+        json!({"hold":true, "head":"h2"})
+    );
+    fleet.answer("SANDBOX_STOP_STATUS", "0");
+    let answer = fleet.close(hold_request());
+    assert_eq!(answer["result"]["word"], "parked", "{answer}");
+    assert_eq!(fleet.lane("KEN-1")["parked"]["hold"], true);
+}
+
+/// The real watch completes its park, observation, mail and wake passes
+/// over a hold without starting its sandbox or sending to its session.
+#[test]
+fn a_watch_pass_over_a_hold_park_wakes_nothing() {
+    use orch_runtime::schedule::Duty;
+    use orch_runtime::watch::{Baseline, Paths};
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    let fleet = Fleet::park_world();
+    let mut lane = held_lane();
+    lane["status"] = json!("stopped");
+    fleet.write_lanes(vec![lane]);
+    let answer = fleet.close(hold_request());
+    assert_eq!(answer["result"]["word"], "parked", "{answer}");
+    let before = fleet.lane("KEN-1");
+    let calls_before = fleet.provider_calls();
+    let bin = fleet.state_dir().join("bin");
+    let mut replies: Value =
+        serde_json::from_str(&std::fs::read_to_string(bin.join("gh.json")).unwrap()).unwrap();
+    replies["repos/o/r/pulls?state=closed&head=o%3Aken-1&per_page=100&page=1"] = json!({"body":[]});
+    replies["search/issues?q=repo%3Ao%2Fr%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody&per_page=100&page=1"] =
+        json!({"body":{"total_count":0,"incomplete_results":false,"items":[]}});
+    replies["repos/o/r/actions/workflows?per_page=100&page=1"] =
+        json!({"body":{"total_count":0,"workflows":[]}});
+    std::fs::write(bin.join("gh.json"), replies.to_string()).unwrap();
+    let err_path = fleet.state_dir().join("watch.stderr");
+    let mut command = isolated();
+    command
+        .current_dir(fleet.state_dir())
+        .args([
+            "--state-dir",
+            &fleet.state_dir().display().to_string(),
+            "watch",
+            "run",
+            "--fleet",
+            "--credential-selected",
+            "--interval",
+            "1",
+            "--mail-program",
+        ])
+        .arg(lane_mail())
+        .arg("--mail-root")
+        .arg(fleet.state_dir())
+        .arg("--socket")
+        .arg(fleet.state_dir().join("no-such.sock"))
+        .env("ORCH_AGENT_RUNTIME", agent_runtime())
+        .env("ORCH_SECURITY_ALERTS", "off")
+        .stdout(Stdio::null())
+        .stderr(std::fs::File::create(&err_path).unwrap());
+    for (name, value) in &fleet.env {
+        command.env(name, value);
+    }
+    let mut child = Owned(command.spawn().unwrap());
+    let paths = Paths::of(&fleet.fleet_path()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok(baseline) = Baseline::load(&paths.baseline)
+            && [
+                Duty::Tracker,
+                Duty::NativeObservation,
+                Duty::Mail,
+                Duty::Wake,
+                Duty::GitHub,
+            ]
+            .iter()
+            .all(|d| baseline.passes.contains_key(d))
+        {
+            break;
+        }
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "watch ended: {}",
+            std::fs::read_to_string(&err_path).unwrap()
+        );
+        assert!(
+            Instant::now() < deadline,
+            "watch did not pass: {}",
+            std::fs::read_to_string(&paths.log).unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let stop = fleet.run(&["watch", "stop", "--fleet"]);
+    assert!(stop.status.success(), "{}", stderr(&stop));
+    assert!(
+        child.0.wait().unwrap().success(),
+        "{}",
+        std::fs::read_to_string(err_path).unwrap()
+    );
+    let log = std::fs::read_to_string(&paths.log).unwrap();
+    for event in [
+        "watch-step-failed step=tracker ",
+        "watch-step-failed step=github ",
+        "watch-step-failed step=native-observation ",
+        "watch-step-failed step=mail ",
+        "watch-step-failed step=wake ",
+        "parked-merged",
+        "parked-closed",
+        "lane-relaunched",
+        "wake-",
+    ] {
+        assert!(!log.contains(event), "{event}: {log}");
+    }
+    assert_eq!(fleet.lane("KEN-1"), before);
+    assert_eq!(fleet.provider_calls(), calls_before);
+}
+
 /// The ssh kind's line for a provider that captures its own pane.
 const VERB_PANE_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb";
 

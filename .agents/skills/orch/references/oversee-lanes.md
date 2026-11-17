@@ -4,26 +4,27 @@ Read from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) to park
 
 ## Parking a merge wait
 
-A hosted lane can wait for its own queued pull request, for another pull request in a watched repository, or for the owner's answer to its own ask. Park it to stop sandbox billing while keeping its disk and session. Park when the lane's notice names its queue wait, a dependency hold or its ask; a `heartbeat` also shows queue waits from the lane's status file ([oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads)). The park is a `close-lane` request with a park `mode`, written with the harness file tool and run as [lane-reach.md § Lane close](lane-reach.md#lane-close) states. The close's own reads decide admission.
+A hosted lane can wait for its own queued pull request, for another pull request in a watched repository, for the owner's answer to its own ask, or stay on hold with no wait. Park it to stop sandbox billing while keeping its disk and session. Park when the lane's notice names its queue wait, a dependency hold, its ask or a hold with no wait; a `heartbeat` also shows queue waits from the lane's status file ([oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads)). The park is a `close-lane` request with a park `mode`, written with the harness file tool and run as [lane-reach.md § Lane close](lane-reach.md#lane-close) states. The close's own reads decide admission.
 
 | Wait | `mode` |
 |---|---|
 | The lane's own pull request in the queue | `{"park":{"pr":[PR_NUMBER]}}` |
 | A blocking pull request | `{"park":{"until_pr":[BLOCKING_PR],"until_repo":"[OWNER/REPO]"}}`, `until_repo` only where it is not the lane's repository; add `"pr":[OWN_PR]` where the lane also has its own pull request |
 | The lane's open ask | `{"park":{"ask":"[ASK_ID]"}}` |
+| A hold with no pull request or ask wait | `{"park":{"hold":true}}` |
 
 ```json
 {"op":"close-lane","item":"[ITEM_KEY]","mode":{"park":{"pr":[PR_NUMBER]}}}
 ```
 
-The named `until_repo` must be the lane's repository or listed in `ORCH_CONNECTED_REPOS`, else the park refuses `park-refused reason=repo-unwatched`. A park naming none of the three refuses `request-invalid field=park`.
+The named `until_repo` must be the lane's repository or listed in `ORCH_CONNECTED_REPOS`, else the park refuses `park-refused reason=repo-unwatched`. A park naming no pull request, ask or hold refuses `request-invalid field=park requires=pr|ask|hold`. A hold combined with any wait field refuses `request-invalid field=park conflict=hold|wait`.
 
 ### The lane's steps before a park
 
 1. Commit the work and push the branch to `origin`.
 2. In the worktree, read `git status --porcelain`, `git rev-parse HEAD`, `git branch --show-current` and `date -u +%Y-%m-%dT%H:%M:%SZ`. A nonempty status stops here.
 3. With the harness file tool, write `tmp/park-status.json` as `{ "head": "[SHA]", "branch": "[BRANCH]", "porcelain": "", "at": "[UTC_TIME]" }` from those readings.
-4. Write a notice to `tmp/park-request.md` naming the repository, its own pull request if any, and what it waits on: the blocking pull request and the step it holds, or its ask.
+4. Write a notice to `tmp/park-request.md` naming the repository, its own pull request if any, and what it waits on: the blocking pull request and the step it holds, its ask, or a hold with no wait.
 5. Send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [ITEM_KEY] --file tmp/park-request.md`, then change no file while it waits.
 
 ### The judge
@@ -33,15 +34,15 @@ The close reads before it signals anything; each failed reading is `park-refused
 - The provider's `stop-sandbox --check` answers whether the disk can be stopped and started again: `reason=local` for a local lane, `reason=provider-unsupported` for a provider without that pair.
 - An ask park's ask must be the lane's oldest open one: `ask-not-open ask= open=`. An ask park reads no pull request.
 - The lane's repository must resolve: `reason=repo-unresolved` with its `cause`.
-- The pull request is read once (`reason=pr-read-failed`) and must be OPEN (`reason=pr-not-open`). A dependency park checks only that the blocking pull request is open.
+- A named pull request is read once (`reason=pr-read-failed`) and must be OPEN (`reason=pr-not-open`). A dependency park checks only that the blocking pull request is open. A hold park reads no pull request and uses the same pushed-head and clean-status proof below.
 - The checked-out branch and head are read through the provider's file interface (`reason=worktree-unread`), and the head must stand on the sandbox's `origin` (`reason=unpushed head= remote=`): tell the lane to push, then park again.
 - The clean-status record, `tmp/park-status.json` under the lane's `mail_root`, must name that branch and head with an empty status and a time (`reason=clean-status-unread`, `clean-status-invalid`). File reads cannot prove current cleanliness: the lane owns the status reading and its quiet wait after the notice. Where the remote Git read fails on a queue park, the item state's `branch` can name its pull request branch instead, judged against the pull request's own head; refusals then name `branch-source=workflow-state`.
 - A queue park needs its pull request's head branch and commit to match the lane (`reason=pr-branch-mismatch`, `pr-head-mismatch`), a second branch of the same item included. GitHub must hold it in the merge queue, or have auto-merge armed with `mergeStateStatus=CLEAN` (`reason=not-armed`, `merge-state`). The github skill's reducer must print no attention line (`reason=attention` with the line's `kinds`, `reducer-missing`, `reducer-failed`). The queue or CLEAN proves the base's required approval; reducer silence alone does not.
-- A pull-request park refuses an unanswered ask as `ask-unanswered`. A record still `preparing` refuses `record-invalid field=status`.
+- A pull-request or hold park refuses an unanswered ask as `ask-unanswered`. A record still `preparing` refuses `record-invalid field=status`.
 
 ### What a park records
 
-The park ends the lane's harness through its provider, as any hosted close does, then calls the provider's `stop-sandbox`. Its `sandbox-stopped` line records the lane `parked` with `{head, repo, at}`, its own `pr` where supplied, `until_pr` and `until_repo` for a dependency wait, and its ask for an ask park; the reply's `result.word` reads `parked`. A park of a record already `parked` changes nothing.
+The park ends the lane's harness through its provider, as any hosted close does, then calls the provider's `stop-sandbox`. Its `sandbox-stopped` line records the lane `parked` with `{head, repo, at}`, its own `pr` where supplied, `until_pr` and `until_repo` for a dependency wait, its ask for an ask park, or `hold: true` for a hold; the reply's `result.word` reads `parked`. A park of a record already `parked` changes nothing. A hold keeps the item's state and work.
 
 A failed sandbox stop refuses `park-failed` and leaves the record `stopped` with `sandbox: standing` and the owed park, which holds a fleet slot. The watch completes an owed park each pass and reports `park-owed [ITEM] result=` once per distinct result; a confirmed park, relaunch or close clears it. The `result` reads:
 
@@ -56,6 +57,8 @@ A failed sandbox stop refuses `park-failed` and leaves the record `stopped` with
 A parked lane keeps its record, its `mail_root`, its pull-request watch rows and its disk with the harness transcript, the mailbox and its `tmp`. It gives up its window, its pane reads and its mail pass. The launch cap charges a parked record only while a live identity or a `reservation` stands, which `reserve-lane`, or a `park-lane` request that names one, writes and the close's park does not; so a parked lane holds no fleet slot, and its resume meets the cap as an added lane ([lane-directive.md § Caps](lane-directive.md#caps)). The watch carries a parked record for its merged check, terminal close and `lane-long` age, and asks its provider nothing. The status report, `orch-runtime report render`, lists it under In progress with the pull request its record names, its `pending_pr` else its `parked` one, or `no pull request`, and reads nothing from its disk.
 
 ### What ends a park
+
+A hold park returns only through a hand relaunch of the parked lane. The watch wakes nothing for it, including when the tracker leaves hold.
 
 Each per [oversee-events.md § Event kinds](oversee-events.md#event-kinds):
 

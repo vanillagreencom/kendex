@@ -635,8 +635,8 @@ pub(crate) fn lane_verdict(
 
 /// The pull requests a retained wait names, `(repo, number)` each once: the
 /// lane's own and a dependency, the dependency in its own repository where
-/// the record names one; a park on the lane's own ask names none. A record
-/// naming neither, or a number or repository of the wrong shape, is
+/// the record names one; a park on the lane's own ask or a hold names none. A record
+/// naming no wait or hold, or a number or repository of the wrong shape, is
 /// `parked-record-invalid`.
 fn pull_waits(record: &serde_json::Value) -> std::result::Result<Vec<(String, u64)>, String> {
     let invalid = || "parked-record-invalid".to_owned();
@@ -666,7 +666,8 @@ fn pull_waits(record: &serde_json::Value) -> std::result::Result<Vec<(String, u6
         .get("ask")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|ask| !ask.is_empty());
-    if waits.is_empty() && !asked {
+    let hold = record.get("hold").and_then(serde_json::Value::as_bool) == Some(true);
+    if waits.is_empty() && !asked && !hold {
         return Err(invalid());
     }
     Ok(waits)

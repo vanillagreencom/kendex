@@ -454,7 +454,7 @@ pub struct Landing {
 }
 
 /// What the close does: end the lane (`close`), end its harness and keep
-/// its sandbox (`keep-sandbox`), park its merge wait (`park`), print the
+/// its sandbox (`keep-sandbox`), park its wait or hold (`park`), print the
 /// tracker's verdict alone (`terminal-state`), or close only where that
 /// verdict is terminal (`if-terminal`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -470,9 +470,12 @@ pub enum CloseMode {
 
 /// What a park waits on: a pull request, the lane's own, a dependency, or
 /// both, a dependency in another repository naming it; or the lane's own
-/// open mailbox ask, whose answer the overseer sends once it relaunches it.
+/// open mailbox ask, whose answer the overseer sends once it relaunches it;
+/// or a hold with no wait, returned only by a hand relaunch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParkWait {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hold: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -499,6 +502,7 @@ impl ParkLane {
     pub fn owed_mark(&self) -> OwedPark {
         OwedPark {
             wait: ParkWait {
+                hold: self.hold,
                 pr: self.pr,
                 until_pr: self.until_pr,
                 until_repo: self.until_repo.clone(),
@@ -532,6 +536,8 @@ pub struct ParkLane {
     pub item: String,
     pub head: String,
     pub repo: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hold: bool,
     #[serde(default)]
     pub pr: Option<u64>,
     #[serde(default)]
@@ -1744,6 +1750,9 @@ pub(super) fn park_lane(
             parked.insert("head".to_owned(), Value::from(r.head.as_str()));
             parked.insert("repo".to_owned(), Value::from(r.repo.as_str()));
             parked.insert("at".to_owned(), Value::from(env.iso()));
+            if r.hold {
+                parked.insert("hold".to_owned(), Value::Bool(true));
+            }
             if let Some(pr) = r.pr {
                 parked.insert("pr".to_owned(), Value::from(pr));
             }
@@ -3803,6 +3812,7 @@ mod tests {
                 item: "KEN-H".into(),
                 head: "abc123".into(),
                 repo: "o/r".into(),
+                hold: false,
                 pr: Some(5814),
                 until_pr: Some(5820),
                 until_repo: Some("o/dep".into()),

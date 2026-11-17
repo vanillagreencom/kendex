@@ -275,10 +275,31 @@ pub fn close_lane(
         && wait.pr.is_none()
         && wait.until_pr.is_none()
         && wait.ask.is_none()
+        && !wait.hold
     {
         return Err(refused(
             "request-invalid",
-            &[("item", &r.item), ("field", "park"), ("requires", "pr|ask")],
+            &[
+                ("item", &r.item),
+                ("field", "park"),
+                ("requires", "pr|ask|hold"),
+            ],
+        ));
+    }
+    if let CloseMode::Park(wait) = &r.mode
+        && wait.hold
+        && (wait.pr.is_some()
+            || wait.until_pr.is_some()
+            || wait.until_repo.is_some()
+            || wait.ask.is_some())
+    {
+        return Err(refused(
+            "request-invalid",
+            &[
+                ("item", &r.item),
+                ("field", "park"),
+                ("conflict", "hold|wait"),
+            ],
         ));
     }
     let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
@@ -628,8 +649,10 @@ impl Close<'_> {
         let mut notes = Vec::new();
         if let Some(wait) = self.park() {
             let park = self.park_judge(wait, None)?;
-            if !matches!(judged, LaneState::Exited) {
+            if !matches!(judged, LaneState::Exited) || wait.hold {
                 self.refuse_ask()?;
+            }
+            if !matches!(judged, LaneState::Exited) {
                 self.host_stop(&mut notes)?;
             }
             let closed = self.close_on(Ground::Keep(Some(park.owed_mark())))?;
@@ -1433,6 +1456,7 @@ impl Close<'_> {
             item: self.item().to_owned(),
             head,
             repo,
+            hold: wait.hold,
             pr: wait.pr,
             until_pr: wait.until_pr,
             until_repo,
