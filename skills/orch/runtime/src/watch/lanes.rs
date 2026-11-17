@@ -779,6 +779,37 @@ fn read_lane<'a>(
     }
 }
 
+fn lane_refused(key: &'static str, fields: &[(&str, &str)]) -> crate::error::Error {
+    crate::error::Error::from(agent_runtime::Error::refused(key, fields))
+}
+
+/// The fleet state at `path` as a lane verb reads it: a snapshot, never
+/// written back; no fleet state refuses `fleet-missing`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a lane verb's one read of the fleet state, a snapshot it judges; it acts on nothing"
+)]
+pub fn read_fleet(path: &Path) -> crate::error::Result<FleetState> {
+    state::load(path)?
+        .map(|snapshot| <FleetState as state::Record>::view(path, &snapshot.doc))
+        .transpose()?
+        .ok_or_else(|| lane_refused("fleet-missing", &[("path", &path.display().to_string())]))
+}
+
+/// The item's one in-flight lane record: none refuses `lane-missing`, two
+/// `lane-ambiguous`.
+pub fn in_flight<'a>(fleet: &'a FleetState, item: &str) -> crate::error::Result<&'a Lane> {
+    let mut lanes = fleet
+        .lanes
+        .iter()
+        .filter(|l| l.item == item && l.status.in_flight());
+    match (lanes.next(), lanes.next()) {
+        (Some(lane), None) => Ok(lane),
+        (None, _) => Err(lane_refused("lane-missing", &[("item", item)])),
+        (Some(_), Some(_)) => Err(lane_refused("lane-ambiguous", &[("item", item)])),
+    }
+}
+
 /// `lane status --item`. The lane is the item's one in-flight record; its
 /// host is read as the observation duty reads it, so a host whose
 /// capability line cannot be read, or whose kind judges no status, leaves
@@ -787,27 +818,9 @@ fn read_lane<'a>(
 /// holds open in the lane's current session ([`session_stage`]), the
 /// record's `session_since`, as its post-PR stop is ([`stop_fact`]);
 /// nothing is written.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verb's one read of the fleet state, a snapshot it judges and prints; it acts on nothing"
-)]
 pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Result<Value> {
-    fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::error::Error {
-        crate::error::Error::from(agent_runtime::Error::refused(key, fields))
-    }
-    let fleet = state::load(path)?
-        .map(|snapshot| <FleetState as state::Record>::view(path, &snapshot.doc))
-        .transpose()?
-        .ok_or_else(|| refused("fleet-missing", &[("path", &path.display().to_string())]))?;
-    let mut lanes = fleet
-        .lanes
-        .iter()
-        .filter(|l| l.item == item && l.status.in_flight());
-    let lane = match (lanes.next(), lanes.next()) {
-        (Some(lane), None) => lane,
-        (None, _) => return Err(refused("lane-missing", &[("item", item)])),
-        (Some(_), Some(_)) => return Err(refused("lane-ambiguous", &[("item", item)])),
-    };
+    let fleet = read_fleet(path)?;
+    let lane = in_flight(&fleet, item)?;
     let scripts = super::overseer::scripts_dir(&settings.roots.project);
     let hosts = Hosts::read(&scripts, [lane]);
     let unjudged = |cause: String| HostRead {

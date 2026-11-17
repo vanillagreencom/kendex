@@ -904,11 +904,15 @@ impl Drop for Loaded<'_> {
     }
 }
 
+/// The keys a pane may be pressed: Enter (a composer, a dialog's default),
+/// Up and Down (a dialog's selection), C-c (an interrupt) and a digit (a
+/// numbered dialog's choice).
+pub const KEYS: [&str; 14] = [
+    "Enter", "Up", "Down", "C-c", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+];
+
 /// Press one named key.
 pub fn send_key(pane: &Pane, key: &str) -> Result<()> {
-    const KEYS: [&str; 15] = [
-        "Enter", "Up", "Down", "C-c", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "Escape",
-    ];
     if !KEYS.contains(&key) {
         return Err(Error::refused("key-invalid", &[("key", key)]));
     }

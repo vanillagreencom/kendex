@@ -20,6 +20,7 @@ use agent_runtime::controller::Overseer;
 use agent_runtime::harness::Harness;
 use serde_json::{Value, json};
 
+use super::close::{StopRead, read_stop};
 use super::lane_operation::{LaneOperation, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
@@ -339,6 +340,52 @@ impl Close<'_> {
         )
     }
 
+    /// The provider's stop of a lane that exits in its window, asked after
+    /// its exit, then its status read exited within the close bound, as the
+    /// close before its transition asks it of every other hosted lane:
+    /// `true` once stopped or skipped, written under `host_stop`; `false`
+    /// with the refusal's key under `host_stop` and its fields beside it,
+    /// `exit-timeout` or `pane-read-failed` among them, which the repeat
+    /// asks again (the provider's stop of a group already ended signals
+    /// nothing).
+    fn host_stopped(&self, operation: &mut LaneOperation, observation: &mut Value) -> Result<bool> {
+        let harness = self.lane.harness.as_deref().unwrap_or_default();
+        let answer = operation.host_stop(self.lane, harness)?;
+        let processes = match read_stop(answer, self.no_landing()) {
+            StopRead::Stopped(processes) => processes,
+            StopRead::Skipped(cause) => {
+                observation["host_stop"] = json!(format!(
+                    "stop-skipped item={} harness={harness} cause={cause}",
+                    self.item
+                ));
+                return Ok(true);
+            }
+            StopRead::Refused(key, fields) => {
+                observation["host_stop"] = json!(key);
+                for (name, value) in fields {
+                    observation[name] = json!(value);
+                }
+                return Ok(false);
+            }
+        };
+        match operation.host_exited(self.lane, harness)? {
+            Ok(true) => {
+                observation["host_stop"] = json!(format!("stopped processes={processes}"));
+                Ok(true)
+            }
+            Ok(false) => {
+                observation["host_stop"] = json!("exit-timeout");
+                observation["processes"] = json!(processes);
+                Ok(false)
+            }
+            Err(cause) => {
+                observation["host_stop"] = json!("pane-read-failed");
+                observation["cause"] = json!(cause);
+                Ok(false)
+            }
+        }
+    }
+
     /// The close of what remains once every process the close names has
     /// ended: the worktree's validation runs are stopped, whose answer
     /// discharges that obligation, unless a `no-landing` disposition keeps
@@ -374,6 +421,11 @@ impl Close<'_> {
                     return Ok(self.hold(operation, observation));
                 }
             }
+        }
+        if provider_stops(self.ground, self.lane)
+            && !self.host_stopped(&mut operation, &mut observation)?
+        {
+            return Ok(self.hold(operation, observation));
         }
         if provider_closes(self.ground, self.lane) {
             let merged = self.merged(&operation, &mut observation);
@@ -577,13 +629,24 @@ impl Close<'_> {
 
 /// Whether a close on `ground` owes a close-out only its finish discharges:
 /// the item's files on the tracker's terminal verdict, the provider's close
-/// of a hosted sandbox on any ground but `no-landing`. Neither leaves a
-/// handle the reconcile can read, and both are safe to ask again (the
-/// archive of no files writes nothing, a provider that no longer holds the
-/// item answers `closed=absent`), so the reconcile of such a close never
-/// confirms it and its repeat runs the close again.
+/// of a hosted sandbox on any ground but `no-landing`, the provider's stop
+/// of a lane that exits in its window. None leaves a handle the reconcile
+/// can read, and each is safe to ask again (the archive of no files writes
+/// nothing, a provider that no longer holds the item answers
+/// `closed=absent`, a stop of a group already ended signals nothing), so
+/// the reconcile of such a close never confirms it and its repeat runs the
+/// close again.
 fn owes_close_out(ground: Option<&CloseGround>, lane: &Lane) -> bool {
-    ground.is_some_and(CloseGround::ends_item) || provider_closes(ground, lane)
+    ground.is_some_and(CloseGround::ends_item)
+        || provider_closes(ground, lane)
+        || provider_stops(ground, lane)
+}
+
+/// Whether the close's effect asks the provider's stop: a lane that exits
+/// in its window ([`Lane::exits_in_window`]), on any ground but a
+/// host-absent close, which has no host to ask.
+fn provider_stops(ground: Option<&CloseGround>, lane: &Lane) -> bool {
+    lane.exits_in_window() && !ground.is_some_and(CloseGround::host_absent)
 }
 
 /// Whether the provider's close ends the lane's sandbox on `ground`: a

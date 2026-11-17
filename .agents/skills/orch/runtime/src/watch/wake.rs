@@ -440,6 +440,113 @@ enum Paste {
     Refused,
 }
 
+/// The refusals `deliver --key` answers, each with nothing pressed: the key
+/// verb's own, field for field.
+const KEY_REFUSALS: [&str; 8] = [
+    "key-invalid",
+    "pane-gone",
+    "pane-unreadable",
+    "pane-self",
+    "process-mismatch",
+    "deliver-refused",
+    "key-unsent",
+    "server-unmatched",
+];
+
+/// `lane key --item --key`: one key pressed into the dialog the item's
+/// in-flight lane shows. The pane is resolved from the lane's record as the
+/// wake resolves it: its window here, or a hosted lane's window whose ssh
+/// client runs its harness. The checks and the key are agent-runtime's
+/// `deliver --key`, whose refusal is this verb's. A lane the resolver gives
+/// no pane refuses `lane-unreachable`; one whose provider holds its session
+/// names `route=provider`, whose keys go through the provider's `send`.
+pub fn press_key(settings: &Settings, fleet_path: &Path, item: &str, key: &str) -> Result<Value> {
+    let unreachable = |fields: &[(&str, &str)]| {
+        Error::from(agent_runtime::Error::refused("lane-unreachable", fields))
+    };
+    let fleet = super::lanes::read_fleet(fleet_path)?;
+    let lane = super::lanes::in_flight(&fleet, item)?;
+    let wake = Wake {
+        fleet: fleet_path.to_path_buf(),
+        record: record_path(fleet_path),
+        settings: settings.clone(),
+    };
+    let socket = wake.socket(&fleet)?;
+    let host_name = hosted::host_of(lane);
+    let target = if host_name == crate::provider::LOCAL {
+        lane_target(lane, &socket)
+    } else {
+        let scripts = super::overseer::scripts_dir(&settings.roots.project);
+        let caps = hosted::capabilities(&scripts, host_name).map_err(|cause| {
+            unreachable(&[("item", item), ("host", host_name), ("cause", &cause)])
+        })?;
+        hosted_target(lane, caps, &socket)
+    };
+    let target = match target {
+        Some(Target {
+            route: Route::Send { .. },
+            ..
+        }) => {
+            return Err(unreachable(&[
+                ("item", item),
+                ("host", host_name),
+                ("route", "provider"),
+            ]));
+        }
+        Some(target) => target,
+        None => return Err(unreachable(&[("item", item)])),
+    };
+    let mut args = wake.target_args(&target, false)?;
+    args.extend(["--key".to_owned(), key.to_owned()]);
+    let (code, reply) = wake.deliver("lane-key", &args)?;
+    if crate::ready::setup_required(code) {
+        return Err(Error::Runtime(agent_runtime::Error::External {
+            program: "agent-runtime",
+            operation: "deliver",
+            cause: format!(
+                "unbuilt: run {}",
+                settings
+                    .roots
+                    .project
+                    .join(crate::settings::ORCH_SETUP)
+                    .display()
+            ),
+        }));
+    }
+    if reply.get("ok").and_then(Value::as_bool) == Some(true) {
+        let mut result = reply.get("result").cloned().unwrap_or(Value::Null);
+        if let Value::Object(fields) = &mut result {
+            fields.insert("item".to_owned(), Value::from(item));
+        }
+        return Ok(result);
+    }
+    let refusal = reply.get("refusal");
+    let key = refusal
+        .and_then(|r| r.get("key"))
+        .and_then(Value::as_str)
+        .and_then(|k| KEY_REFUSALS.into_iter().find(|known| *known == k))
+        .ok_or_else(|| protocol_error("refused", &reply))?;
+    let fields = refusal
+        .and_then(|r| r.get("fields"))
+        .and_then(Value::as_array)
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(|field| {
+                    Some((
+                        field.get(0)?.as_str()?.to_owned(),
+                        field.get(1)?.as_str()?.to_owned(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Err(Error::Runtime(agent_runtime::Error::Refused {
+        key,
+        fields,
+    }))
+}
+
 /// The refusals that leave the pane untouched, which the duty leaves for
 /// its next pass; any other refusal is the call itself failing.
 const PANE_REFUSALS: [&str; 4] = [
@@ -1187,27 +1294,45 @@ impl Wake {
         Ok(args)
     }
 
-    /// One run of agent-runtime's `deliver`, its reply read whole: a result,
-    /// or the refusal's key. No reply is the program failing, not a reading
-    /// of the pane.
+    /// One run of agent-runtime's `deliver` counted under `tag`, its reply
+    /// read whole. No reply is the program failing, not a reading of the
+    /// pane.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the wake acts only through agent-runtime's own `deliver` verb, run by the one runner under the `wake` tag, and records its mark before it types"
+        reason = "the wake and the key verb act only through agent-runtime's own `deliver` verb, run by the one runner under their own tag"
     )]
-    fn call(&self, args: &[String]) -> Result<Answer> {
+    fn deliver(&self, tag: &'static str, args: &[String]) -> Result<(Option<i32>, Value)> {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = host::run_tagged(
-            "wake",
+            tag,
             "agent-runtime",
             &self.settings.agent_runtime,
             "deliver",
             &args,
             self.settings.engine.verify.get()? + ANSWER_MARGIN,
         )?;
+        let code = output.status.code();
+        if crate::ready::setup_required(code) {
+            return Ok((code, Value::Null));
+        }
+        let reply: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+            Error::Runtime(agent_runtime::Error::External {
+                program: "agent-runtime",
+                operation: "deliver",
+                cause: format!("no reply (exit {code:?}): {}", host::stderr_text(&output)),
+            })
+        })?;
+        Ok((code, reply))
+    }
+
+    /// The wake's run of `deliver`: a result, or the refusal's key; the
+    /// mark is recorded before it types.
+    fn call(&self, args: &[String]) -> Result<Answer> {
+        let (code, reply) = self.deliver("wake", args)?;
         // agent-runtime unbuilt under a running watch: the pass fails with
         // the cause the watch's admission gives the same state, which names
         // orch's setup.
-        if crate::ready::setup_required(output.status.code()) {
+        if crate::ready::setup_required(code) {
             return Err(crate::ready::unbuilt(
                 crate::ready::Duty::Watch,
                 "agent-runtime",
@@ -1215,17 +1340,6 @@ impl Wake {
             )
             .refusal());
         }
-        let reply: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-            Error::Runtime(agent_runtime::Error::External {
-                program: "agent-runtime",
-                operation: "deliver",
-                cause: format!(
-                    "no reply (exit {:?}): {}",
-                    output.status.code(),
-                    host::stderr_text(&output)
-                ),
-            })
-        })?;
         if reply.get("ok").and_then(Value::as_bool) == Some(true) {
             return Ok(Answer::Result(
                 reply.get("result").cloned().unwrap_or(Value::Null),

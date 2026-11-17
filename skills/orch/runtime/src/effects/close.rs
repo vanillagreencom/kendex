@@ -92,6 +92,48 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
 }
 
+/// What a close reads in its provider's stop answer: the count of processes
+/// signalled; a stop skipped with its cause; or the refusal's key and
+/// fields, which a close before its transition refuses with and a close's
+/// effect holds with.
+pub(super) enum StopRead {
+    Stopped(u32),
+    Skipped(&'static str),
+    Refused(&'static str, Vec<(&'static str, String)>),
+}
+
+/// The provider's stop `answer` read for a close: an item whose worktree
+/// its close-out removed, or of which the host holds no lane, skips the stop
+/// on a full close, which the provider's close ends; a keep or a park
+/// (`keep`) refuses it, since the sandbox it keeps may still run the harness.
+pub(super) fn read_stop(answer: std::result::Result<HostStopped, Asked>, keep: bool) -> StopRead {
+    let provider = |status: &str| {
+        vec![
+            ("cause", "provider".to_owned()),
+            ("status", status.to_owned()),
+        ]
+    };
+    match answer {
+        Ok(HostStopped::Stopped { processes }) => StopRead::Stopped(processes),
+        Ok(HostStopped::WorktreeRemoved) if !keep => StopRead::Skipped("worktree-removed"),
+        Ok(HostStopped::WorktreeRemoved) => StopRead::Refused("stop-failed", provider("4")),
+        Ok(HostStopped::Unowned) if !keep => StopRead::Skipped("unowned"),
+        Ok(HostStopped::Unowned) => StopRead::Refused("stop-failed", provider("75")),
+        Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
+            StopRead::Refused(hosted::BUSY, vec![("step", "stop".to_owned())])
+        }
+        Ok(HostStopped::Refused { status }) => {
+            StopRead::Refused("stop-failed", provider(&status.to_string()))
+        }
+        Ok(HostStopped::Unparsed) => {
+            StopRead::Refused("stop-failed", vec![("cause", "answer-unparsed".to_owned())])
+        }
+        Err(Asked::Failed(cause) | Asked::Unknown(cause)) => {
+            StopRead::Refused("stop-failed", vec![("cause", cause)])
+        }
+    }
+}
+
 /// The identity the close works with: the record's, else the request's,
 /// else the item key's tracker (`issue-N` names none).
 struct Identity {
@@ -367,7 +409,7 @@ pub(crate) fn account_room(
 }
 
 /// How often the exit wait reads the lane again.
-const EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+pub(super) const EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// The ground the close transition persists; a keep carries the judged park
 /// its sandbox stop follows.
@@ -1009,8 +1051,12 @@ impl Close<'_> {
     /// its pane first gets `C-c` and `/exit` through the provider's input,
     /// so it writes its session totals, and needs no stop where that ends
     /// it; otherwise the provider's stop, then its pane read exited within
-    /// the close bound.
+    /// the close bound. A lane that exits in its window is stopped by the
+    /// close's own effect, after its exit (`stop.rs` `finish`).
     fn host_stop(&self, notes: &mut Vec<String>) -> Result<()> {
+        if self.lane.exits_in_window() {
+            return Ok(());
+        }
         if self.who.harness.as_deref() == Some("copilot")
             && self.caps.pane == PaneKind::Verb
             && self.copilot_exit()?
@@ -1113,9 +1159,7 @@ impl Close<'_> {
     }
 
     /// The provider's stop: the count of processes it signalled, or `None`
-    /// where an item whose worktree its close-out removed, or of which the
-    /// host holds no lane, skips the stop on a full close, which the
-    /// provider's close ends; a keep or a park refuses it.
+    /// where [`read_stop`] skips it, or its refusal.
     fn provider_stop(&self, notes: &mut Vec<String>) -> Result<Option<u32>> {
         let harness = self.who.harness.as_deref().ok_or_else(|| {
             refused(
@@ -1123,73 +1167,21 @@ impl Close<'_> {
                 &[("item", self.item()), ("harness", "unknown")],
             )
         })?;
-        match hosted::stop_answer(self.scripts, self.host, self.item(), harness) {
-            Ok(HostStopped::Stopped { processes }) => Ok(Some(processes)),
-            Ok(HostStopped::WorktreeRemoved) if !self.keep() => {
+        let answer = hosted::stop_answer(self.scripts, self.host, self.item(), harness);
+        match read_stop(answer, self.keep()) {
+            StopRead::Stopped(processes) => Ok(Some(processes)),
+            StopRead::Skipped(cause) => {
                 notes.push(format!(
-                    "stop-skipped item={} harness={harness} cause=worktree-removed",
+                    "stop-skipped item={} harness={harness} cause={cause}",
                     self.item()
                 ));
                 Ok(None)
             }
-            Ok(HostStopped::WorktreeRemoved) => Err(refused(
-                "stop-failed",
-                &[
-                    ("item", self.item()),
-                    ("harness", harness),
-                    ("cause", "provider"),
-                    ("status", "4"),
-                ],
-            )),
-            Ok(HostStopped::Unowned) if !self.keep() => {
-                notes.push(format!(
-                    "stop-skipped item={} harness={harness} cause=unowned",
-                    self.item()
-                ));
-                Ok(None)
+            StopRead::Refused(key, fields) => {
+                let mut all = vec![("item", self.item()), ("harness", harness)];
+                all.extend(fields.iter().map(|(name, value)| (*name, value.as_str())));
+                Err(refused(key, &all))
             }
-            Ok(HostStopped::Unowned) => Err(refused(
-                "stop-failed",
-                &[
-                    ("item", self.item()),
-                    ("harness", harness),
-                    ("cause", "provider"),
-                    ("status", "75"),
-                ],
-            )),
-            Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => Err(refused(
-                hosted::BUSY,
-                &[
-                    ("item", self.item()),
-                    ("harness", harness),
-                    ("step", "stop"),
-                ],
-            )),
-            Ok(HostStopped::Refused { status }) => Err(refused(
-                "stop-failed",
-                &[
-                    ("item", self.item()),
-                    ("harness", harness),
-                    ("cause", "provider"),
-                    ("status", &status.to_string()),
-                ],
-            )),
-            Ok(HostStopped::Unparsed) => Err(refused(
-                "stop-failed",
-                &[
-                    ("item", self.item()),
-                    ("harness", harness),
-                    ("cause", "answer-unparsed"),
-                ],
-            )),
-            Err(Asked::Failed(cause) | Asked::Unknown(cause)) => Err(refused(
-                "stop-failed",
-                &[
-                    ("item", self.item()),
-                    ("harness", harness),
-                    ("cause", &cause),
-                ],
-            )),
         }
     }
 

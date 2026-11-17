@@ -1361,6 +1361,73 @@ const VERB_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstat
 /// A Claude screen at its composer, which the one screen judge reads idle.
 const AT_COMPOSER: &str = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n";
 
+/// `lane key`: one key into the dialog an item's lane shows, the pane
+/// resolved from the lane record as the wake resolves it, through the real
+/// `deliver --key`. A local lane's window and a hosted lane's window, whose
+/// foreground is its ssh client, each draw a permission dialog and take the
+/// key, which their stub records as a line; an idle lane is refused with
+/// agent-runtime's own key and is pressed nothing.
+#[test]
+fn a_key_reaches_the_dialog_a_lane_shows_through_its_recorded_window() {
+    let fleet = Fleet::new();
+    // A dialog as Claude Code draws one in place of its composer, then
+    // each line its pane is typed, bracketed, so a bare Enter is `[]`.
+    let dialog = |dir: &str, name: &str| -> (PathBuf, PathBuf) {
+        let bin = fleet.root.join(dir);
+        std::fs::create_dir(&bin).unwrap();
+        let typed = bin.join("typed");
+        write_executable(
+            &bin.join(name),
+            format!(
+                "#!/bin/bash\nprintf 'Do you want to proceed?\\n\\xe2\\x9d\\xaf 1. Yes\\n  2. No\\n\\nEsc to cancel\\n'\nwhile IFS= read -r line; do printf '[%s]\\n' \"$line\" >> '{}'; done\n",
+                typed.display()
+            ),
+        );
+        (bin.join(name), typed)
+    };
+    let (program, local_typed) = dialog("local", "claude");
+    let local = fleet.open_program("KEN-2", &program, "lead-2", &[]);
+    fleet.server.await_composer(&local.id);
+    let (program, hosted_typed) = dialog("client", "ssh");
+    let window = fleet.open_program("KEN-1", &program, "lead-1", &[]);
+    fleet.server.await_composer(&window.id);
+    let idle = fleet.open("KEN-3", "claude", "lead-3", &[]);
+    fleet.server.await_composer(&idle.id);
+    let dir = fleet.root.join("host");
+    std::fs::create_dir(&dir).unwrap();
+    let host = SshHost::new(&dir, &dir.join("scripts"), "KEN-1");
+    let mut hosted = fleet.lane("KEN-1", "claude", &window);
+    hosted["host"] = json!(host.provider());
+    hosted["kind"] = json!("ssh");
+    hosted["session_id"] = Value::Null;
+    fleet.set_lanes(vec![
+        hosted,
+        fleet.lane("KEN-2", "claude", &local),
+        fleet.lane("KEN-3", "claude", &idle),
+    ]);
+    let fleet_file = fleet.fleet_file();
+    for (item, typed) in [("KEN-2", &local_typed), ("KEN-1", &hosted_typed)] {
+        let pressed = wake::press_key(&fleet.settings, &fleet_file, item, "Enter")
+            .unwrap_or_else(|e| panic!("{item}: {e}"));
+        assert_eq!(pressed["delivery"], "pressed", "{item}: {pressed}");
+        assert_eq!(pressed["item"], item, "{pressed}");
+        let read = || std::fs::read_to_string(typed).unwrap_or_default();
+        let deadline = Instant::now() + secs(5);
+        while read().is_empty() {
+            assert!(Instant::now() < deadline, "{item}: the dialog took no key");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(read(), "[]\n", "{item}");
+    }
+    let refused = wake::press_key(&fleet.settings, &fleet_file, "KEN-3", "Enter").unwrap_err();
+    assert_eq!(refused.key(), "deliver-refused", "{refused}");
+    assert_eq!(
+        fleet.turns("lead-3"),
+        Vec::<String>::new(),
+        "an idle lane is pressed nothing"
+    );
+}
+
 /// A `pane=verb` lane on the planted provider `box` under the fleet's
 /// root, which answers from `answers` (`lane-host.json` beside it):
 /// [`hosted_lane`]'s record, its window a viewer's (`viewer: true`), a live

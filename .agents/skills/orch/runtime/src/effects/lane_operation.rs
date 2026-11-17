@@ -624,6 +624,54 @@ impl<'a> LaneOperation<'a> {
         ))
     }
 
+    /// The provider's stop of a hosted lane's harness (its `stop --item
+    /// ITEM --harness H`), signalled before it runs: what it answered, or
+    /// `Err` with the cause of a stop that refused at the dispatcher or gave
+    /// no answer.
+    pub(super) fn host_stop(
+        &mut self,
+        lane: &Lane,
+        harness: &str,
+    ) -> Result<std::result::Result<crate::watch::hosted::HostStopped, crate::watch::hosted::Asked>>
+    {
+        let _signalled = self.engine.signal()?;
+        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
+        Ok(crate::watch::hosted::stop_answer(
+            &scripts,
+            crate::watch::hosted::host_of(lane),
+            &lane.item,
+            harness,
+        ))
+    }
+
+    /// Whether the provider's status reads the hosted harness exited within
+    /// the close bound (`ORCH_LANE_CLOSE_SECS`) after its stop: `Ok(false)`
+    /// still running past it, `Err` the cause of a status read that failed.
+    pub(super) fn host_exited(
+        &self,
+        lane: &Lane,
+        harness: &str,
+    ) -> Result<std::result::Result<bool, String>> {
+        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
+        let read = || match crate::watch::hosted::status(
+            &scripts,
+            crate::watch::hosted::host_of(lane),
+            &lane.item,
+            harness,
+        ) {
+            Ok(crate::watch::hosted::HostStatus::Exited) => Some(Ok(true)),
+            Ok(crate::watch::hosted::HostStatus::Running) => None,
+            Err(cause) => Some(Err(cause)),
+        };
+        Ok(agent_runtime::effects::poll_until(
+            self.run.engine.clock,
+            self.run.settings.close_grace.get()?,
+            super::close::EXIT_POLL,
+            read,
+        )
+        .unwrap_or(Ok(false)))
+    }
+
     /// The project's base checkout brought to the landed base by
     /// `sync-base`, which judges whether it may move (a checkout with
     /// tracked changes refuses): `followed branch=B`, or `refused cause=C`

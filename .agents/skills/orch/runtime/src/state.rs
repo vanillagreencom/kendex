@@ -709,6 +709,19 @@ impl Lane {
         self.viewer
     }
 
+    /// Whether the close ends the lane through its window before its
+    /// provider's stop: a hosted Copilot CLI lane whose recorded window is
+    /// this machine's, no viewer's, so its recorded identity is the window's
+    /// ssh client. Copilot writes its session totals on `/exit`, which the
+    /// close's effect types there; the provider's stop would end the
+    /// client, and with it that window, first.
+    pub fn exits_in_window(&self) -> bool {
+        self.harness.as_deref() == Some("copilot")
+            && self.provider_hosted()
+            && !self.viewer()
+            && self.launch.as_ref().is_some_and(|l| l.pane.is_some())
+    }
+
     /// Whether the lane's sandbox is a provider's, which the provider's own
     /// close ends: a record naming a host that is not the cloud kind.
     pub fn provider_hosted(&self) -> bool {

@@ -87,8 +87,9 @@ enum Verb {
     },
     /// Type text into the session's pane, only when the session is
     /// positively idle, and confirm it by a user turn the harness wrote to
-    /// its own session file. The session is a launch record, or its facts
-    /// on the line (`--harness` with the pane, the server and the session).
+    /// its own session file; or press one key into a dialog the session
+    /// shows. The session is a launch record, or its facts on the line
+    /// (`--harness` with the pane, the server and the session).
     Deliver {
         #[arg(long, conflicts_with = "harness")]
         record: Option<PathBuf>,
@@ -98,6 +99,11 @@ enum Verb {
         /// The text to type, as given.
         #[arg(long)]
         line: Option<String>,
+        /// Press one key (Enter, Up, Down, C-c or a digit), only where the
+        /// screen reads a dialog (`asking` or `rate-limit-switch`) and the
+        /// pane's foreground is the harness, or the transport's client.
+        #[arg(long, conflicts_with_all = ["file", "line", "no_paste", "force"])]
+        key: Option<String>,
         /// Deliver whatever the screen says; for a probe that knows better.
         #[arg(long)]
         force: bool,
@@ -1501,6 +1507,8 @@ enum Delivery {
         pane: String,
         bytes: usize,
     },
+    /// `--key`: the key pressed into the dialog the screen read.
+    Pressed { pane: String, key: String },
 }
 
 /// How often the session file is read for the confirming turn.
@@ -1650,6 +1658,106 @@ fn deliver(
         }
         std::thread::sleep(TURN_POLL);
     }
+}
+
+/// The client a transport's pane runs, the one foreground a key is pressed
+/// through into a session on another machine.
+const TRANSPORT_CLIENT: &str = "ssh";
+
+/// Press `key` into the dialog `judged` read on the session's pane. The
+/// pane is never the caller's own, its foreground is the harness (a
+/// transport's client for a transport), and the screen reads a dialog:
+/// a key into a composer or a turn lands in the harness's input as typing,
+/// so every other state refuses, as a paste does. A refusal presses nothing.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the session command's own delivery: one key into the dialog its judge read on the pane"
+)]
+fn press(session: &Session, judged: &Judged, key: &str) -> Result<Delivery> {
+    let pane_id = session.pane.id.as_str();
+    let fields = match &judged.pane {
+        Reading::Live(fields) => fields,
+        Reading::Gone => return Err(Error::refused("pane-gone", &[("pane", pane_id)])),
+        Reading::Unreadable { cause } => {
+            return Err(Error::refused(
+                "pane-unreadable",
+                &[("pane", pane_id), ("cause", cause)],
+            ));
+        }
+    };
+    if callers_pane(&session.pane) {
+        return Err(Error::refused("pane-self", &[("pane", pane_id)]));
+    }
+    let transport = matches!(session.file, SessionFile::Transport);
+    // A transport's judge took the caller's word for the far harness; the
+    // client in its foreground is read here.
+    let reading = if transport {
+        observe::foreground(fields.pid, &|name| name == TRANSPORT_CLIENT, None)
+    } else {
+        judged.reading.clone().unwrap_or(ProcessReading::Unread {
+            cause: "pane-unread",
+        })
+    };
+    let running = match &reading {
+        ProcessReading::Harness { .. } => None,
+        ProcessReading::ShellsOnly => Some("shells".to_owned()),
+        ProcessReading::ForegroundShell { name } | ProcessReading::ForegroundOther { name, .. } => {
+            Some(name.clone())
+        }
+        ProcessReading::HarnessUp | ProcessReading::Unread { .. } => Some("unread".to_owned()),
+    };
+    if let Some(running) = running {
+        let expected = if transport {
+            TRANSPORT_CLIENT
+        } else {
+            session.harness.name()
+        };
+        return Err(Error::refused(
+            "process-mismatch",
+            &[
+                ("pane", pane_id),
+                ("expected", expected),
+                ("running", &running),
+            ],
+        ));
+    }
+    match &judged.state {
+        State::Asking | State::RateLimitSwitch => {}
+        State::Idle
+        | State::Working
+        | State::Walled { .. }
+        | State::Exited
+        | State::Unjudged { .. } => {
+            let word = serde_json::to_value(&judged.state)
+                .ok()
+                .and_then(|v| v.get("state").and_then(|s| s.as_str()).map(str::to_owned))
+                .unwrap_or_else(|| "unjudged".to_owned());
+            return Err(Error::refused(
+                "deliver-refused",
+                &[("pane", pane_id), ("state", &word)],
+            ));
+        }
+    }
+    tmux::send_key(&session.pane, key)
+        .map_err(|e| Error::refused("key-unsent", &[("pane", pane_id), ("cause", e.key())]))?;
+    Ok(Delivery::Pressed {
+        pane: pane_id.to_owned(),
+        key: key.to_owned(),
+    })
+}
+
+/// Whether `pane` is the one this command runs in: `$TMUX_PANE` on the
+/// server whose pid `$TMUX` names.
+fn callers_pane(pane: &tmux::Pane) -> bool {
+    let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    let (Some(own), Some(tmux)) = (var("TMUX_PANE"), var("TMUX")) else {
+        return false;
+    };
+    let server = tmux
+        .split(',')
+        .nth(1)
+        .and_then(|pid| pid.parse::<u32>().ok());
+    own == pane.id && server == Some(pane.server.pid)
 }
 
 #[allow(
@@ -1880,6 +1988,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             record: record_path,
             file,
             line,
+            key,
             force,
             account_room,
             transport,
@@ -1898,7 +2007,14 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             no_paste,
             bound_secs,
         } => {
+            // A key outside the set is refused before any pane is read.
+            if let Some(key) = &key
+                && !tmux::KEYS.contains(&key.as_str())
+            {
+                return Err(Error::refused("key-invalid", &[("key", key)]));
+            }
             let text = match (&file, line, no_paste) {
+                _ if key.is_some() => None,
                 (_, _, true) => None,
                 (Some(file), None, false) => {
                     Some(std::fs::read_to_string(file).map_err(|e| Error::io("read", file, e))?)
@@ -1984,6 +2100,11 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 (None, None) => return Err(Error::refused("deliver-session-missing", &[])),
                 (Some(_), Some(_)) => unreachable!("clap refuses --record with --harness"),
             };
+            if let Some(key) = key {
+                return Ok(
+                    serde_json::to_value(press(&session, &judged, &key)?).unwrap_or_default()
+                );
+            }
             Ok(serde_json::to_value(deliver(
                 &session,
                 judged,

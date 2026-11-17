@@ -4817,6 +4817,154 @@ fn a_hosted_copilot_lane_gets_exit_before_its_provider_stop() {
     }
 }
 
+/// A hosted Copilot lane in a window of this machine (`pane=local`) on the
+/// shipped ssh provider ([`Fleet::ssh`]), the window on a private server:
+/// the record names the window and its client as its launch, as the window
+/// launch records them. The client is a stand-in named `ssh` that draws
+/// Copilot's idle composer, writes each line it reads to the provider's log
+/// as `typed LINE`, so one log orders the window's input among the
+/// provider's calls, and ends on `/exit`, as the client ends with its
+/// harness. The server is held until the row ends.
+fn copilot_window() -> (Fleet, Server) {
+    let mut fleet = Fleet::ssh(4);
+    let state = fleet.state_dir().to_path_buf();
+    let server = Server::start(&state, "fleet");
+    fleet.env.extend([
+        (
+            "TMUX".to_owned(),
+            format!("{},0,0", server.socket.display()),
+        ),
+        ("ORCH_LANE_CLOSE_SECS".to_owned(), "10".to_owned()),
+    ]);
+    let bin = state.join("client");
+    std::fs::create_dir(&bin).unwrap();
+    let rule = "─".repeat(40);
+    let log = fleet.host().scripts.join("lane-host.log");
+    write_executable(
+        &bin.join("ssh"),
+        format!(
+            "#!/bin/bash\ntrap '' INT\nprintf ' ~/work [⎇ main]\\n{rule}\\n❯ \\n{rule}\\n'\nwhile IFS= read -r line; do\n  printf 'typed %s\\n' \"$line\" >> '{}'\n  [ \"$line\" = /exit ] && exit 0\ndone\n",
+            log.display()
+        ),
+    );
+    let pane = server.open_window(
+        "KEN-1",
+        &state,
+        &format!("exec {}", bin.join("ssh").display()),
+    );
+    let client = await_named(&server, &pane, "ssh");
+    await_drawn(&server, &pane, "❯");
+    let mut lane = fleet.ssh_lane("KEN-1");
+    lane["harness"] = json!("copilot");
+    lane["launch"] = json!({
+        "pane": pane, "server": server.pid, "pid": client.pid, "start": client.start,
+    });
+    fleet.write_lanes(vec![lane]);
+    (fleet, server)
+}
+
+/// Where `line` stands first among the provider's log lines.
+fn logged_at(fleet: &Fleet, line: &str) -> usize {
+    let calls = fleet.host().calls();
+    calls
+        .iter()
+        .position(|c| c == line)
+        .unwrap_or_else(|| panic!("{line:?} is not logged: {calls:?}"))
+}
+
+/// Copilot writes its session totals on `/exit`: a hosted Copilot lane in
+/// a window of this machine is typed `/exit` in that window before its
+/// provider's stop, which the close's effect asks after the exit, then the
+/// provider's close; the lane ends done.
+#[test]
+fn a_windowed_copilot_lane_is_typed_exit_before_its_provider_stop() {
+    let (fleet, _server) = copilot_window();
+    let _lane = fleet.host().lead("KEN-1", "copilot");
+    fleet.plant_tracker("KEN-1", "completed");
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    let result = &answer["result"];
+    assert_eq!(result["word"], "closed", "{answer}");
+    assert_eq!(fleet.lane("KEN-1")["status"], "done");
+    let exit = logged_at(&fleet, "typed /exit");
+    let stop = logged_at(
+        &fleet,
+        &format!("ORCH_LANE_HOST={SSH_PROVIDER} stop --item KEN-1 --harness copilot"),
+    );
+    let close = logged_at(
+        &fleet,
+        &format!("ORCH_LANE_HOST={SSH_PROVIDER} close --item KEN-1 --merged"),
+    );
+    assert!(exit < stop && stop < close, "{:?}", fleet.host().calls());
+    assert_eq!(
+        result["observation"]["host_stop"], "stopped processes=1",
+        "{result}"
+    );
+}
+
+/// The keep of a hosted Copilot lane in its window, on a host that holds no
+/// lane of the item: its provider's stop, asked after the exit, answers 75
+/// `stop-unowned`, so the close stands `unconfirmed` and says why, with the
+/// refusal's key and fields a keep before its transition refuses with.
+fn held_keep() -> (Fleet, Server, Value) {
+    let (fleet, server) = copilot_window();
+    fleet.plant_tracker("KEN-1", "started");
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1", "mode": "keep-sandbox"}));
+    (fleet, server, answer)
+}
+
+#[test]
+fn a_kept_windowed_copilot_lane_whose_provider_stop_answers_75_holds_with_its_cause() {
+    let (fleet, _server, answer) = held_keep();
+    let result = &answer["result"];
+    assert_eq!(result["word"], "unconfirmed", "{answer}");
+    let observation = &result["observation"];
+    assert_eq!(
+        (
+            &observation["host_stop"],
+            &observation["cause"],
+            &observation["status"]
+        ),
+        (&json!("stop-failed"), &json!("provider"), &json!("75")),
+        "{result}"
+    );
+    let stop = logged_at(
+        &fleet,
+        &format!("ORCH_LANE_HOST={SSH_PROVIDER} stop --item KEN-1 --harness copilot"),
+    );
+    assert!(
+        logged_at(&fleet, "typed /exit") < stop,
+        "{:?}",
+        fleet.host().calls()
+    );
+}
+
+/// A close that ended between the window's exit and the provider's stop
+/// owes that stop: the reconcile of the held keep, its client and window
+/// gone, holds it `close_out: owed` and confirms nothing.
+#[test]
+fn the_reconcile_of_a_windowed_copilot_keep_owes_the_provider_stop() {
+    let (fleet, server, answer) = held_keep();
+    assert_eq!(answer["result"]["word"], "unconfirmed", "{answer}");
+    assert!(
+        !server.window_names().contains(&"KEN-1".to_owned()),
+        "the window left with its client"
+    );
+    let out = fleet.run(&["reconcile", "--fleet"]);
+    let reconciled = reply(&out);
+    let report = &reconciled["result"]["reconciled"][0]["report"];
+    let intent = &report["intent"];
+    assert_eq!(intent["outcome"], "unconfirmed", "{reconciled}");
+    assert_eq!(
+        (
+            &intent["observation"]["identity"],
+            &intent["observation"]["close_out"]
+        ),
+        (&json!("gone"), &json!("owed")),
+        "{reconciled}"
+    );
+    assert_eq!(fleet.lane("KEN-1")["status"], "running");
+}
+
 // --- the container close ---
 
 /// A container close's world: a checkout of its own (a git repository the

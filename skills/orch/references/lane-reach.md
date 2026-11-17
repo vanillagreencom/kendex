@@ -103,7 +103,7 @@ Before it acts, a close on the merged ground or on an item its tracker completed
 
 ### Hosted harness
 
-A hosted lane's harness is stopped through its provider before the close transition. A Copilot lane on a provider that captures its pane first gets `C-c` and `/exit` through the provider's input, so it writes its session totals. Otherwise the provider's `stop` runs, then the close waits up to `ORCH_LANE_CLOSE_SECS` for the pane to read exited.
+A hosted lane's harness is stopped through its provider before the close transition, except a Copilot lane in a window of this machine (`pane=local`), which § What the close does stops after it. A Copilot lane on a provider that captures its pane first gets `C-c` and `/exit` through the provider's input, so it writes its session totals. Otherwise the provider's `stop` runs, then the close waits up to `ORCH_LANE_CLOSE_SECS` for the pane to read exited.
 
 | Refusal or note | Meaning |
 |---|---|
@@ -113,13 +113,13 @@ A hosted lane's harness is stopped through its provider before the close transit
 | `exit-timeout` (`harness`, `pane`, `processes`) | The pane outlived the stop. |
 | note `stop-skipped ... cause=worktree-removed` or `cause=unowned` | The item's worktree is gone, or the host holds no lane of the item: a full close skips the stop and the provider's close ends it. A `keep-sandbox` close or a park refuses it as `stop-failed`. |
 
-An exited lane needs no stop.
+An exited lane needs no stop before the transition.
 
 ### What the close does
 
-The close transition's effect ends a local lane's harness by the record's `launch` identity, else by the harness the pane's foreground shows; a local Copilot lane gets `C-c` and `/exit` first. Nothing else is typed into the pane. It stops the detached turn the record's `wake` names. On every mode but `keep-sandbox` it ends the validation runs the lane's local worktree holds. On the tracker's terminal verdict it archives and removes the item's files. It closes a hosted lane's sandbox through the provider's `close`, releases the window, releases the worktree or keeps it with its reason, and moves the record.
+The close transition's effect ends a local lane's harness by the record's `launch` identity, else by the harness the pane's foreground shows; a local Copilot lane gets `C-c` and `/exit` first. A hosted Copilot lane in a `pane=local` window gets them in that window, then the provider's `stop` and its `status` read exited within `ORCH_LANE_CLOSE_SECS`, on every mode but a host-absent close. Nothing else is typed into the pane. It stops the detached turn the record's `wake` names. On every mode but `keep-sandbox` it ends the validation runs the lane's local worktree holds. On the tracker's terminal verdict it archives and removes the item's files. It closes a hosted lane's sandbox through the provider's `close`, releases the window, releases the worktree or keeps it with its reason, and moves the record.
 
-A step that does not settle answers `unconfirmed`, the window and record standing, with the step in `result.observation`: `validate: stop-failed` with the run's cause, `item_files: failed`, `host_close: refused`, `failed` or `unanswered` from the provider's close, `host_close: standing` where its list still names the sandbox or `unconfirmed` where the list failed, `wake: live`, or a harness that outlived its grace (`timeout_pid`). End what the observation names, then close again.
+A step that does not settle answers `unconfirmed`, the window and record standing, with the step in `result.observation`: `validate: stop-failed` with the run's cause, `item_files: failed`, `host_close: refused`, `failed` or `unanswered` from the provider's close, `host_close: standing` where its list still names the sandbox or `unconfirmed` where the list failed, `host_stop` with a refusal of § Hosted harness and its fields (`stop-failed`, `host-busy`, `exit-timeout`, or `pane-read-failed` with the status read's `cause`), reported after the harness has exited, `wake: live`, or a harness that outlived its grace (`timeout_pid`). End what the observation names, then close again.
 
 The provider's `close` runs on every mode but `keep-sandbox` and a host-absent close, with `--merged` for an item its tracker completed whose merge the record's cycle or `worktree merged` shows. It answers `host_close: refused` with `path`, its exit 3 `close-refused path=`, where the clone or the item's worktree on the host holds a dirty path it cannot set aside, as [lane-host.md § Provider protocol](../schemas/lane-host.md#provider-protocol) states for `close`. Clean or commit what that checkout holds, then close again.
 
@@ -155,7 +155,13 @@ What stays per harness is launching, resuming and the harness's own dialogs. Eve
   .agents/skills/orch/scripts/orch-runtime host --host [HOST] send --item [ITEM] --key [KEY]
   ```
 
-- Any other lane, local or hosted on `pane=local`: no orch or agent-runtime command sends a key to its pane. Report the dialog to the operator with the keys the table names; the operator presses them at the lane's pane.
+- Any other lane, local or hosted on `pane=local`, takes each key in its recorded window, one key per call:
+
+  ```bash
+  .agents/skills/orch/scripts/orch-runtime lane key --item [ITEM] --key [KEY]
+  ```
+
+  The key is `Enter`, `Up`, `Down`, `C-c` or a digit. It is pressed only while the lane reads `asking` or `rate-limit-switch`, through agent-runtime's `deliver --key`, whose refusal the verb prints: `deliver-refused` with the `state` it read, `process-mismatch` where the window's foreground is neither the harness nor a hosted lane's ssh client, `pane-self` for the overseer's own pane, `key-invalid` for any other key. `lane-unreachable` names a lane with no window here to press into, and `route=provider` a `pane=verb` lane, which takes the command above.
 
 The Pi commands are the pi-session-bridge CLI, documented in its [README](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-session-bridge/README.md) and `pi-bridge --help`; every Pi call selects the lane by `--name` or `--cwd`.
 

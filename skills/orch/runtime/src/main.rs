@@ -662,6 +662,17 @@ enum LaneOp {
         #[arg(long)]
         item: String,
     },
+    /// Press one key into a harness dialog the item's in-flight lane shows,
+    /// on its recorded window here or a hosted lane's ssh window, through
+    /// agent-runtime's `deliver --key`.
+    Key {
+        /// The lane's item key.
+        #[arg(long)]
+        item: String,
+        /// Enter, Up, Down, C-c or a digit.
+        #[arg(long)]
+        key: String,
+    },
     /// The listing a lane of this fleet launches under: the fleet's
     /// provider's rows beside this machine's, each row with its status
     /// word, and the roster lines the heartbeat prints.
@@ -2725,6 +2736,12 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
             &settings,
             &record::fleet_path(&settings.state_dir),
             &item,
+        )?),
+        LaneOp::Key { item, key } => Ok(watch::wake::press_key(
+            &settings,
+            &record::fleet_path(&settings.state_dir),
+            &item,
+            &key,
         )?),
         LaneOp::Charges {
             fleet: _,

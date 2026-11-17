@@ -1066,6 +1066,255 @@ fn a_transport_pane_is_typed_after_a_harness_up_idle_read_and_answers_pasted() {
     }
 }
 
+/// A Claude Code permission dialog as the judge reads it: a question over
+/// numbered rows, the selection marker on the first.
+const DIALOG: &str = "printf 'Do you want to proceed?\\n\\xe2\\x9d\\xaf 1. Yes\\n  2. No\\n'\n";
+
+/// A stub body that draws `screen` and then records every line its pane is
+/// typed into `typed`, bracketed, so a bare Enter is the line `[]`.
+fn recording(screen: &str, typed: &std::path::Path) -> String {
+    format!(
+        "{screen}while IFS= read -r line; do printf '[%s]\\n' \"$line\" >> '{}'; done\n",
+        typed.display()
+    )
+}
+
+/// `deliver --key` on the pane by its facts as Claude Code's, under the
+/// caller's tmux variables `tmux` (none: the variables unset), with `args`
+/// after; the exit and the reply's text.
+fn press_on(
+    pane: &PrivatePane,
+    tmux: Option<(&str, &str)>,
+    args: &[&str],
+) -> (Option<i32>, String) {
+    let mut command = Command::new(binary());
+    command
+        .args([
+            "deliver",
+            "--harness",
+            "claude",
+            "--socket",
+            &pane.socket.display().to_string(),
+            "--server-pid",
+            &pane.server_pid.to_string(),
+            "--server-start",
+            &pane.server_start.to_string(),
+            "--pane",
+            &pane.pane,
+            "--cwd",
+            &pane.socket.parent().unwrap().display().to_string(),
+        ])
+        .args(args)
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE");
+    if let Some((tmux, own)) = tmux {
+        command.env("TMUX", tmux).env("TMUX_PANE", own);
+    }
+    let out = command.output().unwrap();
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+fn reply_text(text: &str) -> serde_json::Value {
+    serde_json::from_str(text).unwrap_or_else(|e| panic!("no reply: {e}: {text}"))
+}
+
+/// The lines the stub recorded, once `wanted` holds them or the bound
+/// passes.
+fn typed_lines(typed: &std::path::Path, wanted: &str) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let lines = std::fs::read_to_string(typed).unwrap_or_default();
+        if lines == wanted || std::time::Instant::now() >= deadline {
+            return lines;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// A key reaches a pane whose screen reads a dialog, and only such a pane:
+/// a composer at rest and a turn in flight are refused `deliver-refused`
+/// with the state, and nothing reaches the harness, where a key would land
+/// as typing in its input or in the turn.
+#[test]
+#[cfg(unix)]
+fn a_key_reaches_a_pane_that_shows_a_dialog_and_never_a_composer_or_a_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    let typed = dir.path().join("typed");
+    pane.run_stub(
+        &dir.path().join("idle"),
+        "claude",
+        &recording("printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\n", &typed),
+    );
+    pane.await_row(&|l| l == "\u{276f}\u{a0}");
+    let (code, out) = press_on(&pane, None, &["--key", "Enter"]);
+    assert_eq!(code, Some(1), "{out}");
+    let refused = reply_text(&out);
+    assert_eq!(refused["refusal"]["key"], "deliver-refused", "{out}");
+    assert_eq!(
+        refusal_field(&refused, "state").as_deref(),
+        Some("idle"),
+        "{out}"
+    );
+    pane.run_stub(
+        &dir.path().join("working"),
+        "claude",
+        &recording(
+            "printf '%s\\n' '\u{273b} Thinking\u{2026} (esc to interrupt)'\n",
+            &typed,
+        ),
+    );
+    pane.await_row(&|l| l.contains("esc to interrupt"));
+    let (code, out) = press_on(&pane, None, &["--key", "Enter"]);
+    assert_eq!(code, Some(1), "{out}");
+    let refused = reply_text(&out);
+    assert_eq!(refused["refusal"]["key"], "deliver-refused", "{out}");
+    assert_eq!(
+        refusal_field(&refused, "state").as_deref(),
+        Some("working"),
+        "{out}"
+    );
+    assert_eq!(
+        typed_lines(&typed, ""),
+        "",
+        "a refused pane is pressed nothing"
+    );
+    pane.run_stub(
+        &dir.path().join("asking"),
+        "claude",
+        &recording(DIALOG, &typed),
+    );
+    pane.await_row(&|l| l.starts_with("\u{276f} 1. Yes"));
+    let (code, out) = press_on(&pane, None, &["--key", "Enter"]);
+    assert_eq!(code, Some(0), "{out}");
+    let pressed = reply_text(&out);
+    assert_eq!(pressed["result"]["delivery"], "pressed", "{out}");
+    assert_eq!(pressed["result"]["key"], "Enter", "{out}");
+    assert_eq!(pressed["result"]["pane"], pane.pane.as_str(), "{out}");
+    assert_eq!(
+        typed_lines(&typed, "[]\n"),
+        "[]\n",
+        "the dialog took the key"
+    );
+}
+
+/// The caller's own pane, `$TMUX_PANE` on the server `$TMUX` names, is
+/// refused `pane-self` with its dialog standing: a key the overseer meant
+/// for a lane would answer its own prompt.
+#[test]
+#[cfg(unix)]
+fn a_key_into_the_caller_s_own_pane_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    let typed = dir.path().join("typed");
+    pane.run_stub(
+        &dir.path().join("asking"),
+        "claude",
+        &recording(DIALOG, &typed),
+    );
+    pane.await_row(&|l| l.starts_with("\u{276f} 1. Yes"));
+    let tmux = format!("{},{},0", pane.socket.display(), pane.server_pid);
+    let (code, out) = press_on(&pane, Some((&tmux, &pane.pane)), &["--key", "Enter"]);
+    assert_eq!(code, Some(1), "{out}");
+    assert_eq!(reply_text(&out)["refusal"]["key"], "pane-self", "{out}");
+    assert_eq!(
+        typed_lines(&typed, ""),
+        "",
+        "the caller's pane is pressed nothing"
+    );
+}
+
+/// A pane whose foreground is not the harness is refused
+/// `process-mismatch` with what runs there, whatever its screen draws; under
+/// `--transport` the foreground must be the transport's client, and a
+/// client's dialog takes the key.
+#[test]
+#[cfg(unix)]
+fn a_key_into_a_pane_that_runs_another_process_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    let typed = dir.path().join("typed");
+    pane.run_stub(
+        &dir.path().join("other"),
+        "other",
+        &recording(DIALOG, &typed),
+    );
+    pane.await_row(&|l| l.starts_with("\u{276f} 1. Yes"));
+    let (code, out) = press_on(&pane, None, &["--key", "Enter"]);
+    assert_eq!(code, Some(1), "{out}");
+    let refused = reply_text(&out);
+    assert_eq!(refused["refusal"]["key"], "process-mismatch", "{out}");
+    assert_eq!(
+        refusal_field(&refused, "expected").as_deref(),
+        Some("claude"),
+        "{out}"
+    );
+    assert_eq!(
+        refusal_field(&refused, "running").as_deref(),
+        Some("other"),
+        "{out}"
+    );
+    let (code, out) = press_on(&pane, None, &["--transport", "--key", "Enter"]);
+    assert_eq!(code, Some(1), "{out}");
+    let refused = reply_text(&out);
+    assert_eq!(refused["refusal"]["key"], "process-mismatch", "{out}");
+    assert_eq!(
+        refusal_field(&refused, "expected").as_deref(),
+        Some("ssh"),
+        "{out}"
+    );
+    assert_eq!(
+        typed_lines(&typed, ""),
+        "",
+        "another process is pressed nothing"
+    );
+    pane.run_stub(
+        &dir.path().join("client"),
+        "ssh",
+        &recording(DIALOG, &typed),
+    );
+    pane.await_row(&|l| l.starts_with("\u{276f} 1. Yes"));
+    let (code, out) = press_on(&pane, None, &["--transport", "--key", "Down"]);
+    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(reply_text(&out)["result"]["delivery"], "pressed", "{out}");
+}
+
+/// A key outside the set (`Escape`, which declines a Claude Code dialog and
+/// ends its turn) is refused `key-invalid` before the pane is read, its
+/// dialog standing; a key beside text, a read or `--force` is a usage error.
+#[test]
+#[cfg(unix)]
+fn a_key_outside_the_set_or_beside_text_is_refused_and_presses_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    let typed = dir.path().join("typed");
+    pane.run_stub(
+        &dir.path().join("asking"),
+        "claude",
+        &recording(DIALOG, &typed),
+    );
+    pane.await_row(&|l| l.starts_with("\u{276f} 1. Yes"));
+    let (code, out) = press_on(&pane, None, &["--key", "Escape"]);
+    assert_eq!(code, Some(1), "{out}");
+    assert_eq!(reply_text(&out)["refusal"]["key"], "key-invalid", "{out}");
+    let file = dir.path().join("line");
+    std::fs::write(&file, "x").unwrap();
+    for flag in [
+        &["--line", "x"][..],
+        &["--file", file.to_str().unwrap()],
+        &["--no-paste"],
+        &["--force"],
+    ] {
+        let (code, out) = press_on(&pane, None, &[&["--key", "Enter"][..], flag].concat());
+        assert_eq!(code, Some(2), "{flag:?}: {out}");
+        assert_eq!(out, "", "{flag:?}");
+    }
+    assert_eq!(typed_lines(&typed, ""), "", "a refused key presses nothing");
+}
+
 #[test]
 #[cfg(unix)]
 fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_went_unanswered_keeps_its_record()
