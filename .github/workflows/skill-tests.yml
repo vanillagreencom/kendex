@@ -936,8 +936,8 @@ jobs:
           tmux -V
 
       # ---- shards: orch-state, orch-rest ---------------------------------
-      # run-all.sh's shard_of owns the families and their complement, by
-      # suite name. `orch-state` keeps the lane and workflow-state
+      # run-all.sh's shard_of owns the family and its complement, by
+      # suite name. `orch-state` keeps the lane
       # names. `orch-rest` takes the remaining suites. A new suite joins one
       # family by name, and
       # orch-shard-partition.test.sh proves complete, unique ownership on
