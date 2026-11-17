@@ -56,8 +56,7 @@ old=.agents/skills/orch/scripts/lib/lane-mail-store.py
 new=.agents/skills/mailbox/scripts/lib/lane-mail-store.py
 spare=.agents/spare/original.py
 moved_spare=.agents/spare/renamed.py
-forwarder=.agents/skills/orch/scripts/lane-mail
-commit_paths "$repo" baseline "$old" "$spare" "$forwarder"
+commit_paths "$repo" baseline "$old" "$spare"
 mkdir -p "$repo/$(dirname "$READER")" "$repo/$(dirname "$QUEUE_READER")" "$repo/.github"
 cp "$CHANGE_CLASS" "$repo/$READER"
 cp "$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh" "$repo/$QUEUE_READER"
@@ -102,9 +101,7 @@ while IFS='|' read -r case event base_name change expected_lanes expected_cause 
   git -C "$repo" clean -qfd
   mkdir -p "$repo/$(dirname "$new")"
   case "$change" in
-    renamed)
-      git -C "$repo" mv "$old" "$new"
-      printf 'forward to mailbox\n' >"$repo/$forwarder" ;;
+    renamed) git -C "$repo" mv "$old" "$new" ;;
     deleted) git -C "$repo" rm -q -- "$old" ;;
     in-place) printf 'updated implementation\n' >>"$repo/$old" ;;
     unclaimed-in-place) printf 'updated implementation\n' >>"$repo/$spare" ;;

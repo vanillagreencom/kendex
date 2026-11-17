@@ -141,7 +141,6 @@ make_worktree() { # NAME
   {
     printf '[env]\n'
     printf 'DEV_VALIDATE_CMD = "touch %s"\n' "$TMP_ROOT/$1-full-ran"
-    printf 'DEV_VALIDATE_TIMEOUT_SECS = "20"\n'
     printf 'DEV_VALIDATE_RANGE_CMD = "printf %%s $DEV_VALIDATE_BASE > %s"\n' "$TMP_ROOT/$1-range-ran"
   } > "$wt/kendex.settings.toml"
   printf 'kendex.settings.toml\ntmp/\n' >> "$(git -C "$wt" rev-parse --path-format=absolute --git-path info/exclude)"
@@ -170,7 +169,7 @@ live() {
   line="${line//\[RUN_DIR\]/$5}"
   line="${line//\[ISSUE\]/KEN-1}"
   [[ "$2" != "$RANGE" ]] || line="$line --poll 1"
-  (cd "$3" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_BASE \
+  (cd "$3" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
     -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH \
     -u ORCH_STATE_DIR -u ORCH_PR_ORDER "${INSTALL[@]}" WORKTREE_CLI="$NETWORK_PUSH" "$BASH" -c "set -u; $line")
 }

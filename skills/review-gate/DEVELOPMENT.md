@@ -12,7 +12,7 @@ Consumer adoption uses the committed workflow hash to prove that a retired copy 
 
 The refresh scripts and their suites live in the repository's `refresh/` tree. They run from a kendex release checkout. The refresh adoption and publication contracts remain in [references/adoption.md](references/adoption.md#automatic-consumer-refresh).
 
-`retired-settings.json` is the one list the refresh report's Consumer settings section reads. A change that retires a settings key a consumer may have committed adds it under `keys`; one that replaces a shipped default adds the old value under `values` for its key.
+`retired-settings.json` is the one list the refresh report's Consumer settings section reads. A change that retires a settings key a consumer may have committed adds it under `keys`, and a rename also maps it to the new key under `successors`; one that replaces a default an install wrote into the consumer's file adds the old value under `values` for its key.
 
 ## Tests
 

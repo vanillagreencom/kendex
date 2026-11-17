@@ -803,7 +803,7 @@ const REVIEW_MODEL: &str = "SECOND_OPINION_CURRENT_MODEL";
 const MODEL_LINES_HELD: &str = "ORCH_MODEL_LINES_HELD";
 
 /// The variable a Codex session's turn-end context reader takes the
-/// compaction settings of its own command from (`lib/adapters/codex.sh`).
+/// compaction settings of its own command from (`turnend/marks.rs`).
 const COMPACTION_OVERRIDES: &str = "ORCH_COMPACTION_OVERRIDES";
 
 /// What every orch launch hands its session beside the builder's words:

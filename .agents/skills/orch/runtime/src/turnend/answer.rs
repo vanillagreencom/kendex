@@ -662,7 +662,7 @@ impl Said {
                     "this overseer requires handoff under the shared context rule at {value} tokens used. Handoff is required at {cap} tokens used, or strictly past {mark} percent of the printed window ({window} tokens). Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n{instruction}"
                 ),
                 agent_runtime::controller::views::MarkKind::Headroom => format!(
-                    "The orch runtime reads the account this overseer runs its credential out of as having {value} percent headroom left, at or below the ORCH_OVERSEER_HEADROOM_PCT mark of {mark}. Succeed this session yourself: a walled overseer runs no turn at all, so it reads no mail, handles no event and cannot hand over once the wall lands.\n{instruction}"
+                    "The orch runtime reads the account this overseer runs its credential out of as having {value} percent headroom left, at or below the AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT mark of {mark}. Succeed this session yourself: a walled overseer runs no turn at all, so it reads no mail, handles no event and cannot hand over once the wall lands.\n{instruction}"
                 ),
                 agent_runtime::controller::views::MarkKind::Rate => format!(
                     "The orch runtime projects that this overseer account will reach its wall in {value} minutes, at or before the ORCH_OVERSEER_WALL_MINUTES mark of {mark}. Succeed this session yourself before the account walls.\n{instruction}"

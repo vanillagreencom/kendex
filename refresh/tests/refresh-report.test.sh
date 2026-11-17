@@ -83,6 +83,23 @@ for needle, replacement in [
  mutant = mutants / 'consumer-report.py'
  mutant.write_text(source.replace(needle, replacement))
  assert any(consumer(c, n, mutant) != rows for c, n, rows in consumer_rows), needle
+# A renamed retired key's row names the key that replaces it; a retired key
+# with no successor keeps the plain row. Only a retired key has a successor.
+retired_list = json.loads((skill.parent / 'skills/review-gate/retired-settings.json').read_text())
+assert set(retired_list['successors']) <= set(retired_list['keys']), set(retired_list['successors']) - set(retired_list['keys'])
+plain = '- <code>ORCH_REPORT_COLUMNS</code>: retired; no package reads it.'
+renamed = '- <code>ORCH_LANE_MAX_PCT</code>: retired; no package reads it. Set <code>AGENT_RUNTIME_ACCOUNT_MAX_PCT</code> instead.'
+def renames(script=reporter):
+ result = settings_run(dict(committed={'ORCH_LANE_MAX_PCT': '90', 'ORCH_REPORT_COLUMNS': 'issue'}), script)
+ assert result.returncode == 0, result.stderr
+ return [line for line in result.stdout.splitlines() if line.startswith('- ')]
+assert renames() == [renamed, plain], renames()
+needle = '(f" Set {code(successors[key])} instead." if key in successors else "")'
+assert source.count(needle) == 1
+mutant = mutants / 'successor-report.py'
+mutant.write_text(source.replace(needle, '""'))
+assert renames(mutant) == [renamed.split(' Set ')[0], plain], renames(mutant)
+assert reporter.read_text() == source
 (root / 'bin').mkdir()
 mock = root / 'bin/mock'
 mock.write_text('''#!/usr/bin/env python3
