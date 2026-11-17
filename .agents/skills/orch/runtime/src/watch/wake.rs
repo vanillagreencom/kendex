@@ -10,6 +10,14 @@
 //! is a new wake. The record is read at the start of each pass: nothing
 //! the fleet record's writers do to a lane or overseer record moves a mark.
 //!
+//! Lost outcome: a pass that stops after its mark and before the send's
+//! answer leaves the mark with no outcome, the line typed whole, in part or
+//! not at all. The next pass that meets that mark, for its unread state or
+//! its resume, reconciles it once and types nothing for it: a local target's
+//! bound file read past the mark's count, a later user turn being the
+//! delivery and none `wake-unconfirmed cause=outcome-lost`; a hosted lane's
+//! mark is told `outcome-lost` at once, since nothing here reads its turn.
+//!
 //! Slot: the mail duty sets a baseline row of kind [`UNREAD_KIND`], its
 //! identity the target (an item key, or [`OVERSEER_TARGET`]), its value the
 //! unread state it announced (the newest unread envelope's id or index),
@@ -85,7 +93,7 @@ use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
 use crate::error::{Error, Result, WatchError};
 pub use crate::ops::wake::OVERSEER_TARGET;
-use crate::ops::wake::{WakeMark, WakeOutcome, WakeRecord};
+use crate::ops::wake::{OUTCOME_LOST, WakeMark, WakeOutcome, WakeRecord};
 use crate::schedule::Duty;
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus, Record};
@@ -106,6 +114,10 @@ const ALERT_FILE: &str = "overseer-wake-unread.txt";
 pub const FOLLOW_TARGET: &str = "overseer-follow";
 /// The follow wake's owner notice file under the state directory.
 const FOLLOW_ALERT_FILE: &str = "overseer-wake-follow.txt";
+/// The limit an API error's resume refused before typing stands under: its
+/// idle line is told instead, and the mark has an outcome, so no later pass
+/// reconciles it as a lost send.
+const RESUME_REFUSED: &str = "resume-refused";
 
 /// The wake record's path for the fleet state at `fleet`.
 pub fn record_path(fleet: &Path) -> PathBuf {
@@ -685,7 +697,18 @@ impl Wake {
                 continue;
             };
             let marked = record.get(&lane.item);
-            if marked.and_then(|m| m.resume.as_deref()) == Some(row.as_str()) {
+            if let Some(mark) = marked.filter(|m| m.resume.as_deref() == Some(row.as_str())) {
+                if mark.outcome.is_none() {
+                    let mark = mark.clone();
+                    self.reconcile(
+                        lane,
+                        &socket,
+                        mark,
+                        Some(resume.cause),
+                        &mut record,
+                        &mut produced,
+                    )?;
+                }
                 continue;
             }
             let caps = host_line(&mut lines, &scripts, lane);
@@ -730,16 +753,27 @@ impl Wake {
                     .as_ref()
                     .and_then(|o| overseer_target(o, &socket))
             } else {
-                fleet.lanes.iter().find(|l| l.item == name).and_then(|l| {
-                    // A hosted mark is final: nothing here reads the turn it
-                    // typed for, so its state asks no provider again.
-                    let line = || {
-                        (!marked(&record, l, &state))
-                            .then(|| host_line(&mut lines, &scripts, l))
-                            .flatten()
-                    };
-                    target_of(l, &socket, line).filter(|_| !crate::ops::wake::turn_runs(l, &host))
-                })
+                let Some(lane) = fleet.lanes.iter().find(|l| l.item == name) else {
+                    continue;
+                };
+                if let Some(mark) = record
+                    .get(&lane.item)
+                    .filter(|m| m.outcome.is_none() && marked(&record, lane, &state))
+                    .cloned()
+                {
+                    if !crate::ops::wake::turn_runs(lane, &host) {
+                        self.reconcile(lane, &socket, mark, None, &mut record, &mut produced)?;
+                    }
+                    continue;
+                }
+                // A hosted mark is final: nothing here reads the turn it
+                // typed for, so its state asks no provider again.
+                let line = || {
+                    (!marked(&record, lane, &state))
+                        .then(|| host_line(&mut lines, &scripts, lane))
+                        .flatten()
+                };
+                target_of(lane, &socket, line).filter(|_| !crate::ops::wake::turn_runs(lane, &host))
             };
             let Some(target) = target else {
                 continue;
@@ -774,19 +808,66 @@ impl Wake {
         if let Some(mark) = record.get(&target.name)
             && mark.stands_for(unread, &target.pane, target.server)
         {
-            self.repeat(target, mark.clone(), record, produced)
+            self.repeat(target, mark.clone(), None, record, produced)
         } else {
             self.first_pass(target, unread, None, now, record, produced)
         }
     }
 
+    /// A lane's standing `mark` with no outcome (module doc, Lost outcome),
+    /// `resume` the cause where the mark is the resume's: a hosted lane's
+    /// told at once, a local one's re-read by [`Wake::repeat`]. A lane that
+    /// is no target is relaunched, never woken.
+    fn reconcile(
+        &self,
+        lane: &Lane,
+        socket: &Path,
+        mark: WakeMark,
+        resume: Option<&str>,
+        record: &mut WakeRecord,
+        produced: &mut Produced,
+    ) -> Result<()> {
+        if hosted::host_of(lane) != crate::provider::LOCAL {
+            return self.lost(&lane.item, mark, resume, record, produced);
+        }
+        match lane_target(lane, socket) {
+            Some(target) => self.repeat(&target, mark, resume, record, produced),
+            None => Ok(()),
+        }
+    }
+
+    /// A mark with no outcome that no reading resolves: unconfirmed with
+    /// [`OUTCOME_LOST`], told once, with the owner's word, and final.
+    fn lost(
+        &self,
+        name: &str,
+        mut mark: WakeMark,
+        resume: Option<&str>,
+        record: &mut WakeRecord,
+        produced: &mut Produced,
+    ) -> Result<()> {
+        mark.outcome = Some(WakeOutcome::Unconfirmed {
+            cause: OUTCOME_LOST.to_owned(),
+        });
+        mark.owner = owner_word(name, &mark);
+        self.write(record, name, Some(mark))?;
+        produced.events.push(Event::WakeUnconfirmed {
+            target: name.to_owned(),
+            cause: OUTCOME_LOST.to_owned(),
+            resume: resume.map(str::to_owned),
+        });
+        Ok(())
+    }
+
     /// A pass over the target's standing `mark`: never typed again; the
-    /// file re-read for a late turn, and the owner's turn for an overseer
-    /// still unwoken.
+    /// file re-read for a late turn, a mark with no outcome reconciled, and
+    /// the owner's turn for an overseer still unwoken. `resume` is the cause
+    /// a reconciled resume's line names.
     fn repeat(
         &self,
         target: &Target,
         mut mark: WakeMark,
+        resume: Option<&str>,
         record: &mut WakeRecord,
         produced: &mut Produced,
     ) -> Result<()> {
@@ -806,8 +887,13 @@ impl Wake {
                 // Woken after all: nothing is owed to the owner.
                 mark.owner = None;
                 self.write(record, &name, Some(mark))?;
-                produced.events.extend(delivered(&name, None));
+                produced
+                    .events
+                    .extend(delivered(&name, resume.map(str::to_owned)));
                 Ok(())
+            }
+            Read::Idle { .. } if mark.outcome.is_none() => {
+                self.lost(&name, mark, resume, record, produced)
             }
             // Still idle and unwoken: the owner's turn.
             Read::Idle { .. } => self.owner_turn(target, mark, record),
@@ -825,7 +911,7 @@ impl Wake {
                     target: name,
                     harness,
                     cause,
-                    resume: None,
+                    resume: resume.map(str::to_owned),
                 });
                 Ok(())
             }
@@ -900,7 +986,7 @@ impl Wake {
         };
         match record.get(FOLLOW_TARGET) {
             Some(mark) if mark.stands_for("", &target.pane, target.server) => {
-                self.repeat(&target, mark.clone(), &mut record, produced)
+                self.repeat(&target, mark.clone(), None, &mut record, produced)
             }
             Some(_) | None => self.follow_first(&target, &follow.start, now, &mut record, produced),
         }
@@ -1098,7 +1184,7 @@ impl Wake {
         };
         let events = match read {
             Read::Refused => {
-                self.untyped(&name, standing.as_ref(), resume, &mark, record, produced)?;
+                self.untyped(target, standing.as_ref(), resume, &mark, record, produced)?;
                 return Ok(());
             }
             Read::Limit { harness, cause } => limit(&mut mark, harness, cause),
@@ -1129,7 +1215,7 @@ impl Wake {
                         // Nothing was typed: the mark that stood before
                         // stands again.
                         if !self.untyped(
-                            &name,
+                            target,
                             standing.as_ref(),
                             resume,
                             &mark,
@@ -1154,10 +1240,11 @@ impl Wake {
     /// line is told here instead, once, and the target's mark keeps the
     /// resume, so it is never typed afterwards. Where none stood, the mark
     /// stands for no unread state, so a mail wake for the target is still
-    /// new. Answers whether it told; a wall's resume waits for the next pass.
+    /// new, under [`RESUME_REFUSED`]. Answers whether it told; a wall's
+    /// resume waits for the next pass.
     fn untyped(
         &self,
-        name: &str,
+        target: &Target,
         standing: Option<&WakeMark>,
         resume: Option<&Resume>,
         mark: &WakeMark,
@@ -1172,11 +1259,14 @@ impl Wake {
             ..standing.cloned().unwrap_or_else(|| WakeMark {
                 unread: String::new(),
                 turns_before: 0,
-                outcome: None,
+                outcome: Some(WakeOutcome::Limit {
+                    harness: target.harness.name().to_owned(),
+                    cause: RESUME_REFUSED.to_owned(),
+                }),
                 ..mark.clone()
             })
         };
-        self.write(record, name, Some(kept))?;
+        self.write(record, &target.name, Some(kept))?;
         produced.events.push(Event::IdleAfterReturn {
             lane: resume.lane.clone(),
             note: Some(format!("cause={}", resume.cause)),

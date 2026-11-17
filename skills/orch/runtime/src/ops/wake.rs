@@ -6,7 +6,9 @@
 //! types, it records one mark, pane key and unread state, in the watch's own
 //! record, and reads that record at the start of each pass, so a crash
 //! between the mark and the paste never repeats a nudge for the same unread
-//! state; a later unread state is a new wake.
+//! state; a later unread state is a new wake. A mark such a crash left with
+//! no outcome is reconciled once by the next pass that meets it, and never
+//! typed for.
 //!
 //! The record is the runner's `oversee-watch.wake.json` beside the fleet
 //! state, one [`WakeRecord`] written whole by the duty alone
@@ -29,6 +31,11 @@ use crate::watch::owner_alert::Word;
 
 /// The target word of the controller's own record.
 pub const OVERSEER_TARGET: &str = "overseer";
+
+/// The cause of a mark reconciled with no outcome: the pass that wrote it
+/// stopped before the send's answer, and no later user turn, or no reading
+/// here at all for a hosted lane, says the line arrived.
+pub const OUTCOME_LOST: &str = "outcome-lost";
 
 /// The detached turn a lane record's `wake {pid, start}` names, where it
 /// names one: the pid as the number the runtime writes or the string a
@@ -65,8 +72,10 @@ pub enum WakeOutcome {
     /// The paste went in and the bound passed with no such turn; a repeat
     /// re-reads the file and never types again. A hosted lane's paste is
     /// unconfirmed at once (`session-hosted`), and its repeat reads nothing.
+    /// A mark reconciled with no outcome is [`OUTCOME_LOST`].
     Unconfirmed { cause: String },
-    /// No confirmable route for this harness in this state: nothing typed.
+    /// No confirmable route for this harness in this state, or a resume
+    /// refused before typing (`resume-refused`): nothing typed.
     Limit { harness: String, cause: String },
 }
 
@@ -74,7 +83,8 @@ pub enum WakeOutcome {
 /// exact key on its server, the unread state the wake is for
 /// (the mail duty's row value), the bound file's user-turn count the
 /// delivery is confirmed against, the epoch second of the mark, the
-/// outcome once known, and, for the overseer alone, where the owner's turn
+/// outcome once known (none only between the mark's write and the send's
+/// answer), and, for the overseer alone, where the owner's turn
 /// stands for an outcome that left the mail unread (`watch::owner_alert`):
 /// `told` once the outcome is on the log, `alerted` once the owner holds
 /// the words, none where nothing is owed. `resume` is the last resume typed

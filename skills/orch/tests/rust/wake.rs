@@ -728,8 +728,9 @@ fn two_events_apart_give_two_user_rows_with_the_stub_idle_between() {
 /// that types the line again. The paste call dies after the mark is on disk
 /// (an agent-runtime that exits without a reply on the paste alone, the
 /// real one for the read): the pass fails loud, the mark stands for the
-/// unread state, and the repeat for that state types nothing; a later
-/// unread state types once.
+/// unread state with no outcome, and the repeat for that state reads no
+/// later turn, so it is told `wake-unconfirmed cause=outcome-lost` once and
+/// types nothing, then says nothing; a later unread state types once.
 #[test]
 fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes_once() {
     let real = agent_runtime();
@@ -757,9 +758,21 @@ fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes
     assert_eq!(mark.turns_before, 0);
     assert_eq!(mark.outcome, None);
     assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "nothing typed");
-    // The repeat for the same state: nothing typed, nothing printed.
+    // The repeat for the same state: the lost outcome told once, nothing
+    // typed.
     let repeat = run_once(&mut body, &first, &clock).unwrap();
-    assert_eq!(rendered(&repeat), Vec::<String>::new());
+    assert_eq!(
+        rendered(&repeat),
+        vec!["EVENT wake-unconfirmed KEN-1 cause=outcome-lost"]
+    );
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|m| m.outcome),
+        Some(WakeOutcome::Unconfirmed {
+            cause: "outcome-lost".into()
+        })
+    );
+    let told = run_once(&mut body, &first, &clock).unwrap();
+    assert_eq!(rendered(&told), Vec::<String>::new(), "told once");
     assert_eq!(
         fleet.turns("lead-1"),
         Vec::<String>::new(),
@@ -776,6 +789,130 @@ fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes
     let again = run_once(&mut body, &later, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new());
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
+}
+
+/// A crash after the paste and before its answer is written: the real
+/// `deliver` types the line and the call then dies without a reply, so the
+/// pass fails loud and the mark has no outcome. The next pass reads the
+/// later user turn in the bound file, `wake-delivered`, and types nothing
+/// again, on that pass or the next.
+#[test]
+fn a_paste_whose_answer_was_lost_reads_delivered_from_its_later_turn_and_types_nothing_again() {
+    let real = agent_runtime();
+    let fleet = Fleet::new();
+    let crash = fleet.root.join("agent-runtime-crash");
+    write_executable(
+        &crash,
+        format!(
+            "#!/bin/bash\ncase \" $* \" in *' --turns-before '*) '{real}' \"$@\" >/dev/null; exit 137 ;; esac\nexec '{real}' \"$@\"\n",
+            real = real.display()
+        ),
+    );
+    let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
+    fleet.server.await_composer(&pane.id);
+    fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
+    let clock = FakeClock::new();
+    let mut dying = wake::body(&fleet.fleet_file(), &settings_in(&fleet.root, &crash));
+    let state = unread(&[("KEN-1", "m-1")]);
+    let err = run_once(&mut dying, &state, &clock).unwrap_err();
+    assert!(err.to_string().contains("no reply"), "{err}");
+    assert_eq!(fleet.mark("KEN-1").and_then(|m| m.outcome), None);
+    assert_eq!(fleet.turns("lead-1").len(), 1, "the line went in");
+    let mut body = fleet.body();
+    let reconciled = run_once(&mut body, &state, &clock).unwrap();
+    assert_eq!(rendered(&reconciled), vec!["EVENT wake-delivered KEN-1"]);
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|m| m.outcome),
+        Some(WakeOutcome::Delivered { turns_after: 1 })
+    );
+    let again = run_once(&mut body, &state, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new());
+    assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
+}
+
+/// A mark with no outcome on `pane` of the fleet's server for the unread
+/// state `unread`, carrying `resume`, planted as the target's one mark.
+fn plant_lost(fleet: &Fleet, target: &str, pane: &str, unread: &str, resume: Option<&str>) {
+    let mut record = WakeRecord::default();
+    record.set(
+        target,
+        WakeMark {
+            pane: pane.to_owned(),
+            server: u64::from(fleet.server.pid),
+            server_start: Some(fleet.server.start),
+            unread: unread.to_owned(),
+            turns_before: 0,
+            at: 1,
+            outcome: None,
+            owner: None,
+            resume: resume.map(str::to_owned),
+        },
+    );
+    std::fs::write(fleet.record_file(), serde_json::to_vec(&record).unwrap()).unwrap();
+}
+
+/// An API error's resume whose pass stopped before its answer, with an
+/// empty inbox: the mark carries the row but no outcome. The row's next
+/// pass reads no later turn and tells `wake-unconfirmed cause=outcome-lost
+/// resume=api-error` once, typing nothing; the next pass on the same row
+/// says nothing and types nothing.
+#[test]
+fn a_resume_mark_with_no_outcome_and_an_empty_inbox_is_told_lost_once_and_typed_nothing() {
+    let fleet = Fleet::new();
+    let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
+    fleet.server.await_composer(&pane.id);
+    fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
+    let asked = "api-error|%1|42|cause=api-error";
+    plant_lost(&fleet, "KEN-1", &pane.id, "", Some(asked));
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let row = resume_row("KEN-1", asked);
+    let told = run_once(&mut body, &row, &clock).unwrap();
+    assert_eq!(
+        rendered(&told),
+        vec!["EVENT wake-unconfirmed KEN-1 cause=outcome-lost resume=api-error"]
+    );
+    let mark = fleet.mark("KEN-1").unwrap();
+    assert_eq!(mark.resume.as_deref(), Some(asked));
+    assert_eq!(
+        mark.outcome,
+        Some(WakeOutcome::Unconfirmed {
+            cause: "outcome-lost".into()
+        })
+    );
+    let again = run_once(&mut body, &row, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new(), "told once");
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "typed nothing");
+}
+
+/// A hosted lane's mark with no outcome: nothing here reads its turn, so
+/// the pass for its unread state tells `wake-unconfirmed
+/// cause=outcome-lost` at once, asks its provider nothing and types
+/// nothing; the next pass says nothing.
+#[test]
+fn a_hosted_mark_with_no_outcome_is_told_lost_at_once_and_asks_its_provider_nothing() {
+    let fleet = Fleet::new();
+    let (lane, host) = ssh_lane(&fleet);
+    let pane = lane["launch"]["pane"].as_str().unwrap().to_owned();
+    let before = host.calls().len();
+    fleet.set_lanes(vec![lane]);
+    plant_lost(&fleet, "KEN-1", &pane, "m-1", None);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let state = unread(&[("KEN-1", "m-1")]);
+    let told = run_once(&mut body, &state, &clock).unwrap();
+    assert_eq!(
+        rendered(&told),
+        vec!["EVENT wake-unconfirmed KEN-1 cause=outcome-lost"]
+    );
+    let again = run_once(&mut body, &state, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new(), "told once");
+    assert_eq!(
+        host.calls()[before..],
+        Vec::<String>::new(),
+        "no provider verb"
+    );
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "typed nothing");
 }
 
 /// The real agent-runtime under a tmux that refuses its first load-buffer,

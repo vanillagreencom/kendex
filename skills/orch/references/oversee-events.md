@@ -543,7 +543,7 @@ For the overseer, this session: run `.agents/skills/mailbox/scripts/lane-mail in
 `EVENT wake-delivered [TARGET] [resume=[CAUSE]]`, `EVENT wake-unconfirmed [TARGET] cause=[C] [resume=[CAUSE]]`, `EVENT wake-limit [TARGET] harness=[H] cause=[C] [resume=[CAUSE]]`: the wake duty's outcome for one unread state. `resume=` names the turn end the wake resumed (`usage-limit` or `api-error`); a mail wake carries none.
 
 - `wake-delivered`: the line was typed, and a new user turn in the session's own file confirmed it. Nothing is owed.
-- `wake-unconfirmed`: the line was typed, and no new user turn confirmed it within the bound; `cause` is the delivering verb's word. A hosted lane's line is `cause=session-hosted`: its own mailbox read confirms it. Nothing is typed again for that unread state.
+- `wake-unconfirmed`: the line was typed, and no new user turn confirmed it within the bound; `cause` is the delivering verb's word. A hosted lane's line is `cause=session-hosted`: its own mailbox read confirms it. `cause=outcome-lost` is a send whose watch pass stopped before the send's answer: the line may have gone in whole, in part or not at all, and the next pass found no later user turn in the session's own file, or read nothing because the lane is hosted. Nothing is typed again for that unread state.
 - `wake-limit`: nothing was typed; `cause` says why the harness has no confirmable route.
 
 On a lane's `wake-unconfirmed` or `wake-limit`, deliver the mail per [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
