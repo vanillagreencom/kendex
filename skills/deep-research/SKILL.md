@@ -40,15 +40,9 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 .agents/skills/deep-research/scripts/deep-research doctor
 ```
 
-`deep-research help` lists every flag. Exa `/search` caps the settings behind them: `numResults` 1-100, `text.maxCharacters` 1-10000, `additionalQueries` at most 10.
+`deep-research help` lists the flags and mode settings. Their declarations and accepted limits live in `scripts/deep-research`: `modeDefaults`, `parseArgs` and `applyMode`.
 
-| Mode | Exa type | Results | Text cap | Timeout | Synthesis |
-|---|---|---:|---:|---:|---|
-| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | Not requested, evidence brief only |
-| `standard` | `deep-reasoning` | 50 | 10k chars/result | 10 min | Requested via `outputSchema` |
-| `full` | `deep-reasoning` | 100 | 10k chars/result | 30 min | Requested, per query |
-
-`standard` is the default; `lite` for fast spikes, `full` for strategic or high-risk decisions. `--type`, `--num-results`, and `--text-max-characters` override a mode's defaults.
+Use `lite` for an evidence brief. `standard` and `full` request synthesized findings. Use `full` when the research needs a separate request for each additional query. The flags can override a mode's settings.
 
 `--additional-query` (repeatable) reaches Exa as `additionalQueries` within the single request under `lite` and `standard`, and as one request per query with URLs deduped across responses under `full`.
 
