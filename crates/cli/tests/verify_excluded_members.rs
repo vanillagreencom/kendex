@@ -43,7 +43,7 @@ use super::verify_records::{git, kendex, row, said, write};
 /// `lane-mail-check` hook. A local mirror supplies this checkout's catalog
 /// without reaching the network.
 /// The control restores verify's unfiltered declaration set in a disposable
-/// source copy: the three Copilot-only hooks then produce `Unrecorded` rows.
+/// source copy: the Copilot-only hooks then produce `Unrecorded` rows.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn consumer_record_owes_no_copilot_only_workflow_hooks() {
@@ -52,7 +52,7 @@ fn consumer_record_owes_no_copilot_only_workflow_hooks() {
     use kendex_core::env::Env;
     use kendex_core::model::{HarnessId, ItemKind, Scope};
 
-    const EXCLUDED: &[&str] = &["lane-mail-compact", "lane-mail-prompt", "lane-mail-start"];
+    const EXCLUDED: &[&str] = &["lane-mail-compact", "lane-mail-start"];
     // A workflow hook on Claude, Codex and Pi that the record lacks: verify
     // still owes it, so the exclusion is not a blanket pass on record gaps.
     const OWED: &str = "lane-mail-deliver";

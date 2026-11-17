@@ -2,7 +2,7 @@
 //! for what the harness itself said of its session: up, walled, gone; and
 //! the one writer of those rows, which takes a `flock` on the file itself.
 //! This reader holds the verdict tables, one for
-//! an overseer's rows and one for a Pi lane's, which `agent-runtime rows
+//! an overseer's rows and one for a lane's, which `agent-runtime rows
 //! verdict --kind session|lane` prints; the row shapes follow Claude Code's
 //! hook inputs, Pi's carrier and Copilot's camelCase payloads as that
 //! library names them.
@@ -54,6 +54,9 @@ const ORDINARY_END: [&str; 2] = ["stop", "end_turn"];
 /// read, each absent where the row carries none.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Row {
+    /// The one-based line read from the rows file, never a payload field.
+    #[serde(skip)]
+    pub position: usize,
     #[serde(default)]
     pub harness: Option<String>,
     #[serde(default)]
@@ -109,12 +112,12 @@ pub enum SessionVerdict {
     Live,
 }
 
-/// What a Pi lane's last row says (`rows verdict --kind lane`).
+/// What a lane's last row says (`rows verdict --kind lane`).
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "verdict", rename_all = "kebab-case")]
 pub enum LaneVerdict {
-    /// A PreToolUse row, or a Stop whose carrier counts working agents.
+    /// A prompt, a PreToolUse row, or a Stop whose carrier counts working agents.
     Working,
     /// A Stop row that ended no error, or an error that is no limit;
     /// `cause` is the row's `stop_reason` word where the harness wrote
@@ -122,7 +125,8 @@ pub enum LaneVerdict {
     /// is a turn its output limit cut), so the stop's cause reaches the
     /// line the overseer reads and a finished round carries none.
     Idle { cause: Option<String> },
-    /// A Stop row whose error message is the account's limit.
+    /// A Stop row whose error message is the account's limit, or a Claude
+    /// failure whose error word names a limit or authentication failure.
     Walled,
 }
 
@@ -144,12 +148,20 @@ pub fn last_row(file: &Path) -> Reading<Row> {
 pub fn last_row_in(text: &str) -> Reading<Row> {
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(SPAN);
-    let Some(last) = lines[start..].iter().rev().find(|l| !l.trim().is_empty()) else {
+    let Some((index, last)) = lines[start..]
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, l)| !l.trim().is_empty())
+    else {
         return Reading::Gone;
     };
     match serde_json::from_str::<Value>(last) {
         Ok(Value::Object(_)) => match serde_json::from_str::<Row>(last) {
-            Ok(row) => Reading::Live(row),
+            Ok(mut row) => {
+                row.position = start + index + 1;
+                Reading::Live(row)
+            }
             Err(_) => Reading::Unreadable {
                 cause: "rows-row-unparsed",
             },
@@ -218,7 +230,7 @@ pub fn judge_session(row: &Row) -> SessionVerdict {
     SessionVerdict::Live
 }
 
-/// The Pi lane verdict of `file`'s last row: a row the table cannot judge
+/// The lane verdict of `file`'s last row: a row the table cannot judge
 /// is `Unreadable`, never a verdict.
 pub fn lane_verdict(file: &Path) -> Reading<LaneVerdict> {
     match last_row(file) {
@@ -228,9 +240,20 @@ pub fn lane_verdict(file: &Path) -> Reading<LaneVerdict> {
     }
 }
 
-/// The Pi lane verdict table, over one row.
+/// The lane verdict table, over one row.
 pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
     let event = row.event.as_deref().unwrap_or("");
+    if event == "StopFailure" && row.harness.as_deref() == Some("claude") {
+        return if row.error.as_deref() == Some("rate_limit")
+            || observe::is_auth_failure("", row.error.as_deref())
+        {
+            Reading::Live(LaneVerdict::Walled)
+        } else {
+            Reading::Live(LaneVerdict::Idle {
+                cause: row.error.clone(),
+            })
+        };
+    }
     if event == "Stop"
         && let Some(count) = &row.working_agents
     {
@@ -255,7 +278,7 @@ pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
         })
     };
     match (event, row.stop_reason.as_deref()) {
-        ("PreToolUse", _) => Reading::Live(LaneVerdict::Working),
+        ("UserPromptSubmit" | "PreToolUse", _) => Reading::Live(LaneVerdict::Working),
         ("Stop", Some("error")) => {
             match observe::limit_banner(row.message.as_deref().unwrap_or("")) {
                 Some(_) => Reading::Live(LaneVerdict::Walled),
@@ -490,26 +513,30 @@ pub fn write_session(file: &Path, row: &SessionRow, wait: Wait) -> Result<(), Un
     append(file, &Value::Object(line).to_string(), wait, None).map(|_| ())
 }
 
-/// A Pi lane's rows file inside the lane's mailbox directory.
+/// A lane's rows file inside the lane's mailbox directory.
 pub const LANE_FILE: &str = "session-rows.jsonl";
 
 /// The transcript tail a Pi Stop row reads its turn's end from: a session
 /// file grows without limit and its last assistant message is at its end.
 const TRANSCRIPT_TAIL: u64 = 1_048_576;
 
-/// The two events a Pi lane's rows take.
+/// The events a lane's rows take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TurnEvent {
+pub enum TurnEvent<'a> {
     /// A turn end.
     Stop,
     /// A tool call, written only where it opens a turn.
     PreToolUse,
+    /// A submitted prompt, including one before the first tool call.
+    Prompt,
+    /// Claude's failed turn, which emits no Stop afterward.
+    StopFailure { error: Option<&'a str> },
 }
 
-/// One Pi lane row.
+/// One lane row.
 #[derive(Debug, Clone, Copy)]
 pub struct LaneRow<'a> {
-    pub event: TurnEvent,
+    pub event: TurnEvent<'a>,
     pub harness: &'a str,
     pub at: u64,
     /// The session file a Stop row reads its turn's last assistant message
@@ -524,8 +551,10 @@ pub struct LaneRow<'a> {
 /// a turn end, carrying the `stopReason` of the turn's last assistant
 /// message in the transcript (Pi's `AssistantMessage`), its `errorMessage`
 /// as `message` where that reason is `error`, and the working-agent count;
-/// a PreToolUse at a tool call only over a Stop row or an empty file, so a
-/// turn of many tool calls opens one. `Ok(false)` where nothing is written:
+/// a PreToolUse at a tool call only over an ended turn or an empty file, so a
+/// turn of many tool calls opens one. A prompt always opens a new turn and
+/// a Claude failure closes it with the harness's error word.
+/// `Ok(false)` where nothing is written:
 /// no mailbox directory, or a turn already open.
 pub fn write_lane(dir: &Path, row: &LaneRow, wait: Wait) -> Result<bool, Unwritten> {
     if !dir.is_dir() {
@@ -537,6 +566,8 @@ pub fn write_lane(dir: &Path, row: &LaneRow, wait: Wait) -> Result<bool, Unwritt
     let event = match row.event {
         TurnEvent::Stop => "Stop",
         TurnEvent::PreToolUse => "PreToolUse",
+        TurnEvent::Prompt => "UserPromptSubmit",
+        TurnEvent::StopFailure { .. } => "StopFailure",
     };
     line.insert("event".to_owned(), Value::from(event));
     line.insert("harness".to_owned(), Value::from(row.harness));
@@ -556,14 +587,23 @@ pub fn write_lane(dir: &Path, row: &LaneRow, wait: Wait) -> Result<bool, Unwritt
             wait,
             Some(&turn_open),
         ),
+        TurnEvent::Prompt => append(&file, &Value::Object(line).to_string(), wait, None),
+        TurnEvent::StopFailure { error } => {
+            if let Some(error) = error {
+                line.insert("error".to_owned(), Value::from(error));
+            }
+            append(&file, &Value::Object(line).to_string(), wait, None)
+        }
     }
 }
 
-/// Whether `file`'s last row is a turn end, or the file holds none: the one
+/// Whether `file`'s last row is a turn end, or the file holds none: the
 /// state a PreToolUse row opens a turn over. A file this cannot read
 /// answers yes, so the append itself meets the fault and reports it.
 fn turn_open(file: &Path) -> bool {
-    last_object(file).map_or(true, |last| last.is_none_or(|row| event_of(&row) == "Stop"))
+    last_object(file).map_or(true, |last| {
+        last.is_none_or(|row| matches!(event_of(&row), "Stop" | "StopFailure"))
+    })
 }
 
 /// The turn's end from the last assistant message in the transcript's
@@ -800,7 +840,7 @@ mod tests {
         }
     }
 
-    /// The Pi lane verdict table. A carrier's null count and a row the table
+    /// A carrier's null count and a row the table
     /// cannot judge are no idle lane; an idle verdict carries the row's
     /// `stop_reason`, so a turn the output limit cut (`length`) reads as cut,
     /// and never the harness's ordinary end (`stop`, `end_turn`), so a
@@ -812,7 +852,31 @@ mod tests {
                 cause: cause.map(str::to_owned),
             })
         };
-        let rows: [(&str, Reading<LaneVerdict>); 11] = [
+        let rows = [
+            (
+                r#"{"harness":"claude","event":"UserPromptSubmit"}"#,
+                Reading::Live(LaneVerdict::Working),
+            ),
+            (
+                r#"{"harness":"codex","event":"UserPromptSubmit"}"#,
+                Reading::Live(LaneVerdict::Working),
+            ),
+            (
+                r#"{"harness":"copilot","event":"UserPromptSubmit"}"#,
+                Reading::Live(LaneVerdict::Working),
+            ),
+            (
+                r#"{"harness":"claude","event":"StopFailure","error":"model_not_found"}"#,
+                idle(Some("model_not_found")),
+            ),
+            (
+                r#"{"harness":"claude","event":"StopFailure","error":"rate_limit"}"#,
+                Reading::Live(LaneVerdict::Walled),
+            ),
+            (
+                r#"{"harness":"claude","event":"StopFailure","error":"authentication_failed"}"#,
+                Reading::Live(LaneVerdict::Walled),
+            ),
             (
                 r#"{"harness":"pi","event":"PreToolUse"}"#,
                 Reading::Live(LaneVerdict::Working),
@@ -865,6 +929,74 @@ mod tests {
         for (json, expected) in rows {
             assert_eq!(judge_lane(&row(json)), expected, "{json}");
         }
+    }
+
+    #[test]
+    fn lane_rows_keep_each_prompt_and_failure_position_without_a_stop() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join(LANE_FILE);
+        let row = |event| LaneRow {
+            event,
+            harness: "claude",
+            at: 7,
+            transcript: None,
+            working_agents: None,
+        };
+        let failure = TurnEvent::StopFailure {
+            error: Some("model_not_found"),
+        };
+        for (index, event) in [
+            TurnEvent::Prompt,
+            TurnEvent::Prompt,
+            failure,
+            TurnEvent::Prompt,
+            failure,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(write_lane(root.path(), &row(event), BOUND), Ok(true));
+            let Reading::Live(last) = last_row(&file) else {
+                panic!("last row unread");
+            };
+            assert_eq!(last.position, index + 1);
+            assert_eq!(
+                judge_lane(&last),
+                if event == TurnEvent::Prompt {
+                    Reading::Live(LaneVerdict::Working)
+                } else {
+                    Reading::Live(LaneVerdict::Idle {
+                        cause: Some("model_not_found".into()),
+                    })
+                }
+            );
+            if event == TurnEvent::Prompt {
+                assert_eq!(
+                    write_lane(root.path(), &row(TurnEvent::PreToolUse), BOUND),
+                    Ok(false)
+                );
+            }
+        }
+        let text = format!("{}\n\n", fs::read_to_string(&file).unwrap());
+        let Reading::Live(last) = last_row_in(&text) else {
+            panic!("last row unread");
+        };
+        assert_eq!(last.position, 5);
+        assert!(
+            serde_json::to_value(last)
+                .unwrap()
+                .get("position")
+                .is_none()
+        );
+        let padding = "\n".repeat(SPAN + 3);
+        let Reading::Live(last) = last_row_in(&format!("{padding}{text}")) else {
+            panic!("last row unread past span");
+        };
+        assert_eq!(last.position, SPAN + 8);
+        assert_eq!(
+            write_lane(root.path(), &row(TurnEvent::PreToolUse), BOUND),
+            Ok(true)
+        );
     }
 
     /// A lock wait of a test's own bound, short of [`WAIT`].

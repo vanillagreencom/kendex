@@ -21,7 +21,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `lane-mail-deliver`: Hands a working lane the messages its overseer sent as soon as a tool call finishes, and the notes another repository's overseer sent to the one session the checkout's fleet record names. It also tells the session running the fleet, at its next tool call, that it has used enough of its context to hand over.
 - `lane-mail-halt`: Stops a lane at its next tool call when its overseer sends a halt, until the lane reads it, and refuses the harness question tool in a lane, naming lane mail as the route.
 - `lane-mail-model-switch`: Delivers Claude model-switch events to the existing lane self-check.
-- `lane-mail-prompt`: Hands a Copilot lane the messages its overseer sent with each prompt it is handed, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
+- `lane-mail-prompt`: Hands a Claude Code, Codex or Copilot CLI lane the messages its overseer sent with each prompt, and peer notes to the session the fleet record names.
 - `lane-mail-start`: Hands a Copilot lane the messages its overseer sent as soon as its session starts, and the notes another repository's overseer sent to the one session the checkout's fleet record names.
 - `pre-commit-check`: Stops options that skip armed commit checks and bypass commits after a hook-path change in the same command. Missing setup or an unavailable reader produces a notice with the responsible owner.
 - `reviewer-read-only`: Stops a cooperating reviewer's edits, commits, pushes, Git commands that discard work, and ordinary `rm` or `git rm` deletes in a work tree; lets it write its review report.

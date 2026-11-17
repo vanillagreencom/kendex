@@ -103,6 +103,12 @@ pub struct Answer {
 }
 
 impl Answer {
+    fn holds_stop(&self) -> bool {
+        self.code != 0
+            || serde_json::from_str::<serde_json::Value>(&self.stdout)
+                .is_ok_and(|answer| answer["decision"] == "block")
+    }
+
     /// Hand the answer over, stderr then stdout, and return its exit
     /// status. The cursor moves only once stdout is written, so a run that
     /// dies first leaves the lines unread rather than consumed unseen; a
@@ -418,7 +424,13 @@ fn judge(
         };
         return Err(turn.said(answer));
     }
-    judged(turn, vars, &arm, &lane, &payload, continued)
+    let mut result = judged(turn, vars, &arm, &lane, &payload, continued);
+    let held = result.as_ref().err().is_some_and(Answer::holds_stop);
+    rows::lane_row(turn, vars, &lane, &payload, held)?;
+    if let Err(answer) = &mut result {
+        answer.stderr.push_str(&std::mem::take(&mut turn.stderr));
+    }
+    result
 }
 
 /// Who made the call: the payload names a subagent on every harness, and
@@ -485,10 +497,12 @@ fn judged(
 ) -> Flow {
     // A call in a launched lane that is not its lead moves nothing of the
     // lane's: a halt refuses it as it refuses a subagent, and every other
-    // arm passes. A row moves nothing of a lane's but the bind a cleared
-    // session start makes.
+    // arm passes. A failure row belongs to the same lead as its turn.
     let asked = match arm {
-        Arm::Row { .. } => identity::cleared_start(turn, payload),
+        Arm::Row { event } => {
+            (event == "StopFailure" && turn.harness == Harness::Claude)
+                || identity::cleared_start(turn, payload)
+        }
         _ => true,
     };
     if lane.item.is_some() && turn.caller != Caller::Subagent && asked {
@@ -520,7 +534,6 @@ fn judged(
         | Arm::Start
         | Arm::Prompt => {}
     }
-    rows::lane_row(turn, vars, lane, payload)?;
     let lead = turn.caller == Caller::Lead;
     if *arm == Arm::Start && turn.harness == Harness::Copilot && lead {
         controller::context_reader_check(turn, vars, lane, payload)?;

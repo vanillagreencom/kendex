@@ -103,6 +103,15 @@
             "timeout": 75
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-prompt.sh\"",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "TaskCompleted": [

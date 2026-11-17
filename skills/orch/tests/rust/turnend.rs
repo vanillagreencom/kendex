@@ -1120,6 +1120,159 @@ fn of_session(session: &str, fields: Value) -> String {
     payload.to_string()
 }
 
+fn lane_turn_rows(world: &World) -> Vec<Value> {
+    let file = world.mail_root().join(ITEM).join("session-rows.jsonl");
+    match fs::read_to_string(file) {
+        Ok(text) => text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => panic!("lane rows: {error}"),
+    }
+}
+
+#[test]
+fn lanes_write_prompt_tool_and_passed_stop_rows_for_each_harness() {
+    for harness in ["claude", "codex", "copilot", "pi"] {
+        let world = World::launched();
+        let transcript = world.root.join("s1/events.jsonl");
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::write(
+            &transcript,
+            "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"length\"}}\n",
+        )
+        .unwrap();
+        let mut payload = json!({
+            "prompt": "work",
+            "tool_name": "Bash", "tool_input": {"command": "pwd"},
+            "working_agents": if harness == "pi" { 0 } else { 2 },
+        });
+        if harness == "copilot" {
+            payload["sessionId"] = json!("s1");
+            payload["transcriptPath"] = json!(transcript);
+        } else {
+            payload["session_id"] = json!("s1");
+            payload["transcript_path"] = json!(transcript);
+        }
+        let payload = payload.to_string();
+        if harness == "copilot" {
+            let out = world.mail(harness, &["start"], &payload);
+            assert_eq!(out.code, 0, "{}", out.stderr);
+        }
+        let out = world.mail(harness, &["prompt"], &payload);
+        assert_eq!(out.code, 0, "{harness}: {}", out.stderr);
+        let rows = lane_turn_rows(&world);
+        if harness == "pi" {
+            assert!(rows.is_empty());
+        } else {
+            assert_eq!(rows.len(), 1, "{harness}: {rows:?}");
+            assert_eq!(rows[0]["event"], "UserPromptSubmit", "{harness}");
+        }
+        let out = world.mail(harness, &["halt"], &payload);
+        assert_eq!(out.code, 0, "{harness}: {}", out.stderr);
+        world.report("reported", "notice");
+        let out = world.mail(harness, &[], &payload);
+        assert_eq!(out.code, 0, "{harness}: {}", out.stderr);
+        let rows = lane_turn_rows(&world);
+        assert_eq!(rows.len(), 2, "{harness}: {rows:?}");
+        assert_eq!(
+            rows[0]["event"],
+            if harness == "pi" {
+                "PreToolUse"
+            } else {
+                "UserPromptSubmit"
+            }
+        );
+        assert_eq!(rows[1]["event"], "Stop", "{harness}");
+        assert_eq!(rows[1]["harness"], harness);
+        assert_eq!(
+            rows[1]["stop_reason"],
+            if harness == "pi" {
+                json!("length")
+            } else {
+                Value::Null
+            }
+        );
+        assert_eq!(
+            rows[1]["working_agents"],
+            if harness == "pi" {
+                json!(0)
+            } else {
+                Value::Null
+            }
+        );
+    }
+}
+
+#[test]
+fn lane_stop_rows_follow_each_harness_answer() {
+    for harness in ["claude", "codex", "copilot", "pi"] {
+        let world = World::launched();
+        world.report("reported", "notice");
+        let out = world.mail(harness, &[], "{}");
+        assert_eq!(out.code, 0, "{harness}: {}", out.stderr);
+        assert_eq!(lane_turn_rows(&world).last().unwrap()["event"], "Stop");
+        let out = world.mail(harness, &[], "{}");
+        if harness == "copilot" {
+            assert_eq!(out.code, 0, "{}", out.stderr);
+            assert_eq!(out.json()["decision"], "block");
+        } else {
+            assert_eq!(out.code, 2, "{harness}: {}", out.stderr);
+        }
+        let rows = lane_turn_rows(&world);
+        assert_eq!(rows.len(), 2, "{harness}: {rows:?}");
+        assert_eq!(rows.last().unwrap()["event"], "PreToolUse", "{harness}");
+        let out = world.mail(harness, &[], r#"{"stop_hook_active":true}"#);
+        assert_eq!(out.code, 0, "{harness}: {}", out.stderr);
+        let rows = lane_turn_rows(&world);
+        assert_eq!(rows.len(), 3, "{harness}: {rows:?}");
+        assert_eq!(rows.last().unwrap()["event"], "Stop", "{harness}");
+    }
+}
+
+#[test]
+fn a_claude_lane_failure_ends_its_prompt_without_a_stop() {
+    for error in ["model_not_found", "rate_limit", "authentication_failed"] {
+        let world = World::launched();
+        let prompt = world.mail("claude", &["prompt"], r#"{"prompt":"work"}"#);
+        assert_eq!(prompt.code, 0, "{}", prompt.stderr);
+        let payload = json!({"error": error}).to_string();
+        let out = world.mail("claude", &["row", "StopFailure"], &payload);
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        let rows = lane_turn_rows(&world);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[0]["event"], "UserPromptSubmit");
+        assert_eq!(rows[1]["event"], "StopFailure");
+        assert_eq!(rows[1]["harness"], "claude");
+        assert_eq!(rows[1]["error"], error);
+    }
+}
+
+#[test]
+fn calls_outside_the_lane_lead_leave_its_turn_rows_untouched() {
+    let world = World::launched();
+    world.bind(Some("lead-1"));
+    let out = world.mail("claude", &["prompt"], &of_session("lead-1", json!({})));
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let before = lane_turn_rows(&world);
+    assert_eq!(before.len(), 1);
+    for args in [
+        vec!["prompt"],
+        vec!["halt"],
+        vec!["row", "StopFailure"],
+        vec![],
+    ] {
+        for fields in [
+            json!({"session_id":"job-1","error":"model_not_found","tool_input":{"command":"pwd"}}),
+            json!({"session_id":"lead-1","agent_id":"a1","error":"model_not_found","tool_input":{"command":"pwd"}}),
+        ] {
+            world.mail("claude", &args, &fields.to_string());
+            assert_eq!(lane_turn_rows(&world), before, "{args:?} {fields}");
+        }
+    }
+}
+
 #[test]
 fn lane_mail_is_the_session_its_record_names_and_a_call_before_the_binding_is_the_leads() {
     let world = World::launched();

@@ -1,6 +1,6 @@
 //! The observation duty: the lane classifier over three-valued reads of
 //! real panes on a private tmux server, the wall rule keyed to the live
-//! identity, a Pi lane's rows, the overseer's one verdict shared with the
+//! identity, each local lane's rows, the overseer's one verdict shared with the
 //! mail gate, the death counted on two passes and the succession asked for
 //! through the one request, the stray sweep, the reset the banner names, the
 //! account and lane wall records, the wall relaunch through the route,
@@ -145,8 +145,8 @@ fn status_file(path: &Path) -> Reading<()> {
     }
 }
 
-fn lane_rows(path: &Path) -> Reading<LaneVerdict> {
-    rows::lane_verdict(path)
+fn lane_rows(path: &Path) -> Reading<rows::Row> {
+    rows::last_row(path)
 }
 
 /// The lane record of `item` whose window is `name`, launched in `pane` on
@@ -1734,7 +1734,7 @@ fn a_pi_lane_is_judged_from_its_rows_as_the_released_watch_judged_it() {
     assert!(lines(&third).is_empty(), "{:?}", lines(&third));
     std::fs::write(
         &rows_file,
-        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"stop\",\"working_agents\":0,\"at\":2}\n",
+        format!("{}{row}\n", std::fs::read_to_string(&rows_file).unwrap(), row = json!({"harness":"pi","event":"Stop","stop_reason":"stop","working_agents":0,"at":2})),
     )
     .unwrap();
     driver.pass(&state);
@@ -7269,5 +7269,398 @@ fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() 
         ],
         "{:?}",
         lines(&second)
+    );
+}
+
+#[test]
+fn local_lane_rows_hold_the_turn_open_and_a_claude_failure_ends_it() {
+    if !isolated_row("local_lane_rows_hold_the_turn_open_and_a_claude_failure_ends_it") {
+        return;
+    }
+    for (harness, composer) in [
+        ("claude", "❯\u{a0}\n"),
+        ("codex", "› Ask Codex to do anything\n"),
+        ("copilot", "❯ \n────────────────────────────────────────\n"),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let server = Server::start(&dir, "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = redrawing(&server, &dir, "gh-1", harness, composer);
+        await_drawn(
+            &server,
+            &pane,
+            if harness == "copilot" {
+                "────"
+            } else if harness == "codex" {
+                "Ask Codex"
+            } else {
+                "❯"
+            },
+        );
+        fleet.set_lanes(vec![lane_record(
+            "KEN-1",
+            "gh-1",
+            harness,
+            &server,
+            &pane,
+            Some(&identity),
+            &dir,
+        )]);
+        let state = fleet.read();
+        let file = dir.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let prompt = json!({"harness": harness, "event": "UserPromptSubmit", "at": 1});
+        std::fs::write(&file, format!("{prompt}\n")).unwrap();
+        lane_driver!(server, fleet, readers, driver);
+        for _ in 0..3 {
+            assert!(event_lines(&driver.pass(&state)).is_empty(), "{harness}");
+            assert_eq!(driver.baseline.get("lane-idle", "gh-1"), None, "{harness}");
+        }
+        let stop = json!({"harness": harness, "event": "Stop", "at": 2});
+        std::fs::write(&file, format!("{prompt}\n{stop}\n")).unwrap();
+        driver.pass(&state);
+        assert_eq!(
+            event_lines(&driver.pass(&state)),
+            vec!["EVENT idle-after-return gh-1"],
+            "{harness}"
+        );
+        assert!(event_lines(&driver.pass(&state)).is_empty());
+        if harness == "claude" {
+            let failure = json!({"harness": "claude", "event": "StopFailure", "error": "model_not_found", "at": 3});
+            std::fs::write(&file, format!("{prompt}\n{stop}\n{prompt}\n{failure}\n")).unwrap();
+            driver.pass(&state);
+            assert_eq!(
+                event_lines(&driver.pass(&state)),
+                vec!["EVENT idle-after-return gh-1 cause=model_not_found"]
+            );
+            assert!(event_lines(&driver.pass(&state)).is_empty());
+        }
+    }
+}
+
+#[test]
+fn lane_dialogs_and_pane_walls_precede_rows_except_on_pi() {
+    if !isolated_row("lane_dialogs_and_pane_walls_precede_rows_except_on_pi") {
+        return;
+    }
+    use lanes::{Inputs, LaneState, WallSource};
+    let working = Reading::Live(LaneVerdict::Working);
+    let idle = Reading::Live(LaneVerdict::Idle { cause: None });
+    for harness in [
+        Harness::Claude,
+        Harness::Codex,
+        Harness::Copilot,
+        Harness::Pi,
+    ] {
+        for rows in [&working, &idle] {
+            for (screen, expected) in [
+                ("Do you want to continue?\n› 1. Yes\n", LaneState::Asking),
+                (
+                    "Switch to gpt-6-luna for lower credit usage?\n› 1. Switch\n",
+                    LaneState::RateLimitSwitch,
+                ),
+                (
+                    "You've hit your session limit\n",
+                    LaneState::Walled {
+                        kind: observe::WallKind::Usage,
+                        banner: "You've hit your session limit".to_owned(),
+                        source: WallSource::Pane,
+                    },
+                ),
+                (
+                    "Not logged in · Please run /login\n",
+                    LaneState::Walled {
+                        kind: observe::WallKind::Auth,
+                        banner: "Not logged in · Please run /login".to_owned(),
+                        source: WallSource::Pane,
+                    },
+                ),
+            ] {
+                let screen = Ok(screen.to_owned());
+                let state = lanes::classify(&Inputs {
+                    pane: None,
+                    process: Some(&ProcessReading::HarnessUp),
+                    screen: Some(&screen),
+                    rows: Some(rows),
+                    harness: Some(harness),
+                    account_room: None,
+                });
+                let expected = if harness == Harness::Pi {
+                    if rows == &working {
+                        LaneState::Working
+                    } else {
+                        LaneState::Idle {
+                            capacity: false,
+                            cause: None,
+                        }
+                    }
+                } else {
+                    expected
+                };
+                assert_eq!(state, expected, "{harness:?} {screen:?} {rows:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn rows_none_uses_the_non_pi_pane_and_unreadable_rows_stay_unjudged() {
+    if !isolated_row("rows_none_uses_the_non_pi_pane_and_unreadable_rows_stay_unjudged") {
+        return;
+    }
+    use lanes::{Inputs, LaneState};
+    for (harness, composer) in [
+        (Harness::Claude, "❯\u{a0}\n"),
+        (Harness::Codex, "› Ask Codex to do anything\n"),
+        (
+            Harness::Copilot,
+            "❯ \n────────────────────────────────────────\n",
+        ),
+        (Harness::Pi, "› not a Pi composer\n"),
+    ] {
+        let screen = Ok(composer.to_owned());
+        let classify = |rows| {
+            lanes::classify(&Inputs {
+                pane: None,
+                process: Some(&ProcessReading::HarnessUp),
+                screen: Some(&screen),
+                rows,
+                harness: Some(harness),
+                account_room: None,
+            })
+        };
+        let expected = if harness == Harness::Pi {
+            LaneState::Unjudged {
+                cause: "rows-none".to_owned(),
+            }
+        } else {
+            LaneState::Idle {
+                capacity: false,
+                cause: None,
+            }
+        };
+        assert_eq!(classify(Some(&Reading::Gone)), expected, "{harness:?}");
+        assert_eq!(classify(None), expected, "{harness:?}");
+        assert_eq!(
+            classify(Some(&Reading::Unreadable {
+                cause: "rows-invalid"
+            })),
+            LaneState::Unjudged {
+                cause: "rows-invalid".to_owned()
+            }
+        );
+    }
+}
+
+const CODEX_LIVE_FAILURE: &str = include_str!("../fixtures/oversee-watch/codex-api-error-live.txt");
+
+#[test]
+fn a_current_codex_failure_ends_a_working_row_but_scrollback_does_not() {
+    if !isolated_row("a_current_codex_failure_ends_a_working_row_but_scrollback_does_not") {
+        return;
+    }
+    use lanes::{Inputs, LaneState};
+    let prompt = rows::last_row_in("{\"harness\":\"codex\",\"event\":\"UserPromptSubmit\"}\n");
+    let Reading::Live(prompt) = prompt else {
+        panic!("prompt row")
+    };
+    let working = rows::judge_lane(&prompt);
+    let classify = |screen: &str| {
+        lanes::classify(&Inputs {
+            pane: None,
+            process: Some(&ProcessReading::HarnessUp),
+            screen: Some(&Ok(screen.to_owned())),
+            rows: Some(&working),
+            harness: Some(Harness::Codex),
+            account_room: None,
+        })
+    };
+    assert_eq!(
+        classify(CODEX_LIVE_FAILURE),
+        LaneState::Idle {
+            capacity: false,
+            cause: Some("api-error".to_owned())
+        }
+    );
+    assert_eq!(
+        classify(&format!(
+            "{CODEX_LIVE_FAILURE}\n› Continue the task\n• Working (esc to interrupt)\n"
+        )),
+        LaneState::Working
+    );
+    assert_eq!(
+        classify(&format!(
+            "{CODEX_LIVE_FAILURE}\n› Continue the task\n› Ask Codex to do anything\n"
+        )),
+        LaneState::Working
+    );
+    assert_eq!(
+        classify("› Work\n▲ Selected model is at capacity\n› Ask Codex to do anything\n"),
+        LaneState::Idle {
+            capacity: true,
+            cause: None
+        }
+    );
+    assert_eq!(
+        classify("› Work\n■ A request failed\n• Working (esc to interrupt)\n"),
+        LaneState::Working
+    );
+}
+
+fn wake_stamp(fleet: &Fleet, target: &str, at: u64) {
+    let path = orch_runtime::watch::wake::record_path(&fleet.path());
+    let mut record: Value = std::fs::read(&path)
+        .ok()
+        .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+        .unwrap_or_else(|| json!({"marks": {}}));
+    record["marks"][target] = json!({"pane": "%1", "server": 1, "unread": "resume", "turns_before": 0, "line_digest": 0, "at": at});
+    std::fs::write(path, record.to_string()).unwrap();
+}
+
+fn identical_codex_failures(hosted: bool) {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let server = Server::start(&dir, "fleet");
+    let fleet = Fleet::new(&server);
+    let world = HostedWorld::new(&dir, &server, &fleet);
+    let pane = if hosted {
+        server.open_window("gh-1", &dir, "exec bash --norc --noprofile")
+    } else {
+        let (pane, identity) = redrawing(&server, &dir, "gh-1", "codex", CODEX_LIVE_FAILURE);
+        await_drawn(&server, &pane, "not supported");
+        let lane = lane_record(
+            "KEN-1",
+            "gh-1",
+            "codex",
+            &server,
+            &pane,
+            Some(&identity),
+            &dir,
+        );
+        fleet.set_lanes(vec![lane]);
+        let file = dir.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            file,
+            "{\"harness\":\"codex\",\"event\":\"UserPromptSubmit\",\"at\":1}\n",
+        )
+        .unwrap();
+        pane
+    };
+    if hosted {
+        let mut lane = hosted_lane(&dir, "KEN-1", "gh-1", "/remote/lane");
+        lane["harness"] = json!("codex");
+        lane["viewer"] = json!(true);
+        lane["launch"] = json!({"pane": pane, "server": server.pid});
+        fleet.set_lanes(vec![lane]);
+        world.plant_host(&[
+            ("capabilities", ok(VERB_LINE)),
+            ("status --item KEN-1 --harness codex", ok("running\n")),
+            ("capture --item KEN-1", ok(CODEX_LIVE_FAILURE)),
+        ]);
+    }
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    for _ in 0..3 {
+        assert!(event_lines(&driver.pass(&state)).is_empty());
+    }
+    assert!(
+        driver
+            .baseline
+            .get("resume", "gh-1")
+            .unwrap()
+            .starts_with("api-error|")
+    );
+    wake_stamp(&fleet, "KEN-other", 2);
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    wake_stamp(&fleet, "KEN-1", 2);
+    let events: Vec<String> = (0..3)
+        .flat_map(|_| event_lines(&driver.pass(&state)))
+        .collect();
+    assert_eq!(events, vec!["EVENT idle-after-return gh-1 cause=api-error"]);
+    assert!(
+        driver
+            .baseline
+            .get("resume", "gh-1")
+            .unwrap()
+            .starts_with("told|")
+    );
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    let mark_path = orch_runtime::watch::wake::record_path(&fleet.path());
+    std::fs::write(&mark_path, "{").unwrap();
+    let unread = driver.pass(&state);
+    assert!(
+        unread.failed.is_some(),
+        "unreadable wake record must not supply an idle key"
+    );
+    assert!(event_lines(&unread).is_empty());
+}
+
+#[test]
+fn identical_local_codex_failures_are_told_once_after_the_targets_wake() {
+    if !isolated_row("identical_local_codex_failures_are_told_once_after_the_targets_wake") {
+        return;
+    }
+    identical_codex_failures(false);
+}
+
+#[test]
+fn identical_hosted_codex_failures_are_told_once_after_the_targets_wake() {
+    if !isolated_row("identical_hosted_codex_failures_are_told_once_after_the_targets_wake") {
+        return;
+    }
+    identical_codex_failures(true);
+}
+
+#[test]
+fn identical_claude_failures_at_one_second_are_new_rows_without_a_working_pass() {
+    if !isolated_row("identical_claude_failures_at_one_second_are_new_rows_without_a_working_pass")
+    {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let server = Server::start(&dir, "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = redrawing(&server, &dir, "gh-1", "claude", "❯\u{a0}\n");
+    await_drawn(&server, &pane, "❯");
+    fleet.set_lanes(vec![lane_record(
+        "KEN-1",
+        "gh-1",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        &dir,
+    )]);
+    let state = fleet.read();
+    let file = dir.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let turn = "{\"harness\":\"claude\",\"event\":\"UserPromptSubmit\",\"at\":1}\n{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"model_not_found\",\"at\":1}\n";
+    lane_driver!(server, fleet, readers, driver);
+    for n in 1..=2 {
+        std::fs::write(&file, turn.repeat(n)).unwrap();
+        driver.pass(&state);
+        assert_eq!(
+            event_lines(&driver.pass(&state)),
+            vec!["EVENT idle-after-return gh-1 cause=model_not_found"]
+        );
+        assert!(event_lines(&driver.pass(&state)).is_empty());
+    }
+    redraw(
+        &server,
+        &pane,
+        &dir,
+        "changed-tail.txt",
+        "Second failure details\n❯\u{a0}\n",
+        "Second failure details",
+    );
+    driver.pass(&state);
+    assert_eq!(
+        event_lines(&driver.pass(&state)),
+        vec!["EVENT idle-after-return gh-1 cause=model_not_found"]
     );
 }

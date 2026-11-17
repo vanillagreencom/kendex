@@ -326,8 +326,8 @@ A handoff does not confirm that its session stopped: a relaunch refuses `lane-li
 
 `EVENT idle-after-return [LANE]`, then an optional note: the lane read idle on two passes in a row, or a local Codex lane read idle after its turn. Read the closing lines under it.
 
-- A Pi lane is idle by the Stop row its own hook wrote, never by its pane; the lines under the line are its pane's.
-- `cause=[WORD]` is the Stop row's own stop reason where it is not the harness's ordinary end. `cause=length` is a turn the model's output limit cut: the lane has not finished, and it takes a one-line continuation directive.
+- A local lane reads working from its prompt or first tool row until a passed Stop; a held Stop stays working, and Claude Code StopFailure ends the turn. Pane dialogs and walls take priority except on Pi; Codex's current failed-turn marker below its last prompt and above its idle composer can end a Working row. Hosted Pi lanes use their own Stop rows; other hosted lanes keep their provider's screen reading.
+- `cause=[WORD]` is Claude Code's StopFailure `error`, or a Stop row's own stop reason where it is not the harness's ordinary end. `cause=length` is a turn the model's output limit cut: the lane has not finished, and it takes a one-line continuation directive.
 - `cause=api-error` is a turn its provider's API ended. The watch resumes a lane the wake reaches once, with no line, so this line is the second such end, a resume the wake could not type, or a lane the wake does not reach: wake the lane with a continuation directive.
 - `stop-cause=allow-all-blocked-by-policy` follows [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) instead of a directive; that section names the `session-record=` reasons.
 - A lane whose merge landed and whose work has left its host is closed by the watch at this line.

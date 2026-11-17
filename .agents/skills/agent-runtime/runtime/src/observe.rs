@@ -259,16 +259,16 @@ pub fn codex_capacity_refused(slice: &str) -> bool {
 }
 
 /// Codex's line for a turn its provider's API refused, as a real pane drew
-/// it: the error glyph at the line's start, then the provider's JSON error
-/// body. An answer quoting the words draws them indented.
-static CODEX_API_ERROR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"^■ \{"detail":"#).unwrap());
+/// it: the error glyph at the line's start, then the harness's error text.
+/// An answer quoting the words draws them indented.
+static CODEX_API_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^■ \S").unwrap());
 
 /// Whether a Codex slice judged idle sits at its composer after an API error
 /// ended its turn: the error line and the marker line are both drawn in it.
 pub fn codex_api_error(slice: &str) -> bool {
-    slice.lines().any(|l| CODEX_API_ERROR.is_match(l))
-        && slice.lines().any(|l| CODEX_MARKER.is_match(l))
+    let mut lines = slice.lines();
+    lines.any(|line| CODEX_API_ERROR.is_match(line))
+        && lines.any(|line| CODEX_MARKER.is_match(line))
 }
 
 /// Whether a wall screen is the live process's: a screen first seen before
@@ -897,6 +897,13 @@ mod tests {
             State::Idle
         );
         assert!(codex_api_error(&below_last_turn(screen)));
+        assert!(codex_api_error(
+            "■ The selected model is not supported.\n› Ask Codex to do anything"
+        ));
+        assert!(!codex_api_error(
+            "› Ask Codex to do anything\n■ The selected model is not supported."
+        ));
+        assert!(!codex_api_error("■ The selected model is not supported."));
         assert!(!codex_api_error(
             "› what failed?\n  ■ {\"detail\":\"Bad Request\"} is what the log said\n› Ask Codex to do anything"
         ));

@@ -1876,6 +1876,36 @@ fn rows_verdict_reads_each_word_of_both_tables_from_a_file_and_from_stdin() {
     let rows: Vec<(&str, String, serde_json::Value)> = vec![
         (
             "lane",
+            r#"{"harness":"claude","event":"UserPromptSubmit"}"#.into(),
+            live(json!({"verdict": "working"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"codex","event":"UserPromptSubmit"}"#.into(),
+            live(json!({"verdict": "working"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"copilot","event":"UserPromptSubmit"}"#.into(),
+            live(json!({"verdict": "working"})),
+        ),
+        (
+            "lane",
+            "{\"harness\":\"claude\",\"event\":\"UserPromptSubmit\"}\n{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"model_not_found\"}".into(),
+            live(json!({"verdict": "idle", "cause": "model_not_found"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"claude","event":"StopFailure","error":"rate_limit"}"#.into(),
+            live(json!({"verdict": "walled"})),
+        ),
+        (
+            "lane",
+            r#"{"harness":"claude","event":"StopFailure","error":"authentication_failed"}"#.into(),
+            live(json!({"verdict": "walled"})),
+        ),
+        (
+            "lane",
             r#"{"harness":"pi","event":"PreToolUse"}"#.into(),
             live(json!({"verdict": "working"})),
         ),

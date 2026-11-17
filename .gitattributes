@@ -115,3 +115,5 @@ skills/jarvis/scripts/lib/task.py text eol=lf
 skills/agent-runtime/tests/rust/fixtures/claude-idle.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 skills/agent-runtime/tests/rust/fixtures/codex-idle.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 skills/agent-runtime/tests/rust/fixtures/copilot-idle.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+
+skills/orch/tests/fixtures/oversee-watch/codex-api-error-live.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof

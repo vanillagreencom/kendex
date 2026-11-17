@@ -1579,7 +1579,7 @@ fn record_error(path: &Path, op: &'static str, cause: String) -> Error {
 /// The wake record as it stands: empty where none was written yet. An
 /// unreadable or malformed record is the pass failing, never an empty
 /// record, since an empty record would type for a state already marked.
-fn load_record(path: &Path) -> Result<WakeRecord> {
+pub(crate) fn load_record(path: &Path) -> Result<WakeRecord> {
     match std::fs::read(path) {
         Ok(bytes) => {
             serde_json::from_slice(&bytes).map_err(|e| record_error(path, "parsed", e.to_string()))

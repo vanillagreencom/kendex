@@ -184,8 +184,8 @@ pub struct Readers<'a> {
     pub capture: &'a dyn Fn(&Pane) -> Result<String, String>,
     /// The epoch second the identity's process started (the wall rule).
     pub start_epoch: &'a dyn Fn(&Identity) -> Reading<u64>,
-    /// A Pi lane's session rows verdict.
-    pub rows: &'a dyn Fn(&Path) -> Reading<LaneVerdict>,
+    /// One read binds the lane verdict to its row position.
+    pub rows: &'a dyn Fn(&Path) -> Reading<rows::Row>,
     /// Whether a lane's status file stands.
     pub status_file: &'a dyn Fn(&Path) -> Reading<()>,
     /// The windows of the fleet session; `Gone` for no such session.
@@ -254,7 +254,7 @@ impl Readers<'static> {
             foreground: &foreground,
             capture: &capture,
             start_epoch: &observe::start_epoch,
-            rows: &rows::lane_verdict,
+            rows: &rows::last_row,
             status_file: &status_file,
             windows: &windows,
             receipts: &receipts_in,
@@ -382,7 +382,7 @@ pub struct Inputs<'a> {
     pub pane: Option<&'a Reading<PaneFields>>,
     pub process: Option<&'a ProcessReading>,
     pub screen: Option<&'a Result<String, String>>,
-    /// A Pi lane's rows; `None` for every other harness.
+    /// The lane's rows; hosted non-Pi lanes keep their provider's pane reading.
     pub rows: Option<&'a Reading<LaneVerdict>>,
     pub harness: Option<Harness>,
     /// Whether the account the lane spends was read as having room: the
@@ -393,8 +393,8 @@ pub struct Inputs<'a> {
 
 /// The classifier, in the rung order: the window (where the pane is this
 /// server's), the read, the process (a pane with nothing but shells under
-/// it is the lane, finished), the rows where the harness writes them, then
-/// the screen through the one judge. A Pi lane with no rows is unjudged,
+/// it is the lane, finished), pane dialogs and walls except on Pi, then
+/// the rows. Codex's failed-turn pane can end a Working row. A Pi lane with no rows is unjudged,
 /// never idle off its pane.
 pub fn classify(inputs: &Inputs) -> LaneState {
     match inputs.pane {
@@ -427,40 +427,12 @@ pub fn classify(inputs: &Inputs) -> LaneState {
             };
         }
     };
-    if let Some(rows) = inputs.rows {
-        match rows {
-            Reading::Live(LaneVerdict::Walled) => {
-                return LaneState::Walled {
-                    kind: WallKind::Usage,
-                    banner: String::new(),
-                    source: WallSource::Rows,
-                };
-            }
-            Reading::Live(LaneVerdict::Working) => return LaneState::Working,
-            Reading::Live(LaneVerdict::Idle { cause }) => {
-                return LaneState::Idle {
-                    capacity: false,
-                    cause: cause.clone(),
-                };
-            }
-            Reading::Gone => {
-                return LaneState::Unjudged {
-                    cause: "rows-none".to_owned(),
-                };
-            }
-            Reading::Unreadable { cause } => {
-                return LaneState::Unjudged {
-                    cause: (*cause).to_owned(),
-                };
-            }
-        }
-    }
     let Some(harness) = inputs.harness else {
         return LaneState::Unjudged {
             cause: "harness-unrecorded".to_owned(),
         };
     };
-    match observe::judge(screen, harness, process, inputs.account_room) {
+    let screen_state = match observe::judge(screen, harness, process, inputs.account_room) {
         // Codex's two turn ends that are no finished return, each by its
         // line on the pane: the capacity refusal first, then an API error.
         State::Idle => {
@@ -495,7 +467,55 @@ pub fn classify(inputs: &Inputs) -> LaneState {
             | ProcessReading::ForegroundShell { .. }
             | ProcessReading::ForegroundOther { .. } => LaneState::Unjudged { cause },
         },
+    };
+    if harness != Harness::Pi
+        && matches!(
+            screen_state,
+            LaneState::Asking | LaneState::RateLimitSwitch | LaneState::Walled { .. }
+        )
+    {
+        return screen_state;
     }
+    if let Some(rows) = inputs.rows {
+        match rows {
+            Reading::Live(LaneVerdict::Walled) => {
+                return LaneState::Walled {
+                    kind: WallKind::Usage,
+                    banner: String::new(),
+                    source: WallSource::Rows,
+                };
+            }
+            Reading::Live(LaneVerdict::Working) => {
+                if harness == Harness::Codex
+                    && (matches!(&screen_state, LaneState::Idle { capacity: true, .. })
+                        || matches!(&screen_state, LaneState::Idle { cause: Some(cause), .. } if cause == "api-error"))
+                {
+                    return screen_state;
+                }
+                return LaneState::Working;
+            }
+            Reading::Live(LaneVerdict::Idle { cause }) => {
+                return LaneState::Idle {
+                    capacity: false,
+                    cause: cause.clone(),
+                };
+            }
+            Reading::Unreadable { cause } => {
+                return LaneState::Unjudged {
+                    cause: (*cause).to_owned(),
+                };
+            }
+            Reading::Gone => {}
+        }
+    }
+    // Claude, Codex and Copilot fall back to their pane when no row stands.
+    // Pi's carrier drawing cannot settle its turn without the row.
+    if harness == Harness::Pi {
+        return LaneState::Unjudged {
+            cause: "rows-none".to_owned(),
+        };
+    }
+    screen_state
 }
 
 /// One pass's inputs beyond the readers.
@@ -543,7 +563,7 @@ struct Observed<'a> {
     pane_key: Option<String>,
     identity: Option<Identity>,
     screen: Option<String>,
-    rows_key: Option<String>,
+    row: Option<rows::Row>,
     state: LaneState,
 }
 
@@ -617,8 +637,7 @@ impl HostRead {
     }
 }
 
-/// Read one lane: the pane, its foreground, its screen and, for a Pi lane,
-/// its rows, each once. `host` is what its provider answered first: an
+/// Read one lane: the pane, its foreground, its screen and its local rows. `host` is what its provider answered first: an
 /// exited harness is the lane exited whatever its pane shows, a failed read
 /// leaves it unjudged, and a running one is the proof that the harness is
 /// up, which the pane is judged with: the provider's own where its kind
@@ -650,7 +669,7 @@ fn read_lane<'a>(
         pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
         identity: identity.clone(),
         screen: None,
-        rows_key: None,
+        row: None,
         state,
     };
     let harness_up = match host.status {
@@ -659,45 +678,35 @@ fn read_lane<'a>(
         Some(Ok(HostStatus::Running)) => true,
         None => false,
     };
-    let (rows_reading, rows_key) = match host.rows {
-        Some(answer) => {
-            let row = match answer {
-                Answer::Live(text) => rows::last_row_in(&text),
-                Answer::Gone => Reading::Gone,
-                Answer::Unreadable { cause: _ } => Reading::Unreadable {
-                    cause: "rows-host-unread",
-                },
-            };
-            let key = match &row {
-                Reading::Live(row) => serde_json::to_string(row).ok(),
-                Reading::Gone | Reading::Unreadable { .. } => None,
-            };
-            let verdict = match row {
-                Reading::Live(row) => rows::judge_lane(&row),
-                Reading::Gone => Reading::Gone,
-                Reading::Unreadable { cause } => Reading::Unreadable { cause },
-            };
-            (Some(verdict), key)
-        }
-        None => {
-            let rows_file = (harness == Some(Harness::Pi))
-                .then(|| {
-                    lane.mail_root.as_deref().map(|root| {
-                        Path::new(root)
-                            .join("tmp")
-                            .join("lane-mail")
-                            .join(&lane.item)
-                            .join("session-rows.jsonl")
-                    })
-                })
-                .flatten();
-            let key = rows_file.as_deref().and_then(|f| match rows::last_row(f) {
-                Reading::Live(row) => serde_json::to_string(&row).ok(),
-                Reading::Gone | Reading::Unreadable { .. } => None,
-            });
-            (rows_file.as_deref().map(|f| (readers.rows)(f)), key)
-        }
+    let row_reading = match host.rows {
+        Some(answer) => Some(match answer {
+            Answer::Live(text) => rows::last_row_in(&text),
+            Answer::Gone => Reading::Gone,
+            Answer::Unreadable { cause: _ } => Reading::Unreadable {
+                cause: "rows-host-unread",
+            },
+        }),
+        None => (harness == Some(Harness::Pi) || hosted::host_of(lane) == "local")
+            .then_some(lane.mail_root.as_deref())
+            .flatten()
+            .map(|root| {
+                (readers.rows)(
+                    &Path::new(root)
+                        .join("tmp/lane-mail")
+                        .join(&lane.item)
+                        .join("session-rows.jsonl"),
+                )
+            }),
     };
+    let rows_reading = row_reading.as_ref().map(|row| match row {
+        Reading::Live(row) => rows::judge_lane(row),
+        Reading::Gone => Reading::Gone,
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+    });
+    let row = row_reading.and_then(|row| match row {
+        Reading::Live(row) => Some(row),
+        Reading::Gone | Reading::Unreadable { .. } => None,
+    });
     if let Some(screen) = host.screen {
         let state = classify(&Inputs {
             pane: None,
@@ -713,7 +722,7 @@ fn read_lane<'a>(
             pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
             identity: identity.clone(),
             screen: screen.ok(),
-            rows_key,
+            row,
             state,
         };
     }
@@ -741,7 +750,7 @@ fn read_lane<'a>(
                 pane_key,
                 identity,
                 screen: (readers.capture)(&kept).ok(),
-                rows_key,
+                row,
                 state: LaneState::Exited,
             };
         }
@@ -774,7 +783,7 @@ fn read_lane<'a>(
         pane_key,
         identity,
         screen: screen.and_then(Result::ok),
-        rows_key,
+        row,
         state,
     }
 }
@@ -1400,8 +1409,9 @@ fn observe_one(
         | LaneState::Unjudged { .. } => {}
     }
     // Idle: the capacity refusal once per turn, else the finished turn once
-    // per screen, on the first pass for a local Codex lane below a prior
-    // turn and on two consecutive passes otherwise; the line carries the
+    // per pane, row position, target wake and slice, on the first pass for
+    // a local Codex lane below a prior turn and on two passes otherwise;
+    // the line carries the
     // stop's cause where the verdict kept one, so a turn its output limit
     // cut is told apart from a finished one, whose line carries none, else
     // a Copilot lane's policy note, keyed as the asking line keys it. The
@@ -1421,12 +1431,23 @@ fn observe_one(
             cause,
         } => {
             out.changes.push(clear("model-capacity", lane));
-            let turn = obs.rows_key.as_deref().unwrap_or(&slice);
+            let wakes = match wake::load_record(&pass.state_dir.join(wake::WAKE_FILE)) {
+                Ok(wakes) => wakes,
+                Err(error) => {
+                    fail(out, error.to_string());
+                    return reading;
+                }
+            };
+            let wake_at = wakes.get(&obs.lane.item).map(|mark| mark.at);
+            let position = obs.row.as_ref().map(|row| row.position);
             let note = cause
                 .as_ref()
                 .map(|word| format!("cause={word}"))
                 .or_else(|| copilot_note(obs.lane, pass));
-            let key = keyed(format!("{pane_key}|{}", hash_of(turn)), note.as_deref());
+            let key = keyed(
+                format!("{pane_key}|{position:?}|{wake_at:?}|{}", hash_of(&slice)),
+                note.as_deref(),
+            );
             let prior = get("lane-idle").unwrap_or_default();
             if prior == format!("{key}|reported") {
                 return reading;
@@ -1613,10 +1634,9 @@ fn wall(
     // pane wall is the screen's.
     let text = match source {
         WallSource::Rows => obs
-            .rows_key
-            .as_deref()
-            .and_then(|row| serde_json::from_str::<rows::Row>(row).ok())
-            .and_then(|row| row.message)
+            .row
+            .as_ref()
+            .and_then(|row| row.message.clone())
             .unwrap_or_default(),
         WallSource::Pane => banner.to_owned(),
     };

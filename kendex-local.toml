@@ -757,7 +757,7 @@ enabled = true
 
 [hooks.lane-mail-prompt]
 source = "."
-harnesses = ["copilot"]
+harnesses = ["claude", "codex", "copilot"]
 enabled = true
 
 [hooks.lane-mail-compact]

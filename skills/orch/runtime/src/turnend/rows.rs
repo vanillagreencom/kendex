@@ -1,4 +1,4 @@
-//! A session's own event rows: a session with no lane item and a Pi lane's
+//! A session's own event rows: a session with no lane item and a lane's
 //! turn, each written through agent-runtime's
 //! rows writer, which owns the rows' shapes, the stamps and their locks. A
 //! row or a stamp that could not be written is reported and passed: a
@@ -12,7 +12,7 @@ use agent_runtime::rows::{self, Fields, LaneRow, SessionRow, TurnEvent, Unwritte
 use serde_json::Value;
 
 use super::answer::{Harness, Said};
-use super::identity::Lane;
+use super::identity::{Lane, Seat};
 use super::payload::{Caller, Payload};
 use super::role::Key;
 use super::{Arm, Flow, Turn, Vars};
@@ -127,32 +127,39 @@ impl Written<'_> {
     }
 }
 
-/// A Pi lane's own turn rows in its mailbox directory: a Stop at the
-/// lead's turn end and a PreToolUse at the first tool call of each turn,
-/// which the watch judges a Pi lane idle, working or walled from instead
-/// of its pane. Only a Pi install's launched lane writes them; the pane
-/// still judges a Claude Code or Codex lane.
-pub(super) fn lane_row(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Payload) -> Flow {
+/// The lane's events follow the answer: a held Stop keeps the turn open,
+/// and only a passed Stop closes it. A call outside the lane's lead never
+/// changes the lead's turn.
+pub(super) fn lane_row(
+    turn: &mut Turn,
+    _vars: &Vars,
+    lane: &Lane,
+    payload: &Payload,
+    held: bool,
+) -> Flow {
     let Some(item) = &lane.item else {
         return Ok(());
     };
-    if turn.caller != Caller::Lead || turn.harness != Harness::Pi {
+    if turn.caller != Caller::Lead
+        || turn.seat == Seat::Elsewhere
+        || turn.harness == Harness::Unlisted
+    {
         return Ok(());
     }
-    let Some(event) = turn_event(turn) else {
+    let Some(event) = turn_event(turn, payload, held) else {
         return Ok(());
     };
     if !lane.launched(turn)? {
         return Ok(());
     }
-    let stop = event == TurnEvent::Stop;
+    let pi_stop = event == TurnEvent::Stop && turn.harness == Harness::Pi;
     let transcript = Path::new(&payload.transcript);
     let row = LaneRow {
         event,
-        harness: "pi",
+        harness: harness_word(turn.harness),
         at: wall_secs(),
-        transcript: (stop && !payload.transcript.is_empty()).then_some(transcript),
-        working_agents: payload.field("working_agents").filter(|_| stop),
+        transcript: (pi_stop && !payload.transcript.is_empty()).then_some(transcript),
+        working_agents: payload.field("working_agents").filter(|_| pi_stop),
     };
     let dir = lane.mail_root.join(item);
     if let Err(e) = rows::write_lane(&dir, &row, rows::WAIT) {
@@ -161,11 +168,20 @@ pub(super) fn lane_row(turn: &mut Turn, _vars: &Vars, lane: &Lane, payload: &Pay
     Ok(())
 }
 
-/// The turn event a turn end or a tool call stamps and rows.
-fn turn_event(turn: &Turn) -> Option<TurnEvent> {
-    match turn.arm {
-        Some(Arm::Stop) => Some(TurnEvent::Stop),
+fn turn_event<'a>(turn: &Turn, payload: &'a Payload, held: bool) -> Option<TurnEvent<'a>> {
+    match &turn.arm {
+        Some(Arm::Stop) => Some(if held {
+            TurnEvent::PreToolUse
+        } else {
+            TurnEvent::Stop
+        }),
         Some(Arm::Halt) => Some(TurnEvent::PreToolUse),
+        Some(Arm::Prompt) if turn.harness != Harness::Pi => Some(TurnEvent::Prompt),
+        Some(Arm::Row { event }) if event == "StopFailure" && turn.harness == Harness::Claude => {
+            Some(TurnEvent::StopFailure {
+                error: text(payload, "error"),
+            })
+        }
         Some(
             Arm::ModelSwitch
             | Arm::Compact
@@ -382,13 +398,10 @@ mod tests {
             .collect()
     }
 
-    /// A Pi install's launched lane writes a Stop row at its lead's turn
-    /// end and a PreToolUse row at its tool call; a Claude Code lane, a
-    /// subagent's call, a session start and a lane no launch marker binds
-    /// write none; a rows
-    /// file the writer cannot open is reported under `lane-rows-unwritten`.
+    /// An unlaunched lane and calls outside its lead write none; a file
+    /// the writer cannot open is reported under `lane-rows-unwritten`.
     #[test]
-    fn a_pi_lanes_turn_end_and_tool_call_write_its_rows_and_no_other_lane_does() {
+    fn lane_rows_require_a_launched_lead_and_report_an_unwritable_file() {
         let root = tempfile::tempdir().unwrap();
         let checkout = root.path().join("lane");
         let common = checkout.join(".git");
@@ -405,22 +418,24 @@ mod tests {
             .unwrap_or_else(|_| panic!("the payload decodes"));
         let file = mailbox.join(rows::LANE_FILE);
         let mut pi = turn(Harness::Pi, Arm::Stop);
-        lane_row(&mut pi, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
+        lane_row(&mut pi, &vars, &lane, &payload, false).unwrap_or_else(|_| panic!("passes"));
         assert!(!file.exists(), "no marker binds the lane");
         let marker = crate::marker::marker_path(&common, "ken-1");
         std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
         std::fs::write(&marker, format!("{}\n", checkout.display())).unwrap();
-        let mut claude = turn(Harness::Claude, Arm::Stop);
-        lane_row(&mut claude, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
+        let mut elsewhere = turn(Harness::Claude, Arm::Prompt);
+        elsewhere.seat = Seat::Elsewhere;
+        lane_row(&mut elsewhere, &vars, &lane, &payload, false)
+            .unwrap_or_else(|_| panic!("passes"));
         let mut subagent = turn(Harness::Pi, Arm::Halt);
         subagent.caller = Caller::Subagent;
-        lane_row(&mut subagent, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
+        lane_row(&mut subagent, &vars, &lane, &payload, false).unwrap_or_else(|_| panic!("passes"));
         let mut start = turn(Harness::Pi, Arm::Start);
-        lane_row(&mut start, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
+        lane_row(&mut start, &vars, &lane, &payload, false).unwrap_or_else(|_| panic!("passes"));
         assert!(!file.exists());
-        lane_row(&mut pi, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
+        lane_row(&mut pi, &vars, &lane, &payload, false).unwrap_or_else(|_| panic!("passes"));
         let mut tool = turn(Harness::Pi, Arm::Halt);
-        lane_row(&mut tool, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
+        lane_row(&mut tool, &vars, &lane, &payload, false).unwrap_or_else(|_| panic!("passes"));
         let events: Vec<Value> = std::fs::read_to_string(&file)
             .unwrap()
             .lines()
@@ -437,7 +452,7 @@ mod tests {
         assert_eq!(pi.stderr, "");
         std::fs::remove_file(&file).unwrap();
         std::fs::create_dir(&file).unwrap();
-        lane_row(&mut pi, &vars, &lane, &payload).unwrap_or_else(|_| panic!("passes"));
+        lane_row(&mut pi, &vars, &lane, &payload, false).unwrap_or_else(|_| panic!("passes"));
         assert_eq!(
             keyed(&pi),
             [format!("lane-rows-unwritten={}", mailbox.display())]
