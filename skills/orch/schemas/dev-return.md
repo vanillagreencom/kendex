@@ -70,6 +70,7 @@ A fix round has an input-side record bound by the same token, `[WORKTREE_PATH]/t
 | `validate_lanes` | Optional | read from the run | Comma-separated lane names from the command's [output contract](../references/artifact-checks.md#validation-command-output). Absent where unreported, where the selection is the start's preview, or where no run is named. |
 | `validate_selection` | Optional | read from the run | `all`, `subset`, `battery` or `unreported`. Absent where no run is named. It changes neither `validate_mode` nor the verdict. |
 | `validate_class_base` | Optional | read from `--validate-run-dir` | The commit the run record reports as `class-base`: the base a scoped run judged its class from, the request's base, or the branch merge base where the request names none. The runtime's proof reader (`orch-runtime read-proof`) decides whether submit reuses the run. Absent for whole-branch validation and for a `ci` run that ran no command. |
+| `validate_tree` | `FAILING` `fix` receipt with a run | read from the run | The tree the run validated, which may hold staged work `commit` does not ([§ Fix-round run binding](#fix-round-run-binding)). Absent on every other receipt. |
 | `validate_note` | Optional | `--validate-note` | A qualifier the closed set cannot express, or `null`. Required beside `no-verdict`, where it names the host cause or the stop that ended the run. |
 | `qa_labels` | Optional | `--qa-label`, repeatable | The applied QA labels; `[]` where none. |
 | `near_ceiling` | Optional | `--near-ceiling-base` | One `byte-ceiling: near-ceiling=` line per binary blob within reach of the byte ceiling. The writer runs the worktree's installed `.agents/skills/commit-guards/scripts/byte-ceiling --base REF` and keeps those lines on exit 0 or 1. A repository with nothing at the lane path has no byte ceiling and records `[]`. Every other outcome records `null`, which means unknown, never none. The list describes the branch at receipt time; a blob that enters the warn band in later work is not in it. Orch stores it as workflow state's `near_ceiling` for the next round's brief. |
@@ -117,8 +118,8 @@ A `--validate` that differs from the named run's verdict, a `FAILING` one aside,
 
 A `fix` receipt that names a run binds it to its round record ([dev-round.md](dev-round.md)) or is refused `run-off-round`:
 
-- The run validated the receipt's committed tree, `FAILING` included.
-- The run's HEAD contains the record's `base_sha`; or the base's tree is the run's tree; or the run's start record names that base as its `validate-base`; or the run's HEAD contains the base's rewritten commit in the worktree-private `kendex-rebase-map` (ordered hops per [workflow-state.md](workflow-state.md), `rebase_map` row).
+- A `pass` or `no-verdict` run validated the receipt's committed tree. A `FAILING` run binds over the tree it ran, staged work included, and the receipt stores that tree as `validate_tree`.
+- The run's HEAD contains the record's `base_sha`; or the base's tree is the run's tree; or the run's start record names that base as its `validate-base`; or the run's HEAD contains the base's rewritten commit in the worktree-private `kendex-rebase-map` (ordered hops per [workflow-state.md](workflow-state.md), `rebase_map` row), or, where no map file stands, the first commit the item record's `rebase_map` maps the base to, hop by hop, that the worktree's HEAD contains.
 - A run directory whose start record names no tree, and a foreground record, prove their recorded HEAD's tree only while that HEAD is the worktree's HEAD and `git status --porcelain --untracked-files=all` prints nothing.
 - A `pass` also needs the round's proof: the runtime's proof reader, as `read-proof --need round` reads it, answers the tree `complete` or `pending`. A `no-verdict` needs the run itself to have ended `no-verdict`.
 
@@ -183,7 +184,7 @@ The writer reads the record into the fields a run directory fills, so the receip
 | `not-directory` | The worktree cannot be read as a directory |
 | `required` | No branch; a commit that is not hex; a `no-verdict` with no note; an empty `--near-ceiling-base`; no evidence source for a `pass` or `no-verdict`; a `not-run` with no `--no-change` or no summary |
 | `commit-unresolvable` | `--commit` names no commit in the worktree |
-| `invalid-validate` | `--validate` is none of `pass`, `no-verdict`, `not-run`, `handed-over` or `FAILING: …` |
+| `invalid-validate` | `--validate` is none of `pass`, `no-verdict`, `not-run`, `handed-over` or `FAILING: …`, or is a `FAILING:` list that separates its checks with `;` |
 | `empty-text` | An empty or whitespace-only note or summary |
 | `run-record-unreadable`, `timing-unreadable` | The run directory's records cannot be read, or its times are not their span |
 | `validate-record-unreadable`, `validate-record-line`, `validate-record-missing`, `validate-record-value`, `validate-record-lanes`, `validate-record-time` | A foreground record cannot be read, holds a line outside its grammar, lacks a required key, holds a value outside its grammar, pairs lanes and selection wrongly, or ends before it starts |

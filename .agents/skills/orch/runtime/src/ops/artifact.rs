@@ -775,15 +775,16 @@ fn run_tree(id: &Identity, run: &Run) -> Result<String> {
     committed_tree(&id.worktree, &run.head)
 }
 
-fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Result<()> {
+/// Binds a fix receipt's run to its round and answers the tree the run
+/// validated.
+fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Result<String> {
     let round = round_record(&r.id)?;
     let base = round["base_sha"].as_str().expect("round schema");
-    let target = committed_tree(&r.id.worktree, commit)?;
     let tree = run_tree(&r.id, run)?;
     if !ancestor(&r.id.worktree, base, &run.head)? {
         let equivalent = committed_tree(&r.id.worktree, base)? == tree;
         if !equivalent && run.compared_from.as_deref() != Some(base) {
-            let mapped = projected_base(&r.id.worktree, base)?;
+            let mapped = projected_base(settings, &r.id.issue, &r.id.worktree, base)?;
             let contains = match mapped {
                 Some(mapped) => ancestor(&r.id.worktree, &mapped, &run.head)?,
                 None => false,
@@ -796,15 +797,16 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
             }
         }
     }
-    if tree != target {
+    // A failure is reported over the tree that ran, staged work included,
+    // and asks for no proof of it.
+    if r.validate.starts_with("FAILING:") {
+        return Ok(tree);
+    }
+    if tree != committed_tree(&r.id.worktree, commit)? {
         return Err(refuse(
             "run-off-round",
             "the run did not validate the receipt's tree",
         ));
-    }
-    // A failure is reported over its own tree and asks for no proof of it.
-    if r.validate.starts_with("FAILING:") {
-        return Ok(());
     }
     let declared = proof::Declaration::of(&settings.validate);
     let mut rows = stages(settings, &r.id.issue)?;
@@ -852,7 +854,7 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
     }
     let request = proof::ReadProof {
         need: proof::Need::Round,
-        tree,
+        tree: tree.clone(),
         head: Some(commit.to_owned()),
         base: Some(base.to_owned()),
         round: None,
@@ -861,8 +863,8 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
     let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
     let answer = proof::read(&rows, &[], &request, &declared, &mut tree_of);
     match (r.validate.as_str(), answer.proof) {
-        ("pass", proof::Verdict::Complete | proof::Verdict::Pending) => Ok(()),
-        ("no-verdict", _) if run.verdict == "no-verdict" => Ok(()),
+        ("pass", proof::Verdict::Complete | proof::Verdict::Pending) => Ok(tree),
+        ("no-verdict", _) if run.verdict == "no-verdict" => Ok(tree),
         _ => Err(refuse(
             "run-off-round",
             "Need::Round has no applicable proof of the tree",
@@ -1366,6 +1368,14 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     {
         return Err(refuse("invalid-validate", &r.validate));
     }
+    // `failing_names` splits the list on commas alone: a semicolon would
+    // store two failed checks as one name.
+    if r.validate.starts_with("FAILING:") && r.validate.contains(';') {
+        return Err(refuse(
+            "invalid-validate",
+            "separator=; a FAILING: list separates its checks with commas",
+        ));
+    }
     if r.validate_note.as_deref().is_some_and(|s| !nonempty(s))
         || r.summary.as_deref().is_some_and(|s| !nonempty(s))
     {
@@ -1421,11 +1431,13 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
             "unique item decisions and reasoning required",
         ));
     }
-    if r.kind == "fix"
-        && let Some(run) = &run
-    {
-        bind_run(settings, r, run, &commit)?;
+    // A failing run's tree may hold staged work the commit does not, so the
+    // receipt names it.
+    let failed_tree = match &run {
+        Some(run) if r.kind == "fix" => Some(bind_run(settings, r, run, &commit)?),
+        _ => None,
     }
+    .filter(|_| r.validate.starts_with("FAILING:"));
     let summary = match (&r.summary, &r.summary_file, &r.recovered_text) {
         (Some(s), None, None) => json!(s),
         (None, Some(file), None) | (None, None, Some(file)) => json!(text(file, "missing-file")?),
@@ -1457,6 +1469,9 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
         if let Some(base) = &run.base {
             record["validate_class_base"] = json!(base);
         }
+    }
+    if let Some(tree) = failed_tree {
+        record["validate_tree"] = json!(tree);
     }
     if !screenshots.is_empty() {
         record["screenshots"] = json!(screenshots);
@@ -1570,7 +1585,36 @@ fn protected(path: &str) -> bool {
         && (stem.contains("helper") || stem.contains("test-util") || stem.contains("test_util"))
 }
 
-fn projected_base(worktree: &Path, base: &str) -> Result<Option<String>> {
+/// The commits `from` became through the item record's `rebase_map`, one
+/// per recorded rewrite in order: a push consumes the worktree's temporary
+/// map into that record, which then holds every rewrite of the work. A
+/// dropped commit or a loop ends the chain.
+fn rewrites(settings: &Settings, issue: &str, from: &str) -> Result<Vec<String>> {
+    let path = state::item_path(&settings.state_dir, issue);
+    let Some(snapshot) = crate::validate::load(&path)? else {
+        return Ok(Vec::new());
+    };
+    let Some(Value::Object(map)) = snapshot.doc.get("rebase_map") else {
+        return Ok(Vec::new());
+    };
+    let mut chain: Vec<String> = Vec::new();
+    let mut at = from;
+    while let Some(next) = map.get(at).and_then(Value::as_str).filter(|n| sha(n)) {
+        if next == from || chain.iter().any(|seen| seen == next) {
+            break;
+        }
+        chain.push(next.to_owned());
+        at = next;
+    }
+    Ok(chain)
+}
+
+fn projected_base(
+    settings: &Settings,
+    issue: &str,
+    worktree: &Path,
+    base: &str,
+) -> Result<Option<String>> {
     if ancestor(worktree, base, "HEAD")? {
         return Ok(Some(base.to_owned()));
     }
@@ -1582,6 +1626,11 @@ fn projected_base(worktree: &Path, base: &str) -> Result<Option<String>> {
         worktree.join(map)
     };
     let Some(text) = optional_text(&map).map_err(|e| refuse("rebase-map-unreadable", e))? else {
+        for mapped in rewrites(settings, issue, base)? {
+            if ancestor(worktree, &mapped, "HEAD")? {
+                return Ok(Some(mapped));
+            }
+        }
         return Ok(None);
     };
     // An unmapped rewrite or a map outside the grammar projects nothing.
@@ -1596,6 +1645,7 @@ fn projected_base(worktree: &Path, base: &str) -> Result<Option<String>> {
 }
 
 fn additions(
+    settings: &Settings,
     id: &Identity,
     round: &Value,
 ) -> Result<std::result::Result<Vec<String>, &'static str>> {
@@ -1603,7 +1653,7 @@ fn additions(
     if git(&id.worktree, &["cat-file", "-t", base]).ok().as_deref() != Some("commit") {
         return Ok(Err("comparison_failed"));
     }
-    let base = match projected_base(&id.worktree, base) {
+    let base = match projected_base(settings, &id.issue, &id.worktree, base) {
         Ok(Some(base)) => base,
         Ok(None) => return Ok(Err("additions_unattributable")),
         Err(_) => return Ok(Err("comparison_failed")),
@@ -1951,7 +2001,7 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
         Some("commit_unreachable")
     };
     if let Some(round) = &round {
-        match additions(id.as_ref().expect("round arguments"), round)? {
+        match additions(settings, id.as_ref().expect("round arguments"), round)? {
             Err(reason) => return Ok(emit(reason, None, None, &[])),
             Ok(files) if !files.is_empty() => {
                 return Ok(emit("unapproved_additions", None, None, &files));

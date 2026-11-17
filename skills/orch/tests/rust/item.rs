@@ -401,6 +401,32 @@ mod dev_artifacts {
             let text = fs::read_to_string(&start).unwrap();
             fs::write(start, format!("{text}{line}\n")).unwrap();
         }
+        /// A fix receipt citing a passing run of HEAD's tree whose start
+        /// names `head`.
+        fn bound_pass(&self, round: &str, name: &str, head: &str) -> Output {
+            let run = self.finished_run(name, "full");
+            fs::write(
+                run.join("start"),
+                fs::read_to_string(run.join("start"))
+                    .unwrap()
+                    .replace(&format!("head={}", self.head()), &format!("head={head}")),
+            )
+            .unwrap();
+            self.record_start(&run, &format!("tree={}", self.tree()));
+            self.write(
+                round,
+                "fix",
+                "pass",
+                &[
+                    "--validate-run-dir",
+                    run.to_str().unwrap(),
+                    "--item",
+                    "1",
+                    "Applied",
+                    "x",
+                ],
+            )
+        }
         fn transcript(&self, round: &str, report: &str, channel: &str) -> PathBuf {
             let mut lines =
                 vec![json!({"message":{"role":"user","content":format!("Round ID: {round}")}})];
@@ -3073,30 +3099,7 @@ mod dev_artifacts {
         fs::create_dir(&map).unwrap();
         assert_eq!(w.check("r1")["reason"], "comparison_failed");
         fs::remove_dir(&map).unwrap();
-        let bound = |name: &str, head: &str| {
-            let run = w.finished_run(name, "full");
-            fs::write(
-                run.join("start"),
-                fs::read_to_string(run.join("start"))
-                    .unwrap()
-                    .replace(&format!("head={}", w.head()), &format!("head={head}")),
-            )
-            .unwrap();
-            w.record_start(&run, &format!("tree={}", w.tree()));
-            w.write(
-                "r1",
-                "fix",
-                "pass",
-                &[
-                    "--validate-run-dir",
-                    run.to_str().unwrap(),
-                    "--item",
-                    "1",
-                    "Applied",
-                    "x",
-                ],
-            )
-        };
+        let bound = |name: &str, head: &str| w.bound_pass("r1", name, head);
         let head = w.head();
         refused(&bound("unmapped", &head), "run-off-round");
         let content = format!("rebase-hop:\nrebase-map: {old} {new}\n");
@@ -3116,6 +3119,79 @@ mod dev_artifacts {
         // head contains it.
         result(&bound("mapped", &head));
         refused(&bound("before-map", &main), "run-off-round");
+    }
+
+    /// A fix round's red run over staged work keeps its result against the
+    /// tree that ran, with no commit between, while a pass still proves only
+    /// the committed tree.
+    #[test]
+    fn a_failing_run_over_staged_work_binds_with_its_tree_and_a_staged_pass_does_not() {
+        let w = World::new();
+        w.stamp("r1");
+        fs::write(w.wt.join("app.txt"), "staged\n").unwrap();
+        git(&w.wt, &["add", "app.txt"]);
+        let staged = git(&w.wt, &["write-tree"]);
+        let run = |name: &str, exit: u8| {
+            let dir = w.finished_run(name, "full");
+            fs::write(
+                dir.join("exit"),
+                format!("guard-exit={exit} at=2026-01-01T00:00:01Z\n"),
+            )
+            .unwrap();
+            w.record_start(&dir, &format!("tree={staged}"));
+            dir
+        };
+        let write = |validate: &str, dir: &Path| {
+            let dir = dir.to_str().unwrap();
+            w.write(
+                "r1",
+                "fix",
+                validate,
+                &["--validate-run-dir", dir, "--item", "1", "Applied", "x"],
+            )
+        };
+        refused(&write("pass", &run("staged-pass", 0)), "run-off-round");
+        let written = result(&write("FAILING: lint", &run("staged-red", 1)));
+        let receipt: Value =
+            serde_json::from_str(&fs::read_to_string(written["path"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(receipt["validate_tree"], staged.as_str());
+        assert_eq!(receipt["commit"], w.head());
+        assert_ne!(staged, w.tree());
+    }
+
+    /// A push consumes the worktree's map into the item record's
+    /// `rebase_map`: the round base then projects through the recorded
+    /// hops, each followed until one the work contains, and a base no hop
+    /// maps still binds nothing.
+    #[test]
+    fn a_consumed_map_projects_the_round_base_from_the_item_record() {
+        let w = World::new();
+        w.commit("old.txt");
+        let old = w.head();
+        w.stamp("r1");
+        git(&w.wt, &["switch", "-qc", "replacement", "main"]);
+        let main = w.head();
+        let side = git(
+            &w.wt,
+            &["commit-tree", &w.tree(), "-p", &main, "-m", "side"],
+        );
+        w.commit("new.txt");
+        let new = w.head();
+        w.commit("tools/new");
+        let head = w.head();
+        w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
+        let recorded = |map: Value| {
+            let mut doc = w.doc();
+            doc["rebase_map"] = map;
+            fs::write(w.item(), doc.to_string()).unwrap();
+        };
+        recorded(json!({ side.as_str(): new.as_str() }));
+        assert_eq!(w.check("r1")["reason"], "additions_unattributable");
+        refused(&w.bound_pass("r1", "unmapped", &head), "run-off-round");
+        recorded(json!({ old: side, side: new }));
+        assert_eq!(w.check("r1")["reason"], "unapproved_additions");
+        result(&w.bound_pass("r1", "mapped", &head));
     }
 
     #[test]
@@ -3158,6 +3234,31 @@ mod dev_artifacts {
         let answer = result(&out);
         assert_eq!(answer["reason"], "unapproved_additions");
         assert!(answer["record_warning"].is_string());
+    }
+
+    /// Each check a `FAILING:` list names is its own finding record, and an
+    /// exception excuses it by that name: a list split by a semicolon would
+    /// store two failed checks as one, so the writer refuses it unwritten.
+    #[test]
+    fn a_failing_list_records_each_comma_named_check_and_a_semicolon_list_is_refused() {
+        let w = World::new();
+        w.stamp("r1");
+        let items = ["--item", "1", "Applied", "x"];
+        refused(
+            &w.write("r1", "fix", "FAILING: lint; unit", &items),
+            "invalid-validate",
+        );
+        assert!(!w.receipt_path("r1").exists());
+        result(&w.write("r1", "fix", "FAILING: lint, unit", &items));
+        w.check("r1");
+        let records = w.doc()["finding_occurrences"]["records"].clone();
+        let checks: Vec<&Value> = records
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| &r["check"])
+            .collect();
+        assert_eq!(checks, [&json!("lint"), &json!("unit")], "{records}");
     }
 
     #[test]
