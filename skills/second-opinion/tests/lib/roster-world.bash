@@ -552,7 +552,7 @@ run() {
 stock_pick() {
   case "$1" in
     PI_COPILOT) set -- claude-opus-5.5 ;;
-    PI_COPILOT_GPT) set -- gpt-6.1-sol ;;
+    PI_COPILOT_GPT) set -- gpt-6.2-sol ;;
     *) echo "UNKNOWN-STOCK-ENTRY: $1" >&2; exit 2 ;;
   esac
   printf 'env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/%s' "$1"

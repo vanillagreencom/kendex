@@ -1,7 +1,7 @@
 schema = 8
 
 [model-bindings.copilot]
-standard = "gpt-6.1-sol"
+standard = "gpt-6.2-sol"
 
 [sources."."]
 path = "."

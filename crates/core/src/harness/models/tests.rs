@@ -85,6 +85,47 @@ fn classes_aliases_and_finite_walk() {
     );
 }
 #[test]
+fn gpt_62_class_policy_and_account_availability() {
+    // Native inventories (Codex, Copilot and Pi) can retain the prior release
+    // while advertising the new one; class policy never fabricates access.
+    for (harness, provider) in [
+        (HarnessId::Codex, "openai"),
+        (HarnessId::Copilot, "github-copilot"),
+        (HarnessId::Pi, "github-copilot"),
+    ] {
+        for (class, old, new) in [
+            (ModelClass::Standard, "gpt-6.1-sol", "gpt-6.2-sol"),
+            (ModelClass::Top, "gpt-6-astra", "gpt-6.2-astra"),
+        ] {
+            for (ids, expected, unavailable) in
+                [(vec![old, new], new, false), (vec![old], old, true)]
+            {
+                let mut account = context(provider, &ids);
+                account.harness = harness;
+                if matches!(harness, HarnessId::Codex | HarnessId::Copilot) {
+                    for capacity in &mut account.capacity {
+                        if let ModelCapacityEvidence::Known { selector, .. } = capacity {
+                            *selector = selector.rsplit('/').next().unwrap().into();
+                        }
+                    }
+                }
+                let result = resolve(class.row().name, &account);
+                assert_eq!(
+                    result
+                        .diagnostics()
+                        .iter()
+                        .any(|d| d.code == "family-version-unavailable"),
+                    unavailable
+                );
+                let selection = selected(result);
+                assert_eq!(selection.concrete_id.as_deref(), Some(expected));
+                assert_eq!(selection.effective_class, Some(class));
+            }
+        }
+    }
+}
+
+#[test]
 fn native_root_selector_comparison_uses_observed_identity() {
     let mut context = context("anthropic", &[]);
     context.harness = HarnessId::Claude;
@@ -235,7 +276,7 @@ fn gateway_classes_follow_the_observed_vendor_before_release_order() {
     let ids = [
         "anthropic/claude-opus-4.5",
         "anthropic/claude-sonnet-4.5",
-        "openai/gpt-6.1-sol",
+        "openai/gpt-6.2-sol",
         "openai/gpt-6.1-luna",
         "zai/glm-5.3",
     ];
@@ -245,8 +286,8 @@ fn gateway_classes_follow_the_observed_vendor_before_release_order() {
             "anthropic/claude-opus-4.5",
             "anthropic/claude-sonnet-4.5",
         ),
-        (Some(ids[2]), "openai/gpt-6.1-sol", "openai/gpt-6.1-luna"),
-        (None, "openai/gpt-6.1-sol", "openai/gpt-6.1-luna"),
+        (Some(ids[2]), "openai/gpt-6.2-sol", "openai/gpt-6.1-luna"),
+        (None, "openai/gpt-6.2-sol", "openai/gpt-6.1-luna"),
     ] {
         let mut context = context("vercel-ai-gateway", &ids);
         if let Some(id) = parent {
