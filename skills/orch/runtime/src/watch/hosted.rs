@@ -2257,11 +2257,18 @@ pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
 /// [`record_left`] for a lane on this machine, read by the close verb and
 /// the watch alike: its worktree (the record's `mail_root`) gone, else the
 /// item's live state record under `state_dir`, the fleet's, which the
-/// close-out removes. `Unreadable` carries the state record's read error.
+/// close-out removes. `Unreadable` carries the worktree's or the state
+/// record's read error: only an absent worktree is gone.
 pub fn left_locally(state_dir: &Path, lane: &Lane) -> Answer<()> {
     let root = lane.mail_root.as_deref().unwrap_or("");
-    if std::fs::symlink_metadata(root).is_err() {
-        return Answer::Gone;
+    match std::fs::symlink_metadata(root) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Answer::Gone,
+        Err(e) => {
+            return Answer::Unreadable {
+                cause: format!("{root}: {e}"),
+            };
+        }
     }
     match std::fs::metadata(state::item_path(state_dir, &lane.item)) {
         Ok(_) => Answer::Live(()),

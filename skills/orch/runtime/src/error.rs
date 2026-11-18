@@ -222,6 +222,16 @@ pub enum Error {
     /// disposition; one ground authorizes a close.
     #[error("the close of {item} names two grounds")]
     CloseGroundAmbiguous { item: String },
+    /// A close asked over an open close intent of another kind
+    /// ([`crate::state::CloseKind`]): reconciling it would run the open
+    /// intent's effect, so nothing is acted on.
+    #[error("the close of {item} asks {asked} over the open {open} close {intent}")]
+    CloseKindDiffers {
+        item: String,
+        intent: String,
+        open: &'static str,
+        asked: &'static str,
+    },
     /// A reservation's `until` is not an ISO 8601 UTC stamp after the clock.
     #[error("the reservation on {item} lapses at {until:?}, not a stamp after now")]
     ReservationInvalid { item: String, until: String },
@@ -498,6 +508,7 @@ impl Error {
             Error::HarnessLive { .. } => "harness-live",
             Error::HarnessUnreadable { .. } => "harness-unreadable",
             Error::CloseGroundAmbiguous { .. } => "close-ground-ambiguous",
+            Error::CloseKindDiffers { .. } => "close-kind-differs",
             Error::ReservationInvalid { .. } => "reservation-invalid",
             Error::AttemptStale { .. } => "attempt-stale",
             Error::ParkRefused { .. } => "park-refused",
@@ -711,6 +722,17 @@ impl Error {
                 pair("cause", cause.clone()),
             ],
             Error::CloseGroundAmbiguous { item } => vec![pair("item", item.clone())],
+            Error::CloseKindDiffers {
+                item,
+                intent,
+                open,
+                asked,
+            } => vec![
+                pair("item", item.clone()),
+                pair("intent", intent.clone()),
+                pair("open", (*open).to_owned()),
+                pair("asked", (*asked).to_owned()),
+            ],
             Error::ReservationInvalid { item, until } => {
                 vec![pair("item", item.clone()), pair("until", until.clone())]
             }

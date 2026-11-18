@@ -5506,6 +5506,96 @@ fn a_merged_local_lane_read_working_is_closed_by_the_watch_and_frees_its_slot() 
     );
 }
 
+/// End a harness the row started, whose pane its `exec` makes it the
+/// whole of, by its own pid.
+fn end_harness(identity: &Identity) {
+    let out = std::process::Command::new("kill")
+        .args(["-KILL", &identity.pid.to_string()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+/// A merged local lane whose worktree cannot be read is not one whose work
+/// left: the lane of the row above, relaunched with its item's live state
+/// record standing, its worktree under a parent the row makes unreadable,
+/// is not closed by the pass; the record stays running and the harness
+/// lives. Where the permission bits do not bind (a root run) the row
+/// cannot make the read fail and says so.
+#[test]
+#[expect(
+    clippy::print_stderr,
+    reason = "a run the row cannot make fail says it skipped, never passes silently"
+)]
+fn a_merged_local_lane_whose_worktree_cannot_be_read_keeps_its_running_harness() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let locked = dir.path().join("locked");
+    let worktree = locked.join("worktree");
+    let claude = named_sleep(dir.path(), "claude");
+    let pane = server.open_window(
+        "gh-1",
+        dir.path(),
+        &format!(
+            "bash -c \"printf '\\xe2\\x9c\\xbb Working\\xe2\\x80\\xa6 (esc to interrupt)\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(&server, &pane, "claude");
+    await_drawn(&server, &pane, "esc to interrupt");
+    let mut lane = lane_record(
+        "issue-1",
+        "gh-1",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        &worktree,
+    );
+    lane["repo"] = json!("o/r");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::symlink_metadata(&worktree).is_ok() {
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        end_harness(&identity);
+        eprintln!("skipped: the permission bits do not bind for this user");
+        return;
+    }
+    fleet.set_lanes(vec![lane]);
+    std::fs::write(
+        support::item_record(fleet.runner.state_dir(), "issue-1"),
+        "{}\n",
+    )
+    .unwrap();
+    let state = fleet.read();
+    let scripts = real_close_scripts(dir.path(), &server, &fleet);
+    std::fs::write(
+        dir.path().join("bin/gh.json"),
+        json!({"graphql number=7 cursor=": pull_seven_timeline()}).to_string(),
+    )
+    .unwrap();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = scripts;
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "issue-1".into(),
+        value: "o/r#7".into(),
+    });
+    let first = driver.pass(&state);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let said = lines(&first);
+    assert!(
+        !said.contains(&"EVENT lane-closed issue-1".to_owned()),
+        "{said:?}"
+    );
+    let record = fleet.read();
+    let record = record.lanes.iter().find(|l| l.item == "issue-1").unwrap();
+    assert_eq!(record.status, state::LaneStatus::Running, "{record:?}");
+    assert!(live(identity.pid), "the working harness was ended");
+    end_harness(&identity);
+}
+
 /// A merged local lane whose work left nothing behind is closed by the
 /// watch's own pass at its finished line, and its slot is free: one local
 /// Claude Code lane at its composer, read idle on two passes

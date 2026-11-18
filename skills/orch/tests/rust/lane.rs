@@ -83,6 +83,12 @@ impl Fleet {
     }
 
     fn run(&self, args: &[&str]) -> Output {
+        self.run_in(self.state_dir(), args)
+    }
+
+    /// [`Fleet::run`] with `cwd` as the runtime's working directory, the
+    /// checkout whose worktree list the worktree package reads.
+    fn run_in(&self, cwd: &Path, args: &[&str]) -> Output {
         let mut command = isolated();
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
@@ -94,7 +100,7 @@ impl Fleet {
             .env("AGENT_RUNTIME_TMUX_SESSION", "fleet")
             .env("ORCH_OVERSEER_LANES", self.cap.to_string())
             .env("LANE_MAIL_CLI", lane_mail())
-            .current_dir(self.state_dir());
+            .current_dir(cwd);
         for (name, value) in &self.env {
             command.env(name, value);
         }
@@ -2908,6 +2914,50 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
     }
 }
 
+/// A keep asked over a full close whose provider close refused, its dirt
+/// since cleaned, is refused `close-kind-differs` naming both kinds: the
+/// open full close is not rerun, so its provider close is not asked again
+/// and the sandbox stands with the lane running. A park is refused the
+/// same; the full close asked again still runs it.
+#[test]
+fn a_keep_over_a_refused_full_close_is_refused_and_asks_no_provider_close() {
+    let mut fleet = Fleet::hosted(4);
+    fleet.answer("HARNESS_STATE", "exited");
+    fleet.answer("CLOSE_STATUS", "3");
+    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    fleet.plant_tracker("KEN-1", "started");
+    let full = json!({"op": "close-lane", "item": "KEN-1"});
+    let answer = fleet.close(full.clone());
+    assert_eq!(
+        answer["result"]["observation"]["host_close"], "refused",
+        "{answer}"
+    );
+    fleet.answer("CLOSE_STATUS", "0");
+    let asked = fleet.provider_calls();
+    for (mode, kind) in [
+        (json!("keep-sandbox"), "keep"),
+        (json!({"park": {"pr": 7}}), "park"),
+    ] {
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1", "mode": mode}));
+        assert_eq!(answer["refusal"]["key"], "close-kind-differs", "{answer}");
+        let fields = refusal_fields(&answer);
+        assert_eq!(
+            (fields["open"].as_str(), fields["asked"].as_str()),
+            ("full", kind),
+            "{answer}"
+        );
+        assert_eq!(fleet.provider_calls(), asked, "{kind}: no provider call");
+        assert_eq!(fleet.lane("KEN-1")["status"], "running", "{kind}");
+    }
+    let answer = fleet.close(full);
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    assert_eq!(
+        fleet.provider_calls().last().map(String::as_str),
+        Some("list"),
+        "the full close asked again ran its provider close"
+    );
+}
+
 /// A merged hosted lane whose clone left its host closes all the same: the
 /// shipped provider over a host holding no clone refuses `status` and
 /// `stop` `<verb>-unowned` with status 75, answers its `close`
@@ -3321,6 +3371,114 @@ fn a_cloud_close_ends_the_record_keeps_the_session_and_writes_its_close_row() {
         ),
         "{log:?}"
     );
+}
+
+/// A repository under `dir` with a linked worktree on branch `lane` as the
+/// cloud launcher makes a `claude-cloud` lane's claim: no file checked out,
+/// the index read from `HEAD`, the claim mark in the worktree's own config.
+/// (repository, worktree).
+fn claim_checkout(dir: &Path) -> (PathBuf, PathBuf) {
+    let git = |cwd: &Path, args: &[&str]| {
+        let out = program("git").current_dir(cwd).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    };
+    let repo = dir.join("repo");
+    git(dir, &["init", "-q", "-b", "main", "repo"]);
+    std::fs::write(repo.join(".gitignore"), "tmp/\n").unwrap();
+    git(&repo, &["add", ".gitignore"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+    );
+    let origin = repo.display().to_string();
+    git(&repo, &["remote", "add", "origin", &origin]);
+    git(&repo, &["fetch", "-q", "origin"]);
+    git(&repo, &["remote", "set-head", "origin", "main"]);
+    let wt = dir.join("wt");
+    let at = wt.display().to_string();
+    git(
+        &repo,
+        &["worktree", "add", "-q", "--no-checkout", &at, "-b", "lane"],
+    );
+    git(&repo, &["config", "extensions.worktreeConfig", "true"]);
+    git(&wt, &["read-tree", "HEAD"]);
+    git(
+        &wt,
+        &[
+            "config",
+            "--worktree",
+            "kendex-worktree.checkoutMode",
+            "claim",
+        ],
+    );
+    (repo, wt)
+}
+
+/// `keep-sandbox` on a Claude cloud lane whose tracker reads the item
+/// completed is refused `keep-refused reason=stop-none` before any effect:
+/// nothing here stops a cloud session, so a keep could only take the full
+/// close, ending the record with the session live. The item's files and
+/// the clean claim worktree stand and the lane runs; the full close asked
+/// after releases that worktree and ends the record.
+#[test]
+fn a_cloud_keep_is_refused_and_leaves_the_items_files_and_its_claim_worktree() {
+    let mut fleet = Fleet::hosted(4);
+    let (repo, wt) = claim_checkout(fleet.state_dir());
+    let worktree = orch_package()
+        .parent()
+        .unwrap()
+        .join("worktree/scripts/worktree");
+    fleet
+        .env
+        .push(("WORKTREE_CLI".to_owned(), worktree.display().to_string()));
+    fleet.write_lanes(vec![json!({
+        "item": "KEN-1", "harness": "claude", "host": "claude-cloud", "kind": "claude-cloud",
+        "repo": "o/r", "account": "/a", "session_id": "S1",
+        "mail_root": wt.display().to_string(),
+        "status": "running", "launched_at": "2026-01-29T15:00:00Z",
+        "session_since": "2026-01-29T15:00:00Z",
+    })]);
+    fleet.plant_tracker("KEN-1", "completed");
+    let item_state = plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
+    let close = |mode: Option<&str>| {
+        let mut request = json!({"op": "close-lane", "item": "KEN-1"});
+        if let Some(mode) = mode {
+            request["mode"] = json!(mode);
+        }
+        let path = fleet.state_dir().join("request.json");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        reply(&fleet.run_in(
+            &repo,
+            &["op", "--fleet", "--request", &path.display().to_string()],
+        ))
+    };
+    let answer = close(Some("keep-sandbox"));
+    assert_eq!(answer["refusal"]["key"], "keep-refused", "{answer}");
+    assert_eq!(refusal_fields(&answer)["reason"], "stop-none", "{answer}");
+    assert!(
+        std::fs::symlink_metadata(&item_state).is_ok(),
+        "the item's files stand"
+    );
+    assert!(wt.exists(), "the claim worktree stands");
+    assert_eq!(fleet.lane("KEN-1")["status"], "running");
+    assert_eq!(
+        fleet.fleet()["intents"],
+        json!([]),
+        "no close was persisted"
+    );
+    let answer = close(None);
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    assert!(!wt.exists(), "the full close released the claim worktree");
+    assert!(std::fs::symlink_metadata(&item_state).is_err());
 }
 
 /// The identity a close supplies fills a record that left it empty and

@@ -2099,6 +2099,119 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     assert_eq!(again.paths, Vec::<PathBuf>::new());
 }
 
+/// A hosted lane kept, and one parked, each through its close transition
+/// confirmed on its session ten days back, its sandbox's path absent on
+/// this host, stand past the cutoff: the item record and the lane's row
+/// stay, since the sandbox and the record are what a relaunch resumes. A
+/// lane its full close ended done in the same world is pruned.
+#[test]
+fn retention_never_prunes_a_kept_or_parked_lane_past_the_cutoff() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let then = wall - 10 * 86_400;
+    let old = clock::iso_utc(then);
+    let remote = world.path().join("remote-clone");
+    let hosted = |item: &str| {
+        json!({"item": item, "status": "running", "harness": "claude", "host": "fleet-a",
+               "kind": "ssh", "repo": "o/r", "mail_root": remote, "launched_at": old,
+               "session_since": old})
+    };
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "intents": [],
+        "lanes": [lane("KEN-0", "running", &old, json!({})), hosted("KEN-K"), hosted("KEN-P"), hosted("KEN-D")],
+    }));
+    let env = Env {
+        now_secs: then,
+        now_nanos: u128::from(then) * 1_000_000_000,
+        nonce: 1,
+        owner: Some(agent_runtime::intent::Owner {
+            pid: u64::from(std::process::id()),
+            start: start_of(std::process::id()),
+        }),
+    };
+    let host = orch_runtime::ops::Host::kernel();
+    let apply = |request: Value| {
+        orch_runtime::ops::apply_on(
+            &world.fleet_path(),
+            &serde_json::from_value(request).unwrap(),
+            &env,
+            Locking::FLOCK,
+            &host,
+        )
+        .unwrap();
+    };
+    let close = |item: &str, ground: Value| {
+        let mut request = json!({"op": "close-owned-resources", "item": item});
+        for (key, value) in ground.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        apply(request);
+        let intents = world.fleet()["intents"].as_array().unwrap().clone();
+        let open = intents
+            .iter()
+            .find(|i| i["target"] == item && i.get("completed_at").is_none())
+            .unwrap_or_else(|| panic!("{item}: an open close: {intents:?}"));
+        apply(json!({"op": "record-outcome", "intent_id": open["id"], "outcome": "confirmed"}));
+    };
+    let keep = |park: Option<Value>| {
+        let mut ground =
+            json!({"reason": "keep-sandbox", "source": "close-lane", "interrupt": true});
+        if let Some(park) = park {
+            ground["park"] = park;
+        }
+        json!({"no_landing": ground})
+    };
+    close("KEN-K", keep(None));
+    close("KEN-P", keep(Some(json!({"pr": 7, "head": "abc123"}))));
+    apply(json!({"op": "park-lane", "item": "KEN-P", "head": "abc123", "repo": "o/r", "pr": 7}));
+    close(
+        "KEN-D",
+        json!({"terminal": {"verdict": "completed", "source": "test"}}),
+    );
+    let status = |item: &str| {
+        world.fleet()["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["item"] == item)
+            .map(|l| l["status"].clone())
+    };
+    assert_eq!(
+        [status("KEN-K"), status("KEN-P"), status("KEN-D")],
+        [
+            Some(json!("stopped")),
+            Some(json!("parked")),
+            Some(json!("done"))
+        ]
+    );
+    let dir = world.path();
+    for item in ["KEN-K", "KEN-P", "KEN-D"] {
+        touch(&support::item_record(dir, item));
+        set_modified(&support::item_record(dir, item), then);
+    }
+    let pruned = world.pass(wall).unwrap();
+    assert_eq!(pruned.records, vec!["KEN-D"], "{pruned:?}");
+    let gone = |path: PathBuf| std::fs::symlink_metadata(path).is_err();
+    assert!(gone(support::item_record(dir, "KEN-D")));
+    for item in ["KEN-K", "KEN-P"] {
+        assert!(
+            !gone(support::item_record(dir, item)),
+            "{item}: its record stands"
+        );
+    }
+    let planned: Vec<(&str, bool)> = pruned
+        .rows
+        .iter()
+        .map(|r| (r.item.as_str(), r.drop))
+        .collect();
+    assert_eq!(
+        planned,
+        [("KEN-D", true)],
+        "only the done lane's row leaves"
+    );
+}
+
 /// A successor re-applies a standing instruction it reads, so the prune
 /// reaches only its two arrays. A standing instruction is a row of the
 /// fleet record's `standing[]` and has no retention; the fixture's is older

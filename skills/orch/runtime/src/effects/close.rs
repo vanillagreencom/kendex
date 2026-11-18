@@ -25,7 +25,7 @@ use crate::ops::{
     ParkLane, ParkWait, Report, Request, Terminal, boxes,
 };
 use crate::settings::Settings;
-use crate::state::{self, FleetState, Lane, LaneStatus};
+use crate::state::{self, CloseKind, FleetState, Lane, LaneStatus};
 use crate::verify::Answer;
 use crate::verify::wire::{Nullable, ParkPull, ParkPullAnswer};
 use crate::watch::hosted::{
@@ -35,6 +35,7 @@ use crate::watch::lanes::{self, LaneState, reset};
 use crate::watch::tracker::{self, TerminalState};
 use agent_runtime::clock::Clock;
 use agent_runtime::harness::Harness;
+use agent_runtime::intent::Intent;
 use agent_runtime::journal::Env;
 use agent_runtime::observe::WallKind;
 
@@ -200,12 +201,12 @@ fn terminal(state: TerminalState) -> Option<Terminal> {
 }
 
 /// The item's one lane record, with the tmux socket the controller record
-/// names.
+/// names and the record's intents.
 #[allow(
     clippy::disallowed_methods,
     reason = "the close verb's one read of the fleet record before it acts, a snapshot it judges; the close transition re-reads under the lock"
 )]
-fn read_lane(path: &Path, item: &str) -> Result<(Lane, Option<PathBuf>)> {
+fn read_lane(path: &Path, item: &str) -> Result<(Lane, Option<PathBuf>, Vec<Intent>)> {
     let fleet = state::load(path)?
         .map(|snapshot| snapshot.view::<FleetState>(path))
         .transpose()?
@@ -219,6 +220,7 @@ fn read_lane(path: &Path, item: &str) -> Result<(Lane, Option<PathBuf>)> {
                 .overseer
                 .as_ref()
                 .and_then(agent_runtime::effects::overseer_socket),
+            fleet.intents.clone(),
         )),
         many => Err(refused(
             "lane-duplicate",
@@ -237,7 +239,7 @@ pub fn close_lane(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Closed> {
-    let (lane, socket) = read_lane(path, &r.item)?;
+    let (lane, socket, intents) = read_lane(path, &r.item)?;
     let who = Identity::of(&lane, &r.identity)?;
     let answer = |word: Word, status: Option<LaneStatus>| Closed {
         item: r.item.clone(),
@@ -257,7 +259,7 @@ pub fn close_lane(
             &[("item", &r.item), ("field", "mail_root")],
         ));
     }
-    match &r.mode {
+    let asked = match &r.mode {
         CloseMode::TerminalState => {
             let state = verdict(settings, &lane, &who, true)?;
             let mut closed = answer(Word::State, Some(lane.status));
@@ -268,9 +270,12 @@ pub fn close_lane(
             if verdict(settings, &lane, &who, true)? == TerminalState::Open {
                 return Err(refused("item-open", &[("item", &r.item)]));
             }
+            CloseKind::Full
         }
-        CloseMode::Close | CloseMode::KeepSandbox | CloseMode::Park(_) => {}
-    }
+        CloseMode::Close => CloseKind::Full,
+        CloseMode::KeepSandbox => CloseKind::Keep,
+        CloseMode::Park(_) => CloseKind::Park,
+    };
     if let CloseMode::Park(wait) = &r.mode
         && wait.pr.is_none()
         && wait.until_pr.is_none()
@@ -302,6 +307,9 @@ pub fn close_lane(
             ],
         ));
     }
+    // Before any provider read or stop: the close transition refuses the
+    // same, but only after the running lane's provider stop.
+    crate::ops::lane::refuse_other_close(path, &intents, &r.item, asked)?;
     let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
     let host = hosted::host_of(&lane).to_owned();
     let caps = if host == "local" {
@@ -531,6 +539,19 @@ impl Close<'_> {
     /// where its tracker ended it, the window its launch opened, its local
     /// worktree and the record; the session stays the operator's.
     fn cloud(self) -> Result<Closed> {
+        // A keep ends the harness and keeps its sandbox; here no stop ends
+        // the session, so the only close is the full one, which a keep
+        // never asks for.
+        if self.r.mode == CloseMode::KeepSandbox {
+            return Err(refused(
+                "keep-refused",
+                &[
+                    ("item", self.item()),
+                    ("reason", "stop-none"),
+                    ("host", self.host),
+                ],
+            ));
+        }
         if self.park().is_some() {
             self.park_check()?;
         }

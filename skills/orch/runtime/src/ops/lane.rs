@@ -36,8 +36,8 @@ use super::{
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
-    self, CloseGround, Lane, LaneMembers, LaneStatus, ModelClass, Reservation, Selection,
-    TerminalVerdict,
+    self, CloseGround, CloseKind, Lane, LaneMembers, LaneStatus, ModelClass, Reservation,
+    Selection, TerminalVerdict,
 };
 use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::intent::Intent;
@@ -404,6 +404,48 @@ pub struct CloseOwnedResources {
     /// confirms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disposed: Option<state::LandingDisposal>,
+}
+
+impl CloseOwnedResources {
+    /// The kind the request asks: a no-landing disposition keeps the
+    /// sandbox, for its park where it carries one; any other ground ends it.
+    fn kind(&self) -> CloseKind {
+        match &self.no_landing {
+            Some(NoLanding { park: Some(_), .. }) => CloseKind::Park,
+            Some(NoLanding { park: None, .. }) => CloseKind::Keep,
+            None => CloseKind::Full,
+        }
+    }
+}
+
+/// A close of kind `asked` over the open intent on `item` refuses
+/// `close-kind-differs` where that intent is a close of another kind: the
+/// reconcile a repeated close takes runs the open intent's effect, so a keep
+/// over an open full close would close the sandbox it asks to keep. The
+/// open close is asked again as itself, or its outcome recorded, first.
+pub(crate) fn refuse_other_close(
+    path: &Path,
+    intents: &[Intent],
+    item: &str,
+    asked: CloseKind,
+) -> Result<()> {
+    let Some(intent) = intents
+        .iter()
+        .find(|i| i.target == item && i.open())
+        .filter(|i| i.op == EffectOp::CloseResources)
+    else {
+        return Ok(());
+    };
+    let open = CloseKind::of(LaneMembers::of(path, intent)?.close.as_ref());
+    if open == asked {
+        return Ok(());
+    }
+    Err(Error::CloseKindDiffers {
+        item: item.to_owned(),
+        intent: intent.id.clone(),
+        open: open.word(),
+        asked: asked.word(),
+    })
 }
 
 /// The reading an ended close rests on.
@@ -1626,7 +1668,9 @@ pub(super) fn close_owned_resources(
             item: r.item.clone(),
         });
     }
-    match open_intent(&intents(path, doc)?, EffectOp::CloseResources, &r.item)? {
+    let open = intents(path, doc)?;
+    refuse_other_close(path, &open, &r.item, r.kind())?;
+    match open_intent(&open, EffectOp::CloseResources, &r.item)? {
         Standing::Clear => {}
         Standing::Same(intent) => {
             return Ok(CloseRequested {
@@ -3626,7 +3670,8 @@ mod tests {
 
     /// A close asked for on a lane whose harness read gone persists its
     /// intent on the `exited` ground and leaves the status; the repeat
-    /// reconciles.
+    /// reconciles, and a keep over it refuses `close-kind-differs` with
+    /// nothing written.
     #[test]
     fn close_owned_resources_persists_the_intent_and_leaves_the_status() {
         let dir = tempfile::tempdir().unwrap();
@@ -3674,6 +3719,24 @@ mod tests {
         let body = fleet(&path);
         assert_eq!(body.intents.len(), 2);
         assert_eq!(body.lanes[1].status, LaneStatus::Running);
+        let before = fs::read_to_string(&path).unwrap();
+        let keep = Request::CloseOwnedResources(CloseOwnedResources {
+            item: "KEN-4468".into(),
+            terminal: None,
+            no_landing: Some(NoLanding {
+                reason: "keep-sandbox".into(),
+                source: "close-lane".into(),
+                interrupt: true,
+                park: None,
+            }),
+            ended: None,
+            identity: None,
+            cycle: None,
+            disposed: None,
+        });
+        let err = run(&path, &keep).unwrap_err();
+        assert_eq!(err.key(), "close-kind-differs");
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
     }
 
     /// The live-harness guard: a lane whose recorded harness runs refuses a

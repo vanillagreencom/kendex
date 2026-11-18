@@ -799,6 +799,39 @@ pub const STANDING: &str = "standing";
 /// failed, told apart from one an operator kept.
 pub const PARK_OWED: &str = "park_owed";
 
+/// What a close does with its lane's sandbox: ends it (`full`), keeps it
+/// standing (`keep`), or keeps it for the park's stop (`park`). A repeated
+/// close reconciles an open close intent only of its own kind, since the
+/// reconcile runs that intent's effect, never the one asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseKind {
+    Full,
+    Keep,
+    Park,
+}
+
+impl CloseKind {
+    /// The kind of a close on `ground`; a close recorded with none is full.
+    pub fn of(ground: Option<&CloseGround>) -> CloseKind {
+        match ground {
+            Some(CloseGround::NoLanding { park: Some(_), .. }) => CloseKind::Park,
+            Some(CloseGround::NoLanding { park: None, .. }) => CloseKind::Keep,
+            None
+            | Some(
+                CloseGround::Exited | CloseGround::Terminal { .. } | CloseGround::Ended { .. },
+            ) => CloseKind::Full,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            CloseKind::Full => "full",
+            CloseKind::Keep => "keep",
+            CloseKind::Park => "park",
+        }
+    }
+}
+
 impl CloseGround {
     /// Whether the ground is a terminal close of a sandbox its provider no
     /// longer holds.

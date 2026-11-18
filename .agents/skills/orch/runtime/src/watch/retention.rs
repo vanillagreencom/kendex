@@ -206,10 +206,20 @@ pub fn judge(
     let Some(item) = field(lane, "item") else {
         return Judgement::Keep;
     };
+    // A stopped or parked lane is never ended, whatever its session's close
+    // reads: a keep or a park confirms a no-landing close, and its sandbox
+    // and record are what a relaunch resumes.
+    let status = field(lane, "status");
+    if [state::LaneStatus::Stopped, state::LaneStatus::Parked]
+        .iter()
+        .any(|s| status == Some(s.word()))
+    {
+        return Judgement::Keep;
+    }
     // Ended by its own status, or by a confirmed close of this session: a
     // record relaunched since its last close reads `running` with that
     // close still among the intents, and is live.
-    let ended = field(lane, "status").is_some_and(|s| TERMINAL_WORDS.contains(&s))
+    let ended = status.is_some_and(|s| TERMINAL_WORDS.contains(&s))
         || confirmed_closes(lane, item, intents).next().is_some();
     if !ended {
         return Judgement::Keep;
