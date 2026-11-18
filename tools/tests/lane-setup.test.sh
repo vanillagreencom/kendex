@@ -677,7 +677,8 @@ proof_warm() {
     *) WHY="unknown wrapper $wrapper"; return 1 ;;
   esac
   run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test CARGO_TARGET_DIR="$R/target" ${warm:+FLEET_WARM="$warm"}
-  for exe in "$R"/target/debug/deps/toy-*; do
+  # Cargo places test executables in deps or the build unit's out directory.
+  for exe in "$R"/target/debug/deps/toy-* "$R"/target/debug/build/toy/*/out/toy-*; do
     case "${exe##*/}" in *.*) ;; *) [ ! -f "$exe" ] || [ ! -x "$exe" ] || built=yes ;; esac
   done
   trees="$(git -C "$R" worktree list --porcelain | grep -c '^worktree ')" || return 1
