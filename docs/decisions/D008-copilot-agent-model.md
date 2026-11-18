@@ -6,7 +6,7 @@
 
 **Status**: Active
 
-**Research**: KEN-1937
+**Research**: [KEN-1937](https://linear.app/vanillagreen/issue/KEN-1937/prove-copilot-package-compatibility-and-enable-early-review-work)
 
 **Decision**: On Copilot an unbound model class resolves to no model, as `inherit` does, so the session's model runs the agent. A consumer `[model-bindings.copilot]` binding writes its native model selector for that class without a compatibility warning. An explicit per-agent model id passes through as written. No `reasoningEffort` is written. Every rendered Copilot agent carries `include-custom-instructions: true`, in `crates/core/src/render/agent/copilot.rs`. The class table itself is [D021](D021-runtime-model-classes.md).
 

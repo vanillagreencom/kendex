@@ -6,7 +6,7 @@
 
 **Status**: Active
 
-**Research**: KEN-1803
+**Research**: [KEN-1803](https://linear.app/vanillagreen/issue/KEN-1803/core-the-trash-pass-re-measures-every-kept-entry-on-every-apply)
 
 **Refines**: [D004](D004-trash-retention.md), its measurement only
 

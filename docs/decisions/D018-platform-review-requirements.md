@@ -6,7 +6,7 @@
 
 **Status**: Active (lanes-app kendex/refresh heads with passing render proof → D023, overseer emergency merge → D029, environment provisioning and the report's app and environment rows → D031)
 
-**Research**: KEN-2067; the design note is attached to that issue
+**Research**: [KEN-2067](https://linear.app/vanillagreen/issue/KEN-2067/review-gate-map-every-gate-behaviour-to-a-github-ruleset-or-repository); the design note is attached to that issue
 
 **Supersedes**: [D003](D003-one-merge-path.md) in part, the required review status and the review-finding answer contract; [D013](D013-admin-merge-green-prs.md) in part, the approval and required review status
 
