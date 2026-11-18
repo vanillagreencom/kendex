@@ -18,6 +18,7 @@
 
 ### Trust boundary
 
+- Before any sensitive mutation, use the provider's scoped app or delegated identity and verify that the acting principal, destination and operation match the grant. Proceed only when all three match. Keep only a safe receipt with the result and any non-secret reference needed to verify it.
 - The caller-owned mode-700 directory is the trust boundary for `op` and `@SCRIPT` requests. Only the caller's user can write requests, so the broker runs only work that user could run.
 - Command arguments lie outside the boundary. Other local users can read the arguments of `opq`, of `op` and of every process a script starts, item references included. Pass a secret value to `op` through a mode-600 file or a `--template` file that the script writes, never as an argument.
 - Anyone who can read the broker's journal can read the stderr it logs, so it logs only the stderr of `read` and the renewal, whose arguments the broker chooses. The stderr of an `op` or `@SCRIPT` request, which carries what the programs `op run` and `op plugin run` start print, never reaches the journal.
