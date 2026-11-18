@@ -631,6 +631,23 @@ environment_rows() {
 [2,"exec env --chdir=\"$DIR\" bash <<< 'head -c 32 environ'","process-environ-exec-chdir-unresolved-stdin","claude-and-codex"]
 [0,"cd /proc/4242 && exec env --chdir=/fixture bash <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-ordinary-exec-chdir-heredoc","claude-and-codex"]
 [0,"exec env --chdir=/proc/4242 bash <<'FIXTURE'\nprintf done\nFIXTURE\nhead -c 32 environ","process-exec-chdir-stdin-keeps-sibling-cwd","claude-and-codex"]
+[2,"exec -a \"$FIXTURE_NAME\" env --chdir=/proc/4242 bash <<< 'head -c 32 environ'","process-environ-exec-quoted-name-stdin","claude-and-codex"]
+[2,"builtin -- exec -la\"$FIXTURE_NAME\" env --chdir=/proc/4242 bash <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-builtin-exec-attached-quoted-name-heredoc","claude-and-codex"]
+[0,"cd /proc/4242 && exec -a \"worker\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-ordinary-exec-quoted-name-stdin","claude-and-codex"]
+[0,"cd /proc/4242 && exec -a \"$1\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-ordinary-exec-positional-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a $FIXTURE_NAME env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-split-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a \"$@\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-positional-spread-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a \"${FIXTURE_NAMES[@]}\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-array-spread-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a \"${!FIXTURE_REF}\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-indirect-name-stdin","claude-and-codex"]
+[2,"declare -n FIXTURE_REF='FIXTURE_ARGS[@]'; cd /proc/4242 && exec -a \"$FIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-nameref-name-stdin","claude-and-codex"]
+[2,"declare -n FIXTURE_REF='FIXTURE_ARGS[@]'; cd /proc/4242 && exec -a \"$\\\nFIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-continued-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a\"$FIXTURE_NAME\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-attached-quoted-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a$FIXTURE_NAME env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-attached-split-name-stdin","claude-and-codex"]
+[2,"exec -a $FIXTURE_NAME env --chdir=/proc/4242 bash <<< 'head -c 32 environ'","process-environ-exec-split-name-chdir-stdin","claude-and-codex"]
+[2,"builtin exec \"$FIXTURE_OPTION\" fixture env --chdir=/proc/4242 bash <<< 'head -c 32 environ'","process-environ-builtin-exec-expanding-option-stdin","claude-and-codex"]
+[2,"exec env --chdir=/proc/4242 sh <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-exec-chdir-sh-heredoc","claude-and-codex"]
+[2,"echo 'head -c 32 environ' | exec env --chdir=/proc/4242 dash","process-environ-exec-chdir-dash-pipe","claude-and-codex"]
+[0,"cd /proc/4242 && exec env --chdir=/fixture sh <<< 'head -c 32 environ'","process-ordinary-exec-chdir-sh-stdin","claude-and-codex"]
 [0,"env --chdir=/proc/4242 bash -c 'printf done' < environ; bash -c 'head -c 32 environ'","process-env-source-context-keeps-siblings","claude-and-codex"]
 [0,"bash -c 'head -c 32 environ'; cd /proc/4242","process-later-cd-keeps-earlier-source-cwd","claude-and-codex"]
 [2,"ps eww -p 4242","process-ps-bsd","claude-and-codex"]
@@ -2206,7 +2223,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # so a command that dumps the environment passes. forwarded-word-test
   # judges each unclassified forwarded operand and the words after it by the
   # word test, as before KEN-4728, so an env operand of a waiter refuses
-  # whatever program it launches.
+  # whatever program it launches. Fields split on |, and awk -v decodes
+  # backslashes in from and to, so a planted text holds neither.
   while IFS='|' read -r defect from to want rows; do
     mutant="$environment_controls/environment-$defect.sh"
     awk -v from="$from" -v to="$to" '
@@ -2214,7 +2232,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ } }
       { print }
       END { if (changed != 1) exit 1 }
-    ' "$hook_source" >"$mutant" || exit 1
+    ' "$hook_source" >"$mutant" || { echo "FAIL environment control $defect: its from text is not on exactly one line"; exit 1; }
     if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control $defect changed no bytes"; exit 1; fi
     control_status=0
     # shellcheck disable=SC2086 # rows is a space-separated label list
@@ -2241,6 +2259,13 @@ systemctl-property-order|elif [ -z "$verb" ]; then selected=1; fi|else selected=
 reader-file-option|if environment_file_input "$value" "$kind"; then return; fi ;;|if false; then return; fi ;;|exit=0 expected=2|process-environ-ignore-file-claude process-environ-xargs-cluster-codex
 reader-source-context|load_reader_context "${executable_reader_context[$code]}"|source_reader_dirs=()|exit=0 expected=2|process-environ-shell-cd-source-claude process-environ-env-chdir-source-codex
 exec-stdin-context|[ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then|[ -n "$data_source$incoming_sources" ] && false; then|exit=0 expected=2|process-environ-exec-chdir-heredoc-claude process-environ-exec-chdir-heredoc-codex process-environ-exec-chdir-pipe-claude process-environ-exec-chdir-inherited-stdin-codex process-environ-exec-option-chdir-stdin-claude process-environ-exec-chdir-heredoc-builtin-terminator-codex process-environ-exec-chdir-unresolved-stdin-claude process-environ-builtin-exec-option-stdin-codex
+exec-name-count|if [ "$exec_word" != split ] && [ -n "$exec_name_needed" ]; then|if [ "$exec_word" = split ] && [ -n "$exec_name_needed" ]; then|exit=2 expected=0|process-ordinary-exec-quoted-name-stdin-claude process-ordinary-exec-positional-name-stdin-codex
+exec-unknown-argv|shell_forwarded_pos=""; reader_chdir_unresolved=1; break|shell_forwarded_pos=""; break|exit=0 expected=2|process-environ-exec-split-name-chdir-stdin-claude process-environ-builtin-exec-expanding-option-stdin-codex
+builtin-exec-unknown|elif [ "$shell_forwarder" = exec ] && [ -n "$reader_chdir_unresolved" ] &&|elif false &&|exit=0 expected=2|process-environ-builtin-exec-expanding-option-stdin-claude
+unquoted-expansion-fields|fields_unknown=1 ;;|: ;;|exit=0 expected=2|process-environ-exec-split-name-stdin-codex
+quoted-spread-fields|if [ "$c" = '$' ] && [[ ! ${text:$i:24} =~ $one_field_re ]]; then|if false; then|exit=0 expected=2|process-environ-exec-positional-spread-name-stdin-claude process-environ-exec-array-spread-name-stdin-codex process-environ-exec-indirect-name-stdin-claude process-environ-exec-nameref-name-stdin-codex process-environ-exec-continued-name-stdin-claude
+exec-literal-option|elif [ "$exec_word" = literal ] && [[ $value =~ $exec_option_re ]]; then|elif [[ $value =~ $exec_option_re ]]; then|exit=0 expected=2|process-environ-exec-attached-quoted-name-stdin-claude process-environ-exec-attached-split-name-stdin-codex
+exec-stdin-shell|if [ -n "$stdin_program" ] &&|if [ "$program" = bash ] &&|exit=0 expected=2|process-environ-exec-chdir-sh-heredoc-claude process-environ-exec-chdir-dash-pipe-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc waiter-launch-job-unset-validation
