@@ -254,14 +254,15 @@ fn asked(root: &Path) -> bool {
 /// failure count.
 ///
 /// `before` is what the project held before the write, read by the caller
-/// while it still could be. `set_up` says a setup already ran in this
-/// action, so a package it left holding the commit is not set up again.
+/// while it still could be. `set_up` names the packages this action has
+/// already set up, so one of them still holding the commit is not set up
+/// again; another held package is set up as the offer would.
 pub fn after_writing(
     env: &Env,
     scope: &Scope,
     generated: &GeneratedPaths,
     before: &Before,
-    set_up: bool,
+    set_up: &[String],
 ) -> CliResult {
     let Scope::Project { root } = scope else {
         return Ok(());
@@ -300,7 +301,7 @@ fn make(
     root: &std::path::Path,
     generated: &GeneratedPaths,
     before: &Before,
-    mut set_up: bool,
+    set_up: &[String],
 ) -> Result<Option<Outcome>, Box<dyn std::error::Error>> {
     let default = Session {
         flags: CommitFlags::default(),
@@ -309,6 +310,7 @@ fn make(
     let session = SESSION.get().unwrap_or(&default);
     let style = ui::style();
     let mut generated = generated.clone();
+    let mut set_up = set_up.to_vec();
     // Read again after a setup: the renders kendex reads back join the
     // offer (`set_up_here` says which), and the packages are asked again
     // whether they now stand behind them.
@@ -364,7 +366,9 @@ fn make(
         };
         if !stale.is_empty() {
             let held = Held {
-                set_up,
+                set_up: stale
+                    .iter()
+                    .any(|one| set_up.contains(&one.disclosure.declared.name)),
                 answered,
                 // The flag says yes only beside a choice flag that commits,
                 // `--leave` having returned above. With no choice flag a
@@ -379,7 +383,7 @@ fn make(
             match hold(env, scope, &scan, &stale, held, &mut generated)? {
                 Hold::Ended(outcome) => return Ok(Some(outcome)),
                 Hold::SetUp => {
-                    set_up = true;
+                    set_up.extend(stale.into_iter().map(|one| one.disclosure.declared.name));
                     continue;
                 }
             }
@@ -434,7 +438,7 @@ fn answer(
 /// Where the offer stands when a package holds its commit.
 #[derive(Clone, Copy)]
 struct Held {
-    /// A setup already ran in this offer.
+    /// A held package was already set up in this action.
     set_up: bool,
     /// The choice a flag named, if one did.
     answered: Option<Route>,
@@ -474,8 +478,8 @@ fn hold(
             Some(_) => Outcome::CommitRefused,
         }));
     }
-    // One setup per offer. A package still not ready after its own setup
-    // ran is not one a second run of it fixes.
+    // One setup per package. A package still not ready after its own
+    // setup ran is not one a second run of it fixes.
     let picked = match (held.set_up, held.yes) {
         (true, _) | (false, Yes::Nobody) => {
             ui::stderr(&block::stale_way_on(&style, held.set_up, held.flag));

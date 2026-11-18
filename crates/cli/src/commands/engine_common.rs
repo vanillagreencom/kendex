@@ -380,7 +380,7 @@ pub(super) fn apply_report_accounted(
             &report.plan.scope,
             &generated,
             &before,
-            first.ran(),
+            first.taken(),
         )
         .map_err(AfterFailed::Offer),
         Err(error) => Err(AfterFailed::Render { error, before }),

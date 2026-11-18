@@ -189,10 +189,10 @@ pub struct SetUpFirst {
 }
 
 impl SetUpFirst {
-    /// Whether a setup ran in this action, so the commit offer runs none
-    /// again.
-    pub fn ran(&self) -> bool {
-        !self.taken.is_empty()
+    /// The packages set up in this action, which the commit offer does not
+    /// set up again.
+    pub fn taken(&self) -> &[String] {
+        &self.taken
     }
 
     /// The effects left for the add's own walkthrough.

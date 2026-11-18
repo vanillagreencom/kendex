@@ -101,6 +101,13 @@ enum Arrival {
     Consented,
     /// The same, in a linked work tree that carries neither record.
     ConsentedLinked,
+    /// The same, with neither owner installed before the add, which brings
+    /// both: the old owner is set up first, so the new one's setup moves
+    /// the effect and only one record stands.
+    ConsentedFresh,
+    /// The same, beside a second package whose effect is not set up: the
+    /// offer sets that one up under the add's yes and commits.
+    ConsentedBeside,
     /// The same, with the new owner's installer refusing.
     Refused,
 }
@@ -111,7 +118,8 @@ enum Arrival {
 /// refresh names the pending setup. With `--allow-repo-effects` and a
 /// commit choice, the setup runs once, disclosed once, before the offer,
 /// so the new owner's render is in the add's own commit, in a linked work
-/// tree too. A refused setup leaves the old owner and still closes the add
+/// tree too, with no owner installed before, and beside another held
+/// package. A refused setup leaves the old owner and still closes the add
 /// with its ledger and its registration.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -120,6 +128,8 @@ fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
         Arrival::Declined,
         Arrival::Consented,
         Arrival::ConsentedLinked,
+        Arrival::ConsentedFresh,
+        Arrival::ConsentedBeside,
         Arrival::Refused,
     ] {
         assert_arrival(arrival);
@@ -135,20 +145,53 @@ fn assert_arrival(arrival: Arrival) {
     package(&main, OLD);
     git(&main, &["add", "-A"]);
     git(&main, &["commit", "-q", "-m", "old installer"]);
-    let initial = kendex(
-        &home,
-        &main,
-        &["apply", "--yes", "--commit", "--allow-repo-effects"],
-    );
+    let initial = match arrival {
+        Arrival::ConsentedFresh => kendex(&home, &main, &["remove", OLD, "--commit"]),
+        Arrival::Declined
+        | Arrival::Consented
+        | Arrival::ConsentedLinked
+        | Arrival::ConsentedBeside
+        | Arrival::Refused => kendex(
+            &home,
+            &main,
+            &["apply", "--yes", "--commit", "--allow-repo-effects"],
+        ),
+    };
     assert!(initial.status.success(), "{}", said(&initial));
-    assert!(armed(&main, OLD));
+    let fresh = matches!(arrival, Arrival::ConsentedFresh);
+    assert_eq!(armed(&main, OLD), !fresh);
+    assert_eq!(
+        main.join(".claude/skills/bot-instructions/SKILL.md")
+            .is_file(),
+        !fresh
+    );
 
     package(&main, NEW);
+    let required = match arrival {
+        Arrival::ConsentedFresh => format!("{NEW}, {OLD}"),
+        Arrival::ConsentedBeside => {
+            let other = main.join("catalog/skills/workfx");
+            fs::create_dir_all(&other).unwrap();
+            fs::write(
+                other.join("SKILL.md"),
+                "---\nname: workfx\ndescription: fixture work tree effect\nrepo-effects:\n  summary: fixture workfx effect\n  writes: ['workfx.effect']\n  installer: scripts/effect\n---\n",
+            )
+            .unwrap();
+            executable(
+                &other.join("scripts/effect"),
+                "#!/bin/sh\nprintf x > workfx.effect\necho 'wrote workfx.effect'\n",
+            );
+            format!("{NEW}, workfx")
+        }
+        Arrival::Declined | Arrival::Consented | Arrival::ConsentedLinked | Arrival::Refused => {
+            NEW.to_owned()
+        }
+    };
     let requirer = main.join("catalog/skills/requirer");
     fs::create_dir_all(&requirer).unwrap();
     fs::write(
         requirer.join("SKILL.md"),
-        format!("---\nname: requirer\ndescription: fixture requirer\ndependencies:\n  required: [{NEW}]\n---\n"),
+        format!("---\nname: requirer\ndescription: fixture requirer\ndependencies:\n  required: [{required}]\n---\n"),
     )
     .unwrap();
     git(&main, &["add", "-A"]);
@@ -169,7 +212,11 @@ fn assert_arrival(arrival: Arrival) {
             );
             linked
         }
-        Arrival::Declined | Arrival::Consented | Arrival::Refused => main.clone(),
+        Arrival::Declined
+        | Arrival::Consented
+        | Arrival::ConsentedFresh
+        | Arrival::ConsentedBeside
+        | Arrival::Refused => main.clone(),
     };
     if let Arrival::Refused = arrival {
         fs::write(project.parent().unwrap().join(format!("refuse-{NEW}")), "").unwrap();
@@ -190,7 +237,13 @@ fn assert_arrival(arrival: Arrival) {
     }
     let output = kendex(&home, &project, &args);
     let text = said(&output);
-    let moved = matches!(arrival, Arrival::Consented | Arrival::ConsentedLinked);
+    let moved = matches!(
+        arrival,
+        Arrival::Consented
+            | Arrival::ConsentedLinked
+            | Arrival::ConsentedFresh
+            | Arrival::ConsentedBeside
+    );
     assert_eq!(
         output.status.code(),
         Some(if let Arrival::Refused = arrival { 1 } else { 0 }),
@@ -224,7 +277,10 @@ fn assert_arrival(arrival: Arrival) {
     // a refused setup leaves the render to the old owner.
     let writes = match arrival {
         Arrival::Declined => 0,
-        Arrival::Consented | Arrival::ConsentedLinked => 2,
+        Arrival::Consented
+        | Arrival::ConsentedLinked
+        | Arrival::ConsentedFresh
+        | Arrival::ConsentedBeside => 2,
         Arrival::Refused => 1,
     };
     assert_eq!(
@@ -242,6 +298,13 @@ fn assert_arrival(arrival: Arrival) {
             .lines()
             .any(|line| line == format!("{NEW}.effect")),
         moved,
+        "{arrival:?}\n{committed}\n{text}"
+    );
+    assert_eq!(
+        committed
+            .lines()
+            .any(|line| line == ".claude/skills/workfx/SKILL.md"),
+        matches!(arrival, Arrival::ConsentedBeside),
         "{arrival:?}\n{committed}\n{text}"
     );
     if let Arrival::Refused = arrival {

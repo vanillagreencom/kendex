@@ -958,7 +958,7 @@ fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> Vec<String> {
             &plan.scope,
             &report.generated,
             &kendex_core::commit_offer::Before::Untaken,
-            false,
+            &[],
         ) {
             failures.push(format!("{}: {error}", plan.label));
         }

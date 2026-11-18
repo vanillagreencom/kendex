@@ -178,13 +178,10 @@ NEW_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" github-repository-settings)" || NE
 OLD_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)" || OLD_SKILL=""
 if [ -n "$NEW_SKILL" ] && [ -n "$OLD_SKILL" ]; then
   gg_git_path REVIEW_GIT_DIR "$PWD" rev-parse --absolute-git-dir || gg_fail git-dir "$PWD" "could not read this work tree's git directory"
-  # git answers the common directory relative to the work tree root this
-  # hook stands in, without assuming a git version that has --path-format.
+  # git answers the common directory relative to the directory it was asked
+  # in, this hook's own, or absolute in git's own form, which on Windows is
+  # drive-qualified; the record lookup below reads it from here as given.
   gg_git_path REVIEW_COMMON_DIR "$PWD" rev-parse --git-common-dir || gg_fail git-dir "$PWD" "could not read this repository's common git directory"
-  case "$REVIEW_COMMON_DIR" in
-    /*) ;;
-    *) REVIEW_COMMON_DIR="$PWD/$REVIEW_COMMON_DIR" ;;
-  esac
 fi
 if [ -n "$NEW_SKILL" ] && { [ -z "$OLD_SKILL" ] || review_set_up github-repository-settings || ! review_set_up bot-instructions; }; then
   REVIEW_PACKAGE=github-repository-settings

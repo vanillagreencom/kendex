@@ -1324,7 +1324,7 @@ fn stopped(
         )),
     }
     if let Some(before) = &written.owed
-        && let Err(error) = after_writing(env, scope, &written.report.generated, before, false)
+        && let Err(error) = after_writing(env, scope, &written.report.generated, before, &[])
     {
         failures.push(error.to_string());
     }
