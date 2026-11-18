@@ -17,6 +17,10 @@ Review workflows and finding formats for AI review agents. Projects using orch c
 kendex add vanillagreencom/kendex --skill reviewer
 ```
 
+```bash
+kendex add vanillagreencom/kendex --bundle code-review  # includes the reviewer hooks
+```
+
 ## How it works
 
 The primary agent assigns a review to a specialist. The specialist reads the change and verifies possible defects against the code. It writes findings using [schemas/review-finding.md](schemas/review-finding.md). The primary agent reads that report and routes required fixes.

@@ -29,4 +29,4 @@ These rules hold for every string a view shows. A string that breaks one is a fi
 
 ## Screenshots
 
-The screenshot set a UI review judges a changed view from is the reviewer skill's, in its `workflows/qa-review.md` § Screenshots.
+The screenshot set a UI review judges a changed view from is the reviewer skill's, in its `references/ui-screenshots.md` § Screenshots.

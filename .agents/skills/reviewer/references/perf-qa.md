@@ -9,7 +9,7 @@ Benchmark execution, regression classification, and recording rules for the perf
 
 ## Benchmark Execution and Recording
 
-- Use the project benchmarking skill's direct runner or recorder commands only when documented as standalone commands. Do not use shell pipelines, redirection, heredocs, `tee`, `cat >`, inline env assignment, command substitution, or shell plumbing to capture or record benchmark output (orch SKILL.md § Harness-Safe Shell). If the only documented recording path requires shell plumbing, stop and report the harness gap; if manual entry is supported, pass data only via a documented direct argument or body-file option.
+- Use the project benchmarking skill's direct runner or recorder commands only when documented as standalone commands. Follow [orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell) when capturing or recording benchmark output. If the only documented recording path requires shell plumbing, stop and report the harness gap. If manual entry is supported, pass data only via a documented direct argument or body-file option.
 - A bare `cargo bench` is not a "full benchmark" run when the project's benchmarks require cargo features.
 - If the parser records zero results, stop and report the harness gap; do not count the run as coverage. Common causes: missing required features, parser prefix drift, tool output format changes.
 - If the benchmark recorder fails closed on all-zero counters, report a benchmark environment/tooling failure with command, commit, and error evidence; set `benchmark_commit` to `"none"`; never bypass with manual data.

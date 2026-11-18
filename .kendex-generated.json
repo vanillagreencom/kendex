@@ -873,6 +873,7 @@
   ".agents/skills/reviewer/SKILL.md",
   ".agents/skills/reviewer/references/finding-disposition.md",
   ".agents/skills/reviewer/references/perf-qa.md",
+  ".agents/skills/reviewer/references/ui-screenshots.md",
   ".agents/skills/reviewer/schemas/review-finding.md",
   ".agents/skills/reviewer/scripts/mutation-stability",
   ".agents/skills/reviewer/scripts/review-depth",
