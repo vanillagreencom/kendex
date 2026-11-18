@@ -190,7 +190,7 @@ build_large_base() {
   commit_all "$1/up" base
   clone_repo "$1/up" "$1/work"
   mv "$1/work/docs/decisions/D035-first.md" "$1/work/docs/decisions/D035-renamed.md"
-  write_revisit_index "$1/work" "D034,$rationale,None" "D035,Reason,When the API changes,,,,[Full](D035-renamed.md)"
+  write_revisit_index "$1/work" "D034,$rationale,None" "D035,Reason,When the API changes,,,,Active,[Full](D035-renamed.md)"
 }
 
 build_base_rename() { # DIR [remove]: main renames D035; the lane can remove its inherited document
