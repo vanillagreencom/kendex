@@ -293,7 +293,7 @@ A verifier the overseer delegates writes its full evidence as one Linear comment
 [ISSUE] | verdict: [kept|canceled] | owner: [REPO_PATH_OR_NONE] | Done-when: [ONE_LINE_RESULT] | delta: [EXPECTED_DELTA_LINE_OR_NONE] | project: [PROJECT_NAME_OR_NONE] | agent: [agent:LABEL|none]
 ```
 
-Every field is required. `kept` means the issue clears the filing bar; `canceled` means it does not. When the issue team's project inventory is nonempty, a kept row names a project from it; with an empty inventory, return `project: none` and skip project validation. When `LINEAR_AGENT_LABELS` is nonempty, return an `agent:` label from that list; with an empty list, return `agent: none` and skip agent validation. The return carries no issue body or evidence text. The sender and the receiver both apply this contract.
+Every field is required. For an item judged by the filing bar, `kept` means it clears the bar and `canceled` means it falls below the bar. If the Filing record's `Reached by:` line names an owner or Jarvis decision that authorizes the work, return `canceled` only for a duplicate and `kept` otherwise. When the issue team's project inventory is nonempty, name a project from it on every kept row and every row for an item backed by such a decision. With an empty inventory, return `project: none` and skip project validation. When `LINEAR_AGENT_LABELS` is nonempty, return an `agent:` label from that list; with an empty list, return `agent: none` and skip agent validation. The return carries no issue body or evidence text. The sender and the receiver both apply this contract.
 
 ---
 
