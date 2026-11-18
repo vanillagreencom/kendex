@@ -1685,6 +1685,7 @@ fn mark_closed_owner_asks(
                 owner
             )?));
         }
+        owner.keep_marks(tick, ask.id(), &marks);
         if marks.item != Some(Mark::Landed) {
             let written = clear_owner_item(linear, ask, issue, &open, configured);
             marks.item = Some(quota!(settle_mark(

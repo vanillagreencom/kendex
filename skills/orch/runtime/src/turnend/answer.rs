@@ -102,6 +102,7 @@ pub enum Said {
     RecordUnhealed(String),
     /// A session in tmux names no pane and none was recovered for it.
     SessionUnjudged,
+    ControllerUnjudged(&'static str),
     /// The file that tells a session once that it is unjudged could not be
     /// written.
     SessionUnjudgedCache(PathBuf),
@@ -433,6 +434,7 @@ impl Said {
             ),
             Said::RecordUnhealed(key) => ("record-unhealed", key.clone()),
             Said::SessionUnjudged => ("session-unjudged", "missing-pane".to_owned()),
+            Said::ControllerUnjudged(source) => ("controller-unjudged", (*source).to_owned()),
             Said::SessionUnjudgedCache(told) => {
                 ("session-unjudged-cache", told.display().to_string())
             }
@@ -586,6 +588,7 @@ impl Said {
             Said::SessionUnbound { .. } => "the fleet record names this session's pane, and the native session it records is another one, so this session is not the fleet's controller: it reads no overseer mail and judges no controller marks. Registering this session as the controller binds it".to_owned(),
             Said::RecordUnhealed(_) => "the fleet record names this session's pane and lacks a fact this session knows, its tmux server's start, its harness, its launch home or its native session id, and writing those into the record failed; this caller reads no overseer mail, writes no context or gap and judges no marks until a later turn end or tool call records the binding. The writer's words follow:".to_owned(),
             Said::SessionUnjudged => "this session is unjudged because TMUX_PANE is absent and no controller identity could be recovered".to_owned(),
+            Said::ControllerUnjudged(_) => "the controller binding could not be read, so its marks are unjudged. The turn passes because this session cannot repair the read at its turn end. The cause follows:".to_owned(),
             Said::SessionUnjudgedCache(_) => "the file that keeps this unjudged session from being told again could not be written, so its next event tells it again:".to_owned(),
             Said::LeadUnnamed => "this Copilot session start names no session id this hook can record, so the session's tool calls read as a caller it cannot name: they are handed no mail, and a halt's refusal does not show the command that reads it, which the turn end still hands over".to_owned(),
             Said::LeadUnrecorded(path) => format!(

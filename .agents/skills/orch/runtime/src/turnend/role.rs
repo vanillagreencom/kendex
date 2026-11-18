@@ -72,6 +72,10 @@ pub(super) enum Kind {
 pub(super) enum Binding {
     #[default]
     None,
+    Unreadable {
+        source: &'static str,
+        cause: String,
+    },
     /// The record names this session's pane on its server and its native
     /// identity admits this session.
     Bound(Controller),
@@ -275,9 +279,9 @@ fn key_on(vars: &Vars, pane: &str) -> Option<Key> {
 
 /// The role, read once for every place after the row arm, for the lead of
 /// a session with no lane item that sits on a keyed pane. The fleet record
-/// is read through the controller's own status read; a record that is
-/// missing or cannot be read binds nothing, as settings that cannot be
-/// loaded place none. Who the session is comes after: at a turn end or a
+/// is read through the controller's own status read; a missing record
+/// binds nothing, and an unavailable settings or status read is reported
+/// with its cause. Who the session is comes after: at a turn end or a
 /// context reading, the bound controller whose record names the Jarvis
 /// seat is Jarvis; else the controller the record binds at a repository's
 /// root is the overseer; else the session is no controller.
@@ -288,10 +292,16 @@ pub(super) fn read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload)
     let Some(key) = turn.role.key.clone() else {
         return;
     };
-    let Ok(settings) = marks::marks_settings(turn, &lane.root, vars.private_env) else {
-        return;
+    let binding = match marks::marks_settings(turn, &lane.root, vars.private_env) {
+        Ok(settings) => controller(turn, vars, &settings, payload, &key),
+        Err(cause) => Binding::Unreadable {
+            source: "settings",
+            cause,
+        },
     };
-    let binding = controller(turn, vars, &settings, payload, &key);
+    if let Binding::Unreadable { source, cause } = &binding {
+        turn.note(&Said::ControllerUnjudged(source), cause);
+    }
     let kind = match (&binding, &lane.common) {
         (Binding::Bound(bound), _) if jarvis_seat(turn, payload, bound) => Kind::Jarvis(Jarvis {
             home: PathBuf::from(bound.recorded["cwd"].as_str().unwrap_or_default()),
@@ -346,8 +356,15 @@ fn controller(
         home: &home,
         session: &payload.session,
     };
-    let Ok(read) = status::status(&fleet, &settings.engine, Some(&caller)) else {
-        return Binding::None;
+    let read = match status::status(&fleet, &settings.engine, Some(&caller)) {
+        Ok(read) => read,
+        Err(agent_runtime::error::Error::RecordMissing { .. }) => return Binding::None,
+        Err(cause) => {
+            return Binding::Unreadable {
+                source: "status",
+                cause: cause.to_string(),
+            };
+        }
     };
     let (Some(recorded), Some(answer)) = (read.recorded, read.caller) else {
         return Binding::None;

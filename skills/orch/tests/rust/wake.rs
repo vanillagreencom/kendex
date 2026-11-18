@@ -1549,62 +1549,68 @@ fn api_error_resume_line(item: &str) -> String {
 /// `idle-after-return <lane> cause=api-error` once.
 #[test]
 fn an_api_error_resume_of_a_hosted_lane_is_typed_into_its_window_once_and_confirmed() {
-    let fleet = Fleet::new();
-    let ended = fleet.root.join("api-error.txt");
-    std::fs::write(&ended, "\u{25a0} {\"detail\":\"Bad Request\"}\n").unwrap();
-    let ended = ended.display().to_string();
-    let (lane, host) = ssh_stub(&fleet, "codex", &[("STUB_TURNS_ENDED", &ended)]);
-    let group = host.lead("KEN-1", "codex");
-    let before = host.calls().len();
-    fleet.set_lanes(vec![lane]);
-    let clock = FakeClock::new();
-    let mut body = fleet.body();
-    let asked = "api-error|%1|42|cause=api-error";
-    let baseline = resume_row("KEN-1", asked);
-    let produced = run_with_hosted_receipt(&fleet, "codex", || {
-        run_once(&mut body, &baseline, &clock).unwrap()
-    });
-    assert_eq!(
-        rendered(&produced),
-        vec!["EVENT wake-delivered KEN-1 resume=api-error"]
-    );
-    let deadline = Instant::now() + secs(10);
-    while codex_turns(&fleet.home, "lead-1").is_empty() {
-        assert!(Instant::now() < deadline, "the window was typed nothing");
-        std::thread::sleep(Duration::from_millis(20));
+    for null_identity in [false, true] {
+        let fleet = Fleet::new();
+        let ended = fleet.root.join("api-error.txt");
+        std::fs::write(&ended, "\u{25a0} {\"detail\":\"Bad Request\"}\n").unwrap();
+        let ended = ended.display().to_string();
+        let (mut lane, host) = ssh_stub(&fleet, "codex", &[("STUB_TURNS_ENDED", &ended)]);
+        if null_identity {
+            lane["launch"]["pid"] = Value::Null;
+            lane["launch"]["start"] = Value::Null;
+        }
+        let group = host.lead("KEN-1", "codex");
+        let before = host.calls().len();
+        fleet.set_lanes(vec![lane]);
+        let clock = FakeClock::new();
+        let mut body = fleet.body();
+        let asked = "api-error|%1|42|cause=api-error";
+        let baseline = resume_row("KEN-1", asked);
+        let produced = run_with_hosted_receipt(&fleet, "codex", || {
+            run_once(&mut body, &baseline, &clock).unwrap()
+        });
+        assert_eq!(
+            rendered(&produced),
+            vec!["EVENT wake-delivered KEN-1 resume=api-error"]
+        );
+        let deadline = Instant::now() + secs(10);
+        while codex_turns(&fleet.home, "lead-1").is_empty() {
+            assert!(Instant::now() < deadline, "the window was typed nothing");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            codex_turns(&fleet.home, "lead-1"),
+            vec![api_error_resume_line("KEN-1")]
+        );
+        assert_eq!(
+            fleet.mark("KEN-1").and_then(|m| m.resume).as_deref(),
+            Some(asked)
+        );
+        let asked_calls = host.calls()[before..].to_vec();
+        assert_eq!(
+            host.calls().iter().filter(|c| c.contains(" send ")).count(),
+            0
+        );
+        let again = run_once(&mut body, &baseline, &clock).unwrap();
+        assert_eq!(rendered(&again), Vec::<String>::new(), "the same row");
+        assert_eq!(
+            host.calls()[before..],
+            asked_calls,
+            "no provider verb for a typed resume"
+        );
+        assert_eq!(codex_turns(&fleet.home, "lead-1").len(), 1, "typed once");
+        // The lane's group ended: the provider reads the harness exited.
+        drop(group);
+        let exited = resume_row("KEN-1", "api-error|%1|57|cause=api-error");
+        let told = run_once(&mut body, &exited, &clock).unwrap();
+        assert_eq!(
+            rendered(&told),
+            vec!["EVENT idle-after-return KEN-1 cause=api-error"]
+        );
+        let again = run_once(&mut body, &exited, &clock).unwrap();
+        assert_eq!(rendered(&again), Vec::<String>::new(), "a told row");
+        assert_eq!(codex_turns(&fleet.home, "lead-1").len(), 1, "typed once");
     }
-    assert_eq!(
-        codex_turns(&fleet.home, "lead-1"),
-        vec![api_error_resume_line("KEN-1")]
-    );
-    assert_eq!(
-        fleet.mark("KEN-1").and_then(|m| m.resume).as_deref(),
-        Some(asked)
-    );
-    let asked_calls = host.calls()[before..].to_vec();
-    assert_eq!(
-        host.calls().iter().filter(|c| c.contains(" send ")).count(),
-        0
-    );
-    let again = run_once(&mut body, &baseline, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "the same row");
-    assert_eq!(
-        host.calls()[before..],
-        asked_calls,
-        "no provider verb for a typed resume"
-    );
-    assert_eq!(codex_turns(&fleet.home, "lead-1").len(), 1, "typed once");
-    // The lane's group ended: the provider reads the harness exited.
-    drop(group);
-    let exited = resume_row("KEN-1", "api-error|%1|57|cause=api-error");
-    let told = run_once(&mut body, &exited, &clock).unwrap();
-    assert_eq!(
-        rendered(&told),
-        vec!["EVENT idle-after-return KEN-1 cause=api-error"]
-    );
-    let again = run_once(&mut body, &exited, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "a told row");
-    assert_eq!(codex_turns(&fleet.home, "lead-1").len(), 1, "typed once");
 }
 
 fn calls(log: &Path) -> Vec<String> {
@@ -2270,56 +2276,62 @@ fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
 /// typed nothing.
 #[test]
 fn an_api_error_resume_of_a_pane_verb_lane_is_sent_once_and_a_refused_one_is_told_once() {
-    let fleet = Fleet::new();
-    let ended = fixtures()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("fixtures/oversee-watch/codex-api-error-fleet.txt");
-    let ended = std::fs::read_to_string(ended).unwrap();
-    let (mut lane, log) = viewed_lane(
-        &fleet,
-        json!({
-            "capabilities": {"stdout": VERB_LINE},
-            "status --item KEN-1 --harness codex": {"stdout": "running\n"},
-            "capture --item KEN-1#1": {"stdout": "\u{203a} do the thing\n\u{2022} Working (3s \u{2022} esc to interrupt)\n"},
-            "capture --item KEN-1": {"stdout": ended},
-            "send --item KEN-1 --file": {},
-            format!("{}#1", hosted_rows_key(&fleet)): {"stdout": ""},
-            hosted_rows_key(&fleet): {"stdout": prompt_row(&api_error_resume_line("KEN-1"))},
-        }),
-    );
-    lane["harness"] = json!("codex");
-    fleet.set_lanes(vec![lane]);
-    let clock = FakeClock::new();
-    let mut body = fleet.body();
-    let refused = resume_row("KEN-1", "api-error|%1|42|cause=api-error");
-    let told = run_once(&mut body, &refused, &clock).unwrap();
-    assert_eq!(
-        rendered(&told),
-        vec!["EVENT idle-after-return KEN-1 cause=api-error"]
-    );
-    assert!(sent(&fleet).is_empty(), "{:?}", calls(&log));
-    let asked = calls(&log);
-    let again = run_once(&mut body, &refused, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "a told row");
-    assert_eq!(calls(&log), asked, "no provider verb for a told row");
-    let later = resume_row("KEN-1", "api-error|%1|57|cause=api-error");
-    let resumed = run_once(&mut body, &later, &clock).unwrap();
-    assert_eq!(
-        rendered(&resumed),
-        vec!["EVENT wake-delivered KEN-1 resume=api-error"]
-    );
-    assert_eq!(sent(&fleet), vec![api_error_resume_line("KEN-1")]);
-    let again = run_once(&mut body, &later, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "a sent row");
-    assert_eq!(sent(&fleet).len(), 1, "{:?}", calls(&log));
-    assert_eq!(
-        fleet.turns("lead-1"),
-        Vec::<String>::new(),
-        "the viewer window is typed nothing"
-    );
+    for null_identity in [false, true] {
+        let fleet = Fleet::new();
+        let ended = fixtures()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("fixtures/oversee-watch/codex-api-error-fleet.txt");
+        let ended = std::fs::read_to_string(ended).unwrap();
+        let (mut lane, log) = viewed_lane(
+            &fleet,
+            json!({
+                "capabilities": {"stdout": VERB_LINE},
+                "status --item KEN-1 --harness codex": {"stdout": "running\n"},
+                "capture --item KEN-1#1": {"stdout": "\u{203a} do the thing\n\u{2022} Working (3s \u{2022} esc to interrupt)\n"},
+                "capture --item KEN-1": {"stdout": ended},
+                "send --item KEN-1 --file": {},
+                format!("{}#1", hosted_rows_key(&fleet)): {"stdout": ""},
+                hosted_rows_key(&fleet): {"stdout": prompt_row(&api_error_resume_line("KEN-1"))},
+            }),
+        );
+        lane["harness"] = json!("codex");
+        if null_identity {
+            lane["launch"]["pid"] = Value::Null;
+            lane["launch"]["start"] = Value::Null;
+        }
+        fleet.set_lanes(vec![lane]);
+        let clock = FakeClock::new();
+        let mut body = fleet.body();
+        let refused = resume_row("KEN-1", "api-error|%1|42|cause=api-error");
+        let told = run_once(&mut body, &refused, &clock).unwrap();
+        assert_eq!(
+            rendered(&told),
+            vec!["EVENT idle-after-return KEN-1 cause=api-error"]
+        );
+        assert!(sent(&fleet).is_empty(), "{:?}", calls(&log));
+        let asked = calls(&log);
+        let again = run_once(&mut body, &refused, &clock).unwrap();
+        assert_eq!(rendered(&again), Vec::<String>::new(), "a told row");
+        assert_eq!(calls(&log), asked, "no provider verb for a told row");
+        let later = resume_row("KEN-1", "api-error|%1|57|cause=api-error");
+        let resumed = run_once(&mut body, &later, &clock).unwrap();
+        assert_eq!(
+            rendered(&resumed),
+            vec!["EVENT wake-delivered KEN-1 resume=api-error"]
+        );
+        assert_eq!(sent(&fleet), vec![api_error_resume_line("KEN-1")]);
+        let again = run_once(&mut body, &later, &clock).unwrap();
+        assert_eq!(rendered(&again), Vec::<String>::new(), "a sent row");
+        assert_eq!(sent(&fleet).len(), 1, "{:?}", calls(&log));
+        assert_eq!(
+            fleet.turns("lead-1"),
+            Vec::<String>::new(),
+            "the viewer window is typed nothing"
+        );
+    }
 }
 
 /// The `lstart:` start of `pid`, its `ps -o lstart` text with its blanks

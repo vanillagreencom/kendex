@@ -420,6 +420,69 @@ fn an_overseer_whose_marks_cannot_be_judged_is_told_and_passed() {
     );
 }
 
+#[test]
+fn a_controller_whose_binding_cannot_be_read_is_told_the_cause_and_passed() {
+    for (input, expected) in [
+        ("invalid-settings", Some("settings")),
+        ("unreadable-settings", Some("settings")),
+        ("invalid-status", Some("status")),
+        ("unreadable-status", Some("status")),
+        ("absent-status", None),
+    ] {
+        let world = TurnWorld::new();
+        let (env, account) = claude_on(&world, PANE);
+        world.plant_fleet(world.controller(PANE, "claude", &account, SESSION));
+        let settings = world.checkout.join("kendex.settings.toml");
+        let status = world.fleet_path();
+        let path = match input {
+            "invalid-settings" => {
+                fs::write(&settings, "[\n").unwrap();
+                &settings
+            }
+            "unreadable-settings" => {
+                fs::create_dir(&settings).unwrap();
+                &settings
+            }
+            "invalid-status" => {
+                fs::write(&status, "{\n").unwrap();
+                &status
+            }
+            "unreadable-status" => {
+                fs::remove_file(&status).unwrap();
+                fs::create_dir(&status).unwrap();
+                &status
+            }
+            "absent-status" => {
+                fs::remove_file(&status).unwrap();
+                &status
+            }
+            _ => unreachable!(),
+        };
+        let out = stop(&world, &env, None);
+        assert_eq!(out.code, 0, "{input}: {}", out.stderr);
+        if let Some(expected) = expected {
+            let key = format!("controller-unjudged={expected}");
+            assert_eq!(out.keyed(), [key.as_str()], "{input}: {}", out.stderr);
+            assert_eq!(
+                out.stderr.lines().next(),
+                Some(format!("lane-mail-check: {key}").as_str()),
+                "{input}: {}",
+                out.stderr
+            );
+            assert!(
+                out.stderr
+                    .lines()
+                    .skip(1)
+                    .any(|line| line.contains(&path.display().to_string())),
+                "{input}: {}",
+                out.stderr
+            );
+        } else {
+            assert!(out.keyed().is_empty(), "{input}: {}", out.stderr);
+        }
+    }
+}
+
 /// An overseer whose box cannot take its gap record is told so under its
 /// own key, naming the record, and its turn end goes on: no reading stands
 /// behind the gap.

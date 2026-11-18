@@ -157,9 +157,11 @@ fn gated_box(turn: &mut Turn, vars: &Vars, lane: &Lane) -> Flow<Option<Kept>> {
             let key = Some(controller::caller_key(key));
             Ok(Some(Kept::Mailbox { dir, key }))
         }
-        (Kind::None, _) | (Kind::Overseer | Kind::Jarvis(_), Binding::None | Binding::Lost(_)) => {
-            Ok(None)
-        }
+        (Kind::None, _)
+        | (
+            Kind::Overseer | Kind::Jarvis(_),
+            Binding::None | Binding::Lost(_) | Binding::Unreadable { .. },
+        ) => Ok(None),
     }
 }
 

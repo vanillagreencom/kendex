@@ -2714,10 +2714,10 @@ fn a_helper_from_another_session_keeps_the_reserve_unobserved() {
     }
 }
 
-/// Codex's rollout: a spawned agent is out until a full listing reads it
-/// returned, and the refusal tells the lead to list agents after its wait.
+/// Codex's rollout: a spawned or resumed agent keeps its reserve until a
+/// full listing or its automatic completion event reads it returned.
 #[test]
-fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
+fn a_codex_launch_keeps_the_reserve_until_a_listing_or_event_reads_the_agent_returned() {
     let world = World::launched();
     let overrides = json!({"harness": "codex", "settings": {
         "model_auto_compact_token_limit": "1000000",
@@ -2738,7 +2738,7 @@ fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
         ),
         item(
             "function_call_output",
-            json!({"call_id": "c1", "output": "{\"task_name\":\"/root/a1\"}"}),
+            json!({"call_id": "c1", "output": "{\"task_name\":\"/root/runtime\"}"}),
         ),
     ];
     let listed: Vec<Value> = spawned
@@ -2748,13 +2748,37 @@ fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
             item("function_call", json!({"name": "list_agents", "call_id": "c2", "arguments": "{}"})),
             item(
                 "function_call_output",
-                json!({"call_id": "c2", "output": "{\"agents\":[{\"agent_name\":\"/root/a1\",\"agent_status\":\"completed\"}]}"}),
+                json!({"call_id": "c2", "output": "{\"agents\":[{\"agent_name\":\"/root/runtime\",\"agent_status\":\"completed\"}]}"}),
             ),
         ])
         .collect();
+    let completed: Vec<Value> = spawned
+        .iter()
+        .cloned()
+        .chain([serde_json::from_str(r#"{"timestamp":"2026-10-18T11:35:46.698Z","ordinal":181,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a14ec9-b8b8-7823-8c1c-f937e13b0adf","turn_id":"01a14ec9-b976-7643-a76c-3d1d8af8ba7c","item":{"type":"SubAgentActivity","model":null,"reasoning_effort":null,"id":"subagent-completed-01a14eca-ec30-7af3-baf7-b715e459bfac","kind":"completed","agent_thread_id":"01a14eca-ec0a-7e52-8b43-a4674ef4d38e","agent_path":"/root/runtime"},"started_at_ms":1792323346698,"completed_at_ms":1792323346698}}"#).unwrap()])
+        .collect();
+    let resumed: Vec<Value> = completed
+        .iter()
+        .cloned()
+        .chain([
+            item("function_call", json!({"name": "followup_task", "call_id": "c3", "arguments": "{\"target\":\"/root/runtime\",\"message\":\"Review again.\"}"})),
+            item("function_call_output", json!({"call_id": "c3", "output": ""})),
+        ])
+        .collect();
+    let returned: Vec<Value> = resumed
+        .iter()
+        .cloned()
+        .chain([serde_json::from_str(r#"{"timestamp":"2026-10-18T11:36:14.744Z","ordinal":220,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a14ec9-b8b8-7823-8c1c-f937e13b0adf","turn_id":"01a14ec9-b976-7643-a76c-3d1d8af8ba7c","item":{"type":"SubAgentActivity","model":null,"reasoning_effort":null,"id":"subagent-completed-01a14ecc-0742-7171-8e53-c1a5a8109860","kind":"completed","agent_thread_id":"01a14eca-ec0a-7e52-8b43-a4674ef4d38e","agent_path":"/root/runtime"},"started_at_ms":1792323374744,"completed_at_ms":1792323374744}}"#).unwrap()])
+        .collect();
     let count = json!({"type": "event_msg", "payload": {"type": "token_count", "info": {
         "last_token_usage": {"total_tokens": 510_000}, "model_context_window": 1_000_000}}});
-    for (lines, code) in [(spawned, 2), (listed, 0)] {
+    for (name, lines, code) in [
+        ("spawned", spawned, 2),
+        ("listed", listed, 0),
+        ("completed", completed, 0),
+        ("resumed", resumed, 2),
+        ("returned", returned, 0),
+    ] {
         let mut lines = lines;
         lines.push(count.clone());
         let transcript = world.transcript("r.jsonl", &lines);
@@ -2768,7 +2792,7 @@ fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
             &payload,
             &env,
         );
-        assert_eq!(out.code, code, "{}", out.stderr);
+        assert_eq!(out.code, code, "{name}: {}", out.stderr);
         if code == 2 {
             assert_eq!(
                 out.first(),
@@ -2777,7 +2801,7 @@ fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
             assert!(out.stderr.contains("Call list_agents"), "{}", out.stderr);
             assert!(
                 out.stderr.contains(
-                    "lane-mail-check: attached-agent=/root/a1 status=running output=unknown"
+                    "lane-mail-check: attached-agent=/root/runtime status=running output=unknown"
                 ),
                 "{}",
                 out.stderr

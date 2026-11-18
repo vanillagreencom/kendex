@@ -40,6 +40,7 @@ pub(super) fn turn_end(turn: &mut Turn, lane: &Lane, vars: &Vars, payload: &Payl
         return Ok(());
     };
     match (&role.kind, &role.binding) {
+        (_, Binding::Unreadable { .. }) => Ok(()),
         (Kind::Jarvis(jarvis), Binding::Bound(controller)) => jarvis_marks(
             turn,
             lane,
@@ -630,7 +631,7 @@ pub(super) fn overseer_tool_check(
             lost(turn, lane, vars, payload, key, controller);
             false
         }
-        (_, Binding::Bound(_) | Binding::None) => {
+        (_, Binding::Bound(_) | Binding::None | Binding::Unreadable { .. }) => {
             turn.stderr = notes;
             return Ok(());
         }

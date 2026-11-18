@@ -5266,7 +5266,9 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
     // The pass's read and the close's judge read it running until the
     // close's stop ends its group; its worktree left the host.
     let _lane = host.lead("issue-1", "claude");
-    host.leave("issue-1");
+    let gitfile = host.lane_root("issue-1").join(".git");
+    let gitbytes = std::fs::read(&gitfile).unwrap();
+    std::fs::write(&gitfile, "unreadable worktree link\n").unwrap();
     let root = host.lane_root("issue-1").display().to_string();
     let mut lane = hosted_lane(dir.path(), "issue-1", "gh-1", &root);
     lane["repo"] = json!("o/r");
@@ -5281,6 +5283,18 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
         identity: "issue-1".into(),
         value: "o/r#7".into(),
     });
+    let unread = driver.pass(&state);
+    assert!(
+        unread.failed.as_deref().is_some_and(
+            |cause| cause.starts_with("worktree-read-failed item=issue-1 cause=gitfile-unread")
+        ),
+        "{:?}",
+        unread.failed
+    );
+    assert!(event_lines(&unread).is_empty(), "{:?}", lines(&unread));
+    assert_eq!(closes(&fleet, "issue-1"), 0);
+    std::fs::write(&gitfile, gitbytes).unwrap();
+    host.leave("issue-1");
     let first = driver.pass(&state);
     assert_eq!(
         lines(&first),

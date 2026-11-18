@@ -2357,9 +2357,10 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// sandbox kept: the attempt ends and its record stops charging a slot,
 /// the sandbox standing for a relaunch; a host whose status read fails
 /// reads no exit and keeps the slot. A failed close un-reports the
-/// notification row, so the next pass asks again; a deferred one keeps
-/// `close-pending` for the retry; a close that ended clears it. `row` and
-/// `key` are the notification row and the key it reported under.
+/// notification row, so the next pass asks again; a deferred close or an
+/// unreadable prerequisite keeps `close-pending` for the retry; a close
+/// that ended clears it. `row` and `key` are the notification row and the
+/// key it reported under.
 pub fn close_finished(
     lane: &Lane,
     pass: &Pass,
@@ -2392,6 +2393,8 @@ pub fn close_finished(
                     out,
                     format!("worktree-read-failed item={} cause={cause}", lane.item),
                 );
+                out.changes
+                    .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
                 return;
             }
         }

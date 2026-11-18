@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use super::answer::{Harness, Said};
 use super::identity::{Lane, Seat};
+use super::marks::harness_word;
 use super::payload::{Caller, Payload};
 use super::role::Key;
 use super::{Arm, Flow, Turn, Vars};
@@ -22,7 +23,7 @@ use super::{Arm, Flow, Turn, Vars};
 /// the event its payload or its row hook names, the overseer's turn end as
 /// a Stop. A session the record keys no pane for writes none; a named pane
 /// whose server did not answer is told, ahead of the box, the top-level
-/// and the subagent checks, as the released writer read the key first.
+/// and the subagent checks, so those checks cannot hide an unavailable key.
 pub(super) fn session_row(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload) -> Flow {
     let role = Rc::clone(&turn.role);
     let Some(key) = &role.key else {
@@ -243,16 +244,6 @@ fn account(harness: Harness, vars: &Vars) -> String {
         },
     };
     path.display().to_string()
-}
-
-fn harness_word(harness: Harness) -> &'static str {
-    match harness {
-        Harness::Claude => "claude",
-        Harness::Codex => "codex",
-        Harness::Pi => "pi",
-        Harness::Copilot => "copilot",
-        Harness::Unlisted => "",
-    }
 }
 
 /// The payload's `name` where it is a string.
