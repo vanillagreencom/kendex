@@ -1127,11 +1127,17 @@ impl Runner {
 
     /// The binary with `extra` environment over the runner's own.
     pub fn run_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
+        self.run_in(self.state_dir(), args, extra)
+    }
+
+    /// The binary run from `checkout`, whose settings roots it reads, with
+    /// `extra` environment over the runner's own.
+    pub fn run_in(&self, checkout: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let mut command = isolated();
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
             .args(args)
-            .current_dir(self.state_dir());
+            .current_dir(checkout);
         self.apply_env(&mut command);
         for (name, value) in extra {
             command.env(name, value);
@@ -1183,6 +1189,18 @@ impl Runner {
         extra: &[(&str, &str)],
         path_prefix: &Path,
     ) -> Child {
+        self.spawn_op_fleet_in(self.state_dir(), request, extra, path_prefix)
+    }
+
+    /// [`Runner::spawn_op_fleet`] run from `checkout`, whose settings roots
+    /// the child reads.
+    pub fn spawn_op_fleet_in(
+        &self,
+        checkout: &Path,
+        request: &Value,
+        extra: &[(&str, &str)],
+        path_prefix: &Path,
+    ) -> Child {
         let path = self.state_dir().join("request.json");
         std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
         let combined = tool_path(&[path_prefix]);
@@ -1200,7 +1218,7 @@ impl Runner {
             .env("PATH", combined)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .current_dir(self.state_dir());
+            .current_dir(checkout);
         if let Some(verify) = self.verify {
             command.env(
                 "AGENT_RUNTIME_TMUX_VERIFY_SECS",
@@ -1219,9 +1237,16 @@ impl Runner {
     }
 
     pub fn op_fleet_env(&self, request: &Value, extra: &[(&str, &str)]) -> Output {
+        self.op_fleet_in(self.state_dir(), request, extra)
+    }
+
+    /// A fleet `op` run from `checkout`, the repository the overseer runs
+    /// in, whose linked worktrees its lanes hold.
+    pub fn op_fleet_in(&self, checkout: &Path, request: &Value, extra: &[(&str, &str)]) -> Output {
         let path = self.state_dir().join("request.json");
         std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
-        self.run_env(
+        self.run_in(
+            checkout,
             &["op", "--fleet", "--request", &path.display().to_string()],
             extra,
         )

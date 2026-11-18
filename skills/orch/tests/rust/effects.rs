@@ -4572,11 +4572,11 @@ fn pinned_status(wt: &Path) -> String {
 
 /// The report of `item`'s terminal close, `wt` recorded as the lane's
 /// worktree, through the real worktree package.
-fn close_lane_with_worktree(runner: &Runner, item: &str, wt: &Path) -> Value {
+fn close_lane_with_worktree(runner: &Runner, checkout: &Path, item: &str, wt: &Path) -> Value {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane(item, runner, wt)]);
     runner.write_fleet(&fleet);
-    close_with_worktree(runner, item)
+    close_with_worktree(runner, checkout, item)
 }
 
 /// Whether the module store at `store` holds `commit`, by `git cat-file
@@ -4622,9 +4622,11 @@ fn assert_released(report: &Value, wt: &Path) {
 }
 
 /// The report of `item`'s terminal close with the worktree package at
-/// `cli` as `WORKTREE_CLI`.
-fn close_with_worktree_cli(runner: &Runner, item: &str, cli: &str) -> Value {
-    effect_report(&runner.op_fleet_env(&terminal_close(item), &[("WORKTREE_CLI", cli)]))
+/// `cli` as `WORKTREE_CLI`, run from `checkout`, the repository whose
+/// linked worktree the lane holds: the overseer runs in the checkout its
+/// lanes' worktrees belong to, and the close trusts no other git folder.
+fn close_with_worktree_cli(runner: &Runner, checkout: &Path, item: &str, cli: &str) -> Value {
+    effect_report(&runner.op_fleet_in(checkout, &terminal_close(item), &[("WORKTREE_CLI", cli)]))
 }
 
 /// A running lane with no recorded identity or pane whose worktree is `wt`:
@@ -4651,8 +4653,8 @@ fn worktree_cli() -> String {
 
 /// The report of `item`'s terminal close with the real worktree package as
 /// `WORKTREE_CLI`.
-fn close_with_worktree(runner: &Runner, item: &str) -> Value {
-    close_with_worktree_cli(runner, item, &worktree_cli())
+fn close_with_worktree(runner: &Runner, checkout: &Path, item: &str) -> Value {
+    close_with_worktree_cli(runner, checkout, item, &worktree_cli())
 }
 
 /// One unread notice a lane wrote to its mailbox under the worktree's
@@ -4765,7 +4767,7 @@ fn a_close_releases_a_clean_merged_worktree_and_keeps_one_it_would_lose_work_on(
         let mut fleet = runner.fleet();
         fleet["lanes"] = json!([worktree_lane("KEN-W", &runner, &wt)]);
         runner.write_fleet(&fleet);
-        let report = close_with_worktree(&runner, "KEN-W");
+        let report = close_with_worktree(&runner, &repo, "KEN-W");
         assert_eq!(report["intent"]["outcome"], "confirmed", "{name}: {report}");
         assert_eq!(report["lane"]["status"], "done", "{name}: {report}");
         assert_eq!(
@@ -4804,6 +4806,162 @@ fn a_close_releases_a_clean_merged_worktree_and_keeps_one_it_would_lose_work_on(
         // A locked fixture worktree would stand in the way of the tempdir's
         // removal only through git's own metadata; the directory removes as
         // files.
+    }
+}
+
+/// A copy of `repo`'s git folder at `at`, its `config` naming `run` as
+/// `core.fsmonitor` and as the clean filter its `info/attributes` puts every
+/// path through: a git folder a confined lane can make under its own root,
+/// from which any git that takes it for its repository or its common folder
+/// runs `run`, the filter where no `core.fsmonitor` override reaches.
+fn planted_git_folder(repo: &Path, at: &Path, run: &Path) {
+    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+    let out = program("cp")
+        .arg("-R")
+        .arg(repo.join(".git"))
+        .arg(at)
+        .output()
+        .expect("cp");
+    assert!(out.status.success(), "cp: {}", stderr(&out));
+    let config = at.join("config").display().to_string();
+    let run = run.display().to_string();
+    git(repo, &["config", "--file", &config, "core.fsmonitor", &run]);
+    git(
+        repo,
+        &["config", "--file", &config, "filter.planted.clean", &run],
+    );
+    std::fs::create_dir_all(at.join("info")).unwrap();
+    std::fs::write(at.join("info/attributes"), "* filter=planted\n").unwrap();
+}
+
+/// The tracked `.gitignore` of `wt` given another modification time, its
+/// bytes unchanged: a status read refreshes its index entry, reading the
+/// file through its filter, and writes the index.
+fn restat(wt: &Path) {
+    let past = std::time::SystemTime::now() - Duration::from_secs(600);
+    std::fs::File::options()
+        .write(true)
+        .open(wt.join(".gitignore"))
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+}
+
+/// A confined lane may write its root's `.git` file, its own admin folder
+/// under the common git folder, and a hooks folder the common one lacked at
+/// launch. The close's git reads of the lane's worktree run unconfined, as
+/// the operator, so they take their git folders from the overseer's own
+/// checkout and run no program a lane named: a `.git` leading outside that
+/// checkout's `worktrees/` and a worktree configuration holding any key but
+/// the worktree package's own keep the worktree, each with its word, and a
+/// rewritten `commondir` or a planted hook is not read, and the worktree
+/// package's removal runs from that checkout. Each row's lane write names a
+/// program that writes a marker under the row's temporary root; no marker
+/// may stand after the close.
+#[test]
+fn a_close_runs_no_program_a_lane_planted_in_its_git_folders() {
+    type Plant = fn(&Path, &Path, &Path);
+    /// The worktree's end: kept with the close's own word, kept with the
+    /// package's keyed refusal, or released.
+    enum End {
+        Kept(&'static str),
+        Refused(&'static str),
+        Released,
+    }
+    // (name, the lane's write, the worktree's end)
+    let rows: Vec<(&str, Plant, End)> = vec![
+        (
+            "the root's .git names a git folder under the root",
+            |repo, wt, run| {
+                // Shaped as a linked worktree's admin folder, so the
+                // gitfile's parser takes it and its place alone refuses it.
+                let planted = wt.join("tmp/planted/.git");
+                planted_git_folder(repo, &planted, run);
+                let admin = planted.join("worktrees/wt");
+                let gitfile = format!("gitdir: {}\n", admin.display());
+                std::fs::write(wt.join(".git"), gitfile).unwrap();
+            },
+            End::Kept("git-dir-foreign"),
+        ),
+        (
+            "its admin folder's commondir names a git folder under the root",
+            |repo, wt, run| {
+                let planted = wt.join("tmp/planted.git");
+                planted_git_folder(repo, &planted, run);
+                let commondir = format!("{}\n", planted.display());
+                std::fs::write(repo.join(".git/worktrees/wt/commondir"), commondir).unwrap();
+                restat(wt);
+            },
+            // The close's pinned reads find the tree clean and merged; the
+            // package, run from the overseer's checkout, finds no worktree
+            // registered there through the rewritten admin folder.
+            End::Refused("worktree-path-unregistered: "),
+        ),
+        (
+            "a worktree configuration under extensions.worktreeConfig",
+            |repo, _, run| {
+                git(repo, &["config", "extensions.worktreeConfig", "true"]);
+                git(
+                    repo,
+                    &[
+                        "config",
+                        "--file",
+                        ".git/worktrees/wt/config.worktree",
+                        "core.fsmonitor",
+                        &run.display().to_string(),
+                    ],
+                );
+            },
+            End::Kept("worktree-config"),
+        ),
+        (
+            "a post-index-change hook where no hooks folder stood at launch",
+            |repo, wt, run| {
+                let hooks = repo.join(".git/hooks");
+                std::fs::remove_dir_all(&hooks).unwrap();
+                std::fs::create_dir(&hooks).unwrap();
+                std::os::unix::fs::symlink(run, hooks.join("post-index-change")).unwrap();
+                restat(wt);
+            },
+            End::Released,
+        ),
+    ];
+    for (name, plant, end) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let (repo, wt) = worktree_fixture(runner.state_dir());
+        let marker = runner.state_dir().join("planted-ran");
+        let run = runner.state_dir().join("planted-program");
+        write_executable(
+            &run,
+            format!("#!/bin/sh\necho \"$0\" >> '{}'\n", marker.display()),
+        );
+        plant(&repo, &wt, &run);
+        let mut fleet = runner.fleet();
+        fleet["lanes"] = json!([worktree_lane("KEN-P", &runner, &wt)]);
+        runner.write_fleet(&fleet);
+        let report = close_with_worktree(&runner, &repo, "KEN-P");
+        assert!(
+            !marker.exists(),
+            "{name}: the close ran the lane's program: {report}"
+        );
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{name}: {report}");
+        let kept = report["lane"]["kept"].as_str();
+        match end {
+            End::Kept(word) => assert_eq!(kept, Some(word), "{name}: {report}"),
+            End::Refused(line) => assert!(
+                kept.is_some_and(|k| k.starts_with("refused:status=1 ") && k.contains(line)),
+                "{name}: {report}"
+            ),
+            End::Released => assert_eq!(kept, None, "{name}: {report}"),
+        }
+        assert_eq!(
+            wt.exists(),
+            !matches!(end, End::Released),
+            "{name}: the worktree on disk"
+        );
     }
 }
 
@@ -4846,7 +5004,7 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
         ),
     ];
     runner.init_fleet();
-    let (_repo, wt) = worktree_fixture(dir.path());
+    let (repo, wt) = worktree_fixture(dir.path());
     let launched = effect_report(&runner.op_fleet(&launch_request("KEN-W", runner.state_dir())));
     assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
     let pid = launched["lane"]["launch"]["pid"].as_u64().unwrap() as u32;
@@ -4884,7 +5042,7 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
     assert!(wt.exists(), "a refused close removes nothing");
 
     std::fs::remove_file(&record).unwrap();
-    let answer = reply(&runner.op_fleet_env(&close, &worktree));
+    let answer = reply(&runner.op_fleet_in(&repo, &close, &worktree));
     let result = &answer["result"];
     assert_eq!(result["word"], "closed", "{answer}");
     assert!(!live(pid), "the harness is stopped");
@@ -4917,7 +5075,7 @@ fn a_close_keeps_a_worktree_whose_untracked_draft_git_status_config_hides() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let (repo, wt) = worktree_fixture(runner.state_dir());
     git(&wt, &["config", "status.showUntrackedFiles", "no"]);
     let draft = wt.join("draft.txt");
     std::fs::write(&draft, "x\n").unwrap();
@@ -4929,7 +5087,7 @@ fn a_close_keeps_a_worktree_whose_untracked_draft_git_status_config_hides() {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-H", &runner, &wt)]);
     runner.write_fleet(&fleet);
-    let report = close_with_worktree(&runner, "KEN-H");
+    let report = close_with_worktree(&runner, &repo, "KEN-H");
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
     assert_eq!(
@@ -4971,7 +5129,7 @@ fn a_close_keeps_a_worktree_whose_file_over_an_ignored_gitlink_is_dirt() {
         "T sub",
         "the pinned read lists it"
     );
-    let report = close_lane_with_worktree(&runner, "KEN-T", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-T", &wt);
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
     assert_eq!(report["lane"]["kept"], "dirty", "{report}");
@@ -5008,7 +5166,7 @@ fn a_close_keeps_a_worktree_whose_nested_submodule_setting_hides_a_draft() {
         "",
         "the probe's draft is hidden by the nested submodule's ignore=all"
     );
-    let report = close_lane_with_worktree(&runner, "KEN-N", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-N", &wt);
     assert_kept(&report, &wt, "submodules");
     assert_eq!(
         std::fs::read(&draft).ok().as_deref(),
@@ -5045,7 +5203,7 @@ fn a_close_keeps_a_worktree_whose_submodule_holds_an_unpushed_commit() {
         git(&wt, &["rev-parse", "HEAD"]),
         "the probe's gitlink bump is merged"
     );
-    let report = close_lane_with_worktree(&runner, "KEN-C", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-C", &wt);
     assert_kept(&report, &wt, "submodules");
     assert!(
         store.is_dir(),
@@ -5082,7 +5240,7 @@ fn a_close_releases_a_clean_worktree_whose_submodule_was_never_initialized() {
         !wt.join("sub/.git").exists(),
         "the probe's submodule is populated"
     );
-    let report = close_lane_with_worktree(&runner, "KEN-U", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-U", &wt);
     assert_released(&report, &wt);
 }
 
@@ -5136,7 +5294,7 @@ fn a_close_keeps_a_worktree_whose_submodule_activation_setting_hides_a_nested_dr
             "",
             "{name}: the probe's draft is hidden by the nested ignore=all"
         );
-        let report = close_lane_with_worktree(&runner, "KEN-A", &wt);
+        let report = close_lane_with_worktree(&runner, &repo, "KEN-A", &wt);
         assert_kept(&report, &wt, "submodules");
         assert_eq!(
             std::fs::read(&draft).ok().as_deref(),
@@ -5175,7 +5333,7 @@ fn a_close_keeps_a_worktree_whose_inactive_submodule_holds_an_unpushed_commit() 
         "",
         "the probe's superproject listing reads clean"
     );
-    let report = close_lane_with_worktree(&runner, "KEN-I", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-I", &wt);
     assert_kept(&report, &wt, "submodules");
     assert!(
         commit_in_store(&store, &work),
@@ -5215,7 +5373,7 @@ fn a_close_keeps_a_worktree_whose_deinitialized_submodule_left_its_store() {
         "",
         "the probe's draft under the gitlink is listed by nothing"
     );
-    let report = close_lane_with_worktree(&runner, "KEN-D", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-D", &wt);
     assert_kept(&report, &wt, "submodules");
     assert_eq!(
         std::fs::read(&draft).ok().as_deref(),
@@ -5275,7 +5433,7 @@ fn a_close_keeps_a_worktree_whose_submodule_is_a_clone_with_no_store() {
         "",
         "the probe's draft is hidden by the nested ignore=all"
     );
-    let report = close_lane_with_worktree(&runner, "KEN-H", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-H", &wt);
     assert_kept(&report, &wt, "submodules");
     assert_eq!(
         std::fs::read(&draft).ok().as_deref(),
@@ -5316,7 +5474,7 @@ fn a_close_releases_a_clean_worktree_whose_gitlink_has_no_gitmodules_mapping() {
         String::from_utf8_lossy(&unmapped.stdout)
     );
     assert_eq!(pinned_status(&wt), "", "the probe's tree reads clean");
-    let report = close_lane_with_worktree(&runner, "KEN-G", &wt);
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-G", &wt);
     assert_released(&report, &wt);
 }
 
@@ -5342,7 +5500,7 @@ fn a_close_releasing_a_worktree_moves_its_unread_lane_mail_to_the_main_checkout(
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-M", &runner, &wt)]);
     runner.write_fleet(&fleet);
-    let report = close_with_worktree(&runner, "KEN-M");
+    let report = close_with_worktree(&runner, &repo, "KEN-M");
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
     assert_eq!(
@@ -5380,7 +5538,7 @@ fn a_close_keeps_a_worktree_whose_lane_mail_cannot_be_moved() {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-R", &runner, &wt)]);
     runner.write_fleet(&fleet);
-    let report = close_with_worktree(&runner, "KEN-R");
+    let report = close_with_worktree(&runner, &repo, "KEN-R");
     std::fs::set_permissions(&main_mail, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
@@ -5421,7 +5579,7 @@ fn a_close_releasing_a_worktree_records_the_lane_mail_kept_beside_the_main_check
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-J", &runner, &wt)]);
     runner.write_fleet(&fleet);
-    let report = close_with_worktree(&runner, "KEN-J");
+    let report = close_with_worktree(&runner, &repo, "KEN-J");
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
     assert_eq!(
@@ -5450,14 +5608,14 @@ fn a_later_close_that_releases_clears_an_earlier_closes_kept() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let (repo, wt) = worktree_fixture(runner.state_dir());
     let mut fleet = runner.fleet();
     let mut lane = worktree_lane("KEN-S", &runner, &wt);
     lane["kept"] = json!("dirty");
     lane["kept_mail"] = json!("/stale");
     fleet["lanes"] = json!([lane]);
     runner.write_fleet(&fleet);
-    let report = close_with_worktree(&runner, "KEN-S");
+    let report = close_with_worktree(&runner, &repo, "KEN-S");
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
     assert_eq!(
@@ -5485,7 +5643,7 @@ fn a_claude_cloud_lanes_local_worktree_is_owed_and_released() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = claim_worktree_fixture(runner.state_dir());
+    let (repo, wt) = claim_worktree_fixture(runner.state_dir());
     let tracked = git(&wt, &["ls-files"]);
     assert!(
         !tracked.is_empty() && git(&wt, &["ls-files", "--deleted"]) == tracked,
@@ -5494,7 +5652,7 @@ fn a_claude_cloud_lanes_local_worktree_is_owed_and_released() {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([cloud_lane("KEN-C", &runner, &wt)]);
     runner.write_fleet(&fleet);
-    let report = close_with_worktree(&runner, "KEN-C");
+    let report = close_with_worktree(&runner, &repo, "KEN-C");
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
     assert_eq!(
@@ -5517,13 +5675,13 @@ fn a_claude_cloud_lanes_claim_worktree_holding_a_draft_is_kept_dirty() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = claim_worktree_fixture(runner.state_dir());
+    let (repo, wt) = claim_worktree_fixture(runner.state_dir());
     let draft = wt.join("draft.txt");
     std::fs::write(&draft, "x\n").unwrap();
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([cloud_lane("KEN-D", &runner, &wt)]);
     runner.write_fleet(&fleet);
-    let report = close_with_worktree(&runner, "KEN-D");
+    let report = close_with_worktree(&runner, &repo, "KEN-D");
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["lane"]["status"], "done", "{report}");
     assert_eq!(
@@ -5558,12 +5716,12 @@ fn a_worktree_package_that_cannot_start_holds_the_close_with_nothing_removed() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let (repo, wt) = worktree_fixture(runner.state_dir());
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-N", &runner, &wt)]);
     runner.write_fleet(&fleet);
     let missing = runner.state_dir().join("no-such-package/worktree");
-    let report = close_with_worktree_cli(&runner, "KEN-N", &missing.display().to_string());
+    let report = close_with_worktree_cli(&runner, &repo, "KEN-N", &missing.display().to_string());
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
     assert_eq!(
         report["intent"]["observation"]["worktree"], "unreadable",
@@ -5609,7 +5767,7 @@ fn an_unreadable_worktree_holds_the_close_worktree_unreadable() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let (repo, wt) = worktree_fixture(runner.state_dir());
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-U", &runner, &wt)]);
     runner.write_fleet(&fleet);
@@ -5617,7 +5775,7 @@ fn an_unreadable_worktree_holds_the_close_worktree_unreadable() {
     // (its `.git`, its runs under `tmp/`) do not.
     std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o000)).unwrap();
     let unread = std::fs::metadata(wt.join(".git")).is_err();
-    let report = close_with_worktree(&runner, "KEN-U");
+    let report = close_with_worktree(&runner, &repo, "KEN-U");
     std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert!(unread, "the probe's `.git` entry is unreadable");
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
@@ -5723,7 +5881,7 @@ fn a_close_crashed_at_its_removal_holds_the_worktree_acquired_for_the_repeat() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let (repo, wt) = worktree_fixture(runner.state_dir());
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-X", &runner, &wt)]);
     runner.write_fleet(&fleet);
@@ -5741,7 +5899,8 @@ fn a_close_crashed_at_its_removal_holds_the_worktree_acquired_for_the_repeat() {
     let mark_s = mark.display().to_string();
     let skip_s = skip.display().to_string();
     let cli = worktree_cli();
-    let mut child = runner.spawn_op_fleet(
+    let mut child = runner.spawn_op_fleet_in(
+        &repo,
         &terminal_close("KEN-X"),
         &[
             ("WORKTREE_CLI", cli.as_str()),
@@ -5787,7 +5946,7 @@ fn a_close_crashed_at_its_removal_holds_the_worktree_acquired_for_the_repeat() {
     });
     assert!(wt.exists(), "the held removal never ran");
     // The repeated close reads the standing worktree and releases it.
-    let report = close_with_worktree(&runner, "KEN-X");
+    let report = close_with_worktree(&runner, &repo, "KEN-X");
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(
         report["intent"]["observation"]["worktree"], "released",
@@ -5811,7 +5970,7 @@ fn a_moved_close_owing_its_worktree_releases_it_lane_moved() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let (repo, wt) = worktree_fixture(runner.state_dir());
     let new_harness = Owned::sleep();
     let new_pane = server.open_idle("KEN-MW", runner.state_dir());
     let mut fleet = runner.fleet();
@@ -5835,7 +5994,7 @@ fn a_moved_close_owing_its_worktree_releases_it_lane_moved() {
         "lane_obligations": {"standing": [{"kind": "worktree", "path": wt.display().to_string()}]},
     }]);
     runner.write_fleet(&fleet);
-    let report = effect_report(&runner.op_fleet(&terminal_close("KEN-MW")));
+    let report = effect_report(&runner.op_fleet_in(&repo, &terminal_close("KEN-MW"), &[]));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert!(
         lane_discharged_by(&report["intent"], "lane-moved")

@@ -542,7 +542,7 @@ impl<'a> LaneOperation<'a> {
         let Some(path) = self.lane.worktree() else {
             return Ok(None);
         };
-        let release = match worktree::plan(&path) {
+        let release = match worktree::plan(&path, &self.run.settings.roots.common) {
             worktree::Plan::Answered(release) => {
                 self.discharge_read(LaneDischarge::Worktree {
                     path,

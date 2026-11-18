@@ -56,6 +56,8 @@ kendex installs these with orch.
 
 On Linux a sandboxed lane's writes are held to its checkout, its item's own records and the folders its launch grants. A Copilot CLI lane runs unsandboxed everywhere, since Copilot reads its sign-in over the session bus the sandbox hides. On macOS every lane runs unsandboxed. The package's suites run in CI on Linux and on macOS, against a stand-in harness.
 
+A sandboxed lane can still write the shared Cargo and npm caches, the wider cache folder, the account folders' plugins and instruction files, four git folders of the main checkout (its hooks folder where none stands at launch, its worktree configuration, its submodule stores and its attributes file) and the other lanes' worktree records. An operator process may later run or load what a lane wrote there, so the sandbox is not complete.
+
 ## Setup
 
 kendex installs the skills orch requires, agent-runtime among them. Build the runtime once per install:

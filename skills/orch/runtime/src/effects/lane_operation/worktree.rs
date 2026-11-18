@@ -3,10 +3,13 @@
 //! worktree package's `remove`, the one owner of what a removal must
 //! preserve.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::host;
+
+use crate::marker;
 
 /// How long one git read or one worktree package call may run.
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
@@ -34,6 +37,14 @@ pub(in crate::effects) enum KeptReason {
     /// The path's `.git` is a directory: the repository's main worktree,
     /// which the worktree package's `remove` never removes.
     MainWorktree,
+    /// The path's `.git` file names no admin folder directly under the
+    /// overseer's own common git folder's `worktrees/`: git would read the
+    /// worktree through a folder the lane chose, so no git runs there.
+    GitDirForeign,
+    /// The worktree's admin folder holds a `config.worktree` with a key
+    /// outside the worktree package's own ([`inert_worktree_key`]): git
+    /// would read a setting the lane wrote, so no git runs there.
+    WorktreeConfig,
     /// The worktree package's `remove` could not move a lane mailbox under
     /// the worktree to the main checkout's, so it removed nothing: the mail
     /// stands where the lane wrote it.
@@ -53,6 +64,8 @@ impl KeptReason {
             KeptReason::Dirty => "dirty".to_owned(),
             KeptReason::NotAWorktree => "not-a-worktree".to_owned(),
             KeptReason::MainWorktree => "main-worktree".to_owned(),
+            KeptReason::GitDirForeign => "git-dir-foreign".to_owned(),
+            KeptReason::WorktreeConfig => "worktree-config".to_owned(),
             KeptReason::MailUnmoved => "mail-unmoved".to_owned(),
             KeptReason::Refused { detail } => format!("refused:{detail}"),
         }
@@ -153,12 +166,12 @@ fn read_worktree(path: &str) -> WorktreeRead {
 /// change, a modification) still is; in any other mode, or none, every
 /// line is dirt. The mark is read with `--default ""`, so an absent key is
 /// no mode and a config that cannot be read is a failed read.
-fn judge_worktree(path: &str) -> std::result::Result<Option<KeptReason>, String> {
-    if holds_submodule(path)? {
+fn judge_worktree(pinned: &Pinned) -> std::result::Result<Option<KeptReason>, String> {
+    if holds_submodule(pinned)? {
         return Ok(Some(KeptReason::Submodules));
     }
     let status = git_lines(
-        path,
+        pinned,
         "status",
         &[
             "status",
@@ -169,7 +182,7 @@ fn judge_worktree(path: &str) -> std::result::Result<Option<KeptReason>, String>
     )?;
     if !status.is_empty() {
         let claim = git_lines(
-            path,
+            pinned,
             "checkout-mode",
             &[
                 "config",
@@ -185,7 +198,7 @@ fn judge_worktree(path: &str) -> std::result::Result<Option<KeptReason>, String>
             return Ok(Some(KeptReason::Dirty));
         }
     }
-    let branch = git_lines(path, "branch", &["branch", "--show-current"])?;
+    let branch = git_lines(pinned, "branch", &["branch", "--show-current"])?;
     let mut args = vec!["rev-list", "-n", "1", "HEAD", "--not"];
     let own_branch;
     let own_remote;
@@ -203,26 +216,8 @@ fn judge_worktree(path: &str) -> std::result::Result<Option<KeptReason>, String>
     } else {
         args.extend(["--branches", "--remotes"]);
     }
-    let unreached = git_lines(path, "rev-list", &args)?;
+    let unreached = git_lines(pinned, "rev-list", &args)?;
     Ok((!unreached.is_empty()).then_some(KeptReason::Unmerged))
-}
-
-/// The main checkout of the repository the linked worktree at `path`
-/// belongs to: the parent of its common git directory (`git rev-parse
-/// --path-format=absolute --git-common-dir`, git-rev-parse(1)), as the
-/// worktree package resolves its own `PROJECT_ROOT`. The package takes its
-/// repository from the directory it runs in, so the removal runs there,
-/// never inside the tree it deletes.
-fn main_worktree(path: &str) -> std::result::Result<String, String> {
-    let common = git_path(
-        path,
-        "common-dir",
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?;
-    common
-        .parent()
-        .map(|main| main.display().to_string())
-        .ok_or_else(|| format!("common-dir:no-parent:{}", common.display()))
 }
 
 /// Run the worktree package's `remove` on `path` through the one runner,
@@ -372,10 +367,10 @@ impl RemoveReply {
 /// ls-files --stage -z`, an entry of mode `160000`, NUL-separated so a path
 /// with special characters is not quoted) has a `.git` under its path.
 /// `Err` is a read that failed.
-fn holds_submodule(path: &str) -> std::result::Result<bool, String> {
+fn holds_submodule(pinned: &Pinned) -> std::result::Result<bool, String> {
     use std::os::unix::ffi::OsStrExt;
     let modules = git_path(
-        path,
+        pinned,
         "modules-path",
         &[
             "rev-parse",
@@ -392,7 +387,7 @@ fn holds_submodule(path: &str) -> std::result::Result<bool, String> {
             return Err(format!("modules-path:{}:{}", modules.display(), e.kind()));
         }
     }
-    let index = git_output(path, "ls-files", &["ls-files", "--stage", "-z"])?;
+    let index = git_output(pinned, "ls-files", &["ls-files", "--stage", "-z"])?;
     for entry in index.stdout.split(|byte| *byte == 0) {
         // `<mode> <object> <stage>\t<path>` (git-ls-files(1)).
         let Some(rest) = entry.strip_prefix(b"160000 ") else {
@@ -401,8 +396,8 @@ fn holds_submodule(path: &str) -> std::result::Result<bool, String> {
         let Some(tab) = rest.iter().position(|byte| *byte == b'\t') else {
             return Err("ls-files:a gitlink entry names no path".to_owned());
         };
-        let git_entry = Path::new(path)
-            .join(std::ffi::OsStr::from_bytes(&rest[tab + 1..]))
+        let git_entry = Path::new(pinned.root)
+            .join(OsStr::from_bytes(&rest[tab + 1..]))
             .join(".git");
         // A file standing at the gitlink's path (a person's replacement of
         // a vendored submodule) is no populated submodule, as git reads it;
@@ -422,22 +417,161 @@ fn holds_submodule(path: &str) -> std::result::Result<bool, String> {
     Ok(false)
 }
 
-/// The output of a git read that must succeed: a run that could not start
-/// or exited non-zero is `Err`, naming the operation, the exit and the
-/// first stderr line.
+/// The git folders a close reads a linked worktree through: the worktree
+/// `root` the lane record names, its admin folder and the common git folder
+/// of the overseer's own checkout, each as [`pin`] proved it.
+struct Pinned<'a> {
+    root: &'a str,
+    admin: PathBuf,
+    common: PathBuf,
+}
+
+/// The worktree at `root` pinned to the overseer's own git folders, or the
+/// reason it is kept with no git run there. A confined lane may write its
+/// root's `.git` file and everything under its admin folder, so git's own
+/// discovery from `root` would read a configuration the lane chose and run
+/// the programs it names (`core.fsmonitor`, a lazy fetch's
+/// `core.sshCommand`), as the operator. The `.git` file must name, through
+/// the launch record's parser ([`marker::git_dirs_of`]), a real folder
+/// directly under `<main>/.git/worktrees/`, where `main` is the overseer's
+/// own main checkout, else `git-dir-foreign`. A `config.worktree` in that
+/// folder, which git reads where the common configuration turns on
+/// `extensions.worktreeConfig`, may hold only [`inert_worktree_key`]s,
+/// else `worktree-config`; it is judged wherever it stands, the extension
+/// unread. `Err` is a read that failed.
+fn pin<'a>(
+    root: &'a str,
+    main: &Path,
+) -> std::result::Result<std::result::Result<Pinned<'a>, KeptReason>, String> {
+    let foreign = Ok(Err(KeptReason::GitDirForeign));
+    let gitfile = std::fs::read(Path::new(root).join(".git"))
+        .map_err(|e| format!("git-entry:{}", e.kind()))?;
+    let Some((named, _)) = std::str::from_utf8(&gitfile)
+        .ok()
+        .and_then(marker::git_dirs_of)
+    else {
+        return foreign;
+    };
+    let Some(worktrees) = canonical(&main.join(".git").join("worktrees"))? else {
+        return foreign;
+    };
+    let Some(admin) = canonical(&named)? else {
+        return foreign;
+    };
+    let real_folder = std::fs::metadata(&admin)
+        .map_err(|e| format!("admin-dir:{}", e.kind()))?
+        .is_dir();
+    if !real_folder || admin.parent() != Some(worktrees.as_path()) {
+        return foreign;
+    }
+    let Some(common) = worktrees.parent().map(Path::to_path_buf) else {
+        return foreign;
+    };
+    let pinned = Pinned {
+        root,
+        admin,
+        common,
+    };
+    let config = pinned.admin.join("config.worktree");
+    match std::fs::symlink_metadata(&config) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("worktree-config:{}", e.kind())),
+        Ok(_) => {
+            let config = config.display().to_string();
+            // `--no-includes`: an `include.path` is itself a key, listed and
+            // judged, never followed (git-config(1)).
+            let names = git_output(
+                &pinned,
+                "worktree-config",
+                &[
+                    "config",
+                    "--file",
+                    &config,
+                    "--no-includes",
+                    "--name-only",
+                    "--list",
+                    "-z",
+                ],
+            )?;
+            if names
+                .stdout
+                .split(|byte| *byte == 0)
+                .any(|name| !name.is_empty() && !inert_worktree_key(name))
+            {
+                return Ok(Err(KeptReason::WorktreeConfig));
+            }
+        }
+    }
+    Ok(Ok(pinned))
+}
+
+/// `path` resolved, `None` where it or a folder on it is absent.
+fn canonical(path: &Path) -> std::result::Result<Option<PathBuf>, String> {
+    match std::fs::canonicalize(path) {
+        Ok(path) => Ok(Some(path)),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(format!("canonical:{}:{}", path.display(), e.kind())),
+    }
+}
+
+/// Whether a worktree configuration key, as `git config --name-only` prints
+/// it (section and key in lower case), is one the worktree package writes:
+/// the bot identity and signing keys (`configure_worktree_git`), read only
+/// by a commit or a signature check, which no read of the close runs, and
+/// the package's own `kendex-worktree.` and `kendex-restack.` sections,
+/// which git does not read.
+fn inert_worktree_key(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"user.name" | b"user.email" | b"user.signingkey" | b"gpg.format" | b"commit.gpgsign"
+    ) || name.starts_with(b"kendex-worktree.")
+        || name.starts_with(b"kendex-restack.")
+}
+
+/// The output of a git read of the pinned worktree that must succeed: a run
+/// that could not start or exited non-zero is `Err`, naming the operation,
+/// the exit and the first stderr line. Every read names its git folders
+/// (git(1) § Environment Variables), so a `.git` file or a `commondir` is
+/// never followed; `GIT_NO_LAZY_FETCH` stops a fetch from a promisor remote
+/// for an object a lane's partial clone lacks; `core.fsmonitor` and
+/// `core.hooksPath` are overridden, so no monitor runs and no hook a lane
+/// put in a hooks folder the common one lacked at launch runs when a status
+/// read rewrites the index.
 fn git_output(
-    path: &str,
+    pinned: &Pinned,
     operation: &'static str,
     args: &[&str],
 ) -> std::result::Result<std::process::Output, String> {
-    let mut argv = vec!["-C", path];
+    let mut argv = vec![
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+    ];
     argv.extend_from_slice(args);
-    let output = host::run_tagged(
+    let env = [
+        ("GIT_DIR", pinned.admin.as_os_str()),
+        ("GIT_COMMON_DIR", pinned.common.as_os_str()),
+        ("GIT_WORK_TREE", OsStr::new(pinned.root)),
+        ("GIT_NO_LAZY_FETCH", OsStr::new("1")),
+    ];
+    let output = host::run_tagged_in(
         "worktree",
         "git",
         Path::new("git"),
         operation,
         &argv,
+        host::Place {
+            cwd: Some(Path::new(pinned.root)),
+            env: &env,
+        },
         CLI_TIMEOUT,
     )
     .map_err(|e| e.to_string())?;
@@ -461,26 +595,26 @@ fn git_output(
 /// ends it with, as bytes, since a pathname is one value whatever
 /// characters it holds; an empty answer is a failed read.
 fn git_path(
-    path: &str,
+    pinned: &Pinned,
     operation: &'static str,
     args: &[&str],
 ) -> std::result::Result<PathBuf, String> {
     use std::os::unix::ffi::OsStrExt;
-    let output = git_output(path, operation, args)?;
+    let output = git_output(pinned, operation, args)?;
     let bytes = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
     if bytes.is_empty() {
         return Err(format!("{operation}:no path printed"));
     }
-    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    Ok(PathBuf::from(OsStr::from_bytes(bytes)))
 }
 
 /// The non-empty stdout lines of a git read that must succeed.
 fn git_lines(
-    path: &str,
+    pinned: &Pinned,
     operation: &'static str,
     args: &[&str],
 ) -> std::result::Result<Vec<String>, String> {
-    let output = git_output(path, operation, args)?;
+    let output = git_output(pinned, operation, args)?;
     Ok(host::stdout_text(&output)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -497,9 +631,14 @@ pub(super) enum Plan {
 
 /// The reads of the worktree at `path` before any removal: the path gone,
 /// unreadable, no worktree or the main worktree answers at once; a linked
-/// worktree that holds a submodule, a dirty tree or unmerged commits is
-/// kept with its reason; a clean, merged one is the package's to remove.
-pub(super) fn plan(path: &str) -> Plan {
+/// worktree [`pin`] keeps, or that holds a submodule, a dirty tree or
+/// unmerged commits, is kept with its reason; a clean, merged one is the
+/// package's to remove, run from `main`, the overseer's own main checkout
+/// (`Roots::common`), the parent of the common git folder the reads were
+/// pinned to: the package takes its repository from the directory it runs
+/// in, so the removal runs there, never inside the tree it deletes nor in a
+/// folder the lane's git answers named.
+pub(super) fn plan(path: &str, main: &Path) -> Plan {
     Plan::Answered(match read_worktree(path) {
         WorktreeRead::Gone => WorktreeRelease::Gone,
         WorktreeRead::Unreadable { cause } => WorktreeRelease::Held { cause },
@@ -509,13 +648,17 @@ pub(super) fn plan(path: &str) -> Plan {
         WorktreeRead::Main => WorktreeRelease::Kept {
             reason: KeptReason::MainWorktree,
         },
-        WorktreeRead::Linked => match judge_worktree(path).and_then(|kept| match kept {
-            Some(reason) => Ok(Err(reason)),
-            None => main_worktree(path).map(Ok),
+        WorktreeRead::Linked => match pin(path, main).and_then(|pinned| match pinned {
+            Err(reason) => Ok(Some(reason)),
+            Ok(pinned) => judge_worktree(&pinned),
         }) {
             Err(cause) => WorktreeRelease::Held { cause },
-            Ok(Err(reason)) => WorktreeRelease::Kept { reason },
-            Ok(Ok(main)) => return Plan::Remove { main },
+            Ok(Some(reason)) => WorktreeRelease::Kept { reason },
+            Ok(None) => {
+                return Plan::Remove {
+                    main: main.display().to_string(),
+                };
+            }
         },
     })
 }
