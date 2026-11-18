@@ -1,1 +1,0 @@
-- `kendex add --allow-repo-effects` no longer prints a render-skipped instruction for a package it sets up in the same run.
