@@ -389,7 +389,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # default on claude, codex or copilot. Pi requires provider/model.
 # A claude exact id, such as claude-opus-5-5, still launches as written and
 # warns once per run until the next major release; replace it with its
-# class. A codex or copilot exact id, such as gpt-6.1-sol, is a supported
+# class. A codex or copilot exact id, such as gpt-6.2-sol, is a supported
 # form and launches as written with no warning: a class there runs the
 # harness default, which a lane launch refuses.
 # The deprecated positive account number first uses
@@ -424,8 +424,8 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # launch-model-missing until codex list evidence reaches the launch.
 # The final entry alone may end in :last, a last choice the walk holds back
 # under the rule in references/lane-directive.md § Lane preference.
-# Example: claude:standard:high,pi:github-copilot/gpt-6.1-sol:high:last
-# ORCH_LANE_PREFERENCE = "claude@claude-cloud:standard:high,codex:gpt-6.1-sol:high"
+# Example: claude:standard:high,pi:github-copilot/gpt-6.2-sol:high:last
+# ORCH_LANE_PREFERENCE = "claude@claude-cloud:standard:high,codex:gpt-6.2-sol:high"
 
 # Minutes before the projected account wall that starts overseer succession.
 # Zero disables the rate trigger.

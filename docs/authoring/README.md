@@ -164,10 +164,10 @@ An agent requests a portable model class through its `model:` field. Consumer se
 schema = 8
 
 [model-classes]
-standard = "openai/gpt-6.1-sol"
+standard = "openai/gpt-6.2-sol"
 
 [model-bindings.codex]
-standard = "gpt-6.1-sol"
+standard = "gpt-6.2-sol"
 
 [model-bindings.copilot]
 standard = "claude-opus-4.6"

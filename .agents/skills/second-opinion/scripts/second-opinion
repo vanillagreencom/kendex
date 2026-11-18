@@ -306,7 +306,7 @@ Default commands:
           pi -p --no-session --no-extensions --model MODEL --thinking high
             --tools read,grep,find,ls
           MODEL is github-copilot/claude-opus-5.5 for pi-copilot (identity
-          claude) and github-copilot/gpt-6.1-sol for pi-copilot-gpt
+          claude) and github-copilot/gpt-6.2-sol for pi-copilot-gpt
           (identity codex). Neither is in the default roster: a consumer
           names it in SECOND_OPINION_MODELS, which needs no other key.
           Read-only file tools and no shell, so each is sent the review
@@ -930,7 +930,7 @@ canon_identity() {
   # detected, per-target and roster-derived — so trimming once covers them all.
   kendex_trim id "$1"
   id=$(lower "$id")
-  # Provider-qualified ids — openai-codex/gpt-6.1-sol, openai/gpt-6.1-sol,
+  # Provider-qualified ids — openai-codex/gpt-6.2-sol, openai/gpt-6.2-sol,
   # anthropic/claude-opus-4 — are exactly what Pi and OpenCode show an operator,
   # and those are the operators REQUIRED to declare an identity. Canonicalize on
   # the component after the final slash so the value their harness shows them
@@ -1110,7 +1110,7 @@ stock_copilot_model() {
   [[ -z "${!var:-}" ]] || return 1
   case "$var" in
     SECOND_OPINION_PI_COPILOT_CMD)     printf 'github-copilot/claude-opus-5.5' ;;
-    SECOND_OPINION_PI_COPILOT_GPT_CMD) printf 'github-copilot/gpt-6.1-sol' ;;
+    SECOND_OPINION_PI_COPILOT_GPT_CMD) printf 'github-copilot/gpt-6.2-sol' ;;
     *)                                 return 1 ;;
   esac
 }

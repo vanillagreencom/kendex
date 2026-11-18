@@ -103,7 +103,7 @@ fn tier_model_names_a_rank_and_refuses_one_off_the_ladder() {
 
     let top = kendex(home, home, &["tier-model", "codex", "1"]);
     assert_eq!(top.status.code(), Some(0), "{top:?}");
-    assert_eq!(String::from_utf8_lossy(&top.stdout), "gpt-6-astra\n");
+    assert_eq!(String::from_utf8_lossy(&top.stdout), "gpt-6.2-astra\n");
 
     let off = kendex(home, home, &["tier-model", "codex", "5"]);
     assert_eq!(off.status.code(), Some(1), "{off:?}");
