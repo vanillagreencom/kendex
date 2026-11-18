@@ -539,10 +539,15 @@ environment_rows() {
 [0,"grep -F /proc/4242/environ fixtures.txt","process-environ-implicit-pattern","claude-and-codex"]
 [0,"grep --include '*.md' /proc/4242/environ docs","process-environ-include-pattern","claude-and-codex"]
 [0,"grep --include='*.md' /proc/4242/environ docs","process-environ-include-attached-pattern","claude-and-codex"]
+[0,"grep -F -A 1 --group-separator fixture-separator /proc/4242/environ fixture.txt","process-environ-context-separator-pattern","claude-and-codex"]
+[0,"grep -F -A 1 --group-separator=/proc/4242/environ FIXTURE fixture.txt","process-environ-attached-context-separator","claude-and-codex"]
 [2,"xargs --arg-file=/proc/4242/environ","process-environ-xargs-attached","claude-and-codex"]
 [2,"xargs -0ra/proc/4242/environ","process-environ-xargs-cluster","claude-and-codex"]
 [2,"xargs -0ra /proc/4242/environ","process-environ-xargs-detached","claude-and-codex"]
 [0,"xargs --arg-file=fixtures/arguments.txt","process-ordinary-xargs-arg-file","claude-and-codex"]
+[2,"xargs cat -n /proc/4242/environ","process-environ-xargs-child-cat","claude-and-codex"]
+[0,"xargs /usr/bin/printf '%s\\n' --arg-file=/proc/4242/environ","process-environ-xargs-child-data","claude-and-codex"]
+[0,"xargs cat -n fixtures.txt","process-ordinary-xargs-child-cat","claude-and-codex"]
 [2,"diff --from-file=/proc/4242/environ fixtures.txt","process-environ-diff-from","claude-and-codex"]
 [2,"diff --to-file /proc/4242/environ fixtures.txt","process-environ-diff-to","claude-and-codex"]
 [0,"diff --label /proc/4242/environ before.txt after.txt","process-environ-diff-label","claude-and-codex"]
@@ -557,6 +562,12 @@ environment_rows() {
 [2,"cd -- /proc/4242 && head -c 32 environ","process-environ-shell-cd","claude-and-codex"]
 [2,"cd /proc; cd 4242; head -c 32 < environ","process-environ-shell-cd-redirect","claude-and-codex"]
 [0,"env --chdir=/proc/4242 head -c 32 < environ","process-env-chdir-keeps-shell-redirect-cwd","claude-and-codex"]
+[2,"cd /proc/4242 && bash -c 'head -c 32 environ'","process-environ-shell-cd-source","claude-and-codex"]
+[2,"env --chdir=/proc/4242 bash -c 'head -c 32 environ'","process-environ-env-chdir-source","claude-and-codex"]
+[2,"env --chdir=/proc env --chdir=4242 -S 'head -c 32 environ'","process-environ-env-chdir-split-source","claude-and-codex"]
+[2,"env --chdir=/proc/4242 bash <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-env-chdir-stdin-source","claude-and-codex"]
+[0,"env --chdir=/proc/4242 bash -c 'printf done' < environ; bash -c 'head -c 32 environ'","process-env-source-context-keeps-siblings","claude-and-codex"]
+[0,"bash -c 'head -c 32 environ'; cd /proc/4242","process-later-cd-keeps-earlier-source-cwd","claude-and-codex"]
 [2,"ps eww -p 4242","process-ps-bsd","claude-and-codex"]
 [2,"ps axueww","process-ps-cluster","claude-and-codex"]
 [2,"ps -E -p 4242","process-ps-macos","claude-and-codex"]
@@ -2157,6 +2168,7 @@ no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expecte
 unit-environment|elif systemctl_environment; then mode=dump-unknown|elif systemctl_environment; then mode=other|exit=0 expected=2|unit-env-list-claude unit-env-list-codex
 systemctl-property-order|elif [ -z "$verb" ]; then selected=1; fi|else selected=1; fi|exit=0 expected=2|unit-property-after-verb-claude unit-property-after-verb-codex
 reader-file-option|if environment_file_input "$value" "$kind"; then return; fi ;;|if false; then return; fi ;;|exit=0 expected=2|process-environ-ignore-file-claude process-environ-xargs-cluster-codex
+reader-source-context|load_reader_context "${executable_reader_context[$code]}"|source_reader_dirs=()|exit=0 expected=2|process-environ-shell-cd-source-claude process-environ-env-chdir-source-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc

@@ -118,22 +118,53 @@ literal_absolute_path() {
   absolute_path=${absolute_path:-/}
 }
 
+effective_reader_directories() {
+  local base absolute_path
+  effective_dirs=()
+  effective_dirs_unresolved=${reader_chdir_unresolved:-$reader_dirs_unresolved}
+  case "$reader_chdir" in
+    /*) effective_dirs=("$reader_chdir"); effective_dirs_unresolved=$reader_chdir_unresolved; return ;;
+    '') effective_dirs=("${reader_dirs[@]}"); return ;;
+  esac
+  for base in "${reader_dirs[@]}"; do
+    literal_absolute_path "$base/$reader_chdir"
+    effective_dirs[${#effective_dirs[@]}]=$absolute_path
+  done
+}
+
 proc_environment_path() {
-  local path=$1 base directory absolute_path
+  local path=$1 directory absolute_path effective_dirs=() effective_dirs_unresolved
   [ "${path##*/}" = environ ] || return 1
   case "$path" in
     /*) literal_absolute_path "$path"; [[ $absolute_path == /proc/*/environ ]]; return ;;
   esac
-  [ -z "$reader_chdir_unresolved" ] || return 0
-  # Shell redirects use the shell's directory. Reader arguments also inherit
-  # any literal env --chdir that the existing launcher parser consumed.
-  for base in "${reader_dirs[@]}"; do
-    directory=$base
-    case "$reader_chdir" in /*) directory=$reader_chdir ;; ?*) directory=$base/$reader_chdir ;; esac
+  effective_reader_directories
+  [ -z "$effective_dirs_unresolved" ] || return 0
+  for directory in "${effective_dirs[@]}"; do
     literal_absolute_path "$directory/$path"
     [[ $absolute_path != /proc/*/environ ]] || return 0
   done
-  [ -n "$reader_dirs_unresolved" ]
+  return 1
+}
+
+# A source frame keeps the reaching command's directory candidates, not the
+# last stage's directory. Offsets preserve directory words without splitting.
+record_reader_context() {
+  local effective_dirs=() effective_dirs_unresolved directory
+  effective_reader_directories
+  reader_context_id=${#reader_context_starts[@]}
+  reader_context_starts[reader_context_id]=${#reader_context_paths[@]}
+  reader_context_counts[reader_context_id]=${#effective_dirs[@]}
+  reader_context_uncertain[reader_context_id]=$effective_dirs_unresolved
+  for directory in "${effective_dirs[@]}"; do
+    reader_context_paths[${#reader_context_paths[@]}]=$directory
+  done
+}
+
+load_reader_context() {
+  local first=${reader_context_starts[$1]} count=${reader_context_counts[$1]}
+  source_reader_dirs=("${reader_context_paths[@]:first:count}")
+  source_reader_dirs_unresolved=${reader_context_uncertain[$1]}
 }
 
 literal_cd_operand() {
@@ -314,7 +345,7 @@ reader_long_option_role() {
     grep:--file | rg:--file) role=pattern-file ;;
     rg:--ignore-file | grep:--exclude-from | diff:--exclude-from | diff:--from-file | diff:--to-file | sort:--files0-from | sort:--random-source | xargs:--arg-file) role=file ;;
     grep:--color | grep:--colour | diff:--context | diff:--unified | xargs:--eof | xargs:--max-lines | xargs:--replace) role=optional-data ;;
-    grep:--after-context | grep:--before-context | grep:--binary-files | grep:--context | grep:--devices | grep:--directories | grep:--exclude | grep:--exclude-dir | grep:--include | grep:--label | grep:--max-count) role=data ;;
+    grep:--after-context | grep:--before-context | grep:--binary-files | grep:--context | grep:--devices | grep:--directories | grep:--exclude | grep:--exclude-dir | grep:--group-separator | grep:--include | grep:--label | grep:--max-count) role=data ;;
     rg:--after-context | rg:--before-context | rg:--color | rg:--colors | rg:--context | rg:--context-separator | rg:--dfa-size-limit | rg:--encoding | rg:--engine | rg:--field-context-separator | rg:--field-match-separator | rg:--generate | rg:--glob | rg:--hostname-bin | rg:--hyperlink-format | rg:--iglob | rg:--max-columns | rg:--max-count | rg:--max-depth | rg:--max-filesize | rg:--path-separator | rg:--pre | rg:--pre-glob | rg:--regex-size-limit | rg:--replace | rg:--sort | rg:--sortr | rg:--threads | rg:--type | rg:--type-add | rg:--type-clear | rg:--type-not) role=data ;;
     diff:--ifdef | diff:--ignore-matching-lines | diff:--label | diff:--show-function-line | diff:--starting-file | diff:--width) role=data ;;
     sort:--batch-size | sort:--buffer-size | sort:--compress-program | sort:--field-separator | sort:--key | sort:--output | sort:--parallel | sort:--temporary-directory) role=data ;;
@@ -338,6 +369,16 @@ reader_environment_arguments() {
   esac
   for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
     value=${args[$cursor]}; kind=${arg_kinds[$cursor]}; role=""
+    if [ "$program" = xargs ]; then
+      # The first operand is the child executable. The child's grammar, not
+      # the launcher's option arities, owns every subsequent word.
+      case "$value" in
+        --) cursor=$((cursor + 1)); break ;;
+        -?*) ;;
+        *) break ;;
+      esac
+      if [ "$kind" = ansi-escaped ]; then mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; fi
+    fi
     [ "$kind" = literal ] || filter_ok=""
     if [ -z "$end" ]; then
       case "$value" in
@@ -381,6 +422,7 @@ reader_environment_arguments() {
       *) positional[${#positional[@]}]=$cursor ;;
     esac
   done
+  if [ "$program" = xargs ]; then pos=$cursor; return 0; fi
   index=0
   if [ -n "$search" ] && [ -z "$explicit" ] && [ "${#positional[@]}" -gt 0 ]; then
     pattern=${args[${positional[0]}]}; patterns=1; index=1
@@ -403,7 +445,8 @@ reader_environment_arguments() {
 # evidence, never proof of routing; unseen program semantics are not judged.
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
-    local reader_chdir="" reader_chdir_unresolved="" env_chdir env_chdir_unresolved
+    local env_chdir env_chdir_unresolved xargs_launch=""
+    split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
     # Other is unresolved. An existing arm's proof must establish clean.
     mode=other
     # Only these literal forwarding forms are part of the input contract.
@@ -435,7 +478,15 @@ environment_producer() { # command kind
             esac
           done
           continue ;;
+        xargs)
+          if [ -n "$input_escaped" ]; then mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; fi
+          if [ -n "$proc" ]; then mode=dump-unknown; return; fi
+          reader_environment_arguments
+          [ "$mode" != dump-unknown ] || return
+          xargs_launch=1
+          continue ;;
         env)
+          split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
           options_ended=""; null_output=""; env_chdir=""; env_chdir_unresolved=""
           while [ "$pos" -lt "${#args[@]}" ]; do
             value=${args[$pos]}
@@ -499,13 +550,13 @@ environment_producer() { # command kind
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
-      printenv | export | declare | typeset | set | systemctl | ps | systemd-analyze | busctl | gdbus | dbus-send | cat | tr | strings | xargs)
+      printenv | export | declare | typeset | set | systemctl | ps | systemd-analyze | busctl | gdbus | dbus-send | cat | tr | strings)
         for ((j=pos; j<${#args[@]}; j++)); do
           [ "${arg_kinds[$j]}" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
         done ;;
     esac
     case "${program:-}" in
-      cat | tr | strings | xargs) [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; } ;;
+      cat | tr | strings) [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; } ;;
       awk | base64 | comm | cp | cut | dd | head | hexdump | jq | less | more | nl | od | paste | perl | python | python3 | sed | split | tail | tee | uniq | xxd)
         [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
         for ((j=pos; j<${#args[@]}; j++)); do
@@ -609,11 +660,16 @@ environment_producer() { # command kind
           esac
         fi
         if [ "$program" = cat ] && environment_private_path ${private_inputs[@]+"${private_inputs[@]}"} "${args[@]:pos}"; then mode=dump-unknown; fi ;;
-      grep | rg | diff | sort | xargs)
+      grep | rg | diff | sort)
         if [ -n "$input_escaped" ]; then mode=dump-unknown; dump_reason=undecoded-ansi-escape
         elif [ -n "$proc" ]; then mode=dump-unknown
         else reader_environment_arguments; fi ;;
     esac
+    if [ -n "$xargs_launch" ]; then
+      # xargs consumes stdin as arguments, so it cannot prove the child's
+      # input or output record framing.
+      case "$mode" in dump-lines | dump-nul) mode=dump-unknown ;; convert | filter) mode=other ;; esac
+    fi
     # No unresolved arm can discharge the forwarded classification check.
     if [ "$mode" = other ] && [ -n "${forwarded_argument:-}" ]; then mode=unclassified-forwarded; fi
 }
@@ -784,14 +840,17 @@ environment_receiver_evidence() { # language text
 # Selected source keeps its decoding context. env -S replaces its option
 # and source word with decoded argv, retaining the env prefix and typed tail.
 # The word kind travels too, so every writer keeps the escape judgment.
-environment_queue() { # source text, word kind, optional split-string tail offset
+environment_queue() { # source text, word kind, optional forwarded tag or split-string tail offset
   local code=${#executable_texts[@]} context=conservative cursor
-  [ -z "${forwarded_argument:-}" ] || context=forwarded
+  [ -z "${forwarded_argument:-}" ] && [ "${3:-}" != forwarded ] || context=forwarded
   executable_texts[code]=$1; executable_kinds[code]=$2; executable_stages[code]=$stage; executable_contexts[code]=$context
   executable_tail_starts[code]=${#executable_tail_args[@]}
   executable_tail_counts[code]=0
   executable_source_kinds[code]=shell; executable_prefix_counts[code]=0
-  if [ "$#" -eq 3 ]; then
+  if [ "$#" -eq 3 ] && [ "$3" != forwarded ]; then
+    # The inner decode replays this env command's options. Its context starts
+    # before that command applies its own chdir.
+    local reader_chdir=$split_reader_chdir reader_chdir_unresolved=$split_reader_chdir_unresolved
     executable_source_kinds[code]=env-split
     executable_prefix_counts[code]=$((pos - program_pos))
     for ((cursor=program_pos; cursor<${#args[@]}; cursor++)); do
@@ -803,6 +862,8 @@ environment_queue() { # source text, word kind, optional split-string tail offse
       executable_tail_counts[code]=$((executable_tail_counts[code] + 1))
     done
   fi
+  record_reader_context
+  executable_reader_context[code]=$reader_context_id
 }
 
 # Shell invocation options precede the executable operand, including options
@@ -1016,7 +1077,13 @@ word_quoted() {
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
-  local reader_dirs=("${cwd:-$PWD}") reader_chdir="" reader_chdir_unresolved="" reader_dirs_unresolved="" cd_operand
+  local reader_dirs=(${source_reader_dirs[@]+"${source_reader_dirs[@]}"}) reader_dirs_unresolved=${source_reader_dirs_unresolved:-}
+  [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
+  local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
+  local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand
+  local stage_chdir stage_chdir_unresolved reader_context_id
+  local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
+  local stage_reader_context=() executable_reader_context=()
   local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
@@ -1296,6 +1363,7 @@ environment_dump() { # command kind; arguments are already decoded data
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=()
     target_files[stage]=""; target_operands[stage]=""; target_redirects[stage]=""; target_effects[stage]=ordinary
+    reader_chdir=""; reader_chdir_unresolved=""
     private_inputs=(); proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""; fallback_sources=""; file_output=""; file_body=""
     for ((j=start; j<end; j++)); do
       case "${kinds[$j]}" in operator | operator-stderr | operator-explicit-other)
@@ -1417,10 +1485,15 @@ environment_dump() { # command kind; arguments are already decoded data
       [ -n "$stdin_program" ] || fallback_sources="$fallback_sources $doc"
     done
     stage_stdin[stage]=$stdin_program; stage_sources[stage]=$data_source; stage_fallback[stage]=$fallback_sources
+    if [ -n "$data_source$incoming_sources" ]; then
+      record_reader_context
+      stage_reader_context[stage]=$reader_context_id
+    fi
     if [ -n "$script_pos" ]; then
       case "$mode" in dump-*) return 0 ;; esac
       stage_args=(${args[@]+"${args[@]}"}); stage_kinds=(${arg_kinds[@]+"${arg_kinds[@]}"})
       stage_unquoted=(${arg_unquoted[@]+"${arg_unquoted[@]}"})
+      stage_chdir=$reader_chdir; stage_chdir_unresolved=$reader_chdir_unresolved
       for ((candidate=script_pos+1; candidate<${#stage_args[@]}; candidate++)); do
         # The approved ordinary quoted-data class has the same recorded
         # receiver, head and argument bounds. It recognizes no inner words.
@@ -1436,6 +1509,7 @@ environment_dump() { # command kind; arguments are already decoded data
         arg_kinds=("${stage_kinds[@]:candidate:limit-candidate}")
         arg_unquoted=("${stage_unquoted[@]:candidate:limit-candidate}")
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
+        reader_chdir=$stage_chdir; reader_chdir_unresolved=$stage_chdir_unresolved
         environment_producer shell
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
@@ -1448,9 +1522,7 @@ environment_dump() { # command kind; arguments are already decoded data
         # (Jarvis ruling, KEN-4728).
         if { [ -n "$script_string" ] || [ "$candidate" -gt "$((script_pos + 1))" ]; } && [ -z "$output" ] &&
            [ "${stage_unquoted[$candidate]}" != 1 ] && [ "$producer_end" -le 1 ]; then
-          code=${#executable_texts[@]}
-          executable_texts[code]=${stage_args[$candidate]}; executable_stages[code]=$stage
-          executable_kinds[code]=${stage_kinds[$candidate]}; executable_contexts[code]=forwarded
+          environment_queue "${stage_args[$candidate]}" "${stage_kinds[$candidate]}" forwarded
         fi
         [ "$producer_end" -le 1 ] || candidate=$((candidate + producer_end - 2))
       done
@@ -1503,6 +1575,7 @@ environment_dump() { # command kind; arguments are already decoded data
       command_tail_kinds=("${executable_tail_kinds[@]:tail_start:tail_count}")
       command_tail_unquoted=("${executable_tail_unquoted[@]:tail_start:tail_count}")
       command_prefix_count=${executable_prefix_counts[$code]:-0}
+      load_reader_context "${executable_reader_context[$code]}"
       if environment_dump "${executable_source_kinds[$code]:-shell}" "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
     done
     command_tail_args=(); command_tail_kinds=(); command_tail_unquoted=(); command_prefix_count=0
@@ -1514,6 +1587,7 @@ environment_dump() { # command kind; arguments are already decoded data
     for doc in $data_source; do
       [ "${literal_kinds[$doc]}" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
       local command_text=${literal_inputs[$doc]}
+      load_reader_context "${stage_reader_context[$stage]}"
       if environment_dump shell conservative; then return 0; fi
     done
   done
