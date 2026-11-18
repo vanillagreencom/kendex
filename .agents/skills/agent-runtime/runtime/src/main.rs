@@ -1168,6 +1168,8 @@ struct StopRecord {
 #[derive(Debug, Serialize)]
 struct Inspection {
     pane: Reading<PaneFields>,
+    #[serde(skip)]
+    reading: Option<ProcessReading>,
     harness_process: Option<Identity>,
     harness_live: Option<Reading<Identity>>,
     native_session: Option<session::SessionRef>,
@@ -1220,6 +1222,7 @@ fn harness_identity(rec: &LaunchRecord) -> Reading<Identity> {
 fn unjudged(rec: &LaunchRecord, pane: Reading<PaneFields>, cause: &str) -> Inspection {
     Inspection {
         pane,
+        reading: None,
         harness_process: rec.harness_process.clone(),
         harness_live: None,
         native_session: rec.native_session.clone(),
@@ -1401,6 +1404,7 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
     }
     Ok(Inspection {
         pane: Reading::Live(fields),
+        reading: judged.reading,
         harness_process: rec.harness_process.clone(),
         harness_live,
         native_session: rec.native_session.clone(),
@@ -1449,7 +1453,7 @@ fn recorded_session(path: &Path) -> Result<(Session, Judged)> {
     )?;
     let judged = Judged {
         pane: inspection.pane,
-        reading: None,
+        reading: inspection.reading,
         state: inspection.state,
         screen_tail: inspection.screen_tail,
     };

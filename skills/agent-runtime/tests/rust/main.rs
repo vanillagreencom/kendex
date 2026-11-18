@@ -1375,6 +1375,58 @@ fn a_key_reaches_a_pane_that_shows_a_dialog_and_never_a_composer_or_a_turn() {
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn a_recorded_dialog_takes_a_key_only_at_its_recorded_process_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    let typed = dir.path().join("typed");
+    pane.run_stub(
+        &dir.path().join("asking"),
+        "claude",
+        &recording(DIALOG, &typed),
+    );
+    pane.await_row(&|l| l.starts_with("\u{276f} 1. Yes"));
+    let path = dir.path().join("record.json");
+    let record = pane.record("claude", &dir.path().join("home"), dir.path(), None);
+    let result = inspect(&path, &record);
+    assert!(result["harness_process"]["pid"].is_number(), "{result}");
+    let recorded: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for changed_start in [true, false] {
+        let mut record = recorded.clone();
+        if changed_start {
+            let start = record["harness_process"]["start"].as_str().unwrap();
+            let different = if let Some(ticks) = start.strip_prefix("ticks:") {
+                format!("ticks:{}", ticks.parse::<u64>().unwrap() + 1)
+            } else {
+                "lstart:Thu Jan  1 00:00:00 1970".to_owned()
+            };
+            assert_ne!(start, different);
+            record["harness_process"]["start"] = different.into();
+        }
+        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        let out = Command::new(binary())
+            .args(["deliver", "--record"])
+            .arg(&path)
+            .args(["--key", "Enter"])
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .output()
+            .unwrap();
+        let reply = reply_text(&String::from_utf8_lossy(&out.stdout));
+        if changed_start {
+            assert_eq!(out.status.code(), Some(1), "{reply}");
+            assert_eq!(reply["refusal"]["key"], "process-mismatch", "{reply}");
+            assert_eq!(typed_lines(&typed, ""), "");
+        } else {
+            assert!(out.status.success(), "{reply}");
+            assert_eq!(reply["result"]["delivery"], "pressed", "{reply}");
+            assert_eq!(typed_lines(&typed, "[]\n"), "[]\n");
+        }
+    }
+}
+
 /// The caller's own pane, `$TMUX_PANE` on the server `$TMUX` names, is
 /// refused `pane-self` with its dialog standing: a key the overseer meant
 /// for a lane would answer its own prompt.

@@ -122,21 +122,18 @@ impl Pending {
 pub const SUCCESSOR_IDENTITY_KEYS: &[&str] =
     &["harness", "account", "home", "model", "effort", "cwd"];
 
-/// The binding `ol_record_write` reads afresh from the session it writes for
-/// and a transfer confirmation does not know: a different session inherits
-/// none of the prior's. The successor's watch start fills them; until then a
+/// The session bindings a transfer confirmation does not know: a successor
+/// inherits none of the prior's. Its watch start fills them; until then a
 /// confirmed succession nulls each the record holds. `pane`, `server` and
 /// `server_start` are not among them: the confirmation writes the first two
 /// from the successor's launch identity, and the third where it carries it,
-/// so the record passes `ol_owns` from the successor's pane and that watch
-/// start keeps it.
+/// so the successor's pane owns the record and its watch start keeps it.
 pub const SUCCESSOR_BINDING_KEYS: &[&str] = &["window", "session_rows"];
 
 /// The keys of the session that ended, which a different session's record
 /// leaves out: the native session id, the harness process and its model
-/// check, the recorded exit, the pending it just opened, the display line a
-/// released launcher wrote for it, and the accounts its successions could
-/// not prove.
+/// check, the recorded exit, the pending it just opened, its display line,
+/// and the accounts its successions could not prove.
 pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "session_id",
     "harness_pid",
@@ -267,8 +264,8 @@ pub struct AdoptionRead {
     pub server_start: u64,
     pub socket: String,
     pub window: String,
-    /// Whether the record already names this pane on this server
-    /// (`ol_owns`): the record is healed, not replaced.
+    /// Whether the record already names this pane on this server:
+    /// the record is healed, not replaced.
     pub same: bool,
 }
 

@@ -19,11 +19,8 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use account_planters::*;
-use agent_runtime::accounts::{Env, PickRequest, here};
-use agent_runtime::harness::Harness;
-use agent_runtime::protocol::Reply;
 use agent_runtime::reading::Reading;
-use agent_runtime::settings::{self, AccountSettings, Judged, Keys};
+use agent_runtime::settings::{self, Keys};
 use agent_runtime::{clock, group, process};
 use isolation::*;
 use serde_json::{Value, json};
@@ -35,26 +32,6 @@ const RECORD: &str = "workflow-state-oversee.json";
 /// The world's own preference, walked as `--preference` by a walk that is
 /// not the controller's.
 const PREFERENCE: &str = "--preference";
-
-/// The settings a world's reading takes, owned.
-struct Loaded {
-    accounts: Judged<AccountSettings>,
-    account_state: Judged<PathBuf>,
-    home: Option<String>,
-    preference: String,
-}
-
-impl Loaded {
-    fn env(&self) -> Env<'_> {
-        Env {
-            accounts: &self.accounts,
-            account_state: &self.account_state,
-            home: self.home.as_deref(),
-            copilot_home: None,
-            controller_preference: &self.preference,
-        }
-    }
-}
 
 /// One world: the accounts planted under `home` as the listing reads them,
 /// the usage fixture as `bin/curl` and the `kendex-launch` fixture as
@@ -138,19 +115,9 @@ impl World {
         }
     }
 
-    /// The local rows sampled at `now`, for a judgement run in process at
-    /// that second.
-    fn plant_at(&mut self, now: u64, rows: &[Value]) {
-        let Planted { env, .. } = plant_listing(self.path(), self.path(), rows, now);
-        for (key, value) in env {
-            self.env.retain(|(k, _)| *k != key);
-            self.env.push((key, value));
-        }
-    }
-
-    /// This world's settings as the executable loads them from its
+    /// This world's account state as the executable loads it from its
     /// environment, with no settings file and no private env file.
-    fn settings(&self) -> Loaded {
+    fn account_state(&self) -> PathBuf {
         let environment: Vec<(OsString, OsString)> = self
             .env
             .iter()
@@ -161,12 +128,7 @@ impl World {
             load: &[],
         };
         let values = settings::layered(self.path(), &environment, false, &keys).unwrap();
-        Loaded {
-            accounts: AccountSettings::read(&values),
-            account_state: settings::account_state_dir(&values),
-            home: values.get(settings::HOME_KEY).map(str::to_owned),
-            preference: settings::ControllerSettings::read(&values).preference,
-        }
+        settings::account_state_dir(&values).get().unwrap()
     }
 
     /// The controller record, its controller seated on `seat` where one is
@@ -182,13 +144,7 @@ impl World {
             let Reading::Live(own) = process::identity(std::process::id()) else {
                 panic!("this test's own identity reads");
             };
-            group::seat(
-                &self.settings().account_state.get().unwrap(),
-                &record,
-                &own,
-                account,
-            )
-            .unwrap();
+            group::seat(&self.account_state(), &record, &own, account).unwrap();
         }
     }
 
@@ -1324,104 +1280,4 @@ fn a_walk_that_judged_no_entry_for_want_of_evidence_refuses_by_name() {
             format!("claude:fable:high walled {}", walled.dir("aclaude"))
         ]
     );
-}
-
-/// The pick replies `tests/overseer-walk.sh` plants for the walk it runs,
-/// one file per (harness, trigger, excluded account) its stand-in serves,
-/// keyed as the stand-in keys them: orch's `tests/fixtures/accounts-pick`.
-fn planted_pick_replies() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../orch/tests/fixtures/accounts-pick")
-}
-
-/// The epoch second the walk suite's pick replies are judged at: the
-/// judgement takes its clock as an input, so the planted listing's sample
-/// age and the score's reset bonus hold still between a capture and its
-/// check.
-const PICK_NOW: u64 = 1_769_700_000;
-
-/// The walk suite's world as the verb reads it at [`PICK_NOW`]: the
-/// controller's own Claude account at 57 percent of its weekly window (the
-/// headroom trigger is 50), a second Claude account whose usage cannot be
-/// read, and three Codex accounts at 22, 20 and 18 percent of their weekly
-/// window, every reset far off, no burn, every usage sampled at that
-/// second.
-fn walk_suite_world() -> World {
-    let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "50")]);
-    let far = "2099-08-01T06:00:00Z";
-    let codex = |alias: &str, used: u64| {
-        json!({"alias": alias, "harness": "codex", "config_dir": format!("/home/me/.{alias}"),
-               "measured_through": "local", "status": "ok", "weekly_pct": used,
-               "resets": {"weekly": "2099-01-01T00:00:00Z", "model": null, "monthly": null},
-               "usage_age_s": 0})
-    };
-    world.plant_at(
-        PICK_NOW,
-        &[
-            json!({"alias": "claude", "harness": "claude", "config_dir": "/home/me/.claude",
-                   "measured_through": "local", "status": "ok", "plan": "max",
-                   "weekly_pct": 57,
-                   "model_buckets": [{"label": "Opus", "pct": 5, "resets_at": far}],
-                   "resets": {"weekly": far, "model": far, "monthly": null},
-                   "usage_age_s": 0}),
-            json!({"alias": "unreadclaude", "harness": "claude", "config_dir": "/home/me/.unreadclaude",
-                   "measured_through": "local", "status": "unreachable", "plan": "max", "usage_age_s": 0}),
-            codex("codex", 22),
-            codex("1codex", 20),
-            codex("2codex", 18),
-        ],
-    );
-    world.write_fleet(Some(&world.dir("claude")));
-    world
-}
-
-/// A planted pick reply drifting from the verb's: the walk suite reads its
-/// stand-in's replies as the verb's own, so each file it serves is the
-/// reply `accounts pick --for-controller` prints over the suite's world, the
-/// home as `@H@`. The judgement runs in process at [`PICK_NOW`], the one
-/// input the executable adds from its own clock, and every field is
-/// compared as printed; a difference names the file to re-capture from
-/// this row's output.
-#[test]
-fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
-    let world = walk_suite_world();
-    let home = world.path().join("home").display().to_string();
-    let loaded = world.settings();
-    let env = loaded.env();
-    let record = world.path().join(RECORD);
-    let mut drifted = Vec::new();
-    for (harness, trigger, excluded) in [
-        (Harness::Claude, 50, "claude"),
-        (Harness::Codex, 50, "claude"),
-        (Harness::Claude, 90, "claude"),
-        (Harness::Codex, 90, "claude"),
-        (Harness::Codex, 50, "2codex"),
-    ] {
-        let request = PickRequest {
-            harness,
-            model: None,
-            exclude: vec![world.dir(excluded)],
-            for_overseer: true,
-            lane: None,
-            projected: false,
-            max_pct: None,
-            min_headroom_pct: Some(trigger),
-            binding_floor: true,
-            admit_unread_scope: false,
-            opens_here: false,
-        };
-        let answer = here::pick(&env, world.path(), Some(&record), &request, PICK_NOW).unwrap();
-        let verb = serde_json::to_value(Reply::ok(answer.reply())).unwrap();
-        let key = format!("{harness}-{trigger}-{excluded}");
-        let planted = std::fs::read_to_string(planted_pick_replies().join(format!("{key}.json")))
-            .unwrap_or_default()
-            .trim()
-            .replace("@H@", &home);
-        if verb != serde_json::from_str(&planted).unwrap_or(Value::Null) {
-            drifted.push(format!(
-                "{key}: the planted reply is not the verb's\nverb={}\nplanted={planted}",
-                verb.to_string().replace(&home, "@H@")
-            ));
-        }
-    }
-    assert!(drifted.is_empty(), "{}", drifted.join("\n"));
 }

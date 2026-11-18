@@ -52,7 +52,7 @@ pub(super) fn apply_adoption(
 }
 
 /// The record a hand-opened controller's adoption writes, or heals. The
-/// same pane on the same server (`ol_owns`) keeps its record and its
+/// same pane on the same server keeps its record and its
 /// generation: every launch field the request names replaces the recorded
 /// one, a field it leaves out is kept, and the native `session_id` is the
 /// request's or none, so a session resumed under a new id in the same pane

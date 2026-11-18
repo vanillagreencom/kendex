@@ -348,14 +348,14 @@ impl AccountRow {
         if self.excluded {
             return Word::Reserve;
         }
-        self.stated()
+        self.stated(false)
     }
 
     /// The account's stated word, what a pick is refused by: the
     /// provider's reservation first, then a provider's end nobody can read,
     /// then the earlier of the machine's and the provider's stated ends.
-    fn stated(&self) -> Word {
-        if self.reserved {
+    fn stated(&self, ignore_reservation: bool) -> Word {
+        if self.reserved && !ignore_reservation {
             return Word::Reserve;
         }
         let provider = match &self.plan_ends {
@@ -386,14 +386,18 @@ impl AccountRow {
 
     /// Whether the stated end has come: `today` is the UTC day.
     pub fn ended(&self, today: &str) -> bool {
-        matches!(self.stated(), Word::Retired { date, .. } if date.as_str() <= today)
+        matches!(self.stated(false), Word::Retired { date, .. } if date.as_str() <= today)
     }
 
     /// The word's own verdict on a pick today: the one
     /// rule the judge, a named pick's answer and the delegated pick's
     /// exclusions read.
     pub fn standing(&self, today: &str) -> Standing {
-        match self.stated() {
+        self.standing_for(today, false)
+    }
+
+    fn standing_for(&self, today: &str, ignore_reservation: bool) -> Standing {
+        match self.stated(ignore_reservation) {
             Word::Pick => Standing::Open,
             Word::Reserve => Standing::Reserved,
             Word::PlanEndInvalid { value } => Standing::EndUnread { value },
@@ -508,7 +512,7 @@ impl Roster {
             })
             .collect();
         for row in &self.rows {
-            match row.stated() {
+            match row.stated(false) {
                 Word::Retired { date, source } if row.ended(today) && row.answers() => {
                     lines.push(format!(
                         "account-end-contradicted {} config_dir={} ends={date} source={} status={}",
@@ -1805,10 +1809,7 @@ fn left_out(row: &AccountRow, req: &PickRequest) -> bool {
 /// controller's question about its own account reads a provider's
 /// reservation as no refusal, as it reads the owner's exclusion.
 fn standing_for(row: &AccountRow, req: &PickRequest, today: &str) -> Standing {
-    match row.standing(today) {
-        Standing::Reserved if own_question(req) => Standing::Open,
-        standing => standing,
-    }
+    row.standing_for(today, own_question(req))
 }
 
 /// One named account judged for `req`: the judgement, its verdict

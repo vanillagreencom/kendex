@@ -126,8 +126,8 @@ impl DeathCause {
     }
 }
 
-/// The launch a model recovery was bound to: the seven fields
-/// `ol_model_launch` projects. A field left out compares as `null`.
+/// A model recovery binds to these launch fields. A field left out
+/// compares as `null`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Recovery {
     #[serde(default)]
@@ -146,7 +146,7 @@ pub struct Recovery {
     pub session_id: Value,
 }
 
-/// The keys `ol_model_launch` projects, the launch a recovery is bound to.
+/// The launch fields a model recovery must match.
 pub const MODEL_LAUNCH_KEYS: &[&str] = &[
     "server",
     "server_start",
@@ -718,8 +718,7 @@ fn record_transfer_outcome(
                     path: path.to_path_buf(),
                 });
             };
-            // The successor's record as `ol_record_write` builds one for a
-            // session other than the prior: its identity from `pending`,
+            // A successor inherits its identity from `pending`,
             // `class` only where the pending carries one, the next
             // generation, the successor's own pane on its server, the
             // server start where the confirmation knows it, the binding its
@@ -768,9 +767,8 @@ fn record_transfer_outcome(
                 }
             }
             record::set(record, "generation", generation + 1);
-            // The server as a string, the form the record carries and
-            // `ol_owns` compares; a lane's `launch.server` is a number, so
-            // the identity carries one.
+            // The controller record compares the server as a string;
+            // the launch identity carries it as a number.
             record::set(record, "pane", pane);
             record::set(record, "server", server.to_string());
             match r.server_start {
@@ -2025,9 +2023,8 @@ mod tests {
             assert_eq!(after.get(key), Some(value), "{key}");
         }
         assert_eq!(&after, published);
-        // A confirmation that knows the successor's server start records it
-        // as the number `ol_record_write` writes (`$start | tonumber`); one
-        // that bound no session writes none.
+        // A known server start is recorded as a number; an unknown start
+        // leaves the identity unbound to a server start.
         fs::write(&path, &text).unwrap();
         let id = intend(&path, &handed(transfer(expected())));
         run(
@@ -2138,7 +2135,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         let text = fleet_with_exit_and_model_check();
-        // The fixture's predecessor owns its own record by `ol_names`, and
+        // The fixture's predecessor owns its own record, and
         // another pane's or another start's watch start does not: the
         // encoding tells the two apart.
         let predecessor = object(&path)[MEMBER].as_object().unwrap().clone();
@@ -2152,7 +2149,7 @@ mod tests {
             nulled.insert(key.to_owned(), Value::Null);
         }
         assert!(!ol_owns(&nulled, "41020", "1769590000", "%20"));
-        // Confirmed without the server start: `ol_unstarted` owns it from
+        // Confirmed without the server start: the record is owned from
         // the successor's pane, at any start the watch reads.
         fs::write(&path, &text).unwrap();
         let id = intend(&path, &transfer(expected()));
@@ -2172,7 +2169,7 @@ mod tests {
             !ol_owns(&after, "41021", "1769590000", "%20"),
             "not another server's"
         );
-        // Confirmed with the server start: `ol_names` owns it at that start
+        // Confirmed with the server start: the record is owned at that start
         // alone, as the register path judges a same-generation record.
         fs::write(&path, &text).unwrap();
         let id = intend(&path, &transfer(expected()));
@@ -2189,7 +2186,7 @@ mod tests {
         );
     }
 
-    /// The fixture record's launch as `ol_model_launch` projects it.
+    /// The fixture record's launch fields that a recovery must match.
     fn bound_recovery() -> Recovery {
         Recovery {
             server: json!("41020"),

@@ -23,9 +23,8 @@ pub const OWNER_LIVE: &str = "owner-live";
 pub const OWNER_UNREAD: &str = "owner-unreadable";
 
 /// A lane's launch identity `{pane, server, server_start, pid, start}`.
-/// `server_start` is the tmux server's start the runtime's launch published,
-/// so the pane is keyed on the server's pid and start; a
-/// record the released launcher wrote carries none.
+/// `server_start` keys the pane on the tmux server's pid and start where
+/// known; a record can carry no server start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchIdentity {
     #[serde(default)]
@@ -373,10 +372,9 @@ impl Phase {
 }
 
 /// One recorded handle of an operation's target, typed by what it is. A
-/// pane and a window carry the server's pid and
-/// tmux start, the only form this host addresses a pane in; a lane record
-/// the released launcher wrote carries the pid alone, so
-/// its pane's start is unknown and `None`.
+/// pane and a window need the server's pid and tmux start to be addressed
+/// on this host. An incomplete identity is preserved with its unknown
+/// start as `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Obligation {

@@ -2331,6 +2331,40 @@ fn a_supplied_batch_is_judged_line_by_line_by_the_one_judge() {
     }
     let own = world.judge(&lines, &["--for-controller"], false);
     assert_eq!(own["rows"][5]["verdict"], json!("room"), "{own}");
+
+    let future = accounts::today(now() + 2 * 86400);
+    for (provider_end, setting_end, verdict) in [
+        (future.as_str(), "", "room"),
+        (today.as_str(), "", "retired"),
+        ("not-a-date", "", "plan-end-invalid"),
+        ("", future.as_str(), "room"),
+        ("", today.as_str(), "retired"),
+        (future.as_str(), today.as_str(), "retired"),
+        (today.as_str(), future.as_str(), "retired"),
+    ] {
+        let retirement = if setting_end.is_empty() {
+            String::new()
+        } else {
+            format!("held={setting_end}")
+        };
+        let world = World::new(&[("AGENT_RUNTIME_ACCOUNT_RETIRE", &retirement)]);
+        world.write_fleet(Vec::new(), None);
+        let end = if provider_end.is_empty() {
+            String::new()
+        } else {
+            format!("\tplan-ends={provider_end}")
+        };
+        let line =
+            format!("account=/home/me/.held\tharness=claude\tweekly-pct=10\treserved=1{end}");
+        for (flags, expected) in [(&[][..], "reserved"), (&["--for-controller"][..], verdict)] {
+            let reply = world.judge(&line, flags, false);
+            assert_eq!(
+                reply["rows"][0]["verdict"],
+                json!(expected),
+                "provider={provider_end} setting={setting_end} flags={flags:?}: {reply}"
+            );
+        }
+    }
 }
 
 /// The listing's verdict of a reading this machine took and the judge's
