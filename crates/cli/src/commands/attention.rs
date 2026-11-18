@@ -49,8 +49,17 @@ pub fn print_attention(
     listing: Listing,
     reached: Reached,
     shown: &[ItemSafety],
+    settings_advisories: &[String],
 ) -> Attention {
-    let (lines, attention) = attention(&ui::style(), env, report, listing, reached, shown);
+    let (lines, attention) = attention(
+        &ui::style(),
+        env,
+        report,
+        listing,
+        reached,
+        shown,
+        settings_advisories,
+    );
     for warning in &report.warnings {
         ui::report::run_model_warning(warning);
     }
@@ -65,6 +74,7 @@ fn attention(
     listing: Listing,
     reached: Reached,
     shown: &[ItemSafety],
+    settings_advisories: &[String],
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
     let safety: Vec<_> = report
@@ -90,6 +100,7 @@ fn attention(
         lines.extend(notes_section(
             style,
             &report.notes,
+            settings_advisories,
             &report.excluded_hooks,
             verbose,
         ));
@@ -158,6 +169,7 @@ fn unsettled_section(style: &Style, unsettled: &[&DriftRow]) -> Vec<String> {
 fn notes_section(
     style: &Style,
     notes: &[String],
+    settings_advisories: &[String],
     excluded: &[ExcludedHook],
     verbose: bool,
 ) -> Vec<String> {
@@ -166,7 +178,7 @@ fn notes_section(
         (true, false) => Some(exclusions_line(excluded)),
         _ => None,
     };
-    let count = groups.len() + usize::from(exclusions.is_some());
+    let count = groups.len() + settings_advisories.len() + usize::from(exclusions.is_some());
     if count == 0 {
         return Vec::new();
     }
@@ -176,6 +188,9 @@ fn notes_section(
         for line in &group.under {
             lines.extend(style.detail(None, &[Span::Prose(line)]));
         }
+    }
+    for advisory in settings_advisories {
+        lines.extend(style.row(Status::Notice, &[Span::Prose(advisory)], None));
     }
     if let Some(exclusions) = exclusions {
         lines.extend(style.row(Status::Notice, &[Span::Prose(&exclusions)], None));

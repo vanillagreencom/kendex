@@ -437,12 +437,11 @@ fn seed_settings_env(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
                 &text,
                 &format!("{}: {}", ctx.name, crate::settings_seed::SETTINGS_TEMPLATE),
             );
-            for entry in crate::settings_seed::extract_env_entries(&text) {
-                state.settings_env.push(crate::settings_seed::SeededEnv {
-                    entry,
-                    owner: ctx.name.to_owned(),
-                });
-            }
+            state
+                .settings_env
+                .extend(crate::settings_seed::SeededEnv::declarations(
+                    ctx.name, &text,
+                ));
             crate::settings_template::TemplateSource::Text(text)
         }
         None => crate::settings_template::TemplateSource::Absent,

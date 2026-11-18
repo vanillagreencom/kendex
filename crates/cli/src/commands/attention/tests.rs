@@ -167,6 +167,7 @@ fn drawn(style: &Style, listing: Listing) -> (Vec<String>, Attention) {
         listing,
         crate::commands::offers::Reached::Here,
         &[],
+        &[],
     )
 }
 
@@ -275,6 +276,7 @@ fn a_compact_report_hiding_nothing_folds_nothing() {
         &report,
         Listing::Attention,
         crate::commands::offers::Reached::Here,
+        &[],
         &[],
     );
     assert!(!lines.is_empty(), "the fixture draws nothing");

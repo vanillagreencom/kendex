@@ -220,6 +220,15 @@ fn verdict(checked: &CheckReport, page: &Page, _verbosity: Verbosity) -> Option<
     let all = || page.sections.iter().flat_map(|section| &section.items);
     let settling = all().filter(|item| item.class == Class::Settling).count();
     let notices = all().any(|item| item.class == Class::Notice);
+    let notice_text = if page
+        .sections
+        .iter()
+        .any(|section| section.title == report::SETTINGS_SECTION)
+    {
+        "notices are listed above"
+    } else {
+        "external command notices are listed above"
+    };
     let pending = format!(
         "{settling} item{} pending evaluation",
         if settling == 1 { "" } else { "s" }
@@ -232,16 +241,13 @@ fn verdict(checked: &CheckReport, page: &Page, _verbosity: Verbosity) -> Option<
             (
                 Status::Notice,
                 if notices {
-                    format!("{pending}; external command notices are listed above")
+                    format!("{pending}; {notice_text}")
                 } else {
                     pending
                 },
             )
         } else if notices {
-            (
-                Status::Notice,
-                "external command notices are listed above".to_owned(),
-            )
+            (Status::Notice, notice_text.to_owned())
         } else {
             (
                 Status::Done,

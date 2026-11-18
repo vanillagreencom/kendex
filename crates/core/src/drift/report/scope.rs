@@ -9,6 +9,8 @@ use super::text::{shown, verbatim};
 use super::*;
 use crate::lock::{InstallRef, LockEntry, Reason};
 use crate::model::HarnessId;
+use crate::settings_template::TemplateEvidence;
+use crate::source::header::{SkillReading, settings_at};
 
 /// One scope's outcome beyond the lines it pushed: its second-copy scan,
 /// which the caller folds with the other scopes' before rendering through
@@ -163,7 +165,7 @@ pub(super) fn check_scope(
         ManifestRead::Absent => Some(&nothing),
         ManifestRead::Unreadable => None,
     };
-    ctx.command_lines(declared, record_view, &occupied, sections);
+    ctx.skill_lines(declared, record_view, &occupied, lock.is_ok(), sections);
     ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
     ctx.snapshot_lines(manifest.current(), sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);
@@ -309,8 +311,15 @@ impl ManifestRead {
 /// or a catalog to read behind the check's deadline, at the revision the
 /// install record names where one does.
 enum DeclarationRead {
-    Text(Result<String, String>),
+    Text(Result<SkillReading, String>),
     Catalog(Option<crate::source::header::InstalledFrom>),
+}
+
+type SettingsTemplates = Vec<(String, TemplateEvidence)>;
+
+enum CatalogReading {
+    Header(Result<SkillReading, String>),
+    Settings(Option<SettingsTemplates>),
 }
 
 impl ScopeCheck<'_> {
@@ -324,13 +333,15 @@ impl ScopeCheck<'_> {
     /// publish it, so every such read runs behind this check's deadline
     /// ([`crate::drift::copies::gated`]); one the deadline cuts off is
     /// named as not checked.
-    fn command_lines(
+    fn skill_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
         lock: &crate::lock::Lock,
         occupied: &BTreeMap<String, crate::engine::Occupied>,
+        record_readable: bool,
         sections: &mut Sections,
     ) {
+        let settings = self.settings_text(record_readable && manifest.is_some());
         let mut seen = BTreeSet::new();
         let recorded = lock
             .entries
@@ -345,7 +356,7 @@ impl ScopeCheck<'_> {
                         .as_ref()
                         .map(|artifact| artifact.paths.as_slice())
                         .unwrap_or_default(),
-                    Some(crate::source::header::InstalledFrom::of(entry)),
+                    Some(entry),
                 )
             });
         let unrecorded = occupied
@@ -386,6 +397,8 @@ impl ScopeCheck<'_> {
                 )
             });
         let mut reads = Vec::new();
+        let mut records = Vec::new();
+        let mut complete = true;
         for (name, source, paths, installed) in recorded.chain(unrecorded).chain(native) {
             let in_place = crate::engine::desired::in_place_source(
                 self.env,
@@ -397,78 +410,180 @@ impl ScopeCheck<'_> {
             if !present {
                 continue;
             }
+            if let Some(entry) = installed
+                && settings.is_some()
+            {
+                records.push(entry.clone());
+            }
             // A selected source has one read result. A second harness cannot
             // replace its unreadable declaration with a different answer.
             if !seen.insert(name.to_owned()) {
                 continue;
             }
-            if let Some(read) = self.declaration_read(manifest, in_place, installed) {
+            let read_settings = settings.is_some() && installed.is_none();
+            let installed = installed.map(crate::source::header::InstalledFrom::of);
+            if let Some(read) = self.declaration_read(manifest, in_place, installed, read_settings)
+            {
                 reads.push((name.to_owned(), read));
+            } else {
+                complete = false;
             }
         }
-        for (name, text) in self.declaration_texts(manifest, reads) {
-            self.command_source_lines(&name, text, sections);
-        }
+        self.skill_findings(
+            manifest,
+            reads,
+            &records,
+            settings.as_deref().filter(|_| complete),
+            sections,
+        );
     }
 
-    /// Each read's text, in the order asked. The catalog reads run on one
-    /// thread behind the check's deadline, sending each text as it is
-    /// read; a read the deadline cuts off is named as not checked.
-    fn declaration_texts(
+    fn skill_findings(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
-        mut reads: Vec<(String, DeclarationRead)>,
-    ) -> Vec<(String, Result<String, String>)> {
-        let catalog_reads: Vec<(String, Option<crate::source::header::InstalledFrom>)> = reads
-            .iter_mut()
+        reads: Vec<(String, DeclarationRead)>,
+        records: &[LockEntry],
+        settings: Option<&str>,
+        sections: &mut Sections,
+    ) {
+        let stages = self.catalog_readings(manifest, &reads, records, settings.is_some());
+        let mut unrecorded = Vec::new();
+        let mut headers = Vec::with_capacity(reads.len());
+        let mut complete = true;
+        for (name, read) in reads {
+            let reading = match read {
+                DeclarationRead::Text(text) => text,
+                DeclarationRead::Catalog(_) => match stages
+                    .as_ref()
+                    .and_then(|stages| stages.next(self.deadline))
+                {
+                    Some(CatalogReading::Header(header)) => header,
+                    Some(CatalogReading::Settings(_)) | None => Err(
+                        "the check ran out of time before it could read the skill's source"
+                            .to_owned(),
+                    ),
+                },
+            };
+            let header = match reading {
+                Ok(SkillReading { header, settings }) => {
+                    if let Some(settings) = settings {
+                        unrecorded.push((name.clone(), settings));
+                    }
+                    header
+                }
+                Err(error) => {
+                    complete &= records.iter().any(|entry| entry.name == name);
+                    Err(error)
+                }
+            };
+            headers.push((name, header));
+        }
+        for (name, header) in headers {
+            self.command_source_lines(&name, header, sections);
+        }
+        let Some(text) = settings.filter(|_| complete) else {
+            return;
+        };
+        if !records.is_empty() {
+            let Some(CatalogReading::Settings(Some(mut installed))) = stages
+                .as_ref()
+                .and_then(|stages| stages.next(self.deadline))
+            else {
+                return;
+            };
+            unrecorded.append(&mut installed);
+        }
+        self.settings_lines(text, &unrecorded, sections);
+    }
+
+    fn settings_text(&self, scope_readable: bool) -> Option<String> {
+        let Scope::Project { root } = self.scope else {
+            return None;
+        };
+        if !scope_readable {
+            return None;
+        }
+        let path = crate::settings_seed::settings_file_path(root);
+        if path.is_symlink() || !path.is_file() {
+            return None;
+        }
+        crate::fs::read_if_exists(&path).ok().flatten()
+    }
+
+    fn settings_lines(
+        &self,
+        text: &str,
+        templates: &[(String, TemplateEvidence)],
+        sections: &mut Sections,
+    ) {
+        sections.settings.extend(
+            crate::settings_seed::settings_advisories(
+                text,
+                templates
+                    .iter()
+                    .map(|(name, template)| (name.as_str(), template)),
+            )
+            .into_iter()
+            .map(|note| Line {
+                class: Class::Notice,
+                text: format!("{}{note}", self.prefix).into(),
+                remedy: None,
+                detail: None,
+            }),
+        );
+    }
+
+    /// Command headers are streamed first. Settings gather every recorded
+    /// installation separately under the same deadline.
+    fn catalog_readings(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        reads: &[(String, DeclarationRead)],
+        records: &[LockEntry],
+        settings: bool,
+    ) -> Option<crate::drift::copies::Stages<CatalogReading>> {
+        let catalog_reads: Vec<_> = reads
+            .iter()
             .filter_map(|(name, read)| match read {
-                DeclarationRead::Catalog(installed) => Some((name.clone(), installed.take())),
+                DeclarationRead::Catalog(installed) => Some((name.clone(), installed.clone())),
                 DeclarationRead::Text(_) => None,
             })
             .collect();
-        let stages = match (manifest, catalog_reads.is_empty()) {
+        match (manifest, catalog_reads.is_empty() && records.is_empty()) {
             (Some(manifest), false) => {
                 let (env, scope, manifest) =
                     (self.env.clone(), self.scope.clone(), manifest.clone());
+                let records = records.to_vec();
                 Some(crate::drift::copies::gated(self.deadline, move |sender| {
                     let mut headers = crate::source::header::DeclaredHeaders::default();
                     for (name, installed) in catalog_reads {
-                        let text = headers.text(
+                        let text = headers.skill(
                             &env,
                             &scope,
                             &manifest,
-                            ItemKind::Skill,
                             &name,
                             installed.as_ref(),
+                            settings && installed.is_none(),
                         );
-                        if sender.send(text).is_err() {
+                        if sender.send(CatalogReading::Header(text)).is_err() {
                             return;
                         }
+                    }
+                    if !records.is_empty() {
+                        let installed = records
+                            .iter()
+                            .map(|entry| {
+                                headers
+                                    .installed_settings(&env, &scope, &manifest, entry)
+                                    .map(|template| (entry.name.clone(), template))
+                            })
+                            .collect();
+                        let _ = sender.send(CatalogReading::Settings(installed));
                     }
                 }))
             }
             (Some(_), true) | (None, _) => None,
-        };
-        reads
-            .into_iter()
-            .map(|(name, read)| {
-                let text = match read {
-                    DeclarationRead::Text(text) => text,
-                    // Sent in the order they were asked, so the next stage is
-                    // this skill's; none by the deadline leaves it unread.
-                    DeclarationRead::Catalog(_) => stages
-                        .as_ref()
-                        .and_then(|stages| stages.next(self.deadline))
-                        .unwrap_or_else(|| {
-                            Err(
-                                "the check ran out of time before it could read the skill's source"
-                                    .to_owned(),
-                            )
-                        }),
-                };
-                (name, text)
-            })
-            .collect()
+        }
     }
 
     /// Where a skill's commands are read from, or `None` where the scope's
@@ -486,13 +601,10 @@ impl ScopeCheck<'_> {
         manifest: Option<&crate::manifest::Manifest>,
         in_place: Option<PathBuf>,
         installed: Option<crate::source::header::InstalledFrom>,
+        settings: bool,
     ) -> Option<DeclarationRead> {
         Some(match (in_place, manifest, installed) {
-            (Some(root), _, _) => DeclarationRead::Text(
-                crate::source_read::SealedSource::open(&root)
-                    .and_then(|sealed| sealed.read_to_string(&sealed.root().join("SKILL.md")))
-                    .map_err(|error| error.to_string()),
-            ),
+            (Some(path), _, _) => DeclarationRead::Text(self.in_place_read(&path, settings)),
             (None, None, _) => DeclarationRead::Text(Err(
                 "the manifest could not be read, so the skill's source is unknown".to_owned(),
             )),
@@ -505,6 +617,20 @@ impl ScopeCheck<'_> {
                 )),
             },
         })
+    }
+
+    fn in_place_read(
+        &self,
+        path: &std::path::Path,
+        settings: bool,
+    ) -> Result<SkillReading, String> {
+        let sealed =
+            crate::source::seal_in_place(self.scope, path).map_err(|error| error.to_string())?;
+        let header = sealed
+            .read_to_string(&path.join("SKILL.md"))
+            .map_err(|error| error.to_string());
+        let settings = settings.then(|| TemplateEvidence::Verified(settings_at(&sealed, path)));
+        Ok(SkillReading { header, settings })
     }
 
     fn command_source_lines(

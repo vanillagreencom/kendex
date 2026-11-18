@@ -621,7 +621,14 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
-                    print_attention(env, report, listing(verbose), scope.reach, &[]);
+                    print_attention(
+                        env,
+                        report,
+                        listing(verbose),
+                        scope.reach,
+                        &[],
+                        &report.settings_advisories,
+                    );
                     failures.extend(refresh_failures(report, &[]));
                 }
             }
@@ -1209,7 +1216,14 @@ fn write_ready(
             Ok(deferred) => deferred,
             Err(error) => return Ok(Some(start.stopped_short(report, None, Stop::Failed(error)))),
         };
-        *attention = print_attention(env, &report, listed, context.reach, &[]);
+        *attention = print_attention(
+            env,
+            &report,
+            listed,
+            context.reach,
+            &[],
+            &report.settings_advisories,
+        );
         let reported = refresh_failures(&report, &deferred);
         failed = !context.synced.failures.is_empty() || !reported.is_empty();
         failures.extend(reported);
@@ -1244,7 +1258,14 @@ fn write_ready(
         |after, shown| {
             context.synced.suppress_busy_pending(&mut after.notes);
             let deferred = defer_process_installs(env, scope, context, after)?;
-            *attention = print_attention(env, after, listed, context.reach, &shown.safety);
+            *attention = print_attention(
+                env,
+                after,
+                listed,
+                context.reach,
+                &shown.safety,
+                &after.settings_advisories,
+            );
             attention.folded |= shown.folded;
             failures.extend(refresh_failures(after, &deferred));
             Ok(())
@@ -1367,7 +1388,14 @@ fn ready_to_write(
         Ok(None) => return Ok(Ready::Ended(Ok(ScopeWrite::Declined))),
         Err(error) if ui::cancelled(error.as_ref()) => return Ok(Ready::Ended(Err(error))),
         Err(error) => {
-            print_attention(env, &report, listing(context.verbose), context.reach, &[]);
+            print_attention(
+                env,
+                &report,
+                listing(context.verbose),
+                context.reach,
+                &[],
+                &report.settings_advisories,
+            );
             failures.push(error.to_string());
             return Ok(Ready::Skip);
         }

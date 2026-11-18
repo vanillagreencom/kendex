@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use crate::model::ItemKind;
 use crate::scan::metadata::{self, Metadata};
+use crate::settings_seed::SETTINGS_TEMPLATE;
+use crate::settings_template::{TemplateEvidence, TemplateSource};
 use crate::source_read::SealedSource;
 
 /// The file one kind writes its header in, under the item path
@@ -105,12 +107,56 @@ pub(crate) struct DeclaredHeaders {
         std::collections::HashMap<OpenedKey, Result<(SealedSource, super::SourceConfig), String>>,
 }
 
+/// The two declarations the check reads from an installed skill.
+pub(crate) struct SkillReading {
+    pub(crate) header: Result<String, String>,
+    pub(crate) settings: Option<TemplateEvidence>,
+}
+
+pub(crate) fn settings_at(sealed: &SealedSource, path: &Path) -> TemplateSource {
+    match sealed.read_if_exists(&path.join(SETTINGS_TEMPLATE)) {
+        Ok(Some(text)) => TemplateSource::Text(text),
+        Ok(None) => TemplateSource::Absent,
+        Err(error) => TemplateSource::Unreadable(error.to_string()),
+    }
+}
+
+/// A consumer copy proves the installed template only while its sealed bytes match the record.
+pub(crate) fn rendered_settings(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    entry: &crate::lock::LockEntry,
+) -> Option<TemplateSource> {
+    let crate::model::Scope::Project { root } = scope else {
+        return None;
+    };
+    let recorded = entry.rendered_hash.as_ref()?;
+    let sealed = SealedSource::open(root).ok()?;
+    for path in crate::engine::owned::installed(env, scope, entry).files {
+        let Ok(files) = sealed.collect_tree(&path, &crate::source_read::TOOL_CACHES) else {
+            continue;
+        };
+        if !crate::hash::RenderedIdentity::observed_files(&path, &files, true).matches(recorded) {
+            continue;
+        }
+        return match files
+            .into_iter()
+            .find(|(name, _)| name == Path::new(SETTINGS_TEMPLATE))
+        {
+            Some((_, bytes)) => String::from_utf8(bytes).ok().map(TemplateSource::Text),
+            None => Some(TemplateSource::Absent),
+        };
+    }
+    None
+}
+
 /// What one installation's own record says it came from.
 ///
 /// A declaration is what a scope asks for now; this is what the
 /// installation on disk actually is. They part company the moment
 /// somebody edits the manifest, and every question about the bytes
 /// already installed is answered from here.
+#[derive(Clone)]
 pub(crate) struct InstalledFrom {
     /// The source name this installation was declared under.
     pub(crate) source: String,
@@ -218,13 +264,33 @@ fn header_text(
     name: &str,
     source: &str,
 ) -> crate::error::Result<Result<String, String>> {
-    let path = super::find_item(sealed, config, kind, name).ok_or_else(|| {
+    let path = header_item(sealed, config, kind, name, source)?;
+    text_at(sealed, kind, &path, name, source)
+}
+
+fn header_item(
+    sealed: &SealedSource,
+    config: &super::SourceConfig,
+    kind: ItemKind,
+    name: &str,
+    source: &str,
+) -> crate::error::Result<PathBuf> {
+    super::find_item(sealed, config, kind, name).ok_or_else(|| {
         crate::error::CoreError::ItemNotInSource {
             name: name.to_owned(),
             source_name: source.to_owned(),
         }
-    })?;
-    Ok(try_text(sealed, kind, &path)?
+    })
+}
+
+fn text_at(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    path: &Path,
+    name: &str,
+    source: &str,
+) -> crate::error::Result<Result<String, String>> {
+    Ok(try_text(sealed, kind, path)?
         .ok_or_else(|| format!("'{name}' has no header file in source '{source}'")))
 }
 
@@ -245,6 +311,69 @@ fn header_text(
 type OpenedKey = (crate::model::Scope, String, Option<String>, Option<String>);
 
 impl DeclaredHeaders {
+    /// A verified render carries the settings the installation actually
+    /// received, including label rewrites and bytes kept during a transfer.
+    pub(crate) fn installed_settings(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        entry: &crate::lock::LockEntry,
+    ) -> Option<TemplateEvidence> {
+        if entry.source == crate::manifest::INPLACE_SOURCE_NAME && entry.rendered_hash.is_none() {
+            let path = crate::engine::desired::skill_canonical(env, scope, &entry.name);
+            let sealed = super::seal_in_place(scope, &path).ok()?;
+            return Some(TemplateEvidence::Verified(settings_at(&sealed, &path)));
+        }
+        rendered_settings(env, scope, entry)
+            .map(TemplateEvidence::Verified)
+            .or_else(|| {
+                entry.source_commit.as_ref()?;
+                let installed = InstalledFrom::of(entry);
+                let (sealed, path, _) = self
+                    .skill_location(env, scope, manifest, &entry.name, Some(&installed))
+                    .ok()?;
+                let template = settings_at(sealed, &path);
+                (!matches!(template, TemplateSource::Unreadable(_)))
+                    .then_some(TemplateEvidence::Catalog(template))
+            })
+    }
+
+    pub(crate) fn skill(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        name: &str,
+        installed: Option<&InstalledFrom>,
+        settings: bool,
+    ) -> Result<SkillReading, String> {
+        let (sealed, path, source) = self.skill_location(env, scope, manifest, name, installed)?;
+        let header = text_at(sealed, ItemKind::Skill, &path, name, &source)
+            .unwrap_or_else(|error| Err(error.to_string()));
+        let settings = settings.then(|| TemplateEvidence::Catalog(settings_at(sealed, &path)));
+        Ok(SkillReading { header, settings })
+    }
+
+    fn skill_location(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        name: &str,
+        installed: Option<&InstalledFrom>,
+    ) -> Result<(&SealedSource, PathBuf, String), String> {
+        let read_at = ReadAt::of(manifest, ItemKind::Skill, name, installed)
+            .ok_or_else(|| format!("'{name}' is neither installed nor declared in this scope"))?;
+        let (sealed, config) = self
+            .opened(env, scope, manifest, &read_at)
+            .as_ref()
+            .map_err(String::clone)?;
+        let path = header_item(sealed, config, ItemKind::Skill, name, &read_at.source)
+            .map_err(|error| error.to_string())?;
+        Ok((sealed, path, read_at.source))
+    }
+
     /// What one declared package's own source says about it, at the
     /// version this scope has installed. `None` where the declaration, the
     /// source or the item cannot be reached — an unreachable source
