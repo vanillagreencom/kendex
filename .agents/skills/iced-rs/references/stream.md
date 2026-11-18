@@ -4,26 +4,11 @@
 
 Utilities for bridging async futures into the stream world. Use `channel` or `try_channel` to convert imperative async code (loops, channels) into streams consumed by `Subscription::run` or `Task::stream`.
 
+Read when adapting asynchronous producers for a subscription or task.
+
 ## API
 
-### Functions
-
-```rust
-/// Creates a `Stream` that yields items sent from a `Future` to an
-/// `mpsc::Sender`. A more ergonomic `stream::unfold` -- loop and publish
-/// from inside a `Future`.
-pub fn channel<T>(
-    size: usize,
-    f: impl AsyncFnOnce(Sender<T>),
-) -> impl Stream<Item = T>;
-
-/// Like `channel`, but the async closure may return an error.
-/// The stream yields `Result<T, E>` items.
-pub fn try_channel<T, E>(
-    size: usize,
-    f: impl AsyncFnOnce(Sender<T>) -> Result<(), E>,
-) -> impl Stream<Item = Result<T, E>>;
-```
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/futures/src/stream.rs) for signatures and available types.
 
 ## Patterns
 
@@ -32,14 +17,14 @@ pub fn try_channel<T, E>(
 ```rust
 use iced::stream;
 use iced::Subscription;
+use iced::futures::{SinkExt, StreamExt};
 
 fn subscription(&self) -> Subscription<Message> {
     Subscription::run(|| {
         stream::channel(100, async move |mut sender| {
             let mut ws = connect_websocket().await;
-            loop {
-                let msg = ws.next().await;
-                sender.send(msg).await.ok();
+            while let Some(msg) = ws.next().await {
+                if sender.send(msg).await.is_err() { break; }
             }
         })
     })
@@ -51,11 +36,12 @@ fn subscription(&self) -> Subscription<Message> {
 
 ```rust
 use iced::stream;
+use iced::futures::SinkExt;
 
 let data_stream = stream::try_channel(10, async move |mut sender| {
     let mut reader = open_file().await?;
     while let Some(chunk) = reader.next_chunk().await? {
-        sender.send(chunk).await.ok();
+        if sender.send(chunk).await.is_err() { break; }
     }
     Ok(())
 });
@@ -66,11 +52,13 @@ let data_stream = stream::try_channel(10, async move |mut sender| {
 ```rust
 use iced::stream;
 use iced::Task;
+use iced::futures::SinkExt;
+use std::time::Duration;
 
 Task::stream(stream::channel(1, async move |mut sender| {
     for i in 0..10 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        sender.send(i).await.ok();
+        if sender.send(i).await.is_err() { break; }
     }
 }))
 .map(Message::Progress)
@@ -78,10 +66,10 @@ Task::stream(stream::channel(1, async move |mut sender| {
 
 ## Gotchas
 
-- `size` is the mpsc channel buffer size. Use a small value (1-10) for backpressure-aware streams. Larger values buffer more items in memory.
+- `size` is the mpsc channel buffer size. Start with a small buffer such as 1–10 items for a producer that awaits each send. Size it for how much queued data the consumer can handle.
 - The `Sender` is bounded -- `sender.send(item).await` will wait if the buffer is full. Never use `try_send` in a tight loop without backpressure handling.
-- `try_channel` wraps each item in `Result`. If the closure returns `Err`, the error is yielded as a final `Result::Err` item and the stream ends.
-- The async closure runs in the runtime's async executor. It must be `'static` -- capture owned data, not references.
+- `try_channel` wraps each item in `Result`. If the closure returns `Err`, its runner yields an error item. Buffered successful items can still drain; do not assume the error is the last emitted item.
+- When used with `Subscription::run` or `Task::stream`, the resulting stream must satisfy their `MaybeSend + 'static` bounds. Capture owned data for those uses.
 
 ## See also
 

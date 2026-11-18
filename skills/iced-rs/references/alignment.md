@@ -4,41 +4,11 @@
 
 Single-axis positioning enum: `Start`, `Center`, `End`. Direction-specific variants: `Horizontal` (`Left`/`Center`/`Right`) and `Vertical` (`Top`/`Center`/`Bottom`), convertible to/from `Alignment`.
 
+Read when aligning row, column, text, or container content.
+
 ## API
 
-### `Alignment` enum
-
-```rust
-pub enum Alignment {
-    Start,
-    Center,
-    End,
-}
-```
-
-### `Horizontal` enum
-
-```rust
-pub enum Horizontal {
-    Left,
-    Center,
-    Right,
-}
-```
-
-### `Vertical` enum
-
-```rust
-pub enum Vertical {
-    Top,
-    Center,
-    Bottom,
-}
-```
-
-### Conversions
-
-`From`/`Into` between all three types: `Start`=`Left`=`Top`, `Center`=`Center`, `End`=`Right`=`Bottom`. All derive `Clone`, `Copy`, `Debug`, `PartialEq`, `Eq`, `Hash`.
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/alignment.rs) for signatures and available types.
 
 ## Patterns
 
@@ -54,7 +24,7 @@ column![text("a"), button("b")]
 // Text alignment explicitly with Horizontal
 text("hello").align_x(Horizontal::Right)
 
-// Center a container within an outer container
+// Center content within a container with available room
 container(inner)
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
@@ -62,14 +32,13 @@ container(inner)
     .height(Length::Fill)
 ```
 
-
 ## Gotchas
 
-- `Alignment::Start` / `End` are **direction-neutral**. On a row they mean left/right; on a column they mean top/bottom. In RTL locales, "start" and "end" may flip — iced does not currently document an explicit direction-aware mode, so test layouts in both directions if you support RTL.
+- `Alignment::Start` / `End` are **direction-neutral**. For row cross-axis alignment they mean top/bottom; for column cross-axis alignment they mean left/right. The conversions do not inspect locale.
 - For text, prefer the explicit `Horizontal` / `Vertical` enums — they are less ambiguous than `Alignment::Start` when discussing a specific axis.
 - `Horizontal::Center` and `Vertical::Center` both convert from `Alignment::Center` — you never need a different "center" value for each axis.
-- Centering a child inside a container requires the container to have a `Fill` size on that axis. If the container shrinks to the child, there is no free space to centre within, and alignment has no visible effect.
-- No `SpaceBetween`/`SpaceAround` variants. Use `row!`/`column!` with `.spacing(...)`.
+- Centering a child inside a container requires free space on that axis, from a fixed or filled size. If the container shrinks to the child, there is no free space to centre within, and alignment has no visible effect.
+- No `SpaceBetween`/`SpaceAround` variants. Use `.spacing(...)` for a fixed gap, or flexible space widgets to distribute spare space.
 
 ## See also
 

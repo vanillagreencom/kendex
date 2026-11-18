@@ -2,61 +2,20 @@
 
 > `iced::time` · iced 0.14.0
 
-Re-exports of `std::time::{Duration, Instant}` plus helper functions for creating time-based subscriptions and tasks.
+Cross-platform time types (`Duration` and `Instant`) plus helper functions for creating time-based subscriptions and tasks.
+
+Read when scheduling periodic work or requesting a timestamp.
 
 ## API
 
-### Re-exports
-
-```rust
-pub use std::time::Duration;
-pub use std::time::Instant;
-```
-
-### Functions
-
-```rust
-/// Returns a `Subscription` that yields the current `Instant` at each interval.
-/// First message after `duration`, then every `duration` thereafter.
-/// Requires feature `tokio` or `smol` or WebAssembly.
-pub fn every(duration: Duration) -> Subscription<Instant>;
-
-/// Returns a `Subscription` that runs an async function at a set interval,
-/// yielding the function's return value.
-/// Requires feature `tokio` or `smol` or WebAssembly.
-pub fn repeat<T>(
-    duration: Duration,
-    f: impl AsyncFn() -> T + MaybeSend + 'static,
-) -> Subscription<T>
-where
-    T: MaybeSend + 'static;
-
-/// Returns a `Task` that resolves to the current `Instant`.
-pub fn now() -> Task<Instant>;
-
-/// Convenience: creates a `Duration` from seconds.
-pub fn seconds(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from milliseconds.
-pub fn milliseconds(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from minutes.
-pub fn minutes(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from hours.
-pub fn hours(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from days.
-pub fn days(amount: u64) -> Duration;
-```
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/src/time.rs) for signatures and available types.
 
 ## Patterns
 
 ### Tick every second
 
 ```rust
-use iced::time;
-use std::time::Duration;
+use iced::time::{self, Duration};
 
 fn subscription(&self) -> Subscription<Message> {
     time::every(Duration::from_secs(1)).map(Message::Tick)
@@ -68,11 +27,10 @@ Message::Tick(instant) => {
 }
 ```
 
-### Animation frame at 60 FPS
+### Application animation on an interval
 
 ```rust
-use iced::time;
-use std::time::Duration;
+use iced::time::{self, Duration};
 
 fn subscription(&self) -> Subscription<Message> {
     if self.animating {
@@ -83,16 +41,13 @@ fn subscription(&self) -> Subscription<Message> {
 }
 ```
 
-### Periodic async polling
+### Periodic async polling (native Tokio backend)
 
 ```rust
-use iced::time;
-use std::time::Duration;
+use iced::time::{self, Duration};
 
 fn subscription(&self) -> Subscription<Message> {
-    time::repeat(Duration::from_secs(30), async || {
-        fetch_status().await
-    })
+    time::repeat(fetch_status, Duration::from_secs(30))
     .map(Message::StatusPolled)
 }
 ```
@@ -110,11 +65,13 @@ fn update(&mut self, message: Message) -> Task<Message> {
 
 ## Gotchas
 
+- `repeat(function, interval)` is exposed by the native Tokio backend. It starts the first call immediately, then waits the interval after each completed call. The builder takes a function pointer.
+
 - `every()` requires the `tokio` or `smol` feature flag (or WebAssembly). Without it, the function is not available.
 - `every()` yields `Subscription<Instant>`. Map to your message type: `time::every(dur).map(Message::Tick)`.
-- The first tick fires after `duration`, not immediately. For an immediate first tick, combine with `Task::done(Message::Tick(Instant::now()))`.
-- For animation, prefer `Shell::request_redraw` or `Shell::request_redraw_at` from within a custom widget over `time::every(16ms)`. The shell-based approach syncs with the compositor.
-- `now()` returns a `Task<Instant>`, not a raw `Instant`. This is designed for pure update functions (time-travel debugging support).
+- The native Tokio `every` schedules its first tick after `duration`. For an immediate first tick, combine with `Task::done(Message::Tick(Instant::now()))`.
+- For animation, prefer `Shell::request_redraw` or `Shell::request_redraw_at` from within a custom widget over `time::every(16ms)`. Use redraw scheduling for widget-driven animation; an interval does not guarantee a frame rate.
+- Use the `Task<Instant>` returned by `now()` to receive the time as a message in `update()`.
 
 ## See also
 

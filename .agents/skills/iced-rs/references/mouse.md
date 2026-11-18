@@ -2,50 +2,13 @@
 
 > `iced::mouse` · iced 0.14.0
 
-Mouse events, buttons, scroll deltas, cursor state, and system cursor icons. `Cursor` and `Interaction` are re-exported from `iced::advanced::mouse`; the `position_in`/`is_over` methods require the `advanced` feature.
+Mouse events, buttons, scroll deltas, cursor state, and system cursor icons. `Cursor` and `Interaction` are available through `iced::mouse`, including cursor-position helpers, without the `advanced` feature.
+
+Read when handling pointer events, wheel units, or cursor coordinates.
 
 ## API
 
-### `mouse::Event` enum
-
-```rust
-pub enum Event {
-    CursorEntered,
-    CursorLeft,
-    CursorMoved {
-        position: Point,
-    },
-    ButtonPressed(Button),
-    ButtonReleased(Button),
-    WheelScrolled {
-        delta: ScrollDelta,
-    },
-}
-```
-
-### `mouse::Button` enum
-
-```rust
-pub enum Button {
-    Left,
-    Right,
-    Middle,
-    Back,
-    Forward,
-    Other(u16),
-}
-```
-
-### `mouse::ScrollDelta` enum
-
-```rust
-pub enum ScrollDelta {
-    Lines  { x: f32, y: f32 },
-    Pixels { x: f32, y: f32 },
-}
-```
-
-For `Cursor` and `Interaction` details, see `advanced-mouse.md`.
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/mouse.rs) for source module exports, [mouse events and scroll deltas](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/mouse/event.rs), [buttons](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/mouse/button.rs), and [click classification](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/mouse/click.rs).
 
 ## Patterns
 
@@ -106,11 +69,11 @@ fn subscription(_: &State) -> Subscription<Message> {
 ## Gotchas
 
 - `ScrollDelta::Lines` and `ScrollDelta::Pixels` are both emitted by real devices — always handle both. A common mistake is to only match on `Lines` and silently drop trackpad scrolling.
-- "One line" is typically 16 px, but that's not guaranteed — document your multiplier choice.
+- The example chooses 16 logical pixels per line. Document your multiplier; `Lines` does not prescribe a pixel distance.
 - `CursorMoved { position }` is in **window** coordinates, not widget coordinates. Use `Cursor::position_in(layout.bounds())` inside a widget to get widget-relative coordinates.
-- The public `mouse` module and the `advanced::mouse` module share the same types but the extended `Cursor::position_in`/`position_over`/`is_over` methods are gated behind the `advanced` feature flag.
+- `position_over` keeps the cursor’s coordinates in the same space as the supplied bounds. `position_in` subtracts the rectangle origin to return local coordinates.
 - `Button::Other(u16)` is platform-specific — don't assume any particular numeric code means a particular button.
-- There is no `Event::DoubleClick` variant — double-click detection is done via the `iced::advanced::mouse::click::Click::new(position, button, previous)` helper. If you need timing-based double-click, track timestamps yourself.
+- There is no `Event::DoubleClick` variant — double-click detection is done via the `iced::advanced::mouse::click::Click::new(position, button, previous)` helper. Pass the previous `Click` to use its timing, position and button checks.
 - No `is_inside_window` helper -- track `CursorEntered`/`CursorLeft` yourself.
 
 ## See also

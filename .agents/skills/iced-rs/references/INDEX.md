@@ -2,7 +2,7 @@
 
 Iced 0.14 API references and guides. Load on demand.
 
-- `api-module-tree.md` — hierarchical index of every public module, trait, struct, enum, function
+- [Iced 0.14 API lookup](api-module-tree.md) for versioned declarations and feature gates
 
 ## Synthesized guides
 
@@ -10,9 +10,9 @@ Iced 0.14 API references and guides. Load on demand.
 |---|---|
 | `guide-surface-selection.md` | Built-in / Canvas / Shader / Widget / Overlay decision tree |
 | `guide-custom-widgets.md` | `iced::advanced::Widget` — checklist, state, events, animation, hit-testing |
-| `guide-custom-overlays.md` | `iced::advanced::overlay::Overlay` — contract, viewport rule, panic sources |
+| `guide-custom-overlays.md` | Overlay template, child state, positioning, and viewport |
 | `animation.md` | Paint-only vs layout-affecting, redraw scheduling, `Animation<T>`, hand-rolled, easing |
-| `animation-easing.md` | `Animation<T>` API (all methods) + `Easing` enum (32 variants) |
+| `animation-easing.md` | Easing, retargeting, and repeating animation |
 | `guide-animated-layout.md` | Animated transitions: measured positions, collapsed/expanded, keyed identity, clipping |
 | `guide-animation-debugging.md` | Animation/render bug checklist, symptom→cause table |
 | `shell-chrome.md` | Shell UI: action builders, floating menus, tab bars |
@@ -22,7 +22,7 @@ Iced 0.14 API references and guides. Load on demand.
 
 | File | Covers |
 |---|---|
-| `advanced-widget.md` | `Widget` trait — all methods, signatures |
+| `advanced-widget.md` | `Widget` callbacks and their contracts |
 | `advanced-overlay.md` | `Overlay` trait, `Widget::overlay()` contract |
 | `advanced-shell.md` | `Shell` — publish, capture_event, request_redraw, invalidate_layout |
 | `advanced-tree.md` | `Tree`, `Tag`, `State` — persistent widget state |
@@ -92,14 +92,14 @@ Iced 0.14 API references and guides. Load on demand.
 | `task.md` | `Task<Message>` — none, done, batch, perform, future, stream |
 | `subscription.md` | `Subscription<Message>` — run_with, batch, stable identity |
 | `window.md` | `window::open`, `close`, `resize`, `Event`, `Id`, `Settings` |
-| `keyboard.md` | `Key`, `Modifiers`, `Named` (full variants), `listen`, `on_key_press` |
+| `keyboard.md` | Keyboard input, ignored-event subscriptions, and key matching |
 | `mouse.md` | `mouse::Event`, `Button`, `Cursor`, `Interaction` |
 | `events.md` | `event::Event`, `listen`, `listen_with`, `listen_raw` |
 | `touch.md` | `touch::Event`, `Finger` |
 | `stream.md` | `stream::channel`, `try_channel` |
 | `time.md` | `time::every`, `repeat`, `now` |
 | `futures.md` | `MaybeSend`, `Stream`, `StreamExt` re-exports |
-| `debug.md` | `debug::time`, `time_with`, `enable`, `disable`; dev tools (`cargo-hot`, `comet`, F12 overlay) |
+| `debug.md` | `debug::time`, `time_with`, and development tools including the F12 overlay |
 | `system.md` | `system::information` (feature `sysinfo`) |
 
 ## Theming
@@ -112,4 +112,4 @@ Iced 0.14 API references and guides. Load on demand.
 
 ## Reading strategy
 
-**Building new**: guide → API refs → canonical example → code → gotchas. **Animated layered UI**: `guide-animated-layout.md` + `guide-animation-debugging.md` first. **Debugging**: `SKILL.md` rules → guide failure-modes → API gotchas. `container.rs unwrap on None` → `guide-custom-overlays.md`. Animation bugs → `guide-animation-debugging.md`. **Charts**: chart-specific skill if available.
+Follow [the skill workflow](../SKILL.md#workflow) when building a new interface or debugging an existing one. If a custom overlay has a missing child layout, check the child state and layout pairing in [the overlay guide](guide-custom-overlays.md). Load the chart-specific skill when available.

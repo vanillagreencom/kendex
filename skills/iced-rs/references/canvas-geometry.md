@@ -2,25 +2,13 @@
 
 > `iced::widget::canvas::{Geometry, Cache}` · iced 0.14.0
 
-`Geometry` is the opaque output of `Frame::into_geometry()`. `Cache` stores generated geometry to avoid recomputation -- the primary performance tool for canvas-heavy UIs. Requires the `canvas` feature.
+`Geometry` is the opaque output of `Frame::into_geometry()`. `Cache` stores generated geometry so draw calls can reuse it. Requires the `canvas` feature.
+
+Read when caching Canvas geometry or choosing what invalidates a drawing layer.
 
 ## API
 
-### Producing `Geometry` from a `Frame`
-
-```rust
-impl<Renderer> Frame<Renderer> {
-    pub fn new(renderer: &Renderer, size: Size) -> Frame<Renderer>;
-    pub fn into_geometry(self) -> <Renderer as Renderer>::Geometry;
-}
-```
-
-- **`Frame::new(renderer, size)`** — Creates a frame with the given drawable size. Anything drawn outside `size` is clipped away. The frame is dropped when `into_geometry()` is called, consuming it.
-- **`into_geometry()`** — Consumes the frame and returns the associated renderer's `Geometry` type. Each canvas `Program::draw` call returns a `Vec<Geometry>`, so you can produce multiple independent geometries in a single draw pass.
-
-### `Cache`
-
-See `canvas.md` for the full `Cache` API. Key methods: `new()`, `with_group(group)`, `clear()`, `draw(renderer, size, draw_fn)`, `draw_with_bounds(renderer, bounds, draw_fn)`.
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/graphics/src/geometry/cache.rs) for cache methods and the [frame declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/graphics/src/geometry/frame.rs) for `Frame::into_geometry`.
 
 ## Patterns
 
@@ -75,7 +63,7 @@ self.series.clear();      // on new data
 self.crosshair.clear();   // on mouse move
 ```
 
-### Group caches that invalidate together
+### Group caches likely to change together
 
 ```rust
 let group = canvas::Group::unique();
@@ -92,16 +80,15 @@ self.content.draw_with_bounds(renderer, visible_region, |frame| {
 });
 ```
 
-
 ## Gotchas
 
 - **Caches are not invalidated automatically.** If you change the data you draw from, you must call `cache.clear()` explicitly. Forgetting is the classic "why isn't my chart updating?" bug.
 - The closure passed to `cache.draw(...)` is only called on the **first** call after a clear or size change. Avoid side effects inside the closure other than drawing — it may or may not run on any given frame.
 - Cache identity is keyed on the *size passed to `draw`*, not the widget bounds. If your layout produces sub-pixel sizes, the cache might invalidate every frame. Round your bounds when stable.
-- `draw_with_bounds` invalidates on `bounds` change, not just size change. Use it when you need clipping to an absolute rectangle (for scrollable viewports), not as a general "clip everything" helper.
+- `draw_with_bounds` takes a clipping rectangle. Changing its origin or size causes the cache to draw again.
 - A single `Cache` can only store **one** geometry. If you need multiple layers that invalidate independently, use multiple caches.
 - `Cache::clear()` takes `&self`, not `&mut self`. You can clear from inside an immutable context (which is essential because `Program::draw` receives `&self`).
-- No API to inspect cached geometry size or pre-warm the cache.
+- There is no separate pre-warm method; a call to `draw` computes or retrieves the cached geometry.
 
 ## See also
 

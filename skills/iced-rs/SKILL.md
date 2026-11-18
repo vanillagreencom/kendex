@@ -1,7 +1,7 @@
 ---
 name: iced-rs
 description: "Load whenever building or debugging an Iced UI."
-summary: "Iced 0.14 GUI reference: custom widgets via iced::advanced, overlays, Canvas, Shader, pane_grid, theming, subscriptions, Elm architecture, with a bundled full-API reference."
+summary: "Iced 0.14 GUI reference: custom widgets via iced::advanced, overlays, Canvas, Shader, pane_grid, theming, subscriptions, Elm architecture, with versioned API links and bundled examples."
 license: MIT
 user-invocable: true
 metadata:
@@ -16,10 +16,10 @@ tags: [ui]
 
 ## Workflow
 
-1. Classify the surface against `references/guide-surface-selection.md`. Do not skip.
+1. Classify the surface with [Surface Selection](references/guide-surface-selection.md).
 2. Read the canonical example in `examples/`, never generate 0.14 code from memory.
 3. Read the guide for that surface; for animated layered UI, `references/guide-animated-layout.md` comes first.
-4. Stuck: the guide's "Common failure modes" / "Gotchas", then `references/guide-animation-debugging.md` for animation and render bugs. The three most common: missing `capture_event`, missing `invalidate_layout`, 0.13 event signatures.
+4. When debugging, check the guide’s failure modes and API notes. For animation or rendering, read [the diagnostic checklist](references/guide-animation-debugging.md). Check event capture, layout invalidation, and the 0.14 event signature.
 
 Surface choice: built-in widgets + `.style(closure)` for standard UI; `Canvas` for 2D custom drawing; `Shader` for GPU-dense rendering; `iced::advanced::Widget` for custom events, state, or layout; for a floating layer try `tooltip`, `float`, or `stack`+`opaque` before a custom `Overlay`.
 
@@ -27,7 +27,7 @@ Surface choice: built-in widgets + `.style(closure)` for standard UI; `Canvas` f
 
 ### `references/`: API refs and guides
 
-Full list in `references/INDEX.md`; load on demand.
+Choose guides and references from the [index](references/INDEX.md). Look up signatures and feature gates through the [Iced 0.14 API page](references/api-module-tree.md).
 
 | Guide | Use |
 |---|---|
@@ -38,7 +38,7 @@ Full list in `references/INDEX.md`; load on demand.
 | `guide-animation-debugging.md` | Symptom→cause checklist for animation/render bugs |
 | `widgets.md` | Widget catalog: every 0.14 widget, notes, canonical example |
 
-### `examples/`: every example of the Iced 0.14.0 release
+### Bundled Iced 0.14.0 examples
 
 | Need | Read first |
 |---|---|
@@ -50,7 +50,7 @@ Full list in `references/INDEX.md`; load on demand.
 | Arc/ring animation | `examples/loading_spinners`, `examples/arc` |
 | Modal dialog | `examples/modal/src/main.rs` (stack + opaque) |
 | Toast/notification overlay | `examples/toast/src/main.rs` |
-| Tooltip / zoom-on-hover | `examples/loupe/src/main.rs` |
+| Zoom-on-hover with clipped drawing | `examples/loupe/src/main.rs` |
 | Styled components | `examples/styling/` |
 | pane_grid layout | `examples/pane_grid/` |
 | Multi-window | `examples/multi_window/` |
@@ -61,7 +61,7 @@ Full list in `references/INDEX.md`; load on demand.
 
 Renderer source for shader work: `iced_wgpu/src/` (`engine.rs`, `layer.rs`, `quad.rs`, `quad/solid.rs`, `quad/gradient.rs`, `triangle.rs`, `triangle/msaa.rs`, `primitive.rs`, `buffer.rs`, `settings.rs`, `shader/quad.wgsl`).
 
-Snapshot: tag `0.14.0` of `https://github.com/iced-rs/iced`, commit `3997291f318a8bc06fa522f5579836fb3feb94df`. Upstream `wgpu/` is `iced_wgpu/` and upstream `examples/` is `examples/`, each copied whole. Only the bundled READMEs differ: links out of the copy point at the tag, and run steps name the upstream workspace. This copy has no workspace `Cargo.toml` and does not build.
+The bundled `iced_wgpu/` and `examples/` come from [Iced 0.14.0](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/Cargo.toml). Read the bundled source to match the example’s API. To run an example, use the upstream workspace at that revision. The skill omits the workspace manifest.
 
 The snapshot's signatures are the authority. For discovery beyond it, run `ctx7 docs /websites/iced_rs "<query>"`, then check each signature against `https://docs.rs/iced/0.14.0/iced/` or the tag's source, since lookups can return master APIs. Never copy code from upstream `master`.
 
@@ -69,13 +69,13 @@ The snapshot's signatures are the authority. For discovery beyond it, run `ctx7 
 
 - `Widget::update` takes `event: &Event` (by ref, not by value)
 - `Widget::layout` takes `&mut Tree`
-- Keyboard subscriptions unified into `keyboard::listen`
+- Use `keyboard::listen` for ignored key events. See [keyboard subscriptions](references/keyboard.md).
 
-## Rules (non-negotiable framework invariants)
+## Implementation rules
 
 ### Widget tree consistency
 
-Conditional wrapping changes tree shape and breaks event tracking. Always wrap; conditionally attach the handler.
+Keep the wrapper in the widget tree as interaction state changes. Attach the handler only when the interaction is enabled.
 
 ```rust
 // WRONG: conditional wrapping changes tree shape
@@ -93,15 +93,15 @@ area
 
 ### view() is pure
 
-No side effects, no memoization dependent on call frequency. All mutable state lives in `State` and is mutated only in `update()`. Never trigger redraws from `view()`.
+Keep `view()` free of side effects, redraw requests, and caches that depend on how often it runs. Change app state in `update()`. Keep persistent widget interaction state in Tree.
 
 ### Redraw vs rebuild
 
-`request_redraw()` repaints but does **not** call `view()`. Animation state must live in `widget::Tree` state. Widget struct fields are frozen between `view()` calls. See `references/animation.md` § "Redraw vs rebuild."
+A redraw request on its own uses the existing widget tree. Keep widget-driven motion in `widget::Tree` state and use messages to update app-driven motion. See [Redraw vs rebuild](references/animation.md#redraw-vs-rebuild).
 
 ### Animation invalidation
 
-Paint-only changes (color, opacity, rotation within fixed bounds) need `shell.request_redraw()`. Layout-affecting changes (size, position, expand/collapse, clipping bounds) need `shell.request_redraw()` **and** `shell.invalidate_layout()`. A widget that "only updates on the second click" has stale layout. Add `invalidate_layout()`.
+Paint-only changes (color, opacity, rotation within fixed bounds) need `shell.request_redraw()`. Layout-affecting changes (size, position, expand/collapse, clipping bounds) need `shell.request_redraw()` **and** `shell.invalidate_layout()`. If geometry updates on a second click, check that the first state change invalidates layout.
 
 ### Draw order is z-order
 
@@ -111,13 +111,13 @@ In custom widget `draw()`, child iteration order determines z-order; last drawn 
 
 A widget that conditionally returns an overlay must call `shell.invalidate_layout()` when visibility changes.
 
-### Custom overlays are the #1 panic source
+### Custom overlays
 
-Prefer built-ins (`tooltip`, `float`, `stack`+`opaque`). A violated contract panics as `container.rs unwrap() on None`. The contract: `children()` returns a fixed count; `diff()` reconciles all children regardless of visibility; `layout()` returns nodes matching children; `draw()` walks the same tree layout produced. Full spec: `references/guide-custom-overlays.md`.
+Prefer `tooltip`, `float`, or `stack` with `opaque`. In the custom overlay template, keep a fixed child count and reconcile both children whether or not the popup is visible. Pair each forwarded child with its own Tree entry and layout. The popup has a separate layout pass. Follow [the overlay guide](references/guide-custom-overlays.md).
 
 ### Overlay viewport contract
 
-When calling descendant `Widget` methods from inside an `Overlay` impl, pass `Rectangle::INFINITE` as the viewport, **never** the stored viewport from the parent's `overlay()`. `Overlay::layout()` may still use `bounds: Size` for its own coordinate space.
+In the overlay pattern, pass `Rectangle::INFINITE` to descendant `Widget` methods that take a viewport. Use `bounds: Size` in `Overlay::layout()` to place the popup. A parent viewport can clip popup content.
 
 ### Overlay state isolation
 
@@ -133,7 +133,7 @@ Hover sensors must not wrap content whose size changes during the animation they
 
 ### Scroll state initialization
 
-`scrollable.on_scroll` fires only after user scrolling, never at initial layout. Use `sensor.on_show` for initial layout and `sensor.on_resize` for changes.
+`Scrollable::on_scroll` reports changes to the scroll viewport and can publish during redraw processing. Use `Sensor::on_show` to observe initial size and `Sensor::on_resize` for subsequent size changes.
 
 ### Single message per interaction
 
@@ -147,12 +147,12 @@ One widget interaction produces one message. Composite actions (tab press becomi
 - TitleBar content must use `Shrink` width so empty space remains for the pick area; `Fill` eliminates it.
 - `button` and `mouse_area` both `capture_event()` on press: tab elements capturing means a custom tab drag, an empty title bar means native pane_grid drag.
 - Tab drag is `mouse_area.on_press` per tab plus `listen_with` for `CursorMoved`/`ButtonReleased`, with an Idle → Pressed(origin) → Dragging state machine at an 8px threshold.
-- In `pane_grid::Content::update` the title bar processes before the body. Do not unconditionally clear state in body-exit handlers that the title bar just established.
+- `pane_grid::Content::update` forwards to the title bar before an unpicked pane’s body. Do not unconditionally clear state in body-exit handlers that the title bar just established.
 - Keep drag feedback inside the picked pane subtree or in `pane_grid::Style`. `mouse_area`/`opaque` pane-drag overlays are rebuild-sensitive and can prevent `Dropped` events; drag previews must reuse the same TitleBar/body shell.
 
 ### Subscriptions
 
-Each data source needs stable identity: `Subscription::run_with(id, stream)` or `.with(id)`, batched with `Subscription::batch`. See `references/subscription.md`.
+Each data source needs stable identity: `Subscription::run_with(id, build_stream)` or `.with(id)`, batched with `Subscription::batch`. See `references/subscription.md`.
 
 Pre-aggregate high-frequency data in the subscription worker: emit one batch per non-empty ~16ms window, over bounded channels with producer-side `try_send()`.
 
@@ -160,7 +160,7 @@ Pre-aggregate high-frequency data in the subscription worker: emit one batch per
 
 Build the palette with `Theme::custom_with_fn("My Dark", palette, |p| theme::palette::Extended::generate(p))`, keep app tokens in a `LazyLock<AppTokens>` sidecar, and route every visual value through it from style closures that ignore the passed `&Theme`. Introduce a custom `Theme` type only when runtime theme switching demands it.
 
-Built-in palette roles are `primary`, `success`, `danger`, `warning`. Fonts load on the entry point (`.font(include_bytes!(...))`); `Font::MONOSPACE` resolves to the first loaded monospace font and `Font::with_name("...")` to a system font. See `references/theme.md`, `references/theme-palette.md`, `references/catalog.md`.
+Built-in palette roles are `primary`, `success`, `danger`, `warning`. Fonts load on the entry point (`.font(include_bytes!(...))`); `Font::MONOSPACE` selects the monospace family. Use `Font::with_name("...")` to specify a family by name. See `references/theme.md`, `references/theme-palette.md`, `references/catalog.md`.
 
 ### Cache staleness
 
@@ -170,7 +170,7 @@ Before writing cached or mirrored UI state, enumerate every mutation path that c
 
 `Message` enum and `State` struct live in the root module; extracted modules receive `&State` or `&mut State`. Extract when a feature is gated and self-contained, forms a cohesive responsibility group, or exceeds ~30 lines over a well-defined `State` subset.
 
-Multi-window: `window::open(settings) -> Task<window::Id>`, `window::close(id)`. See `references/window.md`. Testing: `iced_test` provides `Simulator` (headless widget), `Emulator` (full runtime), and snapshot support.
+For multiple windows, save the ID from `window::open(settings)` and return its open task. Use `window::close(id)` to close it. See [Window](references/window.md). Testing: `iced_test` provides `Simulator` (headless widget), `Emulator` (full runtime), and snapshot support.
 
 ## Dev tools
 
