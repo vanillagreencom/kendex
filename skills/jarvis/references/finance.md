@@ -16,6 +16,7 @@ Keep one obligations record in the consumer's private record store, at the locat
 
 - Close an obligation only at `verified`. A `filed` status, a calendar entry, an event marked done or a message saying it was received closes nothing.
 - Prepare a period from the current official source. Check the source again for each period; a prior period's rule is not evidence for this one. Apply [research.md:Legal answers](research.md#legal-answers) when the rule needs a legal answer.
+- When an obligation's next action depends on a document or approval, derive a preparation date from that dependency and include it in the obligation's entry in the consumer's existing calendar or reminder.
 - Keep unknowns unknown. Record a value the source does not give as unknown; never fill it from an estimate or a prior period.
 - Derive the next period from the rule itself, not by adding an interval to the last due date.
 - Leave an obligation at its status when its source or confirmation cannot be read, and name the cause.
