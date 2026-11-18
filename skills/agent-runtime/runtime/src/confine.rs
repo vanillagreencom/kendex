@@ -26,6 +26,20 @@ pub const CONFINED_VAR: &str = "AGENT_RUNTIME_CONFINED";
 /// Names the grants file inside the wrapper.
 pub const GRANTS_VAR: &str = "AGENT_RUNTIME_GRANTS";
 
+/// The variables a harness or its runtime takes its temporary folder from,
+/// each pointed at the wrapper's private `/tmp`: a value inherited from the
+/// pane names a host folder the lane cannot write. `TMPDIR` for every
+/// program; `CLAUDE_CODE_TMPDIR`, then `CLAUDE_TMPDIR`, for Claude Code's
+/// shell; `BUN_TMPDIR` for the Bun runtime Claude Code and Pi ship in;
+/// `SQLITE_TMPDIR` for the SQLite every harness links.
+const TEMP_VARS: [&str; 5] = [
+    "TMPDIR",
+    "CLAUDE_CODE_TMPDIR",
+    "CLAUDE_TMPDIR",
+    "BUN_TMPDIR",
+    "SQLITE_TMPDIR",
+];
+
 /// The Linux wrapper, found on the pane's `PATH`.
 pub const WRAPPER: &str = "bwrap";
 
@@ -66,13 +80,16 @@ pub struct Grants {
     /// Folders the lane writes: its worktree, its mailbox, its own state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writable: Vec<PathBuf>,
-    /// Account seats bound writable: the lane's own and any its review
-    /// may run on. Apart from `writable` so a launch record names them,
-    /// since a confined lane still holds those accounts' credentials.
+    /// Account seats the lane runs on: its own and any its review may run
+    /// on. Named so a launch record names them, since a confined lane still
+    /// holds those accounts' credentials; bound as the rest of the tree is,
+    /// read-only, since a seat's settings, hooks and extensions run code in
+    /// the operator's next session there. What a session writes in a seat
+    /// ([`crate::harness::Harness::home_writes`]) is in `writable`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seats: Vec<PathBuf>,
-    /// Paths inside a writable grant kept read-only, such as a seat's
-    /// settings, which run code in the operator's next session there.
+    /// Paths inside a writable grant kept read-only, such as the settings
+    /// and the code folders of a seat its harness must write whole.
     /// Each must stand: the wrapper refuses a missing one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub read_only: Vec<PathBuf>,
@@ -256,7 +273,7 @@ pub fn linux_words(grants: &Grants) -> Vec<Word> {
         words.push(plain("--tmpfs"));
         words.push(plain(&dir.display().to_string()));
     }
-    for path in grants.writable.iter().chain(&grants.seats) {
+    for path in &grants.writable {
         pair(&mut words, "--bind", path);
     }
     for path in &grants.read_only {
@@ -276,9 +293,11 @@ pub fn linux_words(grants: &Grants) -> Vec<Word> {
     for (name, value) in [
         (CONFINED_VAR, "1".to_owned()),
         (GRANTS_VAR, grants.file.display().to_string()),
-        ("TMPDIR", "/tmp".to_owned()),
     ] {
         words.extend([plain("--setenv"), plain(name), Word::Plain(value)]);
+    }
+    for name in TEMP_VARS {
+        words.extend([plain("--setenv"), plain(name), plain("/tmp")]);
     }
     if let Some(file) = &grants.gh_token {
         words.extend([

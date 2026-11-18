@@ -2838,10 +2838,11 @@ fn wrapper_root() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// The kernel holds what the grants say, for the program and its child:
-/// the home refuses a write, the worktree and the seat take one, the
-/// seat's settings stay read-only, a socket in the runtime folder is
-/// hidden and the one bound back stands. The words alone are run, as the
-/// pane would run them, with no launch around them.
+/// the home refuses a write, the worktree and the seat's session folder
+/// take one, the seat itself and its settings refuse a write and a
+/// replacement, a socket in the runtime folder is hidden and the one bound
+/// back stands. The words alone are run, as the pane would run them, with
+/// no launch around them.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the_runtime_sockets() {
@@ -2849,14 +2850,14 @@ fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the
     use std::os::unix::net::UnixListener;
     let (_dir, root) = wrapper_root();
     let [home, wt, seat, rt] = ["home", "wt", "seat", "rt"].map(|n| root.join(n));
-    for dir in [&home, &wt, &seat, &rt] {
+    for dir in [&home, &wt, &seat.join("projects"), &rt] {
         std::fs::create_dir_all(dir).unwrap();
     }
     std::fs::write(seat.join("settings.json"), "{}").unwrap();
     let _bus = UnixListener::bind(rt.join("bus")).unwrap();
     let _agent = UnixListener::bind(rt.join("agent.sock")).unwrap();
     let grants = Grants {
-        writable: vec![wt.clone()],
+        writable: vec![wt.clone(), seat.join("projects")],
         seats: vec![seat.clone()],
         read_only: vec![seat.join("settings.json")],
         runtime_dir: Some(rt.clone()),
@@ -2875,8 +2876,10 @@ fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the
     let script = r#"touch "$HOME/x" 2>/dev/null && echo home=written || echo home=refused
 sh -c 'touch "$HOME/child"' 2>/dev/null && echo child=written || echo child=refused
 touch "$1/y" && echo worktree=written || echo worktree=refused
-touch "$2/credentials" && echo seat=written || echo seat=refused
+touch "$2/credentials" 2>/dev/null && echo seat=written || echo seat=refused
+touch "$2/projects/session.jsonl" && echo session=written || echo session=refused
 { echo '{"hooks":1}' > "$2/settings.json"; } 2>/dev/null && echo settings=written || echo settings=refused
+mv "$2/settings.json" "$2/old.json" 2>/dev/null && echo replace=written || echo replace=refused
 [ -S "$3/bus" ] && echo bus=visible || echo bus=hidden
 [ -S "$3/agent.sock" ] && echo agent=bound || echo agent=hidden
 echo "confined=${AGENT_RUNTIME_CONFINED:-none}"
@@ -2902,24 +2905,29 @@ echo "confined=${AGENT_RUNTIME_CONFINED:-none}"
             "home=refused",
             "child=refused",
             "worktree=written",
-            "seat=written",
+            "seat=refused",
+            "session=written",
             "settings=refused",
+            "replace=refused",
             "bus=hidden",
             "agent=bound",
             "confined=1",
         ]
     );
     assert!(!home.join("x").exists() && !home.join("child").exists());
-    assert!(wt.join("y").exists() && seat.join("credentials").exists());
+    assert!(wt.join("y").exists() && seat.join("projects/session.jsonl").exists());
+    assert!(!seat.join("credentials").exists());
     assert_eq!(
         std::fs::read_to_string(seat.join("settings.json")).unwrap(),
         "{}"
     );
 }
 
-/// A pane whose environment names a `TMPDIR` outside the grants (the tmux
-/// server's) still hands its program a scratch: the words point `TMPDIR`
-/// at the private `/tmp`, and the outside folder takes nothing.
+/// A pane whose environment names a temporary folder outside the grants
+/// (the tmux server's, as a user service manager publishes it) still hands
+/// its program a scratch: the words point `TMPDIR` and each harness's own
+/// temporary-folder variable at the private `/tmp`, and the outside folder
+/// takes nothing.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scratch() {
@@ -2946,15 +2954,24 @@ fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scrat
             Word::Display(_) | Word::Text(_) => panic!("a shell word without its grant"),
         })
         .collect();
+    let names = [
+        "TMPDIR",
+        "CLAUDE_CODE_TMPDIR",
+        "CLAUDE_TMPDIR",
+        "BUN_TMPDIR",
+        "SQLITE_TMPDIR",
+    ];
     let script = r#"scratch=$(mktemp 2>/dev/null) && echo scratch=written || echo scratch=refused
-echo "tmpdir=$TMPDIR""#;
+mkdir -p "$CLAUDE_CODE_TMPDIR/claude" 2>/dev/null && echo claude=written || echo claude=refused
+for name in "$@"; do eval "echo $name=\$$name"; done"#;
     let out = Command::new("bwrap")
         .args(&words)
-        .args(["/bin/sh", "-c", script])
+        .args(["/bin/sh", "-c", script, "_"])
+        .args(names)
         .env_clear()
         .env("HOME", &home)
         .env("PATH", "/usr/bin:/bin")
-        .env("TMPDIR", &outside)
+        .envs(names.map(|name| (name, &outside)))
         .output()
         .unwrap();
     assert!(
@@ -2962,12 +2979,14 @@ echo "tmpdir=$TMPDIR""#;
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    let mut expected = vec!["scratch=written".to_owned(), "claude=written".to_owned()];
+    expected.extend(names.map(|name| format!("{name}=/tmp")));
     assert_eq!(
         String::from_utf8(out.stdout)
             .unwrap()
             .lines()
             .collect::<Vec<_>>(),
-        ["scratch=written", "tmpdir=/tmp"]
+        expected
     );
     assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
 }

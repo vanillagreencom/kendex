@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use agent_runtime::confine::{self, Answer, Grants, Host};
 use agent_runtime::effects::prepare::LaunchHome;
-use agent_runtime::harness::Harness;
+use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
 use serde_json::{Value, json};
 
@@ -85,9 +85,11 @@ pub(super) struct Granted {
     /// The item's own folder of the state directory, made before the window
     /// so its bind stands.
     item_dir: PathBuf,
-    /// The read-only folders made where absent, so a lane cannot plant one:
-    /// those under the cache folder and the launch records' under the
-    /// common git folder.
+    /// The folders made where absent so their binds stand: the read-only
+    /// ones a lane could otherwise plant (those under the cache folder, the
+    /// launch records' under the common git folder and the code folders of
+    /// a seat bound writable), and a read-only seat's session folders,
+    /// which the harness could not make there.
     kept: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
@@ -171,14 +173,44 @@ fn read_only_bind(path: PathBuf) -> Result<PathBuf> {
     }
 }
 
+/// Where a read-only seat's session folder binds writable: a link binds the
+/// folder it leads to, at that folder's own path, since bwrap mounts on no
+/// link; one absent is made before the window. A link whose target does
+/// not stand refuses `grant-link-unreadable` naming the link, and one that
+/// cannot be read `grant-seats-unread`.
+fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
+    let failed = |key: &'static str, e: std::io::Error| {
+        refused(
+            key,
+            &[
+                ("path", &path.display().to_string()),
+                ("cause", &e.to_string()),
+            ],
+        )
+    };
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::canonicalize(&path).map_err(|e| failed("grant-link-unreadable", e))
+        }
+        Ok(_) => Ok(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            made.push(path.clone());
+            Ok(path)
+        }
+        Err(e) => Err(failed("grant-seats-unread", e)),
+    }
+}
+
 /// The grants of a local launch of `item` on `harness` from `mail_root`
 /// under `homes`: writable its checkout (the root, and the common git
 /// folder of a linked worktree with its hooks, its configuration and the
 /// launch records every lane's hook resolves read-only), the item's own
 /// folder of the state directory, whose other entries stay read-only, and
-/// the room pick's usage records; the seats its own launch runs under and every
-/// configured account of a harness its second opinion can run on, each
-/// with its settings file read-only; the build caches under the home and
+/// the room pick's usage records; in the seats its own launch runs under and
+/// every configured account of a harness its second opinion can run on,
+/// what the seat's harness writes there ([`Harness::home_writes`]): a
+/// read-only seat's session folders, or a seat whole with its settings file
+/// and code folders read-only; the build caches under the home and
 /// the folders `ORCH_LANE_WRITABLE` names, the shared runtime cache
 /// read-only wherever they would hold it; the user's runtime folder
 /// hidden; the display where the record holds `desktop`. A confined launch also
@@ -240,26 +272,23 @@ pub(super) fn of(
     writable.push(item_dir.clone());
     let usage = settings.account_state.get()?.join("usage");
     writable.push(usage.clone());
-    // The lane's own seats: the account it spends, the home it runs under
-    // (a private Codex home links the account's credentials) and the root
-    // its sessions are read under. A Pi lane's root and the seat it bills
-    // keep their settings in `settings.json`, as Claude's and Copilot's do.
-    let own = match harness {
+    // The lane's own seats: the home it runs under (a private Codex home
+    // links the account's credentials), the root its sessions are read
+    // under, and the account it spends. A Pi lane's account is the Claude
+    // seat it bills, or its own root, which the home names first.
+    let billed = match harness {
         Harness::Pi => Harness::Claude,
         Harness::Claude | Harness::Codex | Harness::Copilot => harness,
     };
     let mut seats: Vec<(PathBuf, Harness)> = Vec::new();
-    for home in [
-        account,
-        homes.account.as_deref(),
-        homes.named.as_deref(),
-        homes.sessions.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if let Some(home) = resolved(home) {
-            seats.push((home, own));
+    for (home, kind) in [
+        (homes.named.as_deref(), harness),
+        (homes.sessions.as_deref(), harness),
+        (account, billed),
+        (homes.account.as_deref(), billed),
+    ] {
+        if let Some(home) = home.and_then(resolved) {
+            seats.push((home, kind));
         }
     }
     let accounts = settings.accounts.get()?;
@@ -286,10 +315,33 @@ pub(super) fn of(
         }
         let (name, empty) = settings_file(kind);
         let file = seat.join(name);
-        if std::fs::symlink_metadata(&file).is_err() {
-            missing.push((file.clone(), empty));
+        let stands = std::fs::symlink_metadata(&file).is_ok();
+        match kind.home_writes() {
+            // The settings stay read-only where they stand: a link's target
+            // can lie inside a writable grant.
+            HomeWrites::Folders(folders) => {
+                if stands {
+                    read_only.push(file);
+                }
+                for folder in folders {
+                    writable.push(seat_folder(seat.join(folder), &mut kept)?);
+                }
+            }
+            HomeWrites::Whole(code) => {
+                writable.push(seat.clone());
+                if !stands {
+                    missing.push((file.clone(), empty));
+                }
+                read_only.push(file);
+                for entry in code {
+                    let path = seat.join(entry);
+                    if std::fs::symlink_metadata(&path).is_err() {
+                        kept.push(path.clone());
+                    }
+                    read_only.push(path);
+                }
+            }
         }
-        read_only.push(file);
         seat_paths.push(seat);
     }
     let home = settings
@@ -523,8 +575,8 @@ impl Granted {
         .collect()
     }
 
-    /// What the launch record says of the grants: the answer, the seats
-    /// bound writable, the display, whether a token was handed, and the Pi
+    /// What the launch record says of the grants: the answer, the seats it
+    /// runs on, the display, whether a token was handed, and the Pi
     /// bridge's folder.
     pub fn record(&self) -> Value {
         let mut record = json!({

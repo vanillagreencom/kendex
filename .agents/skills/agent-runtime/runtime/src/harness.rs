@@ -34,6 +34,17 @@ pub enum PermissionMeaning {
     Narrower,
 }
 
+/// What a confined session may write under its harness's home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HomeWrites {
+    /// The home is bound read-only, and these folders under it writable:
+    /// where the session keeps its transcripts, state and logs.
+    Folders(&'static [&'static str]),
+    /// The harness cannot start in a read-only home, so the home is bound
+    /// writable, and these entries it loads code from stay read-only.
+    Whole(&'static [&'static str]),
+}
+
 impl Harness {
     pub const ALL: [Harness; 4] = [
         Harness::Claude,
@@ -87,6 +98,35 @@ impl Harness {
             Harness::Codex => "CODEX_HOME",
             Harness::Copilot => "COPILOT_HOME",
             Harness::Pi => "PI_CODING_AGENT_DIR",
+        }
+    }
+
+    /// What a session writes under the harness's home, which a confined
+    /// launch grants there and nothing more: the home also holds the
+    /// settings, hooks and extensions the operator's next session there
+    /// runs. A named folder that is a link is granted where it leads, since
+    /// an operator's seats share their session folders by link.
+    pub fn home_writes(self) -> HomeWrites {
+        match self {
+            Harness::Claude => HomeWrites::Folders(&[
+                "projects",
+                "sessions",
+                "shell-snapshots",
+                "session-env",
+                "file-history",
+                "plans",
+                "tasks",
+                "todos",
+                "paste-cache",
+                "telemetry",
+            ]),
+            Harness::Copilot => HomeWrites::Folders(&["session-state"]),
+            // Codex opens its state databases at the home's top level as it
+            // starts, and refuses to start where it cannot.
+            Harness::Codex => HomeWrites::Whole(&[]),
+            // Pi takes a lock folder beside its top-level files as it starts
+            // (`trust.json.lock`), and stops where it cannot.
+            Harness::Pi => HomeWrites::Whole(&["extensions", "hooks", "packages"]),
         }
     }
 

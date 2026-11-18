@@ -8585,8 +8585,8 @@ fn a_bypassed_claude_launch_records_the_accounts_bypass_consent_and_honours_a_re
     );
     assert_eq!(
         settings_of(&narrower),
-        Some(json!({})),
-        "no bypass, no consent: the seat holds the empty settings its read-only carve-out binds"
+        None,
+        "no bypass, no consent, and no settings made in a seat the lane cannot write"
     );
 
     let refusing = home("refusing");
@@ -10730,6 +10730,18 @@ fn launch_record_of(cwd: &Path) -> Value {
     }
 }
 
+/// A harness stand-in that writes what the lane reaches into a probe file
+/// in its working directory, then runs `harness`: the display and the bus,
+/// a file made in each of `PROBE_SEATS`' folders, an append to each of
+/// `PROBE_FILES`, the runtime cache it names, `PROBE_RUN` and `gh`'s token.
+#[cfg(target_os = "linux")]
+fn probe_script(harness: &Path) -> String {
+    format!(
+        "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  for file in ${{PROBE_FILES:-}}; do (: >> \"$file\") 2>/dev/null && echo \"file=${{file##*/}} written\" || echo \"file=${{file##*/}} refused\"; done\n  echo \"cache=${{AGENT_RUNTIME_CACHE:-none}}\"\n  [ -z \"${{PROBE_RUN:-}}\" ] || eval \"$PROBE_RUN\"\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {harness} \"$@\" >&3 2>&3 3>&-\n",
+        harness = harness.display()
+    )
+}
+
 /// A launch world for the confinement's rows: the fleet server, a runtime
 /// folder the launch hides (a socket standing for the session bus, a
 /// second private server at `wayland-1` standing for the display), a `gh`
@@ -10770,13 +10782,7 @@ impl Confined {
         );
         let probe = root.join("probe").join("claude");
         std::fs::create_dir_all(probe.parent().unwrap()).unwrap();
-        write_executable(
-            &probe,
-            format!(
-                "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  for file in ${{PROBE_FILES:-}}; do (: >> \"$file\") 2>/dev/null && echo \"file=${{file##*/}} written\" || echo \"file=${{file##*/}} refused\"; done\n  echo \"cache=${{AGENT_RUNTIME_CACHE:-none}}\"\n  [ -z \"${{PROBE_RUN:-}}\" ] || eval \"$PROBE_RUN\"\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {stub} \"$@\" >&3 2>&3 3>&-\n",
-                stub = stub("stub-confirm").display()
-            ),
-        );
+        write_executable(&probe, probe_script(&stub("stub-confirm")));
         runner.stub = probe;
         runner.tools = Some(tools.clone());
         runner
@@ -11106,6 +11112,225 @@ fn a_lane_on_a_seat_whose_settings_are_a_link_reads_them_and_is_refused_a_write(
         std::fs::symlink_metadata(world.dir.path().join("operator/gone.toml")).is_err(),
         "nothing made at an absent target"
     );
+}
+
+/// A folder outside the wrapper's private `/tmp`, where a seat bound only as
+/// the tree is stays in sight.
+#[cfg(target_os = "linux")]
+fn outside_tmp() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    assert!(!root.starts_with("/tmp"), "{}", root.display());
+    (dir, root)
+}
+
+/// A probe line that makes and writes into each of `folders` under `root`,
+/// saying which took the write.
+#[cfg(target_os = "linux")]
+fn folder_writes(root: &Path, folders: &[&str]) -> String {
+    format!(
+        "for d in {}; do {{ mkdir -p '{r}'/$d && touch '{r}'/$d/probe; }} 2>/dev/null && echo \"folder=$d written\" || echo \"folder=$d refused\"; done",
+        folders.join(" "),
+        r = root.display()
+    )
+}
+
+/// A Claude lane cannot replace its seat's settings: the seat is read-only,
+/// so the link every operator seat holds stands and the settings read
+/// through it stay the operator's. The session folder its harness writes in
+/// the seat, made by the launch, takes the lane's session file.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
+    let world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let operator = outside.join("operator/.claude/settings.json");
+    std::fs::create_dir_all(operator.parent().unwrap()).unwrap();
+    std::fs::write(&operator, "{\"theme\": \"dark\"}\n").unwrap();
+    let seat = outside.join("seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let link = seat.join("settings.json");
+    std::os::unix::fs::symlink(&operator, &link).unwrap();
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "rm -f '{s}/settings.json' 2>/dev/null; {{ echo '{{\"hooks\": {{}}}}' > '{s}/settings.json'; }} 2>/dev/null && echo replace=written || echo replace=refused\necho \"settings=$(cat '{s}/settings.json')\"\n{}",
+            folder_writes(&seat, &["projects"]),
+            s = seat.display()
+        ),
+    );
+    let mut request = launch_request("KEN-SR", world.runner.state_dir());
+    request["account"] = json!(seat.display().to_string());
+    world.launch(&request);
+    let probe = world.probe("KEN-SR", 1);
+    // The launch records its bypass consent in the settings before the
+    // window, through the link.
+    let settings = std::fs::read_to_string(&operator).unwrap();
+    assert!(settings.contains("\"theme\": \"dark\""), "{settings}");
+    assert!(probe.contains("replace=refused"), "{probe}");
+    assert!(
+        probe.contains(&format!("settings={}", settings.trim_end())),
+        "{probe}"
+    );
+    assert!(probe.contains("folder=projects written"), "{probe}");
+    assert_eq!(std::fs::read_link(&link).unwrap(), operator);
+    assert!(seat.join("projects/probe").is_file());
+}
+
+/// A Copilot seat a lane's review can run on and a Pi lane's own root keep
+/// the folders their harness loads code from read-only: the lane is refused
+/// a file in `extensions/`, `hooks/` and `packages/` of each, present or
+/// not. The session folder each harness writes takes one: the Copilot
+/// seat's `session-state/`, made by the launch in a seat otherwise
+/// read-only, and `sessions/` in the Pi root, which Pi must write whole.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes_their_sessions() {
+    let mut world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let copilot = outside.join("copilot1");
+    std::fs::create_dir_all(copilot.join("extensions")).unwrap();
+    std::fs::write(copilot.join("config.json"), "{}").unwrap();
+    world.runner.env.extend([
+        (
+            "AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
+            copilot.display().to_string(),
+        ),
+        ("SECOND_OPINION_MODELS".to_owned(), "copilot".to_owned()),
+    ]);
+    world.probe_env(
+        "PROBE_RUN",
+        &folder_writes(
+            &copilot,
+            &["extensions", "hooks", "packages", "session-state"],
+        ),
+    );
+    world.launch(&launch_request("KEN-CP", world.runner.state_dir()));
+    let probe = world.probe("KEN-CP", 1);
+    for name in ["extensions", "hooks", "packages"] {
+        assert!(probe.contains(&format!("folder={name} refused")), "{probe}");
+    }
+    assert!(probe.contains("folder=session-state written"), "{probe}");
+
+    let root = outside.join("pi-root");
+    pi_root_ready(&root);
+    std::fs::create_dir_all(root.join("extensions")).unwrap();
+    let seat = outside.join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let bin = outside.join("pi-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("pi"),
+        "#!/bin/bash\nprintf '%s\\n' '────────────────────────────────' '────────────────────────────────' '~/work (main)' '0.4%/1.0M'\nwhile IFS= read -r _line; do :; done\n",
+    );
+    let probe_pi = world.runner.state_dir().join("probe-pi").join("pi");
+    std::fs::create_dir_all(probe_pi.parent().unwrap()).unwrap();
+    write_executable(&probe_pi, probe_script(&bin.join("pi")));
+    world.runner.env.extend([
+        (
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!("pi={}", probe_pi.display()),
+        ),
+        ("PI_CODING_AGENT_DIR".to_owned(), root.display().to_string()),
+    ]);
+    world.probe_env(
+        "PROBE_RUN",
+        &folder_writes(&root, &["extensions", "hooks", "packages", "sessions"]),
+    );
+    let mut request = launch_request("KEN-PR", world.runner.state_dir());
+    request["harness"] = json!("pi");
+    request["model"] = json!("pi-claude/fable");
+    request["account"] = json!(seat.display().to_string());
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert!(
+        matches!(
+            report["intent"]["outcome"].as_str(),
+            Some("confirmed" | "unconfirmed")
+        ),
+        "{report}"
+    );
+    let probe = world.probe("KEN-PR", 1);
+    for name in ["extensions", "hooks", "packages"] {
+        assert!(probe.contains(&format!("folder={name} refused")), "{probe}");
+    }
+    assert!(probe.contains("folder=sessions written"), "{probe}");
+    assert!(!root.join("extensions/probe").exists());
+}
+
+/// A seat shares its session folders by link, as an operator's seats do:
+/// the lane writes its transcript where the seat's `projects` leads, outside
+/// the seat, and the seat around the link stays read-only. A link that leads
+/// nowhere refuses the launch by name.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_leads() {
+    let world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let shared = outside.join("shared/projects");
+    std::fs::create_dir_all(&shared).unwrap();
+    let seat = outside.join("seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    std::os::unix::fs::symlink(&shared, seat.join("projects")).unwrap();
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "{}\ntouch '{s}/stray' 2>/dev/null && echo stray=written || echo stray=refused",
+            folder_writes(&seat, &["projects"]),
+            s = seat.display()
+        ),
+    );
+    let mut request = launch_request("KEN-SL", world.runner.state_dir());
+    request["account"] = json!(seat.display().to_string());
+    world.launch(&request);
+    let probe = world.probe("KEN-SL", 1);
+    assert!(probe.contains("folder=projects written"), "{probe}");
+    assert!(probe.contains("stray=refused"), "{probe}");
+    assert!(shared.join("probe").is_file());
+    assert!(
+        std::fs::symlink_metadata(seat.join("projects"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    let gone = outside.join("seat-gone");
+    std::fs::create_dir_all(&gone).unwrap();
+    std::os::unix::fs::symlink(outside.join("shared/absent"), gone.join("projects")).unwrap();
+    let mut request = launch_request("KEN-SG", world.runner.state_dir());
+    request["account"] = json!(gone.display().to_string());
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["cause"], "grant-link-unreadable", "{report}");
+    assert_eq!(
+        observation["path"],
+        gone.join("projects").display().to_string(),
+        "{report}"
+    );
+    assert!(std::fs::symlink_metadata(outside.join("shared/absent")).is_err());
+}
+
+/// The pane hands the lane a temporary-folder variable naming a host folder,
+/// as a user service manager publishes `CLAUDE_CODE_TMPDIR`: inside the
+/// wrapper it names the wrapper's own `/tmp`, which the lane writes, and the
+/// host folder takes nothing.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_whose_pane_names_a_host_temporary_folder_writes_the_wrapper_s_own() {
+    let world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let host = outside.join("claude-tmp");
+    std::fs::create_dir_all(&host).unwrap();
+    world.probe_env("CLAUDE_CODE_TMPDIR", &host.display().to_string());
+    world.probe_env(
+        "PROBE_RUN",
+        "echo \"claude_tmp=$CLAUDE_CODE_TMPDIR\"; mkdir -p \"$CLAUDE_CODE_TMPDIR/claude-1\" 2>/dev/null && echo claude_tmp=written || echo claude_tmp=refused",
+    );
+    world.launch(&launch_request("KEN-T", world.runner.state_dir()));
+    let probe = world.probe("KEN-T", 1);
+    assert!(probe.contains("claude_tmp=/tmp\n"), "{probe}");
+    assert!(probe.contains("claude_tmp=written"), "{probe}");
+    assert_eq!(std::fs::read_dir(&host).unwrap().count(), 0);
 }
 
 /// A confined lane's `gh` reads the token the launch handed it, the bus it

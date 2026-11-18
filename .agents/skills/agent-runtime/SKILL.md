@@ -45,6 +45,10 @@ This package owns launch, account selection under the caller's policy, session i
 
 A launch intent that names `grants` runs the harness inside a kernel boundary. On Linux the line runs it under `bwrap`: the whole tree read-only, a private `/tmp`, the user's runtime folder hidden, and only the granted paths bound back writable. Every process the harness starts is inside too. A controller's intent names no grants and runs unconfined.
 
+Inside, `TMPDIR` and each harness's own temporary-folder variable name the private `/tmp`, whatever the pane inherited (`TEMP_VARS` in `runtime/src/confine.rs`).
+
+An account seat a confined lane runs on is read-only except the session folders its harness writes, named per harness by `Harness::home_writes` in `runtime/src/harness.rs`; a folder that is a link is granted where it leads, and one that leads nowhere refuses the launch. A Codex home and a Pi root are granted whole, with the settings file and Pi's `extensions/`, `hooks/` and `packages/` read-only.
+
 - Copilot CLI runs unconfined on every host, `cause=token-on-session-bus`.
 - Every harness runs unconfined on a host other than Linux, `cause=macos-profile-unbuilt`.
 - The launch record names the answer, `confined` or `unconfined` with its cause. No setting changes it.
