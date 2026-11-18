@@ -417,7 +417,7 @@ The watch asks a close once per lane, by a marker `lane-close.[ITEM]` under its 
 `stage=` is the `Step:` line of the lane's status file; `parked` for a parked lane, `unread` where the read failed, `none` where the lane writes no file or names no step. Each count is a string of digits, or `unread`; all five read `unread` for a parked lane or one whose state did not read. [design-review.md](design-review.md) reads the counts.
 
 1. For any `stage=` but `parked`, read the lane: its status file per [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads), its workflow state, and its pull request's `.agents/skills/github/scripts/github.sh pr-timeline`.
-2. For `parked`, read none of its files: read the lane record's `parked` and `pauses`, and that pull request's `pr-timeline`. A park happens only in `merge-pr.md` § 5 step 1's queue wait, so the cause is the merge queue or the time before the park.
+2. For `parked`, read none of its files: read the lane record's `parked` and `pauses`. Apply [Parking a merge wait](oversee-lanes.md#parking-a-merge-wait) to the recorded hold or wait. Run `pr-timeline` only for a pull request the record names; with none, skip that read. Record the held step or intentional hold as the cause instead of inferring a merge-queue wait from `parked` alone.
 3. Apply [design-review.md](design-review.md) when its trigger holds.
 4. Name the cause: long tests, a stuck state or wait, a review loop, scope growth, or the merge queue. If no design review starts, record the cause as a fleet-log `ruling` whose text starts `long-reason`.
 5. Where the cause is in the system, not in this item, file its fix under § Fix the source.

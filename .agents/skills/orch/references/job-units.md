@@ -78,7 +78,7 @@ The reply's `stopped` is `systemd` or `setsid`, or null where the job had alread
 
 ## Agent warden
 
-The agent warden is a systemd user timer that [vsys](https://github.com/vanillagreencom/vsys) ships (`warden/agent-warden`). It keeps agent work inside `agents.slice`:
+The host's agent warden is a systemd user timer that keeps agent work inside `agents.slice`; consult that host's warden installation for its source and configuration.
 
 - It moves a process that runs outside `agents.slice` and carries `AGENT_CONFINE=1` in its environment, with its build and shell descendants, into a scope of its own, `agent-warden-PID-START.scope`. On a host with the warden, every lane pane starts through its launcher, which sets that variable, and a job unit receives it with the rest of the launching process's environment.
 - It stops an `agents.slice` scope as an orphan when every process in it has lost its launcher and the scope stays heavy past a grace period. The thresholds are in the warden source.

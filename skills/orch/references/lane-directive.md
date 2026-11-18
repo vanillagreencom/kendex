@@ -138,7 +138,7 @@ A provider step that gave no answer holds the launch open instead of failing it:
 
 ### Cloud launch
 
-A cloud request fails `cloud-brief-missing` with no `brief_file`, and `cloud-create-refused` with the CLI's first line where it created no session. A cloud launch held as `cloud-create-unknown`, `worktree-create-unknown` or `worktree-push-unknown` has no process left to answer it, and its intent stays open. Check claude.ai/code for a session on the item's branch, then settle the lane with the runtime close, which supersedes the held launch:
+A cloud request fails `cloud-brief-missing` with no `brief_file`, and `cloud-create-refused` with the CLI's first line where it created no session. A cloud launch held as `cloud-create-unknown`, `worktree-create-unknown` or `worktree-push-unknown` has no process left to answer it, and its intent stays open. Read the held launch with `orch-runtime state inspect --fleet`. Where its observation or `CloudCreate` phase carries `answer_by`, wait until that time before checking claude.ai/code for a session on the item's branch. Check again immediately before relaunching the item. A close that answers `intent-open` leaves the launch standing: wait for its owner to end and reconcile it; do not launch beside it. Settle the lane with the runtime close, which supersedes the held launch:
 
 ```json
 {"op": "close-owned-resources", "item": "[ITEM_KEY]", "terminal": {"verdict": "[completed|canceled]", "source": "[SOURCE]"}}

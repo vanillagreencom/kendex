@@ -67,7 +67,7 @@ Each per [oversee-events.md § Event kinds](oversee-events.md#event-kinds):
 - A `pr-watch` line on the parked pull request, `threads-open`, `changes-requested`, `ci-failed`, `disarmed`, `awaiting-stale`, `head-moved` or `error`: the lane is needed again. `disarmed` is also how an otherwise unreported dequeue reads, since the reducer prints it for an approved pull request neither queued nor armed; a parked pull request the heartbeat still lists open with no reducer line stays parked.
 - An ask park's answer: resume the lane through Recovery relaunch, then send the answer.
 
-Resume through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), whose parked rule starts the sandbox before the relaunch; the launch starts no stopped sandbox. The unpark keeps the pull request's identity as `pending_pr` ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), so an open pull request still prevents a terminal close after a failed relaunch. The relaunch starts the harness fresh on the kept disk, and the item's handoff record carries its context.
+Resume through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). Its launch starts the stopped sandbox before `create`; no separate provider `start` call is required. The unpark keeps the pull request's identity as `pending_pr` ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), so an open pull request still prevents a terminal close after a failed relaunch. The relaunch starts the harness fresh on the kept disk, and the item's handoff record carries its context.
 
 ## Talking to a lane
 

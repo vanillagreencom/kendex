@@ -57,13 +57,7 @@ A usage reader counts each bridged turn once by this rule:
 
 ## Memory bounds
 
-The bridge releases everything below on `session_shutdown`.
-
-| Collection | Bound |
-|---|---|
-| Thread table | 16 threads; the least recently used idle thread is dropped first |
-| Queued server requests and notifications | 1024 per thread; a full queue refuses the turn |
-| Tool calls waiting on Pi | 64 per turn; one more refuses the turn |
+The bridge releases its thread records, queued events and pending tool calls on `session_shutdown`. [src/bridge.ts](src/bridge.ts) declares and enforces their limits.
 
 ## Test
 

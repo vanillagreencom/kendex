@@ -6,7 +6,7 @@ The shared change classifier for kendex-managed repositories. It names the kind 
 
 - Classifies a pull-request or merge-group range as `render`, `trivial`, `micro`, `small` or `standard`.
 - Classifies a work item before its branch exists, from its size estimate, the classes it holds and the paths it names.
-- Reads every setting from the base commit, never from the branch under judgement.
+- Reads repository policy from the base commit. Measurement settings use the precedence declared by `change-scope --help`.
 - Measures production, test and render-mirror lines with one shared branch measurement.
 - Proves a re-rendered install by running `kendex verify` over a private checkout of the head.
 - Keeps an agent instruction change or a removed test at `small` or wider.
