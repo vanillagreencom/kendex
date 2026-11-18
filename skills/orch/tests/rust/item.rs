@@ -4341,6 +4341,27 @@ mod dev_artifacts {
         assert_eq!(w.read_proof(PASSING, "round", &[])["proof"], "complete");
     }
 
+    #[test]
+    fn a_fix_groups_hand_over_requires_a_commit_past_its_stamped_base() {
+        let w = World::new();
+        w.begin_round(None);
+        let delegated = w.doc()["pre_delegate_sha"].clone();
+        w.commit("implementation.txt");
+        let begun =
+            result(&w.op(json!({"op": "begin-round", "kind": "dev", "group": {"n": 1, "of": 2}})));
+        let round = begun["report"]["round_id"].as_str().unwrap();
+        w.stamp(round);
+        assert_ne!(delegated, w.head());
+        assert_eq!(w.doc()["pre_delegate_sha"], delegated);
+        let extra = ["--item", "1", "Applied", "repair parser"];
+        let unmoved = w.write(round, "fix", "handed-over", &extra);
+        refused(&unmoved, "handover-unmoved");
+        assert!(!w.receipt_path(round).exists());
+        w.commit("fixed.txt");
+        result(&w.write(round, "fix", "handed-over", &extra));
+        assert_eq!(w.check(round)["verdict"], "hand-over");
+    }
+
     /// A fix round of a project declaring a narrower mode may run the whole
     /// battery with its cause: the receipt written from that run is accepted
     /// and the round records that run once. A check that judged the mode by
@@ -4402,6 +4423,89 @@ mod dev_artifacts {
     /// The declared command a red run runs: the battery reports its lanes
     /// and exits 1.
     const FAILING_RUN: &str = "printf 'validate: lanes=unit selection=battery\\n'; exit 1";
+
+    #[test]
+    fn an_unchanged_heads_begun_exception_proves_only_its_selected_ended_run_before_acceptance() {
+        let w = World::new();
+        let exception = json!({"by": "owner-directive", "id": "D-7", "excused": ["unit"]});
+        let round =
+            w.begin_with(&json!({"op": "begin-round", "kind": "dev", "exception": exception}));
+        let head = w.head();
+        let dir = w.validated(&round, FAILING_RUN);
+        let cited = w.root.join("exception.json");
+        fs::write(&cited, exception.to_string()).unwrap();
+        result(&w.write(
+            &round,
+            "implement",
+            "FAILING: unit",
+            &[
+                "--validate-run-dir",
+                dir.to_str().unwrap(),
+                "--exception-file",
+                cited.to_str().unwrap(),
+            ],
+        ));
+        let checked = result(&w.call(&["dev-return", "check"], &round, &[]));
+        assert_eq!(checked["verdict"], "accept-excused", "{checked}");
+        assert_eq!(w.head(), head);
+        let extra = [
+            "--round",
+            &round,
+            "--exception-file",
+            cited.to_str().unwrap(),
+        ];
+        let proof = w.read_proof(FAILING_RUN, "round", &extra);
+        assert_eq!(proof["proof"], "complete", "{proof}");
+        assert_eq!(proof["rows"][0]["run_dir"], dir.to_str().unwrap());
+        assert_eq!(proof["rows"][0]["excused"], exception["excused"]);
+        assert_eq!(
+            w.read_proof(FAILING_RUN, "submit", &extra)["proof"],
+            "missing"
+        );
+        assert_eq!(w.read_proof(FAILING_RUN, "round", &[])["proof"], "missing");
+        let original = w.doc();
+        let mut pending = original.clone();
+        let rows = pending["stages"].as_array_mut().unwrap();
+        let mut newer = rows
+            .iter()
+            .find(|s| s["run_dir"] == dir.to_str().unwrap())
+            .unwrap()
+            .clone();
+        newer["start"] = json!(newer["start"].as_u64().unwrap() + 1);
+        newer["end"] = Value::Null;
+        newer["outcome"] = Value::Null;
+        newer["run_dir"] = json!(w.wt.join("tmp/dev-validate-newer"));
+        rows.push(newer);
+        fs::write(w.item(), pending.to_string()).unwrap();
+        assert_eq!(
+            w.read_proof(FAILING_RUN, "round", &extra)["proof"],
+            "missing"
+        );
+        fs::write(w.item(), original.to_string()).unwrap();
+        w.commit("another-tree.txt");
+        assert_eq!(
+            w.read_proof(FAILING_RUN, "round", &extra)["proof"],
+            "missing"
+        );
+        let old_tree = git(&w.wt, &["rev-parse", &format!("{head}^{{tree}}")]);
+        let stale = result(
+            &w.command()
+                .env("DEV_VALIDATE_CMD", FAILING_RUN)
+                .args([
+                    "read-proof",
+                    "--item",
+                    "issue-8",
+                    "--need",
+                    "round",
+                    "--tree",
+                    &old_tree,
+                ])
+                .args(extra)
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(stale["proof"], "missing", "{stale}");
+    }
 
     /// A round begun with an exception for known failures ends on a red
     /// run that fails only those checks: the receipt keeps its FAILING line

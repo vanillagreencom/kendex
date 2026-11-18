@@ -31,8 +31,7 @@ use crate::state;
 use crate::validate::files::RunFile;
 use agent_runtime::journal::Env;
 
-/// The bound on the push and on the publication's validation: a pre-push
-/// hook may run the project's whole battery.
+/// The push transport's bound: a pre-push hook may run the whole battery.
 pub const BOUND: Duration = Duration::from_secs(2 * 60 * 60);
 /// The bound on one git read.
 const READ: Duration = Duration::from_secs(120);
@@ -865,8 +864,9 @@ fn micro_tier(settings: &Settings, worktree: &Path, base: &str, head: &str) -> R
 }
 
 /// The publication's validation of the exact prepared head: the runtime's
-/// own validation entry over the range from the prepared base, attached,
-/// through the one runner. A run that does not pass publishes nothing.
+/// own detached validation entry over the range from the prepared base.
+/// Each wait is bounded; the run has no aggregate deadline. A run that
+/// does not pass publishes nothing.
 #[allow(
     clippy::disallowed_methods,
     reason = "the publication's validation through this executable's own validation entry, the one runner, before any transport"
@@ -884,7 +884,10 @@ fn validate_range(worktree: &Path, base: &str, commit: &str) -> Result<Value> {
         "range",
         "--base",
         base,
-        "--attached",
+        "--budget",
+        "1",
+        "--poll",
+        "1",
     ];
     let out = host::run_tagged_in(
         TAG,
@@ -896,7 +899,7 @@ fn validate_range(worktree: &Path, base: &str, commit: &str) -> Result<Value> {
             cwd: Some(worktree),
             env: &[],
         },
-        BOUND,
+        READ,
     )
     .map_err(|e| {
         refuse(
@@ -904,15 +907,47 @@ fn validate_range(worktree: &Path, base: &str, commit: &str) -> Result<Value> {
             &[("commit", commit), ("cause", &e.to_string())],
         )
     })?;
+    let mut stdout = host::stdout_text(&out);
+    let mut exit = out.status.code();
+    if exit == Some(3) {
+        let dir = stdout
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("state=started run-dir=")
+                    .and_then(|line| line.split_once(" log="))
+                    .map(|(dir, _)| PathBuf::from(dir))
+            })
+            .ok_or_else(|| {
+                refuse(
+                    "delivery-validate",
+                    &[("commit", commit), ("cause", "run-directory-unreadable")],
+                )
+            })?;
+        loop {
+            let (line, status) =
+                crate::validate::files::wait(&dir, 540, &agent_runtime::clock::SystemClock)
+                    .map_err(|e| {
+                        refuse(
+                            "delivery-validate",
+                            &[("commit", commit), ("cause", &e.to_string())],
+                        )
+                    })?;
+            if status != 3 {
+                stdout.push_str(&format!("\n{line}"));
+                exit = Some(status);
+                break;
+            }
+        }
+    }
     let answer = json!({
-        "exit": out.status.code(),
-        "stdout": host::stdout_text(&out),
+        "exit": exit,
+        "stdout": stdout,
         "stderr": host::stderr_text(&out),
     });
-    if !out.status.success() {
+    if exit != Some(0) {
         return Err(refuse(
             "delivery-validate",
-            &[("commit", commit), ("stdout", &host::stdout_text(&out))],
+            &[("commit", commit), ("stdout", &stdout)],
         ));
     }
     Ok(answer)

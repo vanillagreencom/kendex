@@ -1336,6 +1336,53 @@ mod push {
     }
 
     #[test]
+    fn publication_follows_a_validation_job_owned_outside_its_bounded_calls() {
+        let range = "DEV_VALIDATE_RANGE_CMD = \"echo ready > tmp/validation-ready; while test ! -e tmp/validation-release; do sleep 0.1; done; git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\n";
+        let repo = Repo::new("KEN-1", &format!("{BASE}{range}"));
+        repo.link_agents();
+        repo.record(json!({}));
+        let receipt = prepared(&repo);
+        let (out, runner) = std::thread::scope(|scope| {
+            let publication = scope.spawn(|| {
+                repo.op(json!({
+                    "op": "record-push", "mode": "publish", "worktree": repo.wt,
+                    "base": receipt["before"], "head": receipt["commit"],
+                }))
+            });
+            let bound = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while !repo.wt.join("tmp/validation-ready").exists() {
+                if std::time::Instant::now() >= bound {
+                    fs::write(repo.wt.join("tmp/validation-release"), "").unwrap();
+                    panic!("publication validation did not reach its barrier");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let runs = orch_runtime::validate::files::runs(&repo.wt).unwrap();
+            let runner = fs::read_to_string(runs.last().unwrap().dir.join("runner")).unwrap();
+            // Keep the command across the start call's one-second follow
+            // budget so publication must follow the detached job again.
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            fs::write(repo.wt.join("tmp/validation-release"), "").unwrap();
+            (publication.join().unwrap(), runner)
+        });
+        let answer = result(&out);
+        assert!(
+            runner
+                .lines()
+                .any(|line| matches!(line, "runner=setsid" | "runner=systemd")),
+            "the validation executor must outlive a bounded follow call: {runner}"
+        );
+        assert_eq!(answer["validation"]["exit"], 0);
+        assert_eq!(repo.remote("main"), receipt["commit"]);
+        assert_eq!(
+            fs::read_to_string(repo.wt.join("tmp/validated"))
+                .unwrap()
+                .trim(),
+            receipt["commit"]
+        );
+    }
+
+    #[test]
     fn a_micro_publication_checks_the_tier_and_runs_no_validation() {
         let repo = Repo::new("KEN-1", BASE);
         repo.link_agents();

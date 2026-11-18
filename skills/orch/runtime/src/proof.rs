@@ -2,8 +2,8 @@
 //! and recorded restack skips read through `ops::proof`, the one reader,
 //! under the project's declaration from the settings. The read records
 //! nothing. The one process it may start is `git rev-parse` in the item's
-//! recorded worktree, for the committed tree of a base a row chains
-//! through; a tree that cannot be read is never coverage.
+//! recorded worktree, for committed base trees and an open round's current
+//! HEAD tree; a tree that cannot be read is never coverage.
 use agent_runtime::record;
 use std::path::Path;
 use std::time::Duration;

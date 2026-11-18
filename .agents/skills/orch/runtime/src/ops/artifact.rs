@@ -1280,12 +1280,21 @@ fn hand_over(settings: &Settings, r: &WriteReturn, commit: &str) -> Result<bool>
         }
         None => return Err(refuse("handover-final", "group=unrecorded")),
     }
-    let delegated = snapshot.as_ref().and_then(|s| {
-        s.doc
-            .get("pre_delegate_sha")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    });
+    let delegated = if r.kind == "fix" {
+        Some(
+            round_record(&r.id)?["base_sha"]
+                .as_str()
+                .expect("round schema")
+                .to_owned(),
+        )
+    } else {
+        snapshot.as_ref().and_then(|s| {
+            s.doc
+                .get("pre_delegate_sha")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+    };
     let Some(delegated) = delegated else {
         return Err(refuse("handover-unmoved", "pre_delegate_sha=unrecorded"));
     };

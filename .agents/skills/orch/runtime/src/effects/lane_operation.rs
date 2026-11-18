@@ -1169,7 +1169,6 @@ mod tests {
         std::fs::create_dir_all(&open).unwrap();
         std::fs::create_dir_all(&done).unwrap();
         std::fs::write(open.join("start"), "start=1\n").unwrap();
-        std::fs::write(open.join("runner"), "runner=attached\n").unwrap();
         std::fs::write(done.join("start"), "start=1\n").unwrap();
         std::fs::write(done.join("exit"), "guard-exit=0 at=1769600002\n").unwrap();
         let mut item: Value = serde_json::from_str(crate::state::fixtures::ITEM).unwrap();
@@ -1178,7 +1177,7 @@ mod tests {
         stages.push(json!({
             "kind": "validate", "round_id": ROUND, "start": 1769600001, "end": null,
             "run_dir": open.display().to_string(),
-            "job": {"record": open.join("runner").display().to_string(), "runner": "attached"}
+            "job": {"record": open.join("runner").display().to_string()}
         }));
         stages.push(json!({
             "kind": "validate", "round_id": ROUND, "start": 1769600001, "end": 1769600002,
@@ -1189,7 +1188,7 @@ mod tests {
         }));
         let record = crate::state::item_path(&w.settings.state_dir, ITEM);
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-        std::fs::write(record, serde_json::to_vec(&item).unwrap()).unwrap();
+        std::fs::write(&record, serde_json::to_vec(&item).unwrap()).unwrap();
         let env = env();
         let run = super::super::Run {
             engine: super::super::engine_run(
@@ -1205,6 +1204,14 @@ mod tests {
         let lane = w.lane();
         let mut close = LaneOperation::open_close(&run, &w.intent(), &lane).unwrap();
         close.stop_validations(&lane).unwrap().unwrap();
+        let closed: Value = serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+        let stopped = closed["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|stage| stage["run_dir"] == open.display().to_string())
+            .unwrap();
+        assert_eq!(stopped["outcome"], "stopped");
         let calls = Detached::calls(&w.named);
         assert!(
             calls.iter().any(|c| c.starts_with(&format!(

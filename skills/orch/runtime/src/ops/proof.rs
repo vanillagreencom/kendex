@@ -99,8 +99,8 @@ pub struct ReadProof {
     pub base: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub round: Option<String>,
-    /// The exception a round's failed run is read as proof under: only a
-    /// round closed `pass-excused` with exactly this exception.
+    /// Publication requires a round closed `pass-excused`. A round read
+    /// naming its open round admits only its selected ended run at HEAD.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exception: Option<Exception>,
 }
@@ -197,13 +197,14 @@ fn row_of((index, stage): (usize, &Stage)) -> Option<ProofRow> {
     })
 }
 
-/// The rounds whose own stage closed `pass-excused` under exactly the
-/// read's exception; none where the read names no exception.
-fn excused_rounds<'a>(stages: &'a [Stage], exception: Option<&Exception>) -> Vec<&'a str> {
-    let Some(exception) = exception else {
+/// An open round admits only its selected ended failure, under the begun
+/// exception and at the current committed tree. Publication still needs
+/// the round's recorded close.
+fn excused_runs<'a>(stages: &'a [Stage], r: &ReadProof, current: Option<&str>) -> Vec<&'a Stage> {
+    let Some(exception) = r.exception.as_ref() else {
         return Vec::new();
     };
-    stages
+    let rounds: Vec<_> = stages
         .iter()
         .filter(|s| {
             s.kind != StageKind::Validate
@@ -211,22 +212,52 @@ fn excused_rounds<'a>(stages: &'a [Stage], exception: Option<&Exception>) -> Vec
                 && s.exception.as_ref() == Some(exception)
         })
         .filter_map(|s| s.round_id.as_deref())
+        .collect();
+    let begun = (r.need == Need::Round && current == Some(r.tree.as_str()))
+        .then_some(r.round.as_deref())
+        .flatten()
+        .filter(|round| {
+            stages.iter().any(|s| {
+                s.kind != StageKind::Validate
+                    && s.round_id.as_deref() == Some(round)
+                    && s.end.is_none()
+                    && s.exception.as_ref() == Some(exception)
+            })
+        });
+    let selected = begun.and_then(|round| {
+        stages
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.kind == StageKind::Validate
+                    && s.round_id.as_deref() == Some(round)
+                    && s.run_dir.is_some()
+            })
+            .max_by_key(|(index, s)| (s.start, *index))
+            .map(|(_, s)| s)
+    });
+    stages
+        .iter()
+        .filter(|s| {
+            s.kind == StageKind::Validate
+                && s.end.is_some()
+                && s.outcome == Some(StageOutcome::Fail)
+                && (s.round_id.as_deref().is_some_and(|r| rounds.contains(&r))
+                    || (selected.is_some_and(|selected| std::ptr::eq(selected, *s))
+                        && s.proof.as_ref().is_some_and(|p| p.tree == r.tree)))
+        })
         .collect()
 }
 
-/// Whether the stage is a failed run of one of the excused rounds.
-fn excused(s: &Stage, rounds: &[&str]) -> bool {
-    s.kind == StageKind::Validate
-        && s.end.is_some()
-        && s.outcome == Some(StageOutcome::Fail)
-        && s.round_id.as_deref().is_some_and(|r| rounds.contains(&r))
+fn excused(s: &Stage, runs: &[&Stage]) -> bool {
+    runs.iter().any(|run| std::ptr::eq(*run, s))
 }
 
 /// Whether the stage is the tree's own local evidence that did not pass: a
 /// validate row at `tree` that ran its own command (not a reuse, and not a
 /// `ci` row, which ran nothing locally) and is red, lost, stopped,
 /// bound-ended or still open, and not an excused failure.
-fn unpassed_at(tree: &str, s: &Stage, excused_rounds: &[&str]) -> bool {
+fn unpassed_at(tree: &str, s: &Stage, excused_rounds: &[&Stage]) -> bool {
     s.kind == StageKind::Validate
         && s.proof
             .as_ref()
@@ -238,7 +269,7 @@ fn unpassed_at(tree: &str, s: &Stage, excused_rounds: &[&str]) -> bool {
 /// A row at the tree that did not pass and started no earlier than the
 /// pass voids it: within one start second the records cannot prove which
 /// came first.
-fn voided(stages: &[Stage], tree: &str, pass: &ProofRow, excused_rounds: &[&str]) -> bool {
+fn voided(stages: &[Stage], tree: &str, pass: &ProofRow, excused_rounds: &[&Stage]) -> bool {
     stages
         .iter()
         .any(|s| unpassed_at(tree, s, excused_rounds) && s.start >= pass.start)
@@ -247,7 +278,7 @@ fn voided(stages: &[Stage], tree: &str, pass: &ProofRow, excused_rounds: &[&str]
 /// Whether the row is a pass that ran its own command: closed `pass` or an
 /// excused failure, not a reuse of an earlier row, scoped only for a
 /// docs-only snapshot, and run with the declared finding prefix.
-fn own_pass(stage: &Stage, declaration: &Declaration, excused_rounds: &[&str]) -> bool {
+fn own_pass(stage: &Stage, declaration: &Declaration, excused_rounds: &[&Stage]) -> bool {
     stage.end.is_some()
         && (stage.outcome == Some(StageOutcome::Pass) || excused(stage, excused_rounds))
         && stage.proof.as_ref().is_some_and(|p| {
@@ -287,6 +318,11 @@ pub fn read(
     declaration: &Declaration,
     tree_of: &mut dyn FnMut(&str) -> Option<String>,
 ) -> ProofRead {
+    let current = if r.need == Need::Round && r.round.is_some() && r.exception.is_some() {
+        tree_of("HEAD")
+    } else {
+        None
+    };
     let mut reader = Reader {
         stages,
         round: match r.need {
@@ -295,7 +331,7 @@ pub fn read(
         },
         admitted: declaration.admitted(r.need),
         declaration,
-        excused: excused_rounds(stages, r.exception.as_ref()),
+        excused: excused_runs(stages, r, current.as_deref()),
         exception: r.exception.as_ref(),
         tree_of,
     };
@@ -347,9 +383,9 @@ struct Reader<'a> {
     round: Option<&'a str>,
     admitted: Vec<(ValidateMode, &'a str)>,
     declaration: &'a Declaration,
-    /// The rounds whose failed runs read as passes under the read's
+    /// The failed runs read as passes under the read's
     /// exception, and that exception, printed on each such row.
-    excused: Vec<&'a str>,
+    excused: Vec<&'a Stage>,
     exception: Option<&'a Exception>,
     tree_of: &'a mut dyn FnMut(&str) -> Option<String>,
 }

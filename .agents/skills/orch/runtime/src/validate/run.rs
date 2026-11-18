@@ -1288,6 +1288,10 @@ pub struct WorktreeStop {
 /// run an item admits through its stage's stop, and a run no item admits, one
 /// whose stage is closed or one `keep` admits with no job, by the identity
 /// its own files name. A stop's owed notices go through `reach`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a worktree stop waits, bounded, for an attached executor to close its recorded stage after its command was ended"
+)]
 pub fn stop_worktree(
     settings: &Settings,
     reach: &Reach,
@@ -1315,8 +1319,33 @@ pub fn stop_worktree(
                 }
             }
             Ok((item, _)) => match stop(settings, reach, Some(&item), &rd, env, locking) {
-                Ok(reply) if reply.ended == JobEnded::Signalled => count(Some(&reply.runner)),
-                Ok(_) => {}
+                Ok(mut reply) => {
+                    if reply.runner == "attached" && reply.job == JobState::Live && !reply.closed {
+                        let deadline = Instant::now() + STOP_WAIT;
+                        let path = state::item_path(&settings.state_dir, &item);
+                        while !reply.closed && Instant::now() < deadline {
+                            std::thread::sleep(STOP_POLL);
+                            let (stages, index) = stage_of(&path, &rd)?;
+                            reply.closed = stages[index].end.is_some();
+                        }
+                    }
+                    if reply.job != JobState::Gone && !reply.closed {
+                        return Err(match reply.job {
+                            JobState::Unreadable => super::files::unreadable(
+                                "stop-unreadable",
+                                format!("run-dir={rd} job=unreadable stage=open"),
+                            ),
+                            JobState::Live => Error::ValidateStopFailed {
+                                run_dir: rd,
+                                cause: "job=live stage=open".to_owned(),
+                            },
+                            JobState::Gone => unreachable!("a gone job satisfies its stop"),
+                        });
+                    }
+                    if reply.ended == JobEnded::Signalled {
+                        count(Some(&reply.runner));
+                    }
+                }
                 Err(Error::RunClosed { .. }) => count(stop_files(&run.dir)?),
                 Err(error) => return Err(error),
             },

@@ -3277,9 +3277,9 @@ fn a_foreground_stop_records_intent_before_signalling_and_closes_the_stage_stopp
         .as_str()
         .unwrap()
         .to_owned();
-    let out = w.run(&["validate", "stop", "--run-dir", &dir], &[]);
-    let stopped = ok(&out);
-    assert_eq!(stopped["recorded_now"], true);
+    let out = w.entry(&["--stop", "--worktree", w.worktree.to_str().unwrap()], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(text(&out), "state=stopped units=0 groups=1");
     assert_eq!(w.wait_closed(&dir)["outcome"], "stopped");
     let snapshot: Value = serde_json::from_slice(&fs::read(at_signal).unwrap()).unwrap();
     assert!(World::stage_in(&snapshot, &dir)["stop"].is_object());
@@ -4801,6 +4801,84 @@ fn a_shell_start_whose_child_never_ran_is_no_run_but_the_runtimes_unread_launch_
     assert_eq!(refusal(&w.start(&[], &extra)), "launch-unanswered");
     let live = w.entry(&["--live", "--worktree", &wt], &extra);
     assert_eq!(live.status.code(), Some(0), "{}", text(&live));
+}
+
+#[test]
+fn a_worktree_stop_keeps_an_admitted_unreadable_job_and_its_open_stage_owed() {
+    let w = World::new();
+    let dir = w.worktree.join("tmp/dev-validate-unreadable-admitted");
+    fs::create_dir_all(&dir).unwrap();
+    let started = epoch_now() - 20;
+    fs::write(dir.join("start"), format!(
+        "worktree={}\nstart={started}\nquiet-secs=660\npoll-secs=1\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
+        w.worktree.display(), w.head(),
+    )).unwrap();
+    fs::write(
+        dir.join("runner"),
+        "runner=setsid\nline=runner=setsid reason=no-linger\n",
+    )
+    .unwrap();
+    let mut state = w.state();
+    state["stages"].as_array_mut().unwrap().push(json!({
+        "kind": "validate", "round_id": ROUND, "start": started, "end": null,
+        "run_dir": dir, "job": {"record": dir.join("runner"), "runner": "setsid"},
+    }));
+    w.write_state(&state);
+    let out = w.entry(&["--stop", "--worktree", w.worktree.to_str().unwrap()], &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{} {}",
+        text(&out),
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("stop-unreadable"), "{}", stderr(&out));
+    let stage = w.stage(dir.to_str().unwrap());
+    assert!(stage["end"].is_null(), "{stage}");
+    assert!(stage["stop"].is_object(), "{stage}");
+    assert!(!dir.join("exit").exists());
+}
+
+#[test]
+fn a_worktree_stop_keeps_a_live_attached_launch_with_an_open_stage_owed() {
+    let w = World::new();
+    let child = Owned(program("sleep").arg("60").spawn().unwrap());
+    let agent_runtime::reading::Reading::Live(owner) =
+        agent_runtime::process::identity(child.0.id())
+    else {
+        panic!("the owned attached caller has no identity")
+    };
+    let dir = w.worktree.join("tmp/dev-validate-attached-launch");
+    fs::create_dir_all(&dir).unwrap();
+    let started = epoch_now() - 20;
+    fs::write(dir.join("start"), format!(
+        "worktree={}\nstart={started}\nquiet-secs=660\npoll-secs=1\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
+        w.worktree.display(), w.head(),
+    )).unwrap();
+    fs::write(
+        dir.join("runner"),
+        format!(
+            "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
+            owner.pid, owner.start
+        ),
+    )
+    .unwrap();
+    let mut state = w.state();
+    state["stages"].as_array_mut().unwrap().push(json!({
+        "kind": "validate", "round_id": ROUND, "start": started, "end": null,
+        "run_dir": dir, "job": {"record": dir.join("runner"), "runner": "attached", "pid": owner.pid, "start": owner.start},
+    }));
+    w.write_state(&state);
+    let out = w.entry(&["--stop", "--worktree", w.worktree.to_str().unwrap()], &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{} {}",
+        text(&out),
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("stop-failed"), "{}", stderr(&out));
+    assert!(w.stage(dir.to_str().unwrap())["end"].is_null());
 }
 
 fn epoch_now() -> u64 {
