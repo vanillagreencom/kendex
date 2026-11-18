@@ -22,9 +22,8 @@ name: Skill Tests
 # `tools/ci-job-set` lists. Every other diff, and a `trivial` one changing a
 # path tools/rust-reads names, runs that job, the shell shards its packages
 # select and each other lane as `tools/ci-job-set` selects it; the invariant
-# comment there is the one statement of what each lane runs. A diff of skill
-# Markdown alone narrows inside its shards: the changes job publishes the
-# suites whose own input notes cover none of it as `skipped_suites`, and
+# comment there is the one statement of what each lane runs. The changes job
+# publishes the suites outside the diff's reach as `skipped_suites`, and
 # each shell suite step leaves those out of its own. The changes job also
 # uploads that list and the Rust targets as the `ci-selection` artifact,
 # the record the main push reads of what this group ran. The selected
@@ -780,13 +779,14 @@ jobs:
 
       # The rest, refresh, jarvis and orch-rest consumers need this
       # checkout's kendex: tools/ci-job-set's CHECKOUT_KENDEX_SHARDS. macOS
-      # retains the binary-dependent skips. The orch, hook, guards-tools, rest
-      # and slack legs build the package runtimes on both runners, in the step
-      # after kendex's.
+      # retains the binary-dependent skips. The orch-state, orch-rest,
+      # guards-hooks, guards-hooks-tail, guards-tools, rest, jarvis and slack
+      # legs build the package runtimes on both runners. Mailbox builds them
+      # on Linux.
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
-        if: ((matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis' || matrix.shard == 'mailbox') && runner.os == 'Linux') || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'guards-tools' || matrix.shard == 'rest' || matrix.shard == 'slack'
+        if: ((matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'mailbox') && runner.os == 'Linux') || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'guards-tools' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || matrix.shard == 'slack'
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
         if: (matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis') && runner.os == 'Linux'
@@ -930,7 +930,8 @@ jobs:
           for t in skills/orch/tests/*.sh; do
             [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
           done
-          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
+          kept="$(tools/ci-job-set --suite-list "${candidates[@]}")"
+          kept=" ${kept//$'\n'/ } "
           [ "$kept" != "  " ] || exit 0
           for t in "${candidates[@]}"; do
             case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
@@ -945,7 +946,8 @@ jobs:
           for t in skills/orch/tests/*.sh; do
             [ "${t##*/}" = run-all.sh ] || candidates+=("$t")
           done
-          kept=" $(tools/ci-job-set --suite-list "${candidates[@]}" | tr '\n' ' ') "
+          kept="$(tools/ci-job-set --suite-list "${candidates[@]}")"
+          kept=" ${kept//$'\n'/ } "
           [ "$kept" != "  " ] || exit 0
           for t in "${candidates[@]}"; do
             case "$kept" in *" $t "*) ;; *) name="${t##*/}"; set -- "$@" "!=${name%.sh}" ;; esac
@@ -2361,11 +2363,10 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
     permissions:
       contents: read
-    # Each merge-group part renders the catalog and runs its share of the
-    # released-package suites; other events run one render. Where the change
-    # reaches orch or agent-runtime, the part installs the Claude Code the
-    # orch plugin suite runs and builds both package runtimes first, as the
-    # orch legs do.
+    # Each merge-group part renders the catalog and builds both runtimes for
+    # its share of the released-package suites. Changes reaching orch or
+    # agent-runtime also install Claude Code for the orch plugin suite.
+    # Other events run one render.
     strategy:
       fail-fast: false
       matrix:
@@ -2395,9 +2396,9 @@ jobs:
             npm install --prefix "$RUNNER_TEMP/release-suite-tools" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code@2.1.292;
             export PATH="$RUNNER_TEMP/release-suite-tools/node_modules/.bin:$PATH";
           fi;
-          export AGENT_RUNTIME_CACHE="$RUNNER_TEMP/agent-runtime";
-          skills/orch/scripts/setup;
         fi;
+        export AGENT_RUNTIME_CACHE="$RUNNER_TEMP/agent-runtime";
+        skills/orch/scripts/setup;
         tools/guard --released-packages "$HOME/.local/bin/kendex" --part {0} --range "$CATALOG_BASE"', matrix.part) || '' }}
 
   # Each installed harness CLI reads the sample catalog emitted by this

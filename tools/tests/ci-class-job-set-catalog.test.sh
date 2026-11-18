@@ -16,6 +16,24 @@ source "$TEST_DIR/lib/ci-job-set-case.sh"
 catalog_bits() { # SELECTION — only the two independently selected jobs
   printf '%s\n' "$1" | tr ' ' '\n' | grep -E '^(catalog|smoke)='
 }
+
+# Jarvis's released suites call orch-runtime. The catalog command must
+# reach setup before the suites even when the runtime path gate is false.
+catalog_runtime_setup() {
+  awk '
+    /^  [^ #].*:$/ { catalog = ($0 == "  catalog:") }
+    catalog && /^      suite-command: >-$/ { command = 1 }
+    command && /^        if \[ -n "\$runtime_paths" \]; then$/ { gated = 1 }
+    command && /^        fi;$/ { gated = 0 }
+    command && !gated && /skills\/orch\/scripts\/setup;/ { setup = 1 }
+    command && /tools\/guard --released-packages/ { release = 1; exit }
+    END { exit !(setup && release) }
+  ' "$ROOT/.github/workflows/skill-tests.yml"
+}
+jarvis_only="$(SELECT_EVENT=merge_group selection micro false skills/jarvis/scripts/lib/watch.py)"
+check "Jarvis-only merge group builds runtimes before the catalog release suites" \
+  "true ready" "$(field catalog <<<"$jarvis_only") $(catalog_runtime_setup && printf ready)"
+
 catalog_rows() { # SCRIPT — every row must agree on both events
   local class path selected event
   while IFS='|' read -r class path selected; do

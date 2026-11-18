@@ -175,9 +175,8 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
     use agent_runtime::effects::prepare::up;
     use agent_runtime::observe::State;
 
-    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/rust/fixtures");
-    let captured = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../orch/tests/fixtures/oversee-watch");
+    let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixtures = runtime.join("../tests/rust/fixtures");
     let dir = tempfile::tempdir().unwrap();
     let setup = dir.path().join("setup.txt");
     std::fs::write(&setup, "Choose a theme\n❯ 1. Dark\n  2. Light\n").unwrap();
@@ -214,14 +213,14 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
             true,
         ),
         (
-            captured.join("copilot-dialog-trust.txt"),
+            runtime.join("../../orch/tests/fixtures/oversee-watch/copilot-dialog-trust.txt"),
             "copilot",
             "asking",
             false,
         ),
         (setup, "copilot", "asking", false),
         (
-            captured.join("copilot-idle.txt"),
+            runtime.join("../../orch/tests/fixtures/oversee-watch/copilot-idle.txt"),
             "copilot",
             "walled",
             false,

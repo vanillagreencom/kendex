@@ -860,7 +860,7 @@ printf 'data\n' >"$R/skills/reachdemo/tests/fixtures/data"
 chmod +x "$R/skills/reachdemo/scripts/tool" "$R"/skills/reachdemo/tests/*.sh
 suite_reach() { # GUARD PATH... — sets REACH, REACH_ERR and RC
   RC=0
-  REACH="$(cd "$R" && printf '%s\n' "${@:2}" | "$1" --suite-reach 2>"$TMP/reach-err")" || RC=$?
+  REACH="$(cd "${REACH_ROOT:-$R}" && printf '%s\n' "${@:2}" | "$1" --suite-reach 2>"$TMP/reach-err")" || RC=$?
   REACH_ERR="$(cat "$TMP/reach-err")"
 }
 REACHDEMO=skills/reachdemo/tests
@@ -993,6 +993,13 @@ runtime_control "a Rust fixture that adds no lib" \
 runtime_control "a joined Rust test module that adds the lib" \
   's/^        \[\[ \$rel =~ .* \]\] || REACH_TARGETS+=/        REACH_TARGETS+=/' 8
 reset_world
+
+for screen in copilot-dialog-trust.txt copilot-idle.txt; do
+  REACH_ROOT="$REPO" suite_reach "$GUARD" "skills/orch/tests/fixtures/oversee-watch/$screen"
+  [ "$RC" -eq 0 ] && grep -qxF 'target agent-runtime/integration' <<<"$REACH" \
+    && ok "--suite-reach: orch screen $screen selects agent-runtime/integration" \
+    || bad "--suite-reach: orch screen $screen selects agent-runtime/integration" "rc=$RC err=$REACH_ERR"
+done
 
 echo "=== a range with no usable base is refused before anything runs ==="
 # label|arguments|expected first line

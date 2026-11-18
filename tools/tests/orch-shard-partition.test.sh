@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The workflow's shell rosters must cover every eligible suite once, the orch
-# battery's four shards among them. Shared runner use does not remove
-# independently owned tools, hooks or skills.
+# battery's two shards, orch-state and orch-rest, among them. Tools, hooks
+# and skills keep their own suites even where they share a runner.
 # Missing, duplicate and wrong-shard controls judge the workflow's real calls.
 #
 # It reaches the cargo lanes too. The macOS kendex-cli lane runs as legs over
@@ -311,6 +311,22 @@ roster_block() { # FILE ; a serial roster or a pooled battery invocation
   grep -qF -e "$ROSTER_MARK" -e 'bash tools/tests/run-all.sh' "$1" ||
     { grep -qF 'bash skills/orch/tests/run-all.sh' "$1" && grep -qF -- '--battery' "$1"; }
 }
+
+# Run the actual steps with GitHub's default bash -e and an unreadable list.
+split_run_blocks "$WORKFLOW" "$TMP/selector-blocks"
+for shard in orch-state orch-rest; do
+  result=''
+  for block in "$TMP/selector-blocks"/*.sh; do
+    grep -qxF "matrix.shard == '$shard'" "${block%.sh}.cond" || continue
+    grep -qF -- "--shard $shard" "$block" || continue
+    rc=0
+    (cd "$PART" && SKIPPED_SUITES=unreadable GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" -e "$block") \
+      >"$TMP/selector-step.log" 2>&1 || rc=$?
+    result="$result$rc|$(cat "$TMP/selector-step.log")"
+  done
+  check "$shard fails when the suite selector refuses its list" \
+    '2|ci-job-set: cause=suite-skips-unreadable' "$result"
+done
 
 # A job outside the shell matrix may run a suite by path. Each job claims
 # a path once, and only a path in the suite universe counts.
@@ -926,7 +942,7 @@ fi
 #
 # The form judged is the repository's own, a name in backticks followed by
 # `shard`. Bare prose naming a FAMILY is outside it and stays prose: "the orch
-# shard filters" means the four orch- shards, and no grammar here separates
+# shard filters" means orch-state and orch-rest, and no grammar here separates
 # that from a stale singular. The workflow itself is excluded, being where the
 # matrix lives and where a retired name is deliberately kept: its own history
 # sentences still say what the undivided guards and rest shards once cost.
