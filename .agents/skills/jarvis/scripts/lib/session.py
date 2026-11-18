@@ -618,6 +618,9 @@ class Session:
         brief_file.write_text(brief)
         request = state / ("start-request-" + uuid.uuid4().hex + ".json")
         request.write_text(json.dumps({"controller": pending, "brief_file": str(brief_file), "session": SESSION_NAME}))
+        record = self.read()
+        record["start_request"] = str(request)
+        self.write(record)
         with (state / "session.log").open("a") as log:
             subprocess.Popen([sys.executable, "-B", "-c",
                               "import os, runpy, sys; runpy.run_path(sys.argv[1], run_name='jarvis_start')['Session'](sys.argv[2], dict(os.environ)).started(sys.argv[3], sys.argv[4], sys.argv[5])",
@@ -638,11 +641,25 @@ class Session:
         """The detached start: agent-runtime's start, its failure's words kept for the answer."""
         try:
             self.deadline = time.monotonic() + 3600
+            if (self.read() or {}).get("start_request") != request:
+                return
             print("jarvis-session: start record=" + str(self.fleet()) + " socket=" + socket, flush=True)
             result, code, refusal, errors = self.runtime("controller", "start", *self.reach(socket),
                                                          "--request", request, "--effect-exit", timeout=3600)
             print("jarvis-session: start exit=" + str(code) + " " + json.dumps(result if result else refusal))
             sys.stdout.write(errors)
+            with self.locked():
+                record = self.read()
+                if (record or {}).get("start_request") != request:
+                    if record and record.get("intent") == "stop":
+                        status = self.status()
+                        if (status or {}).get("live"):
+                            _, stopped, _, errors = self.runtime("controller", "stop", *self.reach(socket),
+                                                                 "--effect-exit", timeout=3600)
+                            if stopped:
+                                sys.stderr.write(errors)
+                                raise Refusal("record-unreadable")
+                    return
             if code == 0:
                 return
             settled = (result or {}).get("settled") or {}
@@ -656,6 +673,8 @@ class Session:
                 Path(request).write_text(json.dumps(body))
                 with self.locked():
                     record = self.read()
+                    if (record or {}).get("start_request") != request:
+                        return
                     record["reason"] = "new-history-gone"
                     self.write(record)
                 return self.started(request, brief_file, socket)
@@ -668,7 +687,7 @@ class Session:
                 failure["detail"] = ""
             with self.locked():
                 record = self.read()
-                if record and record.get("intent") == "start":
+                if record and record.get("start_request") == request and record.get("intent") == "start":
                     record["failure"] = failure
                     self.write(record)
         finally:
@@ -825,11 +844,14 @@ class Session:
         with self.locked():
             record = self.read() or self.fresh(None, None)
             record["intent"] = "stop"
+            record["start_request"] = None
             record["failure"] = None
             record["app_off"] = origin == "app-off" or record.get("app_off", False)
             self.write(record)
             status = self.status()
             recorded = (status or {}).get("recorded") or {}
+            if any(intent["op"] == "start-controller" for intent in (status or {}).get("open_intents", [])):
+                return self.answer(record, status, state="stopping", reason="stop-requested"), 0
             if (status or {}).get("live") and recorded.get("server_socket"):
                 _, code, refusal, errors = self.runtime("controller", "stop", *self.reach(recorded["server_socket"]))
                 if code:

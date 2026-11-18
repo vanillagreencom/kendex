@@ -931,6 +931,58 @@ class SessionContract(unittest.TestCase):
         os.kill(self.started()[-1]["pid"], signal.SIGKILL)
         self.wait("stopped", "ended", seconds=30)
 
+    def test_stop_and_off_during_start_end_the_pending_controller(self):
+        scoped_tmux = shutil.which("tmux", path=self.env["PATH"])
+        ready, release = self.root / "launch-ready", self.root / "launch-release"
+        barrier = Path(self.env["PATH"].split(os.pathsep)[0]) / "tmux"
+        # Only the launch waits: status and Stop still reach the private server.
+        barrier.write_text("#!" + sys.executable + "\n"
+                           "import os, sys, time\nfrom pathlib import Path\n"
+                           "if 'load-buffer' in sys.argv[1:]:\n"
+                           "    Path(" + repr(str(ready)) + ").touch()\n"
+                           "    deadline = time.monotonic() + 90\n"
+                           "    while not Path(" + repr(str(release)) + ").exists():\n"
+                           "        if time.monotonic() >= deadline: sys.exit(124)\n"
+                           "        time.sleep(0.05)\n"
+                           "os.execv(" + repr(scoped_tmux) + ", ['tmux', *sys.argv[1:]])\n")
+        barrier.chmod(0o755)
+        for origin, state, reason in (("manual", "stopped", "stopped"), ("app-off", "off", "app-off")):
+            with self.subTest(origin=origin):
+                ready.unlink(missing_ok=True)
+                release.unlink(missing_ok=True)
+                try:
+                    answer, code = self.call("start", mode="new")
+                    self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
+                    deadline = time.monotonic() + 30
+                    while not ready.exists() and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    self.assertTrue(ready.exists(), self.diagnostics())
+                    self.assertIsNone(self.call("status")[0]["terminal"], "controller published before the barrier")
+                    stopped = subprocess.run([str(SCRIPT), "stop", "--home", str(self.home),
+                                              *(["--origin", origin] if origin == "app-off" else [])],
+                                             env=self.env, capture_output=True, text=True, timeout=120)
+                    self.assertEqual(stopped.returncode, 0, stopped.stderr)
+                finally:
+                    release.touch()
+                try:
+                    deadline = time.monotonic() + 90
+                    while list(self.record.parent.glob("start-request-*.json")) and time.monotonic() < deadline:
+                        time.sleep(0.1)
+                    self.assertFalse(list(self.record.parent.glob("start-request-*.json")), self.diagnostics())
+                    self.settled()
+                    answer, _ = self.call("status")
+                    self.assertEqual((answer["state"], answer["reason"], answer["terminal"]),
+                                     (state, reason, None), self.diagnostics())
+                    validate(stopped.stdout, stopped.returncode, "stop")
+                    if origin == "app-off":
+                        self.assertEqual(self.call("start")[0]["reason"], "app-off")
+                        self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "off")
+                        self.assertIsNone(self.call("status")[0]["terminal"])
+                finally:
+                    self.call("stop")
+                    self.wait(state, reason)
+                    self.settled()
+
     def test_a_register_from_the_managed_pane_keeps_jarvis_s_own_succession(self):
         # Wanted outcome 1: no command the session runs from its own managed
         # pane changes which hand-over its seat gets. A register there binds
