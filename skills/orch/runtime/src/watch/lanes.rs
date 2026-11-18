@@ -2358,7 +2358,7 @@ fn lane_long(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
             .baseline
             .get("lane-long", &lane.item)
             .unwrap_or_default();
-        // A released watch's row holds the launch alone after its first report.
+        // A row that holds the launch alone reads as its first report.
         let prior = if prior == launched.to_string() {
             format!("{launched}|1")
         } else {

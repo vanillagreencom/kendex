@@ -534,7 +534,7 @@ fn op_applies_a_request_and_prints_the_committed_transition() {
     assert_eq!(reply(&out)["refusal"]["key"], "op-kind");
 }
 
-/// Decision 52: `record-verification` through the binary writes
+/// `record-verification` through the binary writes
 /// `.verification` and reports it; a word that is no verdict refuses on the
 /// keyed line with the word, and the file keeps its bytes.
 #[test]

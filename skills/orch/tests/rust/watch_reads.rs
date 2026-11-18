@@ -786,7 +786,6 @@ fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
         Vec::<String>::new(),
         "an unchanged item emits no line"
     );
-    // A comment lands on KEN-2: its key moves, it is raised once more.
     world.linear(
         "comments bulk-list",
         comments(
@@ -802,7 +801,6 @@ fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
     );
     let fourth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1720).unwrap();
     assert_eq!(rendered(&fourth), Vec::<String>::new());
-    // A verdict on KEN-1 acknowledges it: its row goes and no line prints.
     world.write_fleet(&json!({"issue_id": "oversee", "launch_queue": [], "lanes": [], "fleet_log": [],
         "triaged": [{"issue": "KEN-3", "verdict": "kept"}, {"issue": "KEN-1", "verdict": "canceled"}]}));
     let fifth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1960).unwrap();

@@ -1,5 +1,5 @@
 //! The event log the controller session follows: typed events rendered to
-//! the `EVENT` line grammar the released watch printed, byte for byte, and
+//! the `EVENT` line grammar a follower parses, byte for byte, and
 //! appended, one line each, to the log beside the fleet state. A line's
 //! number is its position in the file, which is what a handoff names and
 //! what `watch log --since` reads from.
@@ -77,11 +77,8 @@ impl OverseerCase {
 }
 
 /// One line of the log. Every field is one word: an item key, a lane name,
-/// a count, a stamp; the grammar has no quoting. The variants are the lines
-/// the released watch printed, whose shapes a follower parses, and this
-/// runtime's own (`watch-taken-over`, `idle-unread`, `reconcile-refused`,
-/// `notice-unmarked`, `directive-send-unsettled`, and `watch-step-failed`
-/// for any duty). A line whose tail is free-form carries the tail as one
+/// a count, a stamp; the grammar has no quoting, and a follower parses each
+/// variant's shape. A line whose tail is free-form carries the tail as one
 /// string field, and a line whose whole body its duty composes
 /// (`usage-limit*`, `report-due`, `tracker-quota`) carries that body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,7 +89,7 @@ pub enum Event {
         interval: Duration,
         since: Option<String>,
     },
-    /// This runtime's own: a claim taken over, naming the identity it read;
+    /// A claim taken over, naming the identity it read;
     /// `start` is `None` on a record that carries no start, rendered `none`.
     WatchTakenOver {
         pid: u32,
@@ -105,20 +102,20 @@ pub enum Event {
         step: Duty,
         count: u64,
     },
-    /// This runtime's own: the reconcile duty could not complete or mark an
+    /// The reconcile duty could not complete or mark an
     /// open intent, `refusal` the refusal's key; printed when the key
     /// changes, as `main-workflow-absent` is.
     ReconcileRefused {
         intent: String,
         refusal: String,
     },
-    /// This runtime's own: an owed notice was sent and the store refused
+    /// An owed notice was sent and the store refused
     /// its mark, `cause` the refusal's key.
     NoticeUnmarked {
         intent: String,
         cause: String,
     },
-    /// This runtime's own: a session send recorded
+    /// A session send recorded
     /// owed on the lane `item` that no kept receipt settles, `cause` the
     /// settle's word; printed when the cause is new or changed, as
     /// `reconcile-refused` is.
@@ -132,7 +129,7 @@ pub enum Event {
     LaneCloseRefused {
         item: String,
     },
-    /// This runtime's own: the park a stopped record owes, asked again;
+    /// The park a stopped record owes, asked again;
     /// `result` is `parked`, or the refusal's key with its fields, printed
     /// when it changes.
     ParkOwed {
@@ -173,13 +170,13 @@ pub enum Event {
     },
     // The wake duty's own lines; `resume` is the cause of the resume the
     // wake typed (`usage-limit`), none for a mail wake.
-    /// This runtime's own: the wake's line confirmed by
+    /// The wake's line confirmed by
     /// a new user turn in its bound session file or a hosted prompt digest.
     WakeDelivered {
         target: String,
         resume: Option<String>,
     },
-    /// This runtime's own: no matching receipt confirms the wake's line,
+    /// No matching receipt confirms the wake's line,
     /// `cause` the verb's word (`turn-pending`, `pane-gone`,
     /// `pane-unreadable`), or the hosted rows read's `rows-host-unread`;
     /// nothing is typed again for that unread state.
@@ -188,7 +185,7 @@ pub enum Event {
         cause: String,
         resume: Option<String>,
     },
-    /// This runtime's own: the target read idle with
+    /// The target read idle with
     /// unread mail and no confirmable route for its harness; nothing typed.
     WakeLimit {
         target: String,
@@ -327,7 +324,7 @@ pub enum Event {
         pane: String,
         gap: String,
     },
-    /// This runtime's own: the watch's GitHub sign-in was refused and the
+    /// The watch's GitHub sign-in was refused and the
     /// credential ladder renewed none, `cause` the renewal's word.
     GitHubAuthFailed {
         cause: String,
@@ -393,7 +390,7 @@ pub enum Event {
         passed: bool,
         line: String,
     },
-    /// This runtime's own: a window of the fleet
+    /// A window of the fleet
     /// session that no lane record, controller record, open intent or
     /// receipt names, reported and never adopted or closed.
     StrayWindow {
@@ -402,7 +399,7 @@ pub enum Event {
         server: u64,
         name: String,
     },
-    /// This runtime's own: a lane whose pane, process or
+    /// A lane whose pane, process or
     /// screen could not be read this pass, with the reader's cause; never
     /// `window-gone` or `lane-exited`.
     LaneUnreadable {

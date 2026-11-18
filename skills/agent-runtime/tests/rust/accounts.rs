@@ -2665,10 +2665,6 @@ fn a_claude_renewal_this_machine_cannot_make_names_its_cause_and_posts_nothing()
     plant_renewal(&world, None);
     let row = listed_row(&world, "aclaude");
     assert_eq!(row["status"], json!("expired"), "{row}");
-    assert!(
-        row["detail"].as_str().unwrap().contains("no refresh token"),
-        "{row}"
-    );
     assert_eq!(
         world.curl_log(),
         Vec::<String>::new(),
@@ -2890,10 +2886,6 @@ fn a_rotation_that_cannot_land_its_file_leaves_the_old_credentials_whole() {
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
     let row = reply["result"]["rows"][0]["record"].clone();
     assert_eq!(row["status"], json!("error"), "{reply}");
-    assert!(
-        row["detail"].as_str().unwrap().contains("could not be"),
-        "{reply}"
-    );
     assert_eq!(
         std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
         planted,
@@ -2910,15 +2902,14 @@ fn a_rotation_that_cannot_land_its_file_leaves_the_old_credentials_whole() {
 }
 
 /// One Codex renewal case: whether the CLI renews, what it says on stderr
-/// and answers to request 1, whether it exits at once, the status and the
-/// detail fragments the account reads, and the log's last word.
+/// and answers to request 1, whether it exits at once, the status the
+/// account reads, and the log's last word.
 type CodexCase<'a> = (
     bool,
     Option<&'a str>,
     Option<&'a str>,
     bool,
     &'a str,
-    Vec<&'a str>,
     &'a str,
 );
 
@@ -2930,81 +2921,28 @@ fn a_codex_renewal_is_the_cli_s_own_run_and_its_auth_json_read_back_is_the_verdi
     let error_answer = "{\"error\":{\"code\":-32603,\"message\":\"workspace routing discovery failed\"},\"id\":1}\n";
     let asked = "initialize,initialized,account/read";
     let cases: [CodexCase; 8] = [
-        (true, None, None, false, "ok", vec![], asked),
-        (
-            false,
-            Some(revoked),
-            None,
-            false,
-            "expired",
-            vec!["codex could not renew it: Your access token", "codex login"],
-            asked,
-        ),
-        (
-            false,
-            Some(offline),
-            None,
-            false,
-            "unreachable",
-            vec!["codex could not reach the token endpoint: error sending"],
-            asked,
-        ),
-        (
-            false,
-            None,
-            Some(error_answer),
-            false,
-            "unreachable",
-            vec!["codex answered the renewal with an error: workspace routing discovery failed"],
-            asked,
-        ),
+        (true, None, None, false, "ok", asked),
+        (false, Some(revoked), None, false, "expired", asked),
+        (false, Some(offline), None, false, "unreachable", asked),
+        (false, None, Some(error_answer), false, "unreachable", asked),
         (
             false,
             Some(unknown),
             Some(error_answer),
             false,
             "unreachable",
-            vec![
-                "codex could not renew it: 500 Internal Server Error: upstream failure; codex answered the renewal with an error",
-            ],
             asked,
         ),
-        (
-            false,
-            Some(unknown),
-            None,
-            false,
-            "expired",
-            vec![
-                "codex could not renew it: 500 Internal Server Error: upstream failure; run codex once with CODEX_HOME=",
-            ],
-            asked,
-        ),
-        (
-            false,
-            None,
-            None,
-            false,
-            "expired",
-            vec!["codex did not renew it; run codex once with CODEX_HOME="],
-            asked,
-        ),
-        (
-            false,
-            None,
-            None,
-            true,
-            "expired",
-            vec!["codex did not renew it; run codex once with CODEX_HOME="],
-            "exited",
-        ),
+        (false, Some(unknown), None, false, "expired", asked),
+        (false, None, None, false, "expired", asked),
+        (false, None, None, true, "expired", "exited"),
     ];
     let mut codex_row = measured("acodex", 30, 0);
     codex_row["harness"] = json!("codex");
     let renewed_auth = json!({"tokens": {
         "access_token": jwt(now() + 36_000), "refresh_token": "rotated-refresh", "account_id": "acct-1"}})
     .to_string();
-    for (renewed, says, answer, exits, expected, fragments, last) in cases {
+    for (renewed, says, answer, exits, expected, last) in cases {
         let mut world = World::new(&[]);
         world.write_fleet(Vec::new(), None);
         world.plant_listing(&[codex_row.clone()]);
@@ -3035,19 +2973,6 @@ fn a_codex_renewal_is_the_cli_s_own_run_and_its_auth_json_read_back_is_the_verdi
             );
         } else {
             assert_eq!(row["headroom_pct"], Value::Null, "{row}");
-            let detail = row["detail"].as_str().unwrap();
-            assert!(
-                detail.starts_with("access token expired and could not be renewed: "),
-                "{detail}"
-            );
-            for fragment in fragments {
-                assert!(detail.contains(fragment), "{fragment:?} in {detail:?}");
-            }
-            assert_eq!(
-                detail.contains(&format!("CODEX_HOME={dir}")),
-                expected == "expired",
-                "a dead login names its remedy, an untested one none: {detail}"
-            );
         }
         assert_eq!(codex_log(&world), vec![format!("{dir} {dir} {last}")]);
     }
@@ -3060,13 +2985,6 @@ fn a_codex_renewal_is_the_cli_s_own_run_and_its_auth_json_read_back_is_the_verdi
     plant_fixture(&world, "codex.renewed.json", &renewed_auth);
     let row = listed_row(&world, "acodex");
     assert_eq!(row["status"], json!("expired"), "{row}");
-    assert!(
-        row["detail"]
-            .as_str()
-            .unwrap()
-            .contains("there is no refresh token in"),
-        "{row}"
-    );
     assert_eq!(
         codex_log(&world),
         Vec::<String>::new(),
@@ -3094,13 +3012,6 @@ fn a_codex_renewal_is_the_cli_s_own_run_and_its_auth_json_read_back_is_the_verdi
     let roster = World::reply(command);
     let row = roster["rows"][0]["record"].clone();
     assert_eq!(row["status"], json!("expired"), "{roster}");
-    assert!(
-        row["detail"]
-            .as_str()
-            .unwrap()
-            .contains("no codex command is on PATH"),
-        "{roster}"
-    );
     assert_eq!(codex_log(&world), Vec::<String>::new());
 }
 

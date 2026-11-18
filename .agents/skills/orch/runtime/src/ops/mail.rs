@@ -25,8 +25,7 @@ pub enum Word {
 
 /// The account's cloud credit as `agent-runtime accounts roster` read it at the send, or the
 /// word `unread` (the two forms the mailbox's `lm_send_record` writes). The
-/// dollars stay the number the listing printed, `0` or `12.5`, so the close
-/// row that prints them reads as the released record's.
+/// dollars stay the number as the listing wrote it, `0` or `12.5`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Credit {
@@ -37,7 +36,7 @@ pub enum Credit {
     Unread(Word),
 }
 
-/// How a session send ended, the three words the released record carries.
+/// How a session send ended, as the record's `result` word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SendResult {
@@ -92,10 +91,8 @@ pub enum DirectiveWrite {
     Failed { cause: String },
 }
 
-/// The `owner` word of a record the operator settled.
 const OWNER_OPERATOR: &str = "operator";
 
-/// The operation `record-directive-send`: one stage of a send onto the lane.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordDirectiveSend {
     pub item: String,
@@ -133,7 +130,6 @@ pub enum KeyedSend {
 }
 
 impl KeyedSend {
-    /// The reading of a `directive_send` record made under the write's key.
     fn read(send: &Value) -> KeyedSend {
         match send.get("result").and_then(Value::as_str) {
             Some(OWED) => KeyedSend::Owed,
@@ -148,12 +144,10 @@ impl KeyedSend {
     }
 }
 
-/// The characters of the text the record keeps, as the released record's
-/// `.text | .[0:300]` cut it.
+/// The characters of the text the record keeps.
 const TEXT_CHARS: usize = 300;
 
-/// Whether a lane object's `directive_send` stands at the owed stage; read
-/// here and by the send's settle over the lane's extra fields.
+/// Whether a lane object's `directive_send` stands at the owed stage.
 pub fn owed(lane: &Document) -> bool {
     lane.get("directive_send")
         .and_then(|send| send.get("result"))
@@ -162,7 +156,7 @@ pub fn owed(lane: &Document) -> bool {
 }
 
 /// The key a lane object's `directive_send` was made under, where the owed
-/// write carried one; a settle keeps it on the record it writes.
+/// write carried one.
 fn send_key(lane: &Document) -> Option<String> {
     lane.get("directive_send")
         .and_then(|send| send.get("key"))
@@ -170,14 +164,11 @@ fn send_key(lane: &Document) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A lane object's `directive_send` where the send it records was made
-/// under `key`.
 fn under_key<'a>(lane: &'a Document, key: &str) -> Option<&'a Value> {
     lane.get("directive_send")
         .filter(|send| send.get("key").and_then(Value::as_str) == Some(key))
 }
 
-/// `record` with the send's key beside its fields, where one stands.
 fn keyed(mut record: Value, key: Option<String>) -> Value {
     if let (Some(key), Some(fields)) = (key, record.as_object_mut()) {
         fields.insert("key".to_owned(), Value::String(key));
@@ -199,7 +190,7 @@ fn keyed(mut record: Value, key: Option<String>) -> Value {
 /// written, so the caller's replay learns its own send's standing from the
 /// one record the write judges, under the one lock; a write under no key
 /// reads no key. The
-/// settled stage, `{at, result, text, credit}` as the released record holds it, is
+/// settled stage, `{at, result, text, credit}`, is
 /// written only over an owed record (`directive-send-unowed`: a record
 /// replaced under the send takes no stale receipt), and so is the failed
 /// stage, `{at, result: failed, text, credit: unread, owner: operator}`
@@ -300,9 +291,9 @@ pub fn record_directive_send(
     })
 }
 
-/// The mail duty's memory of one mailbox: the envelope line it has
-/// announced through and the id the box opened with, the released watch's
-/// `.mail` `lane-mail` row. It is the watch's own cursor, never the box's:
+/// The mail duty's memory of one mailbox, its `.mail` `lane-mail` row: the
+/// envelope line it has announced through and the id the box opened with.
+/// It is the watch's own cursor, never the box's:
 /// the controller session's handler acknowledges the box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailCursor {
@@ -348,7 +339,6 @@ mod tests {
         }
     }
 
-    /// The fleet fixture with its first lane a cloud session.
     fn cloud_fleet() -> Document {
         let mut doc: Document = serde_json::from_str(FLEET).unwrap();
         doc["lanes"][0]["kind"] = json!("claude-cloud");
@@ -373,7 +363,7 @@ mod tests {
 
     /// The two stages on the lane: `owed` holds the directive's
     /// words and names its receipt by the request's stamp, the receipt
-    /// replaces it with the released shape, the epoch
+    /// replaces it, the epoch
     /// second the request's, the words cut at 300 characters, every other
     /// field of the lane as it was; the operator's mark settles an owed
     /// record `failed` with the cause as its words, the credit unread and
@@ -445,13 +435,10 @@ mod tests {
             doc["lanes"][1], original["lanes"][1],
             "the other lane untouched"
         );
-        // A receipt over a settled record: not owed, refused.
         before = doc.clone();
         let unowed = record_directive_send(path, &mut doc, &settled, &env()).unwrap_err();
         assert_eq!(unowed.key(), "directive-send-unowed");
         assert_eq!(doc, before, "nothing written");
-        // The next send starts over, and its failed receipt carries the
-        // unread credit word.
         record_directive_send(path, &mut doc, &owed, &env()).unwrap();
         let failed = write(
             "KEN-4437",
@@ -467,8 +454,6 @@ mod tests {
         let recorded = record_directive_send(path, &mut doc, &failed, &env()).unwrap();
         assert_eq!(recorded.directive_send["credit"], "unread");
         assert_eq!(recorded.directive_send["result"], "failed");
-        // The operator's mark over an owed send no receipt settles, and
-        // the same mark over the settled record: refused.
         record_directive_send(path, &mut doc, &owed, &env()).unwrap();
         let by_hand = write(
             "KEN-4437",
@@ -490,7 +475,6 @@ mod tests {
         let unowed = record_directive_send(path, &mut doc, &by_hand, &env()).unwrap_err();
         assert_eq!(unowed.key(), "directive-send-unowed");
         assert_eq!(doc, before, "nothing written");
-        // A mailbox lane and a missing lane: refused before any write.
         let mut mailbox: Document = serde_json::from_str(FLEET).unwrap();
         before = mailbox.clone();
         let channel = record_directive_send(path, &mut mailbox, &owed, &env()).unwrap_err();
@@ -509,7 +493,7 @@ mod tests {
         assert_eq!(doc, before, "nothing written");
     }
 
-    /// Decision 188 (d): a send made under a key carries it from the owed
+    /// A send made under a key carries it from the owed
     /// write through the receipt's settle and the operator's mark, and a
     /// send made under none writes no `key`. Defect: a keyed notice's
     /// replay unable to tell the lane's settled send from another send's,
@@ -587,7 +571,7 @@ mod tests {
         assert!(recorded.directive_send.get("key").is_none(), "{recorded:?}");
     }
 
-    /// Decision 193 (a): the owed write under a key reads the lane's send
+    /// The owed write under a key reads the lane's send
     /// under that key where it decides, inside the one write, and answers
     /// what it found with nothing written: settled under this key answers
     /// `settled` with the result, owed under this key answers `owed`, a

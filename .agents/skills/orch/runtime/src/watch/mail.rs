@@ -51,7 +51,7 @@ use crate::state::{self, FleetState, Lane, LaneStatus, Record};
 use crate::watch::wake::{OVERSEER_TARGET, UNREAD_KIND};
 use crate::watch::{Baseline, Change, Event, Paths, Produced, Runner, Tick};
 
-/// The baseline row kinds, the words a released watch's `.mail` rows carry.
+/// The baseline row kinds of the `.mail` rows.
 const LANE_MAIL: &str = "lane-mail";
 const DIRECTIVE: &str = "directive";
 /// The overseer box's identity among the `lane-mail` rows, and its item

@@ -1578,9 +1578,6 @@ environment_dump() { # command kind; arguments are already decoded data
         # A quoted operand past the program can be a whole command string,
         # and so can an expanding one, whose producer selection stops at 0;
         # after a command string, every quoted operand can be, $0 included.
-        # A legitimate forwarded launcher form refused twice after landing is
-        # a design question for this forwarded-form rule, not a case patch
-        # (Jarvis ruling, KEN-4728).
         if { [ -n "$script_string" ] || [ "$candidate" -gt "$((script_pos + 1))" ]; } && [ -z "$output" ] &&
            [ "${stage_unquoted[$candidate]%%:*}" != 1 ] && [ "$producer_end" -le 1 ]; then
           environment_queue "${stage_args[$candidate]}" "${stage_kinds[$candidate]}" forwarded
