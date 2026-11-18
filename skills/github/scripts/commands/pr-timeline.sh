@@ -121,9 +121,9 @@ extend the clean span. The attempt itself must also have passed.
 Errors: {"error": "..."} on stderr and exit 1. Commits and marked timeline
 events are limited to one page of 100 items. Reviews and each review's
 comments are read with the GraphQL cursor up to 10 pages of 100 items per
-connection. Each commit's check suites and each suite's check runs are read
-the same way, up to 20 pages of 50 suites per commit and 10 pages of 100
-runs per suite. A connection still open at its limit refuses as
+connection. The reader follows up to 20 pages of 50 check suites on the
+final head and on the merge commit when present. It follows up to 10 pages
+of 100 check runs per suite. A connection still open at its limit refuses as
 `truncated: <connection>` (commits, timeline, reviews, review-comments,
 check-suites or check-runs). Each head's status history is read through every
 page of the REST commit statuses endpoint, read only for a PR with no
