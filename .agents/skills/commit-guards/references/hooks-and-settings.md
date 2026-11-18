@@ -14,7 +14,7 @@ Read when changing the hook order or diagnosing a commit that did not run a lane
 
 1. `doc-limits --staged`, when installed.
 2. `preflight --staged`, when installed; a first commit skips it.
-3. `github-repository-settings check --staged` when that package resolves, otherwise `bot-instructions check --staged` when installed. A failing or unrunnable selected owner never falls back. An attested `unconfigured` result with `renders=none` at exit `0` or the older exit `2` means not adopted and blocks nothing.
+3. `github-repository-settings check --staged` when that package resolves and either kendex's record of its setup stands in this work tree or bot-instructions does not resolve, otherwise `bot-instructions check --staged` when installed. A failing or unrunnable selected owner never falls back. An attested `unconfigured` result with `renders=none` at exit `0` or the older exit `2` means not adopted and blocks nothing.
 4. `commit-guards all --staged`.
 5. The configured [repo-local check](#repo-local-check).
 

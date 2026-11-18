@@ -107,8 +107,32 @@ fn record_install(env: &Env, root: &Path, harness: HarnessId, package: PathBuf) 
     record_named_install(env, root, harness, "bot-instructions", package);
 }
 
-#[allow(clippy::unwrap_used)]
 fn record_named_install(env: &Env, root: &Path, harness: HarnessId, name: &str, package: PathBuf) {
+    record_install_for(env, root, harness, name, package, Reason::Requested);
+}
+
+/// The reason another installed skill requires `name`, the one a
+/// dependency-only arrival records.
+fn required_by(harness: HarnessId) -> Reason {
+    Reason::RequiredBy {
+        by: kendex_core::lock::InstallRef {
+            source: "local".to_owned(),
+            kind: ItemKind::Skill,
+            name: "requirer".to_owned(),
+            harness,
+        },
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn record_install_for(
+    env: &Env,
+    root: &Path,
+    harness: HarnessId,
+    name: &str,
+    package: PathBuf,
+    reason: Reason,
+) {
     let path = kendex_core::lock::lock_path(
         env,
         &Scope::Project {
@@ -142,7 +166,7 @@ fn record_named_install(env: &Env, root: &Path, harness: HarnessId, name: &str, 
             }),
             registration: None,
             output_style: None,
-            reasons: BTreeSet::from([Reason::Requested]),
+            reasons: BTreeSet::from([reason]),
         },
     );
     kendex_core::lock::save(

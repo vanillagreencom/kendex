@@ -379,6 +379,32 @@ fn rendered(
             )?;
         }
     }
+    if let Some(pending) = bot_instructions.pending() {
+        // `add --allow-repo-effects` already says yes to this arrival's
+        // setup after the offer. Taken here instead, the setup's render
+        // joins this action's offer rather than a later one.
+        let setup_pending = super::commit_offer::adding_with_repo_effects()
+            && report.repo_effects.iter().any(|effect| {
+                effect.name == pending.successor.name && effect.root == pending.successor.root
+            });
+        if setup_pending {
+            let shown = super::repo_effects::disclose(
+                env,
+                &report.plan.scope,
+                std::slice::from_ref(&pending.successor),
+            )?;
+            if let [disclosure] = shown.as_slice() {
+                super::repo_effects::apply(env, &report.plan.scope, &disclosure.declared)?;
+                kendex_core::bot_instructions::add_to_generated(
+                    env,
+                    &report.plan.scope,
+                    &mut generated,
+                )?;
+            }
+        } else {
+            ui::report::notice(&pending.line());
+        }
+    }
     bot_instructions.add_to(&mut generated);
     Ok(generated)
 }

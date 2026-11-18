@@ -81,3 +81,90 @@ fn existing_setup_consent_transfers_the_configuration_effect() {
         );
     }
 }
+
+/// The KEN-2358 reproduction: an armed old owner, then an add of a package
+/// that requires the new one. Without the setup's say-so the old owner
+/// keeps rendering, its check still fails drift under `verify`, and a
+/// refresh names the pending setup. With `--allow-repo-effects` and a
+/// commit choice, the setup moves the effect before the offer, so the
+/// new owner's render is in the add's own commit.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
+    const PENDING: &str = "github-repository-settings: installed as a dependency;";
+    for consent in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = unarmed_consumer(&tmp);
+        package(&project, OLD);
+        git(&project, &["add", "-A"]);
+        git(&project, &["commit", "-q", "-m", "old installer"]);
+        let initial = kendex(
+            &home,
+            &project,
+            &["apply", "--yes", "--commit", "--allow-repo-effects"],
+        );
+        assert!(initial.status.success(), "{}", said(&initial));
+        assert!(armed(&project, OLD));
+
+        package(&project, NEW);
+        let requirer = project.join("catalog/skills/requirer");
+        fs::create_dir_all(&requirer).unwrap();
+        fs::write(
+            requirer.join("SKILL.md"),
+            format!("---\nname: requirer\ndescription: fixture requirer\ndependencies:\n  required: [{NEW}]\n---\n"),
+        )
+        .unwrap();
+        git(&project, &["add", "-A"]);
+        git(&project, &["commit", "-q", "-m", "requirer"]);
+        let mut args = vec![
+            "add",
+            "--yes",
+            "--throwaway",
+            "--commit",
+            "catalog",
+            "--skill",
+            "requirer",
+        ];
+        if consent {
+            args.push("--allow-repo-effects");
+        }
+        let output = kendex(&home, &project, &args);
+        let text = said(&output);
+        assert_eq!(output.status.code(), Some(0), "{text}");
+        let owner = if consent { NEW } else { OLD };
+        assert_eq!(
+            fs::read_to_string(project.join(".github/copilot-instructions.md")).unwrap(),
+            owner,
+            "{text}"
+        );
+        assert_eq!(armed(&project, OLD), !consent, "{text}");
+        assert_eq!(armed(&project, NEW), consent, "{text}");
+        assert_eq!(text.contains(PENDING), !consent, "{text}");
+        let committed = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+        assert_eq!(
+            committed
+                .lines()
+                .any(|line| line == format!("{NEW}.effect")),
+            consent,
+            "{committed}\n{text}"
+        );
+        if consent {
+            continue;
+        }
+
+        fs::write(project.join(".github/copilot-instructions.md"), "drift").unwrap();
+        let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+        assert_eq!(verified.status.code(), Some(1), "{}", said(&verified));
+
+        let refreshed = kendex(
+            &home,
+            &project,
+            &["refresh", "--yes", "--scope", "project", "--leave"],
+        );
+        let text = said(&refreshed);
+        assert!(refreshed.status.success(), "{text}");
+        assert!(text.contains(PENDING), "{text}");
+        assert!(!armed(&project, NEW), "{text}");
+    }
+}

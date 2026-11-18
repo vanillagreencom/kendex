@@ -137,6 +137,7 @@ mod compared;
 pub use compared::Comparison;
 pub(crate) use compared::digest as position_digest;
 mod repo_effects;
+pub(crate) use repo_effects::installed_entry;
 pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
 pub use report_types::{

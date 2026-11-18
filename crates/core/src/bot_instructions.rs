@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use crate::engine::{GeneratedPaths, Owns, Position};
+use crate::engine::{GeneratedPaths, InstalledDeclaration, Owns, Position};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
@@ -15,68 +15,144 @@ use crate::repo_effects::{ArmError, DeclaredEffects};
 const PACKAGE: &str = "bot-instructions";
 const CONFIGURATION_PACKAGE: &str = "github-repository-settings";
 
+/// The configuration packages in selection order, the successor first.
+const ORDER: [&str; 2] = [CONFIGURATION_PACKAGE, PACKAGE];
+
+/// The configuration owner one selection chose, and the successor it was
+/// chosen over.
+pub(crate) struct Selection<T> {
+    pub(crate) owner: T,
+    /// A successor the scope carries only because another package requires
+    /// it, not armed here, so the installed predecessor keeps the effect
+    /// until the successor's setup moves it.
+    pub(crate) pending: Option<T>,
+}
+
+/// The one configuration-owner selection every reader shares: rendering,
+/// discovery, the one-run render, the commit offer and the lapse check.
+///
+/// Walk [`ORDER`]: an installed candidate is selected unless the scope
+/// carries it only as a dependency, its own arming record does not stand
+/// here, and a later candidate is installed. Installing a package to
+/// satisfy another's requirement is not choosing it to own the
+/// repository's files, and the lock's reasons are the only record of which
+/// it was. Only the yielding candidate's own record is read, so a refresh
+/// checkout, which carries no records, renders what an unadopted consumer
+/// renders. An unreadable declaration is a candidate, so it still prevents
+/// fallback unless it yields.
+pub(crate) fn select_installed(
+    scope: &Scope,
+    lock: &crate::lock::Lock,
+    mut read: impl FnMut(&'static str) -> Result<Option<InstalledDeclaration>>,
+) -> Result<Option<Selection<InstalledDeclaration>>> {
+    let mut present = Vec::new();
+    for name in ORDER {
+        present.extend(read(name)?);
+    }
+    let mut pending = None;
+    let mut rest = present.into_iter().peekable();
+    while let Some(candidate) = rest.next() {
+        if rest.peek().is_some() && yields(scope, lock, &candidate)? {
+            pending.get_or_insert(candidate);
+            continue;
+        }
+        return Ok(Some(Selection {
+            owner: candidate,
+            pending,
+        }));
+    }
+    Ok(None)
+}
+
+fn yields(
+    scope: &Scope,
+    lock: &crate::lock::Lock,
+    candidate: &InstalledDeclaration,
+) -> Result<bool> {
+    if !crate::lock::dependency_only(lock, candidate.name()) {
+        return Ok(false);
+    }
+    let armed = match (candidate, scope) {
+        (InstalledDeclaration::Declared(declared), _) => {
+            crate::repo_effects::armed_here(scope, declared)?
+        }
+        // Its reach is unreadable, so a record in either git directory
+        // counts, as the lapse check reads one.
+        (InstalledDeclaration::Unreadable { name, .. }, Scope::Project { root }) => {
+            crate::repo_effects::setup::recorded_in_either(root, name)?
+        }
+        (InstalledDeclaration::Unreadable { .. }, Scope::Global) => false,
+    };
+    Ok(!armed)
+}
+
+/// [`select_installed`] over this scope's installed packages, for a caller
+/// about to run the owner: an owner whose declaration will not read is an
+/// error. A pending successor whose declaration will not read names no
+/// setup, so it is dropped.
+pub(crate) fn configuration_selection(
+    env: &Env,
+    scope: &Scope,
+) -> Result<Option<Selection<DeclaredEffects>>> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let Some(selection) = select_installed(scope, &lock, |name| {
+        crate::engine::installed_entry(env, scope, &lock, name)
+    })?
+    else {
+        return Ok(None);
+    };
+    let pending = match selection.pending {
+        Some(InstalledDeclaration::Declared(declared)) => Some(*declared),
+        Some(InstalledDeclaration::Unreadable { .. }) | None => None,
+    };
+    Ok(Some(Selection {
+        owner: selection.owner.into_declared()?,
+        pending,
+    }))
+}
+
 /// Select before checking consent: an unarmed new owner cannot license the
 /// old owner's code. Only these configuration effects run automatically.
 pub(crate) fn configuration_owner(env: &Env, scope: &Scope) -> Result<Option<DeclaredEffects>> {
-    select_configuration_owner(|name| {
-        crate::engine::installed_declaration(env, scope, name).transpose()
-    })
-    .transpose()
+    Ok(configuration_selection(env, scope)?.map(|selection| selection.owner))
 }
 
-/// An installed configuration effect whose local licence the selected
-/// package's explicit setup replaces. Selection remains independent of consent.
+/// Whether this package is one of the configuration candidates.
+pub(crate) fn is_configuration_package(name: &str) -> bool {
+    ORDER.contains(&name)
+}
+
+/// The installed, locally armed predecessor whose licence this package's
+/// explicit setup replaces: a later candidate in [`ORDER`]. The setup is
+/// the consent that moves the effect, so a successor that yields to the
+/// predecessor in selection still takes it over here.
 pub(crate) fn superseded_configuration_owner(
     env: &Env,
     scope: &Scope,
     declared: &DeclaredEffects,
 ) -> Result<Option<DeclaredEffects>> {
-    if ![CONFIGURATION_PACKAGE, PACKAGE].contains(&declared.name.as_str()) {
+    let Some(at) = ORDER.iter().position(|name| *name == declared.name) else {
         return Ok(None);
-    }
-    if configuration_owner(env, scope)?
-        .as_ref()
-        .map(|owner| &owner.name)
-        != Some(&declared.name)
-    {
-        return Ok(None);
-    }
-    select_configuration_owner(|name| {
-        if name == declared.name {
-            return None;
-        }
-        let previous = || -> Result<Option<DeclaredEffects>> {
-            let Some(previous) = crate::engine::installed_declaration(env, scope, name)? else {
-                return Ok(None);
-            };
-            Ok(crate::repo_effects::armed_here(scope, &previous)?.then_some(previous))
+    };
+    for name in &ORDER[at + 1..] {
+        let Some(previous) = crate::engine::installed_declaration(env, scope, name)? else {
+            continue;
         };
-        previous().transpose()
-    })
-    .transpose()
-}
-
-/// Whole-scope checks keep unreadable declarations as rows so their local
-/// arming records can decide whether a failed read is a lapse. Selecting that
-/// row still prevents fallback to the superseded configuration checker.
-pub(crate) fn select_configuration_owner<T>(
-    mut find: impl FnMut(&'static str) -> Option<T>,
-) -> Option<T> {
-    for name in [CONFIGURATION_PACKAGE, PACKAGE] {
-        if let Some(declared) = find(name) {
-            return Some(declared);
+        if crate::repo_effects::armed_here(scope, &previous)? {
+            return Ok(Some(previous));
         }
     }
-    None
+    Ok(None)
 }
 
-/// The selected effect also judges changes to its superseded dependency.
+/// The selected effect judges changes to every configuration candidate, so
+/// a successor that yields never holds a commit on its own.
 pub(crate) fn commit_owner(
     env: &Env,
     scope: &Scope,
     declared: &DeclaredEffects,
 ) -> Result<DeclaredEffects> {
-    if declared.name != PACKAGE {
+    if !is_configuration_package(&declared.name) {
         return Ok(declared.clone());
     }
     Ok(configuration_owner(env, scope)?.unwrap_or_else(|| declared.clone()))
@@ -206,6 +282,7 @@ pub struct RenderedPaths {
     paths: BTreeSet<PathBuf>,
     regions: BTreeSet<crate::commit_offer::OwnedRegion>,
     skipped: Option<Skipped>,
+    pending: Option<Pending>,
 }
 
 impl RenderedPaths {
@@ -218,6 +295,34 @@ impl RenderedPaths {
     /// Why no package code ran, for the surface that applied the project.
     pub fn skipped(&self) -> Option<&Skipped> {
         self.skipped.as_ref()
+    }
+
+    /// The successor whose setup would take this render over, where the
+    /// armed owner rendered because the successor arrived as a dependency.
+    pub fn pending(&self) -> Option<&Pending> {
+        self.pending.as_ref()
+    }
+}
+
+/// A configuration successor installed here only as another package's
+/// dependency, while the armed predecessor keeps rendering. Its existing
+/// setup is the step that moves the files.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pending {
+    /// The installed successor, for a surface that runs its setup.
+    pub successor: DeclaredEffects,
+    /// The armed package that rendered.
+    pub owner: String,
+}
+
+impl Pending {
+    /// The line a surface prints for it.
+    pub fn line(&self) -> String {
+        let name = &self.successor.name;
+        format!(
+            "{name}: installed as a dependency; {owner} keeps rendering this repository's review files until {name} is set up here: use Set up on the {name} package page",
+            owner = self.owner
+        )
     }
 }
 
@@ -278,7 +383,11 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
     let Scope::Project { root } = scope.canonical() else {
         return Ok(RenderedPaths::default());
     };
-    let Some(declared) = configuration_owner(env, scope)? else {
+    let Some(Selection {
+        owner: declared,
+        pending,
+    }) = configuration_selection(env, scope)?
+    else {
         return Ok(RenderedPaths::default());
     };
     if !crate::repo_effects::armed_here(scope, &declared)? {
@@ -354,10 +463,15 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
         };
         paths.insert(reported_path(&root, &command, line, relative)?);
     }
+    let pending = pending.map(|successor| Pending {
+        successor,
+        owner: declared.name.clone(),
+    });
     Ok(RenderedPaths {
         paths,
         regions,
         skipped: None,
+        pending,
     })
 }
 
@@ -432,6 +546,7 @@ fn skipped(declared: DeclaredEffects, set_up_in: Option<PathBuf>) -> RenderedPat
             declared,
             set_up_in,
         }),
+        pending: None,
     }
 }
 
