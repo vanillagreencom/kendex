@@ -72,7 +72,8 @@ repos = [
     repository("private-last", 46, fork=True),
 ]
 
-def run(trigger, main, *, script=sender, previous=None, inventory="full", denied=False, post_failure=None):
+def run(trigger, main, *, script=sender, previous=None, receipt_failure=None, inventory="full",
+        denied=False, post_failure=None):
     log = []
     run_id = 101 if previous is None else 102
     conf = dict(
@@ -97,12 +98,15 @@ def run(trigger, main, *, script=sender, previous=None, inventory="full", denied
             return json.dumps(value).encode() + b"\n"
 
         if endpoint == source + f"/actions/artifacts?name={receipt_name}":
+            if receipt_failure == "listing":
+                return answer(b"private-api-body", code=1, stderr=b"private-transport-error")
             artifacts = []
             if previous is not None:
                 artifacts.append(dict(id=7, expired=False, created_at="2026-11-18T08:00:00Z",
                                       workflow_run=dict(id=101, head_branch="main", head_sha=a,
                                                         repository_id=repo_id, head_repository_id=repo_id)))
-            return answer(page({"artifacts": artifacts}))
+            total = len(artifacts) + (receipt_failure == "incomplete")
+            return answer(page({"total_count": total, "artifacts": artifacts}))
         if endpoint == source + "/actions/runs/101":
             return answer(dict(id=101, path=".github/workflows/consumer-dispatch.yml", event="push",
                                head_branch="main", head_sha=a, repository=dict(id=repo_id),
@@ -120,6 +124,8 @@ def run(trigger, main, *, script=sender, previous=None, inventory="full", denied
             return answer({"object": {"sha": main}})
         if endpoint.startswith(source + "/compare/"):
             old, new = endpoint.rsplit("/", 1)[1].split("...")
+            if receipt_failure == "comparison":
+                return answer({"status": None})
             return answer({"status": "ahead" if old < new else "behind"})
 
         if endpoint == "installation/repositories":
@@ -207,9 +213,17 @@ assert_covered(sender)
 result, posts, newer, _, _ = run(d, e, previous=partial)
 assert result == 0 and posts == both and newer["attempted"] == e
 
-# A receipt from an unproved attempt cannot suppress a send.
-result, posts, replacement, _, _ = run(b, d, previous=dict(partial, attempt=2))
-assert result == 0 and posts == both and replacement["attempted"] == d
+# Unreadable evidence supplies no coverage decision, so even the inventory waits.
+for flags in [
+    {"previous": dict(partial, attempt=2)},
+    {"receipt_failure": "listing"},
+    {"receipt_failure": "incomplete"},
+    {"previous": partial, "receipt_failure": "comparison"},
+]:
+    result, posts, receipt_output, log, summary = run(b, d, **flags)
+    assert (result, posts, receipt_output) == (1, [], None), flags
+    assert "installation/repositories" not in log, flags
+    assert summary == dict(receipt="unreadable"), flags
 
 # The live main SHA cannot attest a trigger outside its ancestry.
 result, posts, receipt_output, _, summary = run(c, b)
@@ -246,5 +260,5 @@ with tempfile.TemporaryDirectory() as owner:
         assert error.args == ("covered push dispatched again",)
     else:
         raise AssertionError("must-fail control skipped the coverage check")
-print("pass: 14   fail: 0")
+print("pass: 17   fail: 0")
 PY

@@ -7,6 +7,7 @@ import re
 import subprocess
 import urllib.parse
 import zipfile
+import zlib
 from collections import Counter
 
 source = "repos/" + os.environ["GITHUB_REPOSITORY"]
@@ -69,61 +70,67 @@ def pages(endpoint, *, fleet=False):
 def includes(older, newer):
     if not all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (older, newer)):
         raise ValueError("invalid-commit")
-    return older == newer or get(f"{source}/compare/{older}...{newer}")["status"] == "ahead"
+    if older == newer:
+        return True
+    status = get(f"{source}/compare/{older}...{newer}")["status"]
+    if status not in ("ahead", "behind", "diverged"):
+        raise ValueError("invalid-comparison")
+    return status == "ahead"
 
 def covered():
-    try:
-        candidates = [
-            artifact
-            for page in pages(f"{source}/actions/artifacts?name={receipt_name}")
-            for artifact in page["artifacts"]
-            if artifact["expired"] is False
-            and artifact["workflow_run"]["repository_id"] == repo_id
-            and artifact["workflow_run"]["head_repository_id"] == repo_id
-            and artifact["workflow_run"]["head_branch"] == "main"
-        ]
-        if not candidates:
-            return False
-        latest = max(candidates, key=lambda artifact: (artifact["created_at"], artifact["id"]))
-        origin = latest["workflow_run"]
-        run_id = int(origin["id"])
-        run = get(f"{source}/actions/runs/{run_id}")
-        if (run["id"] != run_id or run["path"] != workflow or run["event"] != "push"
-                or run["head_branch"] != "main" or run["head_sha"] != origin["head_sha"]
-                or run["repository"]["id"] != repo_id or run["head_repository"]["id"] != repo_id):
-            raise ValueError("receipt-origin")
-        # Upload is the final business step. It can be visible while
-        # GitHub still marks the producer as running.
-        artifact_id = int(latest["id"])
-        archive = gh(f"{source}/actions/artifacts/{artifact_id}/zip")
-        with zipfile.ZipFile(io.BytesIO(archive)) as saved:
-            entry = saved.getinfo("receipt.json")
-            if entry.file_size > 1024:
-                raise ValueError("receipt-size")
-            receipt = json.loads(saved.read(entry))
-        attempt = int(receipt["attempt"])
-        if receipt["run"] != run_id or attempt < 1 or receipt["trigger"] != run["head_sha"]:
-            raise ValueError("receipt-identity")
-        producer = get(f"{source}/actions/runs/{run_id}/attempts/{attempt}")
-        if (producer["id"] != run_id or producer["run_attempt"] != attempt
-                or not producer["run_started_at"] <= latest["created_at"]):
-            raise ValueError("receipt-attempt")
-        return includes(trigger, receipt["attempted"])
-    except unreadable:
-        print("consumer-dispatch: receipt=unreadable")
+    rows, failure = collect(f"{source}/actions/artifacts?name={receipt_name}", "artifacts", fleet=False)
+    if failure:
+        raise ApiError(failure)
+    candidates = [
+        artifact for artifact in rows.values()
+        if artifact["workflow_run"]["repository_id"] == repo_id
+        and artifact["workflow_run"]["head_repository_id"] == repo_id
+        and artifact["workflow_run"]["head_branch"] == "main"
+    ]
+    if not candidates:
         return False
+    latest = max(candidates, key=lambda artifact: (artifact["created_at"], artifact["id"]))
+    if latest["expired"] is not False:
+        raise ValueError("receipt-unavailable")
+    origin = latest["workflow_run"]
+    run_id = int(origin["id"])
+    run = get(f"{source}/actions/runs/{run_id}")
+    if (run["id"] != run_id or run["path"] != workflow or run["event"] != "push"
+            or run["head_branch"] != "main" or run["head_sha"] != origin["head_sha"]
+            or run["repository"]["id"] != repo_id or run["head_repository"]["id"] != repo_id):
+        raise ValueError("receipt-origin")
+    # Upload is the final business step. It can be visible while
+    # GitHub still marks the producer as running.
+    artifact_id = int(latest["id"])
+    archive = gh(f"{source}/actions/artifacts/{artifact_id}/zip")
+    with zipfile.ZipFile(io.BytesIO(archive)) as saved:
+        entry = saved.getinfo("receipt.json")
+        if entry.file_size > 1024:
+            raise ValueError("receipt-size")
+        receipt = json.loads(saved.read(entry))
+    attempt = int(receipt["attempt"])
+    if receipt["run"] != run_id or attempt < 1 or receipt["trigger"] != run["head_sha"]:
+        raise ValueError("receipt-identity")
+    producer = get(f"{source}/actions/runs/{run_id}/attempts/{attempt}")
+    if (producer["id"] != run_id or producer["run_attempt"] != attempt
+            or not producer["run_started_at"] <= latest["created_at"]):
+        raise ValueError("receipt-attempt")
+    return includes(trigger, receipt["attempted"])
 
 def failure_code(error):
     return error.code if isinstance(error, ApiError) else "malformed-response"
 
-def collect(endpoint, key):
+def collect(endpoint, key, *, fleet=True):
     rows = {}
     totals = set()
     duplicate = False
     try:
-        for page in pages(endpoint, fleet=True):
-            totals.add(page["total_count"])
-            for row in page[key]:
+        for page in pages(endpoint, fleet=fleet):
+            total, items = page["total_count"], page[key]
+            if type(total) is not int or not isinstance(items, list):
+                return rows, "malformed-response"
+            totals.add(total)
+            for row in items:
                 duplicate |= row["id"] in rows
                 rows[row["id"]] = row
     except unreadable as error:
@@ -218,9 +225,15 @@ def attempt(targets, failures):
     return len(targets), accepted
 
 def send():
-    if covered():
-        print("consumer-dispatch: outcome=covered")
-        return 0
+    try:
+        if covered():
+            print("consumer-dispatch: outcome=covered")
+            return 0
+    except unreadable + (EOFError, RuntimeError, zlib.error):
+        # Preserve the throttle during a receipt outage. The daily
+        # backstop handles any event this sender cannot decide to send.
+        print("::error::consumer-dispatch: receipt=unreadable")
+        return 1
     failures = Counter()
     repos, targets = destinations(failures)
     attempted, accepted = attempt(targets, failures)
