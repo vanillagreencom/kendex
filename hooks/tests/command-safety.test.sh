@@ -503,6 +503,40 @@ environment_rows() {
 [2,"declare -p","declare-print"]
 [2,"declare -x","declare-export"]
 [2,"typeset -x","typeset-export"]
+[2,"tmux show-environment","tmux-session","claude-and-codex"]
+[2,"tmux showenv","tmux-alias"]
+[2,"tmux show-environment -g","tmux-global"]
+[2,"tmux showenv -g","tmux-alias-global"]
+[2,"tmux show-environment -s","tmux-shell"]
+[2,"tmux showenv -s","tmux-alias-shell"]
+[2,"tmux show-environment -t fixture","tmux-target"]
+[2,"tmux showenv -t fixture","tmux-alias-target"]
+[2,"tmux showenv -gstfixture","tmux-cluster-target"]
+[2,"tmux showenv -gs -t fixture","tmux-flags-target"]
+[0,"tmux show-environment NAME","tmux-named","claude-and-codex"]
+[0,"tmux showenv NAME","tmux-alias-named"]
+[0,"tmux show-environment -g NAME","tmux-global-named"]
+[0,"tmux showenv -g NAME","tmux-alias-global-named"]
+[0,"tmux show-environment -s NAME","tmux-shell-named"]
+[0,"tmux showenv -s NAME","tmux-alias-shell-named"]
+[0,"tmux show-environment -t fixture NAME","tmux-target-named"]
+[0,"tmux showenv -t fixture NAME","tmux-alias-target-named"]
+[0,"tmux showenv -gstfixture NAME","tmux-cluster-target-named"]
+[0,"tmux showenv -hgs -t fixture -- NAME","tmux-flags-target-named"]
+[2,"tmux -L fixture showenv -g","tmux-socket-dump"]
+[0,"tmux -Sfixture -f config -u showenv -g NAME","tmux-global-options-named"]
+[0,"tmux -L showenv list-sessions","tmux-global-operand-is-data"]
+[2,"tmux -Z showenv NAME | grep NAME","tmux-unknown-global"]
+[2,"tmux showenv -Z NAME | grep NAME","tmux-unknown-option"]
+[2,"tmux showenv \"$NAME\"","tmux-unresolved-name"]
+[2,"tmux showenv -t \"$TARGET\" NAME","tmux-unresolved-target"]
+[2,"tmux $'show-\\x65nvironment'","tmux-escaped-verb","project","environment-dump","undecoded-ansi-escape"]
+[0,"tmux showenv -g | grep '^NAME='","tmux-filtered"]
+[2,"tmux showenv -gs | grep '^NAME='","tmux-shell-filter-unproved"]
+[2,["tmux","showenv","-g"],"tmux-argv"]
+[0,["tmux","showenv","-gs","-t","fixture","NAME"],"tmux-argv-named"]
+[2,"bash wrapper.sh tmux showenv -g","tmux-forwarded"]
+[0,"printf '%s' 'tmux showenv -g'","tmux-command-data"]
 [2,"systemctl show-environment","system-environment"]
 [2,"systemctl --user show-environment","incident"]
 [2,"systemctl --user show-environment","manager-environment","claude-and-codex"]
@@ -2194,6 +2228,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     done
   done <<'ENVIRONMENT_CONTROLS'
 no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
+tmux-environment|if [ -n "$named" ]; then mode=clean; fi ;;|if [ -n "$named" ]; then mode=clean; else mode=clean; fi ;;|exit=0 expected=2|tmux-session-claude tmux-alias-global
 unit-environment|elif systemctl_environment; then mode=dump-unknown|elif systemctl_environment; then mode=other|exit=0 expected=2|unit-env-list-claude unit-env-list-codex
 systemctl-property-order|elif [ -z "$verb" ]; then selected=1; fi|else selected=1; fi|exit=0 expected=2|unit-property-after-verb-claude unit-property-after-verb-codex
 reader-file-option|if environment_file_input "$value" "$kind"; then return; fi ;;|if false; then return; fi ;;|exit=0 expected=2|process-environ-ignore-file-claude process-environ-xargs-cluster-codex
