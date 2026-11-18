@@ -639,6 +639,10 @@ environment_rows() {
 [2,"cd /proc/4242 && exec -a \"${FIXTURE_NAMES[@]}\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-array-spread-name-stdin","claude-and-codex"]
 [2,"cd /proc/4242 && exec -a \"${!FIXTURE_REF}\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-indirect-name-stdin","claude-and-codex"]
 [2,"declare -n FIXTURE_REF='FIXTURE_ARGS[@]'; cd /proc/4242 && exec -a \"$FIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-nameref-name-stdin","claude-and-codex"]
+[2,"decl\\\nare -n FIXTURE_REF='FIXTURE_ARGS[@]'; cd /proc/4242 && exec -a \"$FIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-continued-nameref-name-stdin","claude-and-codex"]
+[2,"eval \"$FIXTURE_DECLARATION\"; cd /proc/4242 && exec -a \"$FIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-eval-nameref-name-stdin","claude-and-codex"]
+[2,"\"$FIXTURE_BUILTIN\" -n FIXTURE_REF='FIXTURE_ARGS[@]'; cd /proc/4242 && exec -a \"$FIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-expanding-head-name-stdin","claude-and-codex"]
+[2,"$(printf declare) -n FIXTURE_REF='FIXTURE_ARGS[@]'; cd /proc/4242 && exec -a \"$FIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-substituted-head-name-stdin","claude-and-codex"]
 [2,"cd /proc/4242 && exec -a\"$FIXTURE_NAME\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-attached-quoted-name-stdin","claude-and-codex"]
 [2,"cd /proc/4242 && exec -a$FIXTURE_NAME env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-attached-split-name-stdin","claude-and-codex"]
 [2,"exec -a $FIXTURE_NAME env --chdir=/proc/4242 bash <<< 'head -c 32 environ'","process-environ-exec-split-name-chdir-stdin","claude-and-codex"]
@@ -2217,7 +2221,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # so a command that dumps the environment passes. forwarded-word-test
   # judges each unclassified forwarded operand and the words after it by the
   # word test, as before KEN-4728, so an env operand of a waiter refuses
-  # whatever program it launches.
+  # whatever program it launches. Fields split on |, and awk -v decodes
+  # backslashes in from and to, so a planted text holds neither.
   while IFS='|' read -r defect from to want rows; do
     mutant="$environment_controls/environment-$defect.sh"
     awk -v from="$from" -v to="$to" '
@@ -2225,7 +2230,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ } }
       { print }
       END { if (changed != 1) exit 1 }
-    ' "$hook_source" >"$mutant" || exit 1
+    ' "$hook_source" >"$mutant" || { echo "FAIL environment control $defect: its from text is not on exactly one line"; exit 1; }
     if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control $defect changed no bytes"; exit 1; fi
     control_status=0
     # shellcheck disable=SC2086 # rows is a space-separated label list
@@ -2255,10 +2260,12 @@ exec-stdin-context|[ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir
 exec-name-count|if [ "$exec_word" != split ] && [ -n "$exec_name_needed" ]; then|if [ "$exec_word" = literal ] && [ -n "$exec_name_needed" ]; then|exit=2 expected=0|process-ordinary-exec-quoted-name-stdin-claude process-ordinary-exec-quoted-name-stdin-codex
 exec-unknown-argv|shell_forwarded_pos=""; reader_chdir_unresolved=1; break|shell_forwarded_pos=""; break|exit=0 expected=2|process-environ-exec-split-name-chdir-stdin-claude process-environ-builtin-exec-expanding-option-stdin-codex
 builtin-exec-unknown|elif [ "$shell_forwarder" = exec ] && [ -n "$reader_chdir_unresolved" ] &&|elif false &&|exit=0 expected=2|process-environ-builtin-exec-expanding-option-stdin-claude
-unquoted-expansion-fields|fields_unknown=1 ;;|: ;;|exit=0 expected=2|process-environ-exec-split-name-stdin-codex
-quoted-spread-fields|if [ "$c" = '$' ] && [ "$next" != '"' ] && {|if false && {|exit=0 expected=2|process-environ-exec-positional-spread-name-stdin-claude process-environ-exec-array-spread-name-stdin-codex process-environ-exec-indirect-name-stdin-claude process-environ-exec-nameref-name-stdin-codex
+unquoted-expansion-fields|fields_unknown=fields ;;|: ;;|exit=0 expected=2|process-environ-exec-split-name-stdin-codex
+quoted-spread-fields|if [ "$c" = '$' ] && [ "$fields_unknown" != fields ]; then|if false; then|exit=0 expected=2|process-environ-exec-positional-spread-name-stdin-claude process-environ-exec-array-spread-name-stdin-codex process-environ-exec-indirect-name-stdin-claude process-environ-exec-nameref-name-stdin-codex
 quoted-indirect-fields|[^}@!]*|[^}@]*|exit=0 expected=2|process-environ-exec-indirect-name-stdin-claude process-environ-exec-indirect-name-stdin-codex
-nameref-fields|if [[ $nameref_text =~ $nameref_re ]]; then nameref_possible=1; fi|if false; then nameref_possible=1; fi|exit=0 expected=2|process-environ-exec-nameref-name-stdin-claude process-environ-exec-nameref-name-stdin-codex
+nameref-head-names|alias) nameref_possible=1 ;; esac ;;|alias) ;; esac ;;|exit=0 expected=2|process-environ-exec-nameref-name-stdin-claude process-environ-exec-nameref-name-stdin-codex process-environ-exec-continued-nameref-name-stdin-claude process-environ-exec-continued-nameref-name-stdin-codex process-environ-exec-eval-nameref-name-stdin-claude process-environ-exec-eval-nameref-name-stdin-codex
+nameref-unseen-head|      *) nameref_possible=1 ;;|      *) ;;|exit=0 expected=2|process-environ-exec-expanding-head-name-stdin-claude process-environ-exec-expanding-head-name-stdin-codex
+nameref-substitution-head|if { [ "$opened" = word ] &&|if { false &&|exit=0 expected=2|process-environ-exec-substituted-head-name-stdin-claude process-environ-exec-substituted-head-name-stdin-codex
 exec-literal-option|elif [ "$exec_word" = literal ] && [[ $value =~ $exec_option_re ]]; then|elif [[ $value =~ $exec_option_re ]]; then|exit=0 expected=2|process-environ-exec-attached-quoted-name-stdin-claude process-environ-exec-attached-split-name-stdin-codex
 exec-stdin-shell|if [ -n "$stdin_program" ] &&|if [ "$program" = bash ] &&|exit=0 expected=2|process-environ-exec-chdir-sh-heredoc-claude process-environ-exec-chdir-dash-pipe-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon

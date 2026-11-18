@@ -809,6 +809,55 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
   done
 }
 
+# A nameref to name[@] turns a quoted "$ref" into one word per element
+# (the recorded bash 5.2 probe), and the declaration holds for every later
+# word of the shell, a nested source included. So each stage head the
+# decoder reads decides it: declare, typeset or local, reached directly or
+# through command or builtin. A head this decoder cannot read through also
+# can: an expanding or pathname word, substitution output, or a builtin that
+# runs text as code in this shell (eval, source, ., trap, alias, and the -C
+# callback of the Bash 4 array readers). Every :named word then counts as
+# :fields. Those readers' names are bracketed below for tools/bash32-lint.
+environment_namerefs() { # command kind; reads tokens, starts and ends
+  local stage j value opened args arg_kinds arg_unquoted arg_tokens pos syntax_head head_start
+  for ((stage=0; stage<${#starts[@]}; stage++)); do
+    [ -z "$nameref_possible" ] || break
+    args=(); arg_kinds=(); arg_unquoted=(); arg_tokens=()
+    for ((j=${starts[$stage]}; j<${ends[$stage]}; j++)); do
+      case "${kinds[$j]}" in operator | operator-stderr | operator-explicit-other) j=$((j + 1)); continue ;; esac
+      arg_tokens[${#args[@]}]=$j
+      arg_kinds[${#args[@]}]=${kinds[$j]}; arg_unquoted[${#args[@]}]=${unquoted_words[$j]}; args[${#args[@]}]=${tokens[$j]}
+    done
+    environment_head "$1"
+    # A substitution opened as a word where no head stands, or glued to the
+    # head word, supplies the head.
+    opened=${substitution_opens[${ends[$stage]}]:-}
+    if { [ "$opened" = word ] && [ "$pos" -ge "${#args[@]}" ]; } ||
+       { [ "$opened" = 1 ] && [ "$pos" -lt "${#args[@]}" ] && [ "${arg_tokens[$pos]}" -eq "$((${ends[$stage]} - 1))" ]; }; then
+      nameref_possible=1; break
+    fi
+    while [ "$pos" -lt "${#args[@]}" ]; do
+      # A pathname or split word can name any builtin.
+      [[ ${arg_unquoted[$pos]} != *:fields ]] || { nameref_possible=1; break 2; }
+      [ "${arg_kinds[$pos]}" = literal ] && [[ ${args[$pos]} =~ ^(command|builtin|-p|--)$ ]] || break
+      pos=$((pos + 1))
+    done
+    [ "$pos" -lt "${#args[@]}" ] || continue
+    value=${args[$pos]}
+    case "${arg_kinds[$pos]}" in
+      # Text an expanding heredoc body holds is data, not a command.
+      heredoc-data) ;;
+      literal | dollar-literal)
+        case "$value" in declare | typeset | local | eval | source | . | trap | mapf[i]le | readarr[a]y | alias) nameref_possible=1 ;; esac ;;
+      *) nameref_possible=1 ;;
+    esac
+  done
+  [ -n "$nameref_possible" ] || return 0
+  for ((j=0; j<${#unquoted_words[@]}; j++)); do
+    [[ ${unquoted_words[$j]} != *:named ]] || unquoted_words[j]=${unquoted_words[$j]%:named}:fields
+  done
+}
+
 # A word test for text a waiter launcher forwards, which it later runs
 # through bash -c: an unclassified stage, and a forwarded body that holds
 # heredocs; also an eval join that holds a non-literal word. It runs nowhere
@@ -1161,7 +1210,9 @@ relative_targeting() { # collect | judge; environment_dump owns the stage facts
 # when only bytes after its leading ~/ are, and empty otherwise. The
 # tokenizer appends :fields when the word can expand to other than one
 # word: an unquoted pathname pattern or parameter expansion, or a quoted
-# @ expansion such as "$@" or "${names[@]}".
+# @ expansion such as "$@" or "${names[@]}". It appends :named to a quoted
+# word holding a named expansion such as "$ref", which environment_namerefs
+# turns into :fields where a nameref can exist.
 # Bash expands a tilde prefix, the bytes up to the first
 # unquoted /, when none of them is quoted, so a 1 or ~ word starting ~/ is
 # expanded. Called where a quote, escape or expansion first touches the word.
@@ -1185,6 +1236,8 @@ environment_dump() { # command kind; arguments are already decoded data
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target=""
+  # A nameref declared in an enclosing source reaches this one too.
+  local nameref_possible=${nameref_possible:-} substitution_glued substitution_opens=()
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$' declared_re='^[A-Za-z_][A-Za-z0-9_]*(\+?=.*)?$'
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
@@ -1235,8 +1288,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # decisions; growing a word byte by byte exceeds the hook budget.
       if [[ ${text:$i} =~ $span_re ]]; then
         span=${BASH_REMATCH[0]}; word=$word$span; active=1
-        if [ -z "$quote$fields_unknown" ] && [ "$1" != env-split ] &&
-           [[ $span == *[\*\?\[\{\}]* ]]; then fields_unknown=1; fi
+        if [ -z "$quote" ] && [ "$fields_unknown" != fields ] && [ "$1" != env-split ] &&
+           [[ $span == *[\*\?\[\{\}]* ]]; then fields_unknown=fields; fi
         i=$((i + ${#span}))
         continue
       fi
@@ -1286,17 +1339,19 @@ environment_dump() { # command kind; arguments are already decoded data
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
       if [ "$1" != env-split ] && { { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; }; then
-        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:fields}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+        substitution_glued=$active
+        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:$fields_unknown}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
         word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; fields_unknown=""; compound=1; needs_target=""
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
         else
           saved_quotes[n]=$quote; quote=""
-          if [ "$c" = '$' ]; then
-            [ "${text:$((i + 1)):1}" != '(' ] || math_depth=$((n + 1))
-            closers[n]=')'; i=$((i + 1))
-          else closers[n]='`'; fi
+          # Substitution output can form a command head, which
+          # environment_namerefs judges by where it opened.
+          if [ "$c" = '$' ] && [ "${text:$((i + 1)):1}" = '(' ]; then math_depth=$((n + 1))
+          else substitution_opens[${#tokens[@]}]=${substitution_glued:-word}; fi
+          if [ "$c" = '$' ]; then closers[n]=')'; i=$((i + 1)); else closers[n]='`'; fi
         fi
         [ -z "$quote" ] || bare=""
         unquoted_words[${#tokens[@]}]=""
@@ -1305,12 +1360,16 @@ environment_dump() { # command kind; arguments are already decoded data
       fi
       if [ "$quote" = '"' ]; then
         if [ "$c" = '"' ] && { [ "$1" != expansions ] || [ "${#closers[@]}" -ne 0 ]; }; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || kind=unknown; fi
-        # A quoted word splits through an @ expansion, through ${!name}
-        # indirection to name[@], and through a nameref to name[@], which
-        # turns "$ref" into a spread. With no nameref declared, a brace
-        # expansion with no @ or ! before its close within the window is one.
-        if [ "$c" = '$' ] && [ "$next" != '"' ] && { [ -n "$nameref_possible" ] || [ "$next" = @ ] ||
-           { [ "$next" = '{' ] && [[ ! ${text:$i:128} =~ ^\{[^}@!]*\} ]]; }; }; then fields_unknown=1; fi
+        # A quoted word splits through an @ expansion and through ${!name}
+        # indirection to name[@]. A brace expansion with no @ or ! before its
+        # close within the window is one word unless name is a nameref, which
+        # environment_namerefs decides for each :named word.
+        if [ "$c" = '$' ] && [ "$fields_unknown" != fields ]; then
+          if [ "$next" = @ ] || { [ "$next" = '{' ] && [[ ! ${text:$i:128} =~ ^\{[^}@!]*\} ]]; }; then
+            fields_unknown=fields
+          elif [[ ${text:$i:2} =~ ^(\{?)[A-Za-z_] ]]; then fields_unknown=named
+          fi
+        fi
         continue
       fi
       case "$c" in
@@ -1325,7 +1384,7 @@ environment_dump() { # command kind; arguments are already decoded data
               i=$((i + 1)) ;;
             *)
               [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c
-              [ "$1" = env-split ] || fields_unknown=1 ;;
+              [ "$1" = env-split ] || fields_unknown=fields ;;
           esac
           active=1; word_quoted; continue ;;
         '#')
@@ -1355,7 +1414,7 @@ environment_dump() { # command kind; arguments are already decoded data
             active=""
           fi
           if [ -n "$active" ]; then
-            unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:fields}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
+            unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:$fields_unknown}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
             needs_target=""
           fi
           word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; fields_unknown=""
@@ -1414,13 +1473,34 @@ environment_dump() { # command kind; arguments are already decoded data
     # Undecoded split text can also hide the git word itself.
     [ -z "$split_undecoded" ] || history_record unresolved-git-argv unknown
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
-    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:fields}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:$fields_unknown}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
   for ((j=0; j<${#appended_args[@]}; j++)); do
     tokens[${#tokens[@]}]=${appended_args[$j]}
     kinds[${#kinds[@]}]=${appended_kinds[$j]}
     unquoted_words[${#unquoted_words[@]}]=${appended_unquoted[$j]}
   done
+  n=${#tokens[@]}
+  for ((i=0; i<=n; i++)); do
+    if [ "$i" -lt "$n" ]; then
+      if [ -n "$targeting_eligible" ]; then
+        case "${kinds[$i]}" in
+          literal)
+            # Whole-word quote evidence cannot distinguish protected wildcard
+            # fragments from active ones. Exclude both, without another reader.
+            case "${tokens[$i]}" in *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'* | *'~'*) targeting_eligible="" ;; esac ;;
+          operator | operator-stderr | operator-explicit-other)
+            case "${tokens[$i]}" in ';' | '&&' | '||' | '<' | '>' | '>>' | '<>' | '&>' | '&>''>' | '>&' | '<&') ;; *) targeting_eligible="" ;; esac ;;
+          *) targeting_eligible="" ;;
+        esac
+      fi
+      [ "${kinds[$i]}" = operator ] || continue
+      case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
+    fi
+    starts[stage]=$start; ends[stage]=$i
+    separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
+  done
+  environment_namerefs "$1"
   # A shell can end a submission before a registered body is read. Evidence
   # must exist before its identifier reaches either expansion or input checks.
   [ -z "$heredoc_op" ] || return 0
@@ -1446,26 +1526,6 @@ environment_dump() { # command kind; arguments are already decoded data
   for ((doc=3; doc<=$#; doc++)); do
     n=${#literal_inputs[@]}; literal_inputs[n]=${!doc}; literal_kinds[n]=literal
     incoming_sources="$incoming_sources $n"
-  done
-  n=${#tokens[@]}
-  for ((i=0; i<=n; i++)); do
-    if [ "$i" -lt "$n" ]; then
-      if [ -n "$targeting_eligible" ]; then
-        case "${kinds[$i]}" in
-          literal)
-            # Whole-word quote evidence cannot distinguish protected wildcard
-            # fragments from active ones. Exclude both, without another reader.
-            case "${tokens[$i]}" in *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'* | *'~'*) targeting_eligible="" ;; esac ;;
-          operator | operator-stderr | operator-explicit-other)
-            case "${tokens[$i]}" in ';' | '&&' | '||' | '<' | '>' | '>>' | '<>' | '&>' | '&>''>' | '>&' | '<&') ;; *) targeting_eligible="" ;; esac ;;
-          *) targeting_eligible="" ;;
-        esac
-      fi
-      [ "${kinds[$i]}" = operator ] || continue
-      case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
-    fi
-    starts[stage]=$start; ends[stage]=$i
-    separators[stage]=${tokens[$i]:-end}; stage=$((stage + 1)); start=$((i + 1))
   done
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=()
@@ -1893,14 +1953,6 @@ dump_reason=""
 history_reason=""
 history_reasons=(); history_states=(); history_dirs=(); history_ends=(); history_dir_changed=""
 history_roots=(); history_root_reasons=(); outside=""
-# A nameref to name[@] makes a quoted "$ref" expand to several words, and
-# its declaration can sit in any nested source. Quotes and escapes are
-# removed first, so they cannot split the declaring builtin's name.
-nameref_text="$command_text ${command_argv[*]-}"
-nameref_text=${nameref_text//[\'\"\\]/}
-nameref_re='(^|[^[:alnum:]_./-])(declare|typeset|local)([^[:alnum:]_.-]|$)'
-nameref_possible=""
-if [[ $nameref_text =~ $nameref_re ]]; then nameref_possible=1; fi
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
