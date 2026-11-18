@@ -193,7 +193,7 @@ assert snapshot < log.index("repos/vanillagreencom/private-first/dispatches")
 result, posts, partial, _, summary = run(a, c, post_failure="refused")
 assert result == 1 and posts == both
 assert partial == dict(attempted=c, trigger=a, run=101, attempt=1)
-assert summary == dict(installation="5", eligible="2", attempted="2", accepted="1", failures="post-http-422:1")
+assert summary == dict(installation="5", eligible="2", attempted="2", accepted="1", failures="post-command-failed:1")
 
 def assert_covered(script):
     result, posts, receipt_output, log, _ = run(b, d, previous=partial, script=script)
@@ -216,7 +216,7 @@ assert (result, posts, receipt_output) == (1, [], None)
 assert summary["failures"] == "main-trigger-missing:1"
 
 for flags, expected_posts, accepted, installed, failure in [
-    ({"denied": True}, ["private-last"], 1, 5, "caller-http-404"),
+    ({"denied": True}, ["private-last"], 1, 5, "caller-command-failed"),
     ({"inventory": "timeout"}, ["private-first"], 1, 3, "inventory-timeout"),
     ({"inventory": "interrupted"}, ["private-first"], 1, 3, "inventory-command-failed"),
     ({"inventory": "missing-page"}, ["private-first"], 1, 3, "inventory-incomplete"),

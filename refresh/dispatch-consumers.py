@@ -40,11 +40,7 @@ def gh(endpoint, *options, fleet=False):
     except OSError:
         raise ApiError("launch-failed") from None
     if result.returncode:
-        # gh reports API errors with an HTTP status suffix. A command error
-        # without a status gives no proof that GitHub rejected the request.
-        status = re.search(rb"(?m)^gh: [^\n]*\(HTTP ([45][0-9]{2})\)$", result.stderr)
-        code = f"http-{status[1].decode()}" if status else "command-failed"
-        raise ApiError(code, result.stdout)
+        raise ApiError("command-failed", result.stdout)
     return result.stdout
 
 def get(endpoint, *, fleet=False):
