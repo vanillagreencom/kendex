@@ -189,23 +189,38 @@ def changed_packages(previous, snapshot):
     except unreadable as error:
         return None, f"comparison-{failure_code(error)}"
 
-def lock_match(base, path, ref, changed):
+@cache
+def catalog_agent_names(snapshot):
+    try:
+        entries = json.loads(contents(source, "agents", snapshot))
+        # A directory listing reaches the Contents API's cap at 1,000 files.
+        if not isinstance(entries, list) or len(entries) >= 1000:
+            return None
+        names = set()
+        for entry in entries:
+            key = package(entry["path"])
+            if entry["type"] == "file" and key and key[0] == "agent":
+                names.add(key[1])
+        return names
+    except unreadable:
+        return None
+
+def lock_match(base, path, ref, changed, snapshot):
     lock = json.loads(contents(base, path, ref, fleet=True))
     version = lock["version"]
     if version not in (11, 12):
         return "lock-version-unknown"
-    # Version 11 recorded agent names before the catalog's alias migration.
-    # The engine owns those aliases in source/config/agent_names.rs.
-    legacy_agents = version == 11 and any(kind == "agent" for kind, _ in changed)
+    agent_change = any(kind == "agent" for kind, _ in changed)
     catalog = source.removeprefix("repos/").casefold()
     fallback = None
+    unmatched_agents = set()
     for row in lock["entries"].values():
         item = lock["installations"][row["installation"]] if version == 12 else row
         provenance, kind, name = row["sourceRepo"], item["kind"], item["name"]
         if not all(isinstance(value, str) and value for value in (provenance, kind, name)):
             return "lock-malformed-response"
         exact = (kind, name) in changed
-        if not exact and not (legacy_agents and kind == "agent"):
+        if not exact and not (agent_change and kind == "agent"):
             continue
         if provenance.casefold() == catalog:
             if exact:
@@ -216,11 +231,19 @@ def lock_match(base, path, ref, changed):
             continue
         if exact:
             fallback = "lock-source-unrecognized"
-        elif fallback is None:
-            fallback = "lock-legacy-agent-ambiguous"
+        else:
+            unmatched_agents.add(name)
+    if fallback is None and unmatched_agents:
+        # A lock rewrite can retain an old name under a new schema. A
+        # nonmatching name needs a current catalog path to prove distinction.
+        names = catalog_agent_names(snapshot)
+        if names is None:
+            return "lock-agent-catalog-unavailable"
+        if not unmatched_agents <= names:
+            return "lock-agent-identity-unrecognized"
     return fallback
 
-def refresh_reason(repo, changed, fallback):
+def refresh_reason(repo, changed, fallback, snapshot):
     if changed is None:
         return fallback
     if not changed:
@@ -232,7 +255,7 @@ def refresh_reason(repo, changed, fallback):
         ref = get(f"{base}/git/ref/heads/{branch}", fleet=True)["object"]["sha"]
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             return "lock-head-unreadable"
-        reason = lock_match(base, lock_path, ref, changed)
+        reason = lock_match(base, lock_path, ref, changed, snapshot)
         if reason is not None:
             return reason
         # A root non-match alone cannot rule out nested project scopes. Use
@@ -252,7 +275,7 @@ def refresh_reason(repo, changed, fallback):
             elif name == lock_path:
                 if entry["type"] != "blob" or entry["mode"] not in ("100644", "100755"):
                     return "lock-tree-incomplete"
-                reason = lock_match(base, path, ref, changed)
+                reason = lock_match(base, path, ref, changed, snapshot)
                 if reason is not None:
                     return reason
                 checked_locks.add(path)
@@ -359,7 +382,7 @@ def attempt(targets, failures, previous):
         # The source run is public. Repository IDs identify private targets
         # without disclosing their names.
         label = repo["full_name"] if repo.get("private") is False else str(repo["id"])
-        reason = refresh_reason(repo, changed, fallback)
+        reason = refresh_reason(repo, changed, fallback, snapshot)
         if reason is None:
             print(f"consumer-dispatch: consumer={label} outcome=skipped reason=no-installed-package-changed")
             continue

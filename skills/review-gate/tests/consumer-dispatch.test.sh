@@ -372,9 +372,6 @@ selection_rows = [
      [f"{public} outcome=sent reason=lock-command-failed"], {both[1]: nested_lock}),
     (renamed, {both[0]: lock_for("skill", "review-gate", "git@github.com:VanillaGreenCom/kendex.git"), both[1]: last}, both[:1],
      [f"{private} outcome=sent reason=lock-source-unrecognized", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
-    ([row("agents/runtime.md")],
-     {both[0]: lock_for("agent", "engineer"), both[1]: lock_for("agent", "engineer", "vanillagreencom/another")}, both[:1],
-     [f"{private} outcome=sent reason=lock-legacy-agent-ambiguous", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
     (pi_renamed, {both[0]: lock_for("pi-extension", "@vanillagreen/pi-hooks"), both[1]: last}, both[:1],
      [f"{private} outcome=sent reason=installed-package-changed", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
     ([row("pi-extensions/pi-hooks/package.json")],
@@ -384,17 +381,45 @@ selection_rows = [
      [f"{private} outcome=sent reason=comparison-command-failed", f"{public} outcome=sent reason=comparison-command-failed"], {}),
 ]
 
-def assert_selection(script, case):
+def assert_selection(script, case, catalog_files=source_files):
     files, locks, expected, reasons, trees = case
     result, posts, record, log, _ = run(d, e, script=script, previous=partial, files=files, locks=locks,
         expected_lines=["consumer=" + line for line in reasons], compares=normal_compares,
-        catalog_files=source_files, trees=trees)
+        catalog_files=catalog_files, trees=trees)
     assert (result, posts, record["attempted"]) == (0, expected, e)
     if locks:
         assert all(f"repos/vanillagreencom/{name}/contents/.kendex-lock.json?ref={f}" in log for name in both)
+    return log
 
 for case in selection_rows:
     assert_selection(sender, case)
+
+agent_directory = f"agents?ref={e}"
+agents = [dict(path=f"agents/{name}.md", type="file") for name in ("runtime", "maintainer")]
+legacy = lock_for("agent", "engineer")
+upgraded = dict(version=12, installations={"ref": dict(kind="agent", name="engineer")},
+                entries={"item": dict(installation="ref", sourceRepo="vanillagreencom/kendex")})
+exact = lock_for("agent", "engineer")
+exact["entries"]["match"] = entry("agent", "runtime")
+foreign = lock_for("agent", "engineer", "vanillagreencom/another")
+agent_rows = [
+    (legacy, upgraded, both, agents, 1,
+     [f"{private} outcome=sent reason=lock-agent-identity-unrecognized",
+      f"{public} outcome=sent reason=lock-agent-identity-unrecognized"]),
+    (lock_for("agent", "maintainer"), foreign, [], agents, 1,
+     [f"{private} outcome=skipped reason=no-installed-package-changed",
+      f"{public} outcome=skipped reason=no-installed-package-changed"]),
+    (upgraded, exact, both, None, 1,
+     [f"{private} outcome=sent reason=lock-agent-catalog-unavailable",
+      f"{public} outcome=sent reason=installed-package-changed"]),
+    (exact, foreign, both[:1], None, 0,
+     [f"{private} outcome=sent reason=installed-package-changed",
+      f"{public} outcome=skipped reason=no-installed-package-changed"]),
+]
+for private_lock, public_lock, expected, listing, reads, reasons in agent_rows:
+    log = assert_selection(sender, ([row("agents/runtime.md")], dict(zip(both, [private_lock, public_lock])),
+                                     expected, reasons, {}), {agent_directory: listing})
+    assert log.count(f"{source}/contents/{agent_directory}") == reads
 
 # Unreadable evidence supplies no coverage decision, so even the inventory waits.
 for flags in [
@@ -481,5 +506,5 @@ for key, subject, reply, output, reason in [
         assert request.call_count == (reply is not None)
         assert github_output.read_text() == f"urgent={output}\n"
         assert printed.getvalue().strip().endswith(f"reason={reason}") and "private-error" not in printed.getvalue()
-print(f"pass: {36 + len(selection_rows)}   fail: 0")
+print(f"pass: {36 + len(selection_rows) + len(agent_rows)}   fail: 0")
 PY
