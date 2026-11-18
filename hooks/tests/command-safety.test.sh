@@ -637,6 +637,10 @@ environment_rows() {
 [2,"cd /proc/4242 && exec -a $FIXTURE_NAME env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-split-name-stdin","claude-and-codex"]
 [2,"cd /proc/4242 && exec -a \"$@\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-positional-spread-name-stdin","claude-and-codex"]
 [2,"cd /proc/4242 && exec -a \"${FIXTURE_NAMES[@]}\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-array-spread-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a \"${!FIXTURE_REF}\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-indirect-name-stdin","claude-and-codex"]
+[2,"declare -n FIXTURE_REF='FIXTURE_ARGS[@]'; cd /proc/4242 && exec -a \"$FIXTURE_REF\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-nameref-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a\"$FIXTURE_NAME\" env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-attached-quoted-name-stdin","claude-and-codex"]
+[2,"cd /proc/4242 && exec -a$FIXTURE_NAME env --chdir=/fixture bash <<< 'head -c 32 environ'","process-environ-exec-attached-split-name-stdin","claude-and-codex"]
 [2,"exec -a $FIXTURE_NAME env --chdir=/proc/4242 bash <<< 'head -c 32 environ'","process-environ-exec-split-name-chdir-stdin","claude-and-codex"]
 [2,"builtin exec \"$FIXTURE_OPTION\" fixture env --chdir=/proc/4242 bash <<< 'head -c 32 environ'","process-environ-builtin-exec-expanding-option-stdin","claude-and-codex"]
 [2,"exec env --chdir=/proc/4242 sh <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-exec-chdir-sh-heredoc","claude-and-codex"]
@@ -2252,7 +2256,10 @@ exec-name-count|if [ "$exec_word" != split ] && [ -n "$exec_name_needed" ]; then
 exec-unknown-argv|shell_forwarded_pos=""; reader_chdir_unresolved=1; break|shell_forwarded_pos=""; break|exit=0 expected=2|process-environ-exec-split-name-chdir-stdin-claude process-environ-builtin-exec-expanding-option-stdin-codex
 builtin-exec-unknown|elif [ "$shell_forwarder" = exec ] && [ -n "$reader_chdir_unresolved" ] &&|elif false &&|exit=0 expected=2|process-environ-builtin-exec-expanding-option-stdin-claude
 unquoted-expansion-fields|fields_unknown=1 ;;|: ;;|exit=0 expected=2|process-environ-exec-split-name-stdin-codex
-quoted-spread-fields|if [ "$c" = '$' ] && [ "$next" != '"' ] && {|if false && {|exit=0 expected=2|process-environ-exec-positional-spread-name-stdin-claude process-environ-exec-array-spread-name-stdin-codex
+quoted-spread-fields|if [ "$c" = '$' ] && [ "$next" != '"' ] && {|if false && {|exit=0 expected=2|process-environ-exec-positional-spread-name-stdin-claude process-environ-exec-array-spread-name-stdin-codex process-environ-exec-indirect-name-stdin-claude process-environ-exec-nameref-name-stdin-codex
+quoted-indirect-fields|[^}@!]*|[^}@]*|exit=0 expected=2|process-environ-exec-indirect-name-stdin-claude process-environ-exec-indirect-name-stdin-codex
+nameref-fields|if [[ $nameref_text =~ $nameref_re ]]; then nameref_possible=1; fi|if false; then nameref_possible=1; fi|exit=0 expected=2|process-environ-exec-nameref-name-stdin-claude process-environ-exec-nameref-name-stdin-codex
+exec-literal-option|elif [ "$exec_word" = literal ] && [[ $value =~ $exec_option_re ]]; then|elif [[ $value =~ $exec_option_re ]]; then|exit=0 expected=2|process-environ-exec-attached-quoted-name-stdin-claude process-environ-exec-attached-split-name-stdin-codex
 exec-stdin-shell|if [ -n "$stdin_program" ] &&|if [ "$program" = bash ] &&|exit=0 expected=2|process-environ-exec-chdir-sh-heredoc-claude process-environ-exec-chdir-dash-pipe-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data

@@ -486,8 +486,10 @@ environment_producer() { # command kind
                     exec_name_needed=""
                   elif [ "$exec_word" = literal ] && [[ $value != -?* || $value == -- ]]; then
                     break
-                  elif [ "$exec_word" != split ] && [[ $value =~ $exec_option_re ]]; then
-                    # No expansion byte can match before an attached NAME.
+                  elif [ "$exec_word" = literal ] && [[ $value =~ $exec_option_re ]]; then
+                    # An expanding attached NAME can be empty, and exec
+                    # then takes the next word as NAME, so only a literal
+                    # option word has a known boundary.
                     [ "${BASH_REMATCH[1]:-}" != a ] || exec_name_needed=1
                   elif [ "$exec_word" = literal ]; then
                     # exec refuses an unknown option and runs nothing.
@@ -1303,10 +1305,12 @@ environment_dump() { # command kind; arguments are already decoded data
       fi
       if [ "$quote" = '"' ]; then
         if [ "$c" = '"' ] && { [ "$1" != expansions ] || [ "${#closers[@]}" -ne 0 ]; }; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || kind=unknown; fi
-        # Only an @ expansion splits a quoted word. A brace expansion with
-        # no @ before its close within the window is one word.
-        if [ "$c" = '$' ] && [ "$next" != '"' ] && { [ "$next" = @ ] ||
-           { [ "$next" = '{' ] && [[ ! ${text:$i:128} =~ ^\{[^}@]*\} ]]; }; }; then fields_unknown=1; fi
+        # A quoted word splits through an @ expansion, through ${!name}
+        # indirection to name[@], and through a nameref to name[@], which
+        # turns "$ref" into a spread. With no nameref declared, a brace
+        # expansion with no @ or ! before its close within the window is one.
+        if [ "$c" = '$' ] && [ "$next" != '"' ] && { [ -n "$nameref_possible" ] || [ "$next" = @ ] ||
+           { [ "$next" = '{' ] && [[ ! ${text:$i:128} =~ ^\{[^}@!]*\} ]]; }; }; then fields_unknown=1; fi
         continue
       fi
       case "$c" in
@@ -1889,6 +1893,14 @@ dump_reason=""
 history_reason=""
 history_reasons=(); history_states=(); history_dirs=(); history_ends=(); history_dir_changed=""
 history_roots=(); history_root_reasons=(); outside=""
+# A nameref to name[@] makes a quoted "$ref" expand to several words, and
+# its declaration can sit in any nested source. Quotes and escapes are
+# removed first, so they cannot split the declaring builtin's name.
+nameref_text="$command_text ${command_argv[*]-}"
+nameref_text=${nameref_text//[\'\"\\]/}
+nameref_re='(^|[^[:alnum:]_./-])(declare|typeset|local)([^[:alnum:]_.-]|$)'
+nameref_possible=""
+if [[ $nameref_text =~ $nameref_re ]]; then nameref_possible=1; fi
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
