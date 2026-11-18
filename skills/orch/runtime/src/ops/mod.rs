@@ -526,7 +526,10 @@ fn apply_interleaved(
 /// transfer's own admission, the hand-over's.
 pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
     let duty = match request {
-        Request::LaunchLane(_) => Some(crate::ready::Duty::Launch),
+        Request::LaunchLane(r) => {
+            crate::ready::admit_launch(r, settings)?;
+            None
+        }
         Request::StartController(_) => Some(crate::ready::Duty::Controller),
         Request::RequestTransfer(_) | Request::StopController(_) => Some(crate::ready::Duty::Job),
         Request::PruneRound(_) => Some(crate::ready::Duty::Prune),

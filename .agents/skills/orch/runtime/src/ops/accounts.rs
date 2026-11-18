@@ -205,28 +205,17 @@ fn accounts_answer(
                     0 => Duration::from_secs(u64::from(u32::MAX)),
                     secs => Duration::from_secs(secs),
                 };
-                match crate::provider::call(host, &["accounts"], None, bound, TAG) {
+                let answer = match crate::provider::call(host, &["accounts"], None, bound, TAG) {
                     Ok(out) if out.status.success() => {
                         let rows = String::from_utf8_lossy(&out.stdout).into_owned();
-                        cache::write_figure(
-                            &path,
-                            "lane-host",
-                            host,
-                            json!({"status": 0, "rows": rows}),
-                            ctx.now,
-                        );
                         Ok((0, rows))
                     }
-                    Ok(out) if out.status.code() == Some(2) => {
-                        cache::write_figure(
-                            &path,
-                            "lane-host",
-                            host,
-                            json!({"status": 2, "rows": ""}),
-                            ctx.now,
-                        );
-                        Ok((2, String::new()))
-                    }
+                    Ok(out) if out.status.code() == Some(2) => Ok((2, String::new())),
+                    Err(crate::provider::Failure::Refused {
+                        key: "host-kind-verb",
+                        exit: 2,
+                        ..
+                    }) => Ok((2, String::new())),
                     Ok(out) => Err(format!(
                         "host-accounts-unreadable host={host} exit={} {}",
                         out.status.code().unwrap_or(-1),
@@ -236,7 +225,17 @@ fn accounts_answer(
                         Err(format!("{busy} step=accounts"))
                     }
                     Err(e) => Err(format!("host-accounts-unreadable host={host} cause={e}")),
+                };
+                if let Ok((status, rows)) = &answer {
+                    cache::write_figure(
+                        &path,
+                        "lane-host",
+                        host,
+                        json!({"status": status, "rows": rows}),
+                        ctx.now,
+                    );
                 }
+                answer
             });
             if let Some(notice) = notice {
                 ctx.notes.push(notice);

@@ -410,6 +410,52 @@ fn launch(item: &str, mail_root: &Path) -> Value {
     })
 }
 
+#[test]
+fn launch_readiness_probes_only_the_requests_local_confined_harness() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let bin = fleet.dir.path().join("refusing");
+    std::fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("bwrap"),
+        "#!/bin/sh\necho 'uid map refused' >&2\nexit 1\n",
+    );
+    let path = tool_path(&[&bin]);
+    let before = std::fs::read(fleet.fleet_path()).unwrap();
+    for (harness, host, permission, expected) in [
+        ("claude", None, "--dangerously-skip-permissions", "unready"),
+        ("copilot", None, "--allow-all", "launch-class-missing"),
+        (
+            "claude",
+            Some("/fixture/provider"),
+            "--dangerously-skip-permissions",
+            "launch-class-missing",
+        ),
+        (
+            "claude",
+            Some("claude-cloud"),
+            "--dangerously-skip-permissions",
+            "launch-class-missing",
+        ),
+    ] {
+        let mut request = launch("KEN-N", &fleet.state_dir());
+        request["harness"] = json!(harness);
+        request["permission"] = json!(permission);
+        request["host"] = json!(host);
+        request.as_object_mut().unwrap().remove("class");
+        request.as_object_mut().unwrap().remove("class_reason");
+        let (key, fields) = refusal(&fleet.op_with(&request, &[("PATH", &path)]));
+        assert_eq!(key, expected, "harness={harness} host={host:?}: {fields:?}");
+        if expected == "unready" {
+            assert!(
+                fields.contains(&("cause".to_owned(), "userns-off".to_owned())),
+                "{fields:?}"
+            );
+        }
+        assert_eq!(std::fs::read(fleet.fleet_path()).unwrap(), before);
+    }
+}
+
 /// Run git in `repo` as a test child: the fixed identity and no operator
 /// configuration are the constructor's.
 fn git(repo: &Path, args: &[&str]) {
@@ -1407,25 +1453,43 @@ fn two_candidates_of_one_pass_ride_the_first_ones_lane() {
 /// `launch-blocked`, its body naming no path.
 #[test]
 fn a_candidate_blocked_by_a_running_lanes_item_joins_that_lane() {
-    let fleet = Fleet::new();
-    fleet.init_fleet();
-    let root = fleet.checkout("h", None);
-    let harness = Owned::sleep();
-    let mut held = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
-    held["mail_root"] = json!(root.display().to_string());
-    fleet.write_lanes(vec![held]);
-    fleet.item_under("CC-1", "", &["KEN-H"]);
-
-    let out = fleet.op(&launch("CC-1", &fleet.checkout("c", None)));
-    let answer = reply(&out);
-    assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    let report = joined_or_launched(&answer);
-    assert_eq!(
-        (&report["op"], &report["holder"]),
-        (&json!("joined"), &json!("KEN-H"))
-    );
-    assert_eq!(fleet.lane("KEN-H")["carried"][0]["item"], "CC-1");
-    assert_eq!(inbox(&root, "KEN-H").len(), 1);
+    for owns_pull in [true, false] {
+        let mut fleet = Fleet::new();
+        fleet.init_fleet();
+        let root = fleet.checkout("h", None);
+        let harness = Owned::sleep();
+        let mut held = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
+        held["mail_root"] = json!(root.display().to_string());
+        held["repo"] = json!("o/r");
+        fleet.write_lanes(vec![held]);
+        fleet.item_under("CC-1", "", &["KEN-H"]);
+        let pulls = if owns_pull {
+            vec![fake_pull(8, "KEN-H", &["src/a.sh"])]
+        } else {
+            vec![]
+        };
+        fleet.gh_api(&gh_map(&pulls));
+        let mut request = launch("CC-1", &fleet.checkout("c", None));
+        request["repo"] = json!("o/r");
+        let before = std::fs::read(fleet.fleet_path()).unwrap();
+        let out = fleet.op(&request);
+        if owns_pull {
+            let (key, fields) = refusal(&out);
+            assert_eq!(key, "launch-blocked", "{fields:?}");
+            assert_eq!(std::fs::read(fleet.fleet_path()).unwrap(), before);
+            assert!(inbox(&root, "KEN-H").is_empty());
+        } else {
+            let answer = reply(&out);
+            assert_eq!(answer["ok"], true, "{}", stderr(&out));
+            let report = joined_or_launched(&answer);
+            assert_eq!(
+                (&report["op"], &report["holder"]),
+                (&json!("joined"), &json!("KEN-H"))
+            );
+            assert_eq!(fleet.lane("KEN-H")["carried"][0]["item"], "CC-1");
+            assert_eq!(inbox(&root, "KEN-H").len(), 1);
+        }
+    }
 }
 
 /// With the fleet's state in its own repository (`o/fleet`): a checkout

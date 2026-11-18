@@ -146,6 +146,8 @@ fn orch_reads_its_fixtures_as_mentions() {
     let result = shipped("orch");
     let fixtures = [
         "skills/orch/tests/rust/fixtures/stub-bypass-gated/claude",
+        "skills/orch/tests/rust/accounts.rs",
+        "skills/orch/tests/rust/admission.rs",
         "skills/orch/tests/rust/controller.rs",
         "skills/orch/tests/rust/walk.rs",
         "skills/orch/tests/rust/watch_observe.rs",

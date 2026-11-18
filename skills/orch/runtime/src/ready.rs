@@ -214,6 +214,10 @@ fn needs(duty: Duty, settings: &Settings) -> Vec<Need> {
 
 /// What `duty` lacks on this computer, every program it needs judged.
 pub fn judge(duty: Duty, settings: &Settings) -> Result<Vec<Unready>> {
+    judge_needs(duty, settings, true)
+}
+
+fn judge_needs(duty: Duty, settings: &Settings, confined: bool) -> Result<Vec<Unready>> {
     let setup = settings.roots.project.join(ORCH_SETUP);
     let mut lacking = Vec::new();
     for need in needs(duty, settings) {
@@ -227,7 +231,7 @@ pub fn judge(duty: Duty, settings: &Settings) -> Result<Vec<Unready>> {
             Need::OnPath(name) => on_path(name)
                 .is_none()
                 .then(|| (*name, "absent", format!("install-{name}"))),
-            Need::Confined => confinement_lacking(),
+            Need::Confined => confined.then(confinement_lacking).flatten(),
         };
         if let Some((program, cause, fix)) = found {
             lacking.push(Unready {
@@ -245,6 +249,18 @@ pub fn judge(duty: Duty, settings: &Settings) -> Result<Vec<Unready>> {
 /// refusal naming the first program it lacks.
 pub fn admit(duty: Duty, settings: &Settings) -> Result<()> {
     match judge(duty, settings)?.first() {
+        Some(unready) => Err(unready.refusal()),
+        None => Ok(()),
+    }
+}
+
+pub(crate) fn admit_launch(request: &crate::ops::LaunchLane, settings: &Settings) -> Result<()> {
+    let confined = request.host().is_none()
+        && matches!(
+            answer(Host::this(), Harness::named(&request.harness)?),
+            Answer::Confined
+        );
+    match judge_needs(Duty::Launch, settings, confined)?.first() {
         Some(unready) => Err(unready.refusal()),
         None => Ok(()),
     }

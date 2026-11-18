@@ -181,7 +181,7 @@ impl TryFrom<ObligationKeys> for Obligation {
 impl LaunchLane {
     /// Where the lane runs, as the record spells it: `host` empty or
     /// `local` is a window on this machine, recorded as no host.
-    fn host(&self) -> Option<&str> {
+    pub(crate) fn host(&self) -> Option<&str> {
         self.host
             .as_deref()
             .filter(|h| !h.is_empty() && *h != "local")

@@ -959,13 +959,6 @@ pub(super) fn judge(
             tie: Tie::Blockers(blockers),
         });
     }
-    if touched.is_empty() {
-        return Ok(Judged {
-            touched,
-            in_scope,
-            join,
-        });
-    }
     let holder_unreadable =
         |holder: &str, read: &'static str, cause: String| Error::HolderUnreadable {
             item: a.item.to_owned(),
@@ -973,7 +966,7 @@ pub(super) fn judge(
             read,
             cause,
         };
-    for (index, lane) in lanes.iter().enumerate() {
+    for (index, lane) in lanes.iter().enumerate().filter(|_| !touched.is_empty()) {
         if lane.item == a.item || lane.status == LaneStatus::Done || !same_repo(lane, a.repo) {
             continue;
         }

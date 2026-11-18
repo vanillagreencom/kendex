@@ -1690,6 +1690,70 @@ fn a_failed_or_busy_accounts_read_refuses_a_single_pick() {
     }
 }
 
+#[test]
+fn the_builtin_cloud_host_selects_a_local_grant_by_walk_and_name() {
+    let mut world = World::new(&[
+        ("ORCH_LANE_HOST", "claude-cloud"),
+        ("ORCH_LANE_CLOUD_REPOS", "aclaude=owner/repo"),
+        ("ORCH_LANE_PREFERENCE", "claude@claude-cloud:standard:high"),
+        ("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "0"),
+    ]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[grant(
+        "aclaude",
+        "claude",
+        "cloud-credit",
+        50.0,
+        100.0,
+        &stamp(now() + 5 * 86_400),
+    )]);
+    for args in [
+        vec!["init", "-q"],
+        vec![
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/owner/repo.git",
+        ],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(world.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    std::os::unix::fs::symlink(
+        account_fixtures().join("kendex-launch/kendex"),
+        world.path().join("bin/kendex"),
+    )
+    .unwrap();
+    let mut walk = world.command();
+    walk.args([
+        "lane",
+        "walk",
+        "--fleet",
+        "--source-harness",
+        "claude",
+        "--source-flags",
+        "--dangerously-skip-permissions",
+    ]);
+    let walked = World::reply(walk);
+    let picked = world.pick(&PickRequest {
+        lane: Some(world.dir("aclaude")),
+        ..claude(None)
+    });
+    assert_eq!(walked["answer"], json!("lane"), "{walked}");
+    assert_eq!(walked["chosen"]["host"], json!("claude-cloud"), "{walked}");
+    assert_eq!(
+        walked["chosen"]["entry"],
+        json!("claude@claude-cloud:standard:high")
+    );
+    assert_eq!(chosen(&picked), Some(world.dir("aclaude")), "{picked}");
+    assert_eq!(picked["record"]["pool"], json!("cloud-credit"), "{picked}");
+}
+
 /// `lanes --help` § pick's cloud-session rule, and the boundary's
 /// isolation: a `cloud-session` host's account is admitted only where
 /// `ORCH_LANE_CLOUD_REPOS` gives it this checkout's repository, read by a
