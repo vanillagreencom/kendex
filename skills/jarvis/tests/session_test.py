@@ -983,6 +983,61 @@ class SessionContract(unittest.TestCase):
                     self.wait(state, reason)
                     self.settled()
 
+    def test_a_start_that_fails_after_its_brief_is_written_settles_and_succeed_runs(self):
+        # The failure it stops: a start that ends unconfirmed, or with no
+        # answer at all, after Jarvis wrote and removed its brief, leaves the
+        # record `starting` for good or names no failure, and `succeed`
+        # refuses record-unreadable once the session runs. Copilot kept its
+        # brief unsent past the bound (its Enter swallowed here, then pressed
+        # by hand as the live run did); a runtime can die at the paste.
+        scoped_tmux = shutil.which("tmux", path=self.env["PATH"])
+        fault = self.root / "start-fault"
+        shim = Path(self.env["PATH"].split(os.pathsep)[0]) / "tmux"
+        shim.write_text("#!" + sys.executable + "\n"
+                        "import os, signal, subprocess, sys\nfrom pathlib import Path\n"
+                        "fault = Path(" + repr(str(fault)) + ")\n"
+                        "mode = fault.read_text() if fault.exists() else ''\n"
+                        "real = [" + repr(scoped_tmux) + ", *sys.argv[1:]]\n"
+                        "if 'load-buffer' in sys.argv:\n"
+                        "    data = sys.stdin.buffer.read()\n"
+                        "    if mode in ('swallow', 'kill') and b'jarvis/SKILL.md' in data:\n"
+                        "        if mode == 'kill':\n"
+                        "            fault.unlink()\n"
+                        "            os.kill(os.getppid(), signal.SIGKILL)\n"
+                        "            sys.exit(1)\n"
+                        "        fault.write_text('armed')\n"
+                        "    sys.exit(subprocess.run(real, input=data).returncode)\n"
+                        "if mode == 'armed' and 'send-keys' in sys.argv and sys.argv[-1] == 'Enter':\n"
+                        "    fault.unlink()\n"
+                        "    sys.exit(0)\n"
+                        "os.execv(real[0], ['tmux', *sys.argv[1:]])\n")
+        shim.chmod(0o755)
+        for mode in ("swallow", "kill"):
+            with self.subTest(mode=mode):
+                fault.write_text(mode)
+                answer, code = self.call("start", mode="new")
+                self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
+                deadline = time.monotonic() + 90
+                while list(self.record.parent.glob("start-request-*.json")) and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                self.assertFalse(list(self.record.parent.glob("start-request-*.json")), self.diagnostics())
+                self.assertFalse(fault.exists(), "the fault never fired\n" + self.diagnostics())
+                failure = json.loads(self.record.read_text())["failure"]
+                self.assertEqual((failure or {}).get("state"), "failed", self.diagnostics())
+                if mode == "swallow":
+                    opened = [intent for intent in json.loads(self.fleet.read_text())["intents"]
+                              if not intent.get("completed_at")]
+                    pane = opened[0]["phase"]["pane"]
+                    subprocess.run([scoped_tmux, "-L", self.label, "send-keys", "-t", pane, "Enter"],
+                                   env=self.env, check=True)
+                self.wait("running")
+                answer, code = self.call("succeed")
+                self.assertEqual((answer["state"], answer["reason"], code), ("running", "new-requested", 0), self.stderr)
+                self.settled()
+                self.call("stop")
+                self.wait("stopped", "stopped")
+                self.settled()
+
     def test_a_register_from_the_managed_pane_keeps_jarvis_s_own_succession(self):
         # Wanted outcome 1: no command the session runs from its own managed
         # pane changes which hand-over its seat gets. A register there binds

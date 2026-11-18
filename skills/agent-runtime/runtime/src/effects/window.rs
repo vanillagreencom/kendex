@@ -5,12 +5,12 @@
 //! this handle's own read.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::harness::Harness;
 use crate::host::tmux;
 use crate::launch::LaunchCommand;
-use crate::observe::{ProcessReading, State};
+use crate::observe::{self, ProcessReading, State};
 use crate::process::{self, Identity};
 use crate::reading::Reading;
 use serde_json::{Value, json};
@@ -57,13 +57,22 @@ pub enum Polled {
 
 /// What a wait for the runner to record the delivered turn settled on:
 /// the brief appeared in a user turn in its session file, its pane went
-/// (the harness exited), the pane could not be read, or the bound passed.
+/// (the harness exited), the pane could not be read, the bound passed with
+/// the harness still refusing the submit after `presses` more Enters, or
+/// the bound passed.
 pub enum TurnConfirm {
     Recorded,
     PaneGone,
     PaneUnobservable { cause: String },
+    Refused { presses: u32 },
     Pending,
 }
+
+/// How long a refused submit stands before Enter is pressed again, and how
+/// many times it is: Copilot refuses a submit while it loads a managed
+/// account's policy, which a live start saw end within the minute.
+const RESUBMIT_GAP: Duration = Duration::from_secs(2);
+const RESUBMITS: u32 = 5;
 
 /// What a reconcile at `opening` settled on, the same reading
 /// for a launch and a succession.
@@ -588,8 +597,12 @@ impl Operation<'_> {
     /// A receipt must name the delivered brief in the runner's own session,
     /// beyond the cursor recorded before the paste. The pane gone is
     /// the harness exited; a pane the host does not answer for is retried and
-    /// reported past the bound; the bound passed is `Pending`. The wait is a
-    /// handle method, so no poll of this loop runs outside the handle.
+    /// reported past the bound; the bound passed is `Pending`. A screen
+    /// that shows the harness refused the submit, its draft held, is pressed
+    /// Enter again each [`RESUBMIT_GAP`], at most [`RESUBMITS`] times: the
+    /// brief is never typed twice, and the bound passed with the refusal
+    /// still drawn is `Refused`. The wait is a handle method, so no poll of
+    /// this loop runs outside the handle.
     pub fn await_delivered_turn(
         &mut self,
         harness: Harness,
@@ -600,6 +613,9 @@ impl Operation<'_> {
     ) -> Result<TurnConfirm> {
         let deadline = self.now() + self.run.settings.verify.get()?;
         let expected = crate::session::normalize_user_text(brief);
+        let mut presses = 0;
+        let mut refused = false;
+        let mut next_look = self.now() + RESUBMIT_GAP;
         loop {
             if crate::session::user_texts_after(harness, file, turns_before)?
                 .iter()
@@ -616,8 +632,21 @@ impl Operation<'_> {
                     });
                 }
             }
+            if self.now() >= next_look {
+                next_look = self.now() + RESUBMIT_GAP;
+                // A capture that fails settles nothing: no press, no refusal.
+                refused = tmux::capture(pane)
+                    .is_ok_and(|screen| observe::submit_refused(&screen, harness));
+                if refused && presses < RESUBMITS && tmux::send_key(pane, "Enter").is_ok() {
+                    presses += 1;
+                }
+            }
             if self.now() >= deadline {
-                return Ok(TurnConfirm::Pending);
+                return Ok(if refused {
+                    TurnConfirm::Refused { presses }
+                } else {
+                    TurnConfirm::Pending
+                });
             }
             self.sleep(POLL);
         }

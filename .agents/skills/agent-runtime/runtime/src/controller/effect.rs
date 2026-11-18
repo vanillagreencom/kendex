@@ -1016,16 +1016,21 @@ fn succeed(
         Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
     // A controller opens on the brief its request names; the request was
-    // admitted only with one.
-    let Some(held) = brief else {
+    // admitted only with one. The intent holds its own copy: the caller's
+    // file may go once the effect returns, and a reconcile of an unconfirmed
+    // delivery still matches its turn against the brief.
+    let Some(handed) = brief else {
         return Ok(failed_before_retirement_refused(
             operation,
             &refused("brief-missing", &[("field", "brief_file")]),
         ));
     };
-    if let Err(e) = read_brief(held) {
-        return Ok(failed_before_retirement_refused(operation, &e));
-    }
+    let held_file = match read_brief(handed).and_then(|text| operation.hold_brief(text.trim_end()))
+    {
+        Ok(held_file) => held_file,
+        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+    };
+    let held = held_file.as_path();
     let brief = Some(held);
 
     // --- Prepare the waiting runner: open its window and bring it to its
@@ -1211,6 +1216,10 @@ fn succeed(
         TurnConfirm::PaneUnobservable { cause } => {
             Some(("pane-unobservable", json!({"cause": cause})))
         }
+        TurnConfirm::Refused { presses } => Some((
+            "brief-unconfirmed",
+            json!({"cause": "submit-refused", "presses": presses, "turns_before": turns_before, "file": session.file}),
+        )),
         TurnConfirm::Pending => Some((
             "brief-unconfirmed",
             json!({"turns_before": turns_before, "file": session.file}),
@@ -1618,6 +1627,15 @@ fn complete_transfer(
             "pane-unobservable",
             by,
             json!({"cause": cause, "turns_before": turns_before, "file": session.file}),
+        )),
+        TurnConfirm::Refused { presses } => Ok(unconfirmed_after_retirement(
+            operation,
+            opened,
+            runner,
+            Some(session.session_id),
+            "brief-unconfirmed",
+            by,
+            json!({"cause": "submit-refused", "presses": presses, "turns_before": turns_before, "file": session.file}),
         )),
         TurnConfirm::Pending => Ok(unconfirmed_after_retirement(
             operation,

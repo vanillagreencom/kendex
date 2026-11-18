@@ -644,8 +644,15 @@ class Session:
             if (self.read() or {}).get("start_request") != request:
                 return
             print("jarvis-session: start record=" + str(self.fleet()) + " socket=" + socket, flush=True)
-            result, code, refusal, errors = self.runtime("controller", "start", *self.reach(socket),
-                                                         "--request", request, "--effect-exit", timeout=3600)
+            try:
+                result, code, refusal, errors = self.runtime("controller", "start", *self.reach(socket),
+                                                             "--request", request, "--effect-exit", timeout=3600)
+            except Refusal as failure:
+                # A start that ended without its answer is failed all the same.
+                print("jarvis-session: start refused " + failure.reason, flush=True)
+                self.start_failed(request, {"state": failure.state, "reason": failure.reason,
+                                            "detail": short(failure.detail)})
+                return
             print("jarvis-session: start exit=" + str(code) + " " + json.dumps(result if result else refusal))
             sys.stdout.write(errors)
             with self.locked():
@@ -685,14 +692,18 @@ class Session:
                                         "detail": short("Jarvis could not start: " + note + ". Check the Jarvis session log.")})
             if failure["state"] == "blocked" and failure["reason"] == "selection-conflict":
                 failure["detail"] = ""
-            with self.locked():
-                record = self.read()
-                if record and record.get("start_request") == request and record.get("intent") == "start":
-                    record["failure"] = failure
-                    self.write(record)
+            self.start_failed(request, failure)
         finally:
             for path in (request, brief_file):
                 Path(path).unlink(missing_ok=True)
+
+    def start_failed(self, request, failure):
+        """Record FAILURE for the start REQUEST names, while the record still asks for that start."""
+        with self.locked():
+            record = self.read()
+            if record and record.get("start_request") == request and record.get("intent") == "start":
+                record["failure"] = failure
+                self.write(record)
 
     def _adopt(self, args, record):
         # The session a person runs by hand takes the predecessor's place:

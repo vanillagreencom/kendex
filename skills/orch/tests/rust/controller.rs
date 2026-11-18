@@ -1865,6 +1865,130 @@ fn a_copilot_controller_start_binds_the_session_it_opened_and_delivers_the_brief
     assert_eq!(turns, vec![json!("START HERE")], "{report}");
 }
 
+/// Copilot on a seat still loading its managed account policy refuses the
+/// start's submit and keeps the brief in its composer: the start presses
+/// Enter again, the brief never typed a second time, until the brief is the
+/// session's first turn; a refusal that outlasts the bound leaves the start
+/// `unconfirmed` naming the refused submit.
+#[test]
+fn a_copilot_start_whose_submit_copilot_refuses_submits_the_held_brief_again() {
+    // How many submits the stub refuses, and whether the start confirms.
+    for (refusals, confirms) in [(1, true), (99, false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.verify = Some(8);
+        runner.init_fleet();
+        let seat = dir.path().join("copilot-home");
+        std::fs::create_dir_all(&seat).unwrap();
+        copilot_gate_passed(&mut runner, &seat);
+        let cwd = runner.state_dir().to_path_buf();
+        std::fs::write(cwd.join(".stub-refusals"), refusals.to_string()).unwrap();
+        let mut controller = pending(&cwd);
+        controller["harness"] = json!("copilot");
+        controller["account"] = json!(seat.display().to_string());
+        controller["home"] = json!(seat.display().to_string());
+        controller["model"] = json!("claude-opus-5.5");
+        let brief = cwd.join("brief.md");
+        std::fs::write(&brief, "START HERE\n").unwrap();
+        let binaries = format!(
+            "copilot={}",
+            fixtures().join("stub-policy-loading/copilot").display()
+        );
+        let report = effect_report(&runner.op_fleet_env(
+            &json!({
+                "op": "start-controller",
+                "controller": controller,
+                "brief_file": brief.display().to_string(),
+            }),
+            &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)],
+        ));
+        let reads = std::fs::read_to_string(cwd.join(".stub-reads")).unwrap();
+        let reads: Vec<&str> = reads.lines().collect();
+        assert_eq!(reads.first(), Some(&"START HERE"), "{report}");
+        assert!(
+            reads[1..].iter().all(|read| read.is_empty()),
+            "the brief is typed once: {reads:?} {report}"
+        );
+        let opened = std::fs::read_to_string(cwd.join(".stub-session-id")).unwrap();
+        let events = seat
+            .join("session-state")
+            .join(opened.trim_end())
+            .join("events.jsonl");
+        if confirms {
+            assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+            assert_eq!(reads.len(), 2, "one bare Enter: {reads:?} {report}");
+            let turns: Vec<Value> = std::fs::read_to_string(&events)
+                .unwrap()
+                .lines()
+                .map(|row| serde_json::from_str::<Value>(row).unwrap()["data"]["content"].clone())
+                .collect();
+            assert_eq!(turns, vec![json!("START HERE")], "{report}");
+        } else {
+            let observation = &report["intent"]["observation"];
+            assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+            assert_eq!(observation["note"], "brief-unconfirmed", "{report}");
+            assert_eq!(observation["cause"], "submit-refused", "{report}");
+            // The last press may not have reached the stub's log yet.
+            let presses = observation["presses"].as_u64().unwrap();
+            assert!(reads.len() > 1, "the refused brief was submitted again");
+            assert!(reads.len() as u64 - 1 <= presses, "{reads:?} {report}");
+            assert!(!events.exists(), "{report}");
+        }
+    }
+}
+
+/// A start left `unconfirmed` holds its own brief: once its caller removed
+/// the file it handed (Jarvis does as its start returns) and Copilot takes
+/// submits, the reconcile confirms the start against that brief, and a stop
+/// then ends the controller's process.
+#[test]
+fn an_unconfirmed_copilot_start_whose_caller_removed_its_brief_reconciles_and_stops() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(3);
+    runner.init_fleet();
+    let seat = dir.path().join("copilot-home");
+    std::fs::create_dir_all(&seat).unwrap();
+    copilot_gate_passed(&mut runner, &seat);
+    runner.env.push((
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+        format!(
+            "copilot={}",
+            fixtures().join("stub-policy-loading/copilot").display()
+        ),
+    ));
+    let cwd = runner.state_dir().to_path_buf();
+    let refusals = cwd.join(".stub-refusals");
+    std::fs::write(&refusals, "99").unwrap();
+    let mut controller = pending(&cwd);
+    controller["harness"] = json!("copilot");
+    controller["account"] = json!(seat.display().to_string());
+    controller["home"] = json!(seat.display().to_string());
+    controller["model"] = json!("claude-opus-5.5");
+    let brief = cwd.join("brief.md");
+    std::fs::write(&brief, "START HERE\n").unwrap();
+    let report = effect_report(&runner.op_fleet(&json!({
+        "op": "start-controller",
+        "controller": controller,
+        "brief_file": brief.display().to_string(),
+    })));
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    std::fs::remove_file(&brief).unwrap();
+    std::fs::write(&refusals, "0").unwrap();
+    let reconciled = runner.reconcile_one();
+    assert_eq!(reconciled["intent"]["outcome"], "confirmed", "{reconciled}");
+    let pid = runner.fleet()["controller"]["harness_pid"]
+        .as_u64()
+        .unwrap() as u32;
+    assert!(live(pid), "{reconciled}");
+    runner.op_fleet(&json!({"op": "stop-controller"}));
+    let stopped = runner.wait_intent_settled("stop-controller:", SETTLE);
+    assert_eq!(stopped["outcome"], "confirmed", "{stopped}");
+    assert!(!live(pid), "the controller's process ended: {stopped}");
+}
+
 /// A controller's start builds its directory's own install before its
 /// window, through the preparation a lane's launch shares: the orch and
 /// agent-runtime packages linked where an apply puts them, orch's one real

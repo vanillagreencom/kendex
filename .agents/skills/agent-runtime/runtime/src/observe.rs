@@ -258,6 +258,27 @@ pub fn codex_capacity_refused(slice: &str) -> bool {
         && slice.lines().any(|l| CODEX_MARKER.is_match(l))
 }
 
+/// Copilot's refusal of a submit while it still loads an enterprise seat's
+/// managed account policy, as Copilot CLI 1.0.112 drew it in a live start:
+/// the submit is dropped and the draft stays in the composer, where a bare
+/// Enter submits it once the policy has loaded.
+static COPILOT_POLICY_LOADING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*! Managed account policy is still loading\.").unwrap());
+
+/// Whether `screen` shows the harness refused a submit and left its draft in
+/// the composer, with no turn running and no dialog open, so an Enter can
+/// only submit that draft again. Only Copilot refuses a submit so.
+pub fn submit_refused(screen: &str, harness: Harness) -> bool {
+    match harness {
+        Harness::Copilot => {
+            screen.lines().any(|l| COPILOT_POLICY_LOADING.is_match(l))
+                && !is_working(screen)
+                && !ASKING.is_match(screen)
+        }
+        Harness::Claude | Harness::Codex | Harness::Pi => false,
+    }
+}
+
 /// Codex's line for a turn its provider's API refused, as a real pane drew
 /// it: the error glyph at the line's start, then the harness's error text.
 /// An answer quoting the words draws them indented.
@@ -806,6 +827,45 @@ mod tests {
             judge(&copilot, Harness::Copilot, &ProcessReading::HarnessUp, None),
             State::Idle
         );
+    }
+
+    /// Copilot's policy refusal over its composer is a refused submit; the
+    /// same line with a turn running or a dialog open, or under another
+    /// harness, is not.
+    #[test]
+    fn only_copilot_s_policy_refusal_at_rest_is_a_refused_submit() {
+        let rule = "─".repeat(20);
+        let refusal =
+            "! Managed account policy is still loading. Please wait a moment and try again.";
+        let at_rest = format!("❯ brief\n{refusal}\n❯ brief\n{rule}\n");
+        for (screen, harness, refused) in [
+            (at_rest.clone(), Harness::Copilot, true),
+            (
+                format!("  {refusal}\n❯ brief\n{rule}\n"),
+                Harness::Copilot,
+                true,
+            ),
+            (format!("❯ brief\n{rule}\n"), Harness::Copilot, false),
+            (
+                format!("{at_rest}❯ 1. Yes\n  2. No\n"),
+                Harness::Copilot,
+                false,
+            ),
+            (format!("{at_rest}esc interrupt\n"), Harness::Copilot, false),
+            (
+                format!("the answer quotes {refusal}\n❯ \n{rule}\n"),
+                Harness::Copilot,
+                false,
+            ),
+            (at_rest.clone(), Harness::Claude, false),
+            (at_rest, Harness::Codex, false),
+        ] {
+            assert_eq!(
+                submit_refused(&screen, harness),
+                refused,
+                "{harness:?} {screen}"
+            );
+        }
     }
 
     #[test]
