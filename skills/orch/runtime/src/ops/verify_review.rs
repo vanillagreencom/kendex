@@ -1,7 +1,7 @@
 //! The `verify-review` operation: the review gate's verdict on a pull
 //! request's current head, read then recorded, one call per read set. The
-//! gate mode a base's rules set is resolved on the first call and recorded
-//! on the item as its floor. The gate's acts, the ready mark and the
+//! gate mode a base's rules set is resolved on the first call to that base
+//! and recorded on the item with it. The gate's acts, the ready mark and the
 //! Copilot request with its one error retry, are each claimed under the
 //! head's key before the act and read on a later call as absent, attempted
 //! or confirmed by GitHub's own record, so an act whose answer was lost is
@@ -677,9 +677,11 @@ impl Gate<'_> {
         self.period(&record, judged.engaged)
     }
 
-    /// The gate mode: recorded once, read on every later call.
+    /// The gate mode: recorded once per base, read on every later call to
+    /// that base.
     fn mode(&self) -> Step<GateMode> {
-        if let Some(mode) = recorded_mode(self.path, &self.doc)? {
+        let base = &self.view.base;
+        if let Some(mode) = recorded_mode(self.path, &review_object(self.path, &self.doc)?, base)? {
             return Ok(mode);
         }
         let policy = policy(&self.r.base_checkout, self.private_env)?;
@@ -694,11 +696,11 @@ impl Gate<'_> {
                 .into());
             }
         };
-        let (path, base, at) = (self.path, &self.view.base, &self.stamp);
+        let (path, at) = (self.path, &self.stamp);
         Ok(write(path, self.locking, |doc| {
             let record = review_mut(path, doc)?;
-            if let Some(standing) = record.get("mode").and_then(Value::as_str) {
-                return GateMode::parse(standing).ok_or_else(|| shape(path, "mode"));
+            if let Some(standing) = recorded_mode(path, record, base)? {
+                return Ok(standing);
             }
             record.insert("mode".into(), json!(mode.word()));
             record.insert("mode_at".into(), json!(at));
@@ -1630,14 +1632,16 @@ fn review_object(path: &Path, doc: &Document) -> Result<Map<String, Value>> {
     }
 }
 
-fn recorded_mode(path: &Path, doc: &Document) -> Result<Option<GateMode>> {
-    match review_object(path, doc)?.get("mode") {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(word)) => GateMode::parse(word)
-            .map(Some)
-            .ok_or_else(|| shape(path, "mode")),
-        Some(_) => Err(shape(path, "mode")),
-    }
+/// The recorded mode where it was read for `base`: GitHub can retarget a
+/// pull request's head to a base with other rules, and a mode recorded
+/// with no base names none it holds for.
+fn recorded_mode(path: &Path, record: &Document, base: &str) -> Result<Option<GateMode>> {
+    let mode = match record.get("mode") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::String(word)) => GateMode::parse(word).ok_or_else(|| shape(path, "mode"))?,
+        Some(_) => return Err(shape(path, "mode")),
+    };
+    Ok((record.get("base").and_then(Value::as_str) == Some(base)).then_some(mode))
 }
 
 fn head_record(path: &Path, doc: &Document, head: &str) -> Result<Option<HeadRecord>> {

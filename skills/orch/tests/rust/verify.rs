@@ -6221,8 +6221,8 @@ fn merge_is_refused_while_a_regression_blocker_stands_and_allowed_once_lifted() 
 }
 
 /// The gate mode is resolved from the consumer's policy and the base's
-/// rules on the first call and recorded as the item's floor: a later call
-/// reads the record and no rule, so a rules read that then fails changes
+/// rules on the first call and recorded with its base: a later call to that
+/// base reads the record and no rule, so a rules read that then fails changes
 /// nothing. Classic protection decides where no rule requires an approval.
 #[test]
 fn the_gate_mode_is_recorded_once() {
@@ -6367,6 +6367,48 @@ fn the_gate_mode_is_recorded_once() {
     assert!(!out.status.success());
     assert_eq!(reply(&out)["refusal"]["key"], "setting-invalid", "{out:?}");
     assert!(gh.state().get("pr_review").is_none());
+}
+
+/// A recorded mode holds only for the base it was read for: a head that
+/// GitHub retargets from an unprotected base to one whose rules require
+/// an approval is judged under the new base's rules, read before the
+/// verdict, and waits for that approval.
+#[test]
+fn a_retargeted_head_reads_the_new_bases_mode() {
+    const STACK: &str = "stack";
+    let mut gh = Github::review_world();
+    let mut view = review_view("", &[], false);
+    view["baseRefName"] = json!(STACK);
+    gh.answer(&format!("pr view {PR}"), view)
+        .answer(
+            &page(&format!("repos/{REPO}/rules/branches/{STACK}"), 1),
+            json!([]),
+        )
+        .answer(
+            &format!("repos/{REPO}/branches/{STACK}"),
+            json!({"commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": false, "protection": {"enabled": false}}),
+        );
+    let first = ok_result(&gh.review(false, &[]));
+    assert_eq!(first["mode"], "off", "{first}");
+    assert_eq!(gh.review_record()["base"], STACK);
+
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], false));
+    let lines = gh.log().len();
+    let retargeted = ok_result(&gh.review(false, &[]));
+    assert_eq!(retargeted["mode"], "approval", "{retargeted}");
+    assert_eq!(retargeted["status"], "pending", "{retargeted}");
+    assert!(
+        gh.log_since(lines).iter().any(|l| l.contains(&rules(1))),
+        "{:?}",
+        gh.log_since(lines)
+    );
+    assert_eq!(
+        (
+            gh.review_record()["mode"].clone(),
+            gh.review_record()["base"].clone()
+        ),
+        (json!("approval"), json!(BASE))
+    );
 }
 
 /// A request that sends nothing records why under the head, once: the

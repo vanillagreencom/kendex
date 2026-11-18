@@ -993,11 +993,19 @@ struct Left {
 }
 
 /// Read the run directory once the child ended, `stopped` being whether the
-/// stage records a `validate stop`.
-fn read_left(run_dir: &Path, stopped: bool) -> Left {
+/// stage records a `validate stop`. Only `NotFound` proves no sentinel: a
+/// sentinel that stands unread is refused, so the stage stays open for the
+/// reconcile to read it, never closed `lost`.
+fn read_left(run_dir: &Path, stopped: bool) -> Result<Left> {
     let sentinel = match fs::read_to_string(run_dir.join("exit")) {
         Ok(text) => Some(text.trim_end().to_owned()),
-        Err(_) => None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(Error::ValidateUnreadable {
+                read: "sentinel",
+                cause: e.to_string(),
+            });
+        }
     };
     let selection = super::files::RunFile::read(run_dir)
         .ok()
@@ -1020,12 +1028,12 @@ fn read_left(run_dir: &Path, stopped: bool) -> Left {
                 .find_map(|l| l.strip_prefix("seconds="))
                 .and_then(|s| s.parse().ok())
         });
-    Left {
+    Ok(Left {
         outcome,
         at,
         seconds,
         selection,
-    }
+    })
 }
 
 /// Send the stage's owed notice and mark it: the owner word written, or
@@ -1109,7 +1117,7 @@ pub fn run(
     // The stage as it stands once the child ended: a `validate stop` that
     // ended the child recorded its intent on the stage before it did.
     let (stages, index) = stage_of(&path, run_dir)?;
-    let left = read_left(&run_dir_path, stages[index].stop.is_some());
+    let left = read_left(&run_dir_path, stages[index].stop.is_some())?;
     let notice = validate::end_notice(&run_id_of(run_dir), run_dir, left.outcome);
     let ended = apply(
         &path,
@@ -1607,6 +1615,31 @@ mod tests {
     /// reached with no kill, a group with no cap and counts unread after
     /// each keep the leader's verdict and the stall's suffix where it
     /// applies.
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the row plants the sentinel's place under its own temporary directory"
+    )]
+    fn a_sentinel_that_stands_unread_is_no_absent_one_and_a_later_read_ends_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = dir.path();
+        let outcome = |run: &Path| read_left(run, false).map(|left| left.outcome);
+        assert_eq!(outcome(run).unwrap(), StageOutcome::Lost);
+        // A directory in the sentinel's place: its read fails while it stands.
+        fs::create_dir(run.join("exit")).unwrap();
+        let unread = outcome(run).unwrap_err();
+        assert_eq!(
+            (unread.key(), unread.fields()),
+            (
+                "validate-unreadable",
+                vec![("read".to_owned(), "sentinel".to_owned())]
+            )
+        );
+        fs::remove_dir(run.join("exit")).unwrap();
+        fs::write(run.join("exit"), "guard-exit=0 at=2026-11-18T07:00:00Z\n").unwrap();
+        assert_eq!(outcome(run).unwrap(), StageOutcome::Pass);
+    }
+
     #[test]
     #[allow(
         clippy::disallowed_methods,

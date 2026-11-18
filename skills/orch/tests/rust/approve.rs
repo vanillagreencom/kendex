@@ -489,6 +489,47 @@ fn a_moved_or_unread_head_never_posts() {
     }
 }
 
+/// A confirmed approval replays as confirmed only while the live head is
+/// the one it approved and GitHub still holds it: a dismissal is named on
+/// every repeat, and no repeat posts a second approval.
+#[test]
+fn a_confirmed_replay_reads_the_live_head_and_the_standing_review() {
+    if child("a_confirmed_replay_reads_the_live_head_and_the_standing_review").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    let landed: Value =
+        serde_json::from_slice(&fs::read(root.join("landed.json")).unwrap()).unwrap();
+    let mut dismissed = landed.clone();
+    dismissed["state"] = json!("DISMISSED");
+    fs::write(root.join("landed.json"), dismissed.to_string()).unwrap();
+    for _ in 0..2 {
+        let replay = run(&root, &r).unwrap();
+        assert_eq!(
+            (replay.status, replay.reason.as_str()),
+            (Status::Refused, "approval-dismissed")
+        );
+    }
+    fs::write(root.join("landed.json"), landed.to_string()).unwrap();
+    answer(&root, json!({"head":MOVED}));
+    let moved = run(&root, &r).unwrap_err();
+    assert_eq!(
+        refusal_fields(&moved),
+        (
+            "head-moved",
+            vec![
+                ("given".to_owned(), HEAD[..8].to_owned()),
+                ("live".to_owned(), MOVED.to_owned())
+            ]
+        )
+    );
+    answer(&root, json!({}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!(posts(&root), 1);
+}
+
 #[test]
 fn a_lost_answer_is_read_back_and_posts_again_only_where_nothing_landed() {
     if let Ok(mode) = std::env::var("APPROVE_CHILD") {
@@ -892,6 +933,9 @@ fn an_unstarted_post_clears_its_claim_and_can_retry() {
     assert_eq!(posts(&root), 1);
 }
 
+/// A lost post a read-back finds landed is recorded confirmed at the head
+/// it was posted for, whatever the live head; the request answers
+/// `confirmed` only while that head is the live one, else `head-moved`.
 #[test]
 fn a_lost_post_is_read_back_after_the_live_head_moves() {
     if child("a_lost_post_is_read_back_after_the_live_head_moves").is_some() {
@@ -899,16 +943,43 @@ fn a_lost_post_is_read_back_after_the_live_head_moves() {
     }
     let root = root();
     let r = request(&root);
-    answer(&root, json!({"post":"lost", "read_back":"fail"}));
-    assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
-    answer(
-        &root,
-        json!({"head":MOVED, "reviews":[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":HEAD}]}),
-    );
-    let result = run(&root, &r).unwrap();
-    assert_eq!(result.status, Status::Confirmed);
-    assert_eq!(result.head, HEAD);
-    assert_eq!(posts(&root), 1);
+    for live in [HEAD, MOVED] {
+        // The record a POST whose answer was lost leaves.
+        plant_entry(
+            &root,
+            json!({"login":"review-app[bot]","attempt":{"state":"attempted"}}),
+        );
+        answer(
+            &root,
+            json!({"head":live, "reviews":[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":HEAD}]}),
+        );
+        let answered = run(&root, &r);
+        if live == HEAD {
+            let confirmed = answered.unwrap();
+            assert_eq!(
+                (confirmed.status, confirmed.head.as_str()),
+                (Status::Confirmed, HEAD)
+            );
+        } else {
+            assert_eq!(
+                refusal_fields(&answered.unwrap_err()),
+                (
+                    "head-moved",
+                    vec![
+                        ("given".to_owned(), HEAD[..8].to_owned()),
+                        ("live".to_owned(), MOVED.to_owned())
+                    ]
+                )
+            );
+        }
+        let record: Value =
+            serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+        assert_eq!(
+            record["head_approvals"]["o/r#42"][HEAD]["attempt"]["state"], "confirmed",
+            "{live}"
+        );
+    }
+    assert_eq!(posts(&root), 0);
 }
 
 #[test]

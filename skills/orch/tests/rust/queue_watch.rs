@@ -1802,6 +1802,75 @@ fn the_guard_pulls_the_halves_the_shape_calls_for_and_probes_once_more_at_the_de
     );
 }
 
+/// A guard whose thread reads keep failing says so on the wait's stderr,
+/// which the waiter's log keeps: every third failed probe in a row prints
+/// one `guard-blind` line with the run's count, and a readable probe
+/// starts the count again. The wait runs in a child of this binary, whose
+/// stderr is the row's evidence.
+#[test]
+fn a_blind_guard_warns_every_third_failed_read_in_a_row() {
+    const ROW: &str = "a_blind_guard_warns_every_third_failed_read_in_a_row";
+    const CHILD: &str = "QUEUE_WATCH_ROW_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let out = support::program(std::env::current_exe().unwrap())
+            .args([ROW, "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success()
+                && String::from_utf8_lossy(&out.stdout).contains("test result: ok. 1 passed;"),
+            "{}{stderr}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let warned: Vec<(String, String)> = stderr
+            .lines()
+            .filter_map(|line| line.strip_prefix("guard-blind "))
+            .map(|fields| {
+                let field = |key: &str| {
+                    fields
+                        .split(' ')
+                        .find_map(|f| f.strip_prefix(key))
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                (field("failures="), field("pr="))
+            })
+            .collect();
+        let at = |failures: &str| (failures.to_owned(), PR.to_string());
+        assert_eq!(warned, [at("3"), at("6"), at("3")], "{stderr}");
+        return;
+    }
+    let mut world = World::new();
+    world.queue(in_queue(None)).threads_refused();
+    let request = QueueWatch {
+        probe_interval: secs(0),
+        ..world.request(10, 100)
+    };
+    let reply = world.wait(&request, |world, clock| {
+        // Polls one to six fail, the seventh reads, eight to ten fail and
+        // the deadline's probe fails once more.
+        clock.await_sleepers(1);
+        for _ in 2..=6 {
+            clock.pass(secs(10));
+        }
+        world.threads(0).write();
+        clock.pass(secs(10));
+        world.threads_refused().write();
+        for _ in 8..=10 {
+            clock.pass(secs(10));
+        }
+        clock.release(secs(10));
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.polls),
+        ("timeout", "queued", 10),
+        "{reply:?}"
+    );
+    assert!(world.mutations().is_empty(), "{:?}", world.gh_log());
+}
+
 /// The failed-check probe's settled answers: every required check passed
 /// with still no entry is `armed_blocked` with `not_mergeable` at the
 /// deadline, and a probe that could not read keeps the reading before it,

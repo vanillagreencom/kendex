@@ -607,12 +607,55 @@ fn standing_answer(
     attempt: &Attempt,
 ) -> Result<ApprovedHead> {
     match attempt {
-        Attempt::Confirmed { review } => {
+        Attempt::Confirmed { review } => standing(settings, r, head, login, token, review),
+        Attempt::Attempted => {
+            // The read-back records an approval that landed at the head it
+            // was posted for, but answers `confirmed` only for the live head.
+            let settled = settle(path, r, head, login, token, settings, locking, NOT_LANDED)?;
+            if settled.status == Status::Confirmed {
+                let live = live_head(settings, r, token)?;
+                if live != head {
+                    return Err(refuse("head-moved", &[("given", &r.head), ("live", &live)]));
+                }
+            }
+            Ok(settled)
+        }
+    }
+}
+
+/// A recorded confirmation answers `approved` only while the live head is
+/// the head it approved and a complete read of the reviews still holds the
+/// app's approval there: a maintainer can dismiss it or push past it after
+/// it was recorded. A dismissal is refused by name and never posts again,
+/// since the record keeps the head's one attempt.
+fn standing(
+    settings: &Settings,
+    r: &ApproveHead,
+    head: &str,
+    login: &str,
+    token: &str,
+    review: &Value,
+) -> Result<ApprovedHead> {
+    let live = live_head(settings, r, token)?;
+    if live != head {
+        return Err(refuse("head-moved", &[("given", &r.head), ("live", &live)]));
+    }
+    // The recorded review names the login GitHub gave it, which a setting
+    // spelled otherwise (`login-differs`) does not match.
+    let author = reviewer(review).unwrap_or(login);
+    match read_back(settings, r, head, author, token) {
+        Ok(Some(_)) => {
             let mut confirmed = reply(Status::Confirmed, head, "approved", Some(review.clone()));
             confirmed.detail = login_differs(review, login);
             Ok(confirmed)
         }
-        Attempt::Attempted => settle(path, r, head, login, token, settings, locking, NOT_LANDED),
+        Ok(None) => Ok(reply(
+            Status::Refused,
+            head,
+            "approval-dismissed",
+            Some(review.clone()),
+        )),
+        Err(e) => Ok(unconfirmed(head, "approval-unconfirmed", &e)),
     }
 }
 

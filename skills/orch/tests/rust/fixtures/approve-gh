@@ -11,7 +11,10 @@ cfg = json.loads((root / 'answer.json').read_text())
 a = sys.argv[1:]
 with (root / 'gh.log').open('a') as log:
     log.write(json.dumps([os.environ.get('GH_TOKEN'), a]) + '\n')
-head = cfg.get('head', '0123456789abcdef0123456789abcdef01234567')
+# GitHub's REST paths take the owner and repository names case-insensitively
+# (docs.github.com/rest/pulls/pulls: "The name is not case sensitive").
+a = [x.replace('repos/O/R/', 'repos/o/r/') for x in a]
+head =cfg.get('head', '0123456789abcdef0123456789abcdef01234567')
 review = {'id': 91, 'state': 'APPROVED', 'user': {'login': 'review-app[bot]'}, 'commit_id': head}
 copilot = 'copilot-pull-request-reviewer'
 started = '2026-01-29T15:10:00Z'

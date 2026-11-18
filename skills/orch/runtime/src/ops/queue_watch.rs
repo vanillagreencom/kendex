@@ -25,6 +25,7 @@
 use agent_runtime::record::{self, Document, Locking};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -59,6 +60,9 @@ const PROGRESS_WINDOW_POLLS: u64 = 3;
 const MAX_MALFORMED_POLLS: u64 = 3;
 /// The transient backoff's cap, in poll intervals.
 const RETRY_CAP_POLLS: u32 = 8;
+/// Failed guard thread reads in a row at each multiple of which the wait
+/// warns that its guard is blind.
+const GUARD_BLIND_PROBES: u64 = 3;
 
 // --- the record -----------------------------------------------------------------
 
@@ -709,6 +713,8 @@ struct Wait<'a> {
     /// nothing.
     written: Option<Memory>,
     unresolved: Option<u64>,
+    /// Failed guard thread reads in a row.
+    blind_probes: u64,
     transient_errors: u64,
     retry: Duration,
     malformed_polls: u64,
@@ -1169,9 +1175,36 @@ impl<'a> Wait<'a> {
 
     // --- the guard ---
 
-    /// The unresolved thread count through the github package, or `None`
-    /// where the read failed: no evidence is never no threads.
-    fn unresolved_threads(&self) -> Option<u64> {
+    /// The guard's thread count, `None` where its read failed: no evidence
+    /// is never no threads. Failed reads are counted in a row, and every
+    /// `GUARD_BLIND_PROBES`-th warns on stderr, which the waiter's log
+    /// keeps, so a long blind window keeps saying so; a readable one starts
+    /// the count again.
+    fn read_threads(&mut self) -> Option<u64> {
+        match self.unresolved_threads() {
+            Ok(count) => {
+                self.blind_probes = 0;
+                Some(count)
+            }
+            Err(cause) => {
+                self.blind_probes += 1;
+                if self.blind_probes.is_multiple_of(GUARD_BLIND_PROBES) {
+                    let cause = cause.lines().next().unwrap_or_default();
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "guard-blind failures={} pr={} cause={cause}",
+                        self.blind_probes,
+                        self.r.pr
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// The unresolved thread count through the github package, or what
+    /// failed to read it.
+    fn unresolved_threads(&self) -> std::result::Result<u64, String> {
         let number = self.r.pr.to_string();
         let repo = std::ffi::OsStr::new(&self.r.repo);
         let place = Place {
@@ -1186,9 +1219,9 @@ impl<'a> Wait<'a> {
             place,
         ) {
             Call::Printed(bytes) => serde_json::from_slice::<Threads>(&bytes)
-                .ok()
-                .map(|t| t.unresolved_count),
-            Call::Failed { .. } => None,
+                .map(|t| t.unresolved_count)
+                .map_err(|e| format!("pr-threads answer: {e}")),
+            Call::Failed { detail, .. } => Err(detail),
         }
     }
 
@@ -1304,7 +1337,7 @@ impl<'a> Wait<'a> {
     /// One guard probe: a thread count fires the guard; a failed read is no
     /// evidence and the wait goes on.
     fn guard_probe(&mut self) -> Result<Option<Reply>> {
-        let Some(count) = self.unresolved_threads() else {
+        let Some(count) = self.read_threads() else {
             return Ok(None);
         };
         self.unresolved = Some(count);
@@ -1328,7 +1361,7 @@ impl<'a> Wait<'a> {
             return Ok(None);
         }
         if queue.armed() {
-            return match self.unresolved_threads() {
+            return match self.read_threads() {
                 None => Ok(None),
                 Some(0) => {
                     self.unresolved = Some(0);
@@ -1937,6 +1970,7 @@ pub fn run(
         written: memory.clone(),
         memory,
         unresolved: None,
+        blind_probes: 0,
         transient_errors: 0,
         retry: r.poll,
         malformed_polls: 0,
