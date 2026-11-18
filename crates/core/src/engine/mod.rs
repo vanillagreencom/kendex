@@ -288,6 +288,7 @@ fn plan_scope_with_lock_base(
         &mut written,
     )?;
 
+    let mut settings_advisories = Vec::new();
     let (mut scope_notes, planned_shims, removed_settings_comments) = plan_scope_files(
         env,
         scope,
@@ -299,6 +300,7 @@ fn plan_scope_with_lock_base(
         &mut drift,
         &mut ops,
         &mut config_edits,
+        &mut settings_advisories,
     )?;
 
     let (sweepable, said, retired) = plan_removals(
@@ -331,6 +333,7 @@ fn plan_scope_with_lock_base(
         drift,
         ops,
         scope_notes,
+        settings_advisories,
         set_changes,
         removed_settings_comments,
         repo_effects_leaving,
@@ -418,6 +421,7 @@ struct Planned {
     drift: Vec<DriftRow>,
     ops: Vec<PlannedOp>,
     scope_notes: Vec<String>,
+    settings_advisories: Vec<String>,
     set_changes: Vec<SetChange>,
     removed_settings_comments: Vec<String>,
     repo_effects_leaving: Vec<crate::repo_effects::DeclaredEffects>,
@@ -452,6 +456,7 @@ fn report(
         drift,
         ops,
         scope_notes,
+        settings_advisories,
         set_changes,
         removed_settings_comments,
         repo_effects_leaving,
@@ -493,6 +498,7 @@ fn report(
         drift,
         plan: Plan::landed(scope.clone(), ops)?,
         notes: [state.notes, scope_notes, manifest.migration_notes.clone()].concat(),
+        settings_advisories,
         warnings: state.warnings,
         excluded_hooks: state.excluded_hooks,
         pinned_hooks: state.pinned_hooks,
@@ -674,11 +680,12 @@ fn plan_scope_files(
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
+    settings_advisories: &mut Vec<String>,
 ) -> Result<(Vec<String>, Vec<ShimStanding>, Vec<String>)> {
     // The order between the project files is not this caller's to choose,
     // so one entry point plans all three: `settings_write.rs` says why.
     let (scope_notes, settings_drift, removed) =
-        plan_project_files(env, scope, lock, state, options, ops)?;
+        plan_project_files(env, scope, lock, state, options, ops, settings_advisories)?;
     drift.extend(settings_drift);
     // The shims a project owes its instruction files, read off the
     // harness list the manifest declares: committed files, never lock

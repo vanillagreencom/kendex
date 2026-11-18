@@ -1,0 +1,1 @@
+- Refresh and `kendex check` flag saved settings that match an installed package's default or have no declaration. Add `# keep-default` after a value to keep an intentional default match without a notice.

@@ -105,6 +105,33 @@ pub(crate) struct DeclaredHeaders {
         std::collections::HashMap<OpenedKey, Result<(SealedSource, super::SourceConfig), String>>,
 }
 
+/// The two declarations the check reads from an installed skill.
+pub(crate) struct SkillReading {
+    pub(crate) header: Result<String, String>,
+    pub(crate) settings: crate::settings_template::TemplateSource,
+}
+
+impl SkillReading {
+    pub(crate) fn read(
+        sealed: &SealedSource,
+        path: &Path,
+        header: Result<String, String>,
+        settings: bool,
+    ) -> Self {
+        use crate::settings_template::TemplateSource;
+        let settings = if settings {
+            match sealed.read_if_exists(&path.join(crate::settings_seed::SETTINGS_TEMPLATE)) {
+                Ok(Some(text)) => TemplateSource::Text(text),
+                Ok(None) => TemplateSource::Absent,
+                Err(error) => TemplateSource::Unreadable(error.to_string()),
+            }
+        } else {
+            TemplateSource::Absent
+        };
+        Self { header, settings }
+    }
+}
+
 /// What one installation's own record says it came from.
 ///
 /// A declaration is what a scope asks for now; this is what the
@@ -218,13 +245,33 @@ fn header_text(
     name: &str,
     source: &str,
 ) -> crate::error::Result<Result<String, String>> {
-    let path = super::find_item(sealed, config, kind, name).ok_or_else(|| {
+    let path = header_item(sealed, config, kind, name, source)?;
+    text_at(sealed, kind, &path, name, source)
+}
+
+fn header_item(
+    sealed: &SealedSource,
+    config: &super::SourceConfig,
+    kind: ItemKind,
+    name: &str,
+    source: &str,
+) -> crate::error::Result<PathBuf> {
+    super::find_item(sealed, config, kind, name).ok_or_else(|| {
         crate::error::CoreError::ItemNotInSource {
             name: name.to_owned(),
             source_name: source.to_owned(),
         }
-    })?;
-    Ok(try_text(sealed, kind, &path)?
+    })
+}
+
+fn text_at(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    path: &Path,
+    name: &str,
+    source: &str,
+) -> crate::error::Result<Result<String, String>> {
+    Ok(try_text(sealed, kind, path)?
         .ok_or_else(|| format!("'{name}' has no header file in source '{source}'")))
 }
 
@@ -245,6 +292,28 @@ fn header_text(
 type OpenedKey = (crate::model::Scope, String, Option<String>, Option<String>);
 
 impl DeclaredHeaders {
+    pub(crate) fn skill(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        name: &str,
+        installed: Option<&InstalledFrom>,
+        settings: bool,
+    ) -> Result<SkillReading, String> {
+        let read_at = ReadAt::of(manifest, ItemKind::Skill, name, installed)
+            .ok_or_else(|| format!("'{name}' is neither installed nor declared in this scope"))?;
+        let (sealed, config) = self
+            .opened(env, scope, manifest, &read_at)
+            .as_ref()
+            .map_err(String::clone)?;
+        let path = header_item(sealed, config, ItemKind::Skill, name, &read_at.source)
+            .map_err(|error| error.to_string())?;
+        let header = text_at(sealed, ItemKind::Skill, &path, name, &read_at.source)
+            .unwrap_or_else(|error| Err(error.to_string()));
+        Ok(SkillReading::read(sealed, &path, header, settings))
+    }
+
     /// What one declared package's own source says about it, at the
     /// version this scope has installed. `None` where the declaration, the
     /// source or the item cannot be reached — an unreachable source

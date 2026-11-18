@@ -228,9 +228,15 @@ fn outcome(page: &Page) -> String {
         said.push(format!("{} pending evaluation", items_word(settling)));
     }
     if notices > 0 {
-        let verb = match notices {
-            1 => "has a command notice",
-            _ => "have command notices",
+        let settings = page
+            .sections
+            .iter()
+            .any(|section| section.title == SETTINGS_SECTION);
+        let verb = match (notices, settings) {
+            (1, false) => "has a command notice",
+            (1, true) => "has a notice",
+            (_, false) => "have command notices",
+            (_, true) => "have notices",
         };
         said.push(format!("{} {verb}", items_word(notices)));
     }

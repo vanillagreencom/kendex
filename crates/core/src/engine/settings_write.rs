@@ -82,6 +82,7 @@ pub(super) fn plan_settings_seed(
     state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
+    advisories: &mut Vec<String>,
 ) -> Result<(Vec<String>, Vec<DriftRow>, Vec<String>)> {
     let draft = options.settings_draft.as_ref();
     let edits = draft.map_or(&[][..], |draft| draft.edits.as_slice());
@@ -135,6 +136,9 @@ pub(super) fn plan_settings_seed(
         return Ok((notes, vec![row], Vec::new()));
     }
     let current = crate::fs::read_if_exists(&path)?;
+    if let Some(text) = &current {
+        advisories.extend(saved_settings_notes(lock, state, text));
+    }
     let compatible = current
         .as_deref()
         .map(|text| state.agent_names.settings(text, &path))
@@ -210,6 +214,20 @@ pub(super) fn plan_settings_seed(
     let removed = settled.removed.clone();
     plan_settings_write(path, file, draft, settled, compatible != current, ops)?;
     Ok((notes, Vec::new(), removed))
+}
+
+fn saved_settings_notes(lock: &crate::lock::Lock, state: &DesiredState, text: &str) -> Vec<String> {
+    if lock.entries.values().any(|entry| {
+        entry.kind == ItemKind::Skill
+            && entry.enabled
+            && matches!(
+                state.settings_templates.get(&entry.name),
+                Some(crate::settings_template::TemplateSource::Unreadable(_))
+            )
+    }) {
+        return Vec::new();
+    }
+    crate::settings_seed::settings_advisories(text, &state.settings_env, &state.settings_templates)
 }
 
 /// An unavailable or edited installed tree proves nothing and grants no
@@ -526,6 +544,7 @@ pub(super) fn plan_project_files(
     state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
+    advisories: &mut Vec<String>,
 ) -> Result<(Vec<String>, Vec<DriftRow>, Vec<String>)> {
     let target = super::secrets_write::target(scope, options)?;
     let mut notes = Vec::new();
@@ -536,7 +555,7 @@ pub(super) fn plan_project_files(
         &mut notes,
     )?;
     let (settings_notes, drift, removed) =
-        plan_settings_seed(env, scope, lock, state, options, ops)?;
+        plan_settings_seed(env, scope, lock, state, options, ops, advisories)?;
     notes.extend(settings_notes);
     notes.extend(super::secrets_write::plan_secrets(
         scope,

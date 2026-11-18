@@ -9,6 +9,7 @@ use super::text::{shown, verbatim};
 use super::*;
 use crate::lock::{InstallRef, LockEntry, Reason};
 use crate::model::HarnessId;
+use crate::source::header::SkillReading;
 
 /// One scope's outcome beyond the lines it pushed: its second-copy scan,
 /// which the caller folds with the other scopes' before rendering through
@@ -163,7 +164,7 @@ pub(super) fn check_scope(
         ManifestRead::Absent => Some(&nothing),
         ManifestRead::Unreadable => None,
     };
-    ctx.command_lines(declared, record_view, &occupied, sections);
+    ctx.skill_lines(declared, record_view, &occupied, lock.is_ok(), sections);
     ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
     ctx.snapshot_lines(manifest.current(), sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);
@@ -309,7 +310,7 @@ impl ManifestRead {
 /// or a catalog to read behind the check's deadline, at the revision the
 /// install record names where one does.
 enum DeclarationRead {
-    Text(Result<String, String>),
+    Text(Result<SkillReading, String>),
     Catalog(Option<crate::source::header::InstalledFrom>),
 }
 
@@ -324,13 +325,16 @@ impl ScopeCheck<'_> {
     /// publish it, so every such read runs behind this check's deadline
     /// ([`crate::drift::copies::gated`]); one the deadline cuts off is
     /// named as not checked.
-    fn command_lines(
+    fn skill_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
         lock: &crate::lock::Lock,
         occupied: &BTreeMap<String, crate::engine::Occupied>,
+        record_readable: bool,
         sections: &mut Sections,
     ) {
+        use crate::settings_template::TemplateSource;
+        let settings = self.settings_text(record_readable && manifest.is_some());
         let mut seen = BTreeSet::new();
         let recorded = lock
             .entries
@@ -386,6 +390,7 @@ impl ScopeCheck<'_> {
                 )
             });
         let mut reads = Vec::new();
+        let mut complete = true;
         for (name, source, paths, installed) in recorded.chain(unrecorded).chain(native) {
             let in_place = crate::engine::desired::in_place_source(
                 self.env,
@@ -402,13 +407,77 @@ impl ScopeCheck<'_> {
             if !seen.insert(name.to_owned()) {
                 continue;
             }
-            if let Some(read) = self.declaration_read(manifest, in_place, installed) {
+            if let Some(read) =
+                self.declaration_read(manifest, in_place, installed, settings.is_some())
+            {
                 reads.push((name.to_owned(), read));
+            } else {
+                complete = false;
             }
         }
-        for (name, text) in self.declaration_texts(manifest, reads) {
-            self.command_source_lines(&name, text, sections);
+        let mut templates = BTreeMap::new();
+        for (name, reading) in self.declaration_texts(manifest, reads, settings.is_some()) {
+            let header = match reading {
+                Ok(SkillReading { header, settings }) => {
+                    complete &= !matches!(settings, TemplateSource::Unreadable(_));
+                    if !matches!(settings, TemplateSource::Absent) {
+                        templates.insert(name.clone(), settings);
+                    }
+                    header
+                }
+                Err(error) => {
+                    complete = false;
+                    Err(error)
+                }
+            };
+            self.command_source_lines(&name, header, sections);
         }
+        if let (Some(text), true) = (settings, complete) {
+            self.settings_lines(&text, &templates, sections);
+        }
+    }
+
+    fn settings_text(&self, scope_readable: bool) -> Option<String> {
+        let Scope::Project { root } = self.scope else {
+            return None;
+        };
+        if !scope_readable {
+            return None;
+        }
+        let path = crate::settings_seed::settings_file_path(root);
+        if path.is_symlink() || !path.is_file() {
+            return None;
+        }
+        crate::fs::read_if_exists(&path).ok().flatten()
+    }
+
+    fn settings_lines(
+        &self,
+        text: &str,
+        templates: &BTreeMap<String, crate::settings_template::TemplateSource>,
+        sections: &mut Sections,
+    ) {
+        use crate::settings_template::TemplateSource;
+        let entries: Vec<_> = templates
+            .iter()
+            .filter_map(|(name, template)| match template {
+                TemplateSource::Text(text) => {
+                    Some(crate::settings_seed::SeededEnv::declarations(name, text))
+                }
+                TemplateSource::Absent | TemplateSource::Unreadable(_) => None,
+            })
+            .flatten()
+            .collect();
+        sections.settings.extend(
+            crate::settings_seed::settings_advisories(text, &entries, templates)
+                .into_iter()
+                .map(|note| Line {
+                    class: Class::Notice,
+                    text: format!("{}{note}", self.prefix).into(),
+                    remedy: None,
+                    detail: None,
+                }),
+        );
     }
 
     /// Each read's text, in the order asked. The catalog reads run on one
@@ -418,7 +487,8 @@ impl ScopeCheck<'_> {
         &self,
         manifest: Option<&crate::manifest::Manifest>,
         mut reads: Vec<(String, DeclarationRead)>,
-    ) -> Vec<(String, Result<String, String>)> {
+        settings: bool,
+    ) -> Vec<(String, Result<SkillReading, String>)> {
         let catalog_reads: Vec<(String, Option<crate::source::header::InstalledFrom>)> = reads
             .iter_mut()
             .filter_map(|(name, read)| match read {
@@ -433,13 +503,13 @@ impl ScopeCheck<'_> {
                 Some(crate::drift::copies::gated(self.deadline, move |sender| {
                     let mut headers = crate::source::header::DeclaredHeaders::default();
                     for (name, installed) in catalog_reads {
-                        let text = headers.text(
+                        let text = headers.skill(
                             &env,
                             &scope,
                             &manifest,
-                            ItemKind::Skill,
                             &name,
                             installed.as_ref(),
+                            settings,
                         );
                         if sender.send(text).is_err() {
                             return;
@@ -486,11 +556,17 @@ impl ScopeCheck<'_> {
         manifest: Option<&crate::manifest::Manifest>,
         in_place: Option<PathBuf>,
         installed: Option<crate::source::header::InstalledFrom>,
+        settings: bool,
     ) -> Option<DeclarationRead> {
         Some(match (in_place, manifest, installed) {
             (Some(root), _, _) => DeclarationRead::Text(
                 crate::source_read::SealedSource::open(&root)
-                    .and_then(|sealed| sealed.read_to_string(&sealed.root().join("SKILL.md")))
+                    .map(|sealed| {
+                        let header = sealed
+                            .read_to_string(&sealed.root().join("SKILL.md"))
+                            .map_err(|error| error.to_string());
+                        SkillReading::read(&sealed, sealed.root(), header, settings)
+                    })
                     .map_err(|error| error.to_string()),
             ),
             (None, None, _) => DeclarationRead::Text(Err(
