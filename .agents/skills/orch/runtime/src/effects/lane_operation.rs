@@ -538,11 +538,22 @@ impl<'a> LaneOperation<'a> {
     /// or the main worktree, is kept as such. A path or a read that fails
     /// leaves the obligation standing `worktree-unreadable`: never released,
     /// never kept. Nothing to release where the set records no worktree.
-    pub(super) fn release_worktree(&mut self) -> Result<Option<WorktreeRelease>> {
+    /// The reads trust one common git folder: the one the lane's
+    /// registration recorded (`checkout_common`), which no lane can write,
+    /// else the overseer's own checkout's.
+    pub(super) fn release_worktree(&mut self, lane: &Lane) -> Result<Option<WorktreeRelease>> {
         let Some(path) = self.lane.worktree() else {
             return Ok(None);
         };
-        let release = match worktree::plan(&path, &self.run.settings.roots.common) {
+        let common = lane
+            .extra
+            .get(ops::lane::CHECKOUT_COMMON)
+            .and_then(Value::as_str)
+            .map_or_else(
+                || self.run.settings.roots.common.join(".git"),
+                PathBuf::from,
+            );
+        let release = match worktree::plan(&path, &common) {
             worktree::Plan::Answered(release) => {
                 self.discharge_read(LaneDischarge::Worktree {
                     path,

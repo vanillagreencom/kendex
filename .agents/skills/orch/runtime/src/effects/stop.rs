@@ -486,7 +486,7 @@ impl Close<'_> {
         observation["window"] = json!(window.word());
         // The run's diagnostic of the release; the set's discharge word and
         // the lane's `kept` and `kept_mail` are the reading.
-        match operation.release_worktree()? {
+        match operation.release_worktree(self.lane)? {
             None => {}
             Some(WorktreeRelease::Gone) => observation["worktree"] = json!("gone"),
             Some(WorktreeRelease::Released { .. }) => observation["worktree"] = json!("released"),

@@ -324,6 +324,43 @@ pub(super) fn of(
     })
 }
 
+/// The folders [`of`] grants some lane writable beside its checkout: every
+/// item's folder of the state directory, the usage records, every
+/// configured account's seat, the build caches and `ORCH_LANE_WRITABLE`'s
+/// folders, each resolved where it stands. A lane's registration reads them
+/// to refuse a common git folder an earlier lane could have planted.
+pub(crate) fn writable_beside_checkout(settings: &Settings) -> Result<Vec<PathBuf>> {
+    let state = resolved(&settings.state_dir).unwrap_or_else(|| settings.state_dir.clone());
+    let usage = settings.account_state.get()?.join("usage");
+    let home = settings
+        .home
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|h| h.is_absolute());
+    let mut folders = vec![
+        crate::state::items_dir(&state),
+        resolved(&usage).unwrap_or(usage),
+    ];
+    let configured = agent_runtime::accounts::listing::configured(
+        &settings.accounts.get()?.account_dirs,
+        settings.home.as_deref(),
+        &mut Vec::new(),
+    )
+    .map_err(|cause| refused("grant-seats-unread", &[("cause", &cause)]))?;
+    folders.extend(
+        configured
+            .into_iter()
+            .filter_map(|(_, dir)| resolved(Path::new(&dir))),
+    );
+    folders.extend(build_caches(home.as_deref()).0);
+    folders.extend(lane_writable(
+        settings.lane_writable.as_deref(),
+        home.as_deref(),
+        &[],
+    )?);
+    Ok(folders)
+}
+
 /// The variable a variable-named folder is read from, absolute only.
 fn env_dir(name: &str) -> Option<PathBuf> {
     std::env::var_os(name)

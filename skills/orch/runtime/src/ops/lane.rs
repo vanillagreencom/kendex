@@ -638,6 +638,46 @@ pub struct PhaseRecorded {
     pub intent: Intent,
 }
 
+/// The lane row's member naming the canonical common git folder of the
+/// checkout its registration read: with the overseer's own, the one folder
+/// a close trusts the lane's worktree to belong to.
+pub(crate) const CHECKOUT_COMMON: &str = "checkout_common";
+
+/// The lane row's [`CHECKOUT_COMMON`], its one writer: `common`, the folder
+/// the binding read from the checkout at `r.mail_root`, where no lane could
+/// have planted it, else none. A folder under another `.git` (a lane may
+/// write its checkout's common folder), under the lane's root, or under a
+/// folder its grants make writable beside its checkout is not recorded,
+/// nor one judged against no settings or an unread grant: the close then
+/// trusts the overseer's own folder alone.
+fn record_checkout_common(lane: &mut Document, common: Option<&Path>, r: &LaunchLane, host: &Host) {
+    let trusted = common.filter(|common| {
+        let Some(beside) = host
+            .accounts
+            .and_then(|settings| crate::effects::writable_beside_checkout(settings).ok())
+        else {
+            return false;
+        };
+        let root = fs::canonicalize(&r.mail_root).unwrap_or_else(|_| PathBuf::from(&r.mail_root));
+        // `.git` and a bare repository's `<name>.git` alike.
+        let nested = common.parent().is_some_and(|parent| {
+            parent
+                .iter()
+                .any(|c| c.to_str().is_some_and(|c| c.ends_with(".git")))
+        });
+        !nested
+            && !std::iter::once(root)
+                .chain(beside)
+                .any(|w| common.starts_with(w))
+    });
+    match trusted.and_then(Path::to_str) {
+        Some(common) => record::set(lane, CHECKOUT_COMMON, common),
+        None => {
+            record::delete(lane, CHECKOUT_COMMON);
+        }
+    }
+}
+
 /// The record a first launch appends, in the lane record's key order with
 /// `null` where the launch knows no value, the order every reader of the
 /// fleet record meets. `permission` is the permission choice the line
@@ -1305,18 +1345,22 @@ pub(super) fn launch_lane(
     )?;
     // A relaunch was judged when first admitted, bar where it runs and
     // whose item it is: the binding, on its effective tracker and
-    // repository, before the patch writes them.
-    if let Some(index) = relaunch {
-        let record = &lanes[index];
-        admission::bound(
-            path,
-            &r.item,
-            r.tracker.as_deref().or(record.tracker.as_deref()),
-            r.repo.as_deref().or(record.repo.as_deref()),
-            Path::new(&r.mail_root),
-            host,
-        )?;
-    }
+    // repository, before the patch writes them. Either binding answers the
+    // checkout's common git folder it read.
+    let checkout_common = match relaunch {
+        Some(index) => {
+            let record = &lanes[index];
+            admission::bound(
+                path,
+                &r.item,
+                r.tracker.as_deref().or(record.tracker.as_deref()),
+                r.repo.as_deref().or(record.repo.as_deref()),
+                Path::new(&r.mail_root),
+                host,
+            )?
+        }
+        None => judged.as_ref().and_then(|j| j.checkout_common.clone()),
+    };
     if admission.occupancy >= cap && r.over_cap.is_none() {
         let lanes = admission
             .charges
@@ -1382,6 +1426,11 @@ pub(super) fn launch_lane(
                 record::array_mut(path, doc, "fleet_log")?.push(row);
             }
             let lane = lane_doc_mut(path, doc, index)?;
+            // Over the same `mail_root` the folder first recorded stands: a
+            // session of the lane may have rewritten the checkout's `.git`.
+            if previous.get("mail_root").and_then(Value::as_str) != Some(r.mail_root.as_str()) {
+                record_checkout_common(lane, checkout_common.as_deref(), r, host);
+            }
             record::set(lane, "mail_root", r.mail_root.as_str());
             for (key, value) in r.prepared() {
                 if let Some(value) = value {
@@ -1457,6 +1506,12 @@ pub(super) fn launch_lane(
             }
             rows.push(record);
             let index = rows.len() - 1;
+            record_checkout_common(
+                lane_doc_mut(path, doc, index)?,
+                checkout_common.as_deref(),
+                r,
+                host,
+            );
             if let Some(judged) = &judged {
                 admission::record(path, doc, index, judged)?;
             }

@@ -1609,6 +1609,195 @@ fn a_launch_from_a_checkout_the_fleet_neither_owns_nor_connects_is_refused() {
     );
 }
 
+/// A launch's registration records on its lane row the canonical common
+/// git folder admission read from its checkout (`checkout_common`), the
+/// folder the close trusts the lane's worktree to belong to: a first launch
+/// from a linked worktree of a connected repository records that
+/// repository's `.git`; a relaunch over the same `mail_root` after the
+/// worktree's `.git` was rewritten keeps the folder first recorded, since a
+/// session of the lane could have written it; a relaunch from another
+/// checkout records that checkout's; a checkout whose common folder lies
+/// where a lane can plant one, under its own root, under another `.git` or
+/// a bare repository's `<name>.git`, in an `ORCH_LANE_WRITABLE` folder, in
+/// any item's state folder or in a configured account's seat, records none.
+#[test]
+fn a_launch_records_its_checkouts_common_git_folder_once_and_never_one_under_its_root() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    git(&fleet.state_dir(), &["init", "-q", "-b", "main", "."]);
+    git(
+        &fleet.state_dir(),
+        &["remote", "add", "origin", "git@github.com:o/fleet.git"],
+    );
+    let connected = [("ORCH_CONNECTED_REPOS", "o/other o/third")];
+    let launch_from = |item: &str, root: &Path| {
+        let mut request = launch(item, root);
+        request.as_object_mut().unwrap().remove("tracker");
+        let out = fleet.op_with(&request, &connected);
+        assert_eq!(reply(&out)["ok"], true, "{item}: {}", stderr(&out));
+    };
+    // A repository with one commit and its linked worktree `<name>-wt`.
+    let worktree_of = |name: &str| {
+        let repo = fleet.checkout(name, Some(&format!("git@github.com:o/{name}.git")));
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        let wt = fleet.dir.path().join(format!("{name}-wt"));
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                &wt.display().to_string(),
+                "-b",
+                "lane",
+            ],
+        );
+        (repo, wt)
+    };
+    // A copy of `repo`'s git folder at `at`, and `wt`'s `.git` naming the
+    // copy's admin folder of `wt`: the same origin, read through a common
+    // folder the lane chose.
+    let redirect = |repo: &Path, wt: &Path, at: &Path| {
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        let out = program("cp")
+            .arg("-R")
+            .arg(repo.join(".git"))
+            .arg(at)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "cp: {}", stderr(&out));
+        let admin = at.join("worktrees").join(wt.file_name().unwrap());
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+    };
+    let common = |repo: &Path| {
+        json!(
+            std::fs::canonicalize(repo.join(".git"))
+                .unwrap()
+                .display()
+                .to_string()
+        )
+    };
+    let (other, wt) = worktree_of("other");
+    launch_from("KEN-1", &wt);
+    assert_eq!(
+        fleet.lane("KEN-1")["checkout_common"],
+        common(&other),
+        "a first launch"
+    );
+    assert_eq!(fleet.lane("KEN-1")["status"], "stopped");
+    redirect(&other, &wt, &fleet.dir.path().join("copy/.git"));
+    launch_from("KEN-1", &wt);
+    assert_eq!(
+        fleet.lane("KEN-1")["checkout_common"],
+        common(&other),
+        "a relaunch over the same mail_root"
+    );
+    let (third, third_wt) = worktree_of("third");
+    launch_from("KEN-1", &third_wt);
+    assert_eq!(
+        fleet.lane("KEN-1")["checkout_common"],
+        common(&third),
+        "a relaunch from another checkout"
+    );
+    let (_, planted) = worktree_of("planted");
+    let source = fleet.dir.path().join("planted");
+    git(
+        &source,
+        &["remote", "set-url", "origin", "git@github.com:o/other.git"],
+    );
+    redirect(&source, &planted, &planted.join("tmp/x/.git"));
+    launch_from("KEN-2", &planted);
+    assert_eq!(
+        fleet.lane("KEN-2")["checkout_common"],
+        Value::Null,
+        "a common folder under the lane's root"
+    );
+    let (_, nested) = worktree_of("nested");
+    let source = fleet.dir.path().join("nested");
+    git(
+        &source,
+        &["remote", "set-url", "origin", "git@github.com:o/other.git"],
+    );
+    redirect(&source, &nested, &other.join(".git/x/.git"));
+    launch_from("KEN-3", &nested);
+    assert_eq!(
+        fleet.lane("KEN-3")["checkout_common"],
+        Value::Null,
+        "a common folder under another .git"
+    );
+    let (granted, granted_wt) = worktree_of("granted");
+    git(
+        &granted,
+        &["remote", "set-url", "origin", "git@github.com:o/other.git"],
+    );
+    let mut request = launch("KEN-4", &granted_wt);
+    request.as_object_mut().unwrap().remove("tracker");
+    let writable = granted.display().to_string();
+    let out = fleet.op_with(
+        &request,
+        &[connected[0], ("ORCH_LANE_WRITABLE", writable.as_str())],
+    );
+    assert_eq!(reply(&out)["ok"], true, "KEN-4: {}", stderr(&out));
+    assert_eq!(
+        fleet.lane("KEN-4")["checkout_common"],
+        Value::Null,
+        "a common folder in an ORCH_LANE_WRITABLE folder"
+    );
+    // A worktree of a repository of the connected slug whose `.git` leads
+    // through a copy of its git folder at `at`.
+    let planted_at = |name: &str, at: &Path| {
+        let (source, wt) = worktree_of(name);
+        git(
+            &source,
+            &["remote", "set-url", "origin", "git@github.com:o/other.git"],
+        );
+        redirect(&source, &wt, at);
+        wt
+    };
+    let at = fleet.state_dir().join("items/KEN-1/x/.git");
+    launch_from("KEN-5", &planted_at("items", &at));
+    assert_eq!(
+        fleet.lane("KEN-5")["checkout_common"],
+        Value::Null,
+        "a common folder in another item's state folder"
+    );
+    let at = fleet.dir.path().join("srv/repo.git/x/.git");
+    launch_from("KEN-6", &planted_at("bare", &at));
+    assert_eq!(
+        fleet.lane("KEN-6")["checkout_common"],
+        Value::Null,
+        "a common folder under a bare repository's"
+    );
+    let seat = fleet.dir.path().join("seat");
+    let wt = planted_at("seated", &seat.join("x/.git"));
+    let mut request = launch("KEN-7", &wt);
+    request.as_object_mut().unwrap().remove("tracker");
+    let seat = seat.display().to_string();
+    let out = fleet.op_with(
+        &request,
+        &[connected[0], ("AGENT_RUNTIME_ACCOUNT_DIRS", seat.as_str())],
+    );
+    assert_eq!(reply(&out)["ok"], true, "KEN-7: {}", stderr(&out));
+    assert_eq!(
+        fleet.lane("KEN-7")["checkout_common"],
+        Value::Null,
+        "a common folder in a configured account's seat"
+    );
+}
+
 /// A `github` item whose repository is not the one its checkout's origin
 /// names, and a `linear` item of another team than the fleet's
 /// `LINEAR_TEAM` (read through the linear package's real team formatter

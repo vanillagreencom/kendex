@@ -4965,6 +4965,118 @@ fn a_close_runs_no_program_a_lane_planted_in_its_git_folders() {
     }
 }
 
+/// A lane may hold a worktree of another repository than the overseer's:
+/// a connected repository's, or a second clone's. Its row then carries the
+/// common git folder its registration read (`checkout_common`), and the
+/// close pins its reads to that folder and removes a clean, merged worktree
+/// from that repository's main checkout. Trust reaches no further than the
+/// row: a `.git` leading into a third repository's `worktrees/`, a row
+/// that records no folder over a `.git` leading under the lane's own root,
+/// the recorded folder's `worktrees/` replaced by a link (a lane may write
+/// that folder), and a recorded folder not named `.git` keep the worktree
+/// `git-dir-foreign` and run no program planted there. The release of the
+/// first row runs from the recorded repository's main checkout, never the
+/// overseer's.
+#[test]
+fn a_close_releases_a_worktree_of_the_repository_its_row_records() {
+    type Plant = fn(&Path, &Path, &Path, &Path);
+    // The folder the row records, from (that repository, a third folder).
+    type Record = fn(&Path, &Path) -> Option<PathBuf>;
+    let its_own: Record = |repo, _| Some(std::fs::canonicalize(repo.join(".git")).unwrap());
+    // (name, the folder the row records, the lane's write as (that
+    // repository, the worktree, the program, a third folder), the word the
+    // worktree is kept with, none for a release)
+    let rows: Vec<(&str, Record, Plant, Option<&str>)> = vec![
+        (
+            "a clean, merged worktree of the recorded repository",
+            its_own,
+            |_, _, _, _| {},
+            None,
+        ),
+        (
+            "its .git leads into a third repository's worktrees/",
+            its_own,
+            |repo, wt, run, third| {
+                let planted = third.join(".git");
+                planted_git_folder(repo, &planted, run);
+                let gitfile = format!("gitdir: {}\n", planted.join("worktrees/wt").display());
+                std::fs::write(wt.join(".git"), gitfile).unwrap();
+            },
+            Some("git-dir-foreign"),
+        ),
+        (
+            "no recorded folder, its .git leading under its own root",
+            |_, _| None,
+            |repo, wt, run, _| {
+                let planted = wt.join("tmp/planted/.git");
+                planted_git_folder(repo, &planted, run);
+                let gitfile = format!("gitdir: {}\n", planted.join("worktrees/wt").display());
+                std::fs::write(wt.join(".git"), gitfile).unwrap();
+            },
+            Some("git-dir-foreign"),
+        ),
+        (
+            "the recorded repository's worktrees/ a link into a third's",
+            its_own,
+            |repo, wt, run, third| {
+                let planted = third.join(".git");
+                planted_git_folder(repo, &planted, run);
+                let worktrees = repo.join(".git/worktrees");
+                std::fs::rename(&worktrees, repo.join(".git/moved")).unwrap();
+                std::os::unix::fs::symlink(planted.join("worktrees"), &worktrees).unwrap();
+                restat(wt);
+            },
+            Some("git-dir-foreign"),
+        ),
+        (
+            "a recorded folder not named .git, a link to the repository's",
+            |repo, third| {
+                let link = third.join("common");
+                std::os::unix::fs::symlink(repo.join(".git"), &link).unwrap();
+                Some(link)
+            },
+            |_, _, _, _| {},
+            Some("git-dir-foreign"),
+        ),
+    ];
+    for (name, record, plant, kept) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let [own, other, third] = ["a", "b", "c"].map(|name| {
+            let at = runner.state_dir().join(name);
+            std::fs::create_dir_all(&at).unwrap();
+            at
+        });
+        let overseer = repository_fixture(&own);
+        let (repo, wt) = worktree_fixture(&other);
+        let marker = runner.state_dir().join("planted-ran");
+        let run = runner.state_dir().join("planted-program");
+        write_executable(
+            &run,
+            format!("#!/bin/sh\necho \"$0\" >> '{}'\n", marker.display()),
+        );
+        plant(&repo, &wt, &run, &third);
+        let mut row = worktree_lane("KEN-C", &runner, &wt);
+        if let Some(common) = record(&repo, &third) {
+            row["checkout_common"] = json!(common.display().to_string());
+        }
+        let mut fleet = runner.fleet();
+        fleet["lanes"] = json!([row]);
+        runner.write_fleet(&fleet);
+        let report = close_with_worktree(&runner, &overseer, "KEN-C");
+        assert!(
+            !marker.exists(),
+            "{name}: the close ran the lane's program: {report}"
+        );
+        match kept {
+            None => assert_released(&report, &wt),
+            Some(word) => assert_kept(&report, &wt, word),
+        }
+    }
+}
+
 /// An idle local lane whose merge landed, its item still open on its
 /// tracker and its worktree standing: while the item's live state record
 /// stands the lane may be at work on it, so `close-lane` refuses

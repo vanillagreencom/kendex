@@ -361,6 +361,9 @@ pub(super) struct Judged {
     pub in_scope: Vec<String>,
     /// The running lane a first launch joins in place of opening its own.
     pub join: Option<Join>,
+    /// The launch checkout's canonical common git folder, as the binding
+    /// read it; `None` where no checkout was read.
+    pub checkout_common: Option<PathBuf>,
 }
 
 /// A live holder before its review that a first launch ships with, at its
@@ -763,16 +766,19 @@ fn item_foreign(repo: &str) -> Error {
 /// is unjudged and a `linear` item is judged on no team. On a connected
 /// binding a `linear` item's team is the connected checkout's setting,
 /// which the fleet's settings do not carry: the binding is the gate there.
+/// Answers the checkout's canonical common git folder where it was read: a
+/// fleet in no checkout reads none.
 fn bind(
     path: &Path,
     a: &Admission,
     checkout: &Path,
     reads: &AdmissionReads,
     settings: Option<&Settings>,
-) -> Result<()> {
+) -> Result<Option<PathBuf>> {
     let fleet_dir = path.parent().unwrap_or(Path::new("/"));
     let fleet = (reads.checkout)(&reads.clis, fleet_dir)
         .map_err(|_| unjudged("overseer-root", fleet_dir))?;
+    let mut common = None;
     let binding = match fleet {
         None => Binding::Own,
         Some(fleet) => {
@@ -784,6 +790,7 @@ fn bind(
                 (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
                 _ => false,
             };
+            common = Some(launch.root.clone());
             if launch.root == fleet.root || same_slug {
                 Binding::Own
             } else {
@@ -826,7 +833,7 @@ fn bind(
         }
         (Some("linear"), _) if binding == Binding::Own => {
             let Some(team) = settings.and_then(|s| s.linear_team.as_deref()) else {
-                return Ok(());
+                return Ok(common);
             };
             let key = (reads.team_key)(&reads.clis, team)
                 .map_err(|_| unresolved(&[("tracker", "linear"), ("team", team)]))?;
@@ -837,13 +844,14 @@ fn bind(
         }
         _ => {}
     }
-    Ok(())
+    Ok(common)
 }
 
 /// The binding alone (the module's binding paragraph): a first launch's,
 /// inside the judgement, and a relaunch's, whose touched set, Ancestor gate
 /// and holders were judged when it was first admitted but whose checkout,
-/// tracker and repository the request may change.
+/// tracker and repository the request may change. Answers the checkout's
+/// common git folder as [`bind`] read it.
 pub(super) fn bound(
     path: &Path,
     item: &str,
@@ -851,7 +859,7 @@ pub(super) fn bound(
     repo: Option<&str>,
     checkout: &Path,
     host: &Host,
-) -> Result<()> {
+) -> Result<Option<PathBuf>> {
     let reads = host
         .admission
         .as_ref()
@@ -890,9 +898,10 @@ pub(super) fn judge(
             .as_ref()
             .ok_or_else(|| unreadable(read, "admission-reads-unavailable".to_owned()))
     };
-    if let Some(checkout) = a.checkout {
-        bound(path, a.item, a.tracker, a.repo, checkout, host)?;
-    }
+    let checkout_common = match a.checkout {
+        Some(checkout) => bound(path, a.item, a.tracker, a.repo, checkout, host)?,
+        None => None,
+    };
     let mut body = None;
     let mut blocked = None;
     if let Some(tracker) = a.tracker {
@@ -1114,6 +1123,7 @@ pub(super) fn judge(
         touched,
         in_scope,
         join,
+        checkout_common,
     })
 }
 
@@ -1333,6 +1343,7 @@ pub(super) fn admit_paths(
         ),
         in_scope: judged.in_scope,
         join: None,
+        checkout_common: None,
     };
     record(path, doc, index, &widened)?;
     Ok(PathsAdmitted {

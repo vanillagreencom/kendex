@@ -418,32 +418,41 @@ fn holds_submodule(pinned: &Pinned) -> std::result::Result<bool, String> {
 }
 
 /// The git folders a close reads a linked worktree through: the worktree
-/// `root` the lane record names, its admin folder and the common git folder
-/// of the overseer's own checkout, each as [`pin`] proved it.
+/// `root` the lane record names, its admin folder and the trusted common
+/// git folder, each as [`pin`] proved it, and the main checkout the
+/// worktree package removes it from.
 struct Pinned<'a> {
     root: &'a str,
     admin: PathBuf,
     common: PathBuf,
+    main: PathBuf,
 }
 
-/// The worktree at `root` pinned to the overseer's own git folders, or the
-/// reason it is kept with no git run there. A confined lane may write its
-/// root's `.git` file and everything under its admin folder, so git's own
-/// discovery from `root` would read a configuration the lane chose and run
-/// the programs it names (`core.fsmonitor`, a lazy fetch's
-/// `core.sshCommand`), as the operator. The `.git` file must name, through
-/// the launch record's parser ([`marker::git_dirs_of`]), a real folder
-/// directly under `<main>/.git/worktrees/`, where `main` is the overseer's
-/// own main checkout, else `git-dir-foreign`. A `config.worktree` in that
+/// The worktree at `root` pinned to the trusted common git folder `common`,
+/// or the reason it is kept with no git run there. A confined lane may
+/// write its root's `.git` file and everything under its admin folder, so
+/// git's own discovery from `root` would read a configuration the lane
+/// chose and run the programs it names (`core.fsmonitor`, a lazy fetch's
+/// `core.sshCommand`), as the operator. `common` must be a main checkout's
+/// `.git`, and the `.git` file must name, through the launch record's
+/// parser ([`marker::git_dirs_of`]), a real folder directly under
+/// `<common>/worktrees/` as the path reads unresolved, else
+/// `git-dir-foreign`. A `config.worktree` in that
 /// folder, which git reads where the common configuration turns on
 /// `extensions.worktreeConfig`, may hold only [`inert_worktree_key`]s,
 /// else `worktree-config`; it is judged wherever it stands, the extension
 /// unread. `Err` is a read that failed.
 fn pin<'a>(
     root: &'a str,
-    main: &Path,
+    common: &Path,
 ) -> std::result::Result<std::result::Result<Pinned<'a>, KeptReason>, String> {
     let foreign = Ok(Err(KeptReason::GitDirForeign));
+    let (Some(name), Some(main)) = (common.file_name(), common.parent()) else {
+        return foreign;
+    };
+    if name != ".git" {
+        return foreign;
+    }
     let gitfile = std::fs::read(Path::new(root).join(".git"))
         .map_err(|e| format!("git-entry:{}", e.kind()))?;
     let Some((named, _)) = std::str::from_utf8(&gitfile)
@@ -452,9 +461,13 @@ fn pin<'a>(
     else {
         return foreign;
     };
-    let Some(worktrees) = canonical(&main.join(".git").join("worktrees"))? else {
+    let Some(common) = canonical(common)? else {
         return foreign;
     };
+    // Never resolved: a lane may write the common folder, so `worktrees` may
+    // be its link into a folder of the lane's choosing, which the canonical
+    // admin folder's parent then never equals.
+    let worktrees = common.join("worktrees");
     let Some(admin) = canonical(&named)? else {
         return foreign;
     };
@@ -464,13 +477,11 @@ fn pin<'a>(
     if !real_folder || admin.parent() != Some(worktrees.as_path()) {
         return foreign;
     }
-    let Some(common) = worktrees.parent().map(Path::to_path_buf) else {
-        return foreign;
-    };
     let pinned = Pinned {
         root,
         admin,
         common,
+        main: main.to_path_buf(),
     };
     let config = pinned.admin.join("config.worktree");
     match std::fs::symlink_metadata(&config) {
@@ -633,12 +644,11 @@ pub(super) enum Plan {
 /// unreadable, no worktree or the main worktree answers at once; a linked
 /// worktree [`pin`] keeps, or that holds a submodule, a dirty tree or
 /// unmerged commits, is kept with its reason; a clean, merged one is the
-/// package's to remove, run from `main`, the overseer's own main checkout
-/// (`Roots::common`), the parent of the common git folder the reads were
-/// pinned to: the package takes its repository from the directory it runs
-/// in, so the removal runs there, never inside the tree it deletes nor in a
-/// folder the lane's git answers named.
-pub(super) fn plan(path: &str, main: &Path) -> Plan {
+/// package's to remove, run from the parent of `common`, the trusted common
+/// git folder the reads were pinned to: the package takes its repository
+/// from the directory it runs in, so the removal runs there, never inside
+/// the tree it deletes nor in a folder the lane's git answers named.
+pub(super) fn plan(path: &str, common: &Path) -> Plan {
     Plan::Answered(match read_worktree(path) {
         WorktreeRead::Gone => WorktreeRelease::Gone,
         WorktreeRead::Unreadable { cause } => WorktreeRelease::Held { cause },
@@ -648,13 +658,16 @@ pub(super) fn plan(path: &str, main: &Path) -> Plan {
         WorktreeRead::Main => WorktreeRelease::Kept {
             reason: KeptReason::MainWorktree,
         },
-        WorktreeRead::Linked => match pin(path, main).and_then(|pinned| match pinned {
-            Err(reason) => Ok(Some(reason)),
-            Ok(pinned) => judge_worktree(&pinned),
+        WorktreeRead::Linked => match pin(path, common).and_then(|pinned| match pinned {
+            Err(reason) => Ok(Err(reason)),
+            Ok(pinned) => Ok(match judge_worktree(&pinned)? {
+                Some(reason) => Err(reason),
+                None => Ok(pinned.main),
+            }),
         }) {
             Err(cause) => WorktreeRelease::Held { cause },
-            Ok(Some(reason)) => WorktreeRelease::Kept { reason },
-            Ok(None) => {
+            Ok(Err(reason)) => WorktreeRelease::Kept { reason },
+            Ok(Ok(main)) => {
                 return Plan::Remove {
                     main: main.display().to_string(),
                 };
