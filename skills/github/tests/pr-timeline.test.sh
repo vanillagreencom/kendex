@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pr-timeline: the stamps and CI wall times it reads from one GraphQL
-# response, the check-suite and check-run pages it reads past that
+# response, the review, comment, check-suite and check-run pages past that
 # response's first, the review and fix rounds it reads from the reviews and
 # pushes, and its refusal of a connection longer than the page it read or
 # still open at its page cap.
@@ -126,7 +126,8 @@ BIN="$PR_TIMELINE"
 # PR_SELECTOR is the text the PR query must carry for the response to answer
 # it; a case staging an event only some requested item type returns names
 # that type, as GitHub returns no event of a type the query did not request.
-PR_SELECTOR="pullRequest(number"
+DEFAULT_PR_SELECTOR='timelineItems(first:'
+PR_SELECTOR="$DEFAULT_PR_SELECTOR"
 run() { # EDIT [ARGS...]
   local edit="$1" rc=0
   shift
@@ -166,7 +167,7 @@ PR_SELECTOR='READY_FOR_REVIEW_EVENT'
 ready_rows
 PR_SELECTOR='... on ReadyForReviewEvent { createdAt }'
 ready_rows
-PR_SELECTOR='pullRequest(number'
+PR_SELECTOR="$DEFAULT_PR_SELECTOR"
 
 # merge-attempt writes this section after each attempt. The parsed field is
 # consumed by oversee-cycle, so unrelated route text supplies no decision.
@@ -207,7 +208,7 @@ echo "=== reply-only Bot reviews do not count ==="
 # thread through the API, which creates a COMMENTED review for its reply.
 REVIEW_PAIR='.data.repository.pullRequest |= (.author = {login: "person"} | .reviews.nodes = [.reviews.nodes[2], .reviews.nodes[3]] | .reviews.nodes[0].author.login = "copilot" | .reviews.nodes[1].comments.nodes = [{replyTo: {id: "earlier-comment"}}])'
 # GitHub returns a review's comment fields only when the query requests them.
-PR_SELECTOR='comments(first: 100) { totalCount nodes { replyTo { id } } }'
+PR_SELECTOR='nodes { replyTo { id } }'
 while IFS='@' read -r label edit want; do
   [[ -n "$label" ]] || continue
   run "$REVIEW_PAIR | $edit" >/dev/null
@@ -221,7 +222,7 @@ a reply before the review does not become the first Bot review@.data.repository.
 ROWS
 PR_SELECTOR='state body submittedAt'
 assert_eq "$(run "$REVIEW_PAIR | .data.repository.pullRequest.reviews.nodes[1].body = \"Review summary\"") $(jq -c .bot_reviews "$TMP_ROOT/stdout")" 'rc=0 2' "the review body is requested from GitHub"
-PR_SELECTOR='pullRequest(number'
+PR_SELECTOR="$DEFAULT_PR_SELECTOR"
 
 echo "=== armed is the latest arm of any merge method ==="
 # The 10:50 arm made with another method, after the 10:26 merge-method arm:
@@ -236,7 +237,7 @@ arm_row() { # ITEM_TYPE EVENT
   got="$(run ".data.repository.pullRequest.timelineItems.nodes[2].__typename = \"$2\"")"
   printf '%s %s %s' "$got" "$(jq -c '.stamps.armed' "$TMP_ROOT/stdout")" \
     "$(gh_stub_calls | grep -oF -- "... on $2 { createdAt }" | wc -l | tr -d ' ')"
-  PR_SELECTOR="pullRequest(number"
+  PR_SELECTOR="$DEFAULT_PR_SELECTOR"
 }
 while IFS='|' read -r label item_type event; do
   [[ -n "$label" ]] || continue
@@ -480,7 +481,7 @@ ROWS
 ATTEMPT_META='{"run_started_at":"2026-09-20T10:47:00Z","status":"completed","conclusion":"success"}'
 ATTEMPT_PAGES='{"total_count":1,"jobs":[{"name":"test","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}'
 run "$RERUN_HEAD" >/dev/null
-PR_SELECTOR='pullRequest(number'
+PR_SELECTOR="$DEFAULT_PR_SELECTOR"
 assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2$')" "1" "the latest attempt metadata is read once"
 assert_eq "$(gh_stub_calls | grep -c 'actions/runs/1200/attempts/2/jobs?per_page=30 --paginate')" "1" "the latest attempt's jobs are read once through all pages"
 ATTEMPT_PAGES='{"total_count":2,"jobs":[{"name":"same-name","status":"completed","conclusion":"success","started_at":"2026-09-20T10:50:00Z","completed_at":"2026-09-20T11:05:00Z"}]}
@@ -524,13 +525,38 @@ while IFS='|' read -r connection edit; do
     "rc=1  {\"error\":\"truncated: $connection\"}" "$connection past one page"
 done <<'ROWS'
 commits|.data.repository.pullRequest.commits.totalCount = 101
-reviews|.data.repository.pullRequest.reviews.totalCount = 101
-review-comments|.data.repository.pullRequest.reviews.nodes[1].comments.totalCount = 101
 timeline|.data.repository.pullRequest.timelineItems.pageInfo.hasNextPage = true
 ROWS
 
-assert_eq "$(run '.data.repository.pullRequest |= (.commits.totalCount = 100 | .reviews.totalCount = 100)') $(jq -c .pr "$TMP_ROOT/stdout")" \
-  "rc=0 42" "a hundred commits and reviews fit the page and print"
+assert_eq "$(run '.data.repository.pullRequest.commits.totalCount = 100') $(jq -c .pr "$TMP_ROOT/stdout")" \
+  "rc=0 42" "a hundred commits fit the page and print"
+
+echo "=== reviews and their comments are read through every page ==="
+# The 101st review is a Bot approval. Its first 100 comments are all replies;
+# the first new thread comes on the next page and makes the review count.
+PAGED_REVIEWS='.data.repository.pullRequest.reviews |= (
+  .nodes += [range(4; 100) | {id: "R\(.)", state: "PENDING", comments: {nodes: [], pageInfo: {hasNextPage: false}}}]
+  | .totalCount = 101 | .pageInfo = {hasNextPage: true, endCursor: "review100"})'
+stage_review_pages() {
+  gh_stub_answer 'api-graphql:query reviewsPage' "$(jq -cn '{data: {repository: {pullRequest: {reviews: {
+    pageInfo: {hasNextPage: false}, nodes: [{id: "R100", state: "APPROVED", body: "",
+    submittedAt: "2026-09-20T10:32:00Z", author: {__typename: "Bot", login: "reviewer"}, commit: {oid: "h2",
+    firstSuite: {nodes: [{createdAt: "2026-09-20T10:20:00Z"}]}}, comments: {totalCount: 101,
+    pageInfo: {hasNextPage: true, endCursor: "comment100"}, nodes: [range(100) | {replyTo: {id: "thread\(.)"}}]}}]}}}}}')"
+  gh_stub_answer 'api-graphql:query reviewCommentsPage' \
+    '{"data":{"node":{"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"replyTo":null}]}}}}'
+}
+paged_reviews() {
+  assert_eq "$(run "$PAGED_REVIEWS") $(jq -c '[.pr, .head, .stamps.gate_met, .bot_reviews, .bot_review_times]' "$TMP_ROOT/stdout")" \
+    'rc=0 [42,"h2","2026-09-20T10:32:00Z",3,["2026-09-20T09:40:00Z","2026-09-20T10:30:00Z","2026-09-20T10:32:00Z"]]' \
+    "the 101st review and its 101st comment contribute to the timeline"
+}
+stage_pages() { stage_review_pages; }
+paged_reviews
+assert_eq "$(gh_stub_calls | grep -o -e 'owner=owner -f name=repo -F number=42 -f cursor=review100' -e 'id=R100 -f cursor=comment100')" \
+  $'owner=owner -f name=repo -F number=42 -f cursor=review100\nid=R100 -f cursor=comment100' \
+  "follow-up requests use the PR, review ID and cursors from GitHub"
+stage_pages() { :; }
 
 echo "=== check suites and check runs are read through every page ==="
 # The first page of the head's suites filled to 50: the fixture's two plus
@@ -606,10 +632,11 @@ assert_eq "$(gh_stub_calls | grep -c 'query suitesPage') $(gh_stub_calls | grep 
 # exactly the fragments it spreads, which GitHub refuses otherwise and the
 # stub never judges.
 stage_pages() {
+  stage_review_pages
   gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$LATE_HEAD_RUN")" false null)"
   gh_stub_answer "api-graphql:query runsPage" "$(runs_page "$(jq -cn "$LATE_GROUP_RUN")" false null)"
 }
-run "$FIFTY_SUITES | $OPEN_GROUP_RUNS" >/dev/null
+run "$PAGED_REVIEWS | $FIFTY_SUITES | $OPEN_GROUP_RUNS" >/dev/null
 assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
   '["2026-09-20T10:50:00Z",1800,1800]' "the head's suites and the group's runs page in one run"
 # Each GraphQL call's operation name with the fragments it defines and the
@@ -631,7 +658,7 @@ fragments_per_query() {
     END { flush() }'
 }
 assert_eq "$(fragments_per_query | sort | tr '\n' ';')" \
-  "pullRequest defined: gate pushed runPage suitePage suites spread: gate pushed runPage suitePage suites;runsPage defined: runPage spread: runPage;suitesPage defined: runPage suitePage spread: runPage suitePage;" \
+  "pullRequest defined: gate pushed reviewCommentPage reviewPage runPage suitePage suites spread: gate pushed reviewCommentPage reviewPage runPage suitePage suites;reviewCommentsPage defined: reviewCommentPage spread: reviewCommentPage;reviewsPage defined: pushed reviewCommentPage reviewPage spread: pushed reviewCommentPage reviewPage;runsPage defined: runPage spread: runPage;suitesPage defined: runPage suitePage spread: runPage suitePage;" \
   "each query defines the fragments it spreads and no other"
 
 echo "=== a page that cannot be followed refuses ==="
@@ -697,25 +724,33 @@ assert_eq "$(grep -o 'owner=owner -f name=repo -F number=42 -f gate=Review gate'
   "owner=owner -f name=repo -F number=42 -f gate=Review gate" "the checkout's repository and the review gate's default context otherwise"
 assert_eq "$(run . --bogus) $(cat "$TMP_ROOT/stderr")" 'rc=1 {"error":"Unknown option: --bogus"}' "an unknown option is refused"
 
-echo "=== control ==="
-# One planted defect proves the suite goes red. It runs from a private copy
-# of pr-timeline.sh beside a link to the shipped lib, so the source tree is
-# never written; that copy has the job page size, found once in the source,
-# raised to 100.
+echo "=== controls ==="
+# Run each planted defect from a private copy of pr-timeline.sh beside a
+# link to the shipped lib.
 mkdir -p "$TMP_ROOT/scripts/commands"
 ln -s "$REPO_ROOT/skills/github/scripts/lib" "$TMP_ROOT/scripts/lib"
 BIN="$TMP_ROOT/scripts/commands/pr-timeline.sh"
-JOB_PAGE='/jobs?per_page=30'
-assert_eq "$(grep -Fc -- "$JOB_PAGE" "$PR_TIMELINE")" "1" "the control finds its one site"
-A="$JOB_PAGE" R='/jobs?per_page=100' \
-  awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
-  "$PR_TIMELINE" > "$BIN"
-assert_eq "$(grep -Fc -- "$JOB_PAGE" "$BIN")" "0" "the control applied its mutation"
+mutate_timeline() { # OLD NEW
+  assert_eq "$(grep -Fc -- "$1" "$PR_TIMELINE")" "1" "the control finds its one site"
+  A="$1" R="$2" \
+    awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
+    "$PR_TIMELINE" > "$BIN"
+  assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
+}
+mutate_timeline '/jobs?per_page=30' '/jobs?per_page=100'
 if (FAIL=0; large_attempt; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/jobs-control.out"; then
   assert_eq 'accepted' 'refused' 'control: the large job page must fail the merged rerun case'
 else
   assert_eq "$(grep -c '  FAIL  the merged rerun' "$TMP_ROOT/jobs-control.out")" '1' \
     'control: the original large job page refuses the merged rerun timeline'
+fi
+mutate_timeline 'REVIEW_PAGES=10' 'REVIEW_PAGES=1'
+stage_pages() { stage_review_pages; }
+if (FAIL=0; paged_reviews; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/reviews-control.out"; then
+  assert_eq 'accepted' 'refused' 'control: a one-page review cap must fail the review pagination case'
+else
+  assert_eq "$(grep -c '  FAIL  the 101st review' "$TMP_ROOT/reviews-control.out") $(jq -c .error "$TMP_ROOT/stderr")" \
+    '1 "truncated: reviews"' 'control: the one-page cap refuses the paged review timeline'
 fi
 BIN="$PR_TIMELINE"
 
