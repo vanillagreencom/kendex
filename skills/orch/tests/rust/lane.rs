@@ -196,10 +196,10 @@ fn epoch_now() -> u64 {
 
 /// [`ACCOUNT`]'s row of `lanes list --json`: a measured Claude account with
 /// its weekly window, the binding, at `weekly` percent, read this instant
-/// with a week to its reset: each lane on it, the live ones and the
-/// candidate, is charged the setting's burn for the week, about 25 points,
-/// so at 60 percent one live lane and the candidate project 10 past the
-/// room, and the candidate alone leaves 15.
+/// with a week to its reset. Under [`HOURLY_BURN`] each lane on it, the
+/// live ones and the candidate, is charged one hour of the week's burn,
+/// 100 × 5/168, about 2.98 points, so at 90 percent one live lane and the
+/// candidate leave 4.05, under the bound's 5, and the candidate alone 7.02.
 fn listing_row(weekly_pct: u64, now: u64) -> Value {
     let weekly = clock::iso_utc(now + 7 * 86_400);
     json!({
@@ -223,6 +223,10 @@ fn listing_row(weekly_pct: u64, now: u64) -> Value {
         "pool": "plan"
     })
 }
+
+/// The burn setting at its greatest, so one lane's hour on a weekly window
+/// is a charge a test can tell from two lanes'.
+const HOURLY_BURN: (&str, &str) = ("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "100");
 
 /// A lane record on [`ACCOUNT`], its harness `process`, holding its slot
 /// through a reservation to `until` where one is named.
@@ -280,8 +284,11 @@ fn refusal_fields(answer: &Value) -> HashMap<String, String> {
 fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     let mut fleet = Fleet::new(4);
     fleet.init_fleet();
+    fleet
+        .env
+        .push((HOURLY_BURN.0.to_owned(), HOURLY_BURN.1.to_owned()));
     let now = epoch_now();
-    fleet.plant_listing(&[listing_row(60, now)]);
+    fleet.plant_listing(&[listing_row(90, now)]);
     let mut other = Owned::sleep();
     let until = clock::iso_utc(now + 3600);
     fleet.write_lanes(vec![
@@ -302,15 +309,15 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     assert_eq!(fields["account"], ACCOUNT);
     assert_eq!(fields["model"], "opus");
     assert_eq!(fields["bucket"], "weekly");
-    assert_eq!(fields["pct"], "60");
+    assert_eq!(fields["pct"], "90");
     let headroom: f64 = fields["projected-headroom"].parse().unwrap();
     assert!(
-        (-10.5..-9.5).contains(&headroom),
+        (3.9..4.2).contains(&headroom),
         "KEN-2's charge and the candidate's, not KEN-1's own reservation: {headroom}"
     );
     assert!(
         stderr(&out).starts_with(&format!(
-            "orch-runtime: account-walled item=KEN-1 account={ACCOUNT} model=opus pct=60 bucket=weekly projected-headroom="
+            "orch-runtime: account-walled item=KEN-1 account={ACCOUNT} model=opus pct=90 bucket=weekly projected-headroom="
         )),
         "{}",
         stderr(&out)
@@ -353,8 +360,11 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
 fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing() {
     let mut fleet = Fleet::new(4);
     fleet.init_fleet();
+    fleet
+        .env
+        .push((HOURLY_BURN.0.to_owned(), HOURLY_BURN.1.to_owned()));
     let now = epoch_now();
-    fleet.plant_listing(&[listing_row(60, now)]);
+    fleet.plant_listing(&[listing_row(90, now)]);
     let until = clock::iso_utc(now + 3600);
     fleet.write_lanes(vec![lane_on(
         "KEN-1",
@@ -376,7 +386,7 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
         .parse()
         .unwrap();
     assert!(
-        (-10.5..-9.5).contains(&headroom),
+        (3.9..4.2).contains(&headroom),
         "KEN-1's reservation and the candidate charge a launch that replaces nothing: {headroom}"
     );
     assert_eq!(

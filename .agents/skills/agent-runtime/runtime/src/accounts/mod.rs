@@ -1045,9 +1045,13 @@ fn window_hours(bucket: &str) -> f64 {
 }
 
 /// The projected room of one account on the window that binds it: the
-/// window charged `S × burn × hours_to_reset`. `S` is the lanes that will
-/// spend it: the fleet's live lanes on the account and, for the launch
-/// question, the candidate about to join them. `burn` is the window's burn
+/// window charged `S × burn`, one hour of burn per lane, plus, for an
+/// overseer's launch, `burn × hours_to_reset` for the controller it places.
+/// `S` is the lanes that will spend it: the fleet's live lanes on the
+/// account and, for a lane's launch, the candidate about to join them. A
+/// lane is charged one hour, since a reading is retaken within the hour and
+/// a lane charged to a weekly reset would wall an account with days of room;
+/// a controller runs to the reset, so it is charged to it. `burn` is the window's burn
 /// per lane hour: `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`, a lane's hourly
 /// spend in points of five hours scaled to the window's length, except
 /// where the reader measured a rate on that same window while lanes are
@@ -1069,7 +1073,8 @@ fn window_hours(bucket: &str) -> f64 {
 /// reset, each at its share of the measured rate (the setting where none
 /// was measured), the window's whole length where no reset is known, is
 /// `kept`, the room the seat keeps for them beyond their own trigger. A
-/// controller is never charged in `headroom`, which is the lanes' alone.
+/// seated controller is never charged in `headroom`, which is the lanes' and
+/// the candidate's alone.
 /// `room` is the headroom the lanes may spend: on a seat, the headroom less
 /// `kept` and the headroom its limit holds back below the bound.
 ///
@@ -1106,8 +1111,17 @@ fn same_window(row: &AccountRow, binding: &Binding) -> bool {
 struct Spenders {
     claims: u32,
     sampled: u32,
-    candidate: bool,
+    candidate: Candidate,
     seats: u32,
+}
+
+/// The session the launch question places on the account, charged beside
+/// the live lanes: none for the plain named reading.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Candidate {
+    None,
+    Lane,
+    Controller,
 }
 
 /// [`Projection`] of `row` on `binding`, `held` the headroom the row's
@@ -1143,10 +1157,14 @@ fn projection(
         Some(share) if claims > 0 || seat => share.max(default),
         Some(_) | None => default,
     };
-    let lanes = f64::from(claims) + if candidate { 1.0 } else { 0.0 };
     let to_reset = reset_epoch(binding.resets_at.as_deref())
         .map(|reset| ((reset as f64 - now as f64) / 3600.0).clamp(1.0, window));
-    let headroom = 100.0 - binding.pct - lanes * burn * to_reset.unwrap_or(1.0);
+    let (lanes, controller_hours) = match candidate {
+        Candidate::None => (claims, 0.0),
+        Candidate::Lane => (claims + 1, 0.0),
+        Candidate::Controller => (claims, to_reset.unwrap_or(1.0)),
+    };
+    let headroom = 100.0 - binding.pct - (f64::from(lanes) + controller_hours) * burn;
     let kept = f64::from(seats) * measured.unwrap_or(default) * to_reset.unwrap_or(window);
     Projection {
         headroom,
@@ -1713,7 +1731,11 @@ fn judge(
             &Spenders {
                 claims,
                 sampled,
-                candidate: req.launch(),
+                candidate: match (req.launch(), req.for_overseer) {
+                    (false, _) => Candidate::None,
+                    (true, false) => Candidate::Lane,
+                    (true, true) => Candidate::Controller,
+                },
                 seats,
             },
             f64::from(settings.burn_pct_per_hour),

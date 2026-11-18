@@ -527,14 +527,14 @@ fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
     drop(child);
 }
 
-/// Seat sessions charged to their reset: `S × burn_w × hours_to_reset_w` on
-/// each projected window. The weekly window at 90 percent with 144 hours to
-/// its reset and one live lane: the live lane and the candidate each
-/// charged the setting's weekly burn for 144 hours leave no room under the
-/// bound, so the launch is refused with the weekly window as the projected
-/// one; the same account with its reset one hour away is the lane.
+/// A lane is charged one hour of the window's burn, never the hours to its
+/// reset, which only a controller spends. The weekly window at 90 percent
+/// with 144 hours to its reset and one live lane: the live lane and the
+/// candidate charged one hour each of the setting's weekly burn,
+/// 2 × 5 × 5/168, leave 9.70 under the bound, so the account is the lane
+/// with the weekly window as the projected one.
 #[test]
-fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
+fn a_lane_is_charged_one_hour_of_the_binding_window_not_to_its_reset() {
     let mut world = World::new(&[]);
     let mut far = measured("aclaude", 90, 5);
     far["binding_resets_at"] = json!(stamp(now() + 144 * 3600));
@@ -546,49 +546,30 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
         vec![lane("KEN-1", &account, child.pid(), &child.start())],
         None,
     );
-    let refused = world.pick(&claude(None));
-    assert_eq!(
-        (
-            refused["answer"].clone(),
-            refused["record"]["walled"].clone()
-        ),
-        (json!("none"), json!(1)),
-        "a reset six days away charges the week: {refused}"
-    );
-    assert_eq!(
-        left_out(&refused),
-        vec![(account.clone(), "walled".to_owned())]
-    );
-    // The projected window is the weekly one, charged for the two lanes to
-    // its reset: 2 × (5 × 5/168) × 144 hours, about 43 points, against
-    // the 10 left.
-    let judged = world.pick(&named(&account, claude(None)));
-    assert_eq!(judged["answer"], json!("walled"), "{judged}");
-    assert_eq!(
-        judged["record"]["projected_window"]["bucket"],
-        json!("weekly")
-    );
-    let room = judged["record"]["projected_headroom_pct"].as_f64().unwrap();
-    assert!(
-        (-33.5..-32.0).contains(&room),
-        "the room left after the charge to the reset: {room}"
-    );
-    let mut near = measured("aclaude", 90, 5);
-    near["binding_resets_at"] = json!(stamp(now() + 3600));
-    near["resets"]["weekly"] = json!(stamp(now() + 3600));
-    world.plant_listing(&[near]);
     let admitted = world.pick(&claude(None));
     assert_eq!(
         chosen(&admitted).as_deref(),
         Some(account.as_str()),
-        "a reset one hour away charges one hour: {admitted}"
+        "a reset six days away charges one hour: {admitted}"
+    );
+    assert_eq!(admitted["record"]["claims"], json!(1));
+    assert_eq!(
+        admitted["record"]["projected_window"]["bucket"],
+        json!("weekly")
+    );
+    let room = admitted["record"]["projected_headroom_pct"]
+        .as_f64()
+        .unwrap();
+    assert!(
+        (9.6..9.8).contains(&room),
+        "two lanes at one hour each: {room}"
     );
     drop(child);
 }
 
 /// A seat keeps what its overseer will spend to the reset, measured in its
 /// own plan's points: the same work reads 0.12 points an hour on a larger
-/// plan and 0.3 on a smaller one, so with the week at 50 percent and 100
+/// plan and 0.3 on a smaller one, so with the week at 70 percent and 100
 /// hours to its reset the larger seat keeps 17 (the trigger 5 and 12) and
 /// still takes a worker, while the smaller keeps 35 (5 and 30) and is
 /// `seat-reserve`, where a flat reserve would hand its overseer's room to
@@ -599,7 +580,7 @@ fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_mo
     let mut world = World::new(&[]);
     let reset = stamp(now() + 100 * 3600);
     let seat = |alias: &str, rate: f64| {
-        let mut row = measured(alias, 50, 0);
+        let mut row = measured(alias, 70, 0);
         row["binding_resets_at"] = json!(reset);
         row["resets"]["weekly"] = json!(reset);
         row["usage_rate_state"] = json!("measured");
@@ -1450,11 +1431,14 @@ fn a_preparing_launch_is_charged_to_its_open_selections_account() {
 /// The measured rate: the rate the reader measured on the
 /// binding window is the whole account's delta, shared among the lanes live
 /// at the sample, except on a model window, which no lane on another model
-/// spends. The weekly window at 50 with 80 hours to its reset, 0.3 points
-/// an hour measured across two live lanes: the candidate's room is 14, the
-/// per-lane share's, and the record carries the reader's rate fields, since
-/// the judged window is the reader's; a model window at 50 with the same
-/// rate is charged the rate whole and walled; a window the reader did not
+/// spends. The weekly window at 50, 0.3 points an hour measured across two
+/// live lanes: the two and the candidate are charged an hour each at the
+/// per-lane share, 0.15, leaving 49.55, and the record carries the reader's
+/// rate fields, since the judged window is the reader's; a model window at
+/// 94 with the same rate is charged the rate whole, 0.3 for each of its
+/// three live lanes and the candidate, and walled, where the per-lane share
+/// would leave it room; a
+/// window the reader did not
 /// rate carries `one-sample`. The window's identity carries its label:
 /// two model windows at one reset are
 /// two windows, so a Fable read of an account whose reader rated its Opus
@@ -1471,18 +1455,18 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     weekly["usage_rate_pct_per_min"] = json!(0.005);
     weekly["projected_wall_minutes"] = json!(10_000);
     let mut model = measured("bclaude", 10, 5);
-    model["headroom_pct"] = json!(50);
+    model["headroom_pct"] = json!(6);
     model["binding_bucket"] = json!("model");
     model["binding_resets_at"] = json!(reset);
-    model["wall"] = json!(50);
+    model["wall"] = json!(94);
     model["model_label"] = json!("Opus 5");
-    model["model_buckets"] = json!([{"label": "Opus 5", "pct": 50, "resets_at": reset}]);
+    model["model_buckets"] = json!([{"label": "Opus 5", "pct": 94, "resets_at": reset}]);
     model["usage_rate_state"] = json!("measured");
     model["usage_rate_pct_per_min"] = json!(0.005);
     model["projected_wall_minutes"] = json!(10_000);
     world.plant_listing(&[weekly, model]);
     let (acc, bclaude) = (world.dir("acc"), world.dir("bclaude"));
-    let children: Vec<Owned> = (0..4).map(|_| Owned::sleep()).collect();
+    let children: Vec<Owned> = (0..5).map(|_| Owned::sleep()).collect();
     world.write_fleet(
         children
             .iter()
@@ -1503,8 +1487,8 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     assert_eq!(shared["answer"], json!("lane"), "{shared}");
     let room = shared["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!(
-        (room - 14.0).abs() < 0.01,
-        "three lanes at the per-lane share 0.15 for 80 hours: {room}"
+        (room - 49.55).abs() < 0.01,
+        "three lanes at the per-lane share 0.15 for an hour each: {room}"
     );
     assert_eq!(shared["record"]["burn_pct_per_lane_hour"], json!(0.15));
     assert_eq!(shared["record"]["usage_rate_state"], json!("measured"));
@@ -1513,7 +1497,7 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     assert_eq!(opus["answer"], json!("walled"), "{opus}");
     let room = opus["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!(
-        (room + 22.0).abs() < 0.01,
+        (room - 4.8).abs() < 0.01,
         "a model window's rate is one lane's, charged whole: {room}"
     );
     assert_eq!(opus["record"]["usage_rate_state"], json!("measured"));

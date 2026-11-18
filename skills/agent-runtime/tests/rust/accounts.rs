@@ -809,12 +809,12 @@ fn verdict(answer: &PickAnswer) -> String {
 /// A seat is chosen by the room it leaves once it keeps its overseer's
 /// spend to the reset and the headroom its limit holds back, as any
 /// account is by its room: a seat at 1 used whose overseer spends 0.3 a
-/// point an hour keeps 7.2 to a reset a day on and leaves 84.6 beside the
-/// candidate's charge at that rate, so it is the lane over an account at 83
-/// used with 13.4; a seat at 40 used whose overseer spends 0.12 an hour
-/// keeps 12 to a reset a hundred hours on and leaves 33.1, so an account at
-/// 45 used with 40.1 is the lane over it, though the seat's own lanes-only
-/// room, 45.1, is the larger.
+/// point an hour keeps 7.2 to a reset a day on and leaves 91.5 beside the
+/// candidate's hour at that rate, so it is the lane over an account at 83
+/// used with 16.85; a seat at 40 used whose overseer spends 0.12 an hour
+/// keeps 12 to a reset a hundred hours on and leaves 47.88, so an account at
+/// 45 used with 54.85 is the lane over it, though the seat's own lanes-only
+/// room, 59.88, is the larger.
 #[test]
 fn a_lane_goes_to_the_account_with_the_most_room_after_its_seats_reserve() {
     let world = World::new(&[]);
@@ -852,27 +852,31 @@ fn a_lane_goes_to_the_account_with_the_most_room_after_its_seats_reserve() {
 /// A measured rate is a lane's only where a lane was live at its sample:
 /// lanes charged on an account whose sample no lane was live at are
 /// charged no less than the set burn, 5 × 5/168 a point an hour on the
-/// week, and the measured rate where it is higher. Four lanes that began
-/// after the sample of a seat at 1 used whose overseer alone spent 0.03 an
-/// hour put the seat past its reserve; one such lane on an account at 80
-/// used walls it; and a rate of 30 an hour some other spender drew walls an
-/// account at 50 used that the set burn alone would leave room on.
+/// week, and the measured rate where it is higher, one hour each. Eight
+/// lanes that began after the sample of a seat at 90 used whose overseer
+/// alone spent 0.03 an hour, with the candidate 1.34 at the set burn
+/// beside the 4.32 the seat keeps to a reset 144 hours on, put the seat
+/// past its reserve, where the measured rate would charge them 0.27; six
+/// such lanes on an account at 94 used wall it, 1.04 beside the 0.21 the
+/// measured rate would charge; and a rate of 30 an hour some other spender
+/// drew walls an account at 50 used that the set burn alone would leave
+/// room on.
 #[test]
 fn a_measured_rate_with_no_lane_live_at_the_sample_is_no_lanes_rate() {
     let world = World::new(&[]);
     let seat = judged(
         &world,
-        &[rated("seat", 1, 0.0005, Some(144))],
+        &[rated("seat", 90, 0.0005, Some(144))],
         &named("/home/me/.seat", claude(None)),
-        &seated_facts(Some("/home/me/.seat"), "/home/me/.seat", 4),
+        &seated_facts(Some("/home/me/.seat"), "/home/me/.seat", 8),
     );
     assert_eq!(verdict(&seat), "seat-reserve", "{seat:?}");
-    for (used, rate) in [(80, 0.0005), (50, 0.5)] {
+    for (used, rate, lanes) in [(94, 0.0005, 6), (50, 0.5, 1)] {
         let ordinary = judged(
             &world,
             &[rated("ordinary", used, rate, Some(100))],
             &named("/home/me/.ordinary", claude(None)),
-            &seated_facts(None, "/home/me/.ordinary", 1),
+            &seated_facts(None, "/home/me/.ordinary", lanes),
         );
         assert_eq!(verdict(&ordinary), "walled", "{used} {rate}: {ordinary:?}");
     }
@@ -1240,12 +1244,13 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
 }
 
 /// The candidate lane charged: the candidate is a lane in the projection's
-/// charge, and the reset bonus `1 + 1 / (1 + hours to the binding reset)`
-/// is the selection score's weight, never a charge. Two accounts at one
-/// wall with resets one hour and a hundred hours away: the sooner reset is
-/// the lane, and its projected room is the room less the candidate's own
-/// charge to that reset; the account at the bound with a reset a minute
-/// away is never the lane over one with room.
+/// charge, one hour of burn whatever its reset, and the reset bonus
+/// `1 + 1 / (1 + hours to the binding reset)` is the selection score's
+/// weight, never a charge. Two accounts at one wall with resets one hour
+/// and a hundred hours away: the sooner reset is the lane, and each
+/// projected room is the room less the candidate's one hour; the account at
+/// the bound with a reset a minute away is never the lane over one with
+/// room.
 #[test]
 fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying_a_launch() {
     let world = World::new(&[]);
@@ -1274,7 +1279,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
     };
     let projection = judged.projection.as_ref().unwrap();
     // One candidate lane, the weekly burn 5 × 5/168 a point an hour, one
-    // hour to the reset: the room is 50 less that charge.
+    // hour of it: the room is 50 less that charge.
     assert!(
         (49.8..50.0).contains(&projection.headroom),
         "the candidate's own charge to the reset: {}",
@@ -1285,7 +1290,8 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         score > projection.headroom && score <= 2.0 * projection.headroom,
         "the bonus weights the room, at most twofold: {score}"
     );
-    // The late account's candidate is charged a hundred hours of burn.
+    // The late account's candidate is charged the same one hour, never the
+    // hundred hours to its reset.
     let late_judged = accounts::pick(
         &rows,
         &named("/home/me/.late", claude(None)),
@@ -1297,7 +1303,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         panic!("{late_judged:?}");
     };
     let late_room = late_judged.projection.as_ref().unwrap().headroom;
-    assert!((34.0..36.0).contains(&late_room), "{late_room}");
+    assert!((49.8..50.0).contains(&late_room), "{late_room}");
     // At the bound with a reset a minute away: no bonus buys the launch.
     let mut full = measured("full", 95, 5);
     full["binding_resets_at"] = json!(stamp(now() + 60));
@@ -1315,6 +1321,54 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         Some("/home/me/.late"),
         "{bounded:?}"
     );
+}
+
+/// A lane is charged one hour of burn and a controller its spend to the
+/// reset: on an account at 83 percent of its week with 154 hours to the
+/// reset and the default burn of 5 × 5/168 a point an hour, a lane's
+/// launch has room (17 less one hour's 0.149), while a controller's,
+/// charged the 22.9 points it spends to the reset, is walled. A full
+/// window of another model walls neither.
+#[test]
+fn a_lane_is_charged_one_hour_and_a_controller_its_spend_to_the_reset() {
+    let world = World::new(&[]);
+    let reset = stamp(now() + 154 * 3600);
+    let mut week = measured("2claude", 83, 0);
+    week["binding_resets_at"] = json!(reset);
+    week["resets"]["weekly"] = json!(reset);
+    week["model_buckets"] = json!([{"label": "Fable", "pct": 100, "resets_at": reset}]);
+    let rows = rows(&[week], &world.settings);
+    let facts = FleetFacts::default();
+    let settings = world.settings.accounts.get().unwrap();
+    let lane = accounts::pick(&rows, &claude(Some("opus")), &facts, &settings, now());
+    let PickAnswer::Lane(judged) = &lane else {
+        panic!("a lane on the account has room: {lane:?}");
+    };
+    let headroom = judged.projection.as_ref().unwrap().headroom;
+    assert!((16.8..16.9).contains(&headroom), "one hour: {headroom}");
+    let controller = PickRequest {
+        for_overseer: true,
+        min_headroom_pct: Some(5),
+        ..claude(Some("opus"))
+    };
+    let chosen = accounts::pick(&rows, &controller, &facts, &settings, now());
+    assert_eq!(
+        exclusions(&chosen),
+        vec![("/home/me/.2claude".to_owned(), "walled".to_owned())],
+        "{chosen:?}"
+    );
+    let named = accounts::pick(
+        &rows,
+        &named("/home/me/.2claude", controller),
+        &facts,
+        &settings,
+        now(),
+    );
+    let PickAnswer::Walled(judged) = &named else {
+        panic!("a controller on the account is walled: {named:?}");
+    };
+    let headroom = judged.projection.as_ref().unwrap().headroom;
+    assert!((-6.0..-5.8).contains(&headroom), "to the reset: {headroom}");
 }
 
 /// The `accounts pick` verb: the reply a shell caller reads carries the

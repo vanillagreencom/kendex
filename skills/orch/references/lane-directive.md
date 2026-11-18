@@ -29,7 +29,7 @@ On a walled answer, read the roster, `.agents/skills/orch/scripts/orch-runtime l
 | `no_credentials`, `no_usage_data` | The listing found no credential or no usage reading. Report it; launch on another account. |
 | `error` | A step on this machine failed, a renewal among them. A Claude account's `error` for a missing OAuth client id needs `AGENT_RUNTIME_CLAUDE_CLIENT_ID`, set once per host. |
 
-An account with room on the roster can still be refused by its projection. The judge charges the binding window with the burn of the fleet's lanes live on the account and the candidate lane, up to the window's reset; the record's `projected_headroom_pct` carries the result. API and cloud grants carry no projection. Wait for a lane on that account to close, or launch on another account.
+An account with room on the roster can still be refused by its projection. The judge charges the binding window one hour of burn for each of the fleet's lanes live on the account and for the candidate lane; the record's `projected_headroom_pct` carries the result. API and cloud grants carry no projection. Wait for a lane on that account to close, or launch on another account.
 
 A seat is the account this fleet's overseer runs on, or a provider row marked `seat=1`. The judge keeps room on a seat for its overseer, and a seat with too little reads `seat-reserve`. A `none` answer's `seats` names each seat it left out, with `need`, the room the seat keeps, and its `projected_headroom_pct`. Wait until that projected room passes `need`, or launch on another account. A Copilot pool pick, through Copilot or Pi, never takes an account as a seat.
 
