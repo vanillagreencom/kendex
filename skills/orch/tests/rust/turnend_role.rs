@@ -39,6 +39,49 @@ fn stop(world: &TurnWorld, env: &[(String, String)]) -> TurnOut {
 }
 
 #[test]
+fn pi_controller_binding_checks_the_home_used_by_its_context_reader() {
+    let world = TurnWorld::new();
+    let home = world.root.join("pi-agent");
+    let other = world.root.join("other-pi-agent");
+    let settings = home.join("settings.json");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(&settings, "not json").unwrap();
+    fs::create_dir_all(world.checkout.join("tmp/lane-mail/overseer")).unwrap();
+    let transcript = world.root.join("pi.jsonl");
+    fs::write(&transcript, "{}\n").unwrap();
+    let mut env = world.on_pane(PANE);
+    env.push(("PI_CODING_AGENT_DIR".to_owned(), home.display().to_string()));
+    let payload = json!({
+        "session_id": SESSION,
+        "transcript_path": transcript,
+        "context_window": 1_000
+    })
+    .to_string();
+    world.plant_fleet(world.controller(PANE, "pi", &home, SESSION));
+    let read = world.turn(&world.checkout, "pi", &["deliver"], &payload, &env);
+    assert_eq!(read.code, 0, "{}", read.stderr);
+    assert!(
+        read.stderr
+            .contains(&format!("pi-settings={}", settings.display())),
+        "{}",
+        read.stderr
+    );
+
+    world.plant_fleet(world.controller(PANE, "pi", &other, SESSION));
+    let unbound = world.turn(&world.checkout, "pi", &["deliver"], &payload, &env);
+    assert_eq!(unbound.code, 0, "{}", unbound.stderr);
+    assert_eq!(
+        unbound.keyed(),
+        [format!(
+            "session-unbound={SESSION} harness=pi home={} remedy=orch-runtime register --fleet",
+            other.display()
+        )],
+        "{}",
+        unbound.stderr
+    );
+}
+
+#[test]
 fn the_fleet_records_pane_on_its_server_start_names_the_overseer_and_a_native_mismatch_names_none()
 {
     // Each case: the member's pane, start and native session, the start the

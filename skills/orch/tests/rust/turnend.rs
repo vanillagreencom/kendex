@@ -2227,8 +2227,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     let world = World::launched();
     let off = ("DISABLE_AUTO_COMPACT", "1");
     let cap = ("ORCH_HANDOFF_CONTEXT_TOKENS", "123457");
-    // Below the mark the account mark is told, which no account here
-    // measures: the released answer.
+    // Below the context mark, the account mark reports the unlisted account.
     let told = "lane-mail-check: account=unlisted";
     let rows: &[(u64, Env, i32, &str)] = &[
         (1_000, &[off], 0, told),
@@ -2659,11 +2658,9 @@ fn a_pi_reading_takes_its_window_from_the_payload_or_its_own_record() {
 }
 
 impl World {
-    /// A `node` stand-in first on the verb's `PATH` in the contract the
-    /// released suite's stub install fixes: handed the `pi` first on that
-    /// `PATH`, the provider and the id of `p/m`, offline, under the Pi user
-    /// directory `agent`, it runs `answer`, which prints the registry's
-    /// window as one whole number or nothing; any other call is refused.
+    /// The registry read passes Pi's path, provider and model ID to `node`
+    /// under the named Pi user directory in offline mode. The stand-in
+    /// accepts that call and prints the window as one whole number or nothing.
     fn pi_registry(&self, agent: &Path, answer: &str) {
         let pi = self.stand_ins().join("pi");
         let node = format!(
@@ -3448,6 +3445,34 @@ fn admitted(out: &Out) -> (i32, String) {
     }
     assert_eq!(out.stdout, "", "a refusal prints no verdict");
     (out.code, out.first().to_owned())
+}
+
+#[test]
+fn standalone_admission_judges_native_session_inputs_without_a_lane_record() {
+    let world = World::new();
+    world.mailbox(ITEM);
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    let input = world.root.join("admission.json");
+    fs::write(
+        &input,
+        json!({"harness": "claude", "session_id": "s1", "transcript_path": transcript}).to_string(),
+    )
+    .unwrap();
+    let output = isolated()
+        .args(["admission", "--item", ITEM, "--attached-launch"])
+        .current_dir(&world.lane)
+        .env("PWD", &world.lane)
+        .env("HOME", &world.home)
+        .env("PATH", tool_path(&[&world.stand_ins()]))
+        .env("DISABLE_AUTO_COMPACT", "1")
+        .stdin(fs::File::open(&input).unwrap())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(answer["verdict"], "room");
+    assert_eq!(answer["source"]["session_id"], "s1");
+    assert!(!world.mail_root().join(ITEM).join("context.json").exists());
 }
 
 /// The admission answers from the record the session's own tool call bound,

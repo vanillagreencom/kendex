@@ -383,11 +383,8 @@ fn judge(
         arm = Arm::ModelSwitch;
         turn.arm = Some(arm.clone());
     }
-    // A Copilot call reaches another harness's install only through a
-    // registration kendex no longer writes. That install passes it silently:
-    // its answers take a shape Copilot does not read and its caller rules
-    // are not Copilot's, so the Copilot install is the one reader of the
-    // mailbox for a Copilot call.
+    // Copilot reads its own reply shape. Its install alone reads the
+    // mailbox for a Copilot payload.
     if payload.copilot_call && turn.harness != Harness::Copilot {
         return Err(turn.pass());
     }

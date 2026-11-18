@@ -469,8 +469,8 @@ impl<'a> Judge<'a> {
         }
     }
 
-    /// A launched lane's judgement at its review admission, outside any
-    /// hook: its reading recorded in `mailbox`, its handoff in `file`.
+    /// Review admission outside a hook. In a lane, `mailbox` holds the
+    /// reading and `file` names the handoff record.
     pub(super) fn admission(
         lane: &'a Lane,
         item: &'a str,
@@ -508,7 +508,8 @@ impl<'a> Judge<'a> {
     /// controller's key otherwise.
     fn record_key(&self) -> Option<String> {
         match &self.seat {
-            Seat::Lane => role::pane_key(self.vars),
+            Seat::Lane if self.lane.item.is_some() => role::pane_key(self.vars),
+            Seat::Lane => None,
             Seat::Overseer { .. } | Seat::Jarvis { .. } => self.pane_key(),
         }
     }
@@ -543,7 +544,8 @@ impl<'a> Judge<'a> {
     /// does not bind keeps no record, since no watch reads one.
     fn records(&self) -> bool {
         match &self.seat {
-            Seat::Lane | Seat::Overseer { .. } => true,
+            Seat::Lane => self.lane.item.is_some(),
+            Seat::Overseer { .. } => true,
             Seat::Jarvis { key, .. } => key.is_some(),
         }
     }
@@ -792,18 +794,8 @@ impl<'a> Judge<'a> {
         }
     }
 
-    /// Pi's user directory: `PI_CODING_AGENT_DIR`, else the home's
-    /// `.pi/agent`.
     fn pi_agent_dir(&self) -> PathBuf {
-        match &self.vars.pi_dir {
-            Some(dir) => dir.clone(),
-            None => {
-                let home = std::env::var_os("LANES_HOME")
-                    .filter(|h| !h.is_empty())
-                    .unwrap_or_else(|| OsString::from(&self.vars.home));
-                PathBuf::from(home).join(".pi").join("agent")
-            }
-        }
+        model::harness_home(agent_runtime::harness::Harness::Pi, self.vars)
     }
 
     fn pi_user_settings(&self) -> PathBuf {
@@ -1002,16 +994,8 @@ impl<'a> Judge<'a> {
         }
     }
 
-    /// The account directory a Copilot session runs on: `COPILOT_HOME`,
-    /// else the home's `.copilot`.
     fn copilot_account(&self) -> PathBuf {
-        if let Some(home) = std::env::var_os("COPILOT_HOME").filter(|h| !h.is_empty()) {
-            return PathBuf::from(home);
-        }
-        let home = std::env::var_os("LANES_HOME")
-            .filter(|h| !h.is_empty())
-            .unwrap_or_else(|| OsString::from(&self.vars.home));
-        PathBuf::from(home).join(".copilot")
+        model::harness_home(agent_runtime::harness::Harness::Copilot, self.vars)
     }
 
     /// The commands that record this lane's handoff and tell its overseer,
@@ -1032,6 +1016,9 @@ impl<'a> Judge<'a> {
         decision: Value,
         mark: Option<&str>,
     ) -> Flow<String> {
+        if matches!(self.seat, Seat::Lane) && self.lane.item.is_none() {
+            return Ok(String::new());
+        }
         let mut agent = AGENT_INSTRUCTION.to_owned();
         if turn.arm == Some(Arm::Stop) && turn.harness == Harness::Claude {
             let roster = agents::claude_roster(self.payload, &turn.deadline);

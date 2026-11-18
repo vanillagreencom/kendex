@@ -93,10 +93,11 @@ direct() { # TEXT
     --file "$TMP_ROOT/directive.md" >/dev/null)
 }
 
-# The entry at HOOK-PATH run from CWD as a harness runs it: `{}` on stdin, an
+# The entry at HOOK-PATH run from CWD as a harness runs it: JSON on stdin, an
 # environment of HOME, PATH, the cache and ROW_ENV alone, and ARG... as the
 # arm. RC is its exit status; stdout and stderr land in OUT_FILE and ERR_FILE.
 RC=0
+ROW_PAYLOAD='{}'
 ROW_ENV=()
 ROW_PATH="$BASE_PATH"
 ROW_HOME="$TMP_ROOT/home"
@@ -104,7 +105,7 @@ run() { # HOOK-PATH CWD CACHE [ARG...]
   local hook="$1" cwd="$2" cache="$3"
   shift 3
   RC=0
-  (cd "$cwd" && printf '{}' | env -i "HOME=$ROW_HOME" "PATH=$ROW_PATH" "TMPDIR=$TMP_ROOT" LANG=C.UTF-8 \
+  (cd "$cwd" && printf '%s' "$ROW_PAYLOAD" | env -i "HOME=$ROW_HOME" "PATH=$ROW_PATH" "TMPDIR=$TMP_ROOT" LANG=C.UTF-8 \
     GIT_CONFIG_NOSYSTEM=1 "GIT_CEILING_DIRECTORIES=$TMP_ROOT" "AGENT_RUNTIME_CACHE=$cache" \
     ${ROW_ENV[@]+"${ROW_ENV[@]}"} bash "$hook" "$@") >"$OUT_FILE" 2>"$ERR_FILE" || RC=$?
 }
@@ -261,6 +262,9 @@ row_building() {
   assert_eq "RC=$RC said=$(said) decision=$(jq -r '"\(.decision) \(.reason | split("\n") | length)"' "$OUT_FILE" 2>/dev/null || echo unread)" \
     "RC=0 said=$building decision=block 2" \
     "on Copilot the held turn end is a block decision carrying both lines"
+  ROW_PAYLOAD='{"stop_hook_active":true}' run "$LANE/.claude/hooks/lane-mail-check.sh" "$LANE" "$CACHE"
+  assert_eq "RC=$RC said=$(said) stdout=$(cat "$OUT_FILE")" "RC=0 said=$building stdout=" \
+    "a continued Stop passes while the build runs and keeps both build lines"
   run "$LANE/.claude/hooks/lane-mail-check.sh" "$LANE" "$CACHE" halt
   assert_eq "RC=$RC said=$(said)" "RC=0 said=$building" \
     "a tool call while the build runs passes with the lines on stderr"
@@ -332,6 +336,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     'root=${CLAUDE_PROJECT_DIR:-$PWD}'
   control hold-ignored building 'if [ "$src" -eq 3 ] && [ "$#" -eq 0 ]; then' 'if false; then'
   control arm-ignored building 'if [ "$src" -eq 3 ] && [ "$#" -eq 0 ]; then' 'if [ "$src" -eq 3 ]; then'
+  control continued-held building \
+    "  if jq -es 'length == 1 and .[0].stop_hook_active == true' >/dev/null 2>&1; then exit 0; fi" \
+    '  :'
   control copilot-unshaped building '  if [ "$copilot" -eq 0 ]; then exit 2; fi' '  exit 2'
   control prefix-kept building 'line=${line//agent-runtime-setup: /lane-mail-check: }' ':'
   control pass-held failed "[ -z \"\$line\" ] || printf '%s\\n' \"\$line\" >&2" \

@@ -1,15 +1,7 @@
-//! The review admission a launched lane asks from its own shell before it
-//! starts an attached review panel or a process-owned reviewer: the lane
-//! names its item and the launch kind, nothing of its session. The session
-//! and its transcript come from the lane's context record, which the
-//! session's own tool call bound to it before this call ran
-//! (`marks::session_record`), read by the caller's pane; the reading is the
-//! turn end's own, through agent-runtime's reader for the harness, and the
-//! judge is the one judge of a reading. The answer is one JSON line,
-//! `verdict`, `decision` and `source`, at exit 0, or a keyed refusal at
-//! exit 2. The same bound record names the session a call for its model,
-//! effort and name reads, the caller naming none.
+//! Review admission uses the turn end's context reader and mark judge
+//! for the session bound at the lane's pane or named on stdin.
 
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -132,9 +124,9 @@ pub fn session(private_env: bool) -> Answer {
     }
 }
 
-/// Judge `item`'s session for an attached launch, with the attached-agent
-/// reserve, or with `checkpoint` for a process launch on the plain mark;
-/// `private_env` is the command line's word on the private env file.
+/// Judge the caller for an attached launch with the reserve or for a
+/// checkpoint on the plain mark. Outside a lane, stdin supplies a JSON
+/// object with the harness and its native session inputs.
 pub fn run(item: &str, checkpoint: bool, private_env: bool) -> Answer {
     let vars = Vars::read(private_env);
     let mut turn = Turn::new(Harness::Unlisted, PathBuf::new());
@@ -151,20 +143,45 @@ fn admit(turn: &mut Turn, vars: &Vars, item: &str, checkpoint: bool) -> Flow<Str
     }
     let unnamed = Payload::decode(b"", false)
         .map_err(|invalid| turn.refuse(Said::PayloadInvalid, &invalid.0))?;
-    let dir = vars.project_dir.as_ref().unwrap_or(&vars.pwd).clone();
-    // A directory that is no lane passes a hook silently; here nothing of
-    // this session is recorded there.
     let mut lane = match Lane::read(turn, vars, &unnamed) {
         Ok(lane) => lane,
         Err(answer) if answer.code != 0 => return Err(answer),
         Err(_) => {
-            let record = dir.join("tmp/lane-mail").join(item).join(CONTEXT_RECORD);
-            return Err(turn.refuse(Said::SessionUnrecorded(record), ""));
+            let root = vars.project_dir.as_ref().unwrap_or(&vars.pwd).clone();
+            Lane {
+                mail_root: root.join("tmp/lane-mail"),
+                root,
+                common: None,
+                item: None,
+            }
         }
     };
-    lane.item = Some(item.to_owned());
+    if !lane.launched(turn)? {
+        lane.item = None;
+    }
     let mailbox = lane.mail_root.join(item);
-    let record = match bound_session(&mailbox) {
+    let (harness, payload) = if lane.item.is_some() {
+        lane_payload(turn, &mailbox)?
+    } else {
+        standalone_payload(turn)?
+    };
+    turn.harness = harness;
+    let settings = marks::marks_settings(turn, &lane.root, vars.private_env)
+        .map_err(|cause| refuse_input(turn, "unanswered", &cause))?;
+    let file = if lane.item.is_some() {
+        handoff_standing(&settings.state_dir, item, Some(&lane.root))
+            .ok()
+            .and_then(|standing| standing["file"].as_str().map(PathBuf::from))
+            .unwrap_or_default()
+    } else {
+        PathBuf::new()
+    };
+    let judge = Judge::admission(&lane, item, vars, &payload, settings, file, mailbox.clone());
+    judge_admission(turn, &judge, &mailbox, checkpoint)
+}
+
+fn lane_payload(turn: &mut Turn, mailbox: &Path) -> Flow<(Harness, Payload)> {
+    let record = match bound_session(mailbox) {
         Ok(record) => record,
         Err(Unbound::Unrecorded { record, cause }) => {
             return Err(turn.refuse(Said::SessionUnrecorded(record), &cause));
@@ -177,40 +194,71 @@ fn admit(turn: &mut Turn, vars: &Vars, item: &str, checkpoint: bool) -> Flow<Str
             return Err(turn.refuse(said, ""));
         }
     };
-    turn.harness = [
+    let harness = named_harness(record.harness.as_deref());
+    let named = json!({"session_id": record.session_id, "transcript_path": record.transcript});
+    let payload = Payload::decode(named.to_string().as_bytes(), false)
+        .map_err(|invalid| turn.refuse(Said::PayloadInvalid, &invalid.0))?;
+    Ok((harness, payload))
+}
+
+fn standalone_payload(turn: &mut Turn) -> Flow<(Harness, Payload)> {
+    let mut stdin = std::io::stdin().lock();
+    let mut bytes = Vec::new();
+    if !stdin.is_terminal() {
+        stdin
+            .read_to_end(&mut bytes)
+            .map_err(|cause| turn.refuse(Said::PayloadUnreadable, &cause.to_string()))?;
+    }
+    let payload = Payload::decode(&bytes, false)
+        .map_err(|invalid| turn.refuse(Said::PayloadInvalid, &invalid.0))?;
+    let word = payload.field("harness").and_then(Value::as_str);
+    let harness = named_harness(word);
+    let gap = match harness {
+        Harness::Unlisted if word.is_none_or(str::is_empty) => "harness-unnamed",
+        Harness::Unlisted => "harness-unsupported",
+        _ if payload.session.is_empty() => "session-unnamed",
+        Harness::Copilot => return Ok((harness, payload)),
+        _ if payload.transcript.is_empty() => "transcript-unnamed",
+        _ => return Ok((harness, payload)),
+    };
+    Err(refuse_input(turn, gap, ""))
+}
+
+fn refuse_input(turn: &mut Turn, value: &str, cause: &str) -> Answer {
+    turn.refuse(
+        Said::AgentInput {
+            value: value.to_owned(),
+            instruction: String::new(),
+        },
+        cause,
+    )
+}
+
+fn named_harness(word: Option<&str>) -> Harness {
+    [
         Harness::Claude,
         Harness::Codex,
         Harness::Pi,
         Harness::Copilot,
     ]
     .into_iter()
-    .find(|h| record.harness.as_deref() == Some(marks::harness_word(*h)))
-    .unwrap_or(Harness::Unlisted);
-    let named = json!({"session_id": record.session_id, "transcript_path": record.transcript});
-    let payload = Payload::decode(named.to_string().as_bytes(), false)
-        .map_err(|invalid| turn.refuse(Said::PayloadInvalid, &invalid.0))?;
-    let settings = match marks::marks_settings(turn, &lane.root, vars.private_env) {
-        Ok(settings) => settings,
-        Err(cause) => {
-            let said = Said::AgentInput {
-                value: "unanswered".to_owned(),
-                instruction: String::new(),
-            };
-            return Err(turn.refuse(said, &cause));
-        }
-    };
-    let file = handoff_standing(&settings.state_dir, item, Some(&lane.root))
-        .ok()
-        .and_then(|standing| standing["file"].as_str().map(PathBuf::from))
-        .unwrap_or_default();
-    let judge = Judge::admission(&lane, item, vars, &payload, settings, file, mailbox.clone());
+    .find(|h| word == Some(marks::harness_word(*h)))
+    .unwrap_or(Harness::Unlisted)
+}
+
+fn judge_admission(
+    turn: &mut Turn,
+    judge: &Judge<'_>,
+    mailbox: &Path,
+    checkpoint: bool,
+) -> Flow<String> {
     judge.context_share(turn)?;
     let reserve = if checkpoint {
         None
     } else {
         Some(judge.agent_reserve(turn)?)
     };
-    let (verdict, decision) = match judge.read_and_record(turn, &mailbox)? {
+    let (verdict, decision) = match judge.read_and_record(turn, mailbox)? {
         Reading::Measured { tokens, window, .. } => {
             let marks = judge.judged_marks(turn, tokens, window, reserve)?;
             let judged = if reserve.is_some() {

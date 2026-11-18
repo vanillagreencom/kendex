@@ -219,23 +219,17 @@ fn overseer_box(lane: &Lane) -> PathBuf {
 /// home variable set of Claude Code's and Codex's, and none where both or
 /// neither is.
 fn account(harness: Harness, vars: &Vars) -> String {
+    use agent_runtime::harness::Harness as Native;
     let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
-    let home = PathBuf::from(var("LANES_HOME").unwrap_or_else(|| vars.home.clone().into()));
+    let home = |native| super::model::harness_home(native, vars);
     let path = match harness {
-        Harness::Claude => {
-            var("CLAUDE_CONFIG_DIR").map_or_else(|| home.join(".claude"), PathBuf::from)
-        }
+        Harness::Claude => home(Native::Claude),
         Harness::Codex => {
-            let codex = var("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from);
+            let codex = home(Native::Codex);
             agent_runtime::trust::account_of(&codex).to_path_buf()
         }
-        Harness::Pi => vars
-            .pi_dir
-            .clone()
-            .unwrap_or_else(|| home.join(".pi").join("agent")),
-        Harness::Copilot => {
-            var("COPILOT_HOME").map_or_else(|| home.join(".copilot"), PathBuf::from)
-        }
+        Harness::Pi => home(Native::Pi),
+        Harness::Copilot => home(Native::Copilot),
         Harness::Unlisted => match (var("CLAUDE_CONFIG_DIR"), var("CODEX_HOME")) {
             (Some(_), Some(_)) | (None, None) => return String::new(),
             (Some(one), None) | (None, Some(one)) => {

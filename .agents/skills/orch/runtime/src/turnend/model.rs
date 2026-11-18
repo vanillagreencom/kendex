@@ -234,16 +234,16 @@ pub(super) fn account_mark(
     }
     let (account, native_model) = match turn.harness {
         Harness::Claude => (
-            caller_account(harness::Harness::Claude, vars),
+            harness_home(harness::Harness::Claude, vars),
             Some(model).filter(|m| !m.is_empty()),
         ),
         Harness::Codex => {
-            let home = caller_account(harness::Harness::Codex, vars);
+            let home = harness_home(harness::Harness::Codex, vars);
             (agent_runtime::trust::account_of(&home).to_path_buf(), None)
         }
-        Harness::Copilot => (caller_account(harness::Harness::Copilot, vars), None),
+        Harness::Copilot => (harness_home(harness::Harness::Copilot, vars), None),
         Harness::Pi => match pi_billed(model) {
-            Ok(billed) => (caller_account(billed, vars), Some(model)),
+            Ok(billed) => (harness_home(billed, vars), Some(model)),
             Err(cause) => {
                 turn.note(&Said::Account("unmeasured"), &cause);
                 return Ok(());
@@ -372,9 +372,9 @@ fn pi_billed(model: &str) -> Result<harness::Harness, String> {
         .ok_or_else(|| format!("the provider of {model} bills no account lanes measures"))
 }
 
-/// The account directory a session of `harness` runs its credential out
-/// of: its home variable, else the harness's own directory under the home.
-fn caller_account(harness: harness::Harness, vars: &Vars) -> PathBuf {
+/// The native directory holds the session's state. A Codex launch's
+/// directory may sit below the account that pays for it.
+pub(super) fn harness_home(harness: harness::Harness, vars: &Vars) -> PathBuf {
     if let Some(dir) = std::env::var_os(harness.home_var()).filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }

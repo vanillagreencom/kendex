@@ -2,7 +2,7 @@
 
 Review a branch before submission: run the reviewer panel, delegate bounded fix rounds, run QA, and file what the review leaves. `review-pr [PR_NUMBER]` reviews that pull request's worktree. [start-worktree.md](start-worktree.md) § 3 runs it managed.
 
-When [start-worktree.md](start-worktree.md) § 2.1 opened the pull request early, this review runs on the pushed head, and its fix rounds stay local until submit-pr pushes them. Under `push-first`, the first-head review call of start-worktree.md § 2.1, run with `[MARK_READY]` `true`, marks the pull request ready and asks Copilot's review under either gate mode, so Copilot reviews the head during this review. A `ci` fix receipt accepts the local edits and leaves required CI pending on the combined published head.
+When [start-worktree.md](start-worktree.md) § 2.1 opened the pull request early, this review runs on the pushed head, and its fix rounds stay local until submit-pr pushes them. Under `push-first`, the first-head review call of start-worktree.md § 2.1, run with `[MARK_READY]` `true`, marks the pull request ready. When `PR_COPILOT_REQUESTS` is `on`, that call also requests Copilot's review under either gate mode. A `ci` fix receipt accepts the local edits and leaves required CI pending on the combined published head.
 
 **Caller context** (via `⤵`): `worktree`; `agents`, an explicit reviewer panel, by default the first-cycle panel § 2 selects; `lifecycle`, `"managed"` (return at § 9) or `"self"` (default); `dev_agent`, a live dev agent for fix rounds; `issue_id`, the workflow-state key, the normalized issue ID and never the bare GitHub issue number.
 
@@ -82,14 +82,21 @@ With `cycles > 0`, fill the delegation's re-review block from `fixed_items`, `es
 .agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --attached-launch
 ```
 
-The command reads the session that this session's own tool calls recorded at its pane, and the transcript that record names. It prints one JSON line, `verdict`, `decision` and `source`, at exit 0, and a keyed refusal on stderr at exit 2. Route the verdict:
+In a lane, the command reads the session and transcript bound to its pane. Outside a lane, pass the harness name (`claude`, `codex`, `pi` or `copilot`) and this session's native ID and transcript path as one JSON object on stdin. Copilot requires the session ID and can read its session record without a transcript path.
+
+```bash
+jq -cn --arg harness "[HARNESS]" --arg session_id "[SESSION_ID]" --arg transcript_path "[TRANSCRIPT_PATH]" '{harness: $harness, session_id: $session_id, transcript_path: $transcript_path}' |
+  .agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --attached-launch
+```
+
+The command prints one JSON line with `verdict`, `decision` and `source` at exit 0. A refusal prints its key on stderr at exit 2.
 
 | `verdict` | Route |
 |---|---|
 | `room` | Size and start the attached panel below |
 | `alternate-review` | Codex only: the attached-agent reserve refuses, while the plain mark has room. Keep the full required panel and run its required domains as process-owned Codex reviewers through [codex-runtime.md § Process-owned reviewers](../references/codex-runtime.md#process-owned-reviewers). Skip attached slot sizing, thread selection and spawn; keep panel selection, the existing-assignment reads and § 2.1. This verdict permits no attached launch and no advisory replacement |
 | `due` | Take the parent handoff below |
-| A refusal at exit 2 | Start no attached panel. Report the stderr line and repair its cause before re-entering § 2 |
+| A refusal at exit 2 | Start no attached panel. Report the stderr line. If the harness cannot supply the named session input or is unsupported, ask the user to resume the review in a supported session that supplies it. Otherwise repair the cause before re-entering § 2 |
 
 **Handoff on `due`.** The session is past its plain mark, compacted, or cannot prove room for the returns.
 

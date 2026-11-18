@@ -452,22 +452,12 @@ fn transcript_home(harness: Harness) -> bool {
     matches!(harness, Harness::Claude | Harness::Codex | Harness::Copilot)
 }
 
-/// The launch home a session of `harness` runs from, off its own
-/// environment: the directory its harness variable names, else the
-/// harness's own default under `LANES_HOME`, else the home; Codex's is
-/// `CODEX_HOME` as it stands, where its rollouts are written. A harness with
-/// no transcript shape has none.
 fn caller_home(harness: Harness, vars: &Vars) -> String {
-    let (variable, default) = match harness {
-        Harness::Claude => ("CLAUDE_CONFIG_DIR", ".claude"),
-        Harness::Codex => ("CODEX_HOME", ".codex"),
-        Harness::Copilot => ("COPILOT_HOME", ".copilot"),
-        Harness::Pi | Harness::Unlisted => return String::new(),
-    };
-    let set = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
-    if let Some(home) = set(variable) {
-        return home.to_string_lossy().into_owned();
-    }
-    let base = set("LANES_HOME").map_or_else(|| PathBuf::from(&vars.home), PathBuf::from);
-    base.join(default).display().to_string()
+    agent_runtime::harness::Harness::parse(marks::harness_word(harness))
+        .map(|native| {
+            super::model::harness_home(native, vars)
+                .display()
+                .to_string()
+        })
+        .unwrap_or_default()
 }
