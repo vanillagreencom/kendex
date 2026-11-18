@@ -8,7 +8,7 @@ Run one verification pass over the items in Verifying, from the consumer's base 
 .agents/skills/orch/scripts/orch-runtime reconcile-items
 ```
 
-Read the JSON reply. A successful reply carries `result.findings`, `result.lines` and `result.counts`; findings are data, and the command exits 0. A refused reply exits 1: report its diagnostic. A usage error exits 2.
+Read the JSON reply. Pass `--inventory PATH` to reuse the current pass's complete team inventory through the linear package. A successful reply carries `result.findings`, `result.lines` and `result.counts`; findings are data, and the command exits 0. A refused reply exits 1: report its diagnostic. A usage error exits 2.
 
 1. Keep the box lines the invoking watch event or heartbeat supplied, boxes the reconciliation leaves out included. The watch has already ticked a box it read met, and has already commented on one it read failed or inconclusive.
 2. For each `due` or `overdue` box from either source, read the item and its comments live. Read each box once in this pass.

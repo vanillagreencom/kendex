@@ -135,10 +135,12 @@ enum Verb {
         #[arg(long)]
         effect_exit: bool,
     },
-    /// Read the live tracker and report lifecycle findings and verification boxes.
+    /// Read the tracker inventory and report lifecycle findings and verification boxes.
     ReconcileItems {
         #[arg(long)]
         stale_hours: Option<u64>,
+        #[arg(long, value_name = "PATH")]
+        inventory: Option<String>,
         /// `ITEM=OWNER/REPO#N`, repeatable: a merged pull request the item's
         /// boxes are judged from in place of its branch's own, read from
         /// GitHub. A malformed value refuses `merged-invalid`; an item the
@@ -2003,6 +2005,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::ReconcileItems {
             stale_hours,
+            inventory,
             merged,
         } => {
             let settings = resolve_settings(&flags)?;
@@ -2012,6 +2015,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &settings,
                 stale_hours,
                 &merged,
+                inventory.as_deref(),
                 None,
                 Env::system()?.now_secs,
             )?)?

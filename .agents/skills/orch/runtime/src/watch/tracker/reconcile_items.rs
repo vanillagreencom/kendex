@@ -211,6 +211,7 @@ pub fn run(
     settings: &Settings,
     stale_hours: Option<u64>,
     merged: &[String],
+    inventory: Option<&str>,
     gh: Option<&Path>,
     now: u64,
 ) -> Result<Report> {
@@ -242,6 +243,9 @@ pub fn run(
         args.extend(["--team", team]);
     }
     args.push("--format=safe");
+    if let Some(inventory) = inventory {
+        args.extend(["--inventory", inventory]);
+    }
     let items: Vec<Issue> = match linear.json("reconcile-items", &args)? {
         Answered::Value(items) => items,
         Answered::Quota(quota) => {

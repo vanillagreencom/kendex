@@ -82,6 +82,7 @@ impl World {
             &self.settings(&[]),
             None,
             &[],
+            None,
             Some(&self.dir.path().join("gh-missing")),
             NOW,
         )
@@ -238,6 +239,87 @@ fn a_duplicate_item_is_ended_work_in_the_container_findings() {
 }
 
 #[test]
+fn inventory_reaches_the_list_and_its_refusal_keeps_the_package_cause() {
+    let items = vec![issue("T-1", "Done", "completed", "- [ ] proof", None)];
+    let world = World::new(items.clone());
+    let run = |args: &[&str]| {
+        support::isolated()
+            .current_dir(world.dir.path())
+            .env("OVERSEE_WATCH_TRACKER", world.dir.path().join("linear"))
+            .env("LINEAR_TEAM", "T")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let live = run(&["reconcile-items"]);
+    assert!(live.status.success(), "{}", support::stderr(&live));
+    let live: Value = serde_json::from_slice(&live.stdout).unwrap();
+    assert_eq!(live["result"]["findings"][0]["kind"], "done-unchecked");
+
+    let fields = support::program("bash")
+        .args([
+            "-c",
+            "source \"$1\"; printf '%s' \"$ISSUE_INVENTORY_FIELDS\"",
+            "--",
+        ])
+        .arg(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../linear/scripts/lib/formatters.sh"),
+        )
+        .output()
+        .unwrap();
+    assert!(fields.status.success(), "{}", support::stderr(&fields));
+    let inventory = world.dir.path().join("pass inventory.json");
+    let contents = json!({
+        "team": "7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",
+        "fields": String::from_utf8(fields.stdout).unwrap(),
+        "nodes": items,
+    });
+    fs::write(&inventory, contents.to_string()).unwrap();
+    fs::write(world.dir.path().join("read.fail"), "").unwrap();
+    fs::write(world.dir.path().join("linear.log"), "").unwrap();
+    let args = [
+        "reconcile-items",
+        "--inventory",
+        inventory.to_str().unwrap(),
+    ];
+    let cached = run(&args);
+    assert!(cached.status.success(), "{}", support::stderr(&cached));
+    let cached: Value = serde_json::from_slice(&cached.stdout).unwrap();
+    assert_eq!(cached["result"], live["result"]);
+    assert_eq!(
+        fs::read_to_string(world.dir.path().join("linear.log")).unwrap(),
+        format!(
+            "issues list --max --team T --format=safe --inventory {}\n",
+            inventory.display()
+        )
+    );
+
+    for cause in ["other-team", "unreadable"] {
+        if cause == "other-team" {
+            let mut other = contents.clone();
+            other["team"] = json!("another-team");
+            fs::write(&inventory, other.to_string()).unwrap();
+        } else {
+            fs::remove_file(&inventory).unwrap();
+            fs::create_dir(&inventory).unwrap();
+        }
+        let out = run(&args);
+        assert_eq!(out.status.code(), Some(1), "{cause}: {out:?}");
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["refusal"]["key"], "tracker-list-failed");
+        let diagnostic = support::stderr(&out);
+        assert!(diagnostic.contains("read=reconcile-items"), "{diagnostic}");
+        assert!(diagnostic.contains("inventory-unread"), "{diagnostic}");
+        assert!(
+            diagnostic.contains(&format!("cause={cause}")),
+            "{diagnostic}"
+        );
+        assert!(reply.get("result").is_none());
+    }
+}
+
+#[test]
 fn an_unread_or_invalid_inventory_never_becomes_clean() {
     let world = World::new(vec![]);
     let refusal = |out: &std::process::Output| {
@@ -391,13 +473,13 @@ fn settings_and_private_file_thresholds_scope_the_same_live_read() {
     for value in ["bad", "01", "-1"] {
         let settings = world.settings(&[("RECONCILE_STALE_HOURS", value)]);
         assert_eq!(
-            reconcile::run(&settings, None, &[], None, NOW)
+            reconcile::run(&settings, None, &[], None, None, NOW)
                 .unwrap_err()
                 .key(),
             "reconcile-threshold-invalid"
         );
         assert!(
-            reconcile::run(&settings, Some(999999), &[], None, NOW)
+            reconcile::run(&settings, Some(999999), &[], None, None, NOW)
                 .unwrap()
                 .findings
                 .is_empty()
@@ -445,8 +527,15 @@ fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
         ),
     ] {
         fs::write(world.dir.path().join("pulls.json"), rows.to_string()).unwrap();
-        let report =
-            reconcile::run(&world.settings(&[]), Some(999999), &[], Some(&gh), NOW).unwrap();
+        let report = reconcile::run(
+            &world.settings(&[]),
+            Some(999999),
+            &[],
+            None,
+            Some(&gh),
+            NOW,
+        )
+        .unwrap();
         assert_eq!(
             kinds(&report).contains(&("merged-in-review", "T-1")),
             expected
@@ -455,7 +544,7 @@ fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
     // Both items are 72 hours old at the 24-hour default.
     let pulls =
         |rows: Value| fs::write(world.dir.path().join("pulls.json"), rows.to_string()).unwrap();
-    let stale = || reconcile::run(&world.settings(&[]), None, &[], Some(&gh), NOW).unwrap();
+    let stale = || reconcile::run(&world.settings(&[]), None, &[], None, Some(&gh), NOW).unwrap();
     // A merged pull request: the In Review item is merged-in-review, the In
     // Progress one is stale with its pull request merged, never in review.
     pulls(json!([{"state":"MERGED","mergedAt":"2026-10-01T00:00:00Z","isCrossRepository":false}]));
@@ -491,7 +580,15 @@ fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
     fs::remove_file(world.dir.path().join("gh.fail")).unwrap();
     // A reply that is no JSON fails the probe; a fresh item stays fresh.
     fs::write(world.dir.path().join("pulls.json"), "not-json\n").unwrap();
-    let report = reconcile::run(&world.settings(&[]), Some(999999), &[], Some(&gh), NOW).unwrap();
+    let report = reconcile::run(
+        &world.settings(&[]),
+        Some(999999),
+        &[],
+        None,
+        Some(&gh),
+        NOW,
+    )
+    .unwrap();
     assert_eq!(kinds(&report), [("pr-probe-failed", "T-1")], "{report:?}");
     // No gh at all.
     let report = world.run();
@@ -585,7 +682,7 @@ fn release_world_logged(
     // so a write the verb must never make would reach the tracker CLI.
     fs::create_dir(dir.join("state")).unwrap();
     let merged: Vec<String> = merged.iter().map(|m| (*m).to_owned()).collect();
-    let report = reconcile::run(&world.settings(&[]), None, &merged, Some(&gh), NOW);
+    let report = reconcile::run(&world.settings(&[]), None, &merged, None, Some(&gh), NOW);
     let log = |name: &str| {
         fs::read_to_string(dir.join(name))
             .unwrap_or_default()
@@ -1258,13 +1355,14 @@ fn a_missing_merge_stays_a_finding_but_a_failed_verification_read_refuses() {
         &gh,
         "#!/bin/sh\nprintf '{\"total_count\":0,\"incomplete_results\":false,\"items\":[]}\\n'\n",
     );
-    let report = reconcile::run(&world.settings(&[]), None, &[], Some(&gh), NOW).unwrap();
+    let report = reconcile::run(&world.settings(&[]), None, &[], None, Some(&gh), NOW).unwrap();
     assert!(kinds(&report).contains(&("verifying-merge-unread", "T-1")));
     assert!(report.lines.is_empty());
     let err = reconcile::run(
         &world.settings(&[]),
         None,
         &[],
+        None,
         Some(&world.dir.path().join("missing-gh")),
         NOW,
     )
@@ -1286,6 +1384,7 @@ fn future_tracker_updates_never_become_stale_at_a_zero_hour_threshold() {
         &world.settings(&[]),
         Some(0),
         &[],
+        None,
         Some(&world.dir.path().join("missing-gh")),
         NOW,
     )
@@ -1301,7 +1400,7 @@ fn a_stale_started_container_keeps_its_started_findings_beside_container_parked(
     ]);
     let gh = world.dir.path().join("gh");
     support::write_executable(&gh, "#!/bin/sh\nprintf '[]\\n'\n");
-    let report = reconcile::run(&world.settings(&[]), None, &[], Some(&gh), NOW).unwrap();
+    let report = reconcile::run(&world.settings(&[]), None, &[], None, Some(&gh), NOW).unwrap();
     assert_eq!(
         kinds(&report),
         [
