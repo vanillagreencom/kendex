@@ -1195,8 +1195,9 @@ fn wall_overlay(
 }
 
 /// The binding window (`wall`) and the rate the displaced sample exposes:
-/// measured where both samples are at least a minute apart, the figure
-/// rose, and the prior's window is the one judged now (same bucket, its
+/// measured where both samples are at least a minute apart, neither is an
+/// unlimited pool, the figure rose, and the prior's window is the one
+/// judged now (same bucket, its
 /// label in the normalized spelling, its reset within five minutes).
 fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u64)>) {
     let ended = row["status"] == json!("plan_ended");
@@ -1241,10 +1242,14 @@ fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u6
     row["binding_resets_at"] = resets_at.clone();
     let mut prior_pct: Option<f64> = None;
     let mut elapsed = 0u64;
+    // An unlimited pool reads 0 percent used, so a pair with an unlimited
+    // side measures the switch, not a spend.
+    let mut unlimited = row["unlimited"] == json!(true);
     if let Some((prior_usage, secs)) = prior {
         elapsed = *secs;
         let mut prior_buckets = usage::parse_body(harness, prior_usage, Rounding::Rounded);
         usage::utc_resets(&mut prior_buckets);
+        unlimited |= prior_buckets["unlimited"] == json!(true);
         let candidates: Vec<(Option<String>, Option<f64>, Value)> = if bucket == "model" {
             prior_buckets["model_buckets"]
                 .as_array()
@@ -1277,6 +1282,7 @@ fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u6
     }
     let delta = prior_pct.map(|p| pct - p);
     let state = match delta {
+        _ if unlimited => "unlimited",
         None => "one-sample",
         Some(_) if elapsed < 60 => "samples-too-close",
         Some(d) if d <= 0.0 => "not-increasing",
@@ -1404,5 +1410,67 @@ mod tests {
         assert_eq!(row["usage_rate_state"], json!("not-increasing"));
         let row = emit_with(Some((body(10, 20), 30)));
         assert_eq!(row["usage_rate_state"], json!("samples-too-close"));
+    }
+
+    /// A Copilot pool answered unlimited reads 0 percent used, so a pair
+    /// with an unlimited side would rate the switch itself: an unlimited
+    /// sample then an 85 percent one, a minute apart, would project a wall
+    /// within minutes. Each pair with an unlimited side leaves the rate
+    /// unread; two counted samples are still measured.
+    #[test]
+    fn a_copilot_pair_with_an_unlimited_side_leaves_the_rate_unread() {
+        let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
+        let state = Judged::of("state", Ok(PathBuf::new()));
+        let env = Env {
+            accounts: &accounts,
+            account_state: &state,
+            home: None,
+            copilot_home: None,
+            controller_preference: "",
+        };
+        let read = accounts.get().unwrap();
+        let ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();
+        let counted = |used: u64| {
+            json!({"copilot_plan": "business", "quota_reset_date_utc": "2027-02-01",
+                   "quota_snapshots": {"premium_interactions":
+                       {"unlimited": false, "entitlement": 100, "remaining": 100 - used}}})
+        };
+        let unlimited = json!({"copilot_plan": "business", "quota_reset_date_utc": "2027-02-01",
+            "quota_snapshots": {"premium_interactions": {"unlimited": true, "entitlement": 100}}});
+        let emit_with = |now: &Value, prior: &Value| {
+            emit(
+                &ctx,
+                &Emit {
+                    alias: "c",
+                    harness: Harness::Copilot,
+                    dir: "/h/.c",
+                    through: "local",
+                    reading: Reading {
+                        status: "ok".to_owned(),
+                        detail: String::new(),
+                        plan: "business".to_owned(),
+                        usage: Some(Usage::Body(now.clone())),
+                        age: Some(0),
+                        prior: Some((prior.clone(), 60)),
+                        fall: None,
+                    },
+                    words: None,
+                },
+            )
+        };
+        let rows: [(&str, &Value, &Value); 3] = [
+            ("unlimited, then 85 percent", &counted(85), &unlimited),
+            ("85 percent, then unlimited", &unlimited, &counted(85)),
+            ("unlimited twice", &unlimited, &unlimited),
+        ];
+        for (name, now, prior) in rows {
+            let row = emit_with(now, prior);
+            assert_eq!(row["usage_rate_state"], json!("unlimited"), "{name}: {row}");
+            assert_eq!(row["usage_rate_pct_per_min"], Value::Null, "{name}: {row}");
+            assert_eq!(row["projected_wall_minutes"], Value::Null, "{name}: {row}");
+        }
+        let row = emit_with(&counted(85), &counted(70));
+        assert_eq!(row["usage_rate_state"], json!("measured"), "{row}");
+        assert_eq!(row["usage_rate_pct_per_min"], json!(15), "{row}");
     }
 }
