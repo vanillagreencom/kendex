@@ -446,7 +446,7 @@ reader_environment_arguments() {
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
     local env_chdir env_chdir_word xargs_launch="" builtin_head=$pos
-    local exec_option_re='^-[cl]*(a.*)?$' exec_name_needed
+    local exec_option_re='^-[cl]*(a.*)?$' exec_name_needed exec_word
     split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
     shell_forwarder=""; shell_forwarded_pos=""
     # Other is unresolved. An existing arm's proof must establish clean.
@@ -471,22 +471,29 @@ environment_producer() { # command kind
               if [ "$program" = exec ]; then
                 # Bash's exec help names -c, -l and -a NAME. The first a
                 # in a short cluster takes the rest or the next word as NAME.
+                # NAME is argv[0] data, so only its word count matters. A word
+                # that can split, or an expanding word where exec reads an
+                # option, leaves the child and the directory it runs in unknown.
                 exec_name_needed=""
                 while [ "$shell_forwarded_pos" -lt "${#args[@]}" ]; do
                   value=${args[$shell_forwarded_pos]}
-                  [ -n "$exec_name_needed" ] || [[ $value == -?* && $value != -- ]] || break
-                  # An expanding word can change the argument boundary.
                   case "${arg_kinds[$shell_forwarded_pos]}:${arg_unquoted[$shell_forwarded_pos]}" in
-                    *:pattern) shell_forwarded_pos=""; break ;;
-                    literal:* | dollar-literal:*) ;;
-                    *) shell_forwarded_pos=""; break ;;
+                    *:fields) exec_word=split ;;
+                    literal:* | dollar-literal:*) exec_word=literal ;;
+                    *) exec_word=expanding ;;
                   esac
-                  if [ -n "$exec_name_needed" ]; then
+                  if [ "$exec_word" != split ] && [ -n "$exec_name_needed" ]; then
                     exec_name_needed=""
-                  elif [[ $value =~ $exec_option_re ]]; then
+                  elif [ "$exec_word" = literal ] && [[ $value != -?* || $value == -- ]]; then
+                    break
+                  elif [ "$exec_word" != split ] && [[ $value =~ $exec_option_re ]]; then
+                    # No expansion byte can match before an attached NAME.
                     [ "${BASH_REMATCH[1]:-}" != a ] || exec_name_needed=1
-                  else
+                  elif [ "$exec_word" = literal ]; then
+                    # exec refuses an unknown option and runs nothing.
                     shell_forwarded_pos=""; break
+                  else
+                    shell_forwarded_pos=""; reader_chdir_unresolved=1; break
                   fi
                   shell_forwarded_pos=$((shell_forwarded_pos + 1))
                 done
@@ -557,7 +564,7 @@ environment_producer() { # command kind
             # Shell expansion can change the directory, even when some
             # fragments in the word are quoted. The path was never resolved.
             if [ "${arg_kinds[$env_chdir_word]}" != literal ] ||
-               [[ ${arg_unquoted[$env_chdir_word]} == *:pattern ]]; then
+               [[ ${arg_unquoted[$env_chdir_word]} == *:fields ]]; then
               reader_chdir_unresolved=1
             else
               case "$env_chdir" in
@@ -1150,7 +1157,9 @@ relative_targeting() { # collect | judge; environment_dump owns the stage facts
 
 # A word's quoting is 1 when no byte is quoted, escaped or expanded, ~
 # when only bytes after its leading ~/ are, and empty otherwise. The
-# tokenizer appends :pattern when a shell span can expand a pathname.
+# tokenizer appends :fields when the word can expand to other than one
+# word: an unquoted pathname pattern or parameter expansion, or a quoted
+# @ expansion such as "$@" or "${names[@]}".
 # Bash expands a tilde prefix, the bytes up to the first
 # unquoted /, when none of them is quoted, so a 1 or ~ word starting ~/ is
 # expanded. Called where a quote, escape or expansion first touches the word.
@@ -1160,7 +1169,7 @@ word_quoted() {
 }
 
 environment_dump() { # command kind; arguments are already decoded data
-  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted="" pathname_pattern=""
+  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted="" fields_unknown=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local reader_dirs=(${source_reader_dirs[@]+"${source_reader_dirs[@]}"}) reader_dirs_unresolved=${source_reader_dirs_unresolved:-}
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
@@ -1224,8 +1233,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # decisions; growing a word byte by byte exceeds the hook budget.
       if [[ ${text:$i} =~ $span_re ]]; then
         span=${BASH_REMATCH[0]}; word=$word$span; active=1
-        if [ -z "$quote$pathname_pattern" ] && [ "$1" != env-split ] &&
-           [[ $span == *[\*\?\[\{\}]* ]]; then pathname_pattern=1; fi
+        if [ -z "$quote$fields_unknown" ] && [ "$1" != env-split ] &&
+           [[ $span == *[\*\?\[\{\}]* ]]; then fields_unknown=1; fi
         i=$((i + ${#span}))
         continue
       fi
@@ -1275,8 +1284,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
       if [ "$1" != env-split ] && { { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; }; then
-        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${pathname_pattern:+:pattern}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; pathname_pattern=""; compound=1; needs_target=""
+        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:fields}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+        word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; fields_unknown=""; compound=1; needs_target=""
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
@@ -1294,6 +1303,10 @@ environment_dump() { # command kind; arguments are already decoded data
       fi
       if [ "$quote" = '"' ]; then
         if [ "$c" = '"' ] && { [ "$1" != expansions ] || [ "${#closers[@]}" -ne 0 ]; }; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || kind=unknown; fi
+        # Only an @ expansion splits a quoted word. A brace expansion with
+        # no @ before its close within the window is one word.
+        if [ "$c" = '$' ] && [ "$next" != '"' ] && { [ "$next" = @ ] ||
+           { [ "$next" = '{' ] && [[ ! ${text:$i:128} =~ ^\{[^}@]*\} ]]; }; }; then fields_unknown=1; fi
         continue
       fi
       case "$c" in
@@ -1306,7 +1319,9 @@ environment_dump() { # command kind; arguments are already decoded data
               # existing command-head selector can use the literal word.
               [ "$kind" != literal ] || kind=dollar-literal
               i=$((i + 1)) ;;
-            *) [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c ;;
+            *)
+              [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c
+              [ "$1" = env-split ] || fields_unknown=1 ;;
           esac
           active=1; word_quoted; continue ;;
         '#')
@@ -1336,10 +1351,10 @@ environment_dump() { # command kind; arguments are already decoded data
             active=""
           fi
           if [ -n "$active" ]; then
-            unquoted_words[${#tokens[@]}]=${bare:-$tilde}${pathname_pattern:+:pattern}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
+            unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:fields}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
             needs_target=""
           fi
-          word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; pathname_pattern=""
+          word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; fields_unknown=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
           case "$c" in
             '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
@@ -1395,7 +1410,7 @@ environment_dump() { # command kind; arguments are already decoded data
     # Undecoded split text can also hide the git word itself.
     [ -z "$split_undecoded" ] || history_record unresolved-git-argv unknown
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
-    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${pathname_pattern:+:pattern}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${fields_unknown:+:fields}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
   for ((j=0; j<${#appended_args[@]}; j++)); do
     tokens[${#tokens[@]}]=${appended_args[$j]}
@@ -1606,9 +1621,16 @@ environment_dump() { # command kind; arguments are already decoded data
           case "$selected_forwarder" in
             builtin)
               selected_forwarder=$shell_forwarder
-              [ -z "$shell_forwarded_pos" ] || selected_operand=$((candidate + shell_forwarded_pos)) ;;
+              if [ -n "$shell_forwarded_pos" ]; then
+                selected_operand=$((candidate + shell_forwarded_pos))
+              elif [ "$shell_forwarder" = exec ] && [ -n "$reader_chdir_unresolved" ] &&
+                   [ -n "$data_source$incoming_sources" ]; then
+                # The producer could not bound this exec's argv.
+                record_reader_context
+                stage_reader_context[stage]=$reader_context_id
+              fi ;;
             exec)
-              if [ "$program" = bash ] &&
+              if [ -n "$stdin_program" ] &&
                  [ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then
                 record_reader_context
                 stage_reader_context[stage]=$reader_context_id
