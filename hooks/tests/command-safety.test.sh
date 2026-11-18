@@ -231,7 +231,19 @@ environment_rows() {
   cp -- "$hook" "$repo/.codex/hooks/command-safety.sh"
   for tool in jq cat; do ln -sf "$(command -v "$tool")" "$scratch/policy-tools/$tool"; done
   rows=$(jq -sr --arg fixture_home "$scratch/private-home" --args '
-    .[] | (if .[3] == "claude-and-codex" then
+    def exec_dispatches:
+      ["exec", ""],
+      ["exec --", "-terminator"],
+      ["builtin exec", "-builtin"],
+      ["builtin -- exec", "-builtin-terminator"],
+      ["command builtin -- exec", "-command-builtin"],
+      ["builtin $\u0027exec\u0027", "-builtin-quoted"],
+      ["builtin -- builtin -- exec", "-nested-builtin"],
+      ["builtin command -- exec", "-builtin-command"];
+    .[] | (if .[8] == "exec-dispatch" then
+      exec_dispatches as [$dispatch, $suffix] |
+      .[1] |= sub("@DISPATCH@"; $dispatch) | .[2] += $suffix
+    else . end) | (if .[3] == "claude-and-codex" then
       ("claude", "codex") as $harness | .[2] += "-\($harness)" | .[3] = $harness
     else . end) | select(($ARGS.positional | length) == 0 or
       (.[2] as $label | $ARGS.positional | index($label))) |
@@ -567,9 +579,9 @@ environment_rows() {
 [2,"env --chdir=/proc env --chdir=4242 -S 'head -c 32 environ'","process-environ-env-chdir-split-source","claude-and-codex"]
 [2,"env --chdir=/proc/4242 bash <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-env-chdir-stdin-source","claude-and-codex"]
 [2,"exec env --chdir=/proc/4242 bash -c 'head -c 32 environ'","process-environ-exec-chdir-command-string","claude-and-codex"]
-[2,"exec env --chdir=/proc/4242 bash <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-exec-chdir-heredoc","claude-and-codex"]
-[2,"builtin exec env --chdir=/proc/4242 bash <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-builtin-exec-chdir-heredoc","claude-and-codex"]
-[0,"cd /proc/4242 && builtin exec env --chdir=/fixture bash <<< 'head -c 32 environ'","process-ordinary-builtin-exec-chdir-stdin","claude-and-codex"]
+[2,"@DISPATCH@ env --chdir=/proc/4242 bash > fixture.out <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-exec-chdir-heredoc","claude-and-codex",null,null,null,null,"exec-dispatch"]
+[0,"cd /proc/4242 && @DISPATCH@ env --chdir=/fixture bash <<< 'head -c 32 environ'","process-ordinary-exec-chdir-stdin","claude-and-codex",null,null,null,null,"exec-dispatch"]
+[0,"builtin printf '%s' exec env --chdir=/proc/4242 bash <<< 'head -c 32 environ'","process-ordinary-builtin-exec-operand-data","claude-and-codex"]
 [2,"echo 'head -c 32 environ' | exec env --chdir=/proc/4242 bash -s","process-environ-exec-chdir-pipe","claude-and-codex"]
 [2,"bash -c 'exec env --chdir=/proc/4242 bash -s' <<'FIXTURE'\nhead -c 32 environ\nFIXTURE","process-environ-exec-chdir-inherited-stdin","claude-and-codex"]
 [2,"exec -a fixture env -C /proc env -C 4242 bash <<< 'head -c 32 environ'","process-environ-exec-option-chdir-stdin","claude-and-codex"]
@@ -2182,7 +2194,7 @@ unit-environment|elif systemctl_environment; then mode=dump-unknown|elif systemc
 systemctl-property-order|elif [ -z "$verb" ]; then selected=1; fi|else selected=1; fi|exit=0 expected=2|unit-property-after-verb-claude unit-property-after-verb-codex
 reader-file-option|if environment_file_input "$value" "$kind"; then return; fi ;;|if false; then return; fi ;;|exit=0 expected=2|process-environ-ignore-file-claude process-environ-xargs-cluster-codex
 reader-source-context|load_reader_context "${executable_reader_context[$code]}"|source_reader_dirs=()|exit=0 expected=2|process-environ-shell-cd-source-claude process-environ-env-chdir-source-codex
-exec-stdin-context|[ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then|[ -n "$data_source$incoming_sources" ] && false; then|exit=0 expected=2|process-environ-exec-chdir-heredoc-claude process-environ-exec-chdir-heredoc-codex process-environ-exec-chdir-pipe-claude process-environ-exec-chdir-inherited-stdin-codex process-environ-exec-option-chdir-stdin-claude process-environ-builtin-exec-chdir-heredoc-codex process-environ-exec-chdir-unresolved-stdin-claude
+exec-stdin-context|[ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then|[ -n "$data_source$incoming_sources" ] && false; then|exit=0 expected=2|process-environ-exec-chdir-heredoc-claude process-environ-exec-chdir-heredoc-codex process-environ-exec-chdir-pipe-claude process-environ-exec-chdir-inherited-stdin-codex process-environ-exec-option-chdir-stdin-claude process-environ-exec-chdir-heredoc-builtin-terminator-codex process-environ-exec-chdir-unresolved-stdin-claude
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc

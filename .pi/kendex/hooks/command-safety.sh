@@ -445,8 +445,9 @@ reader_environment_arguments() {
 # evidence, never proof of routing; unseen program semantics are not judged.
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
-    local env_chdir env_chdir_word xargs_launch=""
+    local env_chdir env_chdir_word xargs_launch="" builtin_head=$pos
     split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
+    shell_forwarder=""; shell_forwarded_pos=""
     # Other is unresolved. An existing arm's proof must establish clean.
     mode=other
     # Only these literal forwarding forms are part of the input contract.
@@ -461,12 +462,22 @@ environment_producer() { # command kind
       case "$program" in
         exec | builtin)
           if [ "$1" = shell ] && [ "${args[$((pos - 1))]}" = "$program" ]; then
+            shell_forwarder=$program
+            # A command prefix can reach a shell builtin. An external
+            # launcher reaches an opaque operand but proves no dispatch.
+            if [ "$program_pos" -eq "$builtin_head" ]; then
+              shell_forwarded_pos=$pos
+              case "${args[$pos]:-}:${arg_kinds[$pos]:-}" in
+                --:literal | --:dollar-literal) shell_forwarded_pos=$((pos + 1)) ;;
+              esac
+            fi
             program=opaque; compound=1
           fi
           break ;;
         command)
           case "${args[$pos]:-}" in -v | -V) pos=${#args[@]}; break ;; -p) pos=$((pos + 1)) ;; esac
           [ "${args[$pos]:-}" != -- ] || pos=$((pos + 1))
+          if [ "$program_pos" -eq "$builtin_head" ] && [ "${args[$program_pos]}" = command ]; then builtin_head=$pos; fi
           continue ;;
         sudo)
           while [ "$pos" -lt "${#args[@]}" ]; do
@@ -1081,7 +1092,7 @@ environment_dump() { # command kind; arguments are already decoded data
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
   local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
   local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand
-  local exec_operand stage_chdir stage_chdir_unresolved reader_context_id
+  local shell_forwarder shell_forwarded_pos exec_operand builtin_operand stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
   local stage_reader_context=() executable_reader_context=()
   local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
@@ -1445,18 +1456,14 @@ environment_dump() { # command kind; arguments are already decoded data
       mode=other
       if [ -z "$stdin_program" ] && environment_main_evidence "${args[@]}"; then mode=dump-unknown; fi
     fi
-    # Forwarded operands: a shell's script operand, or the word after exec or
-    # builtin, which take no option grammar here. A command string, unlike a
-    # script file, can run its first forwarded word, $0, as shell text.
-    script_pos=$script_operand; script_string=$source_pos; exec_operand=""
-    if [ "$program" = opaque ] && [ -n "$program_pos" ]; then
-      case "${args[$program_pos]}" in
-        exec) script_pos=$program_pos; script_string=""; exec_operand=$((program_pos + 1)) ;;
-        builtin)
-          script_pos=$program_pos; script_string=""
-          if [ "${args[$((program_pos + 1))]:-}:${arg_kinds[$((program_pos + 1))]:-}" = exec:literal ]; then
-            exec_operand=$((program_pos + 2))
-          fi ;;
+    # Scan all forwarded operands for conservative detection. Only the
+    # selected builtin dispatch can transfer the stdin directory.
+    script_pos=$script_operand; script_string=$source_pos; exec_operand=""; builtin_operand=""
+    if [ -n "$shell_forwarder" ]; then
+      script_pos=$program_pos; script_string=""
+      case "$shell_forwarder" in
+        exec) exec_operand=$shell_forwarded_pos ;;
+        builtin) builtin_operand=$shell_forwarded_pos ;;
       esac
     fi
     data_source="$data_source$deferred_piped_source"
@@ -1520,6 +1527,12 @@ environment_dump() { # command kind; arguments are already decoded data
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
         reader_chdir=$stage_chdir; reader_chdir_unresolved=$stage_chdir_unresolved
         environment_producer shell
+        if [ "$candidate" = "$builtin_operand" ] && [ -n "$shell_forwarded_pos" ]; then
+          case "$shell_forwarder" in
+            exec) exec_operand=$((candidate + shell_forwarded_pos)) ;;
+            builtin) builtin_operand=$((candidate + shell_forwarded_pos)) ;;
+          esac
+        fi
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
         if [ "$program" = bash ] && [ -n "$exec_operand" ] &&
