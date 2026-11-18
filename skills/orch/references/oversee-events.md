@@ -665,7 +665,7 @@ The merge route stays the lane's; the overseer never adopts it as its own step.
 
 Each `verifying [ITEM] box=[N] trigger=[JSON] status=[STATUS] deadline=[UTC|-] [merged=[UTC]] blocked_by=[IDS|-] reading=[JSON] where=[JSON] why=[JSON] [read=[KIND] ...]` line names an open post-merge box on a merged item, or an unproved box beside a container's "Every child Done or cancelled" box. A container's line has `trigger="outcome"`, `deadline=-` and no merge time.
 
-`status` is `blocked` where an open blocker stands, else `overdue` at or past the deadline, else `waiting` for an unfired trigger, else `due`. A due or overdue box ends with `read=[KIND]`: `met` or `failed` with `observed=[FIGURE]`, `missing`, or `inconclusive` or `unread` with `cause=[WORD]`. A new reading is a new key, so it prints once.
+`status` is `blocked` where an open blocker stands, else `overdue` at or past the deadline, else `waiting` for an unfired trigger, else `due`. A due or overdue box ends with `read=[KIND]`: `met` or `failed` with `observed=[FIGURE]`, `missing`, or `inconclusive` or `unread` with `cause=[WORD]`. The box and its deadline state key the event. A failed read leaves the key in place and emits no deadline event.
 
 `verifying-deadline` prints a box only when its due or overdue key changes; the heartbeat prints every box. `orch-runtime reconcile-items` returns the same lines in `result.lines`, their counts in `result.counts`, and each item with an overdue box as a `verifying-overdue` finding in `result.findings`.
 

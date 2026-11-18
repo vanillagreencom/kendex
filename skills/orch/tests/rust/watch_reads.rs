@@ -3590,13 +3590,132 @@ fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_
     );
 }
 
+#[test]
+fn a_failed_verification_read_neither_repeats_nor_forgets_a_told_box() {
+    const PATH: &str = "repos/owner/repo/actions/jobs/77";
+    const DEADLINE: &str = "2026-10-03T00:00:00Z";
+    let deadline = agent_runtime::clock::epoch_secs(DEADLINE).unwrap();
+    let mut world = World::new();
+    world.linear("comments create", json!({"body": {"success": true}}));
+    let shared = Shared::default();
+    shared.lock().unwrap().tracker = Some(tracker::TrackerInventory {
+        read_at: deadline - 60,
+        owed: Vec::new(),
+        verifying: vec![tracker::VerifyingItem {
+            id: "KEN-1".to_owned(),
+            created_at: "2026-10-01T00:00:00Z".to_owned(),
+            description: format!(
+                "## Done when\n- [ ] Post-merge: job time <= 600 s; Where: https://github.com/owner/repo/actions/runs/5/job/77; Why after merge: runs on main; Deadline: {DEADLINE}"
+            ),
+            priority: "-".to_owned(),
+            container: false,
+            blocked_by_open: Vec::new(),
+        }],
+        open_unblocked: Vec::new(),
+    });
+    let job = json!({"body": {"id": 77, "run_id": 5, "name": "perf",
+        "head_sha": "0000000000000000000000000000000000000000", "status": "completed",
+        "conclusion": "success", "started_at": "2026-10-01T10:00:00Z",
+        "completed_at": "2026-10-01T10:15:00Z",
+        "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/77"}});
+    let unread = json!({"exit": 1, "stderr": "HTTP 500"});
+    let gh = world.dir.path().join("gh");
+    let context = |settings| verifying::Context {
+        settings,
+        gh: gh.clone(),
+        shared: shared.clone(),
+        lines: verifying::Lines::default(),
+    };
+    let mut body = verifying::body(context(world.settings(&[])));
+    let mut baseline = Baseline::default();
+    let clock = FakeClock::new();
+    for (wall, answer, event_count) in [
+        (deadline - 60, &job, 1),
+        (deadline - 50, &unread, 0),
+        (deadline - 40, &job, 0),
+        (deadline, &unread, 0),
+        (deadline + 10, &job, 1),
+    ] {
+        world.gh(PATH, answer.clone());
+        let produced = pass_as(Duty::Verification, &mut body, &mut baseline, &clock, wall).unwrap();
+        assert_eq!(
+            produced
+                .events
+                .iter()
+                .filter(|event| matches!(event, Event::VerifyingDeadline { .. }))
+                .count(),
+            event_count,
+            "deadline events at {wall}: {:?}",
+            rendered(&produced)
+        );
+        assert_eq!(
+            world
+                .linear_calls()
+                .iter()
+                .filter(|call| call.starts_with("comments create KEN-1 --body-file "))
+                .count(),
+            1,
+            "ruling comments at {wall}"
+        );
+    }
+    let parser_tools = world.dir.path().join("parser-tools");
+    std::fs::create_dir(&parser_tools).unwrap();
+    write_executable(&parser_tools.join("jq"), "#!/bin/sh\nexit 127\n");
+    let cli = world.dir.path().join("linear-with-unread-parser");
+    write_executable(
+        &cli,
+        format!(
+            "#!/bin/sh\nPATH='{}':\"$PATH\" exec '{}' \"$@\"\n",
+            parser_tools.display(),
+            world.dir.path().join("linear").display(),
+        ),
+    );
+    let mut unread_parser = verifying::body(context(
+        world.settings(&[("OVERSEE_WATCH_TRACKER", cli.to_str().unwrap())]),
+    ));
+    let before = baseline
+        .get(verifying::DEADLINE_ROW, "KEN-1")
+        .unwrap()
+        .to_owned();
+    let produced = pass_as(
+        Duty::Verification,
+        &mut unread_parser,
+        &mut baseline,
+        &clock,
+        deadline + 20,
+    )
+    .unwrap();
+    assert!(produced.events.is_empty());
+    assert_eq!(
+        baseline.get(verifying::DEADLINE_ROW, "KEN-1"),
+        Some(before.as_str())
+    );
+    let recovered = pass_as(
+        Duty::Verification,
+        &mut body,
+        &mut baseline,
+        &clock,
+        deadline + 30,
+    )
+    .unwrap();
+    assert!(recovered.events.is_empty());
+    assert_eq!(
+        world
+            .linear_calls()
+            .iter()
+            .filter(|call| call.starts_with("comments create KEN-1 --body-file "))
+            .count(),
+        1,
+    );
+}
+
 /// A due check whose `Where:` is a GitHub job is read through that job's
 /// elapsed seconds and its reading kept in the line and the row key: only
 /// a met reading completes the box, once, through the tracker CLI; a failed
 /// or inconclusive one takes one comment; a job still running reads
-/// missing; a read that fails and a check with no comparator read unread,
-/// the second with no GitHub call. A second pass on the same answers writes
-/// nothing more.
+/// missing; a failed read changes only the heartbeat. A check with no
+/// comparator reads unread with no GitHub call. Repeating the same answers
+/// writes nothing more.
 #[test]
 fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box() {
     const NOW: u64 = 1_790_899_201;
@@ -3738,7 +3857,7 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             )
             .unwrap();
             assert_eq!(*lines_slot.lock().unwrap(), vec![line.clone()], "{reading}");
-            let want = if round == 1 {
+            let want = if round == 1 && reading != " read=unread cause=read-failed" {
                 vec![event.clone(), line.clone()]
             } else {
                 Vec::new()
@@ -3844,6 +3963,157 @@ fn a_verifying_item_with_an_open_branch_box_is_named_once() {
         .unwrap();
         assert_eq!(rendered(&produced), want, "{description:?}");
     }
+}
+
+fn posted_owner_ask(world: &World) -> (Settings, PathBuf) {
+    let root = std::fs::canonicalize(world.dir.path()).unwrap();
+    git_checkout(&root);
+    for (key, value) in [("gc.auto", "0"), ("maintenance.auto", "false")] {
+        let out = program("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["config", key, value])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git config {key}: {}", stderr(&out));
+    }
+    std::fs::write(
+        root.join("kendex.settings.toml"),
+        "[env]\nORCH_OWNER_EMAIL = \"owner@example.com\"\nORCH_OWNER_ASK_LABEL = \"owner-gated\"\n",
+    )
+    .unwrap();
+    let mailbox = root.join("tmp/lane-mail/overseer");
+    std::fs::create_dir_all(&mailbox).unwrap();
+    let events = mailbox.join("to-overseer.jsonl");
+    let ask = json!({"id": "ask-1", "kind": "ask", "at": "2026-10-01T00:00:00Z",
+        "from": "overseer:test", "to": "owner", "issue": "KEN-7", "text": "Approve?",
+        "options": ["yes", "no"], "recommend": "yes", "wait": 0, "effect": "none",
+        "deadline": "2026-10-01T00:00:00Z"});
+    let posted = json!({"id": "ask-1-tracker", "kind": "tracker-posted",
+        "at": "2026-10-01T00:00:01Z", "from": "overseer:test", "re": "ask-1",
+        "issue": "KEN-7", "tracker_label": "owner-gated", "tracker_comment": "question-1",
+        "text": ""});
+    std::fs::write(&events, format!("{ask}\n{posted}\n")).unwrap();
+    let cli = isolated_program(&fixtures().join("lane-mail-hold/lane-mail"));
+    let mut settings = world.settings(&[
+        ("LANE_MAIL_CLI", cli.to_str().unwrap()),
+        ("ORCH_OWNER_EMAIL", "owner@example.com"),
+        ("ORCH_OWNER_ASK_LABEL", "owner-gated"),
+    ]);
+    settings.reach = Some(agent_runtime::effects::Reach {
+        mail_program: cli,
+        mail_root: root.clone(),
+        socket: Some(root.join("no-server")),
+    });
+    (settings, mailbox.join("to-lane.jsonl"))
+}
+
+#[test]
+fn a_due_tracker_ask_closes_once_without_a_triage_team() {
+    let mut world = World::new();
+    let (mut settings, events) = posted_owner_ask(&world);
+    settings.linear_team = None;
+    world.linear("issues list --assignee", json!({"body": []}));
+    world.linear("comments create", json!({"body": {"success": true}}));
+    world.linear("issues update", json!({"body": {}}));
+    world.linear(
+        "graphql OwnerAskItem",
+        json!({"body": {"issue": {"description": "Body.", "assignee": null,
+            "labels": {"nodes": []}}}}),
+    );
+    let mut body = tracker::body(world.context(settings, Some(SINCE)));
+    let mut baseline = Baseline::default();
+    let clock = FakeClock::new();
+    for wall in [SINCE_EPOCH + 1000, SINCE_EPOCH + 1240] {
+        let produced = pass(&mut body, &mut baseline, &clock, wall).unwrap();
+        assert_eq!(produced.failed, None);
+        assert!(
+            !rendered(&produced)
+                .iter()
+                .any(|line| line.contains("triage"))
+        );
+        let resolutions: Vec<Value> = lines(&events)
+            .iter()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|event| event["kind"] == "resolution" && event["re"] == "ask-1")
+            .collect();
+        assert_eq!(
+            resolutions.len(),
+            1,
+            "resolutions at {wall}: {resolutions:?}"
+        );
+        assert_eq!(resolutions[0]["by"], "default");
+    }
+    assert!(
+        !world
+            .linear_calls()
+            .iter()
+            .any(|line| line.contains("--team"))
+    );
+}
+
+#[test]
+fn a_ruling_is_not_reposted_after_a_failed_triage_comments_read() {
+    let mut world = World::new();
+    let (settings, _) = posted_owner_ask(&world);
+    let candidate = item(
+        "KEN-1",
+        "2026-08-16T00:00:00Z",
+        "Triage",
+        "triage",
+        json!(1),
+        &[],
+    );
+    world
+        .linear("statuses list", statuses())
+        .linear("issues list", json!({"body": [candidate]}))
+        .linear("issues list --assignee", json!({"body": []}))
+        .linear(
+            "issues bulk-get",
+            json!({"body": {"issues": {"nodes": [
+                {"identifier": "KEN-1", "state": {"type": "triage"}, "children": {"nodes": []}}
+            ]}}}),
+        )
+        .linear("comments bulk-list", comments(&["KEN-1"], &[]))
+        .linear("comments create", json!({"body": {"success": true}}))
+        .linear("issues update", json!({"body": {}}))
+        .linear(
+            "graphql OwnerAskItem",
+            json!({"body": {"issue": {
+                "description": "Body.", "assignee": null, "labels": {"nodes": []}
+            }}}),
+        );
+    let mut body = tracker::body(world.context(settings, Some(SINCE)));
+    let mut baseline = Baseline::default();
+    let clock = FakeClock::new();
+    pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    let before = world.linear_calls().len();
+    world.linear(
+        "comments bulk-list",
+        json!({"exit": 1, "stderr": "linear: request-failed status=500"}),
+    );
+    let failed = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240);
+    let calls = world.linear_calls();
+    let ensuing = &calls[before..];
+    let ruling = |call: &&String| {
+        call.starts_with("comments create KEN-7 --body ask=ask-1 closed (default): yes")
+    };
+    let posted = ensuing.iter().position(|call| ruling(&call)).unwrap();
+    let read = ensuing
+        .iter()
+        .position(|call| call.starts_with("comments bulk-list KEN-1 "))
+        .unwrap();
+    assert!(posted < read, "{ensuing:?}");
+    world.linear("comments bulk-list", comments(&["KEN-1"], &[]));
+    pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
+    assert_eq!(world.linear_calls().iter().filter(ruling).count(), 1);
+    assert!(
+        failed
+            .unwrap()
+            .failed
+            .unwrap()
+            .contains("tracker-list-failed")
+    );
 }
 
 /// The owner's tracker answers, the description repair and the due tracker

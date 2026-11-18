@@ -218,7 +218,7 @@ fn intents(doc: &Document) -> Result<Vec<Intent>> {
 /// close it was refused), else the item's open `close-resources` intent.
 fn hold(baseline: &super::Baseline, intents: &[Intent], item: &str) -> Option<String> {
     if let Some(value) = baseline.get(super::tracker::TERMINAL_CLOSE_ROW, item) {
-        return Some(match value.strip_prefix("held|") {
+        return Some(match super::tracker::held_close(value) {
             Some(cause) => format!("landing unrecorded ({cause})"),
             None => format!(
                 "close refused ({})",
@@ -888,6 +888,15 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
                                 .entry(&lane.item)
                                 .or_insert(format!("post_pr_stop unreadable ({cause})"));
                         }
+                    }
+                } else if word("stage") == "unread" {
+                    let cause = unread.entry(&lane.item).or_default();
+                    if !cause.is_empty() {
+                        cause.push_str("; ");
+                    }
+                    cause.push_str("post_pr_stop unread");
+                    if let Some(detail) = facts.get("counts_cause").and_then(Value::as_str) {
+                        cause.push_str(&format!(" ({detail})"));
                     }
                 }
             }

@@ -4,7 +4,7 @@
 //! is never an empty set: a failed call, a chain the CLI left open at its
 //! page cap or a malformed member refuses the inventory with its cause,
 //! which the runner prints as `watch-step-failed step=tracker` and the
-//! duty's next run repeats; nothing of that pass moves.
+//! duty's next run repeats. Owner marks already made in that pass stand.
 //!
 //! One body runs the reads in order: the tracker's own (the team's
 //! statuses, its open items once, the lane items' terminal states, the
@@ -71,6 +71,12 @@ pub const TERMINAL_CLOSE_ROW: &str = "terminal-close";
 /// An owner ask's tracker marks, keyed by the ask's id; its `fleet` row is
 /// the floor the first mailbox read set.
 pub const OWNER_MARK_ROW: &str = "owner-ask-mark";
+
+const HELD_CLOSE_PREFIX: &str = "held|";
+
+pub(crate) fn held_close(value: &str) -> Option<&str> {
+    value.strip_prefix(HELD_CLOSE_PREFIX)
+}
 
 /// A refused close's `terminal-close` value as its key and its cause:
 /// `<state word>|<session_since>|<cause>`. The row's other form,
@@ -790,10 +796,12 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     };
     let mut tracker = None;
     let mut owner = OwnerPass::default();
-    if let (Some(team), None) = (&ctx.settings.linear_team, &held) {
-        match read_tracker(&linear, team, &fleet, ctx, tick, &mut owner)? {
-            Answered::Value(read) => tracker = Some(read),
-            Answered::Quota(quota) => {
+    if held.is_none()
+        && (ctx.settings.linear_team.is_some() || ctx.settings.reads.owner_tracker.is_some())
+    {
+        match read_tracker(&linear, &fleet, ctx, tick, &mut owner) {
+            Ok(Answered::Value(read)) => tracker = read,
+            Ok(Answered::Quota(quota)) => {
                 // The one limit event: printed when the receipt is taken,
                 // held as the row until its reset.
                 produced.events.push(Event::TrackerQuota {
@@ -805,6 +813,17 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                     value: quota.row_value(),
                 });
                 held = Some(quota);
+            }
+            Err(cause) if owner.changes.is_empty() && owner.events.is_empty() => {
+                return Err(cause);
+            }
+            Err(cause) => {
+                // Owner effects can land before all tracker reads finish.
+                produced.events.extend(owner.events);
+                produced.changes.extend(owner.changes);
+                owner.failed.push(cause.to_string());
+                produced.failed = Some(owner.failed.join("\n"));
+                return Ok(produced);
             }
         }
     }
@@ -913,19 +932,25 @@ pub(super) fn verifying_read(
 /// newest comment of each triage candidate.
 fn read_tracker(
     linear: &Linear,
-    team: &str,
     fleet: &FleetState,
     ctx: &Context,
     tick: &Tick,
     owner: &mut OwnerPass,
-) -> Result<Answered<TrackerRead>> {
-    let (items, inventory) = quota!(read_list(linear, team, fleet, tick.wall)?);
+) -> Result<Answered<Option<TrackerRead>>> {
+    let (items, inventory) = match ctx.settings.linear_team.as_deref() {
+        Some(team) => {
+            let (items, inventory) = quota!(read_list(linear, team, fleet, tick.wall)?);
+            (items, Some(inventory))
+        }
+        None => (Vec::new(), None),
+    };
     // The lane items' terminal states, one batch (`close-lane`'s
     // `terminal-state`), for every parked or stopped lane's linear-tracked
     // items, its own and those joined to it.
     let lane_items: Vec<&str> = fleet
         .lanes
         .iter()
+        .filter(|_| inventory.is_some())
         .filter(|l| matches!(l.status, LaneStatus::Parked | LaneStatus::Stopped))
         .flat_map(terminal_items)
         .collect::<BTreeSet<_>>()
@@ -1029,11 +1054,11 @@ fn read_tracker(
             }
         }
     }
-    Ok(Answered::Value(TrackerRead {
+    Ok(Answered::Value(inventory.map(|inventory| TrackerRead {
         inventory,
         triage,
         terminal,
-    }))
+    })))
 }
 
 /// The team's open items and the inventory they make, read at `read_at`:
@@ -1858,8 +1883,12 @@ fn close_terminal_lanes(
         let cycle = match cycle_of(ctx, tick, lane) {
             Ok(cycle) => cycle,
             Err(cause) => {
-                let held = format!("held|{cause}");
-                if tick.baseline.get(TERMINAL_CLOSE_ROW, &lane.item) != Some(held.as_str()) {
+                if tick
+                    .baseline
+                    .get(TERMINAL_CLOSE_ROW, &lane.item)
+                    .and_then(held_close)
+                    != Some(cause.as_str())
+                {
                     let _ = writeln!(
                         std::io::stderr(),
                         "lane-close-failed item={} step=cycle cause={cause}",
@@ -1868,7 +1897,7 @@ fn close_terminal_lanes(
                     produced.changes.push(Change::Set {
                         kind: TERMINAL_CLOSE_ROW.to_owned(),
                         identity: lane.item.clone(),
-                        value: held,
+                        value: format!("{HELD_CLOSE_PREFIX}{cause}"),
                     });
                 }
                 continue;

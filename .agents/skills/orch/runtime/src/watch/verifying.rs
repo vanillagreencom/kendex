@@ -257,8 +257,6 @@ impl Judged {
         )
     }
 
-    /// The due box's row key; its reading's kind is part of it, so a new
-    /// reading is said, and written, once.
     fn due_key(&self) -> String {
         format!(
             "box={} trigger={} status={} deadline={}{}",
@@ -880,7 +878,7 @@ pub(super) enum Item {
     Read {
         lines: Vec<String>,
         key: String,
-        due: Vec<String>,
+        due: Vec<(String, bool)>,
         counts: Counts,
         owed: BTreeMap<String, Owed>,
     },
@@ -947,16 +945,15 @@ pub(super) fn judge_item(
         if let Some(write) = b.owed(&at, merged.as_ref()) {
             owed.insert(key.clone(), write);
         }
-        due.push(key);
+        let read_failed = matches!(b.read, Some(Reading::Unread("read-failed" | "job-fields")));
+        due.push((key, read_failed));
     }
     let mut lines: Vec<String> = boxes.iter().map(|b| b.line(&item.id, blocked)).collect();
     let key = if lines.is_empty() {
         lines.push(format!("verifying {} boxes=0", item.id));
         "boxes=0".to_owned()
-    } else if due.is_empty() {
-        "-".to_owned()
     } else {
-        due.join("|")
+        "-".to_owned()
     };
     let mut counts = Counts::default();
     for b in &boxes {
@@ -1003,6 +1000,15 @@ fn write_owed(ctx: &Context, id: &str, owed: &Owed) {
         }
     };
     let _ = writeln!(std::io::stderr(), "verifying-write issue={id} {note}");
+}
+
+fn reading_of(row: &str) -> (&str, &str) {
+    row.rsplit_once(" read=").unwrap_or((row, ""))
+}
+
+fn box_deadline(row: &str) -> Option<(&str, &str)> {
+    let (trigger, tail) = reading_of(row).0.rsplit_once(" status=")?;
+    Some((trigger, tail.split_once(" deadline=")?.1))
 }
 
 fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
@@ -1055,7 +1061,12 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                     });
                 }
             }
-            Item::Unparsed { cause } => say_invalid(&item.id, &cause),
+            Item::Unparsed { cause } => {
+                say_invalid(&item.id, &cause);
+                if prior.is_some_and(|row| row.starts_with("box=")) {
+                    held.insert(item.id.clone());
+                }
+            }
             Item::Unread { key, cause } => {
                 let words = format!("{key} issue={} {cause}", item.id);
                 say_invalid(&item.id, words.trim_end());
@@ -1073,7 +1084,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
             } => {
                 held.insert(item.id.clone());
                 all_lines.extend(lines.iter().cloned());
-                if prior != Some(key.as_str()) {
+                if !due.is_empty() || prior != Some(key.as_str()) {
                     if key == "boxes=0" {
                         produced.events.push(Event::VerifyingDeadline {
                             id: item.id.clone(),
@@ -1081,25 +1092,46 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                         });
                         event_lines.extend(lines.iter().cloned());
                     }
-                    let prior_keys: Vec<&str> =
-                        prior.map(|p| p.split('|').collect()).unwrap_or_default();
-                    for row in &due {
-                        // The saved row already holds each due box key: a
-                        // changed sibling repeats no box's instructions.
-                        if prior_keys.contains(&row.as_str()) {
+                    let prior_keys = prior.unwrap_or_default().split('|');
+                    let mut saved = Vec::new();
+                    for (row, read_failed) in &due {
+                        let box_word = row.split(' ').next().unwrap_or_default();
+                        let old = prior_keys.clone().find(|key| {
+                            if *read_failed {
+                                key.split(' ').next() == Some(box_word)
+                            } else {
+                                box_deadline(key) == box_deadline(row)
+                            }
+                        });
+                        if *read_failed {
+                            saved.extend(old.map(str::to_owned));
                             continue;
                         }
-                        let box_word = row.split(' ').next().unwrap_or_default();
-                        let prefix = format!("verifying {} {box_word} ", item.id);
-                        event_lines
-                            .extend(lines.iter().filter(|l| l.starts_with(&prefix)).cloned());
-                        produced.events.push(Event::VerifyingDeadline {
-                            id: item.id.clone(),
-                            row: row.clone(),
-                        });
-                        if let Some(write) = owed.get(row) {
-                            write_owed(ctx, &item.id, write);
+                        let (previous, marked) = reading_of(old.unwrap_or_default());
+                        let (deadline, reading) = reading_of(row);
+                        if previous != deadline {
+                            let prefix = format!("verifying {} {box_word} ", item.id);
+                            event_lines
+                                .extend(lines.iter().filter(|l| l.starts_with(&prefix)).cloned());
+                            produced.events.push(Event::VerifyingDeadline {
+                                id: item.id.clone(),
+                                row: row.clone(),
+                            });
                         }
+                        let written = matches!(marked, "failed" | "inconclusive" | "met");
+                        let mut mark = if written { marked } else { reading };
+                        if let Some(write) = owed.get(row).filter(|write| match write {
+                            Owed::Complete { .. } => marked != "met",
+                            Owed::Comment { .. } => !written,
+                        }) {
+                            write_owed(ctx, &item.id, write);
+                            mark = reading;
+                        }
+                        saved.push(format!("{deadline} read={mark}"));
+                    }
+                    let key = if due.is_empty() { key } else { saved.join("|") };
+                    if key.is_empty() || prior == Some(key.as_str()) {
+                        continue;
                     }
                     produced.changes.push(Change::Set {
                         kind: DEADLINE_ROW.to_owned(),

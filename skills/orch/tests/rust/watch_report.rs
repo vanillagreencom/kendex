@@ -46,7 +46,8 @@ use orch_runtime::watch::pr_watch;
 use orch_runtime::watch::report;
 use orch_runtime::watch::retention::{self, Judgement};
 use orch_runtime::watch::tracker::{
-    OwedItem, OwedState, Quota, QuotaLimit, QuotaStatus, Shared, TrackerInventory, VerifyingItem,
+    self, OwedItem, OwedState, Quota, QuotaLimit, QuotaStatus, Shared, TrackerInventory,
+    VerifyingItem,
 };
 use orch_runtime::watch::verifying::{self, Lines};
 use orch_runtime::watch::wake;
@@ -4158,6 +4159,36 @@ fn report_blocked_reads_none_only_when_every_active_lane_was_read() {
     }
 }
 
+#[test]
+fn report_blocked_names_a_post_pr_stop_whose_item_cannot_be_read() {
+    let world = World::new();
+    let _ = world.report_context();
+    world.plant("gh.json", &json!({}));
+    let server = Server::start(world.path(), "fleet");
+    let pane = server.open_window("gh-2", world.path(), "bash --norc --noprofile");
+    let state = world.path().join("tmp");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(support::item_record(&state, "KEN-2"), "{").unwrap();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{
+        "item":"KEN-2","status":"running","harness":"claude","window":"gh-2",
+        "launched_at":"2026-09-29T06:00:00Z","session_since":"2026-09-29T06:00:00Z",
+        "mail_root":world.path(),"launch":{"pane":pane,"server":server.pid}
+    }]}));
+    let body = render_body(
+        &world,
+        &world.path().join("linear"),
+        &[
+            ("TMUX", format!("{},0,0", server.socket.display())),
+            ("AGENT_RUNTIME_TMUX_SESSION", server.session.clone()),
+        ],
+    );
+    let blocked = section(&body, "Blocked").trim();
+    assert!(
+        blocked.starts_with("- Unread for KEN-2: post_pr_stop unread; source: lane status; as of "),
+        "{blocked}"
+    );
+}
+
 /// A lane the watch holds over its landing or its close is listed under In
 /// progress with the hold's cause, whatever its status but done: the
 /// tracker duty's `terminal-close` row, held or refused, and an open
@@ -4166,7 +4197,13 @@ fn report_blocked_reads_none_only_when_every_active_lane_was_read() {
 #[test]
 fn report_lists_a_lane_held_over_its_landing_or_close_with_its_cause() {
     let world = World::new();
-    world.plant("gh.json", &json!({}));
+    world.plant(
+        "gh.json",
+        &json!({
+            "repos/owner/repo/pulls?state=closed&head=owner%3Aken-11&per_page=100&page=1":
+                {"exit": 1, "stderr": "HTTP 500"}
+        }),
+    );
     let lane = |item: &str, status: &str| json!({"item":item,"status":status,"launched_at":"2026-09-29T06:00:00Z"});
     let close = |item: &str, outcome: &str| {
         json!({"id":format!("close-{item}"),"op":"close-resources","target":item,
@@ -4180,17 +4217,61 @@ fn report_lists_a_lane_held_over_its_landing_or_close_with_its_cause() {
         lane("KEN-14", "stopped"), lane("KEN-15", "done")
     ],"intents":[close("KEN-13", "unconfirmed"), close("KEN-14", "confirmed")]}));
     let ctx = world.report_context();
+    world.plant(
+        "linear.json",
+        &json!({
+            "statuses list": {"body": [{"name": "In Progress", "type": "started"}]},
+            "issues list": {"body": []},
+            "issues bulk-get": {"body": {"issues": {"nodes": [
+                {"identifier": "KEN-11", "state": {"type": "canceled"}},
+                {"identifier": "KEN-12", "state": {"type": "started"}},
+                {"identifier": "KEN-13", "state": {"type": "started"}},
+                {"identifier": "KEN-14", "state": {"type": "started"}}
+            ]}}}
+        }),
+    );
+    let mut settings = ctx.settings.clone();
+    settings.linear_team = Some("kendex".to_owned());
+    settings.reach = Some(agent_runtime::effects::Reach {
+        mail_program: world.real_report_mail(),
+        mail_root: world.path().to_owned(),
+        socket: Some(world.path().join("no-server")),
+    });
+    let mut duty = tracker::body(tracker::Context {
+        fleet: ctx.fleet.clone(),
+        settings,
+        since: None,
+        gh: ctx.gh.clone(),
+        repos: ctx.repos.clone(),
+        locking: Locking::FLOCK,
+        nonce: 7,
+        owner: None,
+        shared: ctx.shared.clone(),
+    });
+    let now = epoch("2026-10-01T14:00:00Z");
     let mut baseline = Baseline::default();
+    let produced = pass(
+        Duty::Tracker,
+        &mut duty,
+        &mut baseline,
+        &FakeClock::new(),
+        now,
+    )
+    .unwrap();
+    assert_eq!(produced.failed, None);
+    let landing = baseline
+        .get(tracker::TERMINAL_CLOSE_ROW, "KEN-11")
+        .unwrap()
+        .to_owned();
     for (item, value) in [
-        ("KEN-11", "held|merged-read-failed"),
         (
             "KEN-12",
             "canceled|2026-09-29T06:00:00Z|close-failed cause=boxes-unsettled",
         ),
-        ("KEN-15", "held|merged-read-failed"),
+        ("KEN-15", landing.as_str()),
     ] {
         baseline.apply(watch::Change::Set {
-            kind: orch_runtime::watch::tracker::TERMINAL_CLOSE_ROW.to_owned(),
+            kind: tracker::TERMINAL_CLOSE_ROW.to_owned(),
             identity: item.to_owned(),
             value: value.to_owned(),
         });
@@ -4198,15 +4279,20 @@ fn report_lists_a_lane_held_over_its_landing_or_close_with_its_cause() {
     baseline
         .store(&Paths::of(&ctx.fleet).unwrap().baseline)
         .unwrap();
-    let body = report::render(&ctx, epoch("2026-10-01T14:00:00Z")).unwrap();
+    let body = report::render(&ctx, now).unwrap();
     let listed: Vec<&str> = section(&body, "In progress")
         .lines()
         .filter(|l| l.starts_with("- KEN-"))
         .collect();
+    assert!(
+        listed.first().is_some_and(|row| row.starts_with(
+            "- KEN-11: Stopped, no pull request; held: landing unrecorded (merged-unread "
+        )),
+        "{body}"
+    );
     assert_eq!(
-        listed,
+        listed[1..],
         [
-            "- KEN-11: Stopped, no pull request; held: landing unrecorded (merged-read-failed).",
             "- KEN-12: Stopped, no pull request; held: close refused (close-failed cause=boxes-unsettled).",
             "- KEN-13: Parked, #7; held: close unconfirmed (host_close=unanswered cause=ssh exit 255).",
         ],
