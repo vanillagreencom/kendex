@@ -194,19 +194,31 @@ def lock_match(base, path, ref, changed):
     version = lock["version"]
     if version not in (11, 12):
         return "lock-version-unknown"
+    # Version 11 recorded agent names before the catalog's alias migration.
+    # The engine owns those aliases in source/config/agent_names.rs.
+    legacy_agents = version == 11 and any(kind == "agent" for kind, _ in changed)
+    catalog = source.removeprefix("repos/").casefold()
+    fallback = None
     for row in lock["entries"].values():
         item = lock["installations"][row["installation"]] if version == 12 else row
         provenance, kind, name = row["sourceRepo"], item["kind"], item["name"]
         if not all(isinstance(value, str) and value for value in (provenance, kind, name)):
             return "lock-malformed-response"
-        if (kind, name) in changed:
-            if provenance.casefold() == source.removeprefix("repos/").casefold():
+        exact = (kind, name) in changed
+        if not exact and not (legacy_agents and kind == "agent"):
+            continue
+        if provenance.casefold() == catalog:
+            if exact:
                 return "installed-package-changed"
-            # Only a plain, distinct GitHub owner/repo proves a non-match.
-            # The engine also accepts URL spellings; keep them conservative.
-            if not re.fullmatch(r"[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+", provenance) or provenance.casefold().endswith(".git"):
-                return "lock-source-unrecognized"
-    return None
+        # Only a plain, distinct GitHub owner/repo proves a non-match.
+        # The engine also accepts URL spellings; keep them conservative.
+        elif re.fullmatch(r"[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+", provenance) and not provenance.casefold().endswith(".git"):
+            continue
+        if exact:
+            fallback = "lock-source-unrecognized"
+        elif fallback is None:
+            fallback = "lock-legacy-agent-ambiguous"
+    return fallback
 
 def refresh_reason(repo, changed, fallback):
     if changed is None:
