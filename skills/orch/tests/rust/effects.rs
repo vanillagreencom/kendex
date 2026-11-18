@@ -11235,7 +11235,7 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     ]);
     world.probe_env(
         "PROBE_RUN",
-        &folder_writes(&root, &["extensions", "hooks", "packages", "sessions"]),
+        &folder_writes(&root, &["extensions", "packages", "sessions"]),
     );
     let mut request = launch_request("KEN-PR", world.runner.state_dir());
     request["harness"] = json!("pi");
@@ -11250,11 +11250,81 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
         "{report}"
     );
     let probe = world.probe("KEN-PR", 1);
-    for name in ["extensions", "hooks", "packages"] {
+    for name in ["extensions", "packages"] {
         assert!(probe.contains(&format!("folder={name} refused")), "{probe}");
     }
     assert!(probe.contains("folder=sessions written"), "{probe}");
     assert!(!root.join("extensions/probe").exists());
+}
+
+/// A confined launch makes no folder in a Pi root on the host: Pi reads an
+/// empty global `hooks/` as a legacy folder and waits for a key before its
+/// composer, here and in every later Pi session on that root.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_pi_lane_leaves_the_pi_root_s_absent_code_folders_absent_and_starts() {
+    let mut world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let root = outside.join("pi-root");
+    pi_root_ready(&root);
+    let seat = outside.join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let pi = world.runner.state_dir().join("pi-stub").join("pi");
+    std::fs::create_dir_all(pi.parent().unwrap()).unwrap();
+    write_executable(
+        &pi,
+        "#!/bin/bash\nif [ -e \"$PI_CODING_AGENT_DIR/hooks\" ]; then\n  echo 'Warning: Global hooks/ directory found. Press any key to continue...'\n  while :; do read -r _line || sleep 1; done\nfi\nprintf '%s\\n' '────────────────────────────────' '────────────────────────────────' '~/work (main)' '0.4%/1.0M'\nwhile IFS= read -r _line; do :; done\n",
+    );
+    world.runner.env.extend([
+        (
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!("pi={}", pi.display()),
+        ),
+        ("PI_CODING_AGENT_DIR".to_owned(), root.display().to_string()),
+    ]);
+    let mut request = launch_request("KEN-PA", world.runner.state_dir());
+    request["harness"] = json!("pi");
+    request["model"] = json!("pi-claude/fable");
+    request["account"] = json!(seat.display().to_string());
+    world.launch(&request);
+    for name in ["extensions", "hooks"] {
+        assert!(
+            std::fs::symlink_metadata(root.join(name)).is_err(),
+            "{name} made in the Pi root"
+        );
+    }
+}
+
+/// A Pi lane starts past Pi's "Trust project folder?", which Pi asks before
+/// its composer unless its line carries `--approve` or its root's
+/// `trust.json` trusts the folder, with nobody at the pane to answer.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_pi_lane_starts_past_pi_s_project_trust_question() {
+    let mut world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let root = outside.join("pi-root");
+    pi_root_ready(&root);
+    let seat = outside.join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let pi = world.runner.state_dir().join("pi-stub").join("pi");
+    std::fs::create_dir_all(pi.parent().unwrap()).unwrap();
+    write_executable(
+        &pi,
+        "#!/bin/bash\napproved=\nfor a; do [ \"$a\" = --approve ] && approved=1; done\nif [ -z \"$approved\" ] && ! grep -qF \"\\\"$PWD\\\": true\" \"$PI_CODING_AGENT_DIR/trust.json\" 2>/dev/null; then\n  printf 'Trust project folder?\\n%s\\n' \"$PWD\"\n  while :; do read -r _line || sleep 1; done\nfi\nprintf '%s\\n' '────────────────────────────────' '────────────────────────────────' '~/work (main)' '0.4%/1.0M'\nwhile IFS= read -r _line; do :; done\n",
+    );
+    world.runner.env.extend([
+        (
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!("pi={}", pi.display()),
+        ),
+        ("PI_CODING_AGENT_DIR".to_owned(), root.display().to_string()),
+    ]);
+    let mut request = launch_request("KEN-PT", world.runner.state_dir());
+    request["harness"] = json!("pi");
+    request["model"] = json!("pi-claude/fable");
+    request["account"] = json!(seat.display().to_string());
+    world.launch(&request);
 }
 
 /// A seat shares its session folders by link, as an operator's seats do:

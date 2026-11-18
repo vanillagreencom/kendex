@@ -151,10 +151,10 @@ A launch on the tmux surface takes these steps in order, locally or on a remote 
    - Judge whether the design choice is consequential or the approach uncertain, and record that in the same ruling. When either holds, the brief carries an instruction for one one-shot `reviewer-arch` review at launch, which the lane runs before implementing through [design-review.md § Patch-chain actions](../references/design-review.md#patch-chain-actions), row **Second opinion**.
    - Judge the span: an item whose Location names more than one subsystem, as [small.md](small.md)'s opening defines one, or whose body names no Location, goes back to filing under the project-management skill's `SKILL.md` § Disposition, **One landing per subsystem**, unless its body says why it cannot land in parts. Record that reason in the same ruling.
    - Select the model class and effort through [Model class](../references/skill-rules.md#model-class), and keep a model the brief names. Read `orch-env ORCH_LANE_PREFERENCE ""` as the program's default. Select the model before the account: an account with plan-wide room can have none left for one model. Never pick a weaker model because an account is near its wall: pick another account.
-3. **Choose.** The account judge decides. Where `ORCH_LANE_PREFERENCE` is set and the brief names no model, run the preference walk and take `.result.chosen` as [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference) reads it:
+3. **Choose.** The account judge decides. Where `ORCH_LANE_PREFERENCE` is set and the brief names no model, run the preference walk with your own harness and permission words and take `.result.chosen` as [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference) reads it. A walk with no source refuses every Pi entry as `entry-permission-unwritable`:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime lane walk --fleet
+   .agents/skills/orch/scripts/orch-runtime lane walk --fleet --source-harness [HARNESS] --source-flags [WORDS]
    ```
 
    Otherwise judge the account for the model the lane runs, adding `--lane [CONFIG_DIR] --projected` for an account named by hand, and take `.result.record.config_dir` where `.result.exit` is 0:

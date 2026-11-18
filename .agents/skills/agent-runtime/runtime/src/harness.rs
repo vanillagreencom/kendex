@@ -41,7 +41,8 @@ pub enum HomeWrites {
     /// where the session keeps its transcripts, state and logs.
     Folders(&'static [&'static str]),
     /// The harness cannot start in a read-only home, so the home is bound
-    /// writable, and these entries it loads code from stay read-only.
+    /// writable, and these entries it loads code from stay read-only where
+    /// they stand: a bind over an absent one would make it in the home.
     Whole(&'static [&'static str]),
 }
 
@@ -364,7 +365,11 @@ impl Harness {
                 "long_context",
                 "--no-auto-update",
             ],
-            Harness::Pi => Vec::new(),
+            // Pi asks "Trust project folder?" before its composer in a folder
+            // holding project resources (`.agents/skills` among them) whose
+            // trust its root does not record; `--approve` trusts them for the
+            // run, and came in the release that added the question.
+            Harness::Pi => vec!["--approve"],
         }
     }
 

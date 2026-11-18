@@ -86,10 +86,9 @@ pub(super) struct Granted {
     /// so its bind stands.
     item_dir: PathBuf,
     /// The folders made where absent so their binds stand: the read-only
-    /// ones a lane could otherwise plant (those under the cache folder, the
-    /// launch records' under the common git folder and the code folders of
-    /// a seat bound writable), and a read-only seat's session folders,
-    /// which the harness could not make there.
+    /// ones a lane could otherwise plant (those under the cache folder and
+    /// the launch records' under the common git folder), and a read-only
+    /// seat's session folders, which the harness could not make there.
     kept: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
@@ -210,7 +209,7 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 /// every configured account of a harness its second opinion can run on,
 /// what the seat's harness writes there ([`Harness::home_writes`]): a
 /// read-only seat's session folders, or a seat whole with its settings file
-/// and code folders read-only; the build caches under the home and
+/// and the code folders that stand read-only; the build caches under the home and
 /// the folders `ORCH_LANE_WRITABLE` names, the shared runtime cache
 /// read-only wherever they would hold it; the user's runtime folder
 /// hidden; the display where the record holds `desktop`. A confined launch also
@@ -333,12 +332,15 @@ pub(super) fn of(
                     missing.push((file.clone(), empty));
                 }
                 read_only.push(file);
+                // A code folder binds read-only only where it stands: every
+                // bwrap mount over an absent one makes its mount point in
+                // the home on the host, and Pi stops at start over an empty
+                // `hooks/`. The lane can make one that is absent.
                 for entry in code {
                     let path = seat.join(entry);
-                    if std::fs::symlink_metadata(&path).is_err() {
-                        kept.push(path.clone());
+                    if std::fs::symlink_metadata(&path).is_ok() {
+                        read_only.push(path);
                     }
-                    read_only.push(path);
                 }
             }
         }

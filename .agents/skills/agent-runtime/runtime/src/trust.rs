@@ -9,7 +9,8 @@
 //! starts is the kendex context reader: the `kendex-lane-context` extension
 //! under `extensions/`, loaded only while `enabledFeatureFlags.EXTENSIONS`
 //! is true in its settings.json, and the directory the reader leaves each
-//! session's pending marker in; Pi asks none.
+//! session's pending marker in; Pi's trust is the launch line's `--approve`,
+//! which trusts the folder's project resources for the run.
 //!
 //! A numbered Codex account's config.toml is a link the account shim repoints
 //! at every launch, so an entry written there is gone by the next one: the
@@ -59,6 +60,9 @@ pub enum Route {
     LaunchHome,
     /// The entry written into the Claude config dir's own `.claude.json`.
     AccountConfig,
+    /// Pi: the launch line's `--approve` trusts the folder for the run, so
+    /// nothing is written.
+    ApproveWord,
 }
 
 /// What a launch runs under once the trust record stands.
@@ -82,11 +86,46 @@ pub fn prepare(harness: Harness, home: &Path, launch_dir: &Path, bypass: bool) -
         Harness::Codex => codex(home, launch_dir),
         Harness::Claude => claude(home, launch_dir, bypass),
         Harness::Copilot => copilot(home, pending_dir().as_deref()),
-        Harness::Pi => Ok(Prepared {
-            route: Route::None,
-            home: home.to_path_buf(),
-        }),
+        Harness::Pi => pi(home, launch_dir),
     }
+}
+
+/// Pi's answer for `dir` as its root's `trust.json` records it: the entry of
+/// `dir` or of its nearest ancestor that holds one, read as Pi's
+/// `ProjectTrustStore` reads it (Pi 0.87.1 `dist/core/trust-manager.js`).
+/// A recorded `false` refuses `trust-refused`, since the line's
+/// `--approve` would override it; a recorded `true` stands, and otherwise
+/// that word trusts the folder for the run.
+fn pi(root: &Path, dir: &Path) -> Result<Prepared> {
+    let h = Harness::Pi;
+    let store = root.join("trust.json");
+    let entries = match present(&store) {
+        Present::Absent => Map::new(),
+        Present::Unreadable(cause) => {
+            return Err(refused("config-unreadable", h, &store, Some(&cause)));
+        }
+        Present::File => {
+            let text = read(&store, h)?;
+            serde_json::from_str::<Map<String, Value>>(text.trim_start_matches('\u{feff}'))
+                .map_err(|e| refused("config-unreadable", h, &store, Some(&e.to_string())))?
+        }
+    };
+    let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let recorded = dir
+        .ancestors()
+        .find_map(|d| match entries.get(&d.display().to_string()) {
+            Some(Value::Bool(answer)) => Some(*answer),
+            _ => None,
+        });
+    let route = match recorded {
+        Some(true) => Route::Preapproved,
+        Some(false) => return Err(refused("trust-refused", h, &dir, None)),
+        None => Route::ApproveWord,
+    };
+    Ok(Prepared {
+        route,
+        home: root.to_path_buf(),
+    })
 }
 
 /// Where one launch directory's private Codex home sits under the account:
@@ -1284,17 +1323,69 @@ mod tests {
         }
     }
 
-    /// Pi asks no trust question and loads no reader: its arm writes
-    /// nothing, and the home is the one given.
+    /// Pi's arm writes nothing and runs under the root given: the line's
+    /// `--approve` trusts the folder unless the root records an answer for
+    /// it or its nearest ancestor that holds one, and a recorded no refuses.
     #[test]
-    fn the_dispatcher_hands_each_harness_to_its_arm() {
+    fn a_pi_root_s_recorded_answer_for_the_folder_or_its_nearest_ancestor_decides() {
         let root = tempfile::tempdir().unwrap();
-        let dir = root.path().join("wt");
-        let lane = root.path().join(".1pi");
-        let prepared = prepare(Harness::Pi, &lane, &dir, false).unwrap();
-        assert_eq!(prepared.route, Route::None);
-        assert_eq!(prepared.home, lane);
-        assert!(fs::symlink_metadata(&lane).is_err(), "nothing written");
+        let rows: [(&str, Option<&str>, Result<Route>); 7] = [
+            ("no-store", None, Ok(Route::ApproveWord)),
+            (
+                "another",
+                Some(r#"{"/elsewhere": false}"#),
+                Ok(Route::ApproveWord),
+            ),
+            ("trusted", Some(r#"{"DIR": true}"#), Ok(Route::Preapproved)),
+            (
+                "parent-no",
+                Some(r#"{"PARENT": false}"#),
+                Err(Error::refused("trust-refused", &[])),
+            ),
+            (
+                "own-yes-over-parent-no",
+                Some(r#"{"PARENT": false, "DIR": true}"#),
+                Ok(Route::Preapproved),
+            ),
+            (
+                "cleared-under-parent-yes",
+                Some(r#"{"PARENT": true, "DIR": null}"#),
+                Ok(Route::Preapproved),
+            ),
+            (
+                "not-an-object",
+                Some("[]"),
+                Err(Error::refused("config-unreadable", &[])),
+            ),
+        ];
+        for (name, body, want) in rows {
+            let parent = root.path().join(name);
+            let dir = parent.join("wt");
+            let pi_root = parent.join(".pi-root");
+            fs::create_dir_all(&dir).unwrap();
+            fs::create_dir_all(&pi_root).unwrap();
+            let store = pi_root.join("trust.json");
+            if let Some(body) = body {
+                let body = body
+                    .replace(
+                        "PARENT",
+                        &parent.canonicalize().unwrap().display().to_string(),
+                    )
+                    .replace("DIR", &dir.canonicalize().unwrap().display().to_string());
+                fs::write(&store, &body).unwrap();
+            }
+            let before = fs::read(&store).ok();
+            let got = prepare(Harness::Pi, &pi_root, &dir, false);
+            match want {
+                Ok(route) => {
+                    let prepared = got.unwrap();
+                    assert_eq!(prepared.route, route, "{name}");
+                    assert_eq!(prepared.home, pi_root, "{name}");
+                }
+                Err(e) => assert_eq!(key(&got.unwrap_err()), key(&e), "{name}"),
+            }
+            assert_eq!(fs::read(&store).ok(), before, "{name}: nothing written");
+        }
     }
 
     fn field<'a>(e: &'a Error, name: &str) -> &'a str {
