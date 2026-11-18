@@ -1,7 +1,5 @@
 # Code Review Lifecycle
 
-The caller applies [orch § Delegation](../../orch/references/skill-rules.md#delegation) before selecting an agent for each round.
-
 Review agents run in parallel, each reviewing the same changes from their own domain. You review and return a verdict; the orchestrator owns tracker state, fix routing, and presentation.
 
 ## 1. Diff
@@ -33,7 +31,7 @@ Mutation-validating a test as evidence commits you to the skill's Mutation-Stabi
 
 ## 3. Artifact, Validate, Return
 
-Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `orch-runtime review-artifact check` the pre-return check. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
+Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `review-artifact-check` the pre-return check. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
 
 Send exactly one agent-to-agent message, then go idle:
 

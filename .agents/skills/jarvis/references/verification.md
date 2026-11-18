@@ -3,6 +3,7 @@
 ## Sources
 
 - Identify the source for every claim. Mark a claim unchecked until you have checked that source.
+- For each material update, state what you observed, when you observed it and where you checked it. Compare it with the last state you reported on that subject in the same thread. Mark claims without a source as unknown. Correct an earlier claim in that thread if you find it was wrong.
 - If you cannot read a figure, report it as unread. Give the age of evidence that is out of date.
 - Read counts from a complete result or the tool's reported total. A row limit alone proves neither a total nor the earliest start. Compute an age from the relevant record's start time. Do not infer a group's age from the oldest visible row in a limited list.
 - For a claim that something is absent, state where you searched and whether the search ignored letter case.

@@ -24,6 +24,8 @@ Put text in a section read at every Start only when every Start acts on it. Othe
 
 For agent and skill additions, inspect the existing source and selected harness support before changing a declaration. Refresh in the consumer home and read back each selected supported harness's rendering, then refresh again and check that the addition and its source remain. Keep source, declarations and the resulting tracked outputs together through the home repository's normal commit and pull-request route. A satellite forwards the change to Jarvis main under [Main and satellites](agent-reach.md#main-and-satellites).
 
+After a rule changes, a consumer that renders it to another surface checks that the installed copy there has the new revision and runs one relevant request at that surface.
+
 An app-managed home's file tools can be limited to `state/`; that access grants no permission to write sources elsewhere. Report an unavailable source, installation failure or unsupported capability with the operation and cause. Keep the request incomplete until its owner resolves it; an unread or failed check is no successful installation. Preserve existing personal instructions and saved choices.
 
 ## Memory store and index
