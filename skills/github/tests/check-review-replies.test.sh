@@ -265,6 +265,7 @@ body_of() {
     overview) printf '%s' "$OVERVIEW_BODY" ;;
     overview-closer) printf '%s' "$OVERVIEW_CLOSER" ;;
     overview-approved) printf '%s' "$OVERVIEW_APPROVED" ;;
+    overview-approval-recommended) printf '<!-- ccr-overview-v2 -->\n\n### 🟢 Approval recommended\n\n**0 open findings**\n' ;;
     overview-unknown) printf '<!-- ccr-overview-v2 -->\n\n### 🟣 Verdict unavailable\n' ;;
     overview-no-verdict) printf '<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n**0 open findings**\n' ;;
     overview-no-marker) printf '%s' "$OVERVIEW_BODY" | sed '/ccr-overview-v2/d' ;;
@@ -297,6 +298,7 @@ a body written with CRLF line ends reads as the same block|crlf|$BOTH_STANDING
 a Changes recommended overview with no thread fails despite zero open findings|overview|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
 a Needs a closer look overview fails with one review finding|overview-closer|$FAILED | suppressed-findings count=1 | suppressed-entry $OVERVIEW_ENTRY
 the live Approved overview has no body finding|overview-approved|$PASSED
+Copilot's Approval recommended overview at head with no open findings passes|overview-approval-recommended|$PASSED
 an overview with an unreadable verdict fails closed|overview-unknown|$FAILED | suppressed-findings state=unparsed
 an overview marker with no verdict adds nothing|overview-no-verdict|$PASSED
 a verdict without the overview marker adds nothing|overview-no-marker|$PASSED
