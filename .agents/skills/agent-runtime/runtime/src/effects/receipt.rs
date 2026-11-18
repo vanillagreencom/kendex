@@ -1,21 +1,21 @@
 //! The pane's own registration of itself.
 //!
 //! Nothing discovers the window an effect opened: the pane registers
-//! itself. The launch line the runtime types into the new pane first writes
-//! a receipt, one JSON object naming the intent, the pane id tmux gave the
-//! process (`$TMUX_PANE`) and the shell's own pid (`$$`), by writing a
-//! temporary name in the receipt's directory and renaming it over the
-//! receipt, so a reader sees the whole object or nothing. The shell then
-//! `exec`s the launch command. With confinement, the registered pid is the
-//! wrapper's and the harness runs below it. The line runs under `/bin/sh`, so the
-//! pid word and the redirections mean one thing whatever interactive shell
-//! the pane runs.
+//! itself. The launch line the runtime types into the new pane runs the
+//! intent's launch file, which first writes a receipt, one JSON object
+//! naming the intent, the pane id tmux gave the process (`$TMUX_PANE`) and
+//! the shell's own pid (`$$`), by writing a temporary name in the receipt's
+//! directory and renaming it over the receipt, so a reader sees the whole
+//! object or nothing. The shell then `exec`s the launch command. With
+//! confinement, the registered pid is the wrapper's and the harness runs
+//! below it. The file runs under `/bin/sh`, so the pid word and the
+//! redirections mean one thing whatever interactive shell the pane runs.
 //!
 //! The reader validates the shape and refuses a malformed receipt as
 //! invalid, never as absence: an unreadable receipt is held, not failed.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::launch::{LaunchCommand, shell_quote};
 use serde::Deserialize;
@@ -125,31 +125,48 @@ pub(super) fn arm(path: &Path) -> std::result::Result<(), crate::Error> {
     })
 }
 
-/// The line typed into the fresh pane: write the receipt for `intent_id` at
-/// `path` by temporary name and rename, then run the command's own line,
-/// `cd` and `exec` of the harness, all under `/bin/sh`. A failure to write
-/// the receipt stops the chain before the harness runs, so a pane that
-/// never registered never holds a harness.
-pub(super) fn launch_line(path: &Path, intent_id: &str, command: &LaunchCommand) -> String {
+/// The launch file beside the receipt at `receipt`: `<intent id>.launch`.
+fn launch_path(receipt: &Path) -> PathBuf {
+    receipt.with_extension("launch")
+}
+
+/// Write the launch for `intent_id` into its file beside the receipt at
+/// `path` and return the line typed into the fresh pane, which runs that
+/// file under `/bin/sh`. The file writes the receipt by temporary name and
+/// rename, then runs the command's own line, `cd` and `exec` of the
+/// harness. A failure to write the receipt stops the chain before the
+/// harness runs, so a pane that never registered never holds a harness.
+///
+/// The command goes by file because a pane whose shell is not yet reading
+/// takes the paste through a terminal in canonical mode, which keeps 4095
+/// bytes of one line and drops the rest, and a confined command's line runs
+/// past that. The typed line is short whatever the command.
+pub(super) fn launch_line(path: &Path, intent_id: &str, command: &LaunchCommand) -> Result<String> {
     let receipt = path.display().to_string();
     let temp = format!("{receipt}.tmp");
     let script = format!(
         "printf '{{\"intent\":\"%s\",\"pane\":\"%s\",\"pid\":%s,\"written_at\":\"%s\"}}\\n' \
          {id} \"$TMUX_PANE\" \"$$\" \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > {temp} \
-         && mv {temp} {receipt} && {line}",
+         && mv {temp} {receipt} && {line}\n",
         id = shell_quote(intent_id),
         temp = shell_quote(&temp),
         receipt = shell_quote(&receipt),
         line = command.shell_line(),
     );
-    format!("exec /bin/sh -c {}", shell_quote(&script))
+    let file = launch_path(path);
+    fs::write(&file, script).map_err(|e| crate::Error::io("write-launch", &file, e))?;
+    Ok(format!(
+        "exec /bin/sh {}",
+        shell_quote(&file.display().to_string())
+    ))
 }
 
-/// Remove the receipt once its intent is closed. Best effort: a receipt
-/// nothing will read again is not a reason to refuse the recorded outcome,
-/// and a receipt already gone is the wanted state.
+/// Remove the receipt and its launch file once its intent is closed. Best
+/// effort: a file nothing will read again is not a reason to refuse the
+/// recorded outcome, and a file already gone is the wanted state.
 pub(super) fn remove(path: &Path) {
     let _ = fs::remove_file(path);
+    let _ = fs::remove_file(launch_path(path));
 }
 
 #[cfg(test)]
@@ -277,7 +294,7 @@ mod tests {
             brief_path: None,
             confinement: None,
         };
-        let line = launch_line(&path, ID, &command);
+        let line = launch_line(&path, ID, &command).unwrap();
         // The pane shell is bash here; the line's own words run under sh.
         let status = Command::new("bash")
             .args(["-c", &line])
@@ -308,5 +325,113 @@ mod tests {
         };
         assert_eq!(receipt.pane, "%8");
         assert_eq!(receipt.pid, child.id());
+    }
+
+    /// A terminal in canonical mode, as a pane stands before its shell
+    /// reads, holds 4095 bytes of one line and drops the rest (Linux
+    /// `N_TTY_BUF_SIZE` less the newline's byte).
+    const TERMINAL_LINE: usize = 4095;
+
+    /// A command twice a terminal line long whose program writes its long
+    /// argument to `out`.
+    fn long_command(dir: &Path, out: &Path) -> (LaunchCommand, String) {
+        let long = "x".repeat(2 * TERMINAL_LINE);
+        let command = LaunchCommand {
+            program: "sh".to_owned(),
+            args: vec![
+                "-c".to_owned(),
+                "printf %s \"$1\" > \"$2\"".to_owned(),
+                "sh".to_owned(),
+                long.clone(),
+                out.display().to_string(),
+            ],
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
+            cwd: dir.to_path_buf(),
+            brief_arg: None,
+            brief_path: None,
+            confinement: None,
+        };
+        (command, long)
+    }
+
+    /// A command longer than a terminal line still reaches the pane as a
+    /// line under it, which runs the intent's launch file holding the whole
+    /// command: its receipt written and its long argument delivered whole.
+    /// The intent's close takes the launch file with the receipt.
+    #[test]
+    fn a_launch_longer_than_a_terminal_line_is_pasted_as_a_short_line_that_runs_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::record::receipt_path(dir.path(), ID);
+        arm(&path).unwrap();
+        let out = dir.path().join("argument");
+        let (command, long) = long_command(dir.path(), &out);
+        let line = launch_line(&path, ID, &command).unwrap();
+        assert!(line.len() <= TERMINAL_LINE, "{} bytes", line.len());
+        let launch = dir.path().join("intents").join(format!("{ID}.launch"));
+        assert_eq!(line, format!("exec /bin/sh {}", launch.display()));
+        let script = fs::read_to_string(&launch).unwrap();
+        assert!(
+            script.ends_with(&format!(" && {}\n", command.shell_line())),
+            "{script}"
+        );
+        let status = Command::new("bash")
+            .args(["-c", &line])
+            .env("TMUX_PANE", "%7")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{line}");
+        assert_eq!(fs::read_to_string(&out).unwrap(), long);
+        let Reading::Present(receipt) = read(&path, ID).unwrap() else {
+            panic!("no receipt read from {}", path.display());
+        };
+        assert_eq!(receipt.pane, "%7");
+        remove(&path);
+        assert!(!path.exists() && !launch.exists());
+    }
+
+    /// Through a real pane: a window whose shell is not reading yet takes
+    /// the paste into its terminal's line, and the long command still runs
+    /// whole and registers the pane.
+    #[test]
+    fn a_long_launch_pasted_before_the_pane_s_shell_reads_runs_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = crate::host::tmux::Private::start(dir.path());
+        let server = &private.0;
+        // The window's shell starts a second late, so the paste and its
+        // Enter wait in the terminal as they do behind a slow login shell.
+        let set = Command::new("tmux")
+            .args(["-S"])
+            .arg(&server.socket)
+            .args([
+                "set-option",
+                "-g",
+                "default-command",
+                "sleep 1; exec /bin/sh",
+            ])
+            .status()
+            .unwrap();
+        assert!(set.success());
+        let path = crate::record::receipt_path(dir.path(), ID);
+        arm(&path).unwrap();
+        let out = dir.path().join("argument");
+        let (command, long) = long_command(dir.path(), &out);
+        let pane =
+            crate::host::tmux::new_window(server, "t", "launch", dir.path()).expect("a window");
+        let line = launch_line(&path, ID, &command).unwrap();
+        crate::host::tmux::send_line(&pane, &line).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while fs::read_to_string(&out).ok().as_deref() != Some(long.as_str()) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the command never ran whole: {:?}",
+                crate::host::tmux::capture(&pane)
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let Reading::Present(receipt) = read(&path, ID).unwrap() else {
+            panic!("no receipt read from {}", path.display());
+        };
+        assert_eq!(receipt.pane, pane.id);
     }
 }

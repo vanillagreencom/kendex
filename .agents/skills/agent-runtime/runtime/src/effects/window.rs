@@ -254,7 +254,7 @@ impl Operation<'_> {
     /// recorded before the action that creates it: the receipt's directory made only after the handle's
     /// owner-conditional write, which proves the intent still this
     /// writer's and its set the record's and stops on a yield before any
-    /// file effect; the receipt armed and the window
+    /// file effect; the receipt armed, its launch file written and the window
     /// possibly opened before
     /// `new-window` runs; the pane id the creating call printed, with the
     /// server's pid and start, before anything is typed into it; then the
@@ -281,11 +281,14 @@ impl Operation<'_> {
     ) -> Result<std::result::Result<Pane, OpenRefusal>> {
         let receipt_path = self.receipt_path();
         self.write()?;
-        if let Err(e) = receipt::arm(&receipt_path) {
-            return Ok(Err(OpenRefusal::Refused(e)));
-        }
+        let line = match receipt::arm(&receipt_path)
+            .and_then(|()| receipt::launch_line(&receipt_path, &self.intent_id, command))
+        {
+            Ok(line) => line,
+            Err(e) => return Ok(Err(OpenRefusal::Refused(e))),
+        };
         if alone && let Reading::Live(Some(shell)) = tmux::sole_idle_shell(server, session) {
-            return self.run_in_idle_shell(shell, command, opening, &receipt_path);
+            return self.run_in_idle_shell(shell, &line, opening, &receipt_path);
         }
         let asked = Opening {
             asked: true,
@@ -319,13 +322,10 @@ impl Operation<'_> {
         };
         let refusal = match failed {
             Some(error) => error,
-            None => {
-                let line = receipt::launch_line(&receipt_path, &self.intent_id, command);
-                match tmux::send_line(&pane, &line) {
-                    Ok(()) => return Ok(Ok(pane)),
-                    Err(refusal) => refusal,
-                }
-            }
+            None => match tmux::send_line(&pane, &line) {
+                Ok(()) => return Ok(Ok(pane)),
+                Err(refusal) => refusal,
+            },
         };
         // The pane, standing since it was recorded, is closed by its token;
         // then the receipt is read, not assumed absent: an unsuccessful send
@@ -454,7 +454,7 @@ impl Operation<'_> {
     fn run_in_idle_shell(
         &mut self,
         shell: Pane,
-        command: &LaunchCommand,
+        line: &str,
         opening: &Opening,
         receipt_path: &Path,
     ) -> Result<std::result::Result<Pane, OpenRefusal>> {
@@ -468,9 +468,8 @@ impl Operation<'_> {
                 ..opening.clone()
             },
         })?;
-        let line = receipt::launch_line(receipt_path, &self.intent_id, command);
         if let Err(refusal) =
-            tmux::send_key(&shell, "C-c").and_then(|()| tmux::send_line(&shell, &line))
+            tmux::send_key(&shell, "C-c").and_then(|()| tmux::send_line(&shell, line))
         {
             self.read_receipt()?;
             return Ok(Err(OpenRefusal::LineUnsent { refusal }));

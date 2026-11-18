@@ -11220,7 +11220,7 @@ fn a_failed_start_over_the_idle_shell_leaves_it_standing() {
     assert_eq!(server.session_panes(), birth, "the shell stands alone");
     let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &birth[0]]);
     assert!(
-        !String::from_utf8_lossy(&screen.stdout).contains("/bin/sh -c"),
+        !String::from_utf8_lossy(&screen.stdout).contains("exec /bin/sh"),
         "nothing typed into the shell"
     );
 }
