@@ -22,7 +22,7 @@ One pass, in order. The first verdict stands.
 3. Doc or reference updates for code this diff changes are work the Done-when needs → `fix`. A review with no work item (`review.md` run without an issue ID) takes the reviewed change as its Done-when. **Does the Done-when need this work?** If not → `issue` where it clears § Filing bar, else `decline` with its reason. If yes, test relatedness by the problem or the change, not file membership. Unrelated → `issue` where it clears § Filing bar, else `decline` with its reason.
 4. **Size?** Only work the Done-when needs can be `fix` here. Small enough to apply here → `fix`. Needs delegation, tracking, history, or new files → `issue` where it clears § Filing bar, else `decline` with its reason.
 
-A reviewer or the orchestrator can choose a cut when it serves the Done-when. Record that choice with `dev-round-write --cut`; [dev-round.md § Declared cuts](../../orch/schemas/dev-round.md#declared-cuts) owns its acceptance rule. Close each thread on cut code with the deleting sha.
+A reviewer or the orchestrator can choose a cut when it serves the Done-when. Record that choice with `orch-runtime round --text stamp --cut`; [dev-round.md § Declared cuts](../../orch/schemas/dev-round.md#declared-cuts) owns its acceptance rule. Close each thread on cut code with the deleting sha.
 
 Round cap: `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4) bounds the external review rounds on an open PR, counted in `pr_comment_review.iterations`. Past it every finding gets a disposition — `Declined: <reason>` or `Tracked: <ID>` — and no fix push. The filing bar below decides which of the two, exactly as it does under the cap: a finding that misses the bar is declined at the cap as well. One exception: a defect this diff itself introduces or arms, and Step 0 does not exclude, is fixed whatever the round count. Step 1's other `fix` verdict — a pre-existing defect that blocks this change from working — is a fix below the cap and a disposition above it, like anything else.
 
@@ -56,7 +56,7 @@ A finding at a location `patched_causes` records, or sharing an `owner` with a r
 Every loop that dispositions findings reads both records before its first disposition, with this command and no restatement of it:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}' <<<"$STATE_READ"
 ```
 
 ## Filing bar

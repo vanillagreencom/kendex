@@ -62,6 +62,7 @@ Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PA
 - `blockers[]`: block PR merge — dev must fix (may escalate to issues if unfixable)
 - `suggestions[]`: non-blocking improvements, categorized by the review agent
 - `questions[]`: PR-comment triage only — questions needing a response
+- `tests[]`: optional; one entry per test the review judges, with `test`, a `verdict` of `keep`, `add` or `remove`, and for `keep` or `add` a non-blank `cost`, what each run of it costs. `orch-runtime review-artifact check` refuses any other verdict and a kept or added entry with no cost (`test_cost`); an artifact with no `tests[]` is not judged
 
 ## Item Fields (blockers/suggestions)
 
@@ -95,11 +96,11 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 
 ## qa_metadata
 
-Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — `review-artifact-check` rejects such artifacts (`no_review`) regardless of verdict.
+Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — `orch-runtime review-artifact check` rejects such artifacts (`no_review`) regardless of verdict.
 
 ## Measurement Claims
 
-`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Copy each call's printed `mutation: … stability: …; seconds: …` line into `.summary`; the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`. An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
+`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Copy each call's printed `mutation: … stability: …; seconds: …` line into `.summary`; the same numbers written only into a blocker or suggestion are not checked. `orch-runtime review-artifact check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`. An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
 
 Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`, `values` (an object of numbers) and `samples` (how many samples produced them). It is refused when `name` or `unit` is missing or blank, `samples` is not above zero, or `values` holds no number; a zero value is a result and stays valid. Record it under its true name and unit, never outside `perf_qa` or as a failed measurement:
 
