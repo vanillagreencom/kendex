@@ -180,6 +180,19 @@ build_rename_committed() { # a committed rename also keeps the inherited ID
   commit_all "$1/work" rename
 }
 
+build_large_base() {
+  local rationale
+  printf -v rationale '%0131072d' 0
+  new_repo "$1/up" main
+  write_revisit_index "$1/up" "D034,$rationale,None" "D035,Reason,When the API changes"
+  touch "$1/up/docs/decisions/D035-first.md"
+  [[ "$(wc -c <"$1/up/docs/decisions/INDEX.md")" -gt 131072 ]] || return 1
+  commit_all "$1/up" base
+  clone_repo "$1/up" "$1/work"
+  mv "$1/work/docs/decisions/D035-first.md" "$1/work/docs/decisions/D035-renamed.md"
+  write_revisit_index "$1/work" "D034,$rationale,None" "D035,Reason,When the API changes,,,,[Full](D035-renamed.md)"
+}
+
 build_base_rename() { # DIR [remove]: main renames D035; the lane can remove its inherited document
   build_ahead "$1"
   git -C "$1/work" pull -q --ff-only origin main
@@ -552,6 +565,7 @@ next-id-configured-prefix-base-width~prefix_base_width~DECISION_ID_PREFIX=ADR-~n
 next-id-index-absent~index_absent~~next-id~~0~D002~notice=base-unverified ref=origin/main reason=index-absent
 check-collision~collision~~check~~1~~error=id-collision id=D035 path=docs/decisions/D035-lane.md base=origin/main:docs/decisions/D035-main.md
 check-renamed-record~rename~~check~~0~~
+check-large-base-index~large_base~~check~~0~~
 check-committed-rename~rename_committed~~check~~0~~
 check-base-renamed-record~base_rename~~check~~0~~
 check-branch-rename-base-removed~rename:remove~~check~~0~~
