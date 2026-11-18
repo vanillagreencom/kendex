@@ -83,6 +83,7 @@ hooks = [
   "critical-path-deny",
   "docs-writing-note",
   "docs-writing-bash-note",
+  "ui-copy-note",
 ]
 
 [bundles.orchestration]

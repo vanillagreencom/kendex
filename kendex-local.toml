@@ -713,6 +713,11 @@ source = "."
 harnesses = ["claude", "codex", "pi"]
 enabled = true
 
+[hooks.ui-copy-note]
+source = "."
+harnesses = ["claude", "codex"]
+enabled = true
+
 [hooks.reviewer-stop-check]
 source = "."
 harnesses = ["claude", "codex", "copilot"]
