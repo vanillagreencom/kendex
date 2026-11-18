@@ -530,13 +530,33 @@ environment_rows() {
 [2,"grep -a . /proc/4242/environ","process-environ-grep","claude-and-codex"]
 [2,"rg -a -e . /proc/4242/environ","process-environ-rg","claude-and-codex"]
 [2,"rg -a -f /proc/4242/environ fixtures.txt","process-environ-pattern-file","claude-and-codex"]
+[2,"rg --ignore-file /proc/4242/environ FIXTURE docs","process-environ-ignore-file","claude-and-codex"]
+[2,"rg --ignore-file=/proc/4242/environ FIXTURE docs","process-environ-ignore-file-attached","claude-and-codex"]
 [0,"rg -F -e /proc/4242/environ fixtures.txt","process-environ-regexp","claude-and-codex"]
 [0,"rg --regexp=/proc/4242/environ fixtures.txt","process-environ-attached-regexp","claude-and-codex"]
+[0,"rg --glob '*.md' /proc/4242/environ docs","process-environ-glob-pattern","claude-and-codex"]
+[0,"rg --glob='*.md' /proc/4242/environ docs","process-environ-glob-attached-pattern","claude-and-codex"]
 [0,"grep -F /proc/4242/environ fixtures.txt","process-environ-implicit-pattern","claude-and-codex"]
+[0,"grep --include '*.md' /proc/4242/environ docs","process-environ-include-pattern","claude-and-codex"]
+[0,"grep --include='*.md' /proc/4242/environ docs","process-environ-include-attached-pattern","claude-and-codex"]
+[2,"xargs --arg-file=/proc/4242/environ","process-environ-xargs-attached","claude-and-codex"]
+[2,"xargs -0ra/proc/4242/environ","process-environ-xargs-cluster","claude-and-codex"]
+[2,"xargs -0ra /proc/4242/environ","process-environ-xargs-detached","claude-and-codex"]
+[0,"xargs --arg-file=fixtures/arguments.txt","process-ordinary-xargs-arg-file","claude-and-codex"]
+[2,"diff --from-file=/proc/4242/environ fixtures.txt","process-environ-diff-from","claude-and-codex"]
+[2,"diff --to-file /proc/4242/environ fixtures.txt","process-environ-diff-to","claude-and-codex"]
+[0,"diff --label /proc/4242/environ before.txt after.txt","process-environ-diff-label","claude-and-codex"]
+[2,"sort --files0-from=/proc/4242/environ","process-environ-sort-files","claude-and-codex"]
 [2,"head -c 32 $'\\x2fproc/4242/environ'","process-environ-encoded-file","claude-and-codex","environment-dump","undecoded-ansi-escape"]
 [2,"head -c 32 ./environ","process-environ-relative-file","claude-and-codex","environment-dump","-","-","/proc/4242"]
 [2,"cat environ","process-environ-relative-cat","claude-and-codex","environment-dump","-","-","/proc/4242"]
 [2,"tr '\\0' '\\n' < environ","process-environ-relative-redirect","claude-and-codex","environment-dump","-","-","/proc/4242"]
+[2,"env --chdir /proc/4242 head -c 32 environ","process-environ-env-chdir","claude-and-codex"]
+[2,"env --chdir=/proc/4242 head -c 32 environ","process-environ-env-chdir-attached","claude-and-codex"]
+[2,"env --chdir=\"$DIR\" head -c 32 environ","process-environ-env-chdir-unresolved","claude-and-codex"]
+[2,"cd -- /proc/4242 && head -c 32 environ","process-environ-shell-cd","claude-and-codex"]
+[2,"cd /proc; cd 4242; head -c 32 < environ","process-environ-shell-cd-redirect","claude-and-codex"]
+[0,"env --chdir=/proc/4242 head -c 32 < environ","process-env-chdir-keeps-shell-redirect-cwd","claude-and-codex"]
 [2,"ps eww -p 4242","process-ps-bsd","claude-and-codex"]
 [2,"ps axueww","process-ps-cluster","claude-and-codex"]
 [2,"ps -E -p 4242","process-ps-macos","claude-and-codex"]
@@ -545,6 +565,8 @@ environment_rows() {
 [0,"systemctl --user show-environment | grep '^NAME='","manager-environment-named","claude-and-codex"]
 [0,"systemctl --user --property=ActiveState show -- fixture.service","unit-active-state","claude-and-codex"]
 [0,"systemctl --user --legend=no --no-legend --failed -p ActiveState show -- fixture.service","unit-active-state-global-options","claude-and-codex"]
+[0,"systemctl --user --timestamp=unix -p ActiveEnterTimestamp show -- fixture.service","unit-timestamp-format","claude-and-codex"]
+[0,"systemctl --user --no-block --timestamp unix -p ActiveState show -- fixture.service","unit-state-control-options","claude-and-codex"]
 [0,"systemctl -PActiveState show -- \"$UNIT\"","unit-literal-filter","claude-and-codex"]
 [0,"systemctl is-active -- show","unit-name-show-is-data","claude-and-codex"]
 [0,"ps -A -o etime","process-ps-posix","claude-and-codex"]
@@ -2134,6 +2156,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
 no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
 unit-environment|elif systemctl_environment; then mode=dump-unknown|elif systemctl_environment; then mode=other|exit=0 expected=2|unit-env-list-claude unit-env-list-codex
 systemctl-property-order|elif [ -z "$verb" ]; then selected=1; fi|else selected=1; fi|exit=0 expected=2|unit-property-after-verb-claude unit-property-after-verb-codex
+reader-file-option|if environment_file_input "$value" "$kind"; then return; fi ;;|if false; then return; fi ;;|exit=0 expected=2|process-environ-ignore-file-claude process-environ-xargs-cluster-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc

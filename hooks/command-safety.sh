@@ -103,21 +103,62 @@ environment_private_path() {
   return 1
 }
 
-proc_environment_path() {
-  local path=$1 part absolute=""
-  [ "${path##*/}" = environ ] || return 1
-  case "$path" in /*) ;; *) path=${cwd:-$PWD}/$path ;; esac
-  # Resolve literal path components without opening procfs or following links.
+literal_absolute_path() {
+  local path=$1 part
+  absolute_path=""
   while [ -n "$path" ]; do
     part=${path%%/*}
     case "$part" in
       '' | .) ;;
-      ..) absolute=${absolute%/*} ;;
-      *) absolute=$absolute/$part ;;
+      ..) absolute_path=${absolute_path%/*} ;;
+      *) absolute_path=$absolute_path/$part ;;
     esac
     case "$path" in */*) path=${path#*/} ;; *) break ;; esac
   done
-  [[ $absolute == /proc/*/environ ]]
+  absolute_path=${absolute_path:-/}
+}
+
+proc_environment_path() {
+  local path=$1 base directory absolute_path
+  [ "${path##*/}" = environ ] || return 1
+  case "$path" in
+    /*) literal_absolute_path "$path"; [[ $absolute_path == /proc/*/environ ]]; return ;;
+  esac
+  [ -z "$reader_chdir_unresolved" ] || return 0
+  # Shell redirects use the shell's directory. Reader arguments also inherit
+  # any literal env --chdir that the existing launcher parser consumed.
+  for base in "${reader_dirs[@]}"; do
+    directory=$base
+    case "$reader_chdir" in /*) directory=$reader_chdir ;; ?*) directory=$base/$reader_chdir ;; esac
+    literal_absolute_path "$directory/$path"
+    [[ $absolute_path != /proc/*/environ ]] || return 0
+  done
+  [ -n "$reader_dirs_unresolved" ]
+}
+
+literal_cd_operand() {
+  local cursor=$pos options_ended=""
+  [ "${args[$cursor]:-}" != -- ] || { cursor=$((cursor + 1)); options_ended=1; }
+  [ "$((cursor + 1))" -eq "${#args[@]}" ] && [ -n "${args[$cursor]}" ] &&
+    [ "${arg_kinds[$cursor]}" = literal ] && [ "${args[$cursor]}" != - ] &&
+    { [ -n "$options_ended" ] || [[ ${args[$cursor]} != -* ]]; } || return 1
+  cd_operand=${args[$cursor]}
+}
+
+remember_reader_directory() {
+  local destination=$1 index count=${#reader_dirs[@]} absolute_path
+  # Retain both outcomes of earlier directory changes. Bound the number of
+  # combinations before a relative chain can exceed the hook's time limit.
+  [ -z "$reader_dirs_unresolved" ] || return 0
+  case "$destination" in
+    /*) reader_dirs[count]=$destination ;;
+    *)
+      for ((index=0; index<count; index++)); do
+        literal_absolute_path "${reader_dirs[$index]}/$destination"
+        reader_dirs[${#reader_dirs[@]}]=$absolute_path
+      done ;;
+  esac
+  [ "${#reader_dirs[@]}" -le 32 ] || reader_dirs_unresolved=1
 }
 
 unit_environment_property() {
@@ -159,9 +200,9 @@ systemctl_environment() {
         --) ended=1; continue ;;
         --property=*) property=${option#*=} ;;
         --property) take=1 ;;
-        --user | --system | --no-pager | --no-ask-password | --all | --full | --value | --plain | --quiet | --with-dependencies | --no-legend | --failed) continue ;;
-        --host=* | --machine=* | --capsule=* | --type=* | --state=* | --lines=* | --output=* | --root=* | --image=* | --legend=*) continue ;;
-        --host | --machine | --capsule | --type | --state | --lines | --output | --root | --image | --legend)
+        --user | --system | --no-pager | --no-ask-password | --all | --full | --value | --plain | --quiet | --with-dependencies | --no-legend | --failed | --no-block) continue ;;
+        --host=* | --machine=* | --capsule=* | --type=* | --state=* | --lines=* | --output=* | --root=* | --image=* | --legend=* | --timestamp=*) continue ;;
+        --host | --machine | --capsule | --type | --state | --lines | --output | --root | --image | --legend | --timestamp)
           cursor=$((cursor + 1)); systemctl_literal_word "$cursor" || uncertain=1; continue ;;
         --*=*) uncertain=1; continue ;;
         --*) uncertain=1; continue ;;
@@ -267,38 +308,62 @@ environment_file_input() {
   fi
 }
 
-# grep and rg treat their first positional argument as a search pattern only
-# when no explicit -e or -f is present. Pattern files are themselves reads.
-search_environment() {
+reader_long_option_role() {
+  case "$program:$1" in
+    grep:--regexp | rg:--regexp) role=pattern ;;
+    grep:--file | rg:--file) role=pattern-file ;;
+    rg:--ignore-file | grep:--exclude-from | diff:--exclude-from | diff:--from-file | diff:--to-file | sort:--files0-from | sort:--random-source | xargs:--arg-file) role=file ;;
+    grep:--color | grep:--colour | diff:--context | diff:--unified | xargs:--eof | xargs:--max-lines | xargs:--replace) role=optional-data ;;
+    grep:--after-context | grep:--before-context | grep:--binary-files | grep:--context | grep:--devices | grep:--directories | grep:--exclude | grep:--exclude-dir | grep:--include | grep:--label | grep:--max-count) role=data ;;
+    rg:--after-context | rg:--before-context | rg:--color | rg:--colors | rg:--context | rg:--context-separator | rg:--dfa-size-limit | rg:--encoding | rg:--engine | rg:--field-context-separator | rg:--field-match-separator | rg:--generate | rg:--glob | rg:--hostname-bin | rg:--hyperlink-format | rg:--iglob | rg:--max-columns | rg:--max-count | rg:--max-depth | rg:--max-filesize | rg:--path-separator | rg:--pre | rg:--pre-glob | rg:--regex-size-limit | rg:--replace | rg:--sort | rg:--sortr | rg:--threads | rg:--type | rg:--type-add | rg:--type-clear | rg:--type-not) role=data ;;
+    diff:--ifdef | diff:--ignore-matching-lines | diff:--label | diff:--show-function-line | diff:--starting-file | diff:--width) role=data ;;
+    sort:--batch-size | sort:--buffer-size | sort:--compress-program | sort:--field-separator | sort:--key | sort:--output | sort:--parallel | sort:--temporary-directory) role=data ;;
+    xargs:--delimiter | xargs:--max-args | xargs:--max-chars | xargs:--max-procs | xargs:--process-slot-var) role=data ;;
+  esac
+}
+
+# Searchers use their first positional word as a pattern only when no
+# explicit pattern or pattern file was supplied. An ignore file is still a
+# file read, but does not take the place of a search pattern.
+reader_environment_arguments() {
   local cursor value kind role short letters end="" explicit="" filter_ok=1 pattern="" patterns=0
-  local operand_flags='efABCDdm' index
+  local search="" operand_flags index
   local positional=()
-  [ "$program" != rg ] || operand_flags='efABCdEgjtTMmr'
+  case "$program" in
+    grep) search=1; operand_flags='efABCDdm' ;;
+    rg) search=1; operand_flags='efABCdEgjtTMmr' ;;
+    diff) operand_flags='CDFILSUW' ;;
+    sort) operand_flags='kSotT' ;;
+    xargs) operand_flags='aEdIeLlniPs' ;;
+  esac
   for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
     value=${args[$cursor]}; kind=${arg_kinds[$cursor]}; role=""
     [ "$kind" = literal ] || filter_ok=""
     if [ -z "$end" ]; then
       case "$value" in
         --) end=1; continue ;;
-        --regexp | --file)
-          role=$value
-          cursor=$((cursor + 1)); value=${args[$cursor]:-}; kind=${arg_kinds[$cursor]:-}; filter_ok="" ;;
-        --regexp=* | --file=*)
-          role=${value%%=*}; value=${value#*=}; filter_ok="" ;;
-        --*=*)
+        --*)
           filter_ok=""
-          if environment_file_input "${value#*=}" "$kind"; then return; fi
-          continue ;;
-        --*) filter_ok=""; continue ;;
+          reader_long_option_role "${value%%=*}"
+          case "$value" in
+            *=*)
+              value=${value#*=}
+              # An unclassified attached operand cannot establish a data role.
+              role=${role:-file} ;;
+            *)
+              case "$role" in '' | optional-data) continue ;; esac
+              cursor=$((cursor + 1)); value=${args[$cursor]:-}; kind=${arg_kinds[$cursor]:-} ;;
+          esac ;;
         -?*)
           letters=${value#-}
           short=${letters#"${letters%%[$operand_flags]*}"}
           if [ "$value" != -e ] && [[ ! $letters =~ ^[EFq]+$ ]]; then filter_ok=""; fi
-          case "$short" in
-            e*) role=--regexp ;;
-            f*) role=--file ;;
-            ?*) role=option ;;
-            '') continue ;;
+          case "$program:$short" in
+            grep:e* | rg:e*) role=pattern ;;
+            grep:f* | rg:f*) role=pattern-file ;;
+            xargs:a*) role=file ;;
+            xargs:[eil] | *:) continue ;;
+            *) role=data ;;
           esac
           if [ "${#short}" -eq 1 ]; then
             cursor=$((cursor + 1)); value=${args[$cursor]:-}; kind=${arg_kinds[$cursor]:-}
@@ -308,14 +373,16 @@ search_environment() {
       esac
     fi
     case "$role" in
-      --regexp) explicit=1; pattern=$value; patterns=$((patterns + 1)); [ "$kind" = literal ] || filter_ok="" ;;
-      --file) explicit=1; if environment_file_input "$value" "$kind"; then return; fi ;;
-      option) ;;
+      pattern) explicit=1; pattern=$value; patterns=$((patterns + 1)); [ "$kind" = literal ] || filter_ok="" ;;
+      pattern-file | file)
+        [ "$role" != pattern-file ] || explicit=1
+        if environment_file_input "$value" "$kind"; then return; fi ;;
+      data | optional-data) ;;
       *) positional[${#positional[@]}]=$cursor ;;
     esac
   done
   index=0
-  if [ -z "$explicit" ] && [ "${#positional[@]}" -gt 0 ]; then
+  if [ -n "$search" ] && [ -z "$explicit" ] && [ "${#positional[@]}" -gt 0 ]; then
     pattern=${args[${positional[0]}]}; patterns=1; index=1
   fi
   for ((; index<${#positional[@]}; index++)); do
@@ -336,6 +403,7 @@ search_environment() {
 # evidence, never proof of routing; unseen program semantics are not judged.
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
+    local reader_chdir="" reader_chdir_unresolved="" env_chdir env_chdir_unresolved
     # Other is unresolved. An existing arm's proof must establish clean.
     mode=other
     # Only these literal forwarding forms are part of the input contract.
@@ -368,7 +436,7 @@ environment_producer() { # command kind
           done
           continue ;;
         env)
-          options_ended=""; null_output=""
+          options_ended=""; null_output=""; env_chdir=""; env_chdir_unresolved=""
           while [ "$pos" -lt "${#args[@]}" ]; do
             value=${args[$pos]}
             case "${arg_kinds[$pos]}" in dollar-literal | ansi-escaped) break ;; esac
@@ -382,8 +450,19 @@ environment_producer() { # command kind
                 # A non-literal operand such as "$@" can expand to no word,
                 # and env then takes the next word as that operand.
                 [ "${arg_kinds[$((pos + 1))]:-}" = literal ] || { mode=dump-unknown; return; }
+                case "$value" in -C | --chdir) env_chdir=${args[$((pos + 1))]}; env_chdir_unresolved="" ;; esac
                 pos=$((pos + 2)) ;;
-              --unset=* | --chdir=*) pos=$((pos + 1)) ;;
+              --unset=*) pos=$((pos + 1)) ;;
+              --chdir=* | -C?*)
+                if [ "${arg_kinds[$pos]}" = literal ]; then
+                  case "$value" in --*) env_chdir=${value#*=} ;; *) env_chdir=${value:2} ;; esac
+                  env_chdir_unresolved=""
+                else
+                  # An attached value does not obscure which option took it.
+                  # Only a relative environment-file read needs its location.
+                  env_chdir=""; env_chdir_unresolved=1
+                fi
+                pos=$((pos + 1)) ;;
               --help | --version) pos=${#args[@]}; program=""; break ;;
               --) options_ended=1; pos=$((pos + 1)); continue ;;
               -S | --split-string | --split-string=*) program=opaque; break ;;
@@ -391,6 +470,14 @@ environment_producer() { # command kind
               *) break ;;
             esac
           done
+          if [ -n "$env_chdir_unresolved" ]; then
+            reader_chdir_unresolved=1
+          else
+            case "$env_chdir" in
+              /*) reader_chdir=$env_chdir; reader_chdir_unresolved="" ;;
+              ?*) reader_chdir=${reader_chdir:+$reader_chdir/}$env_chdir ;;
+            esac
+          fi
           if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then
             mode=dump-lines; [ -z "$null_output" ] || mode=dump-nul
           fi
@@ -419,7 +506,7 @@ environment_producer() { # command kind
     esac
     case "${program:-}" in
       cat | tr | strings | xargs) [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; } ;;
-      awk | base64 | comm | cp | cut | dd | diff | head | hexdump | jq | less | more | nl | od | paste | perl | python | python3 | sed | sort | split | tail | tee | uniq | xxd)
+      awk | base64 | comm | cp | cut | dd | head | hexdump | jq | less | more | nl | od | paste | perl | python | python3 | sed | split | tail | tee | uniq | xxd)
         [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
         for ((j=pos; j<${#args[@]}; j++)); do
           value=${args[$j]}
@@ -496,7 +583,7 @@ environment_producer() { # command kind
       systemd-analyze)
         for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != dump ] || mode=dump-unknown; done ;;
       busctl | gdbus | dbus-send) if systemd_bus_environment; then mode=dump-unknown; fi ;;
-      cat | tr | strings | xargs)
+      cat | tr | strings)
         for ((j=pos; j<${#args[@]}; j++)); do
           if proc_environment_path "${args[$j]}"; then proc=1; fi
         done
@@ -509,7 +596,7 @@ environment_producer() { # command kind
                 [ "${arg_kinds[$j]}" = literal ] || mode=dump-unknown
                 proc_environment_path "${args[$j]}" || mode=dump-unknown
               done ;;
-            tr | xargs) mode=dump-unknown ;;
+            tr) mode=dump-unknown ;;
           esac
         fi
         # Only this literal conversion proves separate newline records.
@@ -522,9 +609,10 @@ environment_producer() { # command kind
           esac
         fi
         if [ "$program" = cat ] && environment_private_path ${private_inputs[@]+"${private_inputs[@]}"} "${args[@]:pos}"; then mode=dump-unknown; fi ;;
-      grep | rg)
+      grep | rg | diff | sort | xargs)
         if [ -n "$input_escaped" ]; then mode=dump-unknown; dump_reason=undecoded-ansi-escape
-        else search_environment; fi ;;
+        elif [ -n "$proc" ]; then mode=dump-unknown
+        else reader_environment_arguments; fi ;;
     esac
     # No unresolved arm can discharge the forwarded classification check.
     if [ "$mode" = other ] && [ -n "${forwarded_argument:-}" ]; then mode=unclassified-forwarded; fi
@@ -841,12 +929,7 @@ relative_targeting() { # collect | judge; environment_dump owns the stage facts
     [ "$head_start" -eq 0 ] && [ "$program_pos" = 0 ] || { targeting_eligible=""; return 0; }
     case "${args[0]}" in
       cd)
-        cursor=1
-        if [ "${args[$cursor]:-}" = -- ]; then options_ended=1; cursor=$((cursor + 1)); fi
-        if [ "$((cursor + 1))" -ne "${#args[@]}" ] || [ -z "${args[$cursor]}" ] ||
-           [ "${args[$cursor]}" = - ] || { [ -z "$options_ended" ] && [[ ${args[$cursor]} == -* ]]; }; then
-          targeting_eligible=""
-        else target_effects[stage]=cd; fi ;;
+        if [ -n "$cd_operand" ]; then target_effects[stage]=cd; else targeting_eligible=""; fi ;;
       true | :)
         [ "${#args[@]}" -ne 1 ] || [ -n "${target_redirects[$stage]}" ] || target_effects[stage]=success ;;
       false) [ "${#args[@]}" -ne 1 ] || target_effects[stage]=failure ;;
@@ -933,6 +1016,7 @@ word_quoted() {
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
+  local reader_dirs=("${cwd:-$PWD}") reader_chdir="" reader_chdir_unresolved="" reader_dirs_unresolved="" cd_operand
   local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
@@ -1263,6 +1347,10 @@ environment_dump() { # command kind; arguments are already decoded data
       program=opaque
     fi
     environment_producer "$1"
+    cd_operand=""
+    if [ "$program" = cd ] && [ "$head_start" -eq 0 ] && [ "$program_pos" = 0 ]; then
+      literal_cd_operand || :
+    fi
     [ -z "$targeting_eligible" ] || relative_targeting collect
     # A /proc environ input only these readers' arms can classify. Any other
     # program, such as a shell reading its descriptors, can print it.
@@ -1370,6 +1458,9 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
     decisions[stage]=$mode
+    if [ -n "$cd_operand" ]; then
+      case "${separators[$stage]}" in '|' | '&') ;; *) remember_reader_directory "$cd_operand" ;; esac
+    fi
     piped_source=$data_source
     # Echo's plain operands define its output without another shell parser.
     # Options, escapes and expanding words need runtime interpretation.
