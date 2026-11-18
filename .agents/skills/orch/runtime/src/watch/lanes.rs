@@ -1409,7 +1409,7 @@ fn observe_one(
         | LaneState::Unjudged { .. } => {}
     }
     // Idle: the capacity refusal once per turn, else the finished turn once
-    // per pane, row position, target wake and slice, on the first pass for
+    // per pane, row position, confirmed wake and slice, on the first pass for
     // a local Codex lane below a prior turn and on two passes otherwise;
     // the line carries the
     // stop's cause where the verdict kept one, so a turn its output limit
@@ -1438,17 +1438,35 @@ fn observe_one(
                     return reading;
                 }
             };
-            let wake_at = wakes.get(&obs.lane.item).map(|mark| mark.at);
+            let prior = get("lane-idle").unwrap_or_default();
+            let confirmed_wake = wakes.get(&obs.lane.item).and_then(|mark| {
+                matches!(
+                    mark.outcome,
+                    Some(crate::ops::wake::WakeOutcome::Delivered { .. })
+                )
+                .then(|| format!("Some({})", mark.at))
+            });
+            // The latest mark can replace a delivery with a limit. Keep
+            // the wake stamp already seen for this pane in that case.
+            let wake_at = confirmed_wake
+                .as_deref()
+                .or_else(|| {
+                    prior
+                        .strip_prefix(&pane_key)?
+                        .strip_prefix('|')?
+                        .split('|')
+                        .nth(1)
+                })
+                .unwrap_or("None");
             let position = obs.row.as_ref().map(|row| row.position);
             let note = cause
                 .as_ref()
                 .map(|word| format!("cause={word}"))
                 .or_else(|| copilot_note(obs.lane, pass));
             let key = keyed(
-                format!("{pane_key}|{position:?}|{wake_at:?}|{}", hash_of(&slice)),
+                format!("{pane_key}|{position:?}|{wake_at}|{}", hash_of(&slice)),
                 note.as_deref(),
             );
-            let prior = get("lane-idle").unwrap_or_default();
             if prior == format!("{key}|reported") {
                 return reading;
             }

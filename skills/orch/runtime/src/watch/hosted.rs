@@ -553,6 +553,7 @@ fn names(stderr: &str, word: &str, item: &str) -> bool {
 /// The word every cause of a call refused at the provider-call bound
 /// leads with: nothing ran.
 pub const BUSY: &str = "host-busy";
+pub const SEND_INPUT_UNWRITTEN: &str = "send-input-unwritten";
 
 /// `stop --item ITEM --harness H`, its answer read as a [`HostStopped`]; a
 /// stop that never started, gave no answer or was refused at the bound is
@@ -607,10 +608,10 @@ pub fn send_key(scripts: &Path, host: &str, item: &str, key: &str) -> Result<(),
 
 /// `send --item ITEM --file FILE` of `text`, the one way a text reaches a
 /// hosted harness, through a file of the state directory's own written for
-/// the call and removed after it. `Failed` is a send that typed nothing,
-/// its cause leading with [`BUSY`] where every slot stayed taken, or one
-/// the provider answered with a status (`send-failed exit=N`), which may
-/// have typed part of the text; `Unknown` is a send with no answer
+/// the call and removed after it. A `Failed` cause of [`SEND_INPUT_UNWRITTEN`]
+/// or [`BUSY`] means the provider received no request. A provider status
+/// (`send-failed exit=N`) may have typed part of the text.
+/// `Unknown` is a send with no answer
 /// (`send-unanswered`).
 #[allow(
     clippy::disallowed_methods,
@@ -626,7 +627,7 @@ pub fn send_text(
     let input = state_dir.join(format!("send.{item}.{}", std::process::id()));
     std::fs::write(&input, text).map_err(|e| {
         Asked::Failed(format!(
-            "send-input-unwritten path={} cause={e}",
+            "{SEND_INPUT_UNWRITTEN} path={} cause={e}",
             input.display()
         ))
     })?;
@@ -2356,11 +2357,10 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// is closed with its
 /// sandbox kept: the attempt ends and its record stops charging a slot,
 /// the sandbox standing for a relaunch; a host whose status read fails
-/// reads no exit and keeps the slot. A failed close un-reports the
-/// notification row, so the next pass asks again; a deferred close or an
-/// unreadable prerequisite keeps `close-pending` for the retry; a close
-/// that ended clears it. `row` and `key` are the notification row and the
-/// key it reported under.
+/// reads no exit and keeps the slot. Failed and deferred closes and
+/// unreadable prerequisites keep `close-pending` while the notification
+/// remains reported. An unanswered close keeps its marker because it
+/// may have acted. `row` and `key` identify the notification.
 pub fn close_finished(
     lane: &Lane,
     pass: &Pass,
@@ -2414,12 +2414,10 @@ pub fn close_finished(
     };
     say_closed(&lane.item, &closed, out);
     match closed {
-        Closed::Failed { .. } | Closed::Unanswered { .. } => {
-            out.changes.push(set(row, &name, key.to_owned()));
-            out.changes.push(clear(CLOSE_PENDING_ROW, &name));
+        Closed::Failed { .. } | Closed::Deferred => {
+            out.changes.push(set(CLOSE_PENDING_ROW, &name, pending));
         }
-        Closed::Deferred => out.changes.push(set(CLOSE_PENDING_ROW, &name, pending)),
-        Closed::Closed { .. } | Closed::Refused { .. } => {
+        Closed::Closed { .. } | Closed::Refused { .. } | Closed::Unanswered { .. } => {
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
         }
     }
@@ -2428,8 +2426,7 @@ pub fn close_finished(
 /// A lane, local or hosted, read neither idle nor exited: where the GitHub
 /// duty read its item merged, it is asked once per screen `key` whether its
 /// work left nothing behind, and closed through [`close_finished`] where it
-/// did, since the screen of a lane whose work is over proves nothing. A
-/// close that failed un-reports the row, so the next pass asks again.
+/// did, since the screen of a lane whose work is over proves nothing.
 pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut Produced) {
     let merged = pass
         .baseline
@@ -2447,7 +2444,7 @@ pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut 
     close_finished(lane, pass, hosts, LEFT_ROW, key, out);
 }
 
-/// The retry of closes the tracker's hold deferred:
+/// The retry of failed or deferred closes:
 /// only one pending at the pass's entry and untouched by it, while its
 /// notification row still reads `<key>|reported`; a new pane or state ends
 /// the earlier pending close.

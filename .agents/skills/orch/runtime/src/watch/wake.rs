@@ -47,7 +47,8 @@
 //! prompt rows past the pre-send complete-line cursor confirm the digest.
 //! Pending, unmatched or failed post-send reads are read once on later
 //! passes without resending. No evidence gives final `session-hosted`; a
-//! failed pre-send cursor read still sends, final `rows-host-unread`. An API
+//! failed pre-send cursor read still sends, final `rows-host-unread`. An
+//! unanswered transport paste keeps `paste-unanswered`. An API
 //! error's resume reaches either kind by the same route and is final as
 //! typed; a provider read that refuses it is told once. A wall's resume is
 //! local alone.
@@ -701,10 +702,6 @@ impl Wake {
         })
     }
 
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the wake's one construction of the kernel host, for the read of a print-mode turn a lane record names before anything is typed; the read acts on nothing"
-    )]
     fn unread_and_resumes(&self, tick: &Tick) -> Result<Produced> {
         let mut produced = Produced::default();
         let rows = |kind: &str| -> Vec<(String, String)> {
@@ -727,7 +724,6 @@ impl Wake {
             return Ok(produced);
         };
         let socket = self.socket(&fleet)?;
-        let host = crate::ops::Host::kernel();
         let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
         // Each host's line is shared by new sends and open receipt reads
         // in this pass.
@@ -742,7 +738,6 @@ impl Wake {
                 .lanes
                 .iter()
                 .find(|l| super::lanes::lane_name(l) == name)
-                .filter(|l| !crate::ops::wake::turn_runs(l, &host))
             else {
                 continue;
             };
@@ -811,9 +806,7 @@ impl Wake {
                     .filter(|m| m.outcome.is_none() && marked(&record, lane, &state))
                     .cloned()
                 {
-                    if !crate::ops::wake::turn_runs(lane, &host) {
-                        self.reconcile(lane, &socket, mark, None, &mut record, &mut produced)?;
-                    }
+                    self.reconcile(lane, &socket, mark, None, &mut record, &mut produced)?;
                     continue;
                 }
                 let line = || {
@@ -822,7 +815,7 @@ impl Wake {
                     .then(|| host_line(&mut lines, &scripts, lane))
                     .flatten()
                 };
-                target_of(lane, &socket, line).filter(|_| !crate::ops::wake::turn_runs(lane, &host))
+                target_of(lane, &socket, line)
             };
             let Some(target) = target else {
                 continue;
@@ -1444,8 +1437,8 @@ impl Wake {
     /// text after `turns_before`; `room` as [`Wake::read`] takes it. A
     /// hosted target is confirmed by its prompt rows where available.
     /// A provider-held session takes the line through its provider's `send`:
-    /// only a send that typed nothing, refused at the provider-call bound,
-    /// leaves the state for the next pass; any other failure may have typed
+    /// an unwritten input or a busy provider leaves the state for the next
+    /// pass; any other failure may have typed
     /// part of the line, so it is final with its cause and never sent
     /// again for this state.
     fn paste(&self, target: &Target, line: &str, turns_before: u64, room: bool) -> Result<Paste> {
@@ -1465,7 +1458,12 @@ impl Wake {
                         line_digest(line),
                         self.settings.engine.verify.get()?,
                     ),
-                    Err(hosted::Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
+                    Err(hosted::Asked::Failed(cause))
+                        if matches!(
+                            cause.split_whitespace().next(),
+                            Some(hosted::BUSY | hosted::SEND_INPUT_UNWRITTEN)
+                        ) =>
+                    {
                         Paste::Refused
                     }
                     Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) => {
@@ -1497,6 +1495,13 @@ impl Wake {
                 Some("unconfirmed") => Ok(Paste::Unconfirmed {
                     cause: word(&result, "cause")?,
                 }),
+                Some("pasted")
+                    if result.get("cause").and_then(Value::as_str) == Some("paste-unanswered") =>
+                {
+                    Ok(Paste::Unconfirmed {
+                        cause: "paste-unanswered".to_owned(),
+                    })
+                }
                 Some("pasted") => Ok(self.hosted_confirmation(
                     target,
                     turns_before,

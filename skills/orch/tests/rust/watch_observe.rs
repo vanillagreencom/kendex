@@ -1593,6 +1593,55 @@ fn a_pane_verb_codex_api_error_capture_asks_one_resume_with_no_line() {
     );
 }
 
+#[test]
+fn a_refused_api_error_resume_is_told_once_on_an_unchanged_idle_screen() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let viewer = server.open_window("gh-9", dir.path(), "exec bash --norc --noprofile");
+    let mut hosted = hosted_lane(dir.path(), "KEN-9", "gh-9", "/remote/lane");
+    hosted["harness"] = json!("codex");
+    hosted["viewer"] = json!(true);
+    hosted["launch"] = json!({"pane": viewer, "server": server.pid});
+    fleet.set_lanes(vec![hosted]);
+    fleet.set_overseer(json!({"server_socket": server.socket}));
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path(), &server, &fleet);
+    let capture = std::fs::read_to_string(codex_api_error_capture()).unwrap();
+    let plant = |status| {
+        world.plant_host(&[
+            ("capabilities", ok(VERB_LINE)),
+            ("status --item KEN-9 --harness codex", status),
+            ("capture --item KEN-9", ok(&capture)),
+        ]);
+    };
+    plant(ok("running\n"));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    for _ in 0..2 {
+        assert!(event_lines(&driver.pass(&state)).is_empty());
+    }
+    plant(json!({"exit": 1}));
+    let clock = FakeClock::new();
+    let tick = orch_runtime::watch::Tick {
+        duty: orch_runtime::schedule::Duty::Wake,
+        now: agent_runtime::clock::Clock::now(&clock),
+        wall: driver.now,
+        baseline: &driver.baseline,
+        clock: &clock,
+    };
+    let refused = orch_runtime::watch::wake::body(&fleet.path(), &driver.settings)(&tick).unwrap();
+    assert_eq!(
+        event_lines(&refused),
+        vec!["EVENT idle-after-return gh-9 cause=api-error"]
+    );
+    plant(ok("running\n"));
+    for _ in 0..3 {
+        assert_eq!(event_lines(&driver.pass(&state)), Vec::<String>::new());
+    }
+}
+
 /// A Codex turn its provider's API ended, on a local lane the wake types
 /// into, asks the wake for one resume (`resume=api-error|<key>`) with no
 /// line; the resumed turn ending on an API error again is told once with
@@ -5663,6 +5712,45 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     assert_eq!(closes(&fleet, "KEN-1"), 1);
 }
 
+#[test]
+fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-1"]);
+    drop(host.lead("KEN-1", "claude"));
+    host.leave("KEN-1");
+    let (mut lane, _) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
+    lane["mail_root"] = json!(host.lane_root("KEN-1").display().to_string());
+    fleet.set_lanes(vec![lane]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-1".into(),
+        value: "o/r#7".into(),
+    });
+
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    let first = driver.pass(&state);
+    let second = driver.pass(&state);
+    let refusal = "lane-close-failed item=KEN-1 refused key=cycle-unrecorded item=KEN-1 cause=";
+    for attempt in [&first, &second] {
+        assert!(
+            attempt
+                .failed
+                .as_deref()
+                .is_some_and(|cause| cause.starts_with(refusal)),
+            "{:?}: {:?}",
+            lines(attempt),
+            attempt.failed
+        );
+    }
+    assert_eq!(event_lines(&first), vec!["EVENT lane-exited gh-1"]);
+    assert_eq!(event_lines(&second), Vec::<String>::new());
+}
+
 /// A walled hosted lane's harness must not run on beside the successor the
 /// relaunch opens: a walled lane whose kind declares a local pane has its
 /// harness stopped through the provider's `stop --item --harness` under the
@@ -7528,7 +7616,7 @@ fn wake_stamp(fleet: &Fleet, target: &str, at: u64) {
         .ok()
         .map(|bytes| serde_json::from_slice(&bytes).unwrap())
         .unwrap_or_else(|| json!({"marks": {}}));
-    record["marks"][target] = json!({"pane": "%1", "server": 1, "unread": "resume", "turns_before": 0, "line_digest": 0, "at": at});
+    record["marks"][target] = json!({"pane": "%1", "server": 1, "unread": "resume", "turns_before": 0, "line_digest": 0, "at": at, "outcome": {"wake": "delivered", "turns_after": 1}});
     std::fs::write(path, record.to_string()).unwrap();
 }
 

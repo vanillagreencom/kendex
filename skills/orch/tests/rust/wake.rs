@@ -4,9 +4,8 @@
 //! disk before the paste and a repeat for the same unread state types
 //! nothing, whatever the fleet record's writers do to the lane meanwhile; a
 //! session no record binds, a pane that is gone, unreadable or mid-turn, a
-//! lane not running or on a host whose line or harness is not read, and a
-//! lane whose record names a print-mode turn still running are never typed
-//! into; a hosted line is confirmed by its prompt digest. Each row's
+//! lane not running or on a host whose line or harness is not read is never
+//! typed into; a hosted line is confirmed by its prompt digest. Each row's
 //! name carries the defect it catches. The stub harnesses are
 //! `fixtures/stub-turns/{claude,codex,copilot}`. The runner runs on the fake clock;
 //! the paste's confirming-turn wait runs in the `deliver` child on the
@@ -1675,6 +1674,59 @@ fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_confirmed_once() {
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
 }
 
+#[test]
+fn an_unanswered_transport_paste_keeps_its_cause() {
+    let fleet = Fleet::new();
+    let transport = VERB_LINE
+        .replace("pane=verb", "pane=local")
+        .replace("files=verb", "files=none");
+    std::fs::write(
+        fleet.root.join("lane-host.json"),
+        json!({"capabilities": {"stdout": transport}, "status --item KEN-1 --harness claude": {"stdout": "running\n"}}).to_string(),
+    )
+    .unwrap();
+    let lane = hosted_lane(&fleet, &named_host(&fleet.root, "box"));
+    fleet.set_lanes(vec![lane]);
+    let shims = fleet.root.join("tmux-shim");
+    std::fs::create_dir(&shims).unwrap();
+    let attempted = shims.join("paste-attempted");
+    write_executable(
+        &shims.join("tmux"),
+        format!(
+            "#!/bin/sh\n[ \"$1\" = -S ] && [ \"$2\" = '{}' ] || exit 2\nif [ \"$3\" = paste-buffer ]; then\n  : > '{}'\n  exit 1\nfi\nexec '{}' \"$@\"\n",
+            fleet.server.socket.display(),
+            attempted.display(),
+            which_tmux(),
+        ),
+    );
+    let wrapper = fleet.root.join("agent-runtime-with-tmux-shim");
+    write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nPATH='{}' exec '{}' \"$@\"\n",
+            tool_path(&[&shims]),
+            agent_runtime().display(),
+        ),
+    );
+    let mut body = wake::body(&fleet.fleet_file(), &settings_in(&fleet.root, &wrapper));
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let produced = run_once(&mut body, &baseline, &FakeClock::new()).unwrap();
+    assert!(attempted.exists(), "tmux did not reach the paste");
+    assert_eq!(
+        rendered(&produced),
+        vec![
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-unconfirmed KEN-1 cause=paste-unanswered"
+        ]
+    );
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|mark| mark.outcome),
+        Some(WakeOutcome::Unconfirmed {
+            cause: "paste-unanswered".into()
+        })
+    );
+}
+
 /// A hosted lane whose provider reads its harness exited, then fails the
 /// read: its idle window is typed nothing, no mark is written and nothing is
 /// said, on either pass; the lanes duty names both readings.
@@ -2264,6 +2316,36 @@ fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
     assert_eq!(sent(&fleet).len(), 1, "{:?}", calls(&log));
 }
 
+#[test]
+fn an_unwritten_hosted_send_input_leaves_the_wake_owed() {
+    let fleet = Fleet::new();
+    let mut answers = receipt_answers(&fleet);
+    answers[format!("{}#3", hosted_rows_key(&fleet))] =
+        json!({"stdout": format!("{{\"event\":\"Stop\"}}\n{}", prompt_row(inbox_line()))});
+    let (lane, _) = viewed_lane(&fleet, answers);
+    fleet.set_lanes(vec![lane]);
+    let input = fleet
+        .root
+        .join(format!("send.KEN-1.{}", std::process::id()));
+    std::fs::create_dir(&input).unwrap();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let clock = FakeClock::new();
+    let mut body = short_hosted_body(&fleet);
+
+    let refused = run_once(&mut body, &baseline, &clock).unwrap();
+    assert!(sent(&fleet).is_empty());
+    assert!(rendered(&refused).is_empty(), "{:?}", rendered(&refused));
+    assert_eq!(fleet.mark("KEN-1"), None);
+
+    std::fs::remove_dir(&input).unwrap();
+    let sent_later = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&sent_later),
+        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
+    );
+    assert_eq!(sent(&fleet), vec![inbox_line()]);
+}
+
 /// An API error's resume row for a hosted Codex lane whose provider holds
 /// its session (`pane=verb`): a capture the watch's judge reads working is
 /// sent nothing and the resume is told `idle-after-return <lane>
@@ -2332,63 +2414,6 @@ fn an_api_error_resume_of_a_pane_verb_lane_is_sent_once_and_a_refused_one_is_tol
             "the viewer window is typed nothing"
         );
     }
-}
-
-/// The `lstart:` start of `pid`, its `ps -o lstart` text with its blanks
-/// squeezed, in the C locale and UTC: the form every host reads.
-fn lstart_of(pid: u32) -> String {
-    let out = Command::new("ps")
-        .args(["-o", "lstart=", "-p", &pid.to_string()])
-        .env("LC_ALL", "C")
-        .env("TZ", "UTC")
-        .output()
-        .expect("ps");
-    assert!(out.status.success(), "ps: {}", stderr(&out));
-    let text = String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("lstart:{text}")
-}
-
-/// A lane record naming a detached print-mode turn, `wake {pid, start}` in
-/// the `lstart:` form, holds the lane while that
-/// process runs: the pane reads idle beside such a turn, and a paste then
-/// would start a second turn on the session. Nothing is typed or marked
-/// while it runs; once it has ended the next pass delivers once; a writer
-/// rewriting the lane's `wake` meanwhile moves no mark, so a restarted
-/// runner types nothing again for the same unread state.
-#[test]
-fn a_print_mode_turn_the_record_names_holds_the_lane_until_it_ends_and_moves_no_mark() {
-    let fleet = Fleet::new();
-    let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
-    fleet.server.await_composer(&pane.id);
-    let turn = Owned::sleep();
-    let mut lane = fleet.lane("KEN-1", "claude", &pane);
-    lane["wake"] = json!({"pid": turn.pid(), "start": lstart_of(turn.pid())});
-    fleet.set_lanes(vec![lane.clone()]);
-    let clock = FakeClock::new();
-    let baseline = unread(&[("KEN-1", "m-1")]);
-    let held = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
-    assert_eq!(rendered(&held), Vec::<String>::new());
-    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
-    assert_eq!(fleet.mark("KEN-1"), None);
-    drop(turn);
-    let woken = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
-    assert_eq!(
-        rendered(&woken),
-        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
-    );
-    assert_eq!(fleet.turns("lead-1").len(), 1);
-    lane["wake"] = json!({"pid": 4242, "start": "lstart:Thu Jan 1 00:00:00 1970"});
-    fleet.set_lanes(vec![lane]);
-    let again = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
-    assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
-    assert_eq!(
-        fleet.mark("KEN-1").and_then(|m| m.outcome),
-        Some(WakeOutcome::Delivered { turns_after: 1 })
-    );
 }
 
 /// The idle overseer is the one reader of the log, so mail no wake reaches

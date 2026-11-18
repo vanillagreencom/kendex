@@ -15,17 +15,15 @@
 //! (`watch::wake`), never a field of the lane or overseer record, whose
 //! other writers replace those records whole. A lane record's own `wake
 //! {pid, start}` names a detached print-mode turn run beside the lane's
-//! pane on its session: [`wake_identity`] is its one reader, for the
-//! duty's hold, the occupancy charge and the close's stop.
+//! pane on its session: [`wake_identity`] reads it for the occupancy charge
+//! and the close's stop.
 
 use std::collections::BTreeMap;
 
 use agent_runtime::process::Identity;
-use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::Host;
 use crate::state::Lane;
 use crate::watch::owner_alert::Word;
 
@@ -56,15 +54,6 @@ pub(crate) fn wake_identity(lane: &Lane) -> Option<Identity> {
         pid: u32::try_from(pid).ok()?,
         start: wake.get("start")?.as_str()?.to_owned(),
     })
-}
-
-/// Whether the lane record names a detached print-mode turn that may still
-/// run on the lane's session: one `host` reads live under its start, or
-/// cannot read. The lane's pane reads idle while such a turn runs, so a
-/// paste then starts a second turn beside it; an ended turn, or a later
-/// process under its pid, is none.
-pub fn turn_runs(lane: &Lane, host: &Host) -> bool {
-    wake_identity(lane).is_some_and(|id| !matches!((host.still_runs)(&id), Reading::Gone))
 }
 
 /// What a wake answered for the unread state its mark names.
