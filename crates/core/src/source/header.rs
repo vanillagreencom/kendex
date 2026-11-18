@@ -327,9 +327,8 @@ fn text_at(
 type OpenedKey = (crate::model::Scope, String, Option<String>, Option<String>);
 
 impl DeclaredHeaders {
-    /// Installed settings belong to each recorded artifact. Folder catalogs
-    /// can change in place, so their current templates prove nothing about
-    /// a rendering held from an earlier read.
+    /// A verified render carries the settings the installation actually
+    /// received, including label rewrites and bytes kept during a transfer.
     pub(crate) fn installed_settings(
         &mut self,
         env: &crate::env::Env,
@@ -342,18 +341,15 @@ impl DeclaredHeaders {
             let sealed = super::seal_in_place(scope, &path).ok()?;
             return Some(settings_at(&sealed, &path));
         }
-        if entry.source_commit.is_some() {
+        rendered_settings(env, scope, entry).or_else(|| {
+            entry.source_commit.as_ref()?;
             let installed = InstalledFrom::of(entry);
-            if let Ok((sealed, path, _)) =
-                self.skill_location(env, scope, manifest, &entry.name, Some(&installed))
-            {
-                let template = settings_at(sealed, &path);
-                if !matches!(template, TemplateSource::Unreadable(_)) {
-                    return Some(template);
-                }
-            }
-        }
-        rendered_settings(env, scope, entry)
+            let (sealed, path, _) = self
+                .skill_location(env, scope, manifest, &entry.name, Some(&installed))
+                .ok()?;
+            let template = settings_at(sealed, &path);
+            (!matches!(template, TemplateSource::Unreadable(_))).then_some(template)
+        })
     }
 
     pub(crate) fn skill(

@@ -360,7 +360,11 @@ fn check_reads_command_requirements_from_in_place_sources_without_owning_them() 
             .map(|line| line.text.as_str())
             .collect();
         assert_eq!(settings_notes.len(), 1);
-        assert!(settings_notes[0].contains("DEPLOY_MODE"));
+        assert!(
+            settings_notes[0].contains("DEPLOY_MODE")
+                && settings_notes[0].contains("\"preview\"")
+                && settings_notes[0].contains("from deploy")
+        );
         assert_eq!(settings_notes, plan.settings_advisories);
         assert!(fs::read_to_string(&settings_path).unwrap() == settings);
         let lines = checked
@@ -463,6 +467,26 @@ fn an_inaccessible_in_place_source_is_could_not_check() {
     let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
     apply::execute(&world.env, &report.plan).unwrap();
     assert_unreadable_parent_is_unknown(&world, &world.project.join(".agents/skills/deploy"));
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_linked_in_place_catalog_is_refused_by_project_planning() {
+    let world = world();
+    set_manifest(&world, "\"codex\"", true);
+    let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
+    apply::execute(&world.env, &report.plan).unwrap();
+
+    let agents = world.project.join(".agents");
+    fs::rename(&agents, world.project.join("authored-fixture")).unwrap();
+    let empty = world.project.with_file_name("empty-catalog-fixture");
+    fs::create_dir(&empty).unwrap();
+    std::os::unix::fs::symlink(&empty, &agents).unwrap();
+    let error = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap_err();
+    assert!(
+        matches!(error, kendex_core::error::CoreError::SourceEscape { path, .. } if path == agents)
+    );
+    assert!(fs::read_dir(empty).unwrap().next().is_none());
 }
 
 /// An unreadable harness parent cannot prove that its link is absent.

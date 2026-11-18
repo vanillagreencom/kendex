@@ -94,12 +94,17 @@ fn world() -> World {
 
 #[allow(clippy::unwrap_used)]
 fn declare(w: &World, source_extra: &str, body: &str) {
+    declare_delivery(w, source_extra, body, "\"claude\"", "symlink");
+}
+
+#[allow(clippy::unwrap_used)]
+fn declare_delivery(w: &World, source_extra: &str, body: &str, harnesses: &str, method: &str) {
     let path = manifest::manifest_path(&w.env, &w.scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         &path,
         format!(
-            "schema = 8\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{body}"
+            "schema = 8\n\n[sources.cat]\nrepo = \"{REPO}\"\n{source_extra}\n[install]\nharnesses = [{harnesses}]\nmethod = \"{method}\"\n\n{body}"
         ),
     )
     .unwrap();
@@ -587,6 +592,133 @@ fn installations_disagreeing_on_their_commit_read_as_mixed() {
 
     let report = updates::updates(&w.env, &w.scope).unwrap();
     assert!(row(&report.rows, "gh").mixed, "{report:?}");
+}
+
+fn saved_setting_notices(w: &World) -> Vec<String> {
+    drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+        drift::copies::CheckMode::ReportOnly,
+    )
+    .sections
+    .into_iter()
+    .filter(|section| section.title == drift::report::SETTINGS_SECTION)
+    .flat_map(|section| section.lines)
+    .map(|line| line.text.as_str().to_owned())
+    .collect()
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_retained_git_skill_uses_its_rendered_agent_label_default() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Fixture.");
+    fs::write(
+        w.upstream.join("skills/gh/kendex.settings.toml.example"),
+        "[env]\n# Agent labels.\nLINEAR_AGENT_LABELS = \"agent:generalist,agent:engineer\"\n",
+    )
+    .unwrap();
+    let catalog = w.upstream.join("kendex.toml");
+    fs::write(&catalog, "[bundles.kit]\nskills = [\"gh\"]\n").unwrap();
+    let installed = commit(&w.upstream, "ship the original labels");
+    declare_delivery(
+        &w,
+        "",
+        "[bundles.kit]\nsource = \"cat\"\n",
+        "\"claude\"",
+        "copy",
+    );
+    let Scope::Project { root } = &w.scope else {
+        unreachable!()
+    };
+    let saved = "[env]\nLINEAR_AGENT_LABELS = \"agent:maintainer,agent:runtime\"\n";
+    fs::write(root.join("kendex.settings.toml"), saved).unwrap();
+    sync_and_apply(&w);
+    assert!(
+        fs::read_to_string(root.join(".claude/skills/gh/kendex.settings.toml.example"))
+            .unwrap()
+            .contains("agent:maintainer,agent:runtime")
+    );
+
+    fs::write(&catalog, "[retired.bundles]\nkit = \"\"\n").unwrap();
+    commit(&w.upstream, "retire kit");
+    sync_and_apply(&w);
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
+    assert_eq!(
+        lock.entries["skill:gh:claude"].source_commit.as_deref(),
+        Some(installed.as_str())
+    );
+
+    for notices in [
+        audit(&w.env, &w.scope).unwrap().settings_advisories,
+        saved_setting_notices(&w),
+    ] {
+        assert_eq!(notices.len(), 1);
+        assert!(
+            notices[0].contains("LINEAR_AGENT_LABELS")
+                && notices[0].contains("\"agent:maintainer,agent:runtime\"")
+                && notices[0].contains("from gh")
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn separate_installed_copies_must_agree_before_a_saved_default_is_reported() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "First.");
+    let template = w.upstream.join("skills/gh/kendex.settings.toml.example");
+    fs::write(
+        &template,
+        "[env]\n# First setting.\nFIRST_MODE = \"old\"\n# Second setting.\nSECOND_MODE = \"old\"\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "first defaults");
+    declare_delivery(
+        &w,
+        "",
+        "[skills.gh]\nsource = \"cat\"\n",
+        "\"claude\", \"codex\"",
+        "copy",
+    );
+    let Scope::Project { root } = &w.scope else {
+        unreachable!()
+    };
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(
+        root.join("kendex.settings.toml"),
+        "[env]\nFIRST_MODE = \"old\"\nSECOND_MODE = \"new\"\nNO_OWNER = \"manual\"\n",
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let edited = root.join(".claude/skills/gh/SKILL.md");
+    let text = fs::read_to_string(&edited).unwrap() + "\nKeep this edit.\n";
+    fs::write(edited, text).unwrap();
+    write_skill(&w.upstream, "gh", "Second.");
+    fs::write(
+        &template,
+        "[env]\n# First setting.\nFIRST_MODE = \"new\"\n# Second setting.\nSECOND_MODE = \"new\"\n",
+    )
+    .unwrap();
+    let second = commit(&w.upstream, "second defaults");
+    sync_and_apply(&w);
+
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&w.env, &w.scope)).unwrap();
+    assert_eq!(
+        lock.entries["skill:gh:claude"].source_commit.as_deref(),
+        Some(first.as_str())
+    );
+    assert_eq!(
+        lock.entries["skill:gh:codex"].source_commit.as_deref(),
+        Some(second.as_str())
+    );
+    for notices in [
+        audit(&w.env, &w.scope).unwrap().settings_advisories,
+        saved_setting_notices(&w),
+    ] {
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains("NO_OWNER") && notices[0].contains("no installed package"));
+    }
 }
 
 /// A copy of a remote package that no record accounts for is measured
