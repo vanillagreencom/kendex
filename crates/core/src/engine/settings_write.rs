@@ -234,14 +234,7 @@ pub(super) fn saved_settings_notes(
         let template = if rendered.0.rendered(key, entry, rendered.1) {
             state.settings_templates.get(&entry.name).cloned()
         } else {
-            installed_settings(env, scope, entry).or_else(|| {
-                entry.source_commit.as_ref()?;
-                let installed = crate::source::header::InstalledFrom::of(entry);
-                headers
-                    .skill(env, scope, manifest, &entry.name, Some(&installed), true)
-                    .ok()
-                    .map(|reading| reading.settings)
-            })
+            headers.installed_settings(env, scope, manifest, entry)
         };
         let Some(template) = template else {
             // A retained installation can still declare the key.
@@ -269,46 +262,16 @@ fn outgoing_settings(
     lock.entries
         .values()
         .filter(|entry| entry.kind == ItemKind::Skill)
-        .filter_map(|entry| match installed_settings(env, scope, entry) {
-            Some(TemplateSource::Text(text)) => Some(
-                crate::settings_seed::SeededEnv::declarations(&entry.name, &text),
-            ),
-            Some(TemplateSource::Absent | TemplateSource::Unreadable(_)) | None => None,
-        })
+        .filter_map(
+            |entry| match crate::source::header::rendered_settings(env, scope, entry) {
+                Some(TemplateSource::Text(text)) => Some(
+                    crate::settings_seed::SeededEnv::declarations(&entry.name, &text),
+                ),
+                Some(TemplateSource::Absent | TemplateSource::Unreadable(_)) | None => None,
+            },
+        )
         .flatten()
         .collect()
-}
-
-fn installed_settings(
-    env: &crate::env::Env,
-    scope: &Scope,
-    entry: &crate::lock::LockEntry,
-) -> Option<TemplateSource> {
-    let Scope::Project { root } = scope else {
-        return None;
-    };
-    let recorded = entry.rendered_hash.as_ref()?;
-    let sealed = crate::source_read::SealedSource::open(root).ok()?;
-    let mut seen = std::collections::BTreeSet::new();
-    for path in super::owned::installed(env, scope, entry).files {
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        let Ok(files) = sealed.collect_tree(&path, &crate::source_read::TOOL_CACHES) else {
-            continue;
-        };
-        if !crate::hash::RenderedIdentity::observed_files(&path, &files, true).matches(recorded) {
-            continue;
-        }
-        return match files
-            .into_iter()
-            .find(|(name, _)| name == std::path::Path::new(crate::settings_seed::SETTINGS_TEMPLATE))
-        {
-            Some((_, bytes)) => String::from_utf8(bytes).ok().map(TemplateSource::Text),
-            None => Some(TemplateSource::Absent),
-        };
-    }
-    None
 }
 
 /// Bind the combined seed, edit and label rename to the original file bytes.

@@ -330,6 +330,14 @@ fn check_reads_command_requirements_from_in_place_sources_without_owning_them() 
         let skill = world.project.join(".agents/skills/deploy/SKILL.md");
         let text = "---\nname: deploy\ndescription: ship it\ndependencies:\n  commands:\n    - command: kendex-fixture-inplace-absent\n      purpose: Ship the release\n---\nOwned source.\n";
         fs::write(&skill, text).unwrap();
+        fs::write(
+            skill.with_file_name("kendex.settings.toml.example"),
+            "[env]\n# Deployment mode.\nDEPLOY_MODE = \"preview\"\n",
+        )
+        .unwrap();
+        let settings_path = world.project.join("kendex.settings.toml");
+        let settings = "[env]\nDEPLOY_MODE = \"preview\"\n";
+        fs::write(&settings_path, settings).unwrap();
         let plan = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
         assert_eq!(plan.warnings.len(), 1);
         apply::execute(&world.env, &plan.plan).unwrap();
@@ -344,6 +352,17 @@ fn check_reads_command_requirements_from_in_place_sources_without_owning_them() 
             std::slice::from_ref(&world.scope),
             drift::copies::CheckMode::ReportOnly,
         );
+        let settings_notes: Vec<_> = checked
+            .sections
+            .iter()
+            .filter(|section| section.title == drift::report::SETTINGS_SECTION)
+            .flat_map(|section| &section.lines)
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(settings_notes.len(), 1);
+        assert!(settings_notes[0].contains("DEPLOY_MODE"));
+        assert_eq!(settings_notes, plan.settings_advisories);
+        assert!(fs::read_to_string(&settings_path).unwrap() == settings);
         let lines = checked
             .sections
             .iter()

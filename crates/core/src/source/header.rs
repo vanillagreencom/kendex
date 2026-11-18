@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use crate::model::ItemKind;
 use crate::scan::metadata::{self, Metadata};
+use crate::settings_seed::SETTINGS_TEMPLATE;
+use crate::settings_template::TemplateSource;
 use crate::source_read::SealedSource;
 
 /// The file one kind writes its header in, under the item path
@@ -108,7 +110,7 @@ pub(crate) struct DeclaredHeaders {
 /// The two declarations the check reads from an installed skill.
 pub(crate) struct SkillReading {
     pub(crate) header: Result<String, String>,
-    pub(crate) settings: crate::settings_template::TemplateSource,
+    pub(crate) settings: TemplateSource,
 }
 
 impl SkillReading {
@@ -118,18 +120,50 @@ impl SkillReading {
         header: Result<String, String>,
         settings: bool,
     ) -> Self {
-        use crate::settings_template::TemplateSource;
         let settings = if settings {
-            match sealed.read_if_exists(&path.join(crate::settings_seed::SETTINGS_TEMPLATE)) {
-                Ok(Some(text)) => TemplateSource::Text(text),
-                Ok(None) => TemplateSource::Absent,
-                Err(error) => TemplateSource::Unreadable(error.to_string()),
-            }
+            settings_at(sealed, path)
         } else {
             TemplateSource::Absent
         };
         Self { header, settings }
     }
+}
+
+fn settings_at(sealed: &SealedSource, path: &Path) -> TemplateSource {
+    match sealed.read_if_exists(&path.join(SETTINGS_TEMPLATE)) {
+        Ok(Some(text)) => TemplateSource::Text(text),
+        Ok(None) => TemplateSource::Absent,
+        Err(error) => TemplateSource::Unreadable(error.to_string()),
+    }
+}
+
+/// A consumer copy proves the installed template only while its sealed bytes match the record.
+pub(crate) fn rendered_settings(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    entry: &crate::lock::LockEntry,
+) -> Option<TemplateSource> {
+    let crate::model::Scope::Project { root } = scope else {
+        return None;
+    };
+    let recorded = entry.rendered_hash.as_ref()?;
+    let sealed = SealedSource::open(root).ok()?;
+    for path in crate::engine::owned::installed(env, scope, entry).files {
+        let Ok(files) = sealed.collect_tree(&path, &crate::source_read::TOOL_CACHES) else {
+            continue;
+        };
+        if !crate::hash::RenderedIdentity::observed_files(&path, &files, true).matches(recorded) {
+            continue;
+        }
+        return match files
+            .into_iter()
+            .find(|(name, _)| name == Path::new(SETTINGS_TEMPLATE))
+        {
+            Some((_, bytes)) => String::from_utf8(bytes).ok().map(TemplateSource::Text),
+            None => Some(TemplateSource::Absent),
+        };
+    }
+    None
 }
 
 /// What one installation's own record says it came from.
@@ -138,6 +172,7 @@ impl SkillReading {
 /// installation on disk actually is. They part company the moment
 /// somebody edits the manifest, and every question about the bytes
 /// already installed is answered from here.
+#[derive(Clone)]
 pub(crate) struct InstalledFrom {
     /// The source name this installation was declared under.
     pub(crate) source: String,
@@ -292,6 +327,35 @@ fn text_at(
 type OpenedKey = (crate::model::Scope, String, Option<String>, Option<String>);
 
 impl DeclaredHeaders {
+    /// Installed settings belong to each recorded artifact. Folder catalogs
+    /// can change in place, so their current templates prove nothing about
+    /// a rendering held from an earlier read.
+    pub(crate) fn installed_settings(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        entry: &crate::lock::LockEntry,
+    ) -> Option<TemplateSource> {
+        if entry.source == crate::manifest::INPLACE_SOURCE_NAME && entry.rendered_hash.is_none() {
+            let path = crate::engine::desired::skill_canonical(env, scope, &entry.name);
+            let sealed = super::seal_in_place(scope, &path).ok()?;
+            return Some(settings_at(&sealed, &path));
+        }
+        if entry.source_commit.is_some() {
+            let installed = InstalledFrom::of(entry);
+            if let Ok((sealed, path, _)) =
+                self.skill_location(env, scope, manifest, &entry.name, Some(&installed))
+            {
+                let template = settings_at(sealed, &path);
+                if !matches!(template, TemplateSource::Unreadable(_)) {
+                    return Some(template);
+                }
+            }
+        }
+        rendered_settings(env, scope, entry)
+    }
+
     pub(crate) fn skill(
         &mut self,
         env: &crate::env::Env,
@@ -301,6 +365,20 @@ impl DeclaredHeaders {
         installed: Option<&InstalledFrom>,
         settings: bool,
     ) -> Result<SkillReading, String> {
+        let (sealed, path, source) = self.skill_location(env, scope, manifest, name, installed)?;
+        let header = text_at(sealed, ItemKind::Skill, &path, name, &source)
+            .unwrap_or_else(|error| Err(error.to_string()));
+        Ok(SkillReading::read(sealed, &path, header, settings))
+    }
+
+    fn skill_location(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        name: &str,
+        installed: Option<&InstalledFrom>,
+    ) -> Result<(&SealedSource, PathBuf, String), String> {
         let read_at = ReadAt::of(manifest, ItemKind::Skill, name, installed)
             .ok_or_else(|| format!("'{name}' is neither installed nor declared in this scope"))?;
         let (sealed, config) = self
@@ -309,9 +387,7 @@ impl DeclaredHeaders {
             .map_err(String::clone)?;
         let path = header_item(sealed, config, ItemKind::Skill, name, &read_at.source)
             .map_err(|error| error.to_string())?;
-        let header = text_at(sealed, ItemKind::Skill, &path, name, &read_at.source)
-            .unwrap_or_else(|error| Err(error.to_string()));
-        Ok(SkillReading::read(sealed, &path, header, settings))
+        Ok((sealed, path, read_at.source))
     }
 
     /// What one declared package's own source says about it, at the

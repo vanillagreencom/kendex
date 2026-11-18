@@ -136,6 +136,19 @@ fn a_kept_members_dependency_stays_with_no_row_in_the_plan_verify_reads() {
                 .any(|note| note.contains("NO_OWNER")),
             "{name}"
         );
+        let checked = kendex_core::drift::report::check(
+            &f.env,
+            std::slice::from_ref(&f.scope),
+            kendex_core::drift::copies::CheckMode::ReportOnly,
+        );
+        let notes: Vec<_> = checked
+            .sections
+            .iter()
+            .filter(|section| section.title == kendex_core::drift::report::SETTINGS_SECTION)
+            .flat_map(|section| &section.lines)
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(notes, report.settings_advisories, "{name}");
         let rows: Vec<_> = report
             .drift
             .iter()

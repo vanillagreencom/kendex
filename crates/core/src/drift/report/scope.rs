@@ -9,6 +9,7 @@ use super::text::{shown, verbatim};
 use super::*;
 use crate::lock::{InstallRef, LockEntry, Reason};
 use crate::model::HarnessId;
+use crate::settings_template::TemplateSource;
 use crate::source::header::SkillReading;
 
 /// One scope's outcome beyond the lines it pushed: its second-copy scan,
@@ -314,6 +315,13 @@ enum DeclarationRead {
     Catalog(Option<crate::source::header::InstalledFrom>),
 }
 
+type SettingsTemplates = Vec<(String, TemplateSource)>;
+
+enum CatalogReading {
+    Header(Result<SkillReading, String>),
+    Settings(Option<SettingsTemplates>),
+}
+
 impl ScopeCheck<'_> {
     /// PATH is machine state, so saved source-comparison verdicts cannot
     /// answer this check. Each skill with an installed tree is checked once,
@@ -333,7 +341,6 @@ impl ScopeCheck<'_> {
         record_readable: bool,
         sections: &mut Sections,
     ) {
-        use crate::settings_template::TemplateSource;
         let settings = self.settings_text(record_readable && manifest.is_some());
         let mut seen = BTreeSet::new();
         let recorded = lock
@@ -349,7 +356,7 @@ impl ScopeCheck<'_> {
                         .as_ref()
                         .map(|artifact| artifact.paths.as_slice())
                         .unwrap_or_default(),
-                    Some(crate::source::header::InstalledFrom::of(entry)),
+                    Some(entry),
                 )
             });
         let unrecorded = occupied
@@ -390,6 +397,7 @@ impl ScopeCheck<'_> {
                 )
             });
         let mut reads = Vec::new();
+        let mut records = Vec::new();
         let mut complete = true;
         for (name, source, paths, installed) in recorded.chain(unrecorded).chain(native) {
             let in_place = crate::engine::desired::in_place_source(
@@ -402,39 +410,91 @@ impl ScopeCheck<'_> {
             if !present {
                 continue;
             }
+            if let Some(entry) = installed
+                && settings.is_some()
+            {
+                records.push(entry.clone());
+            }
             // A selected source has one read result. A second harness cannot
             // replace its unreadable declaration with a different answer.
             if !seen.insert(name.to_owned()) {
                 continue;
             }
-            if let Some(read) =
-                self.declaration_read(manifest, in_place, installed, settings.is_some())
+            let read_settings = settings.is_some() && installed.is_none();
+            let installed = installed.map(crate::source::header::InstalledFrom::of);
+            if let Some(read) = self.declaration_read(manifest, in_place, installed, read_settings)
             {
                 reads.push((name.to_owned(), read));
             } else {
                 complete = false;
             }
         }
-        let mut templates = BTreeMap::new();
-        for (name, reading) in self.declaration_texts(manifest, reads, settings.is_some()) {
+        self.skill_findings(
+            manifest,
+            reads,
+            &records,
+            settings.as_deref().filter(|_| complete),
+            sections,
+        );
+    }
+
+    fn skill_findings(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        reads: Vec<(String, DeclarationRead)>,
+        records: &[LockEntry],
+        settings: Option<&str>,
+        sections: &mut Sections,
+    ) {
+        let stages = self.catalog_readings(manifest, &reads, records, settings.is_some());
+        let mut unrecorded = Vec::new();
+        let mut headers = Vec::with_capacity(reads.len());
+        let mut complete = true;
+        for (name, read) in reads {
+            let reading = match read {
+                DeclarationRead::Text(text) => text,
+                DeclarationRead::Catalog(_) => match stages
+                    .as_ref()
+                    .and_then(|stages| stages.next(self.deadline))
+                {
+                    Some(CatalogReading::Header(header)) => header,
+                    Some(CatalogReading::Settings(_)) | None => Err(
+                        "the check ran out of time before it could read the skill's source"
+                            .to_owned(),
+                    ),
+                },
+            };
             let header = match reading {
                 Ok(SkillReading { header, settings }) => {
                     complete &= !matches!(settings, TemplateSource::Unreadable(_));
                     if !matches!(settings, TemplateSource::Absent) {
-                        templates.insert(name.clone(), settings);
+                        unrecorded.push((name.clone(), settings));
                     }
                     header
                 }
                 Err(error) => {
-                    complete = false;
+                    complete &= records.iter().any(|entry| entry.name == name);
                     Err(error)
                 }
             };
+            headers.push((name, header));
+        }
+        for (name, header) in headers {
             self.command_source_lines(&name, header, sections);
         }
-        if let (Some(text), true) = (settings, complete) {
-            self.settings_lines(&text, &templates, sections);
+        let Some(text) = settings.filter(|_| complete) else {
+            return;
+        };
+        if !records.is_empty() {
+            let Some(CatalogReading::Settings(Some(mut installed))) = stages
+                .as_ref()
+                .and_then(|stages| stages.next(self.deadline))
+            else {
+                return;
+            };
+            unrecorded.append(&mut installed);
         }
+        self.settings_lines(text, &unrecorded, sections);
     }
 
     fn settings_text(&self, scope_readable: bool) -> Option<String> {
@@ -454,7 +514,7 @@ impl ScopeCheck<'_> {
     fn settings_lines(
         &self,
         text: &str,
-        templates: &BTreeMap<String, crate::settings_template::TemplateSource>,
+        templates: &[(String, TemplateSource)],
         sections: &mut Sections,
     ) {
         sections.settings.extend(
@@ -474,26 +534,27 @@ impl ScopeCheck<'_> {
         );
     }
 
-    /// Each read's text, in the order asked. The catalog reads run on one
-    /// thread behind the check's deadline, sending each text as it is
-    /// read; a read the deadline cuts off is named as not checked.
-    fn declaration_texts(
+    /// Command headers are streamed first. Settings gather every recorded
+    /// installation separately under the same deadline.
+    fn catalog_readings(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
-        mut reads: Vec<(String, DeclarationRead)>,
+        reads: &[(String, DeclarationRead)],
+        records: &[LockEntry],
         settings: bool,
-    ) -> Vec<(String, Result<SkillReading, String>)> {
-        let catalog_reads: Vec<(String, Option<crate::source::header::InstalledFrom>)> = reads
-            .iter_mut()
+    ) -> Option<crate::drift::copies::Stages<CatalogReading>> {
+        let catalog_reads: Vec<_> = reads
+            .iter()
             .filter_map(|(name, read)| match read {
-                DeclarationRead::Catalog(installed) => Some((name.clone(), installed.take())),
+                DeclarationRead::Catalog(installed) => Some((name.clone(), installed.clone())),
                 DeclarationRead::Text(_) => None,
             })
             .collect();
-        let stages = match (manifest, catalog_reads.is_empty()) {
+        match (manifest, catalog_reads.is_empty() && records.is_empty()) {
             (Some(manifest), false) => {
                 let (env, scope, manifest) =
                     (self.env.clone(), self.scope.clone(), manifest.clone());
+                let records = records.to_vec();
                 Some(crate::drift::copies::gated(self.deadline, move |sender| {
                     let mut headers = crate::source::header::DeclaredHeaders::default();
                     for (name, installed) in catalog_reads {
@@ -503,36 +564,27 @@ impl ScopeCheck<'_> {
                             &manifest,
                             &name,
                             installed.as_ref(),
-                            settings,
+                            settings && installed.is_none(),
                         );
-                        if sender.send(text).is_err() {
+                        if sender.send(CatalogReading::Header(text)).is_err() {
                             return;
                         }
+                    }
+                    if !records.is_empty() {
+                        let installed = records
+                            .iter()
+                            .map(|entry| {
+                                headers
+                                    .installed_settings(&env, &scope, &manifest, entry)
+                                    .map(|template| (entry.name.clone(), template))
+                            })
+                            .collect();
+                        let _ = sender.send(CatalogReading::Settings(installed));
                     }
                 }))
             }
             (Some(_), true) | (None, _) => None,
-        };
-        reads
-            .into_iter()
-            .map(|(name, read)| {
-                let text = match read {
-                    DeclarationRead::Text(text) => text,
-                    // Sent in the order they were asked, so the next stage is
-                    // this skill's; none by the deadline leaves it unread.
-                    DeclarationRead::Catalog(_) => stages
-                        .as_ref()
-                        .and_then(|stages| stages.next(self.deadline))
-                        .unwrap_or_else(|| {
-                            Err(
-                                "the check ran out of time before it could read the skill's source"
-                                    .to_owned(),
-                            )
-                        }),
-                };
-                (name, text)
-            })
-            .collect()
+        }
     }
 
     /// Where a skill's commands are read from, or `None` where the scope's
@@ -573,13 +625,8 @@ impl ScopeCheck<'_> {
         path: &std::path::Path,
         settings: bool,
     ) -> Result<SkillReading, String> {
-        let root = match self.scope {
-            Scope::Project { root } => root.as_path(),
-            Scope::Global => path,
-        };
         let sealed =
-            crate::source_read::SealedSource::open(root).map_err(|error| error.to_string())?;
-        sealed.contained(path).map_err(|error| error.to_string())?;
+            crate::source::seal_in_place(self.scope, path).map_err(|error| error.to_string())?;
         let header = sealed
             .read_to_string(&path.join("SKILL.md"))
             .map_err(|error| error.to_string());
