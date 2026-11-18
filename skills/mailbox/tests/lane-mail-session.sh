@@ -283,7 +283,7 @@ mutant session-unrecorded '{ [ -n "$account" ] && [ -n "$session" ]; } || refuse
 lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive" --session session_01CLOUD --account '' --root "$CHECKOUT/wt/CC-1"
 assert_eq "called=$(called)" "called=yes" "control: without the route check a session send runs with no account"
 # shellcheck disable=SC2016
-mutant host-route '[ "$HOST" -eq 0 ] || [ -n "${ORCH_LANE_HOST:-}" ] || refuse host-route-missing "$ITEM"' ':'
+mutant host-route '[ -n "${ORCH_LANE_HOST:-}" ] || refuse host-route-missing "$ITEM"' ':'
 rm -rf -- "$HOST_DISK" "$OTHER_HOST_DISK"
 lm -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" --root "$HOST_ROOT" --host
 assert_eq "rc=$RC lines=$(wc -l < "$OTHER_HOST_DISK$HOST_ROOT/tmp/lane-mail/SSH-1/to-lane.jsonl" | tr -d ' ')" \

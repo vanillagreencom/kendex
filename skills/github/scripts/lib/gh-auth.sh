@@ -449,8 +449,17 @@ kendex_github_load_token() {
       # override the ladder promises wins.
       source "$lib_dir/kendex-env.sh" >/dev/null || true
       kendex_load_project_env "$project_root" -- GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN >/dev/null || exit 3
-      kendex_github_select_auth_token "$mode" || true
-    ) || load_status=$?
+      if ! kendex_github_select_auth_token "$mode"; then
+        printf '%s' "${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-}"
+        exit 1
+      fi
+    ) || {
+      load_status=$?
+      if [[ "$load_status" -eq 1 && -n "$token" ]]; then
+        KENDEX_GITHUB_TOKEN_AUTH_FAILURE="$token"
+      fi
+      token=""
+    }
   fi
 
   if [[ -z "$token" ]]; then

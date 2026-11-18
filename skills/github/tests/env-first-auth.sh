@@ -555,6 +555,14 @@ assert_eq "$(ladder_refusal STUB_KEYRING_STATE=invalid GH_BOT_TOKEN=ghp_BOTREVOK
 assert_eq "$(ladder_refusal GH_BOT_TOKEN=dtn_BOTREFUSED STUB_KEYRING_STATE=absent)|$(ladder_said)" \
   "rc=2|gh-auth-ladder: auth-failed service=github env=absent keyring=absent bot-token=expired|" \
   "a bot value the selection's own check refuses keeps that check's class, not absent"
+file_bot_refused() {
+  printf 'GH_BOT_TOKEN=dtn_APPDENIED\n' > "$TMP_ROOT/repo/.env.local"
+  assert_eq "$(ladder_refusal STUB_KEYRING_STATE=absent)|$(ladder_said)" \
+    "rc=2|gh-auth-ladder: auth-failed service=github env=absent keyring=absent bot-token=refused|" \
+    "a refused bot token from the project's private env file keeps its class"
+  rm -f "$TMP_ROOT/repo/.env.local"
+}
+file_bot_refused
 assert_eq "$(ladder_refusal GH_BOT_TOKEN=op://vault/github/garbage STUB_KEYRING_STATE=absent)|$(ladder_said)" \
   "rc=2|gh-auth-ladder: auth-failed service=github env=absent keyring=absent bot-token=expired|" \
   "a resolved reference GitHub refuses keeps the check's class"

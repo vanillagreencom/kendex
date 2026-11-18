@@ -91,6 +91,22 @@ text() { # NAME CONTENT
 
 echo "=== lane-mail ==="
 
+hosted_send_refused() {
+  new_lane hosted_send
+  local state="$LANE/tmp/workflow-state-oversee.json" box="$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
+  mkdir -p "${box%/*}"
+  printf '{"id":"kept"}\n' > "$TMP_ROOT/hosted-before"
+  cp "$TMP_ROOT/hosted-before" "$box"
+  printf '{"lanes":[{"item":"KEN-1","status":"running","kind":"ssh","host":"test-provider"}]}\n' > "$state"
+  lm send --item KEN-1 --directive --file "$(text directive 'Hold.')"
+  assert_eq "$RC=$ERR=$OUT" '2=lane-mail: host-root-required=test-provider=' "a bare directive to a recorded hosted lane is refused"
+  printf '{"lanes":[{"item":"KEN-1","status":"running","host":false}]}\n' > "$state"
+  lm send --item KEN-1 --re fixture-ask --file "$(text reply 'Hold confirmed.')"
+  assert_eq "$RC=$ERR=$OUT" '2=lane-mail: state-unreadable=KEN-1=' "a bare reply with an unreadable fleet route is refused"
+  assert_eq "$(cat "$box")" "$(cat "$TMP_ROOT/hosted-before")" "refused fleet routes leave the local mailbox unchanged"
+}
+hosted_send_refused
+
 root_subdir() {
   lm ask --item KEN-1 --root tmp/lane-mail --file "$(text root 'Which checkout?')"
   assert_eq "$RC=$ERR=$OUT" "2=lane-mail: root-not-checkout=tmp/lane-mail top=$LANE=" \

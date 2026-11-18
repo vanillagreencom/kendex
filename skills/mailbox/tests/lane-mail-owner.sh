@@ -1446,7 +1446,8 @@ draft_ask "$(draft_file blank '{"recipient":"","medium":"email","text":"x"}')"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.recipient')" "0=" "control: without the field rule an empty recipient lands"
 
 new_repo control_draft_single
-mutant draft-many 'if length != 1 or (.[0] | type)' 'if (.[0] | type)'
+mutant draft-many 'if length != 1 or (.[0] | type) != "object" then error("a draft is one JSON object")' \
+  'if (.[0] | type) != "object" then error("a draft is one JSON object")'
 draft_ask "$(draft_file two "$TWO_DRAFTS")"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.draft.text')" "0=x" "control: without the one-object rule a file of two drafts lands"
 

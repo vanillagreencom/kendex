@@ -865,11 +865,8 @@ exec "$marker" --launch-record "$4" "$2" "$3"''', row["clone"], path, args.item,
 def archive_tmp(row, item, worktree_path):
     """Preserve remaining lane records locally before close removes their worktree.
 
-    The item's workflow state goes with them: the launch environment puts it
-    in the worktree's tmp, and older launches can keep it in the directory
-    their checkout's ORCH_STATE_DIR names, read by the clone's own settings
-    loader with no runtime on the host. The archive's
-    `lane-host-state` member names that file's member, or is an empty line
+    The clone's runtime resolves the item state under the launch's state
+    directory. The archive's `lane-host-state` names that member, or is empty
     when no live state remains. With an empty marker, the `lane-host-saved`
     member lists the clone's saved cycle copies, and a reader takes only the
     listed copy of the merge it records. A resolution
@@ -884,25 +881,12 @@ for base in "$1" "$2"; do
 done
 state="" member="" from="$2"
 test -d "$from" || from="$1"
-loader="$1/.agents/skills/orch/scripts/lib/kendex-env.sh"
-if test -r "$loader"; then
-  state="$2/tmp/items/$3/workflow-state-$3.json"
-  if ! test -f "$state"; then
-    # ORCH_STATE_DIR as the checkout's settings and private env file set it,
-    # else tmp; a relative value joins the clone.
-    if ! dir=$(cd "$from" && . "$loader" && kendex_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "" -- ORCH_STATE_DIR && printf '%s\\n' "${ORCH_STATE_DIR:-tmp}"); then
-      printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
-      exit 1
-    fi
-    case "$dir" in /*) ;; *) dir="$1/$dir" ;; esac
-    state="$dir/items/$3/workflow-state-$3.json"
-  fi
+if state=$(cd -- "$from" && ORCH_STATE_DIR="$2/tmp" "$1$4" state path --item "$3" |
+    jq -er '.result.path | strings | select(startswith("/"))'); then
   names=(lane-host-state)
   if test -f "$state"; then
-    # A relative setting such as ../lane-state joins the clone as given,
-    # and tar cuts a member name at its last .. component, so the record names
-    # the file's physical path: the one test -f found, a symlink before ..
-    # followed as the filesystem follows it, and the root directory kept.
+    # Tar cuts a member name at its last .. component. Use the file's
+    # physical directory, following any symlink before .. as test -f did.
     dir=$(cd -P -- "$(dirname -- "$state")" && pwd -P)
     state="${dir%/}/$(basename -- "$state")"
     member="${state#/}"
@@ -911,18 +895,21 @@ if test -r "$loader"; then
       *) paths+=("$member") ;;
     esac
   fi
+else
+  printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
+  exit 1
 fi
 if test "${#paths[@]}" -eq 0; then exit 0; fi
 manifest=$(mktemp -d)
 trap 'rm -rf -- "${manifest:?}"' EXIT
 printf '%s\\n' "$member" > "$manifest/lane-host-state"
-if test "${#names[@]}" -gt 0 && test -z "$member"; then
+if test -z "$member"; then
   for saved in "$1"/tmp/cycle-state/workflow-state-pr-*.json; do
     if test -f "$saved"; then printf '%s\\n' "${saved#/}"; fi
   done > "$manifest/lane-host-saved"
   names+=(lane-host-saved)
 fi
-tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row["clone"], worktree_path, item).stdout
+tar -chzf - -C "$manifest" "${names[@]}" -C / "${paths[@]}"''', row["clone"], worktree_path, item, ORCH_RUNTIME).stdout
     if not data:
         return
     # The local runtime owns this setting's default, its settings precedence

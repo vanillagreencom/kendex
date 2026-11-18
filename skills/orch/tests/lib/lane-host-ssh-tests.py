@@ -899,11 +899,11 @@ rc=0
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
         original = self.script.read_text()
-        rule = 'state="$2/tmp/items/$3/workflow-state-$3.json"'
+        rule = 'ORCH_STATE_DIR="$2/tmp" "$1$4" state path'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(rule, 'state="$1/tmp/items/$3/workflow-state-$3.json"'))
+            self.executable(self.script, original.replace(rule, 'ORCH_STATE_DIR="$1/tmp" "$1$4" state path'))
             closed = self.call("close", "--item", "TEST-1")
             self.assertEqual(closed.returncode, 0, closed.stderr)
             archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
@@ -2659,89 +2659,26 @@ exit 9
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertTrue(removed.exists())
 
-    def test_close_archives_the_state_the_lane_settings_place_outside_tmp(self):
-        # The lane's settings name a state directory outside both tmp trees;
-        # its close archives the item's state there, which orch's cycle recorder reads
-        # once the sandbox is gone.
-        state_dir = self.root / "lane-state"
-        (self.source / "kendex.settings.toml").write_text(f'[env]\nORCH_STATE_DIR = "{state_dir}"\n')
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+    def test_close_archive_names_the_runtime_state_path(self):
+        state_dir = self.root / "runtime-state"
+        record = plant_record(state_dir, '{"cycles": 4}')
+        runtime = shlex.quote(str(self.runtime_binary()))
+        self.seed_source(".agents/skills/orch/scripts/orch-runtime", f'''#!/bin/sh
+if [ "$1 $2" = "state path" ]; then
+  exec {runtime} --state-dir {shlex.quote(str(state_dir))} "$@"
+fi
+exec {runtime} "$@"
+''')
         self.assertEqual(self.create().returncode, 0)
-        state_dir.mkdir()
-        plant_record(state_dir, '{"cycles": 4}')
-        # An older copy in the clone's tmp, from before the settings moved it.
-        plant_record(Path(self.row["clone"]) / "tmp", '{"cycles": 9}')
+        worktree = Path(self.row["clone"] + "-worktree")
+        plant_record(worktree / "tmp", '{"cycles": 9}')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
-            member = str(item_record(state_dir)).lstrip("/")
-            self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
+            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
+            self.assertEqual(member, str(record).lstrip("/"))
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 4}')
-
-    def test_close_records_a_dotted_state_directory_as_tar_names_it(self):
-        # A relative setting such as ../lane-state resolves to a path holding
-        # .. components; the record names the member tar writes for it.
-        (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "../lane-state"\n')
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
-        self.assertEqual(self.create().returncode, 0)
-        state_dir = Path(self.row["clone"]).parent / "lane-state"
-        state_dir.mkdir()
-        plant_record(state_dir, '{"cycles": 6}')
-        closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
-        self.assertTrue(archive.is_absolute(), archive)
-        with tarfile.open(archive) as saved:
-            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(item_record(state_dir)).lstrip("/"))
-            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 6}')
-
-    def test_close_follows_a_symlink_before_dots_in_the_state_directory(self):
-        # tmp/link/../lane-state names the directory beside link's target, as
-        # the filesystem follows it; collapsing link/.. first names
-        # tmp/lane-state, which here holds another copy, so the record would
-        # name a file that is not the lane's state.
-        (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "tmp/link/../lane-state"\n')
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
-        self.assertEqual(self.create().returncode, 0)
-        target = self.root / "elsewhere/inner"
-        target.mkdir(parents=True)
-        (Path(self.row["clone"]) / "tmp").mkdir(exist_ok=True)
-        (Path(self.row["clone"]) / "tmp/link").symlink_to(target)
-        plant_record(Path(self.row["clone"]) / "tmp/lane-state", '{"cycles": 9}')
-        state_dir = (self.root / "elsewhere/lane-state").resolve()
-        state_dir.mkdir()
-        plant_record(state_dir, '{"cycles": 2}')
-        closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
-        with tarfile.open(archive) as saved:
-            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(item_record(state_dir)).lstrip("/"))
-            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 2}')
-
-    def test_close_archives_the_state_the_lane_private_env_places(self):
-        # The lane loads its private env file over its settings; close
-        # resolves the state the way the lane does, and a retired setting the
-        # file still carries refuses nothing here.
-        created = self.create()
-        self.assertEqual(created.returncode, 0, created.stderr)
-        path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
-        state_dir = (self.root / "private-state").resolve()
-        state_dir.mkdir()
-        plant_record(state_dir, '{"cycles": 5}')
-        (path / ".env.local").write_text(f'ORCH_STATE_DIR="{state_dir}"\nORCH_CONSUMER_REPOS=owner/other\n')
-        closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
-        with tarfile.open(archive) as saved:
-            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(item_record(state_dir)).lstrip("/"))
-            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 5}')
 
     def test_close_stops_when_the_state_directory_does_not_resolve(self):
         # A checkout whose settings the loader refuses leaves the item's state

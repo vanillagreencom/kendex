@@ -49,15 +49,19 @@ def slug(text: str) -> str:
     return CHANNEL_NAME.sub("-", text.lower()).strip("-")
 
 
-def answer(root: Path, *args: str) -> Optional[str]:
+def answer(root: Path, *args: str, forward_setup: bool = False) -> Optional[str]:
     """A command's stdout run from the root, None where it does not answer."""
     try:
         proc = subprocess.run(
             list(args), cwd=str(root), env=CALLER_ENV, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, timeout=30, check=False,
+            stderr=subprocess.PIPE if forward_setup else subprocess.DEVNULL,
+            text=True, timeout=30, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
+    if forward_setup and proc.returncode == 69:
+        sys.stderr.write(proc.stderr)
+        raise SystemExit(proc.returncode)
     return proc.stdout.strip() if proc.returncode == 0 else None
 
 
@@ -82,7 +86,7 @@ def lane_side(root: Path) -> str:
     script = root / ".agents" / "skills" / "orch" / "scripts" / "orch-runtime"
     if not script.is_file():
         return "local"
-    host = answer(root, str(script), "host", "resolve")
+    host = answer(root, str(script), "host", "resolve", forward_setup=True)
     if host is None:
         raise Refusal("setting-invalid", f"root={root} orch-runtime=unanswered")
     return "local" if host == "local" else "vm"

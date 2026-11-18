@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 #
-# The Copilot CLI session record: the one writer and reader of the JSON the CLI
-# hands its `statusLine` command on stdin, for every reader that wants a live
-# context figure or the stop cause of a Copilot session.
+# The writer for the Copilot CLI session record receives the CLI's JSON on
+# stdin from its `statusLine` command.
 #
 # Copilot's `events.jsonl` record holds a context count in each
 # `tool.execution_complete` row (Copilot CLI 1.0.112), and the pane footer is a
@@ -77,33 +76,24 @@ copilot_session_write() { # HOME NOW
   mv -f -- "$staged" "$path" || { rm -f -- "$staged"; COPILOT_SESSION_REASON=record=unwritable; return 1; }
 }
 
-# copilot_session_fields RECORD — one record split into the figures its readers
-# act on, each empty where the CLI sent none or sent a value of another type:
+# copilot_session_fields RECORD — the status line's display fields, each
+# empty where the CLI sent none or sent a value of another type:
 #   CS_MODEL        status.model.id
 #   CS_USED_PCT     status.context_window.used_percentage, rounded
-#   CS_TOKENS       status.context_window.current_context_tokens, whole
-#   CS_WINDOW       status.context_window.context_window_size, whole
 #   CS_NANO_AIU     status.ai_used.total_nano_aiu, whole
-#   CS_ALLOW_ALL    status.allow_all_enabled, `true` or `false`
 # Empty is what a consumer reads as unmeasured; no field is defaulted to a
 # number here. Exit 1 where RECORD is not JSON.
-CS_MODEL="" CS_USED_PCT="" CS_TOKENS="" CS_WINDOW="" CS_NANO_AIU="" CS_ALLOW_ALL=""
+CS_MODEL="" CS_USED_PCT="" CS_NANO_AIU=""
 copilot_session_fields() { # RECORD
   local line
-  CS_MODEL="" CS_USED_PCT="" CS_TOKENS="" CS_WINDOW="" CS_NANO_AIU="" CS_ALLOW_ALL=""
+  CS_MODEL="" CS_USED_PCT="" CS_NANO_AIU=""
   line="$(jq -r '
     def whole: if type == "number" and . >= 0 then (floor | tostring) else "" end;
     [ (.status.model.id | strings) // "",
       (.status.context_window.used_percentage | if type == "number" then (. + 0.5 | floor | tostring) else "" end),
-      (.status.context_window.current_context_tokens | whole),
-      (.status.context_window.context_window_size | whole),
-      (.status.ai_used.total_nano_aiu | whole),
-      (.status.allow_all_enabled | if type == "boolean" then tostring else "" end) ]
+      (.status.ai_used.total_nano_aiu | whole) ]
     | join("\t")' <<<"$1" 2>/dev/null)" || return 1
   CS_MODEL="${line%%	*}"; line="${line#*	}"
   CS_USED_PCT="${line%%	*}"; line="${line#*	}"
-  CS_TOKENS="${line%%	*}"; line="${line#*	}"
-  CS_WINDOW="${line%%	*}"; line="${line#*	}"
-  CS_NANO_AIU="${line%%	*}"
-  CS_ALLOW_ALL="${line#*	}"
+  CS_NANO_AIU="$line"
 }

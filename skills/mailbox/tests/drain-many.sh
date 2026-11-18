@@ -6,6 +6,7 @@
 # with that lane's refusal and retracts nothing printed before it.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+export MSYS=winsymlinks:nativestrict
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 # shellcheck source=../../orch/tests/lib/assertions.sh
 . "$ROOT/skills/orch/tests/lib/assertions.sh"
@@ -78,6 +79,22 @@ lm drain-many --file "$TMP_ROOT/bad-cursor"
 assert_eq "rc=$RC err=$ERR" "rc=2 err=lane-mail: cursor-invalid=$REPO/tmp/lane-mail/KEN-1/to-lane.cursor" "a lane's cursor that holds no count refuses the call with the single verb's key"
 assert_eq "$(grep -c '^item=' <<<"$OUT")" 1 'the lane before it stands'
 rm -- "$REPO/tmp/lane-mail/KEN-1/to-lane.cursor"
+
+flockless_unsafe_box() {
+  local path="$TMP_ROOT/path-without-flock" name
+  local box="$REPO/tmp/lane-mail/KEN-4"
+  mkdir -p "$path" "$TMP_ROOT/elsewhere" "${box%/*}"
+  for name in bash sh python3 cat tail mkdir mv rm rmdir date jq awk sed git \
+    tr head sleep cp ln wc sort grep dirname basename touch chmod id uname env mktemp; do
+    ln -s "$(type -P "$name")" "$path/$name"
+  done
+  ln -s "$TMP_ROOT/elsewhere" "$box"
+  [[ -L "$box" ]] || { fail 'the unsafe mailbox fixture is a symlink'; return; }
+  printf 'KEN-4 0 %s\n' "$REPO" > "$TMP_ROOT/unsafe-request"
+  PATH="$path" lm drain-many --file "$TMP_ROOT/unsafe-request"
+  assert_eq "$RC=$ERR=$OUT" "2=lane-mail: mailbox-unsafe=$box=" 'a batch without flock refuses an unsafe lane mailbox'
+}
+flockless_unsafe_box
 
 echo "=== the request is the one input ==="
 lm drain-many

@@ -12,6 +12,11 @@ set -uo pipefail
 
 sk_fake_start
 echo "=== slack setup ==="
+UNBUILT="$(sk_new_root unbuilt)"
+sk_run AGENT_RUNTIME_CACHE="$SK_TMP/unbuilt-cache" -- setup --root "$UNBUILT"
+assert_eq "$RC=$(grep -Ec '^orch-runtime: setup-required key=[0-9a-f]+ run=.+/skills/orch/scripts/setup$' <<<"$ERR")" \
+  "69=1" "setup passes on the unbuilt orch runtime's cause and setup command"
+
 sk_channel_name() { jq -r .channel_name "$1/tmp/slack/binding.json"; } # ROOT
 sk_purpose() { sk_state ".channels[\"$(sk_channel "$1")\"].purpose"; }     # ROOT — its channel's purpose
 set_purposes() { sk_state '[.calls[] | select(. == "conversations.setPurpose")] | length'; }

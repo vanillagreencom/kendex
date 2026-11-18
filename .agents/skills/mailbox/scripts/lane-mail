@@ -132,11 +132,13 @@ Overseer side:
               the current recorded controller, including during succession,
               not whether it is taking a turn. Peer delivery remains advisory
               after its append.
-              A send to a lane goes where its caller's route names, read
-              from no record: the local mailbox under the root; with --host,
+              A send to a lane goes where its caller's route names:
+              the local mailbox under the root; with --host,
               the mailbox at --root on the provider ORCH_LANE_HOST names in
               the caller's environment, refused as host-route-missing where
-              it names none; with --session ID --account DIR, a Claude cloud
+              it names none. A recorded hosted mailbox refuses a local send
+              as host-root-required. An unreadable fleet route refuses as
+              state-unreadable. With --session ID --account DIR, a Claude cloud
               session. A session route refuses as lane-foreign where --root
               is no checkout of this repository, and queues a --directive
               into the session through `claude -p --cloud SESSION
@@ -578,7 +580,7 @@ command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
-host-route-missing, channel-session,
+host-root-required, host-route-missing, state-unreadable, channel-session,
 session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
 value follows ` id=` rather than `=`, so it names the earlier envelope through
 the same field the receipt above prints; `resolved-already`,
@@ -701,6 +703,8 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     not-owner-ask) text='reserve keeps an owner ask open past its deadline, and the id names another message, of the kind above: a notice, an answer, a directive, a private record, or an ask a peer or nobody is to answer. None of them has a deadline a default would close.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
+    host-root-required) text='Send to the recorded mailbox with --host --root and set ORCH_LANE_HOST to the provider named above.' ;;
+    state-unreadable) text='The fleet record could not give a mailbox route for this lane. Check the fleet record and send again.' ;;
     host-route-missing) text='A hosted send goes to the provider its caller names, and ORCH_LANE_HOST is empty in this environment, so nothing says which host holds the lane'"'"'s mailbox. Nothing was sent. Run it with ORCH_LANE_HOST set to the host the lane record names, as orch passes it.' ;;
     channel-session) text='The lane runs in a cloud session, which never asks and enforces no halt, so this option reaches nothing there. Send a plain --directive; a stop goes to the operator, who archives the session.' ;;
     session-unrecorded) text='The session route names no account or no session id, so no cloud session can be reached. Nothing was sent.' ;;
@@ -1067,6 +1071,7 @@ lm_read_pair() { # OVERSEER_FILE LANE_FILE COMMAND...
   local over="$1" lane="$2" fd path result key value
   shift 2
   if ! command -v flock >/dev/null 2>&1; then
+    [ "$VERB" = inbox ] || lm_plain
     lm_existing_lock 8 "$over" lm_existing_lock 9 "$lane" "$@"
     return
   fi
@@ -1300,8 +1305,38 @@ lm_send_record() { # RESULT CAUSE
     refuse write-failed /dev/stderr
 }
 
-# A send to a lane goes where its caller's route names; the mailbox reads no
-# record for it. A hosted mailbox is the one at --root on the provider the
+# A standalone checkout may have no fleet. An unreadable record cannot
+# authorize writing to a local mailbox that the lane may never read.
+lm_refuse_hosted_local_send() {
+  local path dir host
+  path="$(lm_overseer_path full "$OWN_ROOT")" ||
+    refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/reader.err")"
+  dir="${path%/*}"
+  while [ ! -e "$dir" ] && [ ! -L "$dir" ]; do
+    dir="${dir%/*}"
+    [ -n "$dir" ] || dir=/
+  done
+  [ -d "$dir" ] && [ -x "$dir" ] || refuse state-unreadable "$ITEM" "$path"
+  [ -e "$path" ] || [ -L "$path" ] || return 0
+  [ -f "$path" ] || refuse state-unreadable "$ITEM" "$path"
+  host="$(jq -ers --arg item "$ITEM" '
+    if length != 1 or (.[0] | type) != "object" then error("invalid fleet record") else .[0] end
+    | (if .lanes == null then [] else .lanes end) as $lanes
+    | if ($lanes | type) != "array" or any($lanes[]; (.item | type) != "string")
+      then error("invalid fleet lanes") else [$lanes[] | select(.item == $item)] end
+    | if length > 1 then error("ambiguous fleet route") else .[0] end
+    | (.host // null) as $host
+    | if (.host != null and (.host | type) != "string") or (.kind != null and (.kind | type) != "string")
+      then error("invalid fleet route")
+      elif .kind == "claude-cloud" or $host == "claude-cloud" or $host == "local" then ""
+      else $host // "" end
+    ' <"$path" 2>"$WORK_DIR/reader.err")" ||
+    refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/reader.err")"
+  [ -z "$host" ] || refuse host-root-required "$host"
+}
+
+# A send to a lane goes where its caller's route names.
+# A hosted mailbox is the one at --root on the provider the
 # caller's ORCH_LANE_HOST names: the settings' provider is no route, since it
 # would land the line in a mailbox the lane never reads. A session route is a
 # Claude cloud session of this repository, its --root judged as a mailbox
@@ -1312,7 +1347,11 @@ lm_send_record() { # RESULT CAUSE
 lm_send_channel() {
   local rc=0 account="$ACCOUNT" session="$SESSION" out answer cause
   if [ "$SESSION_GIVEN" -eq 0 ]; then
-    [ "$HOST" -eq 0 ] || [ -n "${ORCH_LANE_HOST:-}" ] || refuse host-route-missing "$ITEM"
+    if [ "$HOST" -eq 0 ]; then
+      lm_refuse_hosted_local_send
+    else
+      [ -n "${ORCH_LANE_HOST:-}" ] || refuse host-route-missing "$ITEM"
+    fi
     return 0
   fi
   [ -z "$MSGID" ] || refuse channel-session --re
@@ -1571,7 +1610,7 @@ lm_plain() {
 # The read-only fast path validates in the same helper that takes its inode
 # locks. Inbox still validates before creating or opening its cursor lock.
 if [ "$HOST" -eq 0 ]; then
-  if [ "$FAST_READ" -ne 1 ] || [ "$VERB" = inbox ] || ! command -v flock >/dev/null 2>&1; then
+  if [ "$FAST_READ" -ne 1 ] || [ "$VERB" = inbox ]; then
     lm_plain
   fi
 fi
