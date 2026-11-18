@@ -250,7 +250,7 @@ split_decision_id() {
 }
 
 regex_valid() { # REGEX
-  jq -n --arg regex "$1" '"" | test($regex)' >/dev/null 2>&1
+  printf '%s' "$1" | jq -Rs '. as $regex | "" | test($regex)' >/dev/null 2>&1
 }
 
 # Parse the INDEX.md table into JSON, one jq pass over the whole file.
@@ -611,8 +611,9 @@ search_decisions() {
     return 0
   fi
 
-  local all
+  local all query_json
   all=$(result_rows)
+  query_json=$(printf '%s' "${issue:-$query}" | jq -Rs .) || return 1
 
   if [[ -n "$issue" ]]; then
     # Negative lookahead prevents PROJ-18 matching PROJ-189.
@@ -620,7 +621,7 @@ search_decisions() {
       emit_error regex-invalid "value=$issue" "The issue value is not a valid regular expression."
       return 1
     fi
-    echo "$all" | jq --arg issue "$issue" '[
+    printf '%s\n' "$query_json" "$all" | jq -n 'input as $issue | input | [
       .[] | select(.research | test($issue + "(?![0-9])"; "i")) |
       {id, decision, status, rationale, path}
     ]'
@@ -634,14 +635,15 @@ search_decisions() {
     fi
     local rx_bodies
     rx_bodies=$(body_term_hits "$all" "$query")
-    echo "$all" | jq --arg q "$query" --argjson limit "$limit" --argjson bodies "$rx_bodies" '[
-      .[] | select(
-        (.decision | test($q; "i")) or
-        (.rationale | test($q; "i")) or
-        (.id | test($q; "i")) or
-        (($bodies[.path] // []) | length > 0)
-      ) | {id, decision, status, rationale, path}
-    ] | .[:$limit]'
+    printf '%s\n' "$query_json" "$limit" "$rx_bodies" "$all" | jq -n '
+      input as $q | input as $limit | input as $bodies | input |
+      [.[] | select(
+          (.decision | test($q; "i")) or
+          (.rationale | test($q; "i")) or
+          (.id | test($q; "i")) or
+          (($bodies[.path] // []) | length > 0)
+        ) | {id, decision, status, rationale, path}
+      ] | .[:$limit]'
     return 0
   fi
 
@@ -649,7 +651,8 @@ search_decisions() {
   # Same split jq performs below, so grep and jq agree on term boundaries.
   read -r -a terms_arr <<< "$(echo "$query" | tr '[:upper:]' '[:lower:]')"
   kw_bodies=$(body_term_hits "$all" "${terms_arr[@]}")
-  echo "$all" | jq --arg q "$query" --argjson limit "$limit" --argjson bodies "$kw_bodies" '
+  printf '%s\n' "$query_json" "$limit" "$kw_bodies" "$all" | jq -n '
+    input as $q | input as $limit | input as $bodies | input |
     ($q | ascii_downcase | split(" ") | map(select(length > 0))) as $terms |
 
     [.[] |
@@ -780,8 +783,14 @@ cmd_get() {
   fi
   local id="$1"
 
-  local matches count match fields
-  matches=$(result_rows | jq -c --arg id "$id" '[.[] | select(.id == $id)]')
+  local id_json matches count match fields
+  id_json=$(printf '%s' "$id" | jq -Rs .) || return 1
+  matches=$(
+    {
+      printf '%s\n' "$id_json"
+      result_rows
+    } | jq -cn 'input as $id | input | [.[] | select(.id == $id)]'
+  ) || return 1
   # jq's own diagnostic names a failed count.
   if ! count=$(jq 'length' <<<"$matches"); then
     return 1
@@ -800,7 +809,7 @@ cmd_get() {
   fi
   match=$(jq 'first | del(.line, .link, .revisit, .cells)' <<<"$matches")
 
-  local path date="unknown" parsed
+  local path date="unknown" parsed date_json
   path=$(printf '%s' "$match" | jq -r '.path')
   if [[ -n "$path" && -f "$path" ]]; then
     parsed=$(awk '/^\*\*Date\*\*:/ { sub(/^\*\*Date\*\*:[[:space:]]*/, ""); print; exit }' < "$path")
@@ -809,7 +818,8 @@ cmd_get() {
     fi
   fi
 
-  printf '%s' "$match" | jq --arg date "$date" '. + {date: $date}'
+  date_json=$(printf '%s' "$date" | jq -Rs .) || return 1
+  printf '%s\n' "$date_json" "$match" | jq -n 'input as $date | input | . + {date: $date}'
 }
 
 row_fields() { # ROWS_JSON — the rows= and paths= fields naming each row
@@ -849,12 +859,14 @@ cmd_check() {
   # a resolved filename alone establishes identity, not an unchanged row.
   # A row the base holds unchanged is history this change does not rewrite;
   # an unread base leaves BASE_ROWS empty, so every row is judged.
+  # Large INDEX data goes over stdin. Native Windows jq cannot open Git Bash
+  # process-substitution paths (https://github.com/kdlbs/kandev/issues/1954).
   local invalid_revisits revisit_row
-  invalid_revisits="$(jq -c --argjson base "$BASE_ROWS" '
-    ($base | map(del(.line, .path))) as $held
-    | .[] | select(del(.line, .path) as $row | any($held[]; . == $row) | not)
+  invalid_revisits="$(printf '%s\n' "$BASE_ROWS" "$rows" | jq -cn '
+    (input | map(del(.line, .path))) as $held
+    | input[] | select(del(.line, .path) as $row | any($held[]; . == $row) | not)
     | select(.revisit | ascii_downcase |
-    . == "" or . == "not specified" or . == "none" or . == "\u2014")' <<<"$rows")" || return 1
+    . == "" or . == "not specified" or . == "none" or . == "\u2014")')" || return 1
   while IFS= read -r revisit_row; do
     [[ -n "$revisit_row" ]] || continue
     fields="$(jq -r --arg path "$INDEX_FILE" '
@@ -895,26 +907,27 @@ cmd_check() {
   report_base check || found=1
   [[ "$BASE_ROWS_SKIPPED" -eq 0 ]] || found=1
   local collisions collision ancestor_rows='[]' old_link old_path path link base_link base_old_path
-  collisions="$(jq -c --argjson base "$BASE_ROWS" '
-    .[] | . as $row
+  collisions="$(printf '%s\n' "$BASE_ROWS" "$rows" | jq -cn '
+    input as $base | input[] | . as $row
     | [$base[] | select(.id == $row.id)] as $held
     | select(($held | length) > 0 and ($held | map(.link) | index($row.link)) == null)
     | {id: $row.id, link: $row.link, path: $row.path, status: $row.status,
        base: ($held | map(.path) | join(",")),
        base_links: ($held | map(.link)), base_statuses: ($held | map(.status))}
-  ' <<<"$rows")" || return 1
+  ')" || return 1
   if [[ -n "$collisions" && -z "$BASE_REASON" ]]; then
     ancestor_rows="$(shared_index)" || return 1
   fi
-  collisions="$(jq -c --argjson ancestor "$ancestor_rows" '
-    . as $row | [$ancestor[] | select(.id == $row.id)] as $history
+  collisions="$(printf '%s\n' "$ancestor_rows" "$collisions" | jq -cn '
+    input as $ancestor | inputs | . as $row
+    | [$ancestor[] | select(.id == $row.id)] as $history
     | .ancestor = (if (.base_links | length) == 1 and ($history | length) == 1
                    then $history[0] else null end)
     | if .ancestor.status == "Removed"
          and ((.link != .ancestor.link and .status != "Removed")
               or (.base_links[0] != .ancestor.link and .base_statuses[0] != "Removed"))
       then .ancestor = null else . end
-  ' <<<"$collisions")" || return 1
+  ')" || return 1
   while IFS= read -r collision; do
     [[ -n "$collision" ]] || continue
     old_link="$(jq -r '.ancestor.link // ""' <<<"$collision")" || return 1
