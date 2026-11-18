@@ -26,6 +26,37 @@ git -C "$R" commit -qm launch
 BASE="$(git -C "$R" rev-parse HEAD)"
 SUITE_LOG="$TMP/suites"
 
+# CI-CHECKS-ROW
+ci_checks_only() { # GUARD
+  printf '# changed\n' >> "$R/skills/orch/scripts/launcher"
+  printf 'fn ci_defect() {\n let tmp = tempfile::tempdir().unwrap();\n drop(tmp);\n}\n' >> "$R/crates/core/tests/existing_temp.rs"
+  : > "$SUITE_LOG"
+  RC=0
+  OUT="$(cd "$R" && DEV_VALIDATE_SCOPED=true DEV_VALIDATE_MODE=ci SUITE_LOG="$SUITE_LOG" "$1" --selection --range "$BASE" 2>&1)" || RC=$?
+  git -C "$R" checkout -q -- skills/orch/scripts/launcher crates/core/tests/existing_temp.rs
+  [ "$RC" -ne 0 ] && [ ! -s "$SUITE_LOG" ] \
+    && ! grep -q '^guard-note: selected-suite=' <<<"$OUT" \
+    && [ "$(grep -c '^guard-note: suites=merge-group' <<<"$OUT")" -eq 1 ] \
+    && grep -q '^guard-note: suites=merge-group .*skills/orch/tests/direct.sh' <<<"$OUT" \
+    && grep -qx 'guard: unrooted-fixture=1' <<<"$OUT" \
+    && [ "${OUT##*$'\n'}" = 'validate: lanes=scoped-checks selection=subset' ]
+}
+ci_checks_only "$GUARD" \
+  && ok 'ci scoped validation keeps scan failures and defers its suites to the merge group' \
+  || bad 'ci scoped validation keeps scan failures and defers its suites to the merge group' "rc=$RC out=$OUT"
+if mutant_guard 's/\[ "${DEV_VALIDATE_MODE:-}" = ci \]/[ "${DEV_VALIDATE_MODE:-}" = never ]/'; then
+  if ci_checks_only "$MUTANT_TOOLS/guard"; then
+    bad 'control: disabling the ci gate breaks the checks-only row' "$OUT"
+  elif [ -s "$SUITE_LOG" ] && grep -q '^guard-note: selected-suite=' <<<"$OUT"; then
+    ok 'control: disabling the ci gate breaks the checks-only row'
+  else
+    bad 'control: the ci gate mutation must execute the selected suites' "$OUT"
+  fi
+else
+  bad 'control changes the ci gate'
+fi
+# CI-CHECKS-END
+
 launch_selection() { # SCOPED STATUS GUARD
   printf '#!/usr/bin/env bash\nlaunch_status=%s\n# changed\n' "$2" > "$R/skills/orch/scripts/launcher"
   : > "$SUITE_LOG"
@@ -314,6 +345,15 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
 [ "$RC" -eq 0 ] && [ "$(sort "$SUITE_LOG" | tr '\n' ' ')" = 'copy listed reader writer ' ] \
   && ok 'normal range maps a settings key change by path' \
   || bad 'normal range maps a settings key change by path' "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- .
+# A key with no named test reader can select more locally than by path.
+settings_change area-key
+REACH="$(cd "$R" && printf 'kendex.settings.toml\n' | "$GUARD" --suite-reach 2>"$TMP/settings-reach.err")"
+doc_selection "$GUARD"
+[ "$RC" -eq 0 ] && [[ $PLAN == *'skills/area/tests/one.sh '*'skills/area/tests/two.sh '* ]] \
+  && ! grep -q '^skills/area/tests/' <<<"$REACH" \
+  && ok 'settings gap: the scoped declared-key fallback exceeds the unscoped path reach' \
+  || bad 'settings gap: the scoped declared-key fallback exceeds the unscoped path reach' "rc=$RC plan=$PLAN reach=$REACH out=$OUT"
 git -C "$R" checkout -q -- .
 # Control: reading the settings file by path again selects the writer.
 if mutant_guard '/^  if \[ -n "\${2-}" \]; then$/,/^  fi$/d'; then

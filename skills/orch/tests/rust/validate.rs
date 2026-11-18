@@ -3635,6 +3635,41 @@ fn under_push_first_a_named_range_start_asks_the_ci_admission_and_review_first_r
 }
 
 #[test]
+fn a_measured_ci_round_passes_ci_mode_to_its_scoped_command() {
+    let w = World::new();
+    let base = w.base_with(&[(INVENTORY, "[]\n")]);
+    w.commit("source.rs");
+    let (path, replies, log) = ci_world(&w, "required");
+    let selector = "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then printf 'scoped-mode=%s\\n' \"$DEV_VALIDATE_MODE\"; echo 'validate: lanes=unit selection=subset'; else echo selection=subset; fi";
+    let out = w.local(
+        &["--validate-mode", "ci", "--base", &base],
+        &[
+            ("PATH", path.as_str()),
+            ("GH_FAKE_REPLIES", replies.as_str()),
+            ("GH_FAKE_LOG", log.as_str()),
+            ("GH_REPO", "o/r"),
+            ("ORCH_DELIVERY", "pr"),
+            ("DEV_VALIDATE_CI_CONTEXT", "CI"),
+            ("DEV_VALIDATE_SELECTION_CMD", selector),
+        ],
+    );
+    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
+    let dir = directory(&out);
+    let record = read_record(&w, &dir);
+    assert_eq!(field(&run_file(&dir, "start"), "class"), "small");
+    assert_eq!(field(&record, "validate-mode"), "ci");
+    assert_eq!(field(&record, "scoped"), "true");
+    assert_eq!(field(&record, "verdict"), "pending");
+    let log = run_file(&dir, "log");
+    assert_eq!(
+        log.lines()
+            .find_map(|line| line.strip_prefix("scoped-mode=")),
+        Some("ci"),
+        "{log}"
+    );
+}
+
+#[test]
 fn an_admitted_ci_round_executes_scoped_suites_but_a_restack_skips_the_selector() {
     for restack in [false, true] {
         let w = World::new();

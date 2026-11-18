@@ -233,6 +233,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "mapped_suites returned status 3, a role reach_join does not know, or a status its header defines no meaning for: tools/guard is broken, and its tree's whole suite set ran." ;;
     suites)
       case "$2" in
+        merge-group*) echo "the ci round runs checks only; the merge group owns these suites, with main-only coverage after merge." ;;
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
         *" reason=unidentified "*) echo "a scoped run could not identify which files read that changed path, so its tree's whole suite set ran." ;;
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
@@ -340,6 +341,7 @@ MODE=default
 range_base=""
 selection_only=0
 scoped_only=0
+checks_only=0
 release_version=""
 # The release leg's share of its suites: every Nth from the Kth, as --part K/N.
 release_part=1
@@ -383,6 +385,7 @@ if [ "${1:-}" = --selection ]; then
   selection_only=1
   shift
   if [ "${DEV_VALIDATE_SCOPED:-false}" = true ]; then scoped_only=1; fi
+  if [ "$scoped_only" -eq 1 ] && [ "${DEV_VALIDATE_MODE:-}" = ci ]; then checks_only=1; fi
   if [ "$#" -eq 0 ]; then
     if [ -n "${DEV_VALIDATE_BASE:-}" ]; then
       set -- --range "$DEV_VALIDATE_BASE"
@@ -424,7 +427,8 @@ case "${1:-}" in
       '        not select.' \
       '--selection: report selection=all|subset without running checks or suites.' \
       '  With DEV_VALIDATE_SCOPED=true it runs the checks and executes the selected' \
-      '  suites, then reports selection=subset and scoped=true.' \
+      '  suites, except DEV_VALIDATE_MODE=ci runs checks only and names the suites' \
+      '  left to the merge group. Both report selection=subset and scoped=true.' \
       '  Emits expected-secs=N only with measured coverage of every selected suite,' \
       '  including a selector-owned 25% margin, rounded up.' \
       'Each lane and suite a run starts opens with validate-step: name=N command=C' \
@@ -436,8 +440,9 @@ case "${1:-}" in
       '        cannot be read, a run of more than one part fails and an unsplit run' \
       '        runs every shell suite of the package.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
-      '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
+      '        DEV_VALIDATE_SCOPED=true maps the changed scripts and suites through' \
       '        the same suite mapper, leaving the full record to merge-group CI;' \
+      '        DEV_VALIDATE_MODE=ci runs checks only; range and docs run the suites.' \
       '        a skill package'"'"'s Markdown, source or render, selects no suite there,' \
       '        nor does a .kendex-generated.json change only to their rows, save' \
       '        in a tree whose suites tools/ci-job-set runs in no shard.' \
@@ -1500,7 +1505,7 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   fi
 fi
 
-if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
+if [ "$checks_only" -eq 0 ] && [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
   while IFS= read -r manifest; do
     [ -n "$manifest" ] || continue
     step cargo-test "cargo test --manifest-path $manifest"
@@ -2873,6 +2878,18 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     suite_runs+=("$run")
     suite_scripts+=("$suite_script")
   done
+  if [ "$checks_only" -eq 1 ]; then
+    deferred_suites=""
+    for run in ${suite_runs[@]+"${suite_runs[@]}"}; do
+      while IFS= read -r t; do
+        [ -z "$t" ] || deferred_suites+=" $t"
+      done <<<"$run"
+    done
+    while IFS= read -r manifest; do
+      [ -z "$manifest" ] || deferred_suites+=" cargo-test:$manifest"
+    done <<<"$runtime_tests"
+    note suites "merge-group$deferred_suites"
+  else
   # Bash defers this guard's trap while a foreground runner stops children,
   # so the active runner reports its own selection; otherwise each entry of
   # suite_runs holds what its tree has not started.
@@ -2985,6 +3002,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     active_runner=0
   fi
   trap - TERM INT HUP
+  fi
 fi
 if [ "$MODE" = suite-reach ]; then
   {
@@ -3029,8 +3047,13 @@ if [ "$selection_only" -eq 1 ]; then
   if [ -n "$release_version" ]; then
     printf 'catalog-release: version=%s leg=package-suites result=%s\n' "$release_version" "$fail"
   elif [ "$scoped_only" -eq 1 ]; then
-    printf 'validate: lanes=scoped-suites selection=subset\n'
-    printf 'scoped=true\n'
+    if [ "$checks_only" -eq 1 ]; then
+      printf 'scoped=true\n'
+      printf 'validate: lanes=scoped-checks selection=subset\n'
+    else
+      printf 'validate: lanes=scoped-suites selection=subset\n'
+      printf 'scoped=true\n'
+    fi
   else
     printf 'selection=%s\n' "$suite_selection"
     selection_expected_secs
