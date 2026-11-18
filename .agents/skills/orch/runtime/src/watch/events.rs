@@ -174,14 +174,15 @@ pub enum Event {
     // The wake duty's own lines; `resume` is the cause of the resume the
     // wake typed (`usage-limit`), none for a mail wake.
     /// This runtime's own: the wake's line confirmed by
-    /// a new user turn in the target's own bound session file.
+    /// a new user turn in its bound session file or a hosted prompt digest.
     WakeDelivered {
         target: String,
         resume: Option<String>,
     },
-    /// This runtime's own: the wake's line typed and the bound passed with
-    /// no such turn, `cause` the verb's word (`turn-pending`, `pane-gone`,
-    /// `pane-unreadable`); nothing is typed again for that unread state.
+    /// This runtime's own: no matching receipt confirms the wake's line,
+    /// `cause` the verb's word (`turn-pending`, `pane-gone`,
+    /// `pane-unreadable`), or the hosted rows read's `rows-host-unread`;
+    /// nothing is typed again for that unread state.
     WakeUnconfirmed {
         target: String,
         cause: String,

@@ -1,7 +1,7 @@
 //! The wake duty: a lead or lane the mail duty reports unread mail for is
 //! read positively idle, by identity and markers, and typed one line,
-//! confirmed by a new user turn in that session's own bound file, never a
-//! neighbour's and never the newest file; a harness with no confirmable
+//! confirmed by a new user turn in that session's own bound file or a
+//! hosted prompt row with the sent text's digest; a harness with no confirmable
 //! route gets its limit reported. The duty acts only through
 //! agent-runtime's `deliver` verb, run by the one runner under the `wake`
 //! tag, and records its mark in the watch's own record (`ops::wake`),
@@ -16,7 +16,7 @@
 //! its resume, reconciles it once and types nothing for it: a local target's
 //! bound file read past the mark's count, a later user turn being the
 //! delivery and none `wake-unconfirmed cause=outcome-lost`; a hosted lane's
-//! mark is told `outcome-lost` at once, since nothing here reads its turn.
+//! prompt rows are read once for the matching digest, else `outcome-lost`.
 //!
 //! Slot: the mail duty sets a baseline row of kind [`UNREAD_KIND`], its
 //! identity the target (an item key, or [`OVERSEER_TARGET`]), its value the
@@ -43,9 +43,11 @@
 //! `pane=verb` runs its harness in the provider's own session: its window
 //! here is a viewer's, typed nothing, and its line goes through the
 //! provider's `send --file` once the watch's judge reads the provider's
-//! capture idle. Nothing here reads either turn: the paste is said
-//! `wake-unconfirmed cause=session-hosted`, the mark is final for the unread
-//! state, and the lane's own mailbox read is the confirmation. An API
+//! capture idle. On a `files=verb` host, Claude Code, Codex and Copilot
+//! prompt rows past the pre-send complete-line cursor confirm the digest.
+//! Pending, unmatched or failed post-send reads are read once on later
+//! passes without resending. No evidence gives final `session-hosted`; a
+//! failed pre-send cursor read still sends, final `rows-host-unread`. An API
 //! error's resume reaches either kind by the same route and is final as
 //! typed; a provider read that refuses it is told once. A wall's resume is
 //! local alone.
@@ -87,13 +89,13 @@ use serde_json::Value;
 
 use super::claim;
 use super::events;
-use super::hosted::{self, Capabilities, HostStatus, Launch, PaneKind, Status};
+use super::hosted::{self, Capabilities, Files, HostStatus, Launch, PaneKind, Status};
 use super::lanes::LaneState;
 use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
 use crate::error::{Error, Result, WatchError};
 pub use crate::ops::wake::OVERSEER_TARGET;
-use crate::ops::wake::{OUTCOME_LOST, WakeMark, WakeOutcome, WakeRecord};
+use crate::ops::wake::{OUTCOME_LOST, ROWS_CURSOR_UNREAD, WakeMark, WakeOutcome, WakeRecord};
 use crate::schedule::Duty;
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus, Record};
@@ -108,6 +110,9 @@ pub const RESUME_KIND: &str = "resume";
 pub const WAKE_FILE: &str = "oversee-watch.wake.json";
 /// What the verb may take past its own bound to read the pane and answer.
 const ANSWER_MARGIN: Duration = Duration::from_secs(15);
+/// Each read fetches the whole file through an ssh broker. One second
+/// between calls keeps one wake from making sixty requests in fifteen seconds.
+const HOST_ROWS_POLL: Duration = Duration::from_secs(1);
 /// The owner alert's notice file under the state directory.
 const ALERT_FILE: &str = "overseer-wake-unread.txt";
 /// The follow wake's target word: its mark's key and its lines' target.
@@ -132,7 +137,7 @@ fn line_for(target: &str) -> String {
 }
 
 fn line_digest(line: &str) -> u32 {
-    agent_runtime::record::cksum(agent_runtime::session::normalize_user_text(line).as_bytes())
+    agent_runtime::session::text_digest(line)
 }
 
 /// The follow wake's line: `start` is the claim's start command, its
@@ -295,6 +300,19 @@ struct Target {
     cwd: PathBuf,
     session_id: Option<String>,
     route: Route,
+    prompt_rows: bool,
+}
+
+impl Target {
+    fn rows_lane(&self) -> Option<&Lane> {
+        if !self.prompt_rows {
+            return None;
+        }
+        match &self.route {
+            Route::Transport { lane, .. } | Route::Send { lane, .. } => Some(lane),
+            Route::Pane => None,
+        }
+    }
 }
 
 /// How a target's line reaches it.
@@ -303,7 +321,7 @@ enum Route {
     Pane,
     /// Typed into its pane here, whose ssh client runs the harness on
     /// `host` (`deliver --transport`).
-    Transport { host: String },
+    Transport { host: String, lane: Box<Lane> },
     /// Sent through `host`'s own `send`, the provider holding the harness's
     /// session; the pane here is a viewer's window, the mark's key alone,
     /// and nothing is typed into it. `lane` is the record the watch's judge
@@ -346,7 +364,10 @@ fn lane_target(lane: &Lane, socket: &Path) -> Option<Target> {
 fn hosted_target(lane: &Lane, caps: Capabilities, socket: &Path) -> Option<Target> {
     let host = hosted::host_of(lane).to_owned();
     let route = match caps.pane {
-        PaneKind::Local if caps.status == Status::Verb => Route::Transport { host },
+        PaneKind::Local if caps.status == Status::Verb => Route::Transport {
+            host,
+            lane: Box::new(lane.clone()),
+        },
         PaneKind::Local => return None,
         PaneKind::Verb => Route::Send {
             host,
@@ -359,6 +380,7 @@ fn hosted_target(lane: &Lane, caps: Capabilities, socket: &Path) -> Option<Targe
         home: None,
         session_id: None,
         route,
+        prompt_rows: caps.files == Files::Verb && target.harness != Harness::Pi,
         ..target
     })
 }
@@ -404,6 +426,18 @@ fn marked(record: &WakeRecord, lane: &Lane, unread: &str) -> bool {
     )
 }
 
+fn hosted_open(mark: &WakeMark) -> bool {
+    mark.turns_before != ROWS_CURSOR_UNREAD
+        && match &mark.outcome {
+            None => true,
+            Some(WakeOutcome::Unconfirmed { cause }) => matches!(
+                cause.as_str(),
+                "turn-pending" | "turn-unmatched" | "rows-host-unread"
+            ),
+            Some(WakeOutcome::Delivered { .. } | WakeOutcome::Limit { .. }) => false,
+        }
+}
+
 /// A running lane's recorded window as a target, wherever its harness runs.
 fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
     if lane.status != LaneStatus::Running {
@@ -433,6 +467,7 @@ fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
         cwd: PathBuf::from(lane.mail_root.as_deref()?),
         session_id: lane.session_id.clone(),
         route: Route::Pane,
+        prompt_rows: false,
     })
 }
 
@@ -461,6 +496,7 @@ fn overseer_target(overseer: &Overseer, socket: &Path) -> Option<Target> {
         cwd: PathBuf::from(text("cwd")?),
         session_id: overseer.session_id.clone(),
         route: Route::Pane,
+        prompt_rows: false,
     })
 }
 
@@ -524,6 +560,7 @@ pub fn press_key(settings: &Settings, fleet_path: &Path, item: &str, key: &str) 
         fleet: fleet_path.to_path_buf(),
         record: record_path(fleet_path),
         settings: settings.clone(),
+        clock: Box::new(agent_runtime::clock::SystemClock),
     };
     let socket = wake.socket(&fleet)?;
     let host_name = hosted::host_of(lane);
@@ -623,6 +660,7 @@ pub fn body<'a>(fleet: &Path, settings: &Settings) -> Body<'a> {
         fleet: fleet.to_path_buf(),
         record: record_path(fleet),
         settings: settings.clone(),
+        clock: Box::new(agent_runtime::clock::SystemClock),
     };
     Box::new(move |tick: &Tick| wake.run(tick))
 }
@@ -632,6 +670,7 @@ struct Wake {
     /// The watch's wake record, [`record_path`] of `fleet`.
     record: PathBuf,
     settings: Settings,
+    clock: Box<dyn agent_runtime::clock::Clock + Send>,
 }
 
 impl Wake {
@@ -690,8 +729,8 @@ impl Wake {
         let socket = self.socket(&fleet)?;
         let host = crate::ops::Host::kernel();
         let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
-        // Each host's line, read once per pass and only for a hosted lane
-        // whose unread state or resume no mark stands for yet.
+        // Each host's line is shared by new sends and open receipt reads
+        // in this pass.
         let mut lines = BTreeMap::new();
         // A resume goes first: its line runs the inbox read too, so the
         // unread state it types for stands marked when the mail is served.
@@ -777,12 +816,11 @@ impl Wake {
                     }
                     continue;
                 }
-                // A hosted mark is final: nothing here reads the turn it
-                // typed for, so its state asks no provider again.
                 let line = || {
-                    (!marked(&record, lane, &state))
-                        .then(|| host_line(&mut lines, &scripts, lane))
-                        .flatten()
+                    (!marked(&record, lane, &state)
+                        || record.get(&lane.item).is_some_and(hosted_open))
+                    .then(|| host_line(&mut lines, &scripts, lane))
+                    .flatten()
                 };
                 target_of(lane, &socket, line).filter(|_| !crate::ops::wake::turn_runs(lane, &host))
             };
@@ -826,8 +864,8 @@ impl Wake {
     }
 
     /// A lane's standing `mark` with no outcome (module doc, Lost outcome),
-    /// `resume` the cause where the mark is the resume's: a hosted lane's
-    /// told at once, a local one's re-read by [`Wake::repeat`]. A lane that
+    /// `resume` the cause where the mark is the resume's: the target's
+    /// evidence is re-read by [`Wake::repeat`]. A lane that
     /// is no target is relaunched, never woken.
     fn reconcile(
         &self,
@@ -839,6 +877,14 @@ impl Wake {
         produced: &mut Produced,
     ) -> Result<()> {
         if hosted::host_of(lane) != crate::provider::LOCAL {
+            let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+            if mark.turns_before != ROWS_CURSOR_UNREAD
+                && let Ok(caps) = hosted::capabilities(&scripts, hosted::host_of(lane))
+                && let Some(target) = hosted_target(lane, caps, socket)
+                && target.prompt_rows
+            {
+                return self.repeat(&target, mark, resume, record, produced);
+            }
             return self.lost(&lane.item, mark, resume, record, produced);
         }
         match lane_target(lane, socket) {
@@ -892,10 +938,29 @@ impl Wake {
         }
         // The paste may have gone in: the file alone says whether the turn
         // arrived, and nothing is typed again for this mark.
-        let confirmation = match self.read(target, false)? {
-            Read::Idle { .. } => self.confirm(target, &mark)?,
-            Read::Limit { harness, cause } => Confirmation::Limit { harness, cause },
-            Read::Refused => Confirmation::Refused,
+        let confirmation = if matches!(target.route, Route::Pane) {
+            match self.read(target, false)? {
+                Read::Idle { .. } => self.confirm(target, &mark)?,
+                Read::Limit { harness, cause } => Confirmation::Limit { harness, cause },
+                Read::Refused => Confirmation::Refused,
+            }
+        } else {
+            if mark.outcome.is_some() && !hosted_open(&mark) {
+                return Ok(());
+            }
+            match self.hosted_confirmation(
+                target,
+                mark.turns_before,
+                mark.line_digest,
+                Duration::ZERO,
+            ) {
+                Paste::Confirmed { turns_after } => Confirmation::Matched { turns_after },
+                Paste::Unconfirmed { .. } if mark.outcome.is_none() => {
+                    return self.lost(&name, mark, resume, record, produced);
+                }
+                Paste::Unconfirmed { cause } => Confirmation::Unconfirmed { cause },
+                Paste::Refused => Confirmation::Refused,
+            }
         };
         match confirmation {
             Confirmation::Matched { turns_after } => {
@@ -908,7 +973,9 @@ impl Wake {
                     .extend(delivered(&name, resume.map(str::to_owned)));
                 Ok(())
             }
-            Confirmation::Unconfirmed { cause } if cause == "turn-unmatched" => {
+            Confirmation::Unconfirmed { cause }
+                if cause == "turn-unmatched" || !matches!(target.route, Route::Pane) =>
+            {
                 let outcome = WakeOutcome::Unconfirmed {
                     cause: cause.clone(),
                 };
@@ -1194,13 +1261,12 @@ impl Wake {
         };
         let room = resume.is_some_and(|r| r.wall);
         let read = match &target.route {
-            // A hosted lane's harness is read through its provider, and no
-            // turn count exists here: an exited or unread harness is the
-            // lanes duty's to name, and a resume refused on it is told once.
+            // An exited or unread hosted harness is the lanes duty's to
+            // name; the rows cursor is read only after this idle check.
             // A transport window's screen is judged by the paste itself; a
             // provider-held session's screen is the provider's capture, read
             // by the watch's one judge, and only an idle one is sent its line.
-            Route::Transport { host } => {
+            Route::Transport { host, .. } => {
                 let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
                 match hosted::status(&scripts, host, &name, target.harness.name()) {
                     Ok(HostStatus::Running) => Read::Idle { turns: 0 },
@@ -1229,10 +1295,14 @@ impl Wake {
             }
             Read::Limit { harness, cause } => limit(&mut mark, harness, cause),
             Read::Idle { turns } => {
-                mark.turns_before = turns;
+                mark.turns_before = if matches!(target.route, Route::Pane) {
+                    turns
+                } else {
+                    self.hosted_cursor(target)
+                };
                 // The mark is on disk before anything is typed.
                 self.write(record, &name, Some(mark.clone()))?;
-                match self.paste(target, &line, turns, room)? {
+                match self.paste(target, &line, mark.turns_before, room)? {
                     Paste::Confirmed { turns_after } => {
                         mark.outcome = Some(WakeOutcome::Delivered { turns_after });
                         lines(Event::WakeDelivered {
@@ -1372,8 +1442,8 @@ impl Wake {
 
     /// Type `line` into the target through `deliver`, confirmed by equal
     /// text after `turns_before`; `room` as [`Wake::read`] takes it. A
-    /// hosted target's paste is confirmed by nothing here. A provider-held
-    /// session is sent the line through its provider's `send` instead:
+    /// hosted target is confirmed by its prompt rows where available.
+    /// A provider-held session takes the line through its provider's `send`:
     /// only a send that typed nothing, refused at the provider-call bound,
     /// leaves the state for the next pass; any other failure may have typed
     /// part of the line, so it is final with its cause and never sent
@@ -1389,9 +1459,12 @@ impl Wake {
                     &self.settings.state_dir,
                     line,
                 ) {
-                    Ok(()) => Paste::Unconfirmed {
-                        cause: "session-hosted".to_owned(),
-                    },
+                    Ok(()) => self.hosted_confirmation(
+                        target,
+                        turns_before,
+                        line_digest(line),
+                        self.settings.engine.verify.get()?,
+                    ),
                     Err(hosted::Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
                         Paste::Refused
                     }
@@ -1424,11 +1497,90 @@ impl Wake {
                 Some("unconfirmed") => Ok(Paste::Unconfirmed {
                     cause: word(&result, "cause")?,
                 }),
-                Some("pasted") => Ok(Paste::Unconfirmed {
-                    cause: "session-hosted".to_owned(),
-                }),
+                Some("pasted") => Ok(self.hosted_confirmation(
+                    target,
+                    turns_before,
+                    line_digest(line),
+                    self.settings.engine.verify.get()?,
+                )),
                 Some(_) | None => Err(protocol_error("not a paste", &result)),
             },
+        }
+    }
+
+    fn hosted_cursor(&self, target: &Target) -> u64 {
+        let Some(lane) = target.rows_lane() else {
+            return 0;
+        };
+        let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+        match hosted::session_rows(&scripts, lane) {
+            hosted::Answer::Live(text) => agent_runtime::rows::complete_line_count(&text),
+            hosted::Answer::Gone => 0,
+            hosted::Answer::Unreadable { .. } => ROWS_CURSOR_UNREAD,
+        }
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the wake has no intent handle; its bounded provider receipt poll waits on its own injected clock"
+    )]
+    fn hosted_confirmation(
+        &self,
+        target: &Target,
+        cursor: u64,
+        digest: u32,
+        bound: Duration,
+    ) -> Paste {
+        let unconfirmed = |cause: &str| Paste::Unconfirmed {
+            cause: cause.to_owned(),
+        };
+        let Some(lane) = target.rows_lane() else {
+            return unconfirmed("session-hosted");
+        };
+        if cursor == ROWS_CURSOR_UNREAD {
+            return unconfirmed("rows-host-unread");
+        }
+        let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+        let deadline = self.clock.now() + bound;
+        loop {
+            let text = match hosted::session_rows(&scripts, lane) {
+                hosted::Answer::Live(text) => text,
+                hosted::Answer::Gone => return unconfirmed("rows-host-unread"),
+                hosted::Answer::Unreadable { .. } => return unconfirmed("rows-host-unread"),
+            };
+            let mut unmatched = false;
+            for reading in agent_runtime::rows::rows_after_in(&text, cursor) {
+                let row = match reading {
+                    Reading::Live(row) => row,
+                    Reading::Gone => continue,
+                    Reading::Unreadable { .. } => return unconfirmed("rows-host-unread"),
+                };
+                if row.event.as_deref() != Some("UserPromptSubmit") {
+                    continue;
+                }
+                match row.digest {
+                    Some(value) if value == digest => {
+                        return Paste::Confirmed {
+                            turns_after: row.position as u64,
+                        };
+                    }
+                    Some(_) => unmatched = true,
+                    None => return unconfirmed("session-hosted"),
+                }
+            }
+            let pending = if unmatched {
+                "turn-unmatched"
+            } else {
+                "turn-pending"
+            };
+            let remaining = deadline.saturating_duration_since(self.clock.now());
+            if remaining.is_zero() {
+                return unconfirmed(pending);
+            }
+            self.clock.sleep(HOST_ROWS_POLL.min(remaining));
+            if self.clock.now() >= deadline {
+                return unconfirmed(pending);
+            }
         }
     }
 

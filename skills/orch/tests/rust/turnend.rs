@@ -1144,7 +1144,7 @@ fn lanes_write_prompt_tool_and_passed_stop_rows_for_each_harness() {
         )
         .unwrap();
         let mut payload = json!({
-            "prompt": "work",
+            "prompt": "work  \r\n",
             "tool_name": "Bash", "tool_input": {"command": "pwd"},
             "working_agents": if harness == "pi" { 0 } else { 2 },
         });
@@ -1168,6 +1168,11 @@ fn lanes_write_prompt_tool_and_passed_stop_rows_for_each_harness() {
         } else {
             assert_eq!(rows.len(), 1, "{harness}: {rows:?}");
             assert_eq!(rows[0]["event"], "UserPromptSubmit", "{harness}");
+            assert_eq!(
+                rows[0]["digest"],
+                agent_runtime::session::text_digest("work"),
+                "{harness}"
+            );
         }
         let out = world.mail(harness, &["halt"], &payload);
         assert_eq!(out.code, 0, "{harness}: {}", out.stderr);

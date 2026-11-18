@@ -176,7 +176,9 @@ fn turn_event<'a>(turn: &Turn, payload: &'a Payload, held: bool) -> Option<TurnE
             TurnEvent::Stop
         }),
         Some(Arm::Halt) => Some(TurnEvent::PreToolUse),
-        Some(Arm::Prompt) if turn.harness != Harness::Pi => Some(TurnEvent::Prompt),
+        Some(Arm::Prompt) if turn.harness != Harness::Pi => Some(TurnEvent::Prompt {
+            digest: text(payload, "prompt").map(agent_runtime::session::text_digest),
+        }),
         Some(Arm::Row { event }) if event == "StopFailure" && turn.harness == Harness::Claude => {
             Some(TurnEvent::StopFailure {
                 error: text(payload, "error"),

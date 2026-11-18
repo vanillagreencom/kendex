@@ -1,8 +1,8 @@
 //! The wake duty's record. A wake is a duty action with no intent, phases or
 //! obligations: it delivers one line to a lead or lane read positively idle
 //! with unread mail, confirms by a new user turn in that session's own
-//! bound file, else reports the harness's capability limit; a hosted lane's
-//! line is typed into its window and confirmed by nothing here. Before it
+//! bound file or a hosted lane's prompt row, else reports the harness's
+//! capability limit. Before it
 //! types, it records one mark, pane key and unread state, in the watch's own
 //! record, and reads that record at the start of each pass, so a crash
 //! between the mark and the paste never repeats a nudge for the same unread
@@ -33,9 +33,13 @@ use crate::watch::owner_alert::Word;
 pub const OVERSEER_TARGET: &str = "overseer";
 
 /// The cause of a mark reconciled with no outcome: the pass that wrote it
-/// stopped before the send's answer, and no later user turn, or no reading
-/// here at all for a hosted lane, says the line arrived.
+/// stopped before the send's answer, and no later user turn or hosted
+/// prompt row says the line arrived.
 pub const OUTCOME_LOST: &str = "outcome-lost";
+
+/// No hosted cursor could be read before the send. No complete-line count
+/// can reach this value; a later read cannot distinguish this send's row.
+pub const ROWS_CURSOR_UNREAD: u64 = u64::MAX;
 
 /// The detached turn a lane record's `wake {pid, start}` names, where it
 /// names one: the pid as the number the runtime writes or the string a
@@ -67,11 +71,12 @@ pub fn turn_runs(lane: &Lane, host: &Host) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "wake", rename_all = "kebab-case")]
 pub enum WakeOutcome {
-    /// The sent text in a user turn beyond the bound session's cursor.
+    /// A matching user turn or hosted prompt digest beyond the saved cursor.
     Delivered { turns_after: u64 },
-    /// The paste went in and the bound passed with no such turn; a repeat
-    /// re-reads the file and never types again. A hosted lane's paste is
-    /// unconfirmed at once (`session-hosted`), and its repeat reads nothing.
+    /// No matching receipt confirms the line. Pending evidence is re-read
+    /// without typing again. A hosted lane with no
+    /// prompt-row evidence is final (`session-hosted`), as is a failed
+    /// cursor read (`rows-host-unread`).
     /// A mark reconciled with no outcome is [`OUTCOME_LOST`].
     Unconfirmed { cause: String },
     /// No confirmable route for this harness in this state, or a resume
@@ -98,6 +103,8 @@ pub struct WakeMark {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_start: Option<u64>,
     pub unread: String,
+    /// A local user-turn count, or a hosted rows file's complete-line count;
+    /// [`ROWS_CURSOR_UNREAD`] where the hosted read before sending failed.
     pub turns_before: u64,
     pub line_digest: u32,
     pub at: u64,

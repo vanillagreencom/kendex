@@ -405,6 +405,10 @@ pub fn normalize_user_text(text: &str) -> String {
         .to_owned()
 }
 
+pub fn text_digest(text: &str) -> u32 {
+    crate::record::cksum(normalize_user_text(text).as_bytes())
+}
+
 pub fn user_texts_after(harness: Harness, file: &Path, cursor: u64) -> Result<Vec<String>> {
     let rows_file = match harness {
         Harness::Copilot => file.with_file_name("events.jsonl"),
@@ -1075,6 +1079,14 @@ mod tests {
         ] {
             assert_eq!(normalize_user_text(text), expected);
         }
+    }
+
+    #[test]
+    fn prompt_digests_normalize_before_the_checksum() {
+        for text in ["work", "work  \r\n", "work\t\r\n\n"] {
+            assert_eq!(text_digest(text), crate::record::cksum(b"work"));
+        }
+        assert_ne!(text_digest(" work"), text_digest("work"));
     }
 
     #[test]

@@ -165,7 +165,7 @@
 <table>
 <tr><th>Limit</th><th>Where it bites</th><th>Owner</th></tr>
 <tr><td>A hosted lane cannot move to an account whose token was stored after its sandbox was created</td><td>A relaunch onto another account after a session limit</td><td>The fleet's lane provider</td></tr>
-<tr><td>A hosted lane's typed line is confirmed by its mailbox read, not by a session turn: its session runs on its host</td><td>Every wake of an idle hosted lane: the watch says <code>wake-unconfirmed cause=session-hosted</code>, and the lane's read is the mail duty's <code>directive-read</code></td><td>The orch package's wake duty</td></tr>
+<tr><td>A hosted lane needs its host to serve prompt evidence for a typed line</td><td>A matching prompt digest confirms the wake on a host that serves session rows. Unavailable evidence gives <code>wake-unconfirmed</code>; its causes are under <a href="../references/oversee-events.md#wake-delivered-wake-unconfirmed-wake-limit">Wake outcomes</a>.</td><td>The orch package's wake duty</td></tr>
 <tr><td>A peer on another host reached by ssh and the owner-stamped <code>send --directive</code> reads as an owner directive</td><td>Owner answers use <code>send --re</code>; <code>resolve</code> closes separately. See <a href="../references/communication-modes.md#owner-asks">Owner asks</a>.</td><td>The mailbox package's peer channel</td></tr>
 </table>
 

@@ -2330,7 +2330,7 @@ pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffRe
     unread.map_or(Ok(HandoffReading::None), Err)
 }
 
-/// A Pi lane's session rows through the provider: the file the lane's hook
+/// A lane's session rows through the provider: the file the lane's hook
 /// writes under its root's mailbox on the host.
 pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
     let Some(root) = root_of(lane) else {

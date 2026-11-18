@@ -1661,7 +1661,7 @@ fn deliver(
         let rows = session::user_texts_after(harness, &file, before)?;
         if rows.iter().any(|row| match input {
             DeliveryInput::Paste(_) | DeliveryInput::Match(_) => Some(row) == expected.as_ref(),
-            DeliveryInput::Digest(digest) => record::cksum(row.as_bytes()) == digest,
+            DeliveryInput::Digest(digest) => session::text_digest(row) == digest,
             DeliveryInput::Read => unreachable!("a count read returns before matching"),
         }) {
             return Ok(Delivery::Confirmed {

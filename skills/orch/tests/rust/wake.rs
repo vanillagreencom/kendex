@@ -6,7 +6,7 @@
 //! session no record binds, a pane that is gone, unreadable or mid-turn, a
 //! lane not running or on a host whose line or harness is not read, and a
 //! lane whose record names a print-mode turn still running are never typed
-//! into; an idle hosted lane is typed through its window, unconfirmed. Each row's
+//! into; a hosted line is confirmed by its prompt digest. Each row's
 //! name carries the defect it catches. The stub harnesses are
 //! `fixtures/stub-turns/{claude,codex,copilot}`. The runner runs on the fake clock;
 //! the paste's confirming-turn wait runs in the `deliver` child on the
@@ -957,34 +957,73 @@ fn a_resume_mark_with_no_outcome_and_an_empty_inbox_is_told_lost_once_and_typed_
     assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "typed nothing");
 }
 
-/// A hosted lane's mark with no outcome: nothing here reads its turn, so
-/// the pass for its unread state tells `wake-unconfirmed
-/// cause=outcome-lost` at once, asks its provider nothing and types
-/// nothing; the next pass says nothing.
+/// A hosted mark with no outcome is reconciled once from prompt evidence;
+/// a prior identical prompt alone proves no delivery, and no line is sent.
 #[test]
-fn a_hosted_mark_with_no_outcome_is_told_lost_at_once_and_asks_its_provider_nothing() {
-    let fleet = Fleet::new();
-    let (lane, host) = ssh_lane(&fleet);
-    let pane = lane["launch"]["pane"].as_str().unwrap().to_owned();
-    let before = host.calls().len();
-    fleet.set_lanes(vec![lane]);
-    plant_lost(&fleet, "KEN-1", &pane, "m-1", None);
-    let clock = FakeClock::new();
-    let mut body = fleet.body();
-    let state = unread(&[("KEN-1", "m-1")]);
-    let told = run_once(&mut body, &state, &clock).unwrap();
-    assert_eq!(
-        rendered(&told),
-        vec!["EVENT wake-unconfirmed KEN-1 cause=outcome-lost"]
-    );
-    let again = run_once(&mut body, &state, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "told once");
-    assert_eq!(
-        host.calls()[before..],
-        Vec::<String>::new(),
-        "no provider verb"
-    );
-    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "typed nothing");
+fn a_hosted_mark_with_no_outcome_reads_prompt_evidence_without_sending() {
+    for (case, expected) in [
+        ("match", "delivered"),
+        ("other", "outcome-lost"),
+        ("unread", "outcome-lost"),
+        ("unsupported", "outcome-lost"),
+        ("cursor-unread", "outcome-lost"),
+    ] {
+        let fleet = Fleet::new();
+        let mut answers = receipt_answers(&fleet);
+        let prior = prompt_row(inbox_line());
+        answers[hosted_rows_key(&fleet)] = match case {
+            "match" => json!({"stdout": format!("{prior}{prior}")}),
+            "unread" => json!({"exit": 1}),
+            _ => json!({"stdout": prior}),
+        };
+        if case == "unsupported" {
+            answers["capabilities"] =
+                json!({"stdout": VERB_LINE.replace("files=verb", "files=none")});
+        }
+        let (lane, log) = viewed_lane(&fleet, answers);
+        let pane = lane["launch"]["pane"].as_str().unwrap().to_owned();
+        fleet.set_lanes(vec![lane]);
+        plant_lost(&fleet, "KEN-1", &pane, "m-1", None);
+        let mut mark = fleet.mark("KEN-1").unwrap();
+        mark.turns_before = if case == "cursor-unread" {
+            orch_runtime::ops::wake::ROWS_CURSOR_UNREAD
+        } else {
+            1
+        };
+        mark.line_digest = agent_runtime::session::text_digest(inbox_line());
+        let mut record = WakeRecord::default();
+        record.set("KEN-1", mark);
+        std::fs::write(fleet.record_file(), serde_json::to_vec(&record).unwrap()).unwrap();
+        let mut body = short_hosted_body(&fleet);
+        let clock = FakeClock::new();
+        let state = unread(&[("KEN-1", "m-1")]);
+        let told = run_once(&mut body, &state, &clock).unwrap();
+        assert_eq!(
+            rendered(&told),
+            vec![if expected == "delivered" {
+                "EVENT wake-delivered KEN-1"
+            } else {
+                "EVENT wake-unconfirmed KEN-1 cause=outcome-lost"
+            }],
+            "{case}"
+        );
+        assert_eq!(sent(&fleet).len(), 0, "{case}");
+        let asked = calls(&log);
+        assert_eq!(
+            asked.iter().filter(|c| c.contains(" cat ")).count(),
+            if matches!(case, "unsupported" | "cursor-unread") {
+                0
+            } else {
+                1
+            }
+        );
+        assert!(
+            rendered(&run_once(&mut body, &state, &clock).unwrap()).is_empty(),
+            "{case}"
+        );
+        assert_eq!(calls(&log), asked, "{case}");
+        assert_eq!(sent(&fleet).len(), 0, "{case}");
+    }
 }
 
 /// The real agent-runtime under a tmux that refuses its first load-buffer,
@@ -1504,13 +1543,12 @@ fn api_error_resume_line(item: &str) -> String {
 /// ssh client its harness runs under (`pane=local`, `status=verb`): the
 /// provider reads the harness running, and the window is typed the resume
 /// sentence then the inbox line through `deliver --transport`, once.
-/// Nothing here reads the hosted turn, so the pass says `wake-unconfirmed
-/// cause=session-hosted resume=api-error` and the mark keeps the row; the
-/// next pass asks the provider nothing and types nothing. A later row whose
+/// The hosted prompt row confirms its digest and the mark keeps the row;
+/// the next pass asks the provider nothing and types nothing. A later row whose
 /// provider reads the harness exited is typed nothing and told
 /// `idle-after-return <lane> cause=api-error` once.
 #[test]
-fn an_api_error_resume_of_a_hosted_lane_is_typed_into_its_window_once_and_said_unconfirmed() {
+fn an_api_error_resume_of_a_hosted_lane_is_typed_into_its_window_once_and_confirmed() {
     let fleet = Fleet::new();
     let ended = fleet.root.join("api-error.txt");
     std::fs::write(&ended, "\u{25a0} {\"detail\":\"Bad Request\"}\n").unwrap();
@@ -1523,10 +1561,12 @@ fn an_api_error_resume_of_a_hosted_lane_is_typed_into_its_window_once_and_said_u
     let mut body = fleet.body();
     let asked = "api-error|%1|42|cause=api-error";
     let baseline = resume_row("KEN-1", asked);
-    let produced = run_once(&mut body, &baseline, &clock).unwrap();
+    let produced = run_with_hosted_receipt(&fleet, "codex", || {
+        run_once(&mut body, &baseline, &clock).unwrap()
+    });
     assert_eq!(
         rendered(&produced),
-        vec!["EVENT wake-unconfirmed KEN-1 cause=session-hosted resume=api-error"]
+        vec!["EVENT wake-delivered KEN-1 resume=api-error"]
     );
     let deadline = Instant::now() + secs(10);
     while codex_turns(&fleet.home, "lead-1").is_empty() {
@@ -1542,6 +1582,10 @@ fn an_api_error_resume_of_a_hosted_lane_is_typed_into_its_window_once_and_said_u
         Some(asked)
     );
     let asked_calls = host.calls()[before..].to_vec();
+    assert_eq!(
+        host.calls().iter().filter(|c| c.contains(" send ")).count(),
+        0
+    );
     let again = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new(), "the same row");
     assert_eq!(
@@ -1573,12 +1617,11 @@ fn calls(log: &Path) -> Vec<String> {
 
 /// An idle hosted lane with unread mail: its provider reads the harness
 /// running, and its window, whose foreground is the ssh client, is typed
-/// the one inbox line through `deliver --transport`; nothing here reads the
-/// hosted turn, so the pass says `idle-unread` and `wake-unconfirmed
-/// cause=session-hosted` and marks the state final. The next pass on the
+/// the one inbox line through `deliver --transport`; its hosted prompt row
+/// confirms the line and marks the state delivered. The next pass on the
 /// same state asks the provider nothing, types nothing and says nothing.
 #[test]
-fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_said_unconfirmed_once() {
+fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_confirmed_once() {
     let fleet = Fleet::new();
     let (lane, host) = ssh_lane(&fleet);
     let _lane = host.lead("KEN-1", "claude");
@@ -1588,13 +1631,12 @@ fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_said_unconfirmed_on
     let clock = FakeClock::new();
     let mut body = fleet.body();
     let baseline = unread(&[("KEN-1", "m-1")]);
-    let produced = run_once(&mut body, &baseline, &clock).unwrap();
+    let produced = run_with_hosted_receipt(&fleet, "claude", || {
+        run_once(&mut body, &baseline, &clock).unwrap()
+    });
     assert_eq!(
         rendered(&produced),
-        vec![
-            "EVENT idle-unread KEN-1",
-            "EVENT wake-unconfirmed KEN-1 cause=session-hosted"
-        ]
+        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
     );
     let deadline = Instant::now() + secs(10);
     while fleet.turns("lead-1").is_empty() {
@@ -1609,16 +1651,14 @@ fn an_idle_hosted_lane_is_typed_one_line_into_its_window_and_said_unconfirmed_on
     );
     assert_eq!(
         fleet.mark("KEN-1").and_then(|m| m.outcome),
-        Some(WakeOutcome::Unconfirmed {
-            cause: "session-hosted".into()
-        })
+        Some(WakeOutcome::Delivered { turns_after: 1 })
     );
-    let asked = [
-        "capabilities".to_owned(),
-        "status --item KEN-1 --harness claude".to_owned(),
-    ]
-    .map(|call| format!("ORCH_LANE_HOST={SSH_PROVIDER} {call}"));
-    assert_eq!(host.calls()[before..], asked);
+    let asked = host.calls()[before..].to_vec();
+    assert!(asked.iter().filter(|call| call.contains(" cat ")).count() >= 2);
+    assert_eq!(
+        host.calls().iter().filter(|c| c.contains(" send ")).count(),
+        0
+    );
     let again = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
     assert_eq!(
@@ -1767,12 +1807,331 @@ fn sent(fleet: &Fleet) -> Vec<String> {
         .collect()
 }
 
+fn hosted_rows_key(fleet: &Fleet) -> String {
+    format!(
+        "cat --item KEN-1 {}/tmp/lane-mail/KEN-1/session-rows.jsonl",
+        fleet.cwd.display()
+    )
+}
+
+fn inbox_line() -> &'static str {
+    "Run .agents/skills/mailbox/scripts/lane-mail inbox --item KEN-1 and act on every envelope it prints, answers and directives alike, as its text directs."
+}
+
+fn prompt_row(line: &str) -> String {
+    format!(
+        "{}\n",
+        json!({"event": "UserPromptSubmit", "digest": agent_runtime::session::text_digest(line)})
+    )
+}
+
+fn run_with_hosted_receipt(
+    fleet: &Fleet,
+    harness: &str,
+    run: impl FnOnce() -> Produced,
+) -> Produced {
+    let file = fleet.cwd.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "").unwrap();
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(|| {
+            let deadline = Instant::now() + secs(10);
+            loop {
+                let turns = if harness == "codex" {
+                    codex_turns(&fleet.home, "lead-1")
+                } else {
+                    fleet.turns("lead-1")
+                };
+                if let Some(line) = turns.first() {
+                    std::fs::write(&file, prompt_row(line)).unwrap();
+                    break;
+                }
+                assert!(Instant::now() < deadline, "the transport typed no line");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let produced = run();
+        writer.join().unwrap();
+        produced
+    })
+}
+
+fn receipt_answers(fleet: &Fleet) -> Value {
+    json!({
+        "capabilities": {"stdout": VERB_LINE},
+        "status --item KEN-1 --harness claude": {"stdout": "running\n"},
+        "capture --item KEN-1": {"stdout": AT_COMPOSER},
+        "send --item KEN-1 --file": {},
+        hosted_rows_key(fleet): {"stdout": "{\"event\":\"Stop\"}\n"},
+    })
+}
+
+fn short_hosted_body(fleet: &Fleet) -> watch::Body<'static> {
+    let settings = settings_with(
+        &fleet.root,
+        agent_runtime(),
+        &[("AGENT_RUNTIME_TMUX_VERIFY_SECS", "1")],
+    );
+    wake::body(&fleet.fleet_file(), &settings)
+}
+
+#[test]
+fn a_hosted_wake_waits_for_a_matching_prompt_row_at_the_provider_poll_gap() {
+    let fleet = Fleet::new();
+    let mut answers = receipt_answers(&fleet);
+    answers[format!("{}#3", hosted_rows_key(&fleet))] =
+        json!({"stdout": format!("{{\"event\":\"Stop\"}}\n{}", prompt_row(inbox_line()))});
+    let (lane, log) = viewed_lane(&fleet, answers);
+    fleet.set_lanes(vec![lane]);
+    let settings = settings_with(
+        &fleet.root,
+        agent_runtime(),
+        &[("AGENT_RUNTIME_TMUX_VERIFY_SECS", "3")],
+    );
+    let mut body = wake::body(&fleet.fleet_file(), &settings);
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let started = Instant::now();
+    let produced = run_once(&mut body, &baseline, &FakeClock::new()).unwrap();
+    assert_eq!(
+        rendered(&produced),
+        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
+    );
+    assert!(started.elapsed() >= secs(1));
+    assert_eq!(
+        calls(&log).iter().filter(|c| c.contains(" cat ")).count(),
+        3
+    );
+    assert_eq!(sent(&fleet).len(), 1);
+}
+
+#[test]
+fn a_hosted_wake_ignores_a_prior_match_and_confirms_later_without_resending() {
+    let fleet = Fleet::new();
+    let prior = prompt_row(inbox_line());
+    let mut answers = receipt_answers(&fleet);
+    answers[hosted_rows_key(&fleet)] = json!({"stdout": prior});
+    answers[format!("{}#3", hosted_rows_key(&fleet))] =
+        json!({"stdout": format!("{prior}{prior}")});
+    let (lane, log) = viewed_lane(&fleet, answers);
+    fleet.set_lanes(vec![lane]);
+    let mut body = short_hosted_body(&fleet);
+    let clock = FakeClock::new();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let first = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&first),
+        vec![
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-unconfirmed KEN-1 cause=turn-pending"
+        ]
+    );
+    assert_eq!(fleet.mark("KEN-1").unwrap().turns_before, 1);
+    assert_eq!(sent(&fleet).len(), 1);
+    let later = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&later), vec!["EVENT wake-delivered KEN-1"]);
+    assert_eq!(
+        fleet.mark("KEN-1").unwrap().outcome,
+        Some(WakeOutcome::Delivered { turns_after: 2 })
+    );
+    assert_eq!(sent(&fleet).len(), 1);
+    let asked = calls(&log);
+    assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+    assert_eq!(calls(&log), asked);
+    assert_eq!(sent(&fleet).len(), 1);
+}
+
+#[test]
+fn a_hosted_wake_reports_other_prompt_text_once_and_never_resends() {
+    let fleet = Fleet::new();
+    let mut answers = receipt_answers(&fleet);
+    answers[format!("{}#1", hosted_rows_key(&fleet))] = json!({"stdout": ""});
+    answers[hosted_rows_key(&fleet)] = json!({"stdout": format!("{}\n{}", json!({"event": "Stop", "digest": agent_runtime::session::text_digest(inbox_line())}), prompt_row("another prompt"))});
+    let other = answers[hosted_rows_key(&fleet)]["stdout"].as_str().unwrap();
+    answers[format!("{}#4", hosted_rows_key(&fleet))] =
+        json!({"stdout": format!("{other}{}", prompt_row(inbox_line()))});
+    let (lane, _) = viewed_lane(&fleet, answers);
+    fleet.set_lanes(vec![lane]);
+    let mut body = short_hosted_body(&fleet);
+    let clock = FakeClock::new();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let first = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&first),
+        vec![
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-unconfirmed KEN-1 cause=turn-unmatched"
+        ]
+    );
+    assert_eq!(sent(&fleet).len(), 1);
+    assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+    assert_eq!(sent(&fleet).len(), 1);
+    let later = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(rendered(&later), vec!["EVENT wake-delivered KEN-1"]);
+    assert_eq!(sent(&fleet).len(), 1);
+}
+
+#[test]
+fn a_hosted_prompt_without_a_digest_ends_confirmation_at_once() {
+    for late in [false, true] {
+        let fleet = Fleet::new();
+        let mut answers = receipt_answers(&fleet);
+        let nth = if late { 3 } else { 2 };
+        answers[format!("{}#{nth}", hosted_rows_key(&fleet))] = json!({"stdout": format!("{{\"event\":\"Stop\"}}\n{{\"event\":\"UserPromptSubmit\"}}\n{}not-json\n", prompt_row(inbox_line()))});
+        answers[format!("{}#{}", hosted_rows_key(&fleet), nth + 1)] =
+            json!({"stdout": prompt_row(inbox_line())});
+        let (lane, log) = viewed_lane(&fleet, answers);
+        fleet.set_lanes(vec![lane]);
+        let mut body = if late {
+            short_hosted_body(&fleet)
+        } else {
+            fleet.body()
+        };
+        let clock = FakeClock::new();
+        let baseline = unread(&[("KEN-1", "m-1")]);
+        let mut produced = run_once(&mut body, &baseline, &clock).unwrap();
+        if late {
+            assert_eq!(
+                rendered(&produced),
+                vec![
+                    "EVENT idle-unread KEN-1",
+                    "EVENT wake-unconfirmed KEN-1 cause=turn-pending"
+                ]
+            );
+            assert_eq!(sent(&fleet).len(), 1);
+            produced = run_once(&mut body, &baseline, &clock).unwrap();
+        }
+        let expected = if late {
+            vec!["EVENT wake-unconfirmed KEN-1 cause=session-hosted"]
+        } else {
+            vec![
+                "EVENT idle-unread KEN-1",
+                "EVENT wake-unconfirmed KEN-1 cause=session-hosted",
+            ]
+        };
+        assert_eq!(rendered(&produced), expected);
+        assert_eq!(
+            calls(&log).iter().filter(|c| c.contains(" cat ")).count(),
+            nth
+        );
+        assert_eq!(sent(&fleet).len(), 1);
+        let asked = calls(&log);
+        assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+        assert_eq!(calls(&log), asked);
+        assert_eq!(sent(&fleet).len(), 1);
+    }
+}
+
+#[test]
+fn a_hosted_wake_without_prompt_evidence_is_final_without_a_rows_read() {
+    for (harness, files, judge_reads) in [
+        ("claude", "none", 0),
+        ("claude", "local", 0),
+        ("pi", "verb", 1),
+    ] {
+        let fleet = Fleet::new();
+        let mut answers = receipt_answers(&fleet);
+        answers["capabilities"] =
+            json!({"stdout": VERB_LINE.replace("files=verb", &format!("files={files}"))});
+        answers[format!("status --item KEN-1 --harness {harness}")] =
+            json!({"stdout": "running\n"});
+        answers[hosted_rows_key(&fleet)] =
+            json!({"stdout": "{\"event\":\"Stop\",\"harness\":\"pi\",\"working_agents\":0}\n"});
+        let (mut lane, log) = viewed_lane(&fleet, answers);
+        lane["harness"] = json!(harness);
+        fleet.set_lanes(vec![lane]);
+        let mut body = short_hosted_body(&fleet);
+        let clock = FakeClock::new();
+        let baseline = unread(&[("KEN-1", "m-1")]);
+        let first = run_once(&mut body, &baseline, &clock).unwrap();
+        assert_eq!(
+            rendered(&first),
+            vec![
+                "EVENT idle-unread KEN-1",
+                "EVENT wake-unconfirmed KEN-1 cause=session-hosted"
+            ],
+            "{harness} files={files}"
+        );
+        assert_eq!(
+            calls(&log).iter().filter(|c| c.contains(" cat ")).count(),
+            judge_reads
+        );
+        assert_eq!(sent(&fleet).len(), 1);
+        let asked = calls(&log);
+        assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+        assert_eq!(calls(&log), asked);
+        assert_eq!(sent(&fleet).len(), 1);
+    }
+}
+
+#[test]
+fn a_failed_hosted_cursor_read_still_sends_and_is_final() {
+    let fleet = Fleet::new();
+    let mut answers = receipt_answers(&fleet);
+    answers[format!("{}#1", hosted_rows_key(&fleet))] = json!({"exit": 1});
+    answers[hosted_rows_key(&fleet)] = json!({"stdout": prompt_row(inbox_line())});
+    let (lane, log) = viewed_lane(&fleet, answers);
+    fleet.set_lanes(vec![lane]);
+    let mut body = short_hosted_body(&fleet);
+    let clock = FakeClock::new();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let first = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&first),
+        vec![
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-unconfirmed KEN-1 cause=rows-host-unread"
+        ]
+    );
+    assert_eq!(
+        fleet.mark("KEN-1").unwrap().turns_before,
+        orch_runtime::ops::wake::ROWS_CURSOR_UNREAD
+    );
+    assert_eq!(sent(&fleet).len(), 1);
+    let asked = calls(&log);
+    assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+    assert_eq!(calls(&log), asked);
+    assert_eq!(sent(&fleet).len(), 1);
+}
+
+#[test]
+fn a_failed_hosted_rows_read_after_sending_is_retried_without_resending() {
+    for exit in [1, 2] {
+        let fleet = Fleet::new();
+        let mut answers = receipt_answers(&fleet);
+        answers[format!("{}#2", hosted_rows_key(&fleet))] = json!({"exit": exit});
+        answers["touch --item KEN-1"] = json!({});
+        answers[format!("{}#3", hosted_rows_key(&fleet))] =
+            json!({"stdout": format!("{{\"event\":\"Stop\"}}\n{}", prompt_row(inbox_line()))});
+        let (lane, _) = viewed_lane(&fleet, answers);
+        fleet.set_lanes(vec![lane]);
+        let mut body = short_hosted_body(&fleet);
+        let clock = FakeClock::new();
+        let baseline = unread(&[("KEN-1", "m-1")]);
+        let first = run_once(&mut body, &baseline, &clock).unwrap();
+        assert_eq!(
+            rendered(&first),
+            vec![
+                "EVENT idle-unread KEN-1",
+                "EVENT wake-unconfirmed KEN-1 cause=rows-host-unread"
+            ],
+            "exit={exit}"
+        );
+        assert_eq!(sent(&fleet).len(), 1);
+        let later = run_once(&mut body, &baseline, &clock).unwrap();
+        assert_eq!(
+            rendered(&later),
+            vec!["EVENT wake-delivered KEN-1"],
+            "exit={exit}"
+        );
+        assert_eq!(sent(&fleet).len(), 1);
+    }
+}
+
 /// An idle `pane=verb` lane with unread mail: the watch's judge reads the
 /// provider's capture at the composer, and the one inbox line goes through
 /// the provider's `send --file`, the file holding exactly that line; the
-/// viewer window here is typed nothing. Nothing here reads the hosted turn,
-/// so the pass says `idle-unread` and `wake-unconfirmed
-/// cause=session-hosted` and marks the state final; the next pass on the
+/// viewer window here is typed nothing. The hosted prompt row confirms
+/// the line, and the pass marks the state delivered; the next pass on the
 /// same state asks the provider nothing and says nothing.
 #[test]
 fn an_idle_pane_verb_lane_with_unread_mail_is_sent_one_line_through_its_provider() {
@@ -1784,6 +2143,8 @@ fn an_idle_pane_verb_lane_with_unread_mail_is_sent_one_line_through_its_provider
             "status --item KEN-1 --harness claude": {"stdout": "running\n"},
             "capture --item KEN-1": {"stdout": AT_COMPOSER},
             "send --item KEN-1 --file": {},
+            hosted_rows_key(&fleet): {"stdout": "{\"event\":\"Stop\"}\n"},
+            format!("{}#2", hosted_rows_key(&fleet)): {"stdout": format!("{{\"event\":\"Stop\"}}\n{}not-json\n", prompt_row(inbox_line()))},
         }),
     );
     fleet.set_lanes(vec![lane]);
@@ -1793,10 +2154,7 @@ fn an_idle_pane_verb_lane_with_unread_mail_is_sent_one_line_through_its_provider
     let produced = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(
         rendered(&produced),
-        vec![
-            "EVENT idle-unread KEN-1",
-            "EVENT wake-unconfirmed KEN-1 cause=session-hosted"
-        ]
+        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
     );
     assert_eq!(
         sent(&fleet),
@@ -1804,10 +2162,9 @@ fn an_idle_pane_verb_lane_with_unread_mail_is_sent_one_line_through_its_provider
     );
     assert_eq!(
         fleet.mark("KEN-1").and_then(|m| m.outcome),
-        Some(WakeOutcome::Unconfirmed {
-            cause: "session-hosted".into()
-        })
+        Some(WakeOutcome::Delivered { turns_after: 2 })
     );
+    assert_eq!(fleet.mark("KEN-1").unwrap().turns_before, 1);
     let asked = calls(&log);
     let again = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
@@ -1875,6 +2232,7 @@ fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
             "status --item KEN-1 --harness claude": {"stdout": "running\n"},
             "capture --item KEN-1": {"stdout": AT_COMPOSER},
             "send --item KEN-1 --file": {"exit": 1},
+            hosted_rows_key(&fleet): {"stdout": ""},
         }),
     );
     fleet.set_lanes(vec![lane]);
@@ -1889,8 +2247,14 @@ fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
             "EVENT wake-unconfirmed KEN-1 cause=send-failed exit=1"
         ]
     );
+    let asked = calls(&log);
+    assert_eq!(
+        asked.iter().filter(|call| call.contains(" cat ")).count(),
+        1
+    );
     let again = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new());
+    assert_eq!(calls(&log), asked);
     assert_eq!(sent(&fleet).len(), 1, "{:?}", calls(&log));
 }
 
@@ -1901,7 +2265,7 @@ fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
 /// capture is a provider's own API-error stop (the error line directly
 /// above the composer, the status rows under it) is sent the resume sentence then
 /// the inbox line through the provider's `send --file` once, said
-/// `wake-unconfirmed cause=session-hosted resume=api-error`. A row the mark
+/// `wake-delivered resume=api-error`. A row the mark
 /// holds asks the provider nothing again, and the viewer window here is
 /// typed nothing.
 #[test]
@@ -1922,6 +2286,8 @@ fn an_api_error_resume_of_a_pane_verb_lane_is_sent_once_and_a_refused_one_is_tol
             "capture --item KEN-1#1": {"stdout": "\u{203a} do the thing\n\u{2022} Working (3s \u{2022} esc to interrupt)\n"},
             "capture --item KEN-1": {"stdout": ended},
             "send --item KEN-1 --file": {},
+            format!("{}#1", hosted_rows_key(&fleet)): {"stdout": ""},
+            hosted_rows_key(&fleet): {"stdout": prompt_row(&api_error_resume_line("KEN-1"))},
         }),
     );
     lane["harness"] = json!("codex");
@@ -1943,7 +2309,7 @@ fn an_api_error_resume_of_a_pane_verb_lane_is_sent_once_and_a_refused_one_is_tol
     let resumed = run_once(&mut body, &later, &clock).unwrap();
     assert_eq!(
         rendered(&resumed),
-        vec!["EVENT wake-unconfirmed KEN-1 cause=session-hosted resume=api-error"]
+        vec!["EVENT wake-delivered KEN-1 resume=api-error"]
     );
     assert_eq!(sent(&fleet), vec![api_error_resume_line("KEN-1")]);
     let again = run_once(&mut body, &later, &clock).unwrap();

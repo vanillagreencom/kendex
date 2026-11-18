@@ -62,6 +62,8 @@ pub struct Row {
     #[serde(default)]
     pub event: Option<String>,
     #[serde(default)]
+    pub digest: Option<u32>,
+    #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
@@ -156,10 +158,14 @@ pub fn last_row_in(text: &str) -> Reading<Row> {
     else {
         return Reading::Gone;
     };
-    match serde_json::from_str::<Value>(last) {
-        Ok(Value::Object(_)) => match serde_json::from_str::<Row>(last) {
+    row_in(last, start + index + 1)
+}
+
+fn row_in(line: &str, position: usize) -> Reading<Row> {
+    match serde_json::from_str::<Value>(line) {
+        Ok(Value::Object(_)) => match serde_json::from_str::<Row>(line) {
             Ok(mut row) => {
-                row.position = start + index + 1;
+                row.position = position;
                 Reading::Live(row)
             }
             Err(_) => Reading::Unreadable {
@@ -175,6 +181,22 @@ pub fn last_row_in(text: &str) -> Reading<Row> {
             cause: "rows-row-unparsed",
         },
     }
+}
+
+/// A cursor excludes only terminated lines: a writer may still complete
+/// the final fragment after this read.
+pub fn complete_line_count(text: &str) -> u64 {
+    text.bytes().filter(|b| *b == b'\n').count() as u64
+}
+
+/// A caller can stop on decisive evidence without parsing later rows.
+pub fn rows_after_in(text: &str, cursor: u64) -> impl Iterator<Item = Reading<Row>> + '_ {
+    text.split_inclusive('\n')
+        .enumerate()
+        .filter(move |(index, line)| {
+            line.ends_with('\n') && (*index + 1) as u64 > cursor && !line.trim().is_empty()
+        })
+        .map(|(index, line)| row_in(line, index + 1))
 }
 
 /// The overseer verdict of `file`'s last row.
@@ -528,7 +550,7 @@ pub enum TurnEvent<'a> {
     /// A tool call, written only where it opens a turn.
     PreToolUse,
     /// A submitted prompt, including one before the first tool call.
-    Prompt,
+    Prompt { digest: Option<u32> },
     /// Claude's failed turn, which emits no Stop afterward.
     StopFailure { error: Option<&'a str> },
 }
@@ -566,7 +588,7 @@ pub fn write_lane(dir: &Path, row: &LaneRow, wait: Wait) -> Result<bool, Unwritt
     let event = match row.event {
         TurnEvent::Stop => "Stop",
         TurnEvent::PreToolUse => "PreToolUse",
-        TurnEvent::Prompt => "UserPromptSubmit",
+        TurnEvent::Prompt { .. } => "UserPromptSubmit",
         TurnEvent::StopFailure { .. } => "StopFailure",
     };
     line.insert("event".to_owned(), Value::from(event));
@@ -587,7 +609,12 @@ pub fn write_lane(dir: &Path, row: &LaneRow, wait: Wait) -> Result<bool, Unwritt
             wait,
             Some(&turn_open),
         ),
-        TurnEvent::Prompt => append(&file, &Value::Object(line).to_string(), wait, None),
+        TurnEvent::Prompt { digest } => {
+            if let Some(digest) = digest {
+                line.insert("digest".to_owned(), Value::from(digest));
+            }
+            append(&file, &Value::Object(line).to_string(), wait, None)
+        }
         TurnEvent::StopFailure { error } => {
             if let Some(error) = error {
                 line.insert("error".to_owned(), Value::from(error));
@@ -778,6 +805,50 @@ mod tests {
         serde_json::from_str(json).unwrap()
     }
 
+    #[test]
+    fn rows_after_a_complete_line_cursor_keep_positions_and_prompt_digests() {
+        let prefix = "{\"event\":\"Stop\"}\n\n";
+        let prompt = "{\"event\":\"UserPromptSubmit\",\"digest\":42}";
+        let partial = format!("{prefix}{prompt}");
+        let cursor = complete_line_count(&partial);
+        assert_eq!(cursor, 2);
+        assert!(rows_after_in(&partial, cursor).next().is_none());
+        let text = format!("{partial}\n{{\"event\":\"UserPromptSubmit\"}}\n{{");
+        let rows = rows_after_in(&text, cursor)
+            .map(|reading| {
+                let Reading::Live(row) = reading else {
+                    panic!("completed rows must read");
+                };
+                row
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.position, r.event.as_deref(), r.digest))
+                .collect::<Vec<_>>(),
+            vec![
+                (3, Some("UserPromptSubmit"), Some(42)),
+                (4, Some("UserPromptSubmit"), None)
+            ]
+        );
+        for text in ["not-json\n", "[]\n", "null\n"] {
+            assert!(matches!(
+                rows_after_in(text, 0).next(),
+                Some(Reading::Unreadable { .. })
+            ));
+        }
+        let text = format!("{prompt}\nnot-json\n");
+        let mut rows = rows_after_in(&text, 0);
+        assert!(matches!(
+            rows.next(),
+            Some(Reading::Live(Row {
+                digest: Some(42),
+                ..
+            }))
+        ));
+        assert!(matches!(rows.next(), Some(Reading::Unreadable { .. })));
+    }
+
     /// The overseer verdict table, one row per form it judges: each
     /// harness's SessionEnd and StopFailure shapes, a Pi row with and
     /// without a limit message, a Copilot row, and the too-long prompt.
@@ -946,10 +1017,10 @@ mod tests {
             error: Some("model_not_found"),
         };
         for (index, event) in [
-            TurnEvent::Prompt,
-            TurnEvent::Prompt,
+            TurnEvent::Prompt { digest: Some(42) },
+            TurnEvent::Prompt { digest: None },
             failure,
-            TurnEvent::Prompt,
+            TurnEvent::Prompt { digest: Some(42) },
             failure,
         ]
         .into_iter()
@@ -961,8 +1032,15 @@ mod tests {
             };
             assert_eq!(last.position, index + 1);
             assert_eq!(
+                last.digest,
+                match event {
+                    TurnEvent::Prompt { digest } => digest,
+                    TurnEvent::Stop | TurnEvent::PreToolUse | TurnEvent::StopFailure { .. } => None,
+                }
+            );
+            assert_eq!(
                 judge_lane(&last),
-                if event == TurnEvent::Prompt {
+                if matches!(event, TurnEvent::Prompt { .. }) {
                     Reading::Live(LaneVerdict::Working)
                 } else {
                     Reading::Live(LaneVerdict::Idle {
@@ -970,7 +1048,7 @@ mod tests {
                     })
                 }
             );
-            if event == TurnEvent::Prompt {
+            if matches!(event, TurnEvent::Prompt { .. }) {
                 assert_eq!(
                     write_lane(root.path(), &row(TurnEvent::PreToolUse), BOUND),
                     Ok(false)
