@@ -2,9 +2,7 @@
 #
 # The one assertion library of the orch suites: the pass/fail counters, the
 # stderr dump a failure prints, and the comparisons the suites assert with.
-# Every suite under tests/ sources it, directly or through
-# lib/oversee-watch-harness.sh, and defines none of these names itself, so how
-# an assertion judges and what its failure prints are decided here once.
+# Suites source this library to share the comparisons and failure output.
 # assertions.test.sh is its suite, the one suite that judges without it.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps

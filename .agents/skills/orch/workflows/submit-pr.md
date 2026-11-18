@@ -250,7 +250,7 @@ Arm only through `github.sh pr-merge --auto` (step 5), which refuses with `arm: 
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-create --title "[PREFIX]([ISSUE_ID]): [ISSUE_TITLE]" --body-file "$BODY_FILE"
    ```
 
-   With `pr_order` reading `push-first`, add `--draft` to that command. The caller's first-head review call ([start-worktree.md](start-worktree.md) § 2.1), run with `[MARK_READY]` `true`, owns the ready transition and, under either gate mode, the draft's Copilot request ([gates.md § Copilot requests](../references/gates.md#copilot-requests)).
+   With `pr_order` reading `push-first`, add `--draft` to that command. The caller's first-head review call ([start-worktree.md](start-worktree.md) § 2.1), run with `[MARK_READY]` `true`, owns the ready transition. With `PR_COPILOT_REQUESTS=on`, it also requests Copilot review under either gate mode ([gates.md § Copilot requests](../references/gates.md#copilot-requests)).
 
    With an existing pull request, update its body instead:
 
@@ -527,7 +527,7 @@ A `blocked` verdict takes the step 1 table's `blocked` row under either mode. Un
    .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
    ```
 
-   The cap is the overseer's ruling point. No wait restarts past it until the overseer, judging with the reply's `attempts` and `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). `ask` presents `Triage again` \| `Stop here`, with `Triage again` recommended, before an automatic budget transition. Under `ask`, `Triage again` is the user's override for one more pass, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5. A standing `changes_requested` verdict on the current head outlives a disposition; only a dismissal or a newer review clears it.
+   The cap is the overseer's ruling point. No wait restarts past it until the overseer, judging with the reply's `attempts` and `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). When the ruling authorizes another wait, the overseer runs `orch-runtime state head-budget reset --item [ISSUE_ID] --kind review-wait` before the next take. `ask` presents `Triage again` \| `Stop here`, with `Triage again` recommended, before an automatic budget transition. Under `ask`, `Triage again` is the user's override for one more pass, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5. A standing `changes_requested` verdict on the current head outlives a disposition; only a dismissal or a newer review clears it.
 
    **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check. `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5. `Force merge` records the forced approval and continues to step 2, which records the status that led to it; the § 6.1 gates still apply:
 
@@ -611,7 +611,7 @@ A `no-rerun` line, or exit `1`, goes to Run Workflow.
 
 **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail` with context `worktree`, `lifecycle: "managed"` and `issue_id`. Ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. It reads the gate at the new head through the review call, whose `mode` is the item's recorded one. Record that mode as `GATE_MODE`, and its gate re-confirmation as the § 4 result; an unblocked `off` has no re-confirmation to record. A returned `comments`, `changes_requested`, `copilot-error` or `blocked` routes through the § 4 step 1 table first, then re-enters § 5 once the approval gate is met. Route a returned final CI result through the § 5 table.
 
-Keep routing failures back into ci-fix until CI passes or `MAX_CYCLES` is spent. At the cap, go to § 6 with a failure report that names the checks still failing, quotes ci-fix's last error summary and lists what each cycle attempted, never a bare "CI is failing". No ci-fix cycle starts past the cap until the overseer, judging with ci-fix's counted cycles and the reply's `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
+Keep routing failures back into ci-fix until CI passes or `MAX_CYCLES` is spent. At the cap, go to § 6 with a failure report that names the checks still failing, quotes ci-fix's last error summary and lists what each cycle attempted, never a bare "CI is failing". No ci-fix cycle starts past the cap until the overseer, judging with ci-fix's counted cycles and the reply's `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). When the ruling authorizes another cycle, the overseer runs `orch-runtime state head-budget reset --item [ISSUE_ID] --kind ci-fix` before the next take.
 
 ---
 

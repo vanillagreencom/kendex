@@ -153,7 +153,7 @@ A group of a grouped round that is not the last commits its work and writes `--v
 
 - The receipt is a `fix` receipt, a `--bundled` one, or one that names `--item`s; otherwise `handover-kind`.
 - The round's stage records a `group` that is not the last, as `begin-round` recorded it; otherwise `handover-final`, with the group or `group=unrecorded`.
-- The commit differs from the item's recorded `pre_delegate_sha` and descends from it; otherwise `handover-unmoved`.
+- The commit differs from its base and descends from it, or the writer refuses `handover-unmoved`. A fix hand-over uses the stamped round's `base_sha`. An implementation hand-over uses the item's recorded `pre_delegate_sha`.
 - No evidence source is named.
 
 The check answers `hand-over` for a valid receipt. The runtime does not judge the worktree's cleanliness on a hand-over; the acceptance's Check B does.

@@ -106,11 +106,22 @@ A merge group that cannot pass because a CI input read from the default branch b
 
 The `lane-mail-check` turn-end hook judges a lane's context and account marks at each turn end, refuses the turn end at a mark, and tells the lane to write its handoff record. Which marks it judges, the record and when the lane writes it: [skill-rules.md § Round Closure](skill-rules.md#round-closure). Copilot CLI, as measured, honours a turn-end block eight times in a row and then ends the turn unheld; the refusal returns at the session's next turn end. The overseer judges the same marks between turn ends, and for a lane whose hook refuses nothing:
 
-1. Read `tmp/lane-mail/[ITEM]/context.json` under the lane's `mail_root`; for a hosted lane, `.agents/skills/orch/scripts/orch-runtime host cat --item [ITEM] [PATH]`. A record whose `harness` differs from the lane record's, or whose `session_id` differs from the one the lane record binds, is another session's. A reading older than an hour while `session-rows.jsonl` beside it holds a later Stop row is stale.
+1. Read `tmp/lane-mail/[ITEM]/context.json` under the lane's `mail_root`; for a hosted lane, `.agents/skills/orch/scripts/orch-runtime host --host [HOST] cat --item [ITEM] [PATH]`, with `[HOST]` from the lane record. A record whose `harness` differs from the lane record's, or whose `session_id` differs from the one the lane record binds, is another session's. A reading older than an hour while `session-rows.jsonl` beside it holds a later Stop row is stale.
 2. Judge a current reading with `orch-runtime marks --item [ITEM] --context [TOKENS]:[WINDOW]`, the hook's own judge. A lane reaches its context mark at `ORCH_HANDOFF_CONTEXT_TOKENS` tokens used, or past `ORCH_HANDOFF_CONTEXT_PCT` of its window; [settings.md](settings.md) owns the defaults. A reading with no window and fewer tokens than that count has unknown capacity: direct the lane to write its handoff record.
 3. Read the account mark with `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --lane [ACCOUNT] --harness [HARNESS] --min-headroom-pct [ORCH_HANDOFF_HEADROOM_PCT]`, `[ACCOUNT]` the lane record's `account`. A Claude or Pi lane adds `--native-model [MODEL]`, the lane record's `model`. The reply's `answer`: `lane` is room; `walled` is the mark reached; `reserved`, `retired` or `excluded` is the account refused by its owner's setting, which you tell the owner. Any other answer leaves the mark unknown.
 4. Treat no record, another session's record, an unreadable or stale one, and an unknown mark as unknown, never as room.
-5. Where a mark is reached and no handoff record stands, send the lane a directive to write its handoff record ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)).
+5. Where a mark is reached and no handoff record stands, send the lane a directive ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)) to reach its next safe point (a pushed head, a landed merge or a held pull request). The lane writes the request below to `tmp/handoff-request-[ITEM].json` in its worktree with the harness file tool, fills in the placeholders and sets `open_pr` to the pull request number if one is open. The runtime stamps `written_at` ([workflow-state.md § Handoff](../schemas/workflow-state.md#handoff)).
+
+   ```json
+   {"op":"record-handoff","merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]","open_pr":null,"traps":["[TRAP]"]}
+   ```
+
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ITEM] --request tmp/handoff-request-[ITEM].json
+   ```
+
+   After the write succeeds, the lane sends `lane-mail notice --item [ITEM] --file [PATH]` with a file naming what is left, then ends its session.
+
 6. On the lane's `handoff` line, relaunch the item through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which resumes from the handoff record. A Copilot lane's relaunch starts a fresh session on that record.
 
 The attached-launch reserve, `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`, is the hook's own refusal of a new attached launch near the mark. Longer work uses the orch job runner ([waiter-launch.md § Launch](waiter-launch.md#launch)) or a separate session, with its run directory on the handoff.
@@ -222,7 +233,7 @@ A lane whose mail, clone or state read fails draws no other line: this one names
 - A Done item with no open box: its cycle row is its report; no relaunch is owed.
 - `[ITEM]` `kendex/refresh`: a refresh pull request the watch reported `refresh-ready` merged. It has no owning lane. Check whether the open lane pull requests touch the files the refresh changed, and follow the repository's declared refresh owner.
 
-A confined lane's own `container-close` and `state remove` do nothing: each prints `container-close: left cause=confined owner=overseer` or `state-remove: left cause=confined owner=overseer` and exits 0 (`main.rs::step_aside`). The overseer's route runs both for that lane: the container close of § Verification, and the item close-out with `.agents/skills/orch/scripts/orch-runtime state remove --item [ITEM]` at the lane's close.
+A confined lane's own `container-close` and `state remove` do nothing: each prints `container-close: left cause=confined owner=overseer` or `state-remove: left cause=confined owner=overseer` and exits 0 (`main.rs::step_aside`). The overseer runs the container close of § Verification. Terminal lane close reads the cycle before removing the item's files.
 
 A hosted lane stays in the watch until its `lane-closed` or `lane-close-refused` line. Send it nothing while that close runs.
 
@@ -350,7 +361,7 @@ A note `stop-cause=allow-all-blocked-by-policy` is a Copilot lane launched with 
 
 ### `model-capacity`
 
-`EVENT model-capacity [LANE]`: the selected model stopped one turn, not the session. Send one continuation line; the next pass watches the lane again. Never relaunch the lane.
+`EVENT model-capacity [LANE]`: the selected model stopped one turn, not the session. Send a one-line continuation directive ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)). The next pass watches the lane again. Never relaunch the lane.
 
 ### `lane-ready`
 
@@ -432,7 +443,7 @@ The watch asks a close once per lane, by a marker `lane-close.[ITEM]` under its 
 
 1. Read the banner and the screen around it. Confirm the banner is the harness's own, not a limit phrase the lane printed. Leave a lane that is still working alone.
 2. Before any stop by hand, apply [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
-3. With `pick lane=[DIR]` under `ask`, for a lane that section admits: on a hosted lane, run `.agents/skills/orch/scripts/orch-runtime host stop --item [ITEM] --harness [HARNESS]` and require its `stopped item=[ITEM] processes=[N]` line; keep the window, which the relaunch's runtime close closes. Then relaunch with `[DIR]` as the request's `account`.
+3. With `pick lane=[DIR]` under `ask`, for a lane that section admits: on a hosted lane, run `.agents/skills/orch/scripts/orch-runtime host --host [HOST] stop --item [ITEM] --harness [HARNESS]` with `[HOST]` from the lane record and require its `stopped item=[ITEM] processes=[N]` line; keep the window, which the relaunch's runtime close closes. Then relaunch with `[DIR]` as the request's `account`.
 4. With no account of that harness qualifying, pick another harness and relaunch with the one-sentence continuation brief from [handoff.md § 2](../workflows/handoff.md#2-launch), naming the matching path from the prior harness's transcript store.
 5. With none qualifying and `resets=` on the line, keep the window and wait for the reset: § `usage-limit-passed` follows. A `resets=` read from a clock time or weekday is an upper bound. Never launch onto the spent account before its reset, and never park a lane on an estimate of your own when `resets=` states the time.
 6. With none qualifying and no `resets=`, tell the owner the recovery is blocked and keep the window until an account qualifies. The spent account's `account` line or heartbeat roster line says which case it is.

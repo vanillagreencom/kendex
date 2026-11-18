@@ -7,6 +7,8 @@
 # tools/ci-job-set answers lane keys, and GitHub names a check by its job's
 # `name:`. This script is the one map between the two: each job's `if:` in
 # skill-tests.yml reads the key its check name maps to below.
+# A failed skill-suites check is judged at shard granularity. `within`
+# means the change selects that shard, regardless of which suite failed.
 #
 # Usage: tools/ci-reach
 #
