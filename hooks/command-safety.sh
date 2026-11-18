@@ -103,6 +103,119 @@ environment_private_path() {
   return 1
 }
 
+proc_environment_path() {
+  case "$1" in /proc/*/environ | */proc/*/environ | proc/*/environ) return 0 ;; esac
+  return 1
+}
+
+unit_environment_property() {
+  case ",$1," in *,Environment,* | *,EnvironmentFiles,* | *,PassEnvironment,* | *,UnsetEnvironment,*) return 0 ;; esac
+  return 1
+}
+
+systemctl_literal_word() {
+  [ "${arg_kinds[$1]:-}" = literal ] &&
+    { [ "${arg_unquoted[$1]:-}" != 1 ] || [[ ${args[$1]} != *[\*\?\[\]\{\}]* ]]; }
+}
+
+# systemctl's property options are global and repeatable. A unit operand can
+# precede an option, so proving a safe selection requires reading every option
+# before --. status and cat render different output and ignore that selection.
+systemctl_environment() {
+  local cursor option property verb="" selected="" sensitive="" uncertain="" ended="" short take
+  local property_list='^[A-Za-z][A-Za-z0-9]*(,[A-Za-z][A-Za-z0-9]*)*$'
+  for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+    option=${args[$cursor]}; property=""; take=""
+    if [ -n "$ended" ] && [ -n "$verb" ]; then break; fi
+    if ! systemctl_literal_word "$cursor"; then
+      uncertain=1
+      continue
+    fi
+    if [ -z "$ended" ]; then
+      case "$option" in
+        --) ended=1; continue ;;
+        --property=*) property=${option#*=} ;;
+        --property) take=1 ;;
+        --user | --system | --no-pager | --no-ask-password | --all | --full | --value | --plain | --quiet | --with-dependencies) continue ;;
+        --host=* | --machine=* | --capsule=* | --type=* | --state=* | --lines=* | --output=* | --root=* | --image=*) continue ;;
+        --host | --machine | --capsule | --type | --state | --lines | --output | --root | --image)
+          cursor=$((cursor + 1)); systemctl_literal_word "$cursor" || uncertain=1; continue ;;
+        --*=*) uncertain=1; continue ;;
+        --*) uncertain=1; continue ;;
+        -?*)
+          short=${option:1}
+          short=${short#"${short%%[!alqrfiT]*}"}
+          case "$short" in
+            [pP]) take=1 ;;
+            [pP]?*) property=${short:1} ;;
+            [HMCtnos]) cursor=$((cursor + 1)); systemctl_literal_word "$cursor" || uncertain=1; continue ;;
+            [HMCtnos]?* | '') continue ;;
+            *) uncertain=1; continue ;;
+          esac ;;
+        *) ;;
+      esac
+      case "$option" in
+        -?*)
+          if [ -n "$take" ]; then
+            cursor=$((cursor + 1)); property=${args[$cursor]:-}
+          fi
+          if ! systemctl_literal_word "$cursor" || [[ ! $property =~ $property_list ]]; then
+            uncertain=1
+          elif unit_environment_property "$property"; then sensitive=1
+          else selected=1; fi
+          continue ;;
+      esac
+    fi
+    case "$option:$verb:$uncertain" in
+      status::* | cat::*) return 0 ;;
+      show::*) verb=show ;;
+      *::) return 1 ;;
+    esac
+  done
+  [ "$verb" = show ] && { [ -z "$selected" ] || [ -n "$uncertain$sensitive" ]; }
+}
+
+# Procps BSD personalities and macOS legacy mode can read a dashed e as an
+# environment flag too. The hook has no proof of the process's personality.
+# Format and PID operands can contain e, so judge only the option letters.
+ps_environment() {
+  local cursor option letters flags operand
+  for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+    option=${args[$cursor]}
+    case "$option" in
+      --cols | --columns | --delimiter | --format | --group | --lines | --pid | --ppid | --quick-pid | --rows | --sid | --sort | --tty | --user | --width)
+        cursor=$((cursor + 1)); continue ;;
+      --*) continue ;;
+    esac
+    letters=${option#-}
+    flags=${letters%%[kOopqtU0-9]*}
+    [[ $flags != *e* ]] || return 0
+    if [ "$option" != "$letters" ]; then
+      flags=${letters%%[CDGgOopqstuU]*}
+      [[ $flags != *E* ]] || return 0
+    fi
+    operand=${letters#"$flags"}
+    case "$operand" in [CDGgOopqstuUk]) cursor=$((cursor + 1)) ;; esac
+  done
+  return 1
+}
+
+# The D-Bus service publishes the same properties via Get, GetAll and
+# introspection. systemd-analyze's dump prints the unit's execution context.
+systemd_bus_environment() {
+  local cursor word service="" read="" property=""
+  for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+    word=${args[$cursor]}
+    case "$word" in
+      org.freedesktop.systemd1 | /org/freedesktop/systemd1 | /org/freedesktop/systemd1/*) service=1 ;;
+      introspect | GetAll | *.GetAll | Dump | *.Dump) read=all ;;
+      get-property | Get | *.Get) [ "$read" = all ] || read=named ;;
+      *) if unit_environment_property "${word#string:}"; then property=1; fi ;;
+    esac
+  done
+  [ -n "$service" ] && { [ "$read" = all ] || { [ "$read" = named ] && [ -n "$property" ]; }; }
+}
+
 # This rule belongs to this hook, not the replaceable project pattern. No
 # harness output-rewrite interface can remove secrets before the transcript.
 # A harness permission rule cannot hold it either: such a rule matches command
@@ -188,13 +301,19 @@ environment_producer() { # command kind
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
-      printenv | export | declare | typeset | set | systemctl | cat | tr | strings | xargs)
+      printenv | export | declare | typeset | set | systemctl | ps | systemd-analyze | busctl | gdbus | dbus-send | cat | tr | strings | xargs)
         for ((j=pos; j<${#args[@]}; j++)); do
           [ "${arg_kinds[$j]}" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
         done ;;
     esac
     case "${program:-}" in
       cat | tr | strings | xargs) [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; } ;;
+      awk | base64 | comm | cp | cut | dd | diff | grep | head | hexdump | jq | less | more | nl | od | paste | perl | python | python3 | rg | sed | sort | split | tail | tee | uniq | xxd)
+        for ((j=pos; j<${#args[@]}; j++)); do
+          value=${args[$j]}
+          case "$program:$value" in dd:if=*) value=${value#if=} ;; esac
+          if proc_environment_path "$value"; then mode=dump-unknown; return; fi
+        done ;;
     esac
     case "${program:-}" in
       printenv)
@@ -259,9 +378,16 @@ environment_producer() { # command kind
           for ((j=pos; j<${#args[@]}; j++)); do
             case "${args[$j]}" in --user | --system | -- | show-environment) ;; *) mode=dump-unknown ;; esac
           done
+        elif systemctl_environment; then mode=dump-unknown
         fi ;;
+      ps) if ps_environment; then mode=dump-unknown; fi ;;
+      systemd-analyze)
+        for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != dump ] || mode=dump-unknown; done ;;
+      busctl | gdbus | dbus-send) if systemd_bus_environment; then mode=dump-unknown; fi ;;
       cat | tr | strings | xargs)
-        for ((j=pos; j<${#args[@]}; j++)); do [[ ${args[$j]} != /proc/*/environ ]] || proc=1; done
+        for ((j=pos; j<${#args[@]}; j++)); do
+          if proc_environment_path "${args[$j]}"; then proc=1; fi
+        done
         if [ -n "$proc" ]; then
           case "$program" in
             cat | strings)
@@ -269,7 +395,7 @@ environment_producer() { # command kind
               for ((j=pos; j<${#args[@]}; j++)); do
                 [ "${args[$j]}" != -- ] || continue
                 [ "${arg_kinds[$j]}" = literal ] || mode=dump-unknown
-                [[ ${args[$j]} == /proc/*/environ ]] || mode=dump-unknown
+                proc_environment_path "${args[$j]}" || mode=dump-unknown
               done ;;
             tr | xargs) mode=dump-unknown ;;
           esac
@@ -1004,7 +1130,7 @@ environment_dump() { # command kind; arguments are already decoded data
             input_redirect=1
             private_inputs[${#private_inputs[@]}]=$target
             [ "${kinds[$j]:-}" != ansi-escaped ] || input_escaped=1
-            [[ $target != /proc/*/environ ]] || proc=1
+            if proc_environment_path "$target"; then proc=1; fi
             [ "${tokens[$((j - 1))]}" != '<>' ] || output=1 ;;
           '<&') input_redirect=1 ;;
           '<<' | '<<-')
@@ -1269,6 +1395,8 @@ refuse() { # KEY VALUE [CAUSE]
         else
           echo "the command contains a recognized private-file read or a whole-environment read without a proven direct named-variable filter"
           echo "for named non-secret settings, use orch-env NAME DEFAULT; do not read or filter the private file"
+          echo "for unit state, use a named systemctl show property, for example: systemctl --user show UNIT --property=ActiveState"
+          echo "for process metadata, select fields without environment flags, for example: ps -A -o pid,comm"
           echo "for actual environment producers, read named variables, for example: systemctl --user show-environment | grep '^NAME='"
           echo "nested or unsupported environment routing can refuse conservatively; use the direct filtered form for environment producers"
         fi ;;
