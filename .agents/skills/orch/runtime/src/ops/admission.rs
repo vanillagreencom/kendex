@@ -1305,6 +1305,28 @@ pub(super) fn admit_paths(
             item: r.item.clone(),
         });
     }
+    // A standing lane's paths are judged in its own repository, the one its
+    // holders are compared in: a request naming none takes the lane's, and
+    // one naming another is refused.
+    let repo = match position.map(|i| lanes[i].repo.as_deref()) {
+        None => r.repo.as_deref(),
+        Some(lane_repo) => match (r.repo.as_deref(), lane_repo) {
+            (None, lane_repo) => lane_repo,
+            (Some(asked), Some(lane_repo)) if asked.eq_ignore_ascii_case(lane_repo) => {
+                Some(lane_repo)
+            }
+            (Some(asked), lane_repo) => {
+                return Err(Error::from(agent_runtime::Error::refused(
+                    "lane-repo-conflict",
+                    &[
+                        ("item", &r.item),
+                        ("repo", asked),
+                        ("lane_repo", lane_repo.unwrap_or("none")),
+                    ],
+                )));
+            }
+        },
+    };
     let standing_scope = position
         .and_then(|i| lanes[i].in_scope.clone())
         .unwrap_or_default();
@@ -1316,7 +1338,7 @@ pub(super) fn admit_paths(
         &Admission {
             item: &r.item,
             tracker: r.tracker.as_deref(),
-            repo: r.repo.as_deref(),
+            repo,
             brief_file: r.brief_file.as_deref(),
             repo_dir: r.repo_dir.as_deref(),
             scope_range: r.scope_range.as_ref(),

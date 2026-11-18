@@ -350,11 +350,16 @@ pub(super) fn launch_lock_base(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.launch", canonical_fleet(path)))
 }
 
-/// Whether an open launch intent stands on `item`.
-pub(super) fn launch_open(intents: &[Intent], item: &str) -> bool {
+/// The open launch intent on `item`, where one stands.
+pub(super) fn open_launch<'a>(intents: &'a [Intent], item: &str) -> Option<&'a Intent> {
     intents
         .iter()
-        .any(|i| i.open() && i.op == EffectOp::LaunchSession && i.target == item)
+        .find(|i| i.open() && i.op == EffectOp::LaunchSession && i.target == item)
+}
+
+/// Whether an open launch intent stands on `item`.
+pub(super) fn launch_open(intents: &[Intent], item: &str) -> bool {
+    open_launch(intents, item).is_some()
 }
 
 /// The slot one cloud session's record charges, or none: a standing

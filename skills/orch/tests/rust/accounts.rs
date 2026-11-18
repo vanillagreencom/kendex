@@ -1402,6 +1402,51 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
     drop(children);
 }
 
+/// A preparing lane spends on the account its open launch will confirm:
+/// a replacement moving from A to B, its row still naming A, charges B and
+/// not A; one whose selection names no account charges neither; an intent
+/// that carries no selection charges the row's account.
+#[test]
+fn a_preparing_launch_is_charged_to_its_open_selections_account() {
+    let mut world = World::new(&[]);
+    world.plant_listing(&[measured("aclaude", 10, 5), measured("bclaude", 10, 5)]);
+    let (a, b) = (world.dir("aclaude"), world.dir("bclaude"));
+    let cases = [
+        (Some(json!(b)), (0, 1)),
+        (Some(Value::Null), (0, 0)),
+        (None, (1, 0)),
+    ];
+    for (account, (on_a, on_b)) in cases {
+        let mut intent = json!({
+            "id": "launch-session:KEN-1:1-1", "op": "launch-session", "target": "KEN-1",
+            "created_at": stamp(now()), "owner": {"pid": 1, "start": "ticks:0"},
+            "outcome": "not-started", "lane_since": stamp(now()),
+        });
+        if let Some(account) = &account {
+            intent["selection"] = json!({
+                "harness": "claude", "account": account,
+                "class": "standard", "class_reason": "general implementation work",
+            });
+        }
+        let fleet = json!({
+            "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+            "lanes": [{
+                "item": "KEN-1", "window": "orch-KEN-1", "harness": "claude",
+                "status": "preparing", "account": a, "launched_at": stamp(now()),
+                "session_since": stamp(now()),
+            }],
+            "intents": [intent],
+        });
+        std::fs::write(world.fleet_path(), fleet.to_string()).unwrap();
+        let claims = |dir: &str| world.pick(&named(dir, claude(None)))["record"]["claims"].clone();
+        assert_eq!(
+            (claims(&a), claims(&b)),
+            (json!(on_a), json!(on_b)),
+            "selection account {account:?}"
+        );
+    }
+}
+
 /// The measured rate: the rate the reader measured on the
 /// binding window is the whole account's delta, shared among the lanes live
 /// at the sample, except on a model window, which no lane on another model

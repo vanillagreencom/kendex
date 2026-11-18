@@ -290,7 +290,10 @@ fn wall_verdict(
     else {
         return "verdict=queue".to_owned();
     };
-    if !listing.bills(billed, harness.pool(&owed.model)) {
+    // A roster whose provider read failed is partial: an account the
+    // provider holds may bill this pick, so the pick judges it, asking the
+    // provider again.
+    if listing.provider_failure.is_none() && !listing.bills(billed, harness.pool(&owed.model)) {
         return "verdict=queue".to_owned();
     }
     let request = PickRequest {

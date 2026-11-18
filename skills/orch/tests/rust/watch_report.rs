@@ -1774,26 +1774,28 @@ fn an_owed_local_item_is_judged_on_the_local_listing_while_the_fleet_provider_ca
 }
 
 /// An owed item on a provider whose `accounts` read fails is never judged
-/// on this machine's listing: its local account at room, the pick under
-/// the item's host is unjudged and the owed line says so, the provider's
-/// accounts asked by the listing and again by the pick.
+/// on this machine's listing: with its local account at room, or with no
+/// local account to bill it, the pick under the item's host is unjudged
+/// and the owed line says so, the provider's accounts asked by the listing
+/// and again by the pick.
 #[test]
 fn an_owed_hosted_item_under_a_failed_accounts_read_is_unjudged() {
     let exit = 1;
-    {
+    for local in [true, false] {
         let world = World::new();
         let clock = FakeClock::new();
         let wall = clock.wall_secs();
         let mut baseline = Baseline::default();
-        let planted = world.plant_accounts(
-            Some("provider-x"),
+        let records: &[Value] = if local {
             &[account_record(
                 "claude",
                 "local",
                 "ok room 60 2026-10-01T00:00:00Z",
-            )],
-            wall,
-        );
+            )]
+        } else {
+            &[]
+        };
+        let planted = world.plant_accounts(Some("provider-x"), records, wall);
         let map = world.path().join("lane-host.json");
         let mut answers: Value =
             serde_json::from_str(&std::fs::read_to_string(&map).unwrap()).unwrap();
@@ -1831,21 +1833,24 @@ fn an_owed_hosted_item_under_a_failed_accounts_read_is_unjudged() {
             owner: None,
         });
         let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
-        assert_eq!(
-            rendered(&produced),
-            [
-                "EVENT heartbeat loops=25 interval=240s since=none".to_owned(),
-                "account-roster accounts=1".to_owned(),
-                format!(
-                    "account claude config_dir={} harness=claude through=local status=ok verdict=room headroom_pct=60 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z",
-                    world.home_dir("claude")
-                ),
-                "owed KEN-1 state=in-progress priority=2 lane=stopped verdict=unjudged harness=claude"
-                    .to_owned(),
-                "open-unblocked count=0 items=-".to_owned(),
-            ],
-            "{exit}"
-        );
+        let mut expected = vec![
+            "EVENT heartbeat loops=25 interval=240s since=none".to_owned(),
+            format!("account-roster accounts={}", usize::from(local)),
+        ];
+        expected.push(if local {
+            format!(
+                "account claude config_dir={} harness=claude through=local status=ok verdict=room headroom_pct=60 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z",
+                world.home_dir("claude")
+            )
+        } else {
+            "accounts-unconfigured key=AGENT_RUNTIME_ACCOUNT_DIRS".to_owned()
+        });
+        expected.extend([
+            "owed KEN-1 state=in-progress priority=2 lane=stopped verdict=unjudged harness=claude"
+                .to_owned(),
+            "open-unblocked count=0 items=-".to_owned(),
+        ]);
+        assert_eq!(rendered(&produced), expected, "{exit} local={local}");
         let asked = lines(&world.path().join("lane-host.log"));
         assert_eq!(
             asked
@@ -1853,7 +1858,7 @@ fn an_owed_hosted_item_under_a_failed_accounts_read_is_unjudged() {
                 .filter(|h| *h == "ORCH_LANE_HOST=provider-x accounts")
                 .count(),
             2,
-            "{exit}: {asked:?}"
+            "{exit} local={local}: {asked:?}"
         );
     }
 }

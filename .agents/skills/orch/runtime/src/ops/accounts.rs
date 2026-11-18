@@ -27,9 +27,9 @@ use agent_runtime::harness::Harness;
 use agent_runtime::host;
 use serde_json::{Value, json};
 
-use super::occupancy::{self, ChargeSource, Host};
+use super::occupancy::{self, ChargeReason, ChargeSource, Host};
 use crate::settings::{ProviderSettings, Settings};
-use crate::state::{FleetState, Record};
+use crate::state::{FleetState, LaneMembers, Record};
 use crate::watch::hosted::{Capabilities, Launch};
 
 /// A request's own bound; the runner's covers the start.
@@ -446,7 +446,9 @@ pub fn walk(
 /// `seat=1` rows, and the fleet's live charges per account from its state
 /// file: every lane record
 /// charges its account while the occupancy reader proves its identity
-/// live, protects it unknown, or holds it preparing or reserved, and
+/// live, protects it unknown, or holds it preparing or reserved (a
+/// preparing launch the account its open selection names, none where it
+/// names none), and
 /// names the instant it began spending on that account where its record
 /// carries one: `session_since`, which every launch and relaunch rewrites
 /// and a wake keeps, else `running_at`, else `launched_at`, which a
@@ -489,15 +491,29 @@ pub fn fleet_facts(
         if replaces == Some(item.as_str()) {
             continue;
         }
-        let Some(lane) = fleet
-            .lanes
-            .iter()
-            .find(|l| l.item == item)
-            .filter(|l| l.account.as_deref().is_some_and(|a| !a.is_empty()))
-        else {
+        let Some(lane) = fleet.lanes.iter().find(|l| l.item == item) else {
             continue;
         };
-        let canon = wall::canon(lane.account.as_deref().unwrap_or_default());
+        // A preparing launch spends on the account its open selection
+        // confirms, which a replacement changing account has not yet
+        // written on the row; an intent with no selection leaves the row's.
+        let selected = if charge.reason == ChargeReason::Preparing {
+            occupancy::open_launch(&fleet.intents, &item)
+                .map(|intent| LaneMembers::of(path, intent))
+                .transpose()
+                .map_err(|e| e.to_string())?
+                .and_then(|members| members.selection)
+        } else {
+            None
+        };
+        let account = match &selected {
+            Some(selection) => selection.account.as_deref(),
+            None => lane.account.as_deref(),
+        };
+        let Some(account) = account.filter(|a| !a.is_empty()) else {
+            continue;
+        };
+        let canon = wall::canon(account);
         *facts.charges.entry(canon.clone()).or_insert(0) += 1;
         if let Some(start) = lane
             .session_since

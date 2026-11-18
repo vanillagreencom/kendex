@@ -468,6 +468,55 @@ fn a_launch_under_a_failed_or_busy_accounts_read_is_refused_and_writes_nothing()
     }
 }
 
+/// A launch that names its host is judged on that host, not the fleet's.
+/// On a fleet whose provider is this machine, an account with room and no
+/// cloud repository grant asked for a Claude cloud session is refused
+/// `account-unjudged` by the cloud rule, nothing written; the same account
+/// asked for this machine by name is admitted.
+#[test]
+fn a_named_launch_is_judged_on_the_host_it_names() {
+    let mut fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let env = plant_accounts(
+        fleet.state_dir(),
+        fleet.state_dir(),
+        None,
+        &[listing_row(10, epoch_now())],
+        epoch_now(),
+    );
+    fleet.env.extend(env);
+    // This machine's listing holds the account under its own home.
+    let account = fleet
+        .state_dir()
+        .join("home/.aclaude")
+        .display()
+        .to_string();
+    let on = |host: &str| {
+        let mut request = launch_on("KEN-3", fleet.state_dir());
+        request["account"] = json!(account);
+        request["host"] = json!(host);
+        request
+    };
+
+    let out = fleet.op(&on("claude-cloud"));
+    let answer = reply(&out);
+    assert_eq!(answer["refusal"]["key"], "account-unjudged", "{answer}");
+    assert_eq!(
+        refusal_fields(&answer)["cause"],
+        format!("cloud-repo-unset account={account}"),
+        "{answer}"
+    );
+    assert_eq!(
+        fleet.fleet()["lanes"].as_array().map_or(0, Vec::len),
+        0,
+        "a refused launch writes no record"
+    );
+
+    let out = fleet.op(&on("local"));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(fleet.lane("KEN-3")["account"], json!(account));
+}
+
 /// An account its word refuses, reserved or retired from its day, may have
 /// room, so the refusal is the word's own key, never `account-walled` with
 /// the wall's figures: its line naming the word, or the day and who stated

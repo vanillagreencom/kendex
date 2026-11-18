@@ -1039,6 +1039,53 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     assert_eq!(fleet.fleet(), before);
 }
 
+/// A running lane's added path is judged in its own lane's repository, so
+/// the documented request, item and paths alone, meets a live holder of
+/// the same named repository and is refused with its id; a request naming
+/// another repository than the lane's is refused by name; one naming the
+/// lane's own, case apart, widens the record.
+#[test]
+fn a_running_lanes_added_path_is_judged_in_its_lanes_repository() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let (a_harness, b_harness) = (Owned::sleep(), Owned::sleep());
+    let named = |item: &str, harness: &Owned, path: &str| {
+        let mut lane = holder(item, "running", Some(harness), Some(&[path]));
+        lane["repo"] = json!("o/r");
+        lane
+    };
+    fleet.write_lanes(vec![
+        named("KEN-A", &a_harness, "src/a.sh"),
+        named("KEN-B", &b_harness, "src/b.sh"),
+    ]);
+    let before = fleet.fleet();
+
+    let out = fleet.admit(&json!({"item": "KEN-B", "paths": ["src/a.sh"]}));
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "launch-overlap", "{}", stderr(&out));
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-B"), ("file", "src/a.sh"), ("holder", "KEN-A")])
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+
+    let out = fleet.admit(&json!({"item": "KEN-B", "repo": "o/other", "paths": ["src/n.sh"]}));
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "lane-repo-conflict", "{}", stderr(&out));
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-B"), ("repo", "o/other"), ("lane_repo", "o/r")])
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+
+    let out = fleet.admit(&json!({"item": "KEN-B", "repo": "O/R", "paths": ["src/n.sh"]}));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(
+        fleet.lane("KEN-B")["touched"],
+        json!(["src/b.sh", "src/n.sh"])
+    );
+}
+
 /// A live holder before its review stage that owns an open pull request,
 /// one on its head branch (its item key), is in its review: the candidate
 /// sharing its path is refused `launch-overlap` with nothing written and

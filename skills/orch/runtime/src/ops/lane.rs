@@ -1046,7 +1046,7 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
 /// The account's room: a
 /// launch that asks (`judge_account`) and names an account `agent-runtime
 /// accounts` measures is judged on that account's projection through the accounts
-/// judge, with the charge of the lane this relaunch replaces, its own
+/// judge, under the host the request names, else the fleet's, with the charge of the lane this relaunch replaces, its own
 /// record, left out, since the relaunch takes that record's slot (its
 /// reservation goes with the relaunch patch): a replacement adds no lane.
 /// A launch with no record is judged fresh. A host built without the
@@ -1081,7 +1081,18 @@ fn room(
         projected: true,
         ..PickRequest::new(harness)
     };
-    match accounts::pick_fleet(settings, path, host, None, replaces, &request, env.now_secs) {
+    // Judged where the lane will run: the host the request names, `local`
+    // included, so a cloud session meets the cloud rule on any fleet.
+    let lane_host = r.host.as_deref().filter(|h| !h.is_empty());
+    match accounts::pick_fleet(
+        settings,
+        path,
+        host,
+        lane_host,
+        replaces,
+        &request,
+        env.now_secs,
+    ) {
         PickAnswer::Lane(_) | PickAnswer::NoRecord => Ok(()),
         PickAnswer::Walled(judged) => {
             let record = judged.record();
