@@ -587,7 +587,7 @@ environment_producer() { # command kind
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
-      printenv | export | declare | typeset | set | systemctl | ps | systemd-analyze | busctl | gdbus | dbus-send | cat | tr | strings)
+      printenv | export | declare | typeset | set | systemctl | tmux | ps | systemd-analyze | busctl | gdbus | dbus-send | cat | tr | strings)
         for ((j=pos; j<${#args[@]}; j++)); do
           [ "${arg_kinds[$j]}" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
         done ;;
@@ -667,6 +667,53 @@ environment_producer() { # command kind
           done
         elif systemctl_environment; then mode=dump-unknown
         fi ;;
+      tmux)
+        # tmux.c:getopt owns global arities; cmd-show-environment.c declares
+        # show-environment/showenv [-hgs] [-t target-session] [variable].
+        # https://github.com/tmux/tmux/blob/master/cmd-show-environment.c
+        local tmux_global_re='^-[2CDdhlNquUvV]+$' tmux_option_re='^-[ghs]*(t.*)?$' tmux_target
+        j=$pos
+        while [ "$j" -lt "${#args[@]}" ]; do
+          value=${args[$j]}
+          [ "${arg_kinds[$j]}" = literal ] || { mode=dump-unknown; return; }
+          case "$value" in
+            --) j=$((j + 1)); break ;;
+            -f | -L | -S | -T)
+              j=$((j + 1))
+              [ "${arg_kinds[$j]:-}" = literal ] || { mode=dump-unknown; return; } ;;
+            -f?* | -L?* | -S?* | -T?*) ;;
+            -*) [[ $value =~ $tmux_global_re ]] || { mode=dump-unknown; return; } ;;
+            *) break ;;
+          esac
+          j=$((j + 1))
+        done
+        case "${args[$j]:-}" in
+          show-environment | showenv)
+            mode=dump-lines; named=""; options_ended=""
+            for ((j=j+1; j<${#args[@]}; j++)); do
+              value=${args[$j]}
+              [ "${arg_kinds[$j]}" = literal ] || { mode=dump-unknown; return; }
+              if [ -z "$options_ended" ]; then
+                case "$value" in
+                  --) options_ended=1; continue ;;
+                  -*)
+                    [[ $value =~ $tmux_option_re ]] || { mode=dump-unknown; return; }
+                    tmux_target=${BASH_REMATCH[1]:-}
+                    # -s emits shell statements, not proven NAME=value rows.
+                    case "${value%%t*}" in *s*) mode=dump-unknown ;; esac
+                    if [ "$tmux_target" = t ]; then
+                      j=$((j + 1))
+                      [ "${arg_kinds[$j]:-}" = literal ] || { mode=dump-unknown; return; }
+                    fi
+                    continue ;;
+                esac
+              fi
+              if [ "$j" -eq "$((${#args[@]} - 1))" ] && [[ $value =~ $name_re ]]; then named=1
+              else mode=dump-unknown; return
+              fi
+            done
+            if [ -n "$named" ]; then mode=clean; fi ;;
+        esac ;;
       ps) if ps_environment; then mode=dump-unknown; fi ;;
       systemd-analyze)
         for ((j=pos; j<${#args[@]}; j++)); do [ "${args[$j]}" != dump ] || mode=dump-unknown; done ;;
@@ -760,7 +807,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
 # else and grants no permission.
 environment_main_evidence() {
   local value evidence continuation=$'\\\n'
-  local opaque_re='(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|set|show-environment)([^A-Za-z0-9_.-]|$)|/proc/[^[:space:]]*/environ'
+  local opaque_re='(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|set|show-environment|showenv)([^A-Za-z0-9_.-]|$)|/proc/[^[:space:]]*/environ'
   for value in "$@"; do
     evidence=${value//"$continuation"/}
     evidence=${evidence//[\'\"\\]/}
