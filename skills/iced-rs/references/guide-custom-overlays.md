@@ -1,22 +1,22 @@
 # Building Custom Overlays
 
-Overlays render on top of the normal widget tree — tooltips, popovers, context menus, modals, drop-down lists.
+Read when implementing a floating layer that the built-in widgets cannot express. An overlay has its own layout pass above the normal widget tree.
 
 **Read order**: this guide → `advanced-overlay.md` → `advanced-widget.md` (for the `overlay()` method on `Widget`).
 
-## First rule: prefer built-in widgets
+## Built-ins
 
-Custom overlays are the #1 source of `container.rs: unwrap on None` panics. Before implementing `Overlay`, check the built-ins:
+Check the built-ins before implementing `Overlay`:
 
 | You want | Use |
 |---|---|
 | A simple tooltip | `iced::widget::tooltip` |
 | A popover/menu anchored to a trigger | `iced::widget::pick_list`, `combo_box`, or `float` |
-| A modal dialog with scrim | `stack![base, opaque(scrim_and_dialog)]` — **not** a custom overlay |
+| A modal dialog with scrim | `stack![base, opaque(scrim_and_dialog)]` |
 | Drag ghost during DnD | `pin` widget + absolute positioning |
 | Context menu | `mouse_area` that opens a `float` or `stack` layer |
 
-Canonical modal: `examples/modal/src/main.rs` (`stack` + `opaque`, no custom overlay).
+Use the [modal example](../examples/modal/src/main.rs) for the full scrim and dialog nesting.
 
 ### Modal nesting order (exact — do not rearrange)
 
@@ -25,7 +25,7 @@ Copy this exactly:
 ```
 stack![
     base_content,                              // layer 0: the app behind the modal
-    opaque(                                    // layer 1: OUTER opaque — blocks ALL events
+    opaque(                                    // layer 1: outer opaque captures in-bounds mouse presses
         mouse_area(                            //   scrim click target
             center(                            //   center the dialog
                 opaque(                        //   INNER opaque — stops dialog clicks
@@ -42,8 +42,8 @@ stack![
 
 - Missing outer `opaque` → base content receives clicks through the scrim
 - Missing inner `opaque` → clicking inside the dialog dismisses it
-- `opaque` wrapping the entire stack layer instead of just the scrim → keyboard events blocked while modal is closed
-- `mouse_area` outside `opaque` → event ordering breaks
+- Keep the opaque scrim in the open modal layer. The outer wrapper captures in-bounds mouse presses after forwarding to its content.
+- Keep the scrim’s `mouse_area` inside the outer `opaque`. The outer wrapper would otherwise capture the press before the scrim handler receives it.
 
 **All close paths must call the same handler.** Extract one helper:
 
@@ -61,46 +61,13 @@ Message::EscapePressed => self.close_modal(),
 
 If none of those fit (viewport-aware positioning, non-rectangular shapes, complex animation), keep reading.
 
-## The Overlay trait
+## Overlay API
 
-`Widget::overlay()` returning `Some(Element)` gives the overlay its own layout and draw pass after the normal tree.
-
-```rust
-pub trait Overlay<Message, Theme, Renderer>
-where
-    Renderer: Renderer,
-{
-    // Required
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node;
-    fn draw(
-        &self,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &Style,
-        layout: Layout<'_>,
-        cursor: Cursor,
-    );
-
-    // Provided
-    fn update(/* &Event by ref, no viewport arg */) { ... }
-    fn operate(...) { ... }
-    fn mouse_interaction(...) -> Interaction { ... }
-    fn overlay<'a>(...) -> Option<Element<'a, ...>> { ... }
-    fn index(&self) -> f32 { 1.0 }
-}
-```
-
-Key differences from `Widget`:
-
-- `layout()` takes `Size` (not `Limits`)
-- `draw()` and `update()` have no `viewport` parameter
-- No `size()` — overlays aren't slotted into parent layouts
-
-Full API: `advanced-overlay.md`.
+See the [`Overlay` trait and `from_children`](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/overlay.rs) and [advanced-overlay.md](advanced-overlay.md). `layout()` takes a `Size`. The overlay has no `size()` method, and its `draw()` and `update()` methods have no viewport parameter.
 
 ## The custom overlay contract — MUST follow
 
-Violating the contract panics in `container.rs` (`unwrap() on None`, missing child layout node).
+Pair each forwarded child with its own Tree entry and the layout produced for that child. A missing child layout can panic when a composite widget expects one.
 
 ### 1. `children()` returns a **fixed count**
 
@@ -142,11 +109,13 @@ fn diff(&self, tree: &mut Tree) {
 }
 ```
 
-### 3. `layout()` produces nodes matching `children()`
+### 3. Lay out the child each pass forwards
 
-Same count, same order.
+Lay out the anchor in the base pass. Lay out the popup in the overlay pass.
 
-### 4. `draw()` walks the same tree as `layout()`
+### 4. Forward the corresponding Tree entry and layout
+
+Use each child’s own state and layout when forwarding `draw()` or other widget methods.
 
 ### 5. Invalidate layout when overlay visibility changes
 
@@ -156,14 +125,14 @@ When `Widget::overlay()` transitions between `Some` and `None`, call `shell.inva
 Event::Mouse(mouse::Event::CursorEntered) => {
     if !state.show_overlay {
         state.show_overlay = true;
-        shell.invalidate_layout();  // REQUIRED — popup layout nodes go stale otherwise
+        shell.invalidate_layout();  // refresh layout and overlay placement
     }
 }
 ```
 
-## The viewport rule — the most important thing
+## Overlay viewport
 
-**Pass `Rectangle::INFINITE` as viewport to all descendant `Widget` calls from inside an overlay, never the stored viewport from the parent's `overlay()`.** Inherited clips make text invisible under `iced_wgpu`'s scissor.
+In this pattern, pass `Rectangle::INFINITE` as the viewport to descendant `Widget` calls from the overlay. An inherited parent viewport can clip overlay content outside the parent’s bounds.
 
 Exception: `Overlay::layout()` may use `bounds: Size` for its own coordinate space.
 
@@ -191,7 +160,7 @@ impl<'a, Message, Theme, Renderer> iced::advanced::overlay::Overlay<Message, The
             renderer,
             clipboard,
             shell,
-            &Rectangle::INFINITE,  // NOT self.viewport
+            &Rectangle::INFINITE,
         );
     }
 }
@@ -210,7 +179,7 @@ fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
     let below_y = self.anchor_bounds.y + self.anchor_bounds.height + SPACING;
 
     let y = if above_y >= 0.0 {
-        above_y
+        above_y.min((bounds.height - popup_size.height).max(0.0))
     } else if below_y + popup_size.height <= bounds.height {
         below_y
     } else {
@@ -221,7 +190,7 @@ fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
     // Horizontal: clamp to viewport edges
     let x = (self.anchor_bounds.x + self.anchor_bounds.width * 0.5 - popup_size.width * 0.5)
         .max(0.0)
-        .min(bounds.width - popup_size.width);
+        .min((bounds.width - popup_size.width).max(0.0));
 
     Node::new(popup_size).move_to(Point::new(x, y))
 }
@@ -229,7 +198,7 @@ fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> Node {
 
 ### Follow through scrollables
 
-`translation` in `Widget::overlay()` is the accumulated parent translation (from scrollables). Offset the remembered anchor by it:
+`translation` in `Widget::overlay()` is the accumulated parent translation (from scrollables). Offset the laid-out anchor by it:
 
 ```rust
 fn overlay<'a>(
@@ -275,17 +244,17 @@ fn overlay<'a>(
 }
 ```
 
-Unforwarded child overlays are the usual cause of tooltips/popovers inside composite widgets never appearing.
+If a child tooltip or popover does not appear, check that the composite forwards the child’s overlay.
 
 ## Copy-paste overlay template
 
-Copy this skeleton verbatim. Do NOT restructure the tree shape.
+Copy this template and keep the two-child tree shape.
 
 ```rust
-use iced::advanced::layout::{self, Layout, Limits, Node};
+use iced::advanced::layout::{Layout, Limits, Node};
 use iced::advanced::overlay;
 use iced::advanced::renderer;
-use iced::advanced::widget::{self, Widget, tree};
+use iced::advanced::widget::{self, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Vector, mouse};
 
@@ -296,13 +265,6 @@ pub struct WithOverlay<'a, Message, Theme, Renderer> {
     show: bool,
 }
 
-// ── State ────────────────────────────────────────────────────────────
-#[derive(Default)]
-struct State {
-    anchor_bounds: Rectangle,
-}
-
-// ── Widget impl ──────────────────────────────────────────────────────
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for WithOverlay<'a, Message, Theme, Renderer>
 where
@@ -318,25 +280,17 @@ where
 
     // ALWAYS diff both children regardless of `show`
     fn diff(&self, tree: &mut widget::Tree) {
-        tree.diff_children(&[&self.anchor as &dyn Widget<_, _, _>,
-                             &self.content as &dyn Widget<_, _, _>]);
+        tree.diff_children(&[&self.anchor, &self.content]);
     }
-
-    fn tag(&self) -> tree::Tag { tree::Tag::of::<State>() }
-    fn state(&self) -> tree::State { tree::State::new(State::default()) }
 
     fn size(&self) -> Size<Length> { self.anchor.as_widget().size() }
 
     fn layout(&mut self, tree: &mut widget::Tree, renderer: &Renderer,
               limits: &Limits) -> Node {
         // Layout ONLY the anchor here; content is laid out in the overlay pass
-        let node = self.anchor.as_widget_mut().layout(
+        self.anchor.as_widget_mut().layout(
             &mut tree.children[0], renderer, limits,
-        );
-        // Remember anchor bounds for overlay positioning
-        tree.state.downcast_mut::<State>().anchor_bounds =
-            Rectangle::new(Point::ORIGIN, node.size());
-        node
+        )
     }
 
     fn draw(&self, tree: &widget::Tree, renderer: &mut Renderer, theme: &Theme,
@@ -366,13 +320,12 @@ where
     }
 
     fn overlay<'b>(&'b mut self, tree: &'b mut widget::Tree,
-                   layout: Layout<'b>, renderer: &Renderer,
-                   viewport: &Rectangle, translation: Vector,
+                   layout: Layout<'b>, _renderer: &Renderer,
+                   _viewport: &Rectangle, translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         if !self.show { return None; }
 
-        let state = tree.state.downcast_ref::<State>();
-        let anchor = state.anchor_bounds + translation;
+        let anchor = layout.bounds() + translation;
 
         Some(overlay::Element::new(Box::new(ContentOverlay {
             content: &mut self.content,
@@ -397,7 +350,7 @@ where
 {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
         let limits = Limits::new(Size::ZERO, bounds);
-        let mut node = self.content.as_widget_mut().layout(
+        let node = self.content.as_widget_mut().layout(
             self.tree, renderer, &limits,
         );
 
@@ -405,15 +358,18 @@ where
         let popup_h = node.size().height;
         let above_y = self.anchor.y - popup_h - 4.0;
         let below_y = self.anchor.y + self.anchor.height + 4.0;
-        let y = if above_y >= 0.0 { above_y }
-                else if below_y + popup_h <= bounds.height { below_y }
-                else { 0.0 };
+        let y = if above_y >= 0.0 {
+            above_y.min((bounds.height - popup_h).max(0.0))
+        } else if below_y + popup_h <= bounds.height {
+            below_y
+        } else {
+            0.0
+        };
         let x = (self.anchor.center_x() - node.size().width * 0.5)
             .max(0.0)
-            .min(bounds.width - node.size().width);
+            .min((bounds.width - node.size().width).max(0.0));
 
-        node = node.move_to(Point::new(x, y));
-        node
+        node.move_to(Point::new(x, y))
     }
 
     fn draw(&self, renderer: &mut Renderer, theme: &Theme,
@@ -447,9 +403,9 @@ where
 **Rigid (the overlay contract — never change):**
 
 - `children()` returns exactly 2, always, regardless of `show`
-- `diff()` reconciles both children every frame
+- `diff()` reconciles both children when the runtime rebuilds the widget tree
 - `overlay()` switches on `show` → `Some`/`None`, never changes child count
-- All descendant calls pass `&Rectangle::INFINITE`
+- Overlay descendant calls that take a viewport pass `&Rectangle::INFINITE`
 
 **Customizable:**
 
@@ -460,7 +416,7 @@ where
 - **Multiple overlays** — `overlay::Group::with_children(vec![...]).overlay()`
 - **Z-index** — `Overlay::index()` (default 1.0)
 
-**The tree shape stays identical regardless of use case.**
+The anchor and popup keep their Tree entries through visibility changes.
 
 ## Testing your overlay
 

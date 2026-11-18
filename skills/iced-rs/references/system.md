@@ -1,47 +1,14 @@
 # System
 
-> `iced::system` · iced 0.14.0 · feature = `sysinfo`
+> `iced::system` · iced 0.14.0
 
-Retrieves system information: OS, CPU, memory, and graphics adapter details. Returns a `Task` that resolves to an `Information` struct.
+Enable `sysinfo` to query the operating system, processor, memory, and graphics adapter through an `Information` task.
+
+Read when displaying system information or choosing the system theme.
 
 ## API
 
-### Functions
-
-```rust
-/// Retrieves available system information.
-pub fn information() -> Task<Information>;
-```
-
-### `Information` struct
-
-```rust
-pub struct Information {
-    pub system_name: Option<String>,
-    pub system_kernel: Option<String>,
-    pub system_version: Option<String>,
-    pub system_short_version: Option<String>,
-    pub cpu_brand: String,
-    pub cpu_cores: Option<usize>,
-    pub memory_total: u64,
-    pub memory_used: Option<u64>,
-    pub graphics_backend: String,
-    pub graphics_adapter: String,
-}
-```
-
-Field descriptions:
-
-- **`system_name`** -- OS name (e.g., "Linux", "macOS", "Windows").
-- **`system_kernel`** -- Kernel version string.
-- **`system_version`** -- Long version (e.g., "Ubuntu 24.04 LTS").
-- **`system_short_version`** -- Short version number.
-- **`cpu_brand`** -- Detailed CPU model string.
-- **`cpu_cores`** -- Physical core count.
-- **`memory_total`** -- Total RAM in bytes.
-- **`memory_used`** -- Memory used by this process in bytes.
-- **`graphics_backend`** -- Rendering backend (e.g., "wgpu (Vulkan)").
-- **`graphics_adapter`** -- GPU model string.
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/runtime/src/system.rs) for signatures and available types.
 
 ## Patterns
 
@@ -77,7 +44,7 @@ fn view_about(info: &system::Information) -> Element<'_, Message> {
             info.cpu_brand,
             info.cpu_cores.unwrap_or(0)
         ),
-        text!("RAM: {} MB", info.memory_total / 1_048_576),
+        text!("RAM: {} MiB", info.memory_total / 1_048_576),
         text!("GPU: {}", info.graphics_adapter),
         text!("Backend: {}", info.graphics_backend),
     ]
@@ -88,8 +55,8 @@ fn view_about(info: &system::Information) -> Element<'_, Message> {
 
 ## Gotchas
 
-- Requires the `sysinfo` crate feature. Without it, the `iced::system` module is not available.
-- `information()` returns a `Task`, not a direct value. It must be returned from `boot` or `update`.
+- Requires the `sysinfo` crate feature. Without it, `Information` and `information()` are unavailable; system theme APIs remain available.
+- Return the task from `boot` or `update` so the runtime can run it.
 - `memory_used` is the memory used by the current process, not total system memory usage.
 - Some fields are `Option` -- they may be `None` on platforms where the information is unavailable.
 

@@ -4,42 +4,17 @@
 
 Touch input events for multi-touch devices. Each touch point is identified by a unique `Finger` ID and carries a position.
 
+Read when tracking contacts in a custom widget or subscribing to touch events.
+
 ## API
 
-### `Event` enum
-
-```rust
-pub enum Event {
-    FingerPressed {
-        id: Finger,
-        position: Point,
-    },
-    FingerMoved {
-        id: Finger,
-        position: Point,
-    },
-    FingerLifted {
-        id: Finger,
-        position: Point,
-    },
-    FingerLost {
-        id: Finger,
-        position: Point,
-    },
-}
-```
-
-### `Finger` struct
-
-```rust
-pub struct Finger(pub u64);
-```
-
-A unique identifier for a touch point. The runtime assigns this when a finger makes contact and reuses it across `FingerMoved` and `FingerLifted` events for the same contact.
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/touch.rs) for signatures and available types.
 
 ## Patterns
 
 ### Handle touch in a custom widget
+
+Keep `active_finger: Option<touch::Finger>` in the widget's tree state. Use a matching `tag()` and `state()` constructor for `TouchState`; the update fragment below accesses that state.
 
 ```rust
 use iced::touch;
@@ -50,35 +25,38 @@ fn update(
     tree: &mut Tree,
     event: &Event,
     layout: Layout<'_>,
-    cursor: Cursor,
+    _cursor: Cursor,
     _renderer: &Renderer,
     _clipboard: &mut dyn Clipboard,
     shell: &mut Shell<'_, Message>,
     _viewport: &Rectangle,
 ) {
+    let state = tree.state.downcast_mut::<TouchState>();
+
     if let Event::Touch(touch_event) = event {
         match touch_event {
             touch::Event::FingerPressed { id, position } => {
-                if layout.bounds().contains(*position) {
-                    self.active_finger = Some(*id);
+                if state.active_finger.is_none() && layout.bounds().contains(*position) {
+                    state.active_finger = Some(*id);
                     shell.publish(Message::TouchStart(*position));
                     shell.capture_event();
                 }
             }
             touch::Event::FingerMoved { id, position } => {
-                if self.active_finger == Some(*id) {
+                if state.active_finger == Some(*id) {
                     shell.publish(Message::TouchMove(*position));
                 }
             }
             touch::Event::FingerLifted { id, .. } => {
-                if self.active_finger == Some(*id) {
-                    self.active_finger = None;
+                if state.active_finger == Some(*id) {
+                    state.active_finger = None;
                     shell.publish(Message::TouchEnd);
                 }
             }
             touch::Event::FingerLost { id, .. } => {
-                if self.active_finger == Some(*id) {
-                    self.active_finger = None;
+                if state.active_finger == Some(*id) {
+                    state.active_finger = None;
+                    shell.publish(Message::TouchCanceled);
                 }
             }
         }
@@ -89,7 +67,7 @@ fn update(
 ### Filter touch events globally
 
 ```rust
-use iced::event::{self, Event, Status};
+use iced::event::{self, Event};
 use iced::touch;
 
 event::listen_with(|event, _status, _id| {
@@ -103,9 +81,9 @@ event::listen_with(|event, _status, _id| {
 
 ## Gotchas
 
-- `FingerLost` fires when the system loses track of a finger (e.g., the finger moves outside the touchscreen boundary). Treat it like `FingerLifted` for cleanup.
+- `FingerLost` reports cancellation. Clear the active contact as on `FingerLifted`, and send a cancellation message if the app owns gesture state.
 - Touch events and mouse events are separate. A touch may also generate synthetic mouse events on some platforms. Handle both if needed.
-- `Finger(u64)` IDs are opaque and platform-assigned. Do not assume sequential numbering.
+- Use `Finger` IDs to match contact events. Use no assumptions about their numeric order.
 - Multi-touch requires tracking multiple `Finger` IDs simultaneously. Use a `HashMap<Finger, Point>` for multi-finger gestures.
 
 ## See also

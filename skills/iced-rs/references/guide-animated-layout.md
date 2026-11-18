@@ -4,7 +4,7 @@ Patterns for animating custom widgets between collapsed and expanded states: mea
 
 **Read order**: `animation.md` → this guide → `guide-custom-widgets.md` → `advanced-tree.md` → `advanced-layout.md`.
 
-**When to read**: before any animated expand/collapse, reorderable layered view, floating panel, toast, or variable-height animated list.
+Read before implementing an animated expand/collapse, reorderable layered view, floating panel, toast, or variable-height animated list.
 
 ## Measured positions over estimated heights
 
@@ -32,7 +32,7 @@ fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> N
     let mut y = 0.0;
 
     for (i, child) in self.children.iter_mut().enumerate() {
-        let child_node = child.layout(&mut tree.children[i], renderer, &child_limits);
+        let child_node = child.as_widget_mut().layout(&mut tree.children[i], renderer, &child_limits);
         let measured_height = child_node.bounds().height;
 
         state.items[i].expanded_y = y;
@@ -57,7 +57,6 @@ fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> N
 
 ```rust
 // Tree state for the transition
-#[derive(Default)]
 struct CollapseState {
     expanded: Animation<bool>,
     items: Vec<ItemGeometry>,
@@ -79,9 +78,7 @@ impl ItemGeometry {
 fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
     let state = tree.state.downcast_ref::<CollapseState>();
     let now = /* current Instant */;
-    let t = state.expanded.interpolate_with(
-        |b| if *b { 1.0 } else { 0.0 }, now,
-    );
+    let t = state.expanded.interpolate(0.0_f32, 1.0_f32, now);
 
     for (i, (child, child_tree)) in self.children.iter()
         .zip(tree.children.iter())
@@ -89,7 +86,7 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
     {
         let y = state.items[i].y_at(t);
         renderer.with_translation(Vector::new(0.0, y), |renderer| {
-            child.draw(child_tree, renderer, /* ... */);
+            child.as_widget().draw(child_tree, renderer, /* ... */);
         });
     }
 }
@@ -97,13 +94,13 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
 
 ### What to avoid
 
-**Duplicated animated trees in a `stack`.** Do not crossfade a full collapsed tree and a full expanded tree. Both trees receive events, identity is duplicated in `diff()`, and the crossfade shows overlap artifacts.
+**Duplicated animated trees in a `stack`.** Do not crossfade a full collapsed tree and a full expanded tree. Both branches carry their own child state and event handlers. If both branches draw the same content during the crossfade, their visuals overlap.
 
 ```rust
 // BAD: two full trees crossfading
 stack![
-    container(collapsed_list).opacity(1.0 - t),  // full tree with event handlers
-    container(expanded_list).opacity(t),           // duplicate tree, duplicate events
+    collapsed_list, // full list with event handlers
+    expanded_list,  // second full list with its own state and handlers
 ]
 
 // GOOD: one tree, interpolated positions
@@ -111,7 +108,7 @@ my_animated_list(items)
     .expanded(self.is_expanded)  // single source of truth
 ```
 
-**Branch-swap.** Do not use `if expanded { expanded_view() } else { collapsed_view() }`: the view pops, the tree shape change resets persistent state, and it violates `../SKILL.md` § "Widget tree consistency".
+**Branch-swap.** Do not use `if expanded { expanded_view() } else { collapsed_view() }`: the view pops, changing widget tags can reset persistent state, and it violates `../SKILL.md` § "Widget tree consistency".
 
 ```rust
 // BAD: branch swap — pops, loses state
@@ -139,9 +136,9 @@ Iterating `self.children[sorted_indices[i]]` against Tree children stored in ins
 
 Options:
 
-1. **Use `keyed::Column`** for list presentations — it diffs by key, not position. See `widget-lazy-keyed.md`.
+1. **Use `keyed::Column`** for list insertions or removals the keyed reconciliation supports. It does not reorder Tree entries for a same-length permutation. See `widget-lazy-keyed.md`.
 2. **Maintain a stable key→index mapping** in Tree state. When reordering visually, reorder draw calls (not child indices).
-3. **Use `Tree::diff_children_custom`** with key-aware reconciliation when items are added, removed, or reordered. See `advanced-tree.md`.
+3. **Use `Tree::diff_children_custom`** for a composite with custom reconciliation. The helper visits children by position. Arrange the Tree entries by key yourself before reconciling reordered children. See `advanced-tree.md`.
 
 ```rust
 // GOOD: stable Tree child order, reordered draw calls
@@ -152,7 +149,7 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
     for &draw_index in &state.visual_order {
         let child = &self.children[draw_index];
         let child_tree = &tree.children[draw_index];
-        child.draw(child_tree, renderer, /* ... */);
+        child.as_widget().draw(child_tree, renderer, /* ... */);
     }
 }
 ```
@@ -198,9 +195,7 @@ During a transition, the reported layout size and clipping region must match the
 fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
     let state = tree.state.downcast_mut::<CollapseState>();
     let now = Instant::now();
-    let t = state.expanded.interpolate_with(
-        |b| if *b { 1.0 } else { 0.0 }, now,
-    );
+    let t = state.expanded.interpolate(0.0_f32, 1.0_f32, now);
 
     let collapsed_height = self.collapsed_height();
     let expanded_height = self.measure_expanded_height(tree, renderer, limits);
@@ -228,7 +223,7 @@ fn draw(&self, tree: &Tree, renderer: &mut Renderer, /* ... */) {
     renderer.with_layer(clip, |renderer| {
         // Draw children — only visible within clip bounds
         for (child, child_tree) in self.children.iter().zip(tree.children.iter()) {
-            child.draw(child_tree, renderer, /* ... */);
+            child.as_widget().draw(child_tree, renderer, /* ... */);
         }
     });
 }
@@ -262,5 +257,5 @@ If content is visible below where it should be during collapse:
 - `advanced-tree.md` — Tree state, Tag, `diff_children_custom`
 - `advanced-layout.md` — `layout::Node`, `Limits`
 - `widget-lazy-keyed.md` — `keyed::Column` for key-based diffing
-- `examples/toast/src/main.rs` — animated overlay with lifecycle, entry/exit
-- `examples/loading_spinners/src/circular.rs` — custom Widget with Tree-state animation loop
+- [Toast example](../examples/toast/src/main.rs) for a notification overlay with timeout and dismissal
+- [Circular spinner](../examples/loading_spinners/src/circular.rs) for a custom Widget with a Tree-state animation loop

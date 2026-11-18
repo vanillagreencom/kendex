@@ -1,6 +1,6 @@
 # Surface Selection
 
-For **trading charts or dense visualizations** (>1000 primitives/frame), use Shader + Canvas overlay hybrid. If a chart-specific skill is available, load it — it supersedes Q3 below.
+Read when choosing the Iced drawing or interaction surface. For **trading charts or dense visualizations** (>1000 primitives/frame), use a Shader with a Canvas overlay. Load the chart-specific skill when available. Its guidance supersedes Q3.
 
 ## The five surfaces
 
@@ -16,7 +16,7 @@ For **trading charts or dense visualizations** (>1000 primitives/frame), use Sha
 
 ### Q1: Standard UI composition (buttons, forms, layouts)?
 
-**Yes** → built-in widgets + `.style(closure)` for custom colors/borders/spacing. Do not write custom widgets.
+**Yes** → built-in widgets + `.style(closure)` for custom colors and borders. Set spacing with layout builders. Do not write custom widgets.
 
 **No** → Q2.
 
@@ -30,7 +30,7 @@ For **trading charts or dense visualizations** (>1000 primitives/frame), use Sha
 
 **Trading chart or dense market-data visualization → Shader + Canvas overlay hybrid. Load a chart-specific skill if available.**
 
-For non-chart visual surfaces:
+Use the following thresholds as this guide’s selection rules for non-chart visuals:
 
 Use **Canvas** when:
 
@@ -88,11 +88,12 @@ Only implement `iced::advanced::overlay::Overlay` when none fit. See `guide-cust
 | `custom_quad` | `iced::advanced::Widget` | Custom rounded-quad |
 | `geometry` | `iced::advanced::Widget` + `Mesh2D` | Mesh drawing |
 | `bezier_tool`, `clock`, `color_palette`, `solar_system`, `the_matrix`, `game_of_life`, `sierpinski_triangle` | `canvas::Program` | 2D drawing fits Canvas cleanly |
-| `loading_spinners`, `arc` | Custom Widget + `canvas::Cache` | Animated arcs; loading_spinners is the canonical smooth-arc pattern |
-| `loupe` | Custom Widget + overlay | Hover-triggered transform overlay |
-| `toast` | Subscription + animated overlay | Notification lifecycle + composite widget with overlay |
+| `loading_spinners` | Custom Widget + `canvas::Cache` | Animated arcs with a Tree-state animation loop |
+| `arc` | `canvas::Program` + `window::frames` | Animate a Canvas arc on window redraws |
+| `loupe` | Custom Widget | Clip and transform drawing around the cursor |
+| `toast` | Composite Widget + Overlay | Position notifications and dismiss them on timeout |
 | `modal` | `stack` + `opaque` | Modal dialog without custom Overlay |
-| `pane_grid` | `pane_grid` built-in | Docking layout |
+| `pane_grid` | `pane_grid` built-in | Resizable, draggable panes |
 
 ## Quick rules
 

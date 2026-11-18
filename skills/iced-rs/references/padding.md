@@ -2,48 +2,13 @@
 
 > `iced::Padding` · iced 0.14.0
 
-Per-side box spacing. Accepts scalar (uniform), `[v, h]`, `[t, r, b, l]`, or a `Padding` struct via `impl Into<Padding>`.
+Per-side box spacing. Accepts scalar (uniform), `[v, h]`, or a `Padding` struct via `impl Into<Padding>`.
+
+Read when setting a widget’s inner spacing or calculating available content space.
 
 ## API
 
-```rust
-pub struct Padding {
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
-    pub left: f32,
-}
-
-impl Padding {
-    pub const ZERO: Padding;
-
-    pub const fn new(padding: f32) -> Padding;
-
-    pub fn top(self, top: impl Into<Pixels>) -> Padding;
-    pub fn right(self, right: impl Into<Pixels>) -> Padding;
-    pub fn bottom(self, bottom: impl Into<Pixels>) -> Padding;
-    pub fn left(self, left: impl Into<Pixels>) -> Padding;
-
-    pub fn horizontal(self, horizontal: impl Into<Pixels>) -> Padding;
-    pub fn vertical(self, vertical: impl Into<Pixels>) -> Padding;
-
-    pub fn x(&self) -> f32;
-    pub fn y(&self) -> f32;
-
-    pub fn fit(&self, inner: Size, outer: Size) -> Padding;
-}
-```
-
-- **`ZERO`** — The `Padding::ZERO` constant.
-- **`new(f32)`** — Creates equal padding on all four sides.
-- **`top(..)` / `right(..)` / `bottom(..)` / `left(..)`** — Builder methods that replace one side and return the modified `Padding`.
-- **`horizontal(..)`** — Sets both `left` and `right`.
-- **`vertical(..)`** — Sets both `top` and `bottom`.
-- **`x()`** — Returns the total horizontal padding (`left + right`).
-- **`y()`** — Returns the total vertical padding (`top + bottom`).
-- **`fit(inner, outer)`** — Adjusts the padding so an inner size fits inside an outer size.
-
-From impls: `From<f32>` (uniform), `From<[f32; 2]>` (`[v, h]`), `From<[f32; 4]>` (`[t, r, b, l]`).
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/padding.rs) for signatures and available types.
 
 ## Patterns
 
@@ -83,16 +48,16 @@ Typical widget use:
 ```rust
 container(content).padding(20)             // uniform 20px
 container(content).padding([10, 20])       // 10 top/bottom, 20 left/right
-container(content).padding([5, 10, 15, 20]) // t/r/b/l
+container(content).padding(Padding { top: 5.0, right: 10.0, bottom: 15.0, left: 20.0 })
 container(content).padding(Padding::ZERO)  // no padding
 ```
 
 ## Gotchas
 
 - **`Padding::from([v, h])` is vertical-first**, matching CSS shorthand. Don't confuse with `[top, left]`.
-- `Padding::from([t, r, b, l])` is **clockwise from top**, matching CSS.
+- Four-side array conversion is unavailable. Set named fields for four different sides.
 - `x()` and `y()` return **totals**, not averages — use them to compute available content area: `content_width = bounds.width - padding.x()`.
-- Padding fields are `f32`, not `u16` — sub-pixel padding is allowed but can cause blurry borders. Keep them integer for crisp rendering.
+- Padding is in logical pixels and accepts fractions. Check alignment after scaling to physical pixels if a border needs to be sharp.
 - The builder methods (`top`, `right`, etc.) take `impl Into<Pixels>`, so you can pass either a scalar or a `Pixels` type.
 - No `Padding::symmetric(v, h)` helper -- use `Padding::from([v, h])` or builder methods.
 

@@ -1,10 +1,8 @@
 # Animation
 
-Framework-level animation rules for Iced 0.14. Covers redraw scheduling, layout invalidation, and the two animation primitives (`iced::Animation<T>` and hand-rolled Instant math).
+Read when implementing an Iced animation. Choose invalidation based on whether each step changes layout geometry.
 
 ## The two invalidation modes
-
-Every animating widget falls into one of two buckets.
 
 ### Paint-only animation
 
@@ -16,7 +14,7 @@ if state.animation.is_animating(now) {
 }
 ```
 
-That's it. One call per frame. No `invalidate_layout`.
+Request another redraw while the paint-only animation is active.
 
 ### Layout-affecting animation
 
@@ -29,15 +27,13 @@ if state.animation.is_animating(now) {
 }
 ```
 
-**Diagnostic**: "only updates on the second click" → add `invalidate_layout()` to the state-flip handler.
+If geometry updates on a second click, check whether the first state change invalidates layout.
 
-### Why it matters
+The [runtime user interface](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/runtime/src/user_interface.rs) keeps the computed layout. Invalidate it when a widget changes geometry between view builds to avoid painting with stale bounds.
 
-`iced_wgpu` caches layout per widget tree. Without invalidation, iced repaints at the new visual state but positions using old layout bounds. Result: overlap, clipping, dead space. Symptom: visuals "jump" on the second interaction, rubber-band back, or leave ghost trails.
+## Redraw vs rebuild
 
-## Redraw vs rebuild — critical invariant
-
-`request_redraw()` repaints the current widget tree. It does **not** call `view()` to rebuild widget structs.
+A redraw request on its own uses the existing widget tree. Messages published during redraw handling and widget invalidation can cause a view rebuild.
 
 | State location | Redraw behavior | Correct for animation? |
 |---|---|---|
@@ -70,44 +66,36 @@ use iced::window::RedrawRequest;
 use std::time::{Duration, Instant};
 
 shell.request_redraw_at(RedrawRequest::At(
-    Instant::now() + Duration::from_millis(16)
+    Instant::now() + Duration::from_millis(16),
 ));
 ```
 
-Schedules a redraw at a specific future time. The runtime coalesces multiple `_at` requests and aligns with vsync. Use for animation loops that should tick at a specific cadence.
+Requests a redraw at the given time. The Shell keeps the earliest pending request. Use a scheduled request to ask for a later frame when no immediate redraw is needed.
 
 ### Sustaining an animation loop
 
-Animations are self-driving — the widget must keep requesting frames until complete:
+Use one redraw route per step while the animation is active:
 
 ```rust
 if let Event::Window(window::Event::RedrawRequested(now)) = event {
     let state = tree.state.downcast_mut::<State>();
     if state.animation.is_animating(*now) {
-        // Paint-only path
         shell.request_redraw();
-
-        // OR layout-affecting path
-        // shell.invalidate_layout();
-        // shell.request_redraw();
-
-        // Optional: schedule the NEXT frame at a deterministic tick
-        shell.request_redraw_at(RedrawRequest::At(
-            *now + std::time::Duration::from_millis(16)
-        ));
+        // Also call shell.invalidate_layout() when the geometry changes.
     }
 }
 ```
+
+To request a later redraw, use `request_redraw_at` in place of `request_redraw`.
 
 Stop requesting when the animation completes. Idle widgets must not pin the CPU.
 
 ## The `iced::Animation<T>` primitive
 
-Iced ships a generic animation helper for bool/f32/enum interpolation:
+Use `Animation<T>` for a bool, f32, or custom state that implements `iced::animation::Float`:
 
 ```rust
-use iced::{Animation, animation::Easing};
-use std::time::Duration;
+use iced::{Animation, animation::Easing, time::Duration};
 
 pub struct State {
     progress: Animation<bool>,  // or Animation<f32>
@@ -127,23 +115,20 @@ impl Default for State {
 ### Transitioning
 
 ```rust
-// Start transitioning toward the new target from the current interpolated value
+// Start a transition toward the new target.
 state.progress.go_mut(new_target, Instant::now());
 ```
 
-`go_mut` is the interrupt-safe version: mid-transition changes keep the current eased value and retarget from there, so rapid toggles don't snap.
+Both `go` and `go_mut` retarget from the current eased scalar progress. Use `go_mut` to update stored state in place.
 
 ### Querying
 
 ```rust
-// Is the animation still moving?
-state.progress.is_animating(Instant::now())
-
-// Interpolated value (for f32/custom)
-let v = state.progress.interpolate_with(|t| t, Instant::now());
-
+let active = state.progress.is_animating(now);
 // For Animation<bool>, interpolate between false=0 and true=1:
-let t = state.progress.interpolate_with(|b| if *b { 1.0 } else { 0.0 }, now);
+let t = state.progress.interpolate(0.0_f32, 1.0_f32, now);
+// For a separate Animation<f32>, read its current visual value:
+let v = scalar.interpolate_with(|t| t, now);
 ```
 
 ### Where to store it
@@ -154,11 +139,7 @@ For application-level state (fade-in modals, global transitions), store in `App:
 
 ## Easing
 
-`iced::animation::Easing` ships standard curves:
-
-- `Linear`
-- `EaseIn`, `EaseOut`, `EaseInOut`
-- Variants: `Quadratic`, `Cubic`, `Quartic`, `Quintic`, `Sinusoidal`, `Exponential`, `Circular`, `Back`, `Elastic`, `Bounce`
+See [animation-easing.md](animation-easing.md) for the declaration links and practical easing examples.
 
 For trading UI: `EaseInOut` for state transitions, `EaseOutCubic` for arrival animations. Avoid `Bounce`/`Elastic` on trading surfaces.
 
@@ -208,69 +189,18 @@ Hand-rolled gives you: per-frame-value inspection, arbitrary easing, custom inte
 
 | Pattern | Example |
 |---|---|
-| Minimal `Animation<bool>` + float-scale-in UI | `examples/gallery/src/main.rs` |
-| `Animation<f32>` + `RedrawRequested` loop inside a custom Widget | `examples/loading_spinners/src/circular.rs` |
-| Hand-rolled arc tween with `canvas::Cache` inside a custom Widget | `examples/arc/src/main.rs` |
-| `Subscription::time::every` driving a Canvas animation | `examples/clock/src/main.rs`, `examples/solar_system/src/main.rs` |
-| Toast notification with animated lifetime + fade-out overlay | `examples/toast/src/main.rs` |
+| `Animation<bool>` for fades and scale changes | [Gallery](../examples/gallery/src/main.rs) |
+| Custom animation state and a widget redraw loop | [Circular spinner](../examples/loading_spinners/src/circular.rs) |
+| Canvas arc driven by `window::frames` | [Arc](../examples/arc/src/main.rs) |
+| Canvas updated by `time::every` | [Clock](../examples/clock/src/main.rs) |
+| Canvas simulation driven by `window::frames` | [Solar system](../examples/solar_system/src/main.rs) |
+| Notification overlay with timeout and dismissal | [Toast](../examples/toast/src/main.rs) |
 
 Read the closest example before writing a new animation from scratch.
-
-## Easing Variants (complete list)
-
-`iced::animation::Easing` has 32 variants (31 named + 1 custom):
-
-| Variant | Category | Description |
-|---|---|---|
-| `Linear` | Linear | Constant speed, no acceleration |
-| `EaseIn` | CSS standard | Slow start (cubic-bezier) |
-| `EaseOut` | CSS standard | Slow end |
-| `EaseInOut` | CSS standard | Slow start and end |
-| `EaseInQuad` | Quadratic | Accelerate (t^2) |
-| `EaseOutQuad` | Quadratic | Decelerate |
-| `EaseInOutQuad` | Quadratic | Accelerate then decelerate |
-| `EaseInCubic` | Cubic | Accelerate (t^3) |
-| `EaseOutCubic` | Cubic | Decelerate -- good for "arrival" |
-| `EaseInOutCubic` | Cubic | Smooth state transitions |
-| `EaseInQuart` | Quartic | Accelerate (t^4) |
-| `EaseOutQuart` | Quartic | Decelerate |
-| `EaseInOutQuart` | Quartic | Accelerate then decelerate |
-| `EaseInQuint` | Quintic | Accelerate (t^5) |
-| `EaseOutQuint` | Quintic | Decelerate |
-| `EaseInOutQuint` | Quintic | Accelerate then decelerate |
-| `EaseInExpo` | Exponential | Sharp accelerate |
-| `EaseOutExpo` | Exponential | Sharp decelerate |
-| `EaseInOutExpo` | Exponential | Sharp both |
-| `EaseInCirc` | Circular | Circular accelerate |
-| `EaseOutCirc` | Circular | Circular decelerate |
-| `EaseInOutCirc` | Circular | Circular both |
-| `EaseInBack` | Back | Overshoot start |
-| `EaseOutBack` | Back | Overshoot end |
-| `EaseInOutBack` | Back | Overshoot both |
-| `EaseInElastic` | Elastic | Spring-like start |
-| `EaseOutElastic` | Elastic | Spring-like end |
-| `EaseInOutElastic` | Elastic | Spring-like both |
-| `EaseInBounce` | Bounce | Bouncing start |
-| `EaseOutBounce` | Bounce | Bouncing end |
-| `EaseInOutBounce` | Bounce | Bouncing both |
-| `Custom(fn(f32) -> f32)` | Custom | User-supplied timing function |
-
-`Easing::value(self, x: f32) -> f32` evaluates the curve at position `x` (0.0..1.0).
 
 ## Reusable animation widgets
 
 Extract a reusable animation widget when 2+ components need the same reveal/collapse behavior. The widget owns its `Animation<T>` in tree state, handles `RedrawRequested`/`invalidate_layout` internally, and exposes only `fn new(content).expanded(bool)` — callers flip a bool in `update()`.
-
-## Rules summary
-
-1. Paint-only → `request_redraw()`. Layout-affecting → `request_redraw()` + `invalidate_layout()`.
-2. Animation state lives in `widget::Tree::state` for custom widgets, not in the widget struct.
-3. Call `shell.request_redraw()` every frame an animation is moving; stop when done.
-4. Prefer `request_redraw_at` for scheduled ticks — lets the runtime coalesce redraws.
-5. Use `Animation::go_mut` (not `set`) to retarget mid-transition without snapping.
-6. If a widget "only updates on the second click," you forgot `invalidate_layout()`.
-7. Idle widgets must not request redraws — that pins the CPU.
-8. `request_redraw()` repaints the tree but does **not** call `view()`. Animation state must live in Tree state, not widget struct fields — see § "Redraw vs rebuild" above.
 
 ## See also
 

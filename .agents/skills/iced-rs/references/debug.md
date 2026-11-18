@@ -2,42 +2,25 @@
 
 > `iced::debug` · iced 0.14.0
 
-Profiling and timing utilities for iced applications. Measure execution time of code blocks and toggle the debug overlay.
+Profiling and timing utilities for iced applications. Measure execution time of code blocks. Enable the `debug` feature for native developer tools.
+
+Read when timing Iced work or using native developer tools.
 
 ## API
 
-### Functions
-
-```rust
-/// Returns a `Span` that measures execution time until dropped.
-/// Use as a scope guard: `let _span = debug::time("my_operation");`
-pub fn time(name: impl Into<String>) -> Span;
-
-/// Executes a closure, logs its execution time, and returns its result.
-pub fn time_with<T>(name: impl Into<String>, f: impl FnOnce() -> T) -> T;
-
-/// Enables the debug overlay (performance metrics, widget tree).
-pub fn enable();
-
-/// Disables the debug overlay.
-pub fn disable();
-```
-
-### `Span` struct
-
-A scope-guard type returned by `time()`. When dropped, it records the elapsed duration under the given name. The timing data is visible in the debug overlay.
+Read the [Iced 0.14.0 declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/src/lib.rs) for public exports and the [timing implementation](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/debug/src/lib.rs) for span recording.
 
 ## Patterns
 
-### Measure a code block with scope guard
+### Measure a code block
 
 ```rust
 use iced::debug;
 
 fn heavy_computation(&self) {
-    let _span = debug::time("heavy_computation");
+    let span = debug::time("heavy_computation");
     // ... work happens here ...
-    // timing recorded when `_span` is dropped
+    span.finish(); // record timing explicitly
 }
 ```
 
@@ -51,21 +34,9 @@ let result = debug::time_with("parse_data", || {
 });
 ```
 
-### Toggle debug overlay from a keyboard shortcut
+### Open the developer tools
 
-```rust
-use iced::keyboard;
-
-// In update:
-Message::ToggleDebug => {
-    if self.debug_enabled {
-        debug::disable();
-    } else {
-        debug::enable();
-    }
-    self.debug_enabled = !self.debug_enabled;
-}
-```
+With the `debug` feature on a native build, press F12 to toggle Comet. `iced::debug` exposes `time`, `time_with` and `Span`; it does not expose `enable` or `disable`. The [pinned developer-tool integration](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/devtools/src/comet.rs) owns Comet's compatible revision and installation route.
 
 ### Profile update function
 
@@ -81,28 +52,23 @@ fn update(&mut self, message: Message) -> Task<Message> {
 
 ## Dev tools
 
-| Tool | Purpose | Install |
-|---|---|---|
-| `cargo-hot` | Live UI patching | `cargo install cargo-hot` |
-| `comet` | Debugger: frame metrics, widget tree, message inspector | `cargo install --locked --git https://github.com/iced-rs/comet.git` |
+Use Comet for debug metrics. The `hot` feature enables the experimental cargo-hot integration; see the [feature declarations](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/Cargo.toml) and [cargo-hot project](https://github.com/hecrj/cargo-hot). Follow those owners for setup.
 
-`features = ["debug"]` plus F12 enables the built-in debugger. Stress-test with `ICED_PRESENT_MODE=Immediate` and `unconditional-rendering`. Measure with `iced::debug::time` and `comet` before optimizing:
+For stress testing, `ICED_PRESENT_MODE=immediate` requests immediate presentation, and `unconditional-rendering` requests rendering on runtime events. Measure before optimizing:
 
 ```rust
 fn update(&mut self, message: Message) -> Task<Message> {
-    iced::debug::time(format!("{message:?}"), || match message { /* ... */ })
+    iced::debug::time_with(format!("{message:?}"), || match message { /* ... */ })
 }
 ```
 
 ## Gotchas
 
-- `time()` returns a `Span` scope guard. You must bind it to a variable (`let _span = ...`) or it will be dropped immediately, recording zero time.
-- Timing data is only visible when the debug overlay is enabled. Call `debug::enable()` or press the built-in debug hotkey (F12 by default).
-- These are lightweight wrappers -- safe to leave in production code. They become no-ops when the debug overlay is disabled.
-- `time_with` is the simpler API when you just want to time a single expression.
+- Call `Span::finish()` to record a span. Dropping it does not finish timing.
+- `time_with` records a span around one closure and returns the closure's result on ordinary completion.
+- Timing is a no-op without debug support or on WebAssembly. Native recording also depends on the debugger's enabled state; use its UI to inspect metrics.
 
 ## See also
 
-- `application.md` -- debug overlay configuration in application settings
+- [Application setup](application.md)
 - `advanced-shell.md` -- `Shell::request_redraw` for frame timing
-- `window.md` -- window settings including debug mode
