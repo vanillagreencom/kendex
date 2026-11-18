@@ -137,7 +137,7 @@ awk '/^## Reviewer round wait$/ { section=1; next } /^## / && section { section=
 # The completion command has one owner. Execute it, rather than reproducing
 # the poll in this fixture.
 awk 'match($0, /foreground poll `[^`]+`/) { print substr($0, RSTART + 17, RLENGTH - 18); hits++ } END { if (hits != 1) exit 1 }' \
-  "$SKILL_DIR/../reviewer/SKILL.md" > "$TMP_ROOT/poll"
+  "$SKILL_DIR/../reviewer/workflows/mutation-stability.md" > "$TMP_ROOT/poll"
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/systemd-run" <<'SH'
 #!/bin/sh
