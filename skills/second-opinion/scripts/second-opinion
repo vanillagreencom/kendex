@@ -200,10 +200,10 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              as a reviewer on read-only file tools: review
                              mode then embeds the git diff of the pinned
                              range in that target's scope block, the prompt
-                             otherwise unchanged (default: unset, the target
-                             runs the diff command itself; on for claude, pi-copilot
-                             and pi-copilot-gpt on their default command,
-                             any other set value turning it off). The embedded copy
+                             otherwise unchanged. When unset, inlining is on
+                             for claude and for pi-copilot and pi-copilot-gpt
+                             on their default commands. Any other set value
+                             turns it off. The embedded copy
                              is capped at 131072 bytes: a longer diff is cut
                              at its last whole line inside the cap, and the
                              whole diff is kept in an owner-only file in the
@@ -257,8 +257,7 @@ Scope and caller prompts:
   The wrapper derives the review scope from the worktree before invoking the
   external CLI — current branch, diff range (--range or origin/BASE...HEAD),
   diffstat, and the changed-file list are embedded in the prompt, and the
-  diff, capped, for a target set to SECOND_OPINION_<NAME>_INLINE_DIFF=1 and the
-  stock Claude and Copilot entries on their default command. audit keeps the supplied
+  capped diff for targets with inlining enabled. audit keeps the supplied
   prompt and appends authoritative starting head/dirty-path bindings. Pass
   --range explicitly when that audit needs a diff: the wrapper supplies the
   pinned range and its diff for every target, with the same cap and whole-diff
@@ -1873,7 +1872,7 @@ REVIEW_CHANGED_FILES=""
 REVIEW_DIFFSTAT=""
 REVIEW_HEAD_SHA=""
 # The full diff of the pinned range, for a target whose
-# SECOND_OPINION_<NAME>_INLINE_DIFF is 1, or a stock Claude or Copilot entry with that
+# SECOND_OPINION_<NAME>_INLINE_DIFF is 1, or Claude or stock Copilot with that
 # key unset: a reviewer with read-only file tools
 # and no shell cannot run the diff command the prompt names, and would
 # otherwise review only the file list. Audit always supplies its requested diff.
@@ -1890,15 +1889,14 @@ REVIEW_DIFF_CAP=131072
 REVIEW_DIFF_FILE=""
 
 derive_review_diff() {
-  local cwd="$1" var cmd_var git_err diff_file size shown
+  local cwd="$1" var git_err diff_file size shown
   var="$(target_var "$TARGET_CLI" INLINE_DIFF)"
   # Audit's caller-bound range must be readable without granting Git access.
   if [[ "$MODE" != "audit" ]]; then
     if [[ -n "${!var+x}" ]]; then
       [[ "${!var}" == 1 ]] || return 0
     else
-      cmd_var="${var%_INLINE_DIFF}_CMD"
-      [[ "$cmd_var" == SECOND_OPINION_CLAUDE_CMD && -z "${!cmd_var:-}" ]] ||
+      [[ "$var" == SECOND_OPINION_CLAUDE_INLINE_DIFF ]] ||
         stock_copilot_model "$TARGET_CLI" >/dev/null || return 0
     fi
   fi

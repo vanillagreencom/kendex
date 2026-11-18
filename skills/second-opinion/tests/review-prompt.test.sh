@@ -66,9 +66,13 @@ suite_reset() {
 
 suite_word() {
   case "$1" in
-    stock-claude)
-      W_SCRIPT="$ROW/stock-claude"
-      printf '#!/usr/bin/env bash\nunset SECOND_OPINION_CLAUDE_CMD SECOND_OPINION_CLAUDE_INLINE_DIFF\nexec %q "$@"\n' "$HERMETIC" >"$W_SCRIPT"
+    stock-claude|configured-claude)
+      W_SCRIPT="$ROW/$1"
+      {
+        printf '#!/usr/bin/env bash\nunset SECOND_OPINION_CLAUDE_INLINE_DIFF\n'
+        if [[ "$1" == stock-claude ]]; then printf 'unset SECOND_OPINION_CLAUDE_CMD\n'; fi
+        printf 'exec %q "$@"\n' "$HERMETIC"
+      } >"$W_SCRIPT"
       chmod +x "$W_SCRIPT"
       ;;
     stock-claude-off) W_ENV+=(SECOND_OPINION_CLAUDE_CMD=) ;;
@@ -238,6 +242,8 @@ ALLMISS="AGENTS.md,review-bots.md,.github/instructions/code-review.md,.github/in
 run_table "the review prompt" "capture" "\
 the stock Claude entry gets the diff with its inline setting unset|stock-claude|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+world
 the stock Claude entry respects an explicit non-1 value|stock-claude-off env:SECOND_OPINION_CLAUDE_INLINE_DIFF=0|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
+the configured Claude command gets the diff with its inline setting unset|configured-claude|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=+world
+the configured Claude command respects an explicit non-1 value|env:SECOND_OPINION_CLAUDE_INLINE_DIFF=0|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 the default globs: every matching file in the setting's order, the nested AGENTS.md files over a changed path parents first, the non-matching file left out, the unmatched default pattern reported|layout:full|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head> diff=-
 no instruction files: no block, every default pattern and the empty prompt reported, the lenses and the schema still|-|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 the default globs collect the bot-instructions render alone|layout:botrender|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=.github/instructions/code-review.md(RULE-GOLF) miss=AGENTS.md,review-bots.md,.github/instructions/*.instructions.md,.github/copilot-instructions.md none=- head=<head> diff=-
@@ -256,22 +262,26 @@ a deletion past the cap is in the owner-only file the marker names, readable whi
 another target's setting leaves this target's prompt without the diff|env:SECOND_OPINION_CODEX_INLINE_DIFF=1|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=- miss=$ALLMISS none=5 head=<head> diff=-
 BSD utilities that refuse -- still build the whole prompt|layout:full bsd|review|$OK lenses=$L skip=$SKIP schema=$SCHEMA instr=$FULL miss=.github/instructions/code-review.md none=- head=<head> diff=-
 "
-build must-fail capture stock-claude
-# Keep the default's text while disabling its Claude arm in the disposable copy.
+build must-fail capture configured-claude
+# Restore the old stock-only condition in the disposable copy.
 python3 - "$HERMETIC" <<'PY'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 assert not p.is_symlink()
 s = p.read_text()
-old = '[[ "$cmd_var" == SECOND_OPINION_CLAUDE_CMD && -z "${!cmd_var:-}" ]] ||'
+old = '[[ "$var" == SECOND_OPINION_CLAUDE_INLINE_DIFF ]] ||'
 assert s.count(old) == 1
-changed = s.replace(old, old.replace(']] ||', ']] && false ||'))
+changed = s.replace(old, old.replace(']] ||', '&& -z "${SECOND_OPINION_CLAUDE_CMD:-}" ]] ||'))
 assert changed != s
 p.write_text(changed)
 PY
-run review >/dev/null
+control_state="$(run review)"
+if [[ "$control_state" != "rc=0 "* || ! -s "$ROW/prompts/prompt-1.txt" ]]; then
+  printf 'must-fail control did not reach a successful review: %s\n' "$control_state" >&2
+  exit 1
+fi
 control_rc=0
-(assert_eq "$(inline_diff "$ROW/prompts/prompt-1.txt")" +world 'must-fail: Claude default'; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
-assert_eq "$control_rc" 1 'omitting Claude from the default turns the inline-diff row red'
+(assert_eq "$(inline_diff "$ROW/prompts/prompt-1.txt")" +world 'must-fail: configured Claude default'; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
+assert_eq "$control_rc" 1 'the stock-only default turns the configured Claude inline-diff row red'
 finish
