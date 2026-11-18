@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::settings_file::{Current, current_of, lines_phrase};
-use crate::settings_template::TemplateSource;
+use crate::settings_template::{TemplateEvidence, TemplateSource};
 
 use super::{SETTINGS_FILE, SeededEnv, Seeding};
 
@@ -181,7 +181,7 @@ fn default_groups(entries: &[SeededEnv]) -> BTreeMap<&str, Vec<Shipped<'_>>> {
 
 pub(crate) fn settings_advisories<'a>(
     text: &str,
-    templates: impl IntoIterator<Item = (&'a str, &'a TemplateSource)>,
+    templates: impl IntoIterator<Item = (&'a str, &'a TemplateEvidence)>,
 ) -> Vec<String> {
     let sites = crate::settings_file::sites(text);
     let keys: BTreeSet<_> = sites
@@ -195,7 +195,15 @@ pub(crate) fn settings_advisories<'a>(
     let mut secrets = BTreeSet::from([crate::settings_secret::USER_EMAIL_KEY.to_owned()]);
     let mut entries = vec![crate::settings_secret::env_file_declaration()];
     let mut families = Vec::new();
-    for (name, template) in templates {
+    let mut all_verified = true;
+    for (name, evidence) in templates {
+        let template = match evidence {
+            TemplateEvidence::Verified(template) => template,
+            TemplateEvidence::Catalog(template) => {
+                all_verified = false;
+                template
+            }
+        };
         match template {
             TemplateSource::Text(template) => {
                 // Even a malformed [secrets] declaration identifies a credential.
@@ -213,7 +221,11 @@ pub(crate) fn settings_advisories<'a>(
         .filter(|key| !secrets.contains(*key))
         .filter_map(|key| {
             let note = match defaults.get(key).map(Vec::as_slice) {
-                None if families.iter().any(|family| matches_family(family, key)) => return None,
+                None if !all_verified
+                    || families.iter().any(|family| matches_family(family, key)) =>
+                {
+                    return None;
+                }
                 None => format!("{SETTINGS_FILE} {key}: no installed package declares this key"),
                 Some([default]) => {
                     let Current::Value { value, line } = current_of(&sites, key) else {

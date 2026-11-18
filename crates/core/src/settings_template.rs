@@ -69,6 +69,14 @@ pub enum TemplateSource {
     Unreadable(String),
 }
 
+/// What a settings notice knows about one installation. A catalog read
+/// can supply its default, but only a verified template can prove absence.
+#[derive(PartialEq, Eq)]
+pub(crate) enum TemplateEvidence {
+    Verified(TemplateSource),
+    Catalog(TemplateSource),
+}
+
 /// A defect at a place in the template, with what to do about it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

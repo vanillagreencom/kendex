@@ -1,1 +1,1 @@
-- Refresh and `kendex check` flag saved settings that match an installed package's default or have no declaration. Add `# keep-default` after a value to keep an intentional default match without a notice.
+- Refresh and `kendex check` flag saved settings that match a package default. They also flag undeclared keys when verified package templates establish that no installation declares them. Add `# keep-default` after a value to keep an intentional default match without a notice.

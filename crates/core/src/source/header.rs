@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::model::ItemKind;
 use crate::scan::metadata::{self, Metadata};
 use crate::settings_seed::SETTINGS_TEMPLATE;
-use crate::settings_template::TemplateSource;
+use crate::settings_template::{TemplateEvidence, TemplateSource};
 use crate::source_read::SealedSource;
 
 /// The file one kind writes its header in, under the item path
@@ -110,26 +110,10 @@ pub(crate) struct DeclaredHeaders {
 /// The two declarations the check reads from an installed skill.
 pub(crate) struct SkillReading {
     pub(crate) header: Result<String, String>,
-    pub(crate) settings: TemplateSource,
+    pub(crate) settings: Option<TemplateEvidence>,
 }
 
-impl SkillReading {
-    pub(crate) fn read(
-        sealed: &SealedSource,
-        path: &Path,
-        header: Result<String, String>,
-        settings: bool,
-    ) -> Self {
-        let settings = if settings {
-            settings_at(sealed, path)
-        } else {
-            TemplateSource::Absent
-        };
-        Self { header, settings }
-    }
-}
-
-fn settings_at(sealed: &SealedSource, path: &Path) -> TemplateSource {
+pub(crate) fn settings_at(sealed: &SealedSource, path: &Path) -> TemplateSource {
     match sealed.read_if_exists(&path.join(SETTINGS_TEMPLATE)) {
         Ok(Some(text)) => TemplateSource::Text(text),
         Ok(None) => TemplateSource::Absent,
@@ -335,21 +319,24 @@ impl DeclaredHeaders {
         scope: &crate::model::Scope,
         manifest: &crate::manifest::Manifest,
         entry: &crate::lock::LockEntry,
-    ) -> Option<TemplateSource> {
+    ) -> Option<TemplateEvidence> {
         if entry.source == crate::manifest::INPLACE_SOURCE_NAME && entry.rendered_hash.is_none() {
             let path = crate::engine::desired::skill_canonical(env, scope, &entry.name);
             let sealed = super::seal_in_place(scope, &path).ok()?;
-            return Some(settings_at(&sealed, &path));
+            return Some(TemplateEvidence::Verified(settings_at(&sealed, &path)));
         }
-        rendered_settings(env, scope, entry).or_else(|| {
-            entry.source_commit.as_ref()?;
-            let installed = InstalledFrom::of(entry);
-            let (sealed, path, _) = self
-                .skill_location(env, scope, manifest, &entry.name, Some(&installed))
-                .ok()?;
-            let template = settings_at(sealed, &path);
-            (!matches!(template, TemplateSource::Unreadable(_))).then_some(template)
-        })
+        rendered_settings(env, scope, entry)
+            .map(TemplateEvidence::Verified)
+            .or_else(|| {
+                entry.source_commit.as_ref()?;
+                let installed = InstalledFrom::of(entry);
+                let (sealed, path, _) = self
+                    .skill_location(env, scope, manifest, &entry.name, Some(&installed))
+                    .ok()?;
+                let template = settings_at(sealed, &path);
+                (!matches!(template, TemplateSource::Unreadable(_)))
+                    .then_some(TemplateEvidence::Catalog(template))
+            })
     }
 
     pub(crate) fn skill(
@@ -364,7 +351,8 @@ impl DeclaredHeaders {
         let (sealed, path, source) = self.skill_location(env, scope, manifest, name, installed)?;
         let header = text_at(sealed, ItemKind::Skill, &path, name, &source)
             .unwrap_or_else(|error| Err(error.to_string()));
-        Ok(SkillReading::read(sealed, &path, header, settings))
+        let settings = settings.then(|| TemplateEvidence::Catalog(settings_at(sealed, &path)));
+        Ok(SkillReading { header, settings })
     }
 
     fn skill_location(

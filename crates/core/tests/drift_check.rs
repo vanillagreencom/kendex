@@ -670,7 +670,7 @@ fn separate_installed_copies_must_agree_before_a_saved_default_is_reported() {
     let template = w.upstream.join("skills/gh/kendex.settings.toml.example");
     fs::write(
         &template,
-        "[env]\n# First setting.\nFIRST_MODE = \"old\"\n# Second setting.\nSECOND_MODE = \"old\"\n",
+        "[env]\n# First setting.\nFIRST_MODE = \"old\"\n# Second setting.\nSECOND_MODE = \"old\"\n# Common setting.\nCOMMON_MODE = \"steady\"\n",
     )
     .unwrap();
     let first = commit(&w.upstream, "first defaults");
@@ -687,7 +687,7 @@ fn separate_installed_copies_must_agree_before_a_saved_default_is_reported() {
     fs::create_dir_all(root.join(".codex")).unwrap();
     fs::write(
         root.join("kendex.settings.toml"),
-        "[env]\nFIRST_MODE = \"old\"\nSECOND_MODE = \"new\"\nNO_OWNER = \"manual\"\n",
+        "[env]\nFIRST_MODE = \"old\"\nSECOND_MODE = \"new\"\nCOMMON_MODE = \"steady\"\n",
     )
     .unwrap();
     sync_and_apply(&w);
@@ -697,7 +697,7 @@ fn separate_installed_copies_must_agree_before_a_saved_default_is_reported() {
     write_skill(&w.upstream, "gh", "Second.");
     fs::write(
         &template,
-        "[env]\n# First setting.\nFIRST_MODE = \"new\"\n# Second setting.\nSECOND_MODE = \"new\"\n",
+        "[env]\n# First setting.\nFIRST_MODE = \"new\"\n# Second setting.\nSECOND_MODE = \"new\"\n# Common setting.\nCOMMON_MODE = \"steady\"\n",
     )
     .unwrap();
     let second = commit(&w.upstream, "second defaults");
@@ -717,7 +717,7 @@ fn separate_installed_copies_must_agree_before_a_saved_default_is_reported() {
         saved_setting_notices(&w),
     ] {
         assert_eq!(notices.len(), 1);
-        assert!(notices[0].contains("NO_OWNER") && notices[0].contains("no installed package"));
+        assert!(notices[0].contains("COMMON_MODE") && notices[0].contains("\"steady\""));
     }
 }
 

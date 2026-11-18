@@ -333,24 +333,39 @@ fn a_transferred_bundle_member_reports_the_settings_it_still_has_before_resync()
             .exists()
     );
 
-    let checked = kendex_core::drift::report::check(
-        &env,
-        std::slice::from_ref(&scope),
-        kendex_core::drift::copies::CheckMode::ReportOnly,
-    );
-    let notices = checked
+    let check_notices = || {
+        kendex_core::drift::report::check(
+            &env,
+            std::slice::from_ref(&scope),
+            kendex_core::drift::copies::CheckMode::ReportOnly,
+        )
         .sections
-        .iter()
+        .into_iter()
         .filter(|section| section.title == kendex_core::drift::report::SETTINGS_SECTION)
-        .flat_map(|section| &section.lines)
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>();
+        .flat_map(|section| section.lines)
+        .map(|line| line.text.as_str().to_owned())
+        .collect::<Vec<_>>()
+    };
+    let notices = check_notices();
     assert_eq!(notices.len(), 1);
     assert!(
         notices[0].contains("SHARED_MODE")
             && notices[0].contains("\"old-default\"")
             && notices[0].contains("from shared")
     );
+
+    // A separate file edit invalidates the recorded hash while the installed
+    // template still declares the key. The rebound catalog does not.
+    let skill = scope_skill(&scope, "shared").join("SKILL.md");
+    let edited = fs::read_to_string(&skill).unwrap() + "\nKeep this local edit.\n";
+    fs::write(&skill, edited).unwrap();
+    let refresh = kendex_core::engine::audit(&env, &scope).unwrap();
+    for notices in [check_notices(), refresh.settings_advisories] {
+        assert!(
+            notices.iter().all(|note| !note.contains("SHARED_MODE")),
+            "{notices:?}"
+        );
+    }
 }
 
 /// A member another marketplace's bundle gained leaves with the source as

@@ -9,8 +9,8 @@ use super::text::{shown, verbatim};
 use super::*;
 use crate::lock::{InstallRef, LockEntry, Reason};
 use crate::model::HarnessId;
-use crate::settings_template::TemplateSource;
-use crate::source::header::SkillReading;
+use crate::settings_template::TemplateEvidence;
+use crate::source::header::{SkillReading, settings_at};
 
 /// One scope's outcome beyond the lines it pushed: its second-copy scan,
 /// which the caller folds with the other scopes' before rendering through
@@ -315,7 +315,7 @@ enum DeclarationRead {
     Catalog(Option<crate::source::header::InstalledFrom>),
 }
 
-type SettingsTemplates = Vec<(String, TemplateSource)>;
+type SettingsTemplates = Vec<(String, TemplateEvidence)>;
 
 enum CatalogReading {
     Header(Result<SkillReading, String>),
@@ -466,8 +466,7 @@ impl ScopeCheck<'_> {
             };
             let header = match reading {
                 Ok(SkillReading { header, settings }) => {
-                    complete &= !matches!(settings, TemplateSource::Unreadable(_));
-                    if !matches!(settings, TemplateSource::Absent) {
+                    if let Some(settings) = settings {
                         unrecorded.push((name.clone(), settings));
                     }
                     header
@@ -514,7 +513,7 @@ impl ScopeCheck<'_> {
     fn settings_lines(
         &self,
         text: &str,
-        templates: &[(String, TemplateSource)],
+        templates: &[(String, TemplateEvidence)],
         sections: &mut Sections,
     ) {
         sections.settings.extend(
@@ -630,7 +629,8 @@ impl ScopeCheck<'_> {
         let header = sealed
             .read_to_string(&path.join("SKILL.md"))
             .map_err(|error| error.to_string());
-        Ok(SkillReading::read(&sealed, path, header, settings))
+        let settings = settings.then(|| TemplateEvidence::Verified(settings_at(&sealed, path)));
+        Ok(SkillReading { header, settings })
     }
 
     fn command_source_lines(

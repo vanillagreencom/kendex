@@ -13,7 +13,7 @@
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::settings_template::TemplateSource;
+use crate::settings_template::{TemplateEvidence, TemplateSource};
 
 use super::desired::DesiredState;
 use super::{DriftRow, DriftState};
@@ -232,7 +232,11 @@ pub(super) fn saved_settings_notes(
         .filter(|(_, entry)| entry.kind == ItemKind::Skill && entry.enabled)
     {
         let template = if rendered.0.rendered(key, entry, rendered.1) {
-            state.settings_templates.get(&entry.name).cloned()
+            state
+                .settings_templates
+                .get(&entry.name)
+                .cloned()
+                .map(TemplateEvidence::Verified)
         } else {
             headers.installed_settings(env, scope, manifest, entry)
         };
