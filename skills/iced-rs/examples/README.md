@@ -33,7 +33,7 @@ cd iced
 | [Pokédex](pokedex/README.md) | Load a random Pokédex entry and its sprite |
 | [Progress bar](progress_bar/README.md) | Use a slider to change the progress bar’s value |
 | [QR code generator](qr_code/README.md) | Enter text and preview the corresponding QR code |
-| [Scrollable](scrollable/README.md) | Compare scroll directions, alignment, and scrollbar dimensions and styles |
+| [Scrollable](scrollable/README.md) | Compare scroll directions, alignment, and scrollbar dimensions |
 | [Sierpiński triangle](sierpinski_triangle/README.md) | Draw a Sierpiński triangle on Canvas |
 | [Slider](slider/README.md) | Select a value with a horizontal or vertical slider |
 | [Solar system](solar_system/README.md) | Animate a solar system on Canvas using rotation and translation |

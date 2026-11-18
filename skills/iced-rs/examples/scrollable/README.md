@@ -1,6 +1,6 @@
 # Scrollable
 
-Compare scroll directions, alignment, and scrollbar dimensions and styles.
+Compare scroll directions, alignment, and scrollbar dimensions.
 
 [![Controls for scroll direction and scrollbar appearance](screenshot.png)](screenshot.png)
 
