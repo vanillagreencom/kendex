@@ -288,7 +288,7 @@ fn plan_scope_with_lock_base(
         &mut written,
     )?;
 
-    let mut settings_advisories = Vec::new();
+    let mut saved_settings = None;
     let (mut scope_notes, planned_shims, removed_settings_comments) = plan_scope_files(
         env,
         scope,
@@ -300,7 +300,7 @@ fn plan_scope_with_lock_base(
         &mut drift,
         &mut ops,
         &mut config_edits,
-        &mut settings_advisories,
+        &mut saved_settings,
     )?;
 
     let (sweepable, said, retired) = plan_removals(
@@ -323,7 +323,6 @@ fn plan_scope_with_lock_base(
     let set_changes = set_changes(lock, &new_lock, &said, &state.retired);
     let notices = desired::retired_notices(scope, &state, &retired);
     state.warnings.extend(notices);
-    let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     let trees = generated_paths::Unrendered::of(env, scope, &state, &item_pass, lock, &new_lock)?;
     let installations = installations(env, scope, &manifest, &state)?;
@@ -333,13 +332,23 @@ fn plan_scope_with_lock_base(
         drift,
         ops,
         scope_notes,
-        settings_advisories,
+        settings_advisories: saved_settings.as_deref().map_or_else(Vec::new, |text| {
+            settings_write::saved_settings_notes(
+                env,
+                scope,
+                &manifest,
+                &state,
+                &new_lock,
+                (&item_pass, &kept),
+                text,
+            )
+        }),
         set_changes,
         removed_settings_comments,
         repo_effects_leaving,
         sweepable,
         retired,
-        kept,
+        kept: kept_members(lock, &new_lock, &options.uninstalled_bundles),
         safety,
         instruction_shims: planned_shims,
         item_pass,
@@ -680,12 +689,12 @@ fn plan_scope_files(
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
-    settings_advisories: &mut Vec<String>,
+    saved_settings: &mut Option<String>,
 ) -> Result<(Vec<String>, Vec<ShimStanding>, Vec<String>)> {
     // The order between the project files is not this caller's to choose,
     // so one entry point plans all three: `settings_write.rs` says why.
     let (scope_notes, settings_drift, removed) =
-        plan_project_files(env, scope, lock, state, options, ops, settings_advisories)?;
+        plan_project_files(env, scope, lock, state, options, ops, saved_settings)?;
     drift.extend(settings_drift);
     // The shims a project owes its instruction files, read off the
     // harness list the manifest declares: committed files, never lock

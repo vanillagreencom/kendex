@@ -205,6 +205,12 @@ fn a_locked_refresh_reads_a_new_item_and_its_source_at_the_tip() {
         &world.catalog.join("skills/third/SKILL.md"),
         "---\nname: third\ndescription: a third skill\n---\n# Third\n\nArrived later.\n",
     );
+    write(
+        &world
+            .catalog
+            .join("skills/third/kendex.settings.toml.example"),
+        "[env]\n# A synthetic fixture message.\nTHIRD_MODE = \"not found in source\"\n",
+    );
     move_the_catalog(&world);
     let manifest = world.project.join("kendex.toml");
     let declared = fs::read_to_string(&manifest).unwrap();
@@ -212,6 +218,9 @@ fn a_locked_refresh_reads_a_new_item_and_its_source_at_the_tip() {
         &manifest,
         &format!("{declared}\n[skills.third]\nsource = \"cat\"\nharnesses = [\"claude\"]\n"),
     );
+    let settings = world.project.join("kendex.settings.toml");
+    let saved = "[env]\n# My choice.\nTHIRD_MODE = 'not found in source'\n";
+    write(&settings, saved);
     commit(&world.project, "a new catalog skill");
 
     let locked = kendex(
@@ -222,6 +231,12 @@ fn a_locked_refresh_reads_a_new_item_and_its_source_at_the_tip() {
         ],
     );
     assert!(locked.status.success(), "{}", said(&locked));
+    assert!(said(&locked).lines().any(|line| {
+        line.contains("THIRD_MODE")
+            && line.contains("not found in source")
+            && line.contains("third")
+    }));
+    assert!(fs::read_to_string(&settings).unwrap() == saved);
     let third = fs::read_to_string(world.project.join(".claude/skills/third/SKILL.md")).unwrap();
     assert!(third.contains("Arrived later."), "{third}");
     let moved = changed(&world);

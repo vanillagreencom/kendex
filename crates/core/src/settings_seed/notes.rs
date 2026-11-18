@@ -164,7 +164,10 @@ fn default_groups(entries: &[SeededEnv]) -> BTreeMap<&str, Vec<Shipped<'_>>> {
         for seeded in super::writable_all(entries, key) {
             let identity = seeded.default_key();
             match defaults.iter_mut().find(|had| had.identity == identity) {
-                Some(had) => had.owners.push(&seeded.owner),
+                Some(had) if !had.owners.contains(&seeded.owner.as_str()) => {
+                    had.owners.push(&seeded.owner);
+                }
+                Some(_) => {}
                 None => defaults.push(Shipped {
                     identity,
                     shown: seeded.default_shown(),
@@ -176,10 +179,9 @@ fn default_groups(entries: &[SeededEnv]) -> BTreeMap<&str, Vec<Shipped<'_>>> {
     by_key
 }
 
-pub(crate) fn settings_advisories(
+pub(crate) fn settings_advisories<'a>(
     text: &str,
-    shipped: &[SeededEnv],
-    templates: &BTreeMap<String, TemplateSource>,
+    templates: impl IntoIterator<Item = (&'a str, &'a TemplateSource)>,
 ) -> Vec<String> {
     let sites = crate::settings_file::sites(text);
     let keys: BTreeSet<_> = sites
@@ -190,24 +192,28 @@ pub(crate) fn settings_advisories(
     if keys.is_empty() {
         return Vec::new();
     }
-    // Even a malformed [secrets] declaration identifies a credential.
-    let secrets: BTreeSet<_> = templates
-        .values()
-        .filter_map(|template| match template {
-            TemplateSource::Text(text) => Some(crate::settings_template::read(text).secret_keys),
-            TemplateSource::Absent | TemplateSource::Unreadable(_) => None,
-        })
-        .flatten()
-        .chain([crate::settings_secret::USER_EMAIL_KEY.to_owned()])
-        .collect();
-    let mut entries = shipped.to_vec();
-    entries.push(crate::settings_secret::env_file_declaration());
+    let mut secrets = BTreeSet::from([crate::settings_secret::USER_EMAIL_KEY.to_owned()]);
+    let mut entries = vec![crate::settings_secret::env_file_declaration()];
+    let mut families = Vec::new();
+    for (name, template) in templates {
+        match template {
+            TemplateSource::Text(template) => {
+                // Even a malformed [secrets] declaration identifies a credential.
+                secrets.extend(crate::settings_template::read(template).secret_keys);
+                entries.extend(SeededEnv::declarations(name, template));
+                families.extend(key_families(template));
+            }
+            TemplateSource::Absent => {}
+            TemplateSource::Unreadable(_) => return Vec::new(),
+        }
+    }
     let defaults = default_groups(&entries);
     let lines: Vec<_> = text.lines().collect();
     keys.into_iter()
         .filter(|key| !secrets.contains(*key))
         .filter_map(|key| {
             let note = match defaults.get(key).map(Vec::as_slice) {
+                None if families.iter().any(|family| matches_family(family, key)) => return None,
                 None => format!("{SETTINGS_FILE} {key}: no installed package declares this key"),
                 Some([default]) => {
                     let Current::Value { value, line } = current_of(&sites, key) else {
@@ -228,6 +234,56 @@ pub(crate) fn settings_advisories(
             Some(crate::names::shown(&crate::quality::redact(&note)))
         })
         .collect()
+}
+
+fn key_families(template: &str) -> impl Iterator<Item = &str> {
+    use crate::settings_toml::{Line, rows};
+    rows(template)
+        .into_iter()
+        .filter(|row| row.kind == Line::Comment)
+        .filter_map(|row| {
+            row.text
+                .trim()
+                .strip_prefix('#')?
+                .trim_start()
+                .strip_prefix("keys:")
+        })
+        .flat_map(|items| {
+            items
+                .split([',', ' ', '\t'])
+                .filter(|item| !item.is_empty())
+        })
+}
+
+fn matches_family(family: &str, key: &str) -> bool {
+    if !crate::settings_template::is_env_name(key) {
+        return false;
+    }
+    // Use the same <NAME> wildcard as change-class. Each wildcard must
+    // consume at least one identifier byte before the next literal.
+    let Some((prefix, pattern)) = family.split_once("<NAME>") else {
+        return key == family;
+    };
+    let (middle, suffix) = match pattern.rsplit_once("<NAME>") {
+        Some((middle, suffix)) => (Some(middle), suffix),
+        None => (None, pattern),
+    };
+    let Some(mut between) = key
+        .strip_prefix(prefix)
+        .and_then(|key| key.strip_suffix(suffix))
+    else {
+        return false;
+    };
+    for literal in middle.into_iter().flat_map(|middle| middle.split("<NAME>")) {
+        let Some(rest) = between
+            .get(1..)
+            .and_then(|key| key.split_once(literal).map(|(_, rest)| rest))
+        else {
+            return false;
+        };
+        between = rest;
+    }
+    !between.is_empty()
 }
 
 fn keeps_default(line: &str) -> bool {

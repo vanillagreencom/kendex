@@ -32,6 +32,19 @@ pub(super) struct ItemPass {
     pub(super) own_edit_rows: BTreeSet<(crate::model::ItemKind, String, crate::model::HarnessId)>,
 }
 
+impl ItemPass {
+    pub(super) fn rendered(
+        &self,
+        key: &str,
+        entry: &crate::lock::LockEntry,
+        kept: &KeptAsIs,
+    ) -> bool {
+        self.planned
+            .contains(&(entry.kind, entry.name.clone(), entry.harness))
+            && !kept.contains(key)
+    }
+}
+
 /// One pass over the desired items, with the two holds that outrank
 /// planning: a revision conflict writes nothing, and an edited install
 /// writes nothing unless the caller asked for edits to be discarded.

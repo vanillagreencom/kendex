@@ -224,6 +224,7 @@ fn saved_settings_notes_are_advisory_in_refresh_and_check() {
             "alpha",
             concat!(
                 "[env]\n",
+                "# keys: FAMILY_<NAME>_MODE, FAMILY_<NAME>_DETAIL\n",
                 "# A shared default.\nSHARED = \"not found in source\"\n",
                 "# An explicit default.\nPINNED = \"auto\"\n",
                 "# A comment inside the value.\nHASH = \"# keep-default\"\n",
@@ -246,6 +247,8 @@ fn saved_settings_notes_are_advisory_in_refresh_and_check() {
         "HASH = \"# keep-default\"\n",
         "CUSTOM = \"manual\"\n",
         "WAIT = \"900\"\n",
+        "FAMILY_CLAUDE_4_MODE = \"custom\"\n",
+        "FAMILY_CODEX_DETAIL = \"custom\"\n",
         "RETIRED = \"fixture-value-do-not-print\" # keep-default\n",
         "PRIVATE_KEY = \"fixture-value-do-not-print\"\n",
         "\n[other]\nOUTSIDE = \"untouched\"\n",

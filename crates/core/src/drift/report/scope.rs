@@ -457,26 +457,20 @@ impl ScopeCheck<'_> {
         templates: &BTreeMap<String, crate::settings_template::TemplateSource>,
         sections: &mut Sections,
     ) {
-        use crate::settings_template::TemplateSource;
-        let entries: Vec<_> = templates
-            .iter()
-            .filter_map(|(name, template)| match template {
-                TemplateSource::Text(text) => {
-                    Some(crate::settings_seed::SeededEnv::declarations(name, text))
-                }
-                TemplateSource::Absent | TemplateSource::Unreadable(_) => None,
-            })
-            .flatten()
-            .collect();
         sections.settings.extend(
-            crate::settings_seed::settings_advisories(text, &entries, templates)
-                .into_iter()
-                .map(|note| Line {
-                    class: Class::Notice,
-                    text: format!("{}{note}", self.prefix).into(),
-                    remedy: None,
-                    detail: None,
-                }),
+            crate::settings_seed::settings_advisories(
+                text,
+                templates
+                    .iter()
+                    .map(|(name, template)| (name.as_str(), template)),
+            )
+            .into_iter()
+            .map(|note| Line {
+                class: Class::Notice,
+                text: format!("{}{note}", self.prefix).into(),
+                remedy: None,
+                detail: None,
+            }),
         );
     }
 
@@ -559,16 +553,7 @@ impl ScopeCheck<'_> {
         settings: bool,
     ) -> Option<DeclarationRead> {
         Some(match (in_place, manifest, installed) {
-            (Some(root), _, _) => DeclarationRead::Text(
-                crate::source_read::SealedSource::open(&root)
-                    .map(|sealed| {
-                        let header = sealed
-                            .read_to_string(&sealed.root().join("SKILL.md"))
-                            .map_err(|error| error.to_string());
-                        SkillReading::read(&sealed, sealed.root(), header, settings)
-                    })
-                    .map_err(|error| error.to_string()),
-            ),
+            (Some(path), _, _) => DeclarationRead::Text(self.in_place_read(&path, settings)),
             (None, None, _) => DeclarationRead::Text(Err(
                 "the manifest could not be read, so the skill's source is unknown".to_owned(),
             )),
@@ -581,6 +566,24 @@ impl ScopeCheck<'_> {
                 )),
             },
         })
+    }
+
+    fn in_place_read(
+        &self,
+        path: &std::path::Path,
+        settings: bool,
+    ) -> Result<SkillReading, String> {
+        let root = match self.scope {
+            Scope::Project { root } => root.as_path(),
+            Scope::Global => path,
+        };
+        let sealed =
+            crate::source_read::SealedSource::open(root).map_err(|error| error.to_string())?;
+        sealed.contained(path).map_err(|error| error.to_string())?;
+        let header = sealed
+            .read_to_string(&path.join("SKILL.md"))
+            .map_err(|error| error.to_string());
+        Ok(SkillReading::read(&sealed, path, header, settings))
     }
 
     fn command_source_lines(

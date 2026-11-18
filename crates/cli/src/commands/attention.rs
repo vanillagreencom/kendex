@@ -49,8 +49,17 @@ pub fn print_attention(
     listing: Listing,
     reached: Reached,
     shown: &[ItemSafety],
+    settings_advisories: &[String],
 ) -> Attention {
-    let (lines, attention) = attention(&ui::style(), env, report, listing, reached, shown);
+    let (lines, attention) = attention(
+        &ui::style(),
+        env,
+        report,
+        listing,
+        reached,
+        shown,
+        settings_advisories,
+    );
     for warning in &report.warnings {
         ui::report::run_model_warning(warning);
     }
@@ -65,6 +74,7 @@ fn attention(
     listing: Listing,
     reached: Reached,
     shown: &[ItemSafety],
+    settings_advisories: &[String],
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
     let safety: Vec<_> = report
@@ -90,7 +100,7 @@ fn attention(
         lines.extend(notes_section(
             style,
             &report.notes,
-            &report.settings_advisories,
+            settings_advisories,
             &report.excluded_hooks,
             verbose,
         ));

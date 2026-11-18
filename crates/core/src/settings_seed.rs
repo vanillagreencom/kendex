@@ -130,7 +130,10 @@ pub struct SeededEnv {
 }
 
 impl SeededEnv {
-    pub(crate) fn declarations<'a>(owner: &'a str, text: &str) -> impl Iterator<Item = Self> + 'a {
+    pub(crate) fn declarations<'a>(
+        owner: &'a str,
+        text: &str,
+    ) -> impl Iterator<Item = Self> + use<'a> {
         extract_env_entries(text)
             .into_iter()
             .map(move |entry| Self {

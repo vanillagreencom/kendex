@@ -105,11 +105,37 @@ fn a_shared_member_keeps_the_kept_sets_edge_after_the_other_set_drops_it() {
 fn a_kept_members_dependency_stays_with_no_row_in_the_plan_verify_reads() {
     for (name, kept) in kept_rows("") {
         let f = fixture(STARTER);
+        write(
+            &f.source,
+            "skills/github/kendex.settings.toml.example",
+            "[env]\n# A fixture default.\nGITHUB_FIXTURE_MODE = \"quiet\"\n",
+        );
+        write(
+            &f.project,
+            "kendex.settings.toml",
+            "[env]\nGITHUB_FIXTURE_MODE = \"quiet\"\nNO_OWNER = \"manual\"\n",
+        );
         apply_now(&f);
         catalog_bundles(&f.source, &kept);
+        std::fs::remove_file(f.source.join("skills/github/kendex.settings.toml.example")).unwrap();
         refresh(&f);
 
         let report = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
+        assert!(
+            report.settings_advisories.iter().any(|note| {
+                note.contains("GITHUB_FIXTURE_MODE")
+                    && note.contains("\"quiet\"")
+                    && note.contains("github")
+            }),
+            "{name}"
+        );
+        assert!(
+            report
+                .settings_advisories
+                .iter()
+                .any(|note| note.contains("NO_OWNER")),
+            "{name}"
+        );
         let rows: Vec<_> = report
             .drift
             .iter()

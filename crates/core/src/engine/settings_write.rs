@@ -13,6 +13,7 @@
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::settings_template::TemplateSource;
 
 use super::desired::DesiredState;
 use super::{DriftRow, DriftState};
@@ -82,7 +83,7 @@ pub(super) fn plan_settings_seed(
     state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
-    advisories: &mut Vec<String>,
+    saved_settings: &mut Option<String>,
 ) -> Result<(Vec<String>, Vec<DriftRow>, Vec<String>)> {
     let draft = options.settings_draft.as_ref();
     let edits = draft.map_or(&[][..], |draft| draft.edits.as_slice());
@@ -135,17 +136,15 @@ pub(super) fn plan_settings_seed(
         ));
         return Ok((notes, vec![row], Vec::new()));
     }
-    let current = crate::fs::read_if_exists(&path)?;
-    if let Some(text) = &current {
-        advisories.extend(saved_settings_notes(lock, state, text));
-    }
+    *saved_settings = crate::fs::read_if_exists(&path)?;
+    let current = &*saved_settings;
     let compatible = current
         .as_deref()
         .map(|text| state.agent_names.settings(text, &path))
         .transpose()?;
     if declared.is_empty()
         && edits.is_empty()
-        && compatible == current
+        && &compatible == current
         && !options.remove_orphan_settings_comments
     {
         return Ok((notes, Vec::new(), Vec::new()));
@@ -206,28 +205,57 @@ pub(super) fn plan_settings_seed(
     )?;
     // Nothing to write when the finished text is what the file already
     // holds — and, where there was no file, when there is nothing to make.
-    match &current {
+    match current {
         Some(original) if *original == settled.text => return Ok((notes, Vec::new(), Vec::new())),
         None if settled.text.is_empty() => return Ok((notes, Vec::new(), Vec::new())),
         _ => {}
     }
     let removed = settled.removed.clone();
-    plan_settings_write(path, file, draft, settled, compatible != current, ops)?;
+    plan_settings_write(path, file, draft, settled, &compatible != current, ops)?;
     Ok((notes, Vec::new(), removed))
 }
 
-fn saved_settings_notes(lock: &crate::lock::Lock, state: &DesiredState, text: &str) -> Vec<String> {
-    if lock.entries.values().any(|entry| {
-        entry.kind == ItemKind::Skill
-            && entry.enabled
-            && matches!(
-                state.settings_templates.get(&entry.name),
-                Some(crate::settings_template::TemplateSource::Unreadable(_))
-            )
-    }) {
-        return Vec::new();
+pub(super) fn saved_settings_notes(
+    env: &crate::env::Env,
+    scope: &Scope,
+    manifest: &crate::manifest::Manifest,
+    state: &DesiredState,
+    lock: &crate::lock::Lock,
+    rendered: (&super::plan_pass::ItemPass, &super::item_plan::KeptAsIs),
+    text: &str,
+) -> Vec<String> {
+    let mut headers = crate::source::header::DeclaredHeaders::default();
+    let mut templates = Vec::new();
+    for (key, entry) in lock
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.kind == ItemKind::Skill && entry.enabled)
+    {
+        let template = if rendered.0.rendered(key, entry, rendered.1) {
+            state.settings_templates.get(&entry.name).cloned()
+        } else {
+            installed_settings(env, scope, entry).or_else(|| {
+                entry.source_commit.as_ref()?;
+                let installed = crate::source::header::InstalledFrom::of(entry);
+                headers
+                    .skill(env, scope, manifest, &entry.name, Some(&installed), true)
+                    .ok()
+                    .map(|reading| reading.settings)
+            })
+        };
+        let Some(template) = template else {
+            // A retained installation can still declare the key.
+            return Vec::new();
+        };
+        let reading = (entry.name.as_str(), template);
+        if !templates.contains(&reading) {
+            templates.push(reading);
+        }
     }
-    crate::settings_seed::settings_advisories(text, &state.settings_env, &state.settings_templates)
+    crate::settings_seed::settings_advisories(
+        text,
+        templates.iter().map(|(name, template)| (*name, template)),
+    )
 }
 
 /// An unavailable or edited installed tree proves nothing and grants no
@@ -238,48 +266,49 @@ fn outgoing_settings(
     scope: &Scope,
     lock: &crate::lock::Lock,
 ) -> Vec<crate::settings_seed::SeededEnv> {
-    let mut entries = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for entry in lock
-        .entries
+    lock.entries
         .values()
         .filter(|entry| entry.kind == ItemKind::Skill)
-    {
-        let Some(recorded) = &entry.rendered_hash else {
+        .filter_map(|entry| match installed_settings(env, scope, entry) {
+            Some(TemplateSource::Text(text)) => Some(
+                crate::settings_seed::SeededEnv::declarations(&entry.name, &text),
+            ),
+            Some(TemplateSource::Absent | TemplateSource::Unreadable(_)) | None => None,
+        })
+        .flatten()
+        .collect()
+}
+
+fn installed_settings(
+    env: &crate::env::Env,
+    scope: &Scope,
+    entry: &crate::lock::LockEntry,
+) -> Option<TemplateSource> {
+    let Scope::Project { root } = scope else {
+        return None;
+    };
+    let recorded = entry.rendered_hash.as_ref()?;
+    let sealed = crate::source_read::SealedSource::open(root).ok()?;
+    let mut seen = std::collections::BTreeSet::new();
+    for path in super::owned::installed(env, scope, entry).files {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let Ok(files) = sealed.collect_tree(&path, &crate::source_read::TOOL_CACHES) else {
             continue;
         };
-        for path in super::owned::installed(env, scope, entry).files {
-            if path.is_symlink() || !path.is_dir() || !seen.insert(path.clone()) {
-                continue;
-            }
-            let Ok(files) = crate::source_read::SealedSource::open(&path)
-                .and_then(|sealed| sealed.collect_tree(&path, &crate::source_read::TOOL_CACHES))
-            else {
-                continue;
-            };
-            if !crate::hash::RenderedIdentity::observed_files(&path, &files, true).matches(recorded)
-            {
-                continue;
-            }
-            let Some((_, bytes)) = files.iter().find(|(name, _)| {
-                name == std::path::Path::new(crate::settings_seed::SETTINGS_TEMPLATE)
-            }) else {
-                continue;
-            };
-            let Ok(text) = std::str::from_utf8(bytes) else {
-                continue;
-            };
-            entries.extend(
-                crate::settings_seed::extract_env_entries(text)
-                    .into_iter()
-                    .map(|one| crate::settings_seed::SeededEnv {
-                        entry: one,
-                        owner: entry.name.clone(),
-                    }),
-            );
+        if !crate::hash::RenderedIdentity::observed_files(&path, &files, true).matches(recorded) {
+            continue;
         }
+        return match files
+            .into_iter()
+            .find(|(name, _)| name == std::path::Path::new(crate::settings_seed::SETTINGS_TEMPLATE))
+        {
+            Some((_, bytes)) => String::from_utf8(bytes).ok().map(TemplateSource::Text),
+            None => Some(TemplateSource::Absent),
+        };
     }
-    entries
+    None
 }
 
 /// Bind the combined seed, edit and label rename to the original file bytes.
@@ -544,7 +573,7 @@ pub(super) fn plan_project_files(
     state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
-    advisories: &mut Vec<String>,
+    saved_settings: &mut Option<String>,
 ) -> Result<(Vec<String>, Vec<DriftRow>, Vec<String>)> {
     let target = super::secrets_write::target(scope, options)?;
     let mut notes = Vec::new();
@@ -555,7 +584,7 @@ pub(super) fn plan_project_files(
         &mut notes,
     )?;
     let (settings_notes, drift, removed) =
-        plan_settings_seed(env, scope, lock, state, options, ops, advisories)?;
+        plan_settings_seed(env, scope, lock, state, options, ops, saved_settings)?;
     notes.extend(settings_notes);
     notes.extend(super::secrets_write::plan_secrets(
         scope,

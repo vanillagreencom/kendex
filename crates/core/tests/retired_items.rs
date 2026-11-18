@@ -371,6 +371,13 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
         ),
     ] {
         let f = installed_as(kind, name, wanted);
+        if kind == ItemKind::Skill {
+            fs::write(
+                f.project.join("kendex.settings.toml"),
+                "[env]\nNO_OWNER = \"manual\"\n",
+            )
+            .unwrap();
+        }
         let catalog_copy = f.catalog_copy(kind, name);
         if !carried {
             match catalog_copy.is_dir() {
@@ -395,6 +402,15 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
         assert!(!recorded.is_empty(), "{row}: the fixture records nothing");
 
         let report = plan_apply(&f.env, &f.scope, &refresh_options()).unwrap();
+        if kind == ItemKind::Skill {
+            assert!(
+                report
+                    .settings_advisories
+                    .iter()
+                    .any(|note| note.contains("NO_OWNER")),
+                "{row}"
+            );
+        }
 
         assert_eq!(
             report.declaration_status,

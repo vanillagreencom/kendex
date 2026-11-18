@@ -89,7 +89,7 @@ pub fn print_report_for(
     listing: Listing,
     reached: super::offers::Reached,
 ) -> super::attention::Attention {
-    let attention = super::attention::print_attention(env, report, listing, reached, &[]);
+    let attention = super::attention::print_attention(env, report, listing, reached, &[], &[]);
     ui::report::print(Status::Notice, |style| {
         report_lines(style, report, !attention.blocked.is_empty())
     });
