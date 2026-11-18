@@ -75,7 +75,7 @@ fn subscribe_to_feed(state: &State) -> Subscription<Message> {
 - `time::every` is exposed on native targets through the `tokio` or `smol` feature, or through the WebAssembly backend. Supplying a custom executor does not add that re-export.
 - `event::listen_with` includes captured interactions but filters redraw requests. Check `Status` to avoid handling a captured interaction twice.
 - Messages emitted by subscriptions go through the normal `update` loop — don't forget to handle them in your match.
-- Map closures run outside the `update` context. Capture owned context if needed; send a message to mutate application state through `update`.
+- Map closures run outside the `update` context. Send a message to mutate application state through `update`.
 
 ## See also
 

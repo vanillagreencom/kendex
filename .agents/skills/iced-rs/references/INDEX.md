@@ -98,7 +98,7 @@ Iced 0.14 API references and guides. Load on demand.
 | `touch.md` | `touch::Event`, `Finger` |
 | `stream.md` | `stream::channel`, `try_channel` |
 | `time.md` | `time::every`, `repeat`, `now` |
-| `futures.md` | `MaybeSend`, `Stream`, `StreamExt` re-exports |
+| `futures.md` | `Stream`, `StreamExt` re-exports |
 | `debug.md` | `debug::time`, `time_with`, and development tools including the F12 overlay |
 | `system.md` | `system::information` (feature `sysinfo`) |
 

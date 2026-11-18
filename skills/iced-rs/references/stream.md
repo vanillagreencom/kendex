@@ -75,5 +75,5 @@ Task::stream(stream::channel(1, async move |mut sender| {
 
 - `subscription.md` -- `Subscription::run` consumes streams
 - `task.md` -- `Task::stream` for one-shot stream tasks
-- `futures.md` -- `MaybeSend`, `Stream` re-exports
+- `futures.md` -- `Stream` re-exports
 - `time.md` -- `time::every` for interval-based subscriptions

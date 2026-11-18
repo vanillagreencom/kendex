@@ -2,7 +2,7 @@
 
 > `iced::widget::shader` · iced 0.14.0
 
-Custom GPU pipeline widget. Implement `shader::Program<Message>` to produce a `Primitive`, then implement `shader::Primitive` to prepare and render in a wgpu render pass. Enable `wgpu`, or `wgpu-bare` with your own backend selection. Use for 3D rendering, particle systems, or GPU-based data visualization.
+Custom GPU pipeline widget. Implement `shader::Program<Message>` to produce a `Primitive`, then implement `shader::Primitive` to prepare and render in a wgpu render pass. Enable `wgpu`. Use for 3D rendering, particle systems, or GPU-based data visualization.
 
 Read when implementing a Shader widget or its GPU pipeline.
 
