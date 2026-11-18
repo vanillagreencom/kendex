@@ -225,7 +225,7 @@ oracle_runs_env() { # COMMAND: whether real bash runs env with no operands
 environment_rows() {
   local rows expected command_json label world payload payload_cwd status output
   local want first_key keyed want_keyed invalid shape_kind diagnostics_safe refusal reason before=$((passed + failed))
-  local oracle oracle_ran oracle_command run_hook
+  local oracle oracle_ran oracle_command run_hook cwd_fixture
   local selected_rows=("$@") selected_seen=()
   mkdir -p "$scratch/policy-tools" "$repo/.codex/hooks"
   cp -- "$hook" "$repo/.codex/hooks/command-safety.sh"
@@ -236,7 +236,7 @@ environment_rows() {
     else . end) | select(($ARGS.positional | length) == 0 or
       (.[2] as $label | $ARGS.positional | index($label))) |
     .[1] |= (if type == "array" then map(gsub("@PRIVATE_HOME@"; $fixture_home)) else gsub("@PRIVATE_HOME@"; $fixture_home) end) |
-    [.[0], (.[1] | tojson), .[2], (.[3] // "project"), (.[4] // "environment-dump"), (.[5] // "-"), (.[6] // "-")] | @tsv
+    [.[0], (.[1] | tojson), .[2], (.[3] // "project"), (.[4] // "environment-dump"), (.[5] // "-"), (.[6] // "-"), (.[7] // "-")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env","project","environment-dump","-","runs-env"]
 [0,"vgs_selected_rows=\"$(sed -n 's|^scripts/qml-smoke.sh --rows ||p' tmp/evidence-VGS-1998/final/selection.log)\"; [[ -n $vgs_selected_rows && $vgs_selected_rows != *$'\\n'* ]] || exit 2; bash /home/method/dev/vgshell/tmp/nested-slot.sh scripts/qml-smoke.sh --keep --rows \"$vgs_selected_rows\" > tmp/evidence-VGS-1998/final/qml.log 2>&1; vgs_check_status=$?; printf '%s\\n' \"$vgs_check_status\" > tmp/evidence-VGS-1998/final/qml.exit; exit \"$vgs_check_status\"","reported-public-selection-log"]
@@ -497,34 +497,54 @@ environment_rows() {
 [2,"systemctl --user show fixture.service --property=Id,ActiveState,Environment","unit-env-list","claude-and-codex"]
 [2,"systemctl --property EnvironmentFiles show fixture.service","unit-env-files","claude-and-codex"]
 [2,"systemctl --user show fixture.service","unit-all","claude-and-codex"]
+[2,"systemctl --user $'show' fixture.service","unit-dollar-quoted-show","claude-and-codex"]
 [2,"systemctl show --value","manager-all","claude-and-codex"]
 [2,"systemctl --user show --property= fixture.service","unit-empty-filter","claude-and-codex"]
 [2,"systemctl --user show -p Environment fixture.service","unit-env-short","claude-and-codex"]
 [2,"systemctl -aPEnvironmentFiles show fixture.service","unit-value-cluster","claude-and-codex"]
 [2,"systemctl -pActiveState --property=UnsetEnvironment show fixture.service","unit-env-repeated","claude-and-codex"]
 [2,"systemctl --user show --prop=Environment fixture.service","unit-env-abbreviation","claude-and-codex"]
-[2,"systemctl show fixture.service --property=ActiveState $MORE","unit-unresolved-option","claude-and-codex"]
-[2,"systemctl --host $HOST show fixture.service --property=ActiveState","unit-unresolved-option-operand","claude-and-codex"]
+[2,"systemctl --property=ActiveState show fixture.service $MORE","unit-unresolved-option","claude-and-codex"]
+[2,"systemctl --host $HOST --property=ActiveState show fixture.service","unit-unresolved-option-operand","claude-and-codex"]
 [2,"systemctl show -- fixture.service --property=ActiveState","unit-options-end","claude-and-codex"]
+[2,"POSIXLY_CORRECT=1 systemctl --user show fixture.service --property=ActiveState","unit-property-after-verb","claude-and-codex"]
+[2,"systemctl --property=ActiveState show fixture.service --property=ExecStartEx","unit-argv-appended-property","claude-and-codex"]
 [2,"systemctl --user status fixture.service","unit-status","claude-and-codex"]
+[2,"systemctl --user $'status' fixture.service","unit-dollar-quoted-status","claude-and-codex"]
 [2,"systemctl status --full --lines=0 --property=ActiveState fixture.service","status-ignores-property","claude-and-codex"]
 [2,"systemctl --user cat fixture.service","unit-file","claude-and-codex"]
+[2,"systemctl --user $'cat' fixture.service","unit-dollar-quoted-cat","claude-and-codex"]
 [2,"systemd-analyze --user dump fixture.service","manager-dump","claude-and-codex"]
-[2,"busctl --user get-property org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/fixture org.freedesktop.systemd1.Service ActiveState PassEnvironment","systemd-bus-property","claude-and-codex"]
+[2,"busctl --user get-property org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/fixture_2eservice org.freedesktop.systemd1.Service MainPID PassEnvironment","systemd-bus-property","claude-and-codex"]
+[2,"busctl --user get-property org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/fixture_2eservice org.freedesktop.systemd1.Service ExecStart","systemd-bus-argv-property","claude-and-codex"]
 [2,"busctl --user introspect org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/fixture","systemd-bus-introspection","claude-and-codex"]
+[0,"busctl --user --xml-interface introspect org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/fixture_2eservice","systemd-bus-xml-only","claude-and-codex"]
 [2,"busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1/unit/fixture org.freedesktop.DBus.Properties GetAll s org.freedesktop.systemd1.Service","systemd-bus-all","claude-and-codex"]
 [2,"gdbus call --session --dest org.freedesktop.systemd1 --object-path /org/freedesktop/systemd1/unit/fixture --method org.freedesktop.DBus.Properties.Get org.freedesktop.systemd1.Service Environment","systemd-gdbus-property","claude-and-codex"]
+[2,"gdbus call --session --dest=org.freedesktop.systemd1 --object-path=/org/freedesktop/systemd1/unit/fixture_2eservice --method=org.freedesktop.DBus.Properties.Get org.freedesktop.systemd1.Service Environment","systemd-gdbus-property-attached","claude-and-codex"]
 [2,"dbus-send --session --print-reply --dest=org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager.Dump","systemd-bus-dump","claude-and-codex"]
+[2,"busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager DumpUnitsMatchingPatterns as 1 fixture.service","systemd-bus-dump-pattern","claude-and-codex"]
 [2,"cat /proc/4242/environ","process-environ-operand","claude-and-codex"]
 [2,"strings < /proc/4242/task/4242/environ","task-environ-input","claude-and-codex"]
 [2,"dd if=/proc/4242/environ","process-environ-dd","claude-and-codex"]
 [2,"grep -a . /proc/4242/environ","process-environ-grep","claude-and-codex"]
+[2,"rg -a -e . /proc/4242/environ","process-environ-rg","claude-and-codex"]
+[2,"rg -a -f /proc/4242/environ fixtures.txt","process-environ-pattern-file","claude-and-codex"]
+[0,"rg -F -e /proc/4242/environ fixtures.txt","process-environ-regexp","claude-and-codex"]
+[0,"rg --regexp=/proc/4242/environ fixtures.txt","process-environ-attached-regexp","claude-and-codex"]
+[0,"grep -F /proc/4242/environ fixtures.txt","process-environ-implicit-pattern","claude-and-codex"]
+[2,"head -c 32 $'\\x2fproc/4242/environ'","process-environ-encoded-file","claude-and-codex","environment-dump","undecoded-ansi-escape"]
+[2,"head -c 32 ./environ","process-environ-relative-file","claude-and-codex","environment-dump","-","-","/proc/4242"]
+[2,"cat environ","process-environ-relative-cat","claude-and-codex","environment-dump","-","-","/proc/4242"]
+[2,"tr '\\0' '\\n' < environ","process-environ-relative-redirect","claude-and-codex","environment-dump","-","-","/proc/4242"]
 [2,"ps eww -p 4242","process-ps-bsd","claude-and-codex"]
 [2,"ps axueww","process-ps-cluster","claude-and-codex"]
 [2,"ps -E -p 4242","process-ps-macos","claude-and-codex"]
 [2,"ps -ef","process-ps-dashed-ambiguous","claude-and-codex"]
+[2,"PS_PERSONALITY=bsd ps -u e -p 4242","process-ps-ambiguous-operand","claude-and-codex"]
 [0,"systemctl --user show-environment | grep '^NAME='","manager-environment-named","claude-and-codex"]
-[0,"systemctl --user show fixture.service --property=ActiveState","unit-active-state","claude-and-codex"]
+[0,"systemctl --user --property=ActiveState show -- fixture.service","unit-active-state","claude-and-codex"]
+[0,"systemctl --user --legend=no --no-legend --failed -p ActiveState show -- fixture.service","unit-active-state-global-options","claude-and-codex"]
 [0,"systemctl -PActiveState show -- \"$UNIT\"","unit-literal-filter","claude-and-codex"]
 [0,"systemctl is-active -- show","unit-name-show-is-data","claude-and-codex"]
 [0,"ps -A -o etime","process-ps-posix","claude-and-codex"]
@@ -1548,11 +1568,12 @@ environment_rows() {
 [2,"cd DIR; rm -rf X; printf '%s' \"$VALUE\"; env","target-exclusion-keeps-environment-check"]
 ENVIRONMENT_ROWS
   ) || exit 1
-  while IFS=$'\t' read -r expected command_json label world refusal reason oracle; do
+  while IFS=$'\t' read -r expected command_json label world refusal reason oracle cwd_fixture; do
     [ -n "$expected" ] || continue
     printf -v command_json '%b' "$command_json"
     row_selected "$label" || continue
     label="environment: $label"; payload_cwd=$repo; invalid=false; shape_kind=tool; run_hook=$hook
+    [ "$cwd_fixture" = - ] || payload_cwd=$cwd_fixture
     printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^$"\n' >"$repo/kendex.settings.toml"
     case "$world" in
       outside) payload_cwd=/ ;;
@@ -2112,6 +2133,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   done <<'ENVIRONMENT_CONTROLS'
 no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
 unit-environment|elif systemctl_environment; then mode=dump-unknown|elif systemctl_environment; then mode=other|exit=0 expected=2|unit-env-list-claude unit-env-list-codex
+systemctl-property-order|elif [ -z "$verb" ]; then selected=1; fi|else selected=1; fi|exit=0 expected=2|unit-property-after-verb-claude unit-property-after-verb-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc

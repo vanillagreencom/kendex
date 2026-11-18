@@ -104,23 +104,46 @@ environment_private_path() {
 }
 
 proc_environment_path() {
-  case "$1" in /proc/*/environ | */proc/*/environ | proc/*/environ) return 0 ;; esac
-  return 1
+  local path=$1 part absolute=""
+  [ "${path##*/}" = environ ] || return 1
+  case "$path" in /*) ;; *) path=${cwd:-$PWD}/$path ;; esac
+  # Resolve literal path components without opening procfs or following links.
+  while [ -n "$path" ]; do
+    part=${path%%/*}
+    case "$part" in
+      '' | .) ;;
+      ..) absolute=${absolute%/*} ;;
+      *) absolute=$absolute/$part ;;
+    esac
+    case "$path" in */*) path=${path#*/} ;; *) break ;; esac
+  done
+  [[ $absolute == /proc/*/environ ]]
 }
 
 unit_environment_property() {
-  case ",$1," in *,Environment,* | *,EnvironmentFiles,* | *,PassEnvironment,* | *,UnsetEnvironment,*) return 0 ;; esac
+  local list=$1 property
+  while [ -n "$list" ]; do
+    property=${list%%,*}
+    # The extended execution properties carry the configured argv too.
+    case "${property%Ex}" in
+      Environment | EnvironmentFiles | PassEnvironment | UnsetEnvironment | ExecCondition | ExecStart | ExecStartPre | ExecStartPost | ExecReload | ExecStop | ExecStopPost) return 0 ;;
+    esac
+    case "$list" in *,*) list=${list#*,} ;; *) break ;; esac
+  done
   return 1
 }
 
 systemctl_literal_word() {
-  [ "${arg_kinds[$1]:-}" = literal ] &&
-    { [ "${arg_unquoted[$1]:-}" != 1 ] || [[ ${args[$1]} != *[\*\?\[\]\{\}]* ]]; }
+  case "${arg_kinds[$1]:-}" in
+    dollar-literal) return 0 ;;
+    literal) [[ ${args[$1]} != *[\*\?\[\]\{\}]* ]] ;;
+    *) return 1 ;;
+  esac
 }
 
-# systemctl's property options are global and repeatable. A unit operand can
-# precede an option, so proving a safe selection requires reading every option
-# before --. status and cat render different output and ignore that selection.
+# Older systemctl uses getopt_long, which can stop at the verb. Count only
+# leading filters as proof, and check every later option because versions
+# that permute operands can still apply them. status and cat ignore filters.
 systemctl_environment() {
   local cursor option property verb="" selected="" sensitive="" uncertain="" ended="" short take
   local property_list='^[A-Za-z][A-Za-z0-9]*(,[A-Za-z][A-Za-z0-9]*)*$'
@@ -136,9 +159,9 @@ systemctl_environment() {
         --) ended=1; continue ;;
         --property=*) property=${option#*=} ;;
         --property) take=1 ;;
-        --user | --system | --no-pager | --no-ask-password | --all | --full | --value | --plain | --quiet | --with-dependencies) continue ;;
-        --host=* | --machine=* | --capsule=* | --type=* | --state=* | --lines=* | --output=* | --root=* | --image=*) continue ;;
-        --host | --machine | --capsule | --type | --state | --lines | --output | --root | --image)
+        --user | --system | --no-pager | --no-ask-password | --all | --full | --value | --plain | --quiet | --with-dependencies | --no-legend | --failed) continue ;;
+        --host=* | --machine=* | --capsule=* | --type=* | --state=* | --lines=* | --output=* | --root=* | --image=* | --legend=*) continue ;;
+        --host | --machine | --capsule | --type | --state | --lines | --output | --root | --image | --legend)
           cursor=$((cursor + 1)); systemctl_literal_word "$cursor" || uncertain=1; continue ;;
         --*=*) uncertain=1; continue ;;
         --*) uncertain=1; continue ;;
@@ -162,7 +185,7 @@ systemctl_environment() {
           if ! systemctl_literal_word "$cursor" || [[ ! $property =~ $property_list ]]; then
             uncertain=1
           elif unit_environment_property "$property"; then sensitive=1
-          else selected=1; fi
+          elif [ -z "$verb" ]; then selected=1; fi
           continue ;;
       esac
     fi
@@ -179,23 +202,39 @@ systemctl_environment() {
 # environment flag too. The hook has no proof of the process's personality.
 # Format and PID operands can contain e, so judge only the option letters.
 ps_environment() {
-  local cursor option letters flags operand
+  local cursor option letters flags operand grammar
+  for grammar in bsd sysv; do
+    for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+      option=${args[$cursor]}
+      case "$option" in
+        --cols | --columns | --delimiter | --format | --group | --lines | --pid | --ppid | --quick-pid | --rows | --sid | --sort | --tty | --user | --width)
+          cursor=$((cursor + 1)); continue ;;
+        --*) continue ;;
+      esac
+      letters=${option#-}
+      if [ "$grammar" = bsd ] || [ "$option" = "$letters" ]; then
+        flags=${letters%%[kOopqtU0-9]*}
+        [[ $flags != *e* ]] || return 0
+      else
+        flags=${letters%%[CDGgOopqstuU]*}
+        [[ $flags != *E* ]] || return 0
+      fi
+      operand=${letters#"$flags"}
+      case "$operand" in [CDGgOopqstuUk]) cursor=$((cursor + 1)) ;; esac
+    done
+  done
+  return 1
+}
+
+# busctl prints only interface XML when it sees the leading XML option.
+busctl_xml_only() {
+  local cursor
   for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
-    option=${args[$cursor]}
-    case "$option" in
-      --cols | --columns | --delimiter | --format | --group | --lines | --pid | --ppid | --quick-pid | --rows | --sid | --sort | --tty | --user | --width)
-        cursor=$((cursor + 1)); continue ;;
-      --*) continue ;;
+    case "${arg_kinds[$cursor]}:${args[$cursor]}" in
+      literal:--xml-interface | dollar-literal:--xml-interface) return 0 ;;
+      literal:--user | literal:--system | literal:--no-pager | literal:--no-legend) ;;
+      *) return 1 ;;
     esac
-    letters=${option#-}
-    flags=${letters%%[kOopqtU0-9]*}
-    [[ $flags != *e* ]] || return 0
-    if [ "$option" != "$letters" ]; then
-      flags=${letters%%[CDGgOopqstuU]*}
-      [[ $flags != *E* ]] || return 0
-    fi
-    operand=${letters#"$flags"}
-    case "$operand" in [CDGgOopqstuUk]) cursor=$((cursor + 1)) ;; esac
   done
   return 1
 }
@@ -206,14 +245,86 @@ systemd_bus_environment() {
   local cursor word service="" read="" property=""
   for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
     word=${args[$cursor]}
+    case "$word" in --dest=* | --object-path=* | --method=*) word=${word#*=} ;; esac
     case "$word" in
       org.freedesktop.systemd1 | /org/freedesktop/systemd1 | /org/freedesktop/systemd1/*) service=1 ;;
-      introspect | GetAll | *.GetAll | Dump | *.Dump) read=all ;;
+      introspect) if [ "$program" != busctl ] || ! busctl_xml_only; then read=all; fi ;;
+      GetAll | *.GetAll | Dump | *.Dump | DumpUnitsMatchingPatterns | *.DumpUnitsMatchingPatterns) read=all ;;
       get-property | Get | *.Get) [ "$read" = all ] || read=named ;;
       *) if unit_environment_property "${word#string:}"; then property=1; fi ;;
     esac
   done
   [ -n "$service" ] && { [ "$read" = all ] || { [ "$read" = named ] && [ -n "$property" ]; }; }
+}
+
+environment_file_input() {
+  if [ "$2" = ansi-escaped ]; then
+    mode=dump-unknown; dump_reason=undecoded-ansi-escape
+  elif proc_environment_path "$1"; then
+    mode=dump-unknown
+  else
+    return 1
+  fi
+}
+
+# grep and rg treat their first positional argument as a search pattern only
+# when no explicit -e or -f is present. Pattern files are themselves reads.
+search_environment() {
+  local cursor value kind role short letters end="" explicit="" filter_ok=1 pattern="" patterns=0
+  local operand_flags='efABCDdm' index
+  local positional=()
+  [ "$program" != rg ] || operand_flags='efABCdEgjtTMmr'
+  for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+    value=${args[$cursor]}; kind=${arg_kinds[$cursor]}; role=""
+    [ "$kind" = literal ] || filter_ok=""
+    if [ -z "$end" ]; then
+      case "$value" in
+        --) end=1; continue ;;
+        --regexp | --file)
+          role=$value
+          cursor=$((cursor + 1)); value=${args[$cursor]:-}; kind=${arg_kinds[$cursor]:-}; filter_ok="" ;;
+        --regexp=* | --file=*)
+          role=${value%%=*}; value=${value#*=}; filter_ok="" ;;
+        --*=*)
+          filter_ok=""
+          if environment_file_input "${value#*=}" "$kind"; then return; fi
+          continue ;;
+        --*) filter_ok=""; continue ;;
+        -?*)
+          letters=${value#-}
+          short=${letters#"${letters%%[$operand_flags]*}"}
+          if [ "$value" != -e ] && [[ ! $letters =~ ^[EFq]+$ ]]; then filter_ok=""; fi
+          case "$short" in
+            e*) role=--regexp ;;
+            f*) role=--file ;;
+            ?*) role=option ;;
+            '') continue ;;
+          esac
+          if [ "${#short}" -eq 1 ]; then
+            cursor=$((cursor + 1)); value=${args[$cursor]:-}; kind=${arg_kinds[$cursor]:-}
+          else
+            value=${short:1}
+          fi ;;
+      esac
+    fi
+    case "$role" in
+      --regexp) explicit=1; pattern=$value; patterns=$((patterns + 1)); [ "$kind" = literal ] || filter_ok="" ;;
+      --file) explicit=1; if environment_file_input "$value" "$kind"; then return; fi ;;
+      option) ;;
+      *) positional[${#positional[@]}]=$cursor ;;
+    esac
+  done
+  index=0
+  if [ -z "$explicit" ] && [ "${#positional[@]}" -gt 0 ]; then
+    pattern=${args[${positional[0]}]}; patterns=1; index=1
+  fi
+  for ((; index<${#positional[@]}; index++)); do
+    cursor=${positional[$index]}
+    if environment_file_input "${args[$cursor]}" "${arg_kinds[$cursor]}"; then return; fi
+    filter_ok=""
+  done
+  if [ "$program" = grep ] && [ -n "$filter_ok" ] && [ "$patterns" -eq 1 ] &&
+     [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi
 }
 
 # This rule belongs to this hook, not the replaceable project pattern. No
@@ -308,11 +419,12 @@ environment_producer() { # command kind
     esac
     case "${program:-}" in
       cat | tr | strings | xargs) [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; } ;;
-      awk | base64 | comm | cp | cut | dd | diff | grep | head | hexdump | jq | less | more | nl | od | paste | perl | python | python3 | rg | sed | sort | split | tail | tee | uniq | xxd)
+      awk | base64 | comm | cp | cut | dd | diff | head | hexdump | jq | less | more | nl | od | paste | perl | python | python3 | sed | sort | split | tail | tee | uniq | xxd)
+        [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
         for ((j=pos; j<${#args[@]}; j++)); do
           value=${args[$j]}
           case "$program:$value" in dd:if=*) value=${value#if=} ;; esac
-          if proc_environment_path "$value"; then mode=dump-unknown; return; fi
+          if environment_file_input "$value" "${arg_kinds[$j]}"; then return; fi
         done ;;
     esac
     case "${program:-}" in
@@ -410,24 +522,9 @@ environment_producer() { # command kind
           esac
         fi
         if [ "$program" = cat ] && environment_private_path ${private_inputs[@]+"${private_inputs[@]}"} "${args[@]:pos}"; then mode=dump-unknown; fi ;;
-      grep)
-        filter_ok=1; pattern_count=0; pattern=""
-        for ((j=pos; j<${#args[@]}; j++)); do
-          value=${args[$j]}
-          [ "${arg_kinds[$j]}" = literal ] || filter_ok=""
-          case "$value" in
-            --) pos=$((j + 1)); break ;;
-            -e) j=$((j + 1)); value=${args[$j]:-}; [ "${arg_kinds[$j]:-}" = literal ] || filter_ok="" ;;
-            -*) [[ $value =~ ^-[EFq]+$ ]] || filter_ok=""; continue ;;
-          esac
-          pattern_count=$((pattern_count + 1)); pattern=$value
-        done
-        if [ "${value:-}" = -- ]; then
-          for ((j=pos; j<${#args[@]}; j++)); do
-            pattern_count=$((pattern_count + 1)); pattern=${args[$j]}; [ "${arg_kinds[$j]}" = literal ] || filter_ok=""
-          done
-        fi
-        if [ -n "$filter_ok" ] && [ "$pattern_count" -eq 1 ] && [[ $pattern =~ $filter_re ]] && [ -z "$input_redirect" ]; then mode=filter; fi ;;
+      grep | rg)
+        if [ -n "$input_escaped" ]; then mode=dump-unknown; dump_reason=undecoded-ansi-escape
+        else search_environment; fi ;;
     esac
     # No unresolved arm can discharge the forwarded classification check.
     if [ "$mode" = other ] && [ -n "${forwarded_argument:-}" ]; then mode=unclassified-forwarded; fi
@@ -836,7 +933,7 @@ word_quoted() {
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
+  local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target=""
@@ -1395,7 +1492,7 @@ refuse() { # KEY VALUE [CAUSE]
         else
           echo "the command contains a recognized private-file read or a whole-environment read without a proven direct named-variable filter"
           echo "for named non-secret settings, use orch-env NAME DEFAULT; do not read or filter the private file"
-          echo "for unit state, use a named systemctl show property, for example: systemctl --user show UNIT --property=ActiveState"
+          echo "for unit state, put the named property before show: systemctl --user --property=ActiveState show -- UNIT"
           echo "for process metadata, select fields without environment flags, for example: ps -A -o pid,comm"
           echo "for actual environment producers, read named variables, for example: systemctl --user show-environment | grep '^NAME='"
           echo "nested or unsupported environment routing can refuse conservatively; use the direct filtered form for environment producers"
