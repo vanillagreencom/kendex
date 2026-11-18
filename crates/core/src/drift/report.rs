@@ -479,6 +479,8 @@ const SECTION_ITEMS: usize = 10;
 const REPORT_LINES: usize = 60;
 const REPORT_BYTES: usize = 8 * 1024;
 
+pub const SETTINGS_SECTION: &str = "settings";
+
 /// What a scope's own manifest file turned out to be, from the one read
 /// the check makes of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,6 +498,7 @@ enum ManifestState {
 
 struct Sections {
     commands: Vec<Line>,
+    settings: Vec<Line>,
     stale: Vec<Line>,
     edited: Vec<Line>,
     removed: Vec<Line>,
@@ -523,6 +526,7 @@ impl Sections {
     fn lines(&self) -> impl Iterator<Item = &Line> {
         [
             &self.commands,
+            &self.settings,
             &self.stale,
             &self.edited,
             &self.removed,
@@ -552,6 +556,7 @@ impl Sections {
     fn new() -> Sections {
         Sections {
             commands: Vec::new(),
+            settings: Vec::new(),
             stale: Vec::new(),
             edited: Vec::new(),
             removed: Vec::new(),
@@ -578,6 +583,7 @@ impl Sections {
     ) -> CheckReport {
         let sections: Vec<Section> = [
             ("external commands", self.commands),
+            (SETTINGS_SECTION, self.settings),
             ("stale", self.stale),
             ("edited by hand", self.edited),
             ("gone from their source", self.removed),

@@ -407,7 +407,7 @@ SUPP_SCAN_DEF='
         | close_section
         | if (["Changes recommended", "Needs a closer look"] | index($verdict)) != null then
             .entries += 1 | .list += ["review:\($id)"]
-          elif $verdict == "" or $verdict == "Approved" then .
+          elif $verdict == "" or $verdict == "Approved" or $verdict == "Approval recommended" then .
           else .unparsed += 1 end;
 '
 # The scan reads every submitted review at the head from a finding source:

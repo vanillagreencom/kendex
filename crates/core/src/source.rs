@@ -202,6 +202,20 @@ pub fn inplace_source_root(scope: &Scope) -> Option<PathBuf> {
     }
 }
 
+/// Bind a project in-place path to its checkout before reading it as a catalog.
+pub(crate) fn seal_in_place(
+    scope: &Scope,
+    path: &Path,
+) -> Result<crate::source_read::SealedSource> {
+    let root = match scope {
+        Scope::Project { root } => root.as_path(),
+        Scope::Global => path,
+    };
+    let sealed = crate::source_read::SealedSource::open(root)?;
+    sealed.contained(path)?;
+    Ok(sealed)
+}
+
 /// The portable identity a declaration names, even while its catalog is
 /// unavailable. Disabled subscriptions keep their identity.
 pub(crate) fn declared_provenance(manifest: &Manifest, name: &str) -> Option<String> {
@@ -239,6 +253,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
                 path: root,
             });
         }
+        seal_in_place(scope, &root)?;
         return Ok(SourceState::Ready(ResolvedSource {
             name: name.to_owned(),
             root,

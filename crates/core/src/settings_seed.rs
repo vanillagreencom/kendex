@@ -40,6 +40,7 @@ mod env;
 mod notes;
 mod write;
 pub use env::{EnvBlocked, env_blocked};
+pub(crate) use notes::settings_advisories;
 pub use notes::{Answered, conflict_notes, seed_notes, unterminated_notes};
 pub use write::merge;
 pub(crate) use write::remove_orphan_comments;
@@ -126,6 +127,20 @@ pub struct SeededEnv {
     pub entry: EnvEntry,
     /// The declared skill whose template this came from.
     pub owner: String,
+}
+
+impl SeededEnv {
+    pub(crate) fn declarations<'a>(
+        owner: &'a str,
+        text: &str,
+    ) -> impl Iterator<Item = Self> + use<'a> {
+        extract_env_entries(text)
+            .into_iter()
+            .map(move |entry| Self {
+                entry,
+                owner: owner.to_owned(),
+            })
+    }
 }
 
 /// MEMBERSHIP — whether the shell loaders read the assignments under this

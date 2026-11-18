@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::settings_file::{Current, current_of, lines_phrase};
+use crate::settings_template::{TemplateEvidence, TemplateSource};
 
 use super::{SETTINGS_FILE, SeededEnv, Seeding};
 
@@ -121,33 +122,7 @@ pub fn conflict_notes(
     answered: &Answered,
     seeding: &Seeding,
 ) -> Vec<String> {
-    // Distinct defaults per key, each with its owners, both in declaration
-    // order; the key order is the file's, so the notes read stably.
-    //
-    // The declarations come from `writable_all`, the same selection every
-    // other consumer takes, rather than from a filter of this loop's own.
-    // An incomplete declaration ships no default to disagree with — it
-    // grouped as an empty one and reported two skills as conflicting when
-    // only one of them had said anything.
-    let mut by_key: BTreeMap<&str, Vec<Shipped>> = BTreeMap::new();
-    for key in entries.iter().map(|seeded| seeded.entry.key.as_str()) {
-        let defaults = by_key.entry(key).or_default();
-        if !defaults.is_empty() {
-            continue;
-        }
-        for seeded in super::writable_all(entries, key) {
-            let identity = seeded.default_key();
-            match defaults.iter_mut().find(|had| had.identity == identity) {
-                Some(had) => had.owners.push(&seeded.owner),
-                None => defaults.push(Shipped {
-                    identity,
-                    shown: seeded.default_shown(),
-                    owners: vec![&seeded.owner],
-                }),
-            }
-        }
-    }
-    by_key
+    default_groups(entries)
         .into_iter()
         .filter(|(_, defaults)| defaults.len() > 1)
         .map(|(key, defaults)| {
@@ -155,12 +130,6 @@ pub fn conflict_notes(
                 .iter()
                 .map(|had| format!("{} ({})", had.shown, had.owners.join(", ")))
                 .collect();
-            // Whose value lands, where one does, is the chooser's answer
-            // and never the first declaration: naming a skill whose bytes
-            // this pass would not write points at a value that never
-            // arrives. Where the pass writes none of them, what a person
-            // reads instead is their own line if the loaders read one, and
-            // only a package's carried default if they do not.
             let consequence = match super::written_for(entries, key, seeding, &answered.occupied) {
                 Some(seeded) => format!(
                     "{}'s is the one written, so set the value yourself if that is not the one you want",
@@ -181,6 +150,158 @@ pub fn conflict_notes(
             ))
         })
         .collect()
+}
+
+fn default_groups(entries: &[SeededEnv]) -> BTreeMap<&str, Vec<Shipped<'_>>> {
+    // Keep keys with no complete default so they still count as declared.
+    // Only writable declarations contribute a default.
+    let mut by_key: BTreeMap<&str, Vec<Shipped>> = BTreeMap::new();
+    for key in entries.iter().map(|seeded| seeded.entry.key.as_str()) {
+        let defaults = by_key.entry(key).or_default();
+        if !defaults.is_empty() {
+            continue;
+        }
+        for seeded in super::writable_all(entries, key) {
+            let identity = seeded.default_key();
+            match defaults.iter_mut().find(|had| had.identity == identity) {
+                Some(had) if !had.owners.contains(&seeded.owner.as_str()) => {
+                    had.owners.push(&seeded.owner);
+                }
+                Some(_) => {}
+                None => defaults.push(Shipped {
+                    identity,
+                    shown: seeded.default_shown(),
+                    owners: vec![&seeded.owner],
+                }),
+            }
+        }
+    }
+    by_key
+}
+
+pub(crate) fn settings_advisories<'a>(
+    text: &str,
+    templates: impl IntoIterator<Item = (&'a str, &'a TemplateEvidence)>,
+) -> Vec<String> {
+    let sites = crate::settings_file::sites(text);
+    let keys: BTreeSet<_> = sites
+        .iter()
+        .filter(|site| site.in_env && site.written == crate::settings_file::Written::Bare)
+        .map(|site| site.key.as_str())
+        .collect();
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let mut secrets = BTreeSet::from([crate::settings_secret::USER_EMAIL_KEY.to_owned()]);
+    let mut entries = vec![crate::settings_secret::env_file_declaration()];
+    let mut families = Vec::new();
+    let mut all_verified = true;
+    for (name, evidence) in templates {
+        let template = match evidence {
+            TemplateEvidence::Verified(template) => template,
+            TemplateEvidence::Catalog(template) => {
+                all_verified = false;
+                template
+            }
+        };
+        match template {
+            TemplateSource::Text(template) => {
+                // Even a malformed [secrets] declaration identifies a credential.
+                secrets.extend(crate::settings_template::read(template).secret_keys);
+                entries.extend(SeededEnv::declarations(name, template));
+                families.extend(key_families(template));
+            }
+            TemplateSource::Absent => {}
+            TemplateSource::Unreadable(_) => return Vec::new(),
+        }
+    }
+    let defaults = default_groups(&entries);
+    let lines: Vec<_> = text.lines().collect();
+    keys.into_iter()
+        .filter(|key| !secrets.contains(*key))
+        .filter_map(|key| {
+            let note = match defaults.get(key).map(Vec::as_slice) {
+                None if !all_verified
+                    || families.iter().any(|family| matches_family(family, key)) =>
+                {
+                    return None;
+                }
+                None => format!("{SETTINGS_FILE} {key}: no installed package declares this key"),
+                Some([default]) => {
+                    let Current::Value { value, line } = current_of(&sites, key) else {
+                        return None;
+                    };
+                    let decoded = super::writable_all(&entries, key).next()?.decoded()?;
+                    if value != decoded || keeps_default(lines[line as usize - 1]) {
+                        return None;
+                    }
+                    format!(
+                        "{SETTINGS_FILE} {key}: equals the default {} from {}",
+                        default.shown,
+                        default.owners.join(", ")
+                    )
+                }
+                Some(_) => return None,
+            };
+            Some(crate::names::shown(&crate::quality::redact(&note)))
+        })
+        .collect()
+}
+
+fn key_families(template: &str) -> impl Iterator<Item = &str> {
+    use crate::settings_toml::{Line, rows};
+    rows(template)
+        .into_iter()
+        .filter(|row| row.kind == Line::Comment)
+        .filter_map(|row| {
+            row.text
+                .trim()
+                .strip_prefix('#')?
+                .trim_start()
+                .strip_prefix("keys:")
+        })
+        .flat_map(|items| {
+            items
+                .split([',', ' ', '\t'])
+                .filter(|item| !item.is_empty())
+        })
+}
+
+fn matches_family(family: &str, key: &str) -> bool {
+    if !crate::settings_template::is_env_name(key) {
+        return false;
+    }
+    // Use the same <NAME> wildcard as change-class. Each wildcard must
+    // consume at least one identifier byte before the next literal.
+    let Some((prefix, pattern)) = family.split_once("<NAME>") else {
+        return key == family;
+    };
+    let (middle, suffix) = match pattern.rsplit_once("<NAME>") {
+        Some((middle, suffix)) => (Some(middle), suffix),
+        None => (None, pattern),
+    };
+    let Some(mut between) = key
+        .strip_prefix(prefix)
+        .and_then(|key| key.strip_suffix(suffix))
+    else {
+        return false;
+    };
+    for literal in middle.into_iter().flat_map(|middle| middle.split("<NAME>")) {
+        let Some(rest) = between
+            .get(1..)
+            .and_then(|key| key.split_once(literal).map(|(_, rest)| rest))
+        else {
+            return false;
+        };
+        between = rest;
+    }
+    !between.is_empty()
+}
+
+fn keeps_default(line: &str) -> bool {
+    crate::settings_toml::assignment_of(line)
+        .and_then(|(_, value)| crate::settings_toml::trailing_comment(value))
+        .is_some_and(|(_, comment)| comment == "keep-default")
 }
 
 /// What the plan says about a key a template marks `# required` that this

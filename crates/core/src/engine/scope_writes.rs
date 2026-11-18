@@ -210,10 +210,7 @@ pub(super) fn record_entry_readings(
             continue;
         }
         let item = (entry.kind, entry.name.clone());
-        let written = pass
-            .planned
-            .contains(&(entry.kind, entry.name.clone(), entry.harness))
-            && !kept.contains(key);
+        let written = pass.rendered(key, entry, kept);
         if written {
             let Some(basis) = state.selector_bases.get(&item) else {
                 unreachable!("a successfully planned item has its reading owner's selector basis");

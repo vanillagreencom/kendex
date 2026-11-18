@@ -7,6 +7,8 @@
 
 use std::fs;
 
+use kendex_core::drift::copies::CheckMode;
+use kendex_core::drift::report::{Class, SETTINGS_SECTION, check};
 use kendex_core::engine::audit;
 
 use super::scope::{arrive, fixture, many_owners, names_unanswered, refresh_now, without_key};
@@ -212,4 +214,116 @@ fn the_note_names_the_line_the_file_has_rather_than_a_default_nothing_reads() {
         fs::read_to_string(&settings).unwrap(),
         "[env]\n# Mine.\nWAIT = \"5\"\n"
     );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn saved_settings_notes_are_advisory_in_refresh_and_check() {
+    let f = many_owners(&[
+        (
+            "alpha",
+            concat!(
+                "[env]\n",
+                "# keys: FAMILY_<NAME>_MODE, FAMILY_<NAME>_DETAIL\n",
+                "# A shared default.\nSHARED = \"not found in source\"\n",
+                "# An explicit default.\nPINNED = \"auto\"\n",
+                "# A comment inside the value.\nHASH = \"# keep-default\"\n",
+                "# An independent value.\nCUSTOM = \"auto\"\n",
+                "# A contested default.\nWAIT = \"900\"\n",
+                "\n[secrets]\n# A credential.\nPRIVATE_KEY = \"\"\n",
+            ),
+        ),
+        (
+            "beta",
+            "[env]\n# A shared default.\nSHARED = 'not found in source'\n# A contested default.\nWAIT = \"600\"\n",
+        ),
+    ]);
+    arrive(&f, &["alpha", "beta"]);
+    let settings = f.project.join("kendex.settings.toml");
+    let text = concat!(
+        "[env]\n",
+        "SHARED = 'not found in source'\n",
+        "PINNED = \"auto\"  # keep-default\n",
+        "HASH = \"# keep-default\"\n",
+        "CUSTOM = \"manual\"\n",
+        "WAIT = \"900\"\n",
+        "FAMILY_CLAUDE_4_MODE = \"custom\"\n",
+        "FAMILY_CODEX_DETAIL = \"custom\"\n",
+        "RETIRED = \"fixture-value-do-not-print\" # keep-default\n",
+        "PRIVATE_KEY = \"fixture-value-do-not-print\"\n",
+        "\n[other]\nOUTSIDE = \"untouched\"\n",
+    );
+    fs::write(&settings, text).unwrap();
+
+    let refresh = audit(&f.env, &f.scope).unwrap();
+    assert_eq!(
+        refresh
+            .notes
+            .iter()
+            .filter(|note| note.contains("WAIT"))
+            .count(),
+        1,
+    );
+    assert!(refresh.notes.iter().all(|note| !note.contains("SHARED")));
+    assert!(
+        refresh
+            .plan
+            .ops
+            .iter()
+            .all(|op| !op.line().contains("kendex.settings.toml"))
+    );
+
+    let checked = check(
+        &f.env,
+        std::slice::from_ref(&f.scope),
+        CheckMode::ReportOnly,
+    );
+    assert_eq!(checked.status.exit_code(), 0);
+    let notices = checked
+        .sections
+        .iter()
+        .find(|section| section.title == SETTINGS_SECTION)
+        .unwrap();
+    assert!(
+        notices
+            .lines
+            .iter()
+            .all(|line| line.class == Class::Notice && line.remedy.is_none())
+    );
+    let check_text: Vec<_> = notices
+        .lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect();
+    let refresh_text: Vec<_> = refresh
+        .settings_advisories
+        .iter()
+        .map(String::as_str)
+        .collect();
+    // The report text is the feature a reader uses to identify each key
+    // and its owner. Neither report should echo an undeclared value.
+    for advisory in [refresh_text, check_text] {
+        assert_eq!(advisory.len(), 3);
+        assert!(advisory.iter().any(|line| line.contains("SHARED:")
+            && line.contains("\"not found in source\"")
+            && line.contains("alpha, beta")));
+        assert!(
+            advisory
+                .iter()
+                .any(|line| line.contains("HASH:") && line.contains("alpha"))
+        );
+        assert!(
+            advisory
+                .iter()
+                .any(|line| line.contains("RETIRED:") && line.contains("no installed package"))
+        );
+        assert!(
+            advisory
+                .iter()
+                .all(|line| !line.contains("fixture-value-do-not-print"))
+        );
+    }
+    assert!(fs::read_to_string(&settings).unwrap() == text);
+    kendex_core::apply::execute(&f.env, &refresh.plan).unwrap();
+    assert!(fs::read_to_string(&settings).unwrap() == text);
 }

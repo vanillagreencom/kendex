@@ -488,6 +488,14 @@ pub mod unsubscribe {
     /// which then gained `shared` as `gained` says, fetched here.
     #[allow(clippy::unwrap_used)]
     pub fn installed_then_gained(gained: Gained) -> (tempfile::TempDir, Env, Scope) {
+        installed_then_gained_with_settings(gained, None)
+    }
+
+    #[allow(clippy::unwrap_used)]
+    pub fn installed_then_gained_with_settings(
+        gained: Gained,
+        shared_settings: Option<&str>,
+    ) -> (tempfile::TempDir, Env, Scope) {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = Env::host_rooted(&home);
@@ -495,6 +503,13 @@ pub mod unsubscribe {
         fs::create_dir_all(project.join(".claude")).unwrap();
         let cat = home.join("cat");
         skill(&cat, "shared", "s");
+        if let Some(template) = shared_settings {
+            fs::write(
+                cat.join("skills/shared/kendex.settings.toml.example"),
+                template,
+            )
+            .unwrap();
+        }
         fs::write(
             cat.join("kendex.toml"),
             "[bundles.core]\nskills = [\"shared\"]\n",

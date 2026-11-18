@@ -367,6 +367,9 @@ pub struct EngineReport {
     pub drift: Vec<DriftRow>,
     pub plan: Plan,
     pub notes: Vec<String>,
+    /// Notices about saved settings. Keep these outside the failure
+    /// diagnostics because they quote catalog defaults.
+    pub settings_advisories: Vec<String>,
     pub warnings: Vec<ItemWarning>,
     /// Catalog hooks left off a tool by their own harnesses line alone.
     /// A declaration that names the tool gets a `kendex-hook-excluded`
@@ -658,6 +661,7 @@ impl EngineReport {
             drift: Vec::new(),
             plan,
             notes: Vec::new(),
+            settings_advisories: Vec::new(),
             warnings: Vec::new(),
             excluded_hooks: Vec::new(),
             pinned_hooks: Vec::new(),
