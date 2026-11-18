@@ -265,11 +265,12 @@ step() {
       chmod +x "$ROOT/stub/jq"
       PATH="$ROOT/stub:$PATH"
       ;;
-    # A cut that fails, ahead of the real one: the tracked listing cannot be
-    # split into paths.
+    # A cut that fails the split of the tracked listing, ahead of the real
+    # one: the listing cannot be split into paths. Every other cut, such as
+    # the digest orch-runtime's wrapper keys its binary by, runs the real one.
     broken-cut)
       mkdir -p "$ROOT/stub"
-      printf '#!/usr/bin/env bash\nexit 1\n' >"$ROOT/stub/cut"
+      printf '#!/usr/bin/env bash\n[ "$*" != "-f 2-" ] || exit 1\nexec %q "$@"\n' "$(command -v cut)" >"$ROOT/stub/cut"
       chmod +x "$ROOT/stub/cut"
       PATH="$ROOT/stub:$PATH"
       ;;
