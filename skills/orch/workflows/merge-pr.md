@@ -349,7 +349,7 @@ Some harnesses reset the working directory on every shell call: use `-C` and abs
    .agents/skills/orch/scripts/orch-env QUEUE_WAIT_ARMED_MINUTES 90
    ```
 
-   Repeat the wait while that many minutes have not passed since the recorded time. A new head, or any verdict but those two, clears the record. Past the budget, hand back with the last result's `pending_checks` and the minutes waited, skipping steps 2-6. Under `cause: checks_unread` there are no pending checks: say the checks were never read within the wait's budget. Under `cause: not_mergeable` there are none either: say the last check read settled as `pass` or `none` with no entry. This budget, not `CI_FIX_MAX_CYCLES`, bounds a wait on checks that have not failed. No wait past the budget starts until the overseer, judging with the minutes waited, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
+   Repeat the wait while that many minutes have not passed since the recorded time. A new head, or any verdict but those two, clears the record. Past the budget, hand back with the last result's `pending_checks` and the minutes waited, skipping steps 2-6. Under `cause: checks_unread` there are no pending checks: say the checks were never read within the wait's budget. Under `cause: not_mergeable` there are none either: say the last check read settled as `pass` or `none` with no entry. This budget, not `CI_FIX_MAX_CYCLES`, bounds a wait on checks that have not failed. No wait past the budget starts until the overseer, judging with the minutes waited, has appended one `ruling` row for the item through `orch-runtime state log append --fleet [RULING_FILE]` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
 
    **Entry-ahead wait.** Save `queue_ahead_pr` as `[AHEAD_PR]`. Repeat the same `queue-watch` command through Waiter launch. Route `merged`, `closed`, `dequeued` and `status: error` at once by the table. For every other result, read whether the saved entry is still queued:
 
@@ -373,7 +373,7 @@ Some harnesses reset the working directory on every shell call: use `-C` and abs
    .agents/skills/orch/scripts/orch-runtime state cap CI_FIX_MAX_CYCLES
    ```
 
-   Its reply's `limit` is `[MAX_CYCLES]`, the recovery cycles one merge-pr run may spend. At the cap, report the failing check names, ci-fix's last error summary and what each cycle attempted, never a bare "persistent failure", then skip steps 2-6 and hand back. No cycle starts past the cap until the overseer, judging with `[RECOVERY_COUNT]` and that `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet`. A gate or CI behaviour change needs a fresh head.
+   Its reply's `limit` is `[MAX_CYCLES]`, the recovery cycles one merge-pr run may spend. At the cap, report the failing check names, ci-fix's last error summary and what each cycle attempted, never a bare "persistent failure", then skip steps 2-6 and hand back. No cycle starts past the cap until the overseer, judging with `[RECOVERY_COUNT]` and that `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet [RULING_FILE]`. A gate or CI behaviour change needs a fresh head.
 
    **The re-queue rule**, which every other workflow points to: after a merge-group run concludes `failure` or `timed_out`, re-arm only a new head, the fix ci-fix pushes. A cancelled merge-group run, or one the infrastructure lost, may re-arm the same head once. So may a red run whose `queue-watch` ejection reads `reach: outside`; a second such red at the same head hands back naming both runs. No other unchanged head re-enters the queue after a red run: the merge-group run is the only proof of a head, and a repeat of the same head spends a full queue run on a known failure.
 
@@ -469,7 +469,7 @@ Some harnesses reset the working directory on every shell call: use `-C` and abs
 
    The outputs are `[BASE_BRANCH]`, `[LOCAL_SHA]` and `[ORIGIN_SHA]`. A failed ref read stays in the warning as its cause. Never record the sync as done.
 
-4. **Prepare branch and worktree cleanup.** In a lane, skip this step: the overseer's close stops the lane's session, then releases its worktree, removing a clean, merged one and keeping a dirty or unmerged one with its reason. A run outside a lane cleans up the PR's own branch and worktree alone, never unrelated branches or sibling worktrees:
+4. **Prepare branch and worktree cleanup.** In a lane, the overseer's close owns cleanup. A local close keeps a dirty or unmerged worktree and records the reason. The static SSH provider can remove a clean detached worktree without checking whether another ref reaches its HEAD. Preserve needed commits before handing back a hosted lane for close. A run outside a lane cleans up the PR's own branch and worktree alone, never unrelated branches or sibling worktrees:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName

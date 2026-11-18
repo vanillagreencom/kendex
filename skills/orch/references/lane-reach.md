@@ -64,7 +64,7 @@ The runtime's close is the `close-lane` request. Write it with the harness file 
 
 | Member | Value |
 |---|---|
-| `mode` | `close`, the default: end the lane and record it `done`. `keep-sandbox`: end its harness and record it `stopped`, keeping its worktree, its validation runs and a hosted lane's sandbox, which then reads `sandbox: standing` and holds its slot. `{"park": {...}}`: park a hosted lane's merge wait ([oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait)). `terminal-state`: print the tracker's verdict alone, `completed`, `canceled` or `open`, in `result.state`. `if-terminal`: close only where that verdict is terminal, refusing `item-open` otherwise. |
+| `mode` | `close`, the default: end the lane and record it `done`. `keep-sandbox`: end its harness and record it `stopped`, keeping its worktree and a hosted lane's sandbox, which then reads `sandbox: standing` and holds its slot. This mode leaves local validation runs alone. The static SSH provider's `stop` ends the hosted worktree's validation runs. `{"park": {...}}`: park a hosted lane's merge wait ([oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait)). `terminal-state`: print the tracker's verdict alone, `completed`, `canceled` or `open`, in `result.state`. `if-terminal`: close only where that verdict is terminal, refusing `item-open` otherwise. |
 | `delivery` | The merge the lane delivered: `{"pr": {"pr": [N], "repo": "[OWNER/REPO]"}}`, or a direct push's `{"commit": {"commit": "[SHA]"}}`. The close records that merge cycle on the lane when it confirms ([oversee-events.md § Direct-push cycle records](oversee-events.md#direct-push-cycle-records)). |
 | `landing` | `{"disposed": {"by": "overseer", "id": "[ID]", "reason": "[REASON]", "of": "record"}}`, with `of` `record`, `boxes` or `both`: gives up a merge cycle the close could not record, or merged boxes it could not settle, under that authority. The close writes it once as the fleet log's `landing-disposed` row. |
 | `tracker`, `repo`, `harness` | The identity a record written without it needs (§ Records with no identity). |
@@ -103,7 +103,7 @@ Before it acts, a close on the merged ground or on an item its tracker completed
 
 ### Hosted harness
 
-A hosted lane's harness is stopped through its provider before the close transition, except a Copilot lane in a window of this machine (`pane=local`), which § What the close does stops after it. A Copilot lane on a provider that captures its pane first gets `C-c` and `/exit` through the provider's input, so it writes its session totals. Otherwise the provider's `stop` runs, then the close waits up to `ORCH_LANE_CLOSE_SECS` for the pane to read exited.
+A hosted lane's harness is stopped through its provider before the close transition, except a Copilot lane in a window of this machine (`pane=local`), which § What the close does stops after it. A Copilot lane on a provider that captures its pane first gets `C-c` and `/exit` through the provider's input, so it writes its session totals. Otherwise the provider's `stop` runs, then the close polls for the pane to read exited. The close checks `ORCH_LANE_CLOSE_SECS` after an inconclusive read. Each provider read has its own timeout and can answer after the polling deadline.
 
 | Refusal or note | Meaning |
 |---|---|

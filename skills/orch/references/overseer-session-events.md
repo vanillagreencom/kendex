@@ -79,5 +79,5 @@ A record naming another pane, another harness than the fleet record's for this p
 
 The line under it names the step:
 
-- `succession=on`: hand the session over at the next safe point through [oversee.md § Succession](../workflows/oversee.md#succession). Choose the successor with `.agents/skills/orch/scripts/orch-runtime successor --fleet --cwd [CHECKOUT] --predecessor [PANE] --mark [KIND]`, then ask `orch-runtime op --fleet --effect-exit` for `request-transfer` with `cause` `live`, its `.result.successor` as the successor and `.result.expected` as the expected record.
+- `succession=on`: hand the session over at the next safe point through [oversee.md § Succession](../workflows/oversee.md#succession). Choose the successor with `.agents/skills/orch/scripts/orch-runtime successor --fleet --cwd [CHECKOUT] --predecessor [PANE] --mark [KIND]`, then ask `orch-runtime op --fleet --effect-exit --request [TRANSFER_REQUEST_FILE]` for `request-transfer` with `cause` `live`, its `.result.successor` as the successor and `.result.expected` as the expected record.
 - `succession=off`: no successor opens. Write the overseer handoff file and ask the owner to start a fresh overseer session.

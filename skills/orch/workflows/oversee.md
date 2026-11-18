@@ -157,13 +157,13 @@ A launch on the tmux surface takes these steps in order, locally or on a remote 
    .agents/skills/orch/scripts/orch-runtime lane walk --fleet
    ```
 
-   Otherwise judge the account for the model the lane runs, adding `--lane [CONFIG_DIR]` for an account named by hand, and take `.result.record.config_dir` where `.result.exit` is 0:
+   Otherwise judge the account for the model the lane runs, adding `--lane [CONFIG_DIR] --projected` for an account named by hand, and take `.result.record.config_dir` where `.result.exit` is 0:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]
    ```
 
-   The judge reads each account's plan windows and its API or Codex credits, and projects the lanes already on it with the candidate among them. It judges this fleet's overseer account last: it charges the overseer's own spend to the window's reset beside the lanes, and holds that account's room to `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT)`, a row past it reading `seat-reserve`. An account another controller sits on reads `seated`. A Copilot or Pi account is never a seat. An account whose windows measure nothing for the model is dropped, never taken as free. The reply carries the answer's word and its exit: 0 `lane`; 3 no eligible account (`none`, `walled`, `reserved`, `retired` or `excluded`); 4 `no-record`; 5 `unmeasured`; 7 `cloud-repo-unset`; 1 `unjudged`. At exit 3 nothing launches: [lane-directive.md § No lane has room](../references/lane-directive.md#no-lane-has-room) says what to read, wait on and report.
+   The judge reads each account's plan windows and its API or Codex credits, and projects the lanes already on it with the candidate among them. A worker pick ranks eligible seats with other accounts after reserving their controllers' projected spend. It caps a seat's plan window at `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT)`. A row past that limit reads `seat-reserve`. An overseer chooser excludes another controller's seat as `seated`. A Copilot or Pi account is never a seat. An account whose windows measure nothing for the model is dropped, never taken as free. The reply carries the answer's word and its exit: 0 `lane`; 3 no eligible account (`none`, `walled`, `reserved`, `retired` or `excluded`); 4 `no-record`; 5 `unmeasured`; 7 `cloud-repo-unset`; 1 `unjudged`. At exit 3 nothing launches: [lane-directive.md § No lane has room](../references/lane-directive.md#no-lane-has-room) says what to read, wait on and report.
 
 4. **Launch.** One request per item. For a lane on this host, create the item's worktree first, the claim § 2 names; it prints its path, the request's `mail_root`. A hosted or `claude-cloud` request names this checkout as `mail_root`, and the launch creates the lane's worktree and records its path. Write the brief file under [lane-directive.md § Brief file](../references/lane-directive.md#brief-file), then the request with the harness file tool, and run it:
 
@@ -243,7 +243,7 @@ For a recorded surface-2 item, write the fields that change to `tmp/lane-merge-[
 .agents/skills/orch/scripts/orch-runtime state get --fleet /lanes/0/launched_at
 ```
 
-`mail_root` is the lane's worktree path as its own host sees it, and the lane's status file is `[MAIL_ROOT]/tmp/lane-status-[ISSUE_ID].md`. Every mailbox call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value and names the root, `lane-mail send --root [MAIL_ROOT] --host`; its provider reads run as `orch-runtime host --host [HOST] cat` or `touch`. A close reads the host from the record. A lane on this host needs neither. A local lane whose `mail_root` is a worktree of another repository takes `--root [MAIL_ROOT]`, run from a checkout of that repository: `lane-mail` refuses a cross-repository send as `lane-foreign`.
+`mail_root` is the lane's worktree path as its own host sees it, and the lane's status file is `[MAIL_ROOT]/tmp/lane-status-[ISSUE_ID].md`. Every mailbox call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value and names the root. Send a directive with `lane-mail send --item [ITEM] --root [MAIL_ROOT] --host --directive --file [PATH]`. Its provider reads run as `orch-runtime host --host [HOST] cat` or `touch`. A close reads the host from the record. A lane on this host needs neither. A local lane whose `mail_root` is a worktree of another repository takes `--root [MAIL_ROOT]`, run from a checkout of that repository: `lane-mail` refuses a cross-repository send as `lane-foreign`.
 
 ## 4. Watch And Advance
 

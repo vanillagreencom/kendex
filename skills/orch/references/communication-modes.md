@@ -153,7 +153,7 @@ Progress reports and scheduled messages go to every open text medium (Slack and 
 - Only these message classes go to Slack, for every overseer.
 - The `report-due` summary ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)) reaches Slack as the report file's comment only. The chat and the report file keep [§ Status report](#status-report) and carry no summary.
 - The Slack relay links bare tracker ids, Linear ids included.
-- Deliver an image with `slack post --file`, adding `--thread TS` for a reply.
+- Deliver an image with `slack post --file [IMAGE_PATH]`, adding `--thread TS` for a reply.
 
 ### Thread delivery
 

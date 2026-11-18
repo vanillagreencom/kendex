@@ -4,7 +4,7 @@ Read the matching section when [oversee.md § Lane directive](../workflows/overs
 
 ## No lane has room
 
-The account judge is `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]`, with `--lane [CONFIG_DIR]` to judge one named account. Every launch, turn-end mark and succession pick asks the same judge. Read `.result.answer` and `.result.exit`:
+The account judge is `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]`, with `--lane [CONFIG_DIR]` to judge one named account. A launch checks its named account through the same judge when the request sets `judge_account: true`. Read `.result.answer` and `.result.exit`:
 
 | Answer | Exit | Meaning |
 |---|---|---|
@@ -107,7 +107,7 @@ A first launch whose touched set meets a live lane of the same repository before
 
 ### After the lane is recorded `preparing`
 
-The effect's refusals come after the transition recorded the lane `preparing` with its launch intent. The intent settles `failed`, the record reads `stopped`, and the intent's observation carries the key as `cause` with the values it acted on. Under `--effect-exit` the reply's `settled` intent carries that observation; `.agents/skills/orch/scripts/orch-runtime state inspect --fleet` shows it among the fleet's intents. Fix what it names, then send the same request again: it relaunches over the stopped record.
+The effect's refusals come after the transition recorded the lane `preparing` with its launch intent. The intent settles `failed`, the record reads `stopped`, and the intent's observation carries the key as `cause` with the values it acted on. Under `--effect-exit` the reply's `settled` intent carries that observation; `.agents/skills/orch/scripts/orch-runtime state inspect --fleet` shows it among the fleet's intents. Fix what it names before retrying. If a failed cloud launch leaves an item worktree claim, resolve that claim with its owner before sending the request again.
 
 | Cause (fields) | Remedy |
 |---|---|
@@ -134,7 +134,7 @@ A `cause` that begins with a harness gate's word is the gate that admits only a 
 
 A hosted launch reads the provider's capability line first; a line that does not declare `launch=ssh` fails as `host-capabilities-failed`, `kind-unbuilt kind=codex-cloud` or `cloud-session-invalid host=provider`. A request naming no `account` or no `repo` fails `host-request-incomplete` before the provider's `create`. After `create`, the provider's refusal is the `cause` as the provider gave it, and a hosted Pi or Copilot lane meets the harness gate on the host's own files. `marker-failed`, `host-gitfile-unread`, `host-gitfile-invalid` and `host-runtime-unbuilt` (`path`, `cause`) name a launch record on the host that the provider's `create` did not leave whole: report it to the provider's owner.
 
-A provider step that gave no answer holds the launch open instead of failing it: the observation's `note` is `host-start-unknown`, `host-create-unknown` or `host-exec-unknown`, with the `cause` and the provider `at`. The provider may hold the item's worktree. Launch the item again, and the provider's `create` reuses it, or close the lane through [lane-reach.md § Lane close](lane-reach.md#lane-close). A launch that failed after the provider started or created the sandbox records `sandbox: standing`, and the lane keeps charging the cap until a close confirms the sandbox gone.
+A provider step that gave no answer holds the launch open instead of failing it: the observation's `note` is `host-start-unknown`, `host-create-unknown` or `host-exec-unknown`, with the `cause` and the provider `at`. The provider may hold the item's worktree. A repeated launch request reconciles the open launch. To start a fresh one, close the held launch through [lane-reach.md § Lane close](lane-reach.md#lane-close) and confirm the sandbox is gone. An acknowledged provider start or create keeps `sandbox: standing` charged to the cap on failure until a close confirms the sandbox is gone. If create refuses before acknowledging the sandbox, check its ownership with the provider before retrying.
 
 ### Cloud launch
 

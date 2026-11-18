@@ -372,8 +372,8 @@ A note `stop-cause=allow-all-blocked-by-policy` is a Copilot lane launched with 
 `EVENT lane-prepare-failed [ITEM] reason=[REASON] [exit=[RC]] log=[PATH]`: a launch failed; `log=` holds its output.
 
 - `reason=relaunch-failed`: the watch's own wall relaunch failed, `exit=` its status, or no `exit=` where the launch's intent settled it failed. Its log holds the `op` replies; `.result.effect.report.intent.observation` names the cause. Keep any window that stands, fix the cause, then relaunch.
-- `reason=wait-failed`: the host's own preparation failed. Close the lane through the runtime close ([lane-reach.md § Lane close](lane-reach.md#lane-close)), which closes the host from the `stopped` record, and launch the item again once.
-- `reason=launch-failed`: a launch step on a ready host failed, named in the log. Fix the cause, then relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+- When a new launch fails with `host-wait-failed` in the launch result's cause, read the provider's answer there. Close the lane through the runtime close ([lane-reach.md § Lane close](lane-reach.md#lane-close)), which closes the host from the `stopped` record, and launch the item again once.
+- After a failed launch on a ready host, read the cause or held observation in the launch result. Fix the cause, settle any held launch through its close, then relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
 
 Tell the owner of a second failure.
 

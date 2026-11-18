@@ -66,7 +66,7 @@ With `ORCH_DELIVERY=push-base` no pull request exists: skip step 1. Run step 2 t
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE] --request-json '{"op":"record-pr-progress","step":"restack-skip","file":"tmp/restack-skip-[ISSUE].json"}'
    ```
 
-   A lane also rewrites its status file's validation line to name the skip, its condition and its paths, as [dev-start.md § Validation status](dev-start.md#validation-status) sets out. A skip proves tree equivalence and no more: a later run at that tree that did not pass voids the skip's proof with every other proof of the tree, so step 3's proof read answers `missing` and the restack hands back.
+   A lane also rewrites its status file's validation line to name the skip, its condition and its paths, as [dev-start.md § Validation status](dev-start.md#validation-status) sets out. A skip proves tree equivalence and no more: a later run at that tree that did not pass voids the skip's proof with every other proof of the tree, so handle step 3's `missing` reply before either caller resumes.
 
    Any other exit of the check under `full` goes to step 3 with no run. Any other exit under `range`, whatever it prints, runs the range command over the branch as it sits on the base after the restack:
 
@@ -106,7 +106,7 @@ With `ORCH_DELIVERY=push-base` no pull request exists: skip step 1. Run step 2 t
 
    This request publishes nothing and reads no rebase map. Its stage write is advisory: the reply's `stage` names the run folder, or `unrecorded cause=no-run` where that run is unfinished or validated another head, and it exits 0 either way. A pass or a skip takes the proof read below with no second push; a base that moves again comes back through the next `queue-watch` verdict. The worktree skill's `--no-rebase` push flag cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
-   **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head, and keep step 2's `[BASE_BRANCH]`. The block reads the pushed head's recorded skip. Where one stands, it asks the runtime whether the item's proof rows prove the pushed head: a pass at its tree over the new base, or the run the skip is equivalent to, read by the head (`restack-skip` owns the equivalence, and the reader takes the skip's validated run as the tree's). A range pass counts where the project declares a range command and no CI context; a full pass covers the tree whole. A reused tree alone supplies no passing validation. The block starts no validation and prints the reader's reply:
+   **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head, and keep step 2's `[BASE_BRANCH]`. The block reads the pushed head's recorded skip. Where one stands, it asks the runtime whether the item's proof rows prove the pushed head: a pass at its tree or proof of the prior tree named by the skip. A range pass over the new base counts where the project declares a range command and no CI context. For the prior tree, a range pass counts only if it chains to a whole-tree pass. A reused tree alone supplies no passing validation. The block starts no validation and prints the reader's reply:
 
    ```bash
    if ! RESTACK_SKIPS="$(.agents/skills/orch/scripts/orch-runtime state get --item [STATE_KEY] /restack_skips)"; then
@@ -128,7 +128,15 @@ With `ORCH_DELIVERY=push-base` no pull request exists: skip step 1. Run step 2 t
 
    Where the item's dev round closed `pass-excused`, add `--exception-file [WORKTREE_PATH]/tmp/round-exception-[STATE_KEY].json` to the `read-proof` line: [dev-start.md § The exception file](dev-start.md#the-exception-file).
 
-   A nonzero exit hands back with the printed reply and keeps the PR unarmed, on submit-pr's steps 1-3 route too, before its create or update can arm the queue. Keep the reader's reply, its `proof` word and the rows it names, with the merge decision. A `missing` reply names in `lacks` the tree and the narrowest mode the project declares. A `pending` reply stays pending until the exact-head CI wait or the queue proves it.
+   When the block prints `missing` with `lacks.mode` `range`, keep the PR unarmed and validate the pushed head. Use the commit the proof read passed as `--base` for `[PREPARED_BASE]`. `--reproduce` runs the declared range command fresh.
+
+   ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode range --base [PREPARED_BASE] --reproduce
+   ```
+
+   Follow step 2's wait and record reads for this run. A result other than `validate=pass` or a record for a head other than `[PREPARED_HEAD]` hands back with the run's verdict, head and log path. Bind `[RUN_DIR]` to the fresh run and import it with the `record-restack-validation` request above. If the reply's `stage` names that run folder, repeat `read-proof` with the same head, tree, base and any exception file. Resume only on `complete`. An import refusal, an unrecorded stage or a failed proof recheck hands back with its reply and keeps the PR unarmed.
+
+   Any other nonzero exit hands back with the printed reply and keeps the PR unarmed, on submit-pr's steps 1-3 route too, before its create or update can arm the queue. Keep the reader's reply, its `proof` word and the rows it names, with the merge decision. A `missing` reply names in `lacks` the tree and the narrowest mode the project declares. A `pending` reply stays pending until the exact-head CI wait or the queue proves it.
 
 4. **Return to the merge.** The head changed. Re-confirm the gate mode, then return to merge-pr.md § 5 step 1, which reads the new exact head, repeats its proof read, waits for CI and takes the merge route again.
 
