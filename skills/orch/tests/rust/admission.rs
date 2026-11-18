@@ -680,7 +680,7 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
     let mut done = holder("KEN-L", "done", None, Some(&["old/path.rs"]));
     done["repo"] = json!("o/r");
     fleet.write_lanes(vec![live, done]);
-    fleet.gh_api(&gh_map(&[fake_pull(7, "feature/x", &["src/a.sh"])]));
+    fleet.gh_api(&gh_map(&[fake_pull(7, "ken-h", &["src/a.sh"])]));
     let before = fleet.fleet();
     let mut request = launch("KEN-L", fleet.state_dir().as_path());
     request["repo"] = json!("o/r");
@@ -1042,8 +1042,8 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
 /// A live holder before its review stage that owns an open pull request,
 /// one on its head branch (its item key), is in its review: the candidate
 /// sharing its path is refused `launch-overlap` with nothing written and
-/// the holder told nothing; a pull request on another branch, a fork's or
-/// a closed one is not the holder's, and the candidate joins it.
+/// the holder told nothing; an unrelated path, a fork's pull request or
+/// a closed one leaves the candidate free to join the holder.
 #[test]
 fn a_holder_owning_an_open_pull_request_is_in_its_review_and_never_joined() {
     let mut fleet = Fleet::new();
@@ -1081,7 +1081,7 @@ fn a_holder_owning_an_open_pull_request_is_in_its_review_and_never_joined() {
     let mut merged = fake_pull(10, "KEN-T", &["docs/x.md"]);
     merged.state = "closed";
     fleet.gh_api(&gh_map(&[
-        fake_pull(8, "other-work", &["docs/x.md"]),
+        fake_pull(8, "other-work", &["docs/y.md"]),
         fork,
         merged,
     ]));
@@ -1090,6 +1090,26 @@ fn a_holder_owning_an_open_pull_request_is_in_its_review_and_never_joined() {
     assert_eq!(answer["ok"], true, "{}", stderr(&out));
     assert_eq!(joined_or_launched(&answer)["holder"], "KEN-T");
     assert_eq!(inbox(&root, "KEN-T").len(), 1);
+}
+
+#[test]
+fn an_unowned_open_pull_request_holds_paths_against_a_first_launch() {
+    let mut fleet = Fleet::new();
+    fleet.init_fleet();
+    fleet.item("KEN-N", "`docs/x.md`", 0, &[]);
+    fleet.gh_api(&gh_map(&[fake_pull(8, "other-work", &["docs/x.md"])]));
+    let mut request = launch("KEN-N", &fleet.checkout("n", None));
+    request["repo"] = json!("o/r");
+    let before = std::fs::read(fleet.fleet_path()).unwrap();
+
+    let out = fleet.op(&request);
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "launch-overlap");
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-N"), ("file", "docs/x.md"), ("holder", "#8")])
+    );
+    assert_eq!(std::fs::read(fleet.fleet_path()).unwrap(), before);
 }
 
 /// The fleet's own repository, which a request names by its checkout alone
@@ -1117,7 +1137,7 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
     let repo = fleet.dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main", "."]);
-    let mut map = gh_map(&[fake_pull(7, "feat-a", &["src/a.sh"])]);
+    let mut map = gh_map(&[fake_pull(7, "feat-a", &["src/z.sh"])]);
     fleet.gh_api(&map);
     let mut launch_l = launch("KEN-L", &fleet.checkout("l", None));
     launch_l["repo_dir"] = json!(repo.display().to_string());
@@ -1187,8 +1207,7 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
 /// documented shape does not decode, a pull request answering nothing and a
 /// state outside the documented pair each refuse `holders-unreadable`
 /// naming the read, with nothing written and the holder told nothing,
-/// although a live holder before its review stood ready to be joined; a
-/// candidate beside a holder that yields reads no pull request.
+/// although a live holder before its review stood ready to be joined.
 #[test]
 fn a_gh_failure_or_a_malformed_member_refuses_a_join_holders_unreadable_with_nothing_written() {
     let mut fleet = Fleet::new();
@@ -1248,17 +1267,11 @@ fn a_gh_failure_or_a_malformed_member_refuses_a_join_holders_unreadable_with_not
         assert_eq!(fleet.fleet(), before, "{defect}: a refusal writes nothing");
         assert!(inbox(&root, "KEN-S").is_empty(), "{defect}");
     }
-    // The holder gone, the candidate joins nothing: no pull request is read,
-    // and the failing map above is never reached.
+    // Unread pull requests still hold admission when the live lane yields.
     end(&mut harness);
-    let reads = fleet.gh_log().len();
     let out = fleet.op(&request);
-    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    assert_eq!(
-        fleet.gh_log().len(),
-        reads,
-        "a launch that joins no lane reads no pull request"
-    );
+    assert_eq!(refusal(&out).0, "holders-unreadable");
+    assert_eq!(fleet.fleet(), before);
 }
 
 /// A first launch sharing a path with a running lane on this disk whose
@@ -1723,7 +1736,7 @@ fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
         br#"{"body": "Review the change.\n**Location**: `src/a.rs`\n", "labels": [{"name": "review"}]}"#,
     )
     .unwrap();
-    fleet.gh_api(&gh_map(&[]));
+    fleet.gh_api(&gh_map(&[fake_pull(12, "review-me", &["src/a.rs"])]));
     // One `gh` for every read: the item through the issue fixture, the rest
     // through the API fixture.
     let bin = fleet.dir.path().join("bin");

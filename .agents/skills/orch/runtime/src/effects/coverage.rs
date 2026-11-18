@@ -92,21 +92,27 @@ pub(super) fn coverage_notices(
         place,
         INVENTORY_TIMEOUT,
     );
-    let (exit, listed) = match &listed {
+    let listed = match &listed {
         Ok(out) => {
-            let table = format!("{}{}", host::stdout_text(out), host::stderr_text(out));
-            (
-                out.status
+            if !out.status.success() {
+                let cause = out
+                    .status
                     .code()
-                    .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
-                out.status.success() && lists_turn_end_hook(&table, name),
-            )
+                    .map_or_else(|| "signal".to_owned(), |code| format!("exit-{code}"));
+                notices.push(format!("turn-end-hook=unread harness={name} cause={cause}"));
+                return notices;
+            }
+            let table = format!("{}{}", host::stdout_text(out), host::stderr_text(out));
+            lists_turn_end_hook(&table, name)
         }
-        Err(e) => (format!("unanswered cause={e}"), false),
+        Err(e) => {
+            notices.push(format!("turn-end-hook=unread harness={name} cause={e}"));
+            return notices;
+        }
     };
     if !listed {
         notices.push(format!(
-            "turn-end-hook=missing harness={name} exit={exit} {}",
+            "turn-end-hook=missing harness={name} exit=0 {}",
             fix(name)
         ));
     }

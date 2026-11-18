@@ -16,11 +16,14 @@
 //! on only through its own recorded set. Also the close cells of the
 //! reconcile matrix.
 
+use std::path::Path;
+
 use agent_runtime::controller::Overseer;
 use agent_runtime::harness::Harness;
 use serde_json::{Value, json};
 
 use super::close::{StopRead, read_stop};
+use super::grants;
 use super::lane_operation::{LaneOperation, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
@@ -31,6 +34,17 @@ use agent_runtime::effects::{
     Stop, Word,
 };
 use agent_runtime::intent::Intent;
+
+fn remove_local_gh_token(lane: &Lane) -> Result<()> {
+    if lane.host.is_none()
+        && let Some(root) = lane.mail_root.as_deref()
+    {
+        grants::remove_token(
+            &grants::folder(Path::new(root), &lane.item).join(grants::GH_TOKEN_FILE),
+        )?;
+    }
+    Ok(())
+}
 
 /// `stale` is what the reconcile of the same request already read stale,
 /// counted no second time here.
@@ -405,6 +419,9 @@ impl Close<'_> {
             observation["cause"] = json!(cause);
             return Ok(self.hold(operation, observation));
         }
+        // The close-out and worktree release can carry the mailbox into
+        // the main checkout. The lane's credential must leave first.
+        remove_local_gh_token(self.lane)?;
         // The item's files leave before the provider's close, so a close
         // that stops past this point repeats whole, the removal included.
         if self.ground.is_some_and(CloseGround::ends_item) {
@@ -807,6 +824,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             observation["close_out"] = json!("owed");
             return Ok(hold(operation, observation));
         }
+        remove_local_gh_token(&lane)?;
         let mut outcome =
             operation.settle(Word::Confirmed, reconcile_observation(&item, observation));
         // A recorded handle still standing after every read is the repeated

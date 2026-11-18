@@ -5519,6 +5519,36 @@ fn a_close_releasing_a_worktree_moves_its_unread_lane_mail_to_the_main_checkout(
     );
 }
 
+/// A linked worktree's mailbox moves during close. It must carry its
+/// unread notice to the main checkout without the lane's GitHub token.
+#[test]
+fn a_confirmed_close_does_not_move_the_lanes_gh_token_into_the_main_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let (row, notice) = plant_lane_notice(&wt, "KEN-G");
+    std::fs::write(notice.with_file_name("gh-token"), "fixture-token\n").unwrap();
+
+    let report = close_lane_with_worktree(&runner, &repo, "KEN-G", &wt);
+    assert_released(&report, &wt);
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let moved = repo.join("tmp/lane-mail/KEN-G/to-overseer.jsonl");
+    assert_eq!(std::fs::read(&moved).unwrap(), row);
+    let tokens = program("find")
+        .arg(&repo)
+        .args(["-name", "gh-token"])
+        .output()
+        .unwrap();
+    assert!(tokens.status.success(), "{}", stderr(&tokens));
+    assert!(
+        tokens.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&tokens.stdout)
+    );
+}
+
 /// The package's rc 2: a lane mailbox the package cannot move to the main
 /// checkout's refuses the removal with nothing removed, and the close keeps
 /// the worktree `mail-unmoved`, the notice where the lane wrote it.
@@ -10167,10 +10197,9 @@ fn a_lane_output_outside_its_words_refuses_the_launch_before_any_record() {
 /// declares: a Copilot CLI or Pi session has no other identity it can read,
 /// and a Claude Code or Codex session is detected by the review itself.
 /// Through the real `launch-lane`, on a fleet server whose environment
-/// carries an opener's own declaration, model-line hold and Codex
-/// compaction reading: a Copilot CLI or Pi session sees the model its launch
-/// pinned, a Claude Code or Codex session declares nothing, and none of the
-/// three reaches a session from its opener.
+/// carries an opener's model declaration and Codex compaction reading.
+/// Copilot CLI and Pi declare the pinned model. Claude Code and Codex
+/// declare no model, and Codex gets its own compaction reading.
 #[test]
 fn a_lane_declares_its_pinned_model_to_the_review_and_never_its_openers() {
     let cases: [(&str, &str, Option<&str>); 4] = [
@@ -10185,7 +10214,6 @@ fn a_lane_declares_its_pinned_model_to_the_review_and_never_its_openers() {
         let server = Server::start(dir.path(), "fleet");
         for (name, value) in [
             ("SECOND_OPINION_CURRENT_MODEL", "the opener's model"),
-            ("ORCH_MODEL_LINES_HELD", "1"),
             ("ORCH_COMPACTION_OVERRIDES", "the opener's reading"),
         ] {
             let out = tmux(&server.socket, &["set-environment", "-g", name, value]);
@@ -10237,11 +10265,6 @@ fn a_lane_declares_its_pinned_model_to_the_review_and_never_its_openers() {
             opened["SECOND_OPINION_CURRENT_MODEL"],
             declared.map_or(Value::Null, |m| json!(m)),
             "{case}: the model the session declares: {opened}"
-        );
-        assert_eq!(
-            opened["ORCH_MODEL_LINES_HELD"],
-            Value::Null,
-            "{case}: the opener's hold: {opened}"
         );
         if harness == "codex" {
             let reading = opened["ORCH_COMPACTION_OVERRIDES"].as_str().unwrap_or("");

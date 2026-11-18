@@ -26,12 +26,12 @@
 //! open pull request of the item's repository: one its record names by its
 //! `pending_pr` or `parked` number, or by its head branch (the lane's
 //! recorded branch, or its item key); the join then refuses by its tie.
-//! The open pull requests are read for that alone, once per admission,
-//! after the lanes, only where a join stands, from GitHub through the one
-//! `gh api` transport (`verify::Gh`, the `gh` on `PATH`); closed, merged, a
-//! fork's or a deleted fork's are none. A list or object read that fails,
-//! answers nothing or decodes to no member blocks `holders-unreadable`: an
-//! unread inventory is never an empty one. They are read of the repository
+//! An open pull request owned by neither the candidate nor a fleet lane
+//! holds its changed paths against a first launch: `launch-overlap holder=#N`.
+//! The open pull requests are read once after the lanes through `verify::Gh`
+//! where a join stands or a first launch names touched paths. Closed, merged
+//! and forked pull requests hold nothing. An unread or incomplete inventory
+//! blocks `holders-unreadable`. They are read of the repository
 //! the request names, else of the checkout it names (`repo_dir`, the
 //! fleet's own repository, whose lane records name none): the slug `gh repo
 //! view` answers in the checkout, else the one its `origin` remote names on
@@ -74,7 +74,7 @@ use super::{lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::{Delivery, Settings};
 use crate::state::{self, Carried, Lane, LaneStatus, StageKind};
-use crate::verify::wire::{Nullable, Pull};
+use crate::verify::wire::{Nullable, Pull, PullFile};
 use crate::verify::{Answer, Gh};
 use agent_runtime::intent::Intent;
 use agent_runtime::journal::{Env, intents};
@@ -129,6 +129,8 @@ pub(super) struct OpenPull {
     pub number: u64,
     /// Its head branch, `head.ref`.
     pub branch: String,
+    /// The detail's count, used to check the completeness of its files list.
+    changed_files: Option<u64>,
 }
 
 /// The open pull requests of one repository, with the `owner/name` they
@@ -1032,10 +1034,8 @@ pub(super) fn judge(
             Holding::Yields => {}
         }
     }
-    // A holder that owns an open pull request is in its review.
-    if let Some(join) = &join
-        && (a.repo.is_some() || a.repo_dir.is_some())
-    {
+    let check_unowned = a.checkout.is_some() && !touched.is_empty();
+    if (join.is_some() || check_unowned) && (a.repo.is_some() || a.repo_dir.is_some()) {
         let reads = host
             .admission
             .as_ref()
@@ -1058,13 +1058,55 @@ pub(super) fn judge(
             }
         })?;
         if let Some(OpenPulls { repo, pulls }) = read {
-            let holder = &lanes[join.holder];
-            let branch = holder_branch(path, &holder.item)?;
-            if pulls
-                .iter()
-                .any(|pull| names_pull(holder, branch.as_deref(), pull, &repo))
-            {
-                return Err(join.refusal(a.item, &holder.item));
+            // A holder that owns an open pull request is in its review.
+            if let Some(join) = &join {
+                let holder = &lanes[join.holder];
+                let branch = holder_branch(path, &holder.item)?;
+                if pulls
+                    .iter()
+                    .any(|pull| names_pull(holder, branch.as_deref(), pull, &repo))
+                {
+                    return Err(join.refusal(a.item, &holder.item));
+                }
+            }
+            if check_unowned && !pulls.is_empty() {
+                let own_branch = holder_branch(path, a.item)?;
+                let issue_number = if a.tracker == Some("github") {
+                    super::accept::issue_number(a.item)
+                } else {
+                    None
+                };
+                let named = lanes
+                    .iter()
+                    .filter(|lane| lane.status != LaneStatus::Done && same_repo(lane, a.repo))
+                    .map(|lane| Ok((lane, holder_branch(path, &lane.item)?)))
+                    .collect::<Result<Vec<_>>>()?;
+                for pull in pulls {
+                    if own_branch.as_deref() == Some(pull.branch.as_str())
+                        || pull.branch.eq_ignore_ascii_case(a.item)
+                        || issue_number == Some(pull.number)
+                        || named
+                            .iter()
+                            .any(|(lane, branch)| names_pull(lane, branch.as_deref(), &pull, &repo))
+                    {
+                        continue;
+                    }
+                    let files = read_pull_files(&reads.clis, &repo, &pull).map_err(|cause| {
+                        Error::HoldersUnreadable {
+                            item: a.item.to_owned(),
+                            repo: repo.clone(),
+                            read: "files",
+                            cause,
+                        }
+                    })?;
+                    if let Some(file) = shared(&touched, &files, &in_scope).into_iter().next() {
+                        return Err(Error::LaunchOverlap {
+                            item: a.item.to_owned(),
+                            file,
+                            holder: format!("#{}", pull.number),
+                        });
+                    }
+                }
             }
         }
     }
@@ -1631,12 +1673,41 @@ fn read_open_pulls(
         out.push(OpenPull {
             number,
             branch: pull.head.branch,
+            changed_files: pull.changed_files.present().copied(),
         });
     }
     Ok(Some(OpenPulls {
         repo: slug,
         pulls: out,
     }))
+}
+
+/// Read both sides of a rename. The files endpoint can truncate the list,
+/// so its count must match the pull request's detail before it clears a path.
+fn read_pull_files(
+    clis: &Clis,
+    repo: &str,
+    pull: &OpenPull,
+) -> std::result::Result<Vec<String>, ReadFailure> {
+    let number = pull.number;
+    let changed = pull
+        .changed_files
+        .ok_or_else(|| format!("#{number}: changed_files absent"))?;
+    let repo = repo.to_ascii_lowercase();
+    let gh = crate::watch::github::handle(&clis.gh);
+    let files: Vec<PullFile> = gh
+        .list(PULLS_READ, &format!("repos/{repo}/pulls/{number}/files"))
+        .map_err(|e| format!("#{number}: {e}"))?
+        .ok_or_else(|| format!("#{number}: not-found"))?;
+    if files.len() as u64 != changed {
+        return Err(format!("#{number}: {} of {changed} files", files.len()));
+    }
+    let mut paths = Vec::with_capacity(files.len());
+    for file in files {
+        paths.extend(file.previous_filename.present().cloned());
+        paths.push(file.filename);
+    }
+    Ok(paths)
 }
 
 #[allow(
@@ -1848,6 +1919,7 @@ mod tests {
         let pull = |number: u64, branch: &str| OpenPull {
             number,
             branch: branch.to_owned(),
+            changed_files: None,
         };
         let lane = |record: Value| -> Lane {
             let mut doc = json!({"item": "KEN-S", "status": "stopped"});

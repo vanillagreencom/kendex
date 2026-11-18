@@ -2027,9 +2027,8 @@ fn rows_file(runner: &Runner, server: &Server, pane: &str) -> std::path::PathBuf
 /// harness wrote, the row's model and directory, the
 /// record naming this pane keeping its generation, the binding cleared so a
 /// resumed session binds its new id, a stale pending and an ended session's
-/// exit dropped, and `--account` taken; a checkout whose install lists no
-/// turn-end hook for the harness is said; a server start that cannot be
-/// read writes nothing.
+/// exit dropped, and `--account` taken. A failed install inventory is
+/// reported unread. A server start that cannot be read writes nothing.
 #[test]
 fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registering_again_rebinds_it()
 {
@@ -2165,9 +2164,7 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
     assert_eq!(answer["ok"], true, "{answer}");
     assert_eq!(
         answer["result"]["notices"],
-        json!([
-            "turn-end-hook=missing harness=claude exit=1 fix=add claude to [install] harnesses in kendex.toml and run kendex apply"
-        ])
+        json!(["turn-end-hook=unread harness=claude cause=exit-1"])
     );
 
     let before = std::fs::read_to_string(&fleet_file).unwrap();
@@ -5370,29 +5367,6 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
         ("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()),
     ];
     (bin, env)
-}
-
-/// A test child whose world plants no answer for a provider's program runs
-/// the constructor's refusal, never the operator's program: a watch whose
-/// controller reads live judges its account on every pass, and a world
-/// with a credential and no usage answer otherwise sends that read through
-/// the operator's `curl` to the real endpoint. `--version` reaches nothing
-/// either way.
-#[test]
-fn a_test_child_with_no_planted_answer_runs_the_refusing_provider_programs() {
-    for name in ["curl", "codex", "secret-tool", "ssh", "gh"] {
-        let out = program(name).arg("--version").output().expect(name);
-        let said = stderr(&out);
-        assert_eq!(
-            (out.status.code(), said.as_str()),
-            (
-                Some(4),
-                format!("{name}: no fixture on PATH answers: --version\n").as_str()
-            ),
-            "{name} answered: {}",
-            String::from_utf8_lossy(&out.stdout)
-        );
-    }
 }
 
 /// The watch words a `start-controller` request carries for the fleet

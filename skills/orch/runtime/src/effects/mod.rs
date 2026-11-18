@@ -130,21 +130,7 @@ impl<'a> Run<'a> {
                 agent_runtime::effects::apply_outcome(&self.engine, outcome).map_err(Error::from)
             }
         }?;
-        let applied = ops::outcome_applied(written)?;
-        // A local lane whose close confirmed holds no `gh` token: its next
-        // launch hands a fresh one.
-        if let Report::RecordOutcome(recorded) = &applied.report
-            && recorded.intent.op == EffectOp::CloseResources
-            && recorded.intent.outcome == Outcome::Confirmed
-            && let Some(lane) = &recorded.lane
-            && lane.host.is_none()
-            && let Some(root) = lane.mail_root.as_deref()
-        {
-            grants::remove_token(
-                &grants::folder(Path::new(root), &lane.item).join(grants::GH_TOKEN_FILE),
-            )?;
-        }
-        Ok(applied)
+        ops::outcome_applied(written)
     }
 }
 
@@ -797,15 +783,12 @@ pub fn companion_reach(request: &mut Request, settings: &Settings) -> Result<()>
 /// CLI, Pi) has no other identity the review can read.
 const REVIEW_MODEL: &str = "SECOND_OPINION_CURRENT_MODEL";
 
-/// The inherited hold name cleared from a launched session's environment.
-const MODEL_LINES_HELD: &str = "ORCH_MODEL_LINES_HELD";
-
 /// The variable a Codex session's turn-end context reader takes the
 /// compaction settings of its own command from (`turnend/marks.rs`).
 const COMPACTION_OVERRIDES: &str = "ORCH_COMPACTION_OVERRIDES";
 
 /// What every orch launch hands its session beside the builder's words:
-/// the opener's own declaration and model-line hold cleared, so a session
+/// the opener's own declaration cleared, so a session
 /// never answers as its opener, and the model the launch pins declared to
 /// the review where the review cannot detect the harness itself. Claude
 /// Code and Codex it detects, and a declaration there could only add a
@@ -814,7 +797,7 @@ const COMPACTION_OVERRIDES: &str = "ORCH_COMPACTION_OVERRIDES";
 fn opener_env(harness: Harness, model: Option<&str>) -> OpenerEnv {
     let mut opener = OpenerEnv {
         env: Default::default(),
-        env_remove: [REVIEW_MODEL, MODEL_LINES_HELD].map(str::to_owned).to_vec(),
+        env_remove: vec![REVIEW_MODEL.to_owned()],
         compaction_env: Some(COMPACTION_OVERRIDES.to_owned()),
     };
     let review_detects = match harness {
