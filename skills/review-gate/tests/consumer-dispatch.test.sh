@@ -402,24 +402,31 @@ upgraded = dict(version=12, installations={"ref": dict(kind="agent", name="engin
 exact = lock_for("agent", "engineer")
 exact["entries"]["match"] = entry("agent", "runtime")
 foreign = lock_for("agent", "engineer", "vanillagreencom/another")
+legacy_upgrade = (
+    legacy, upgraded, both, agents, 1,
+    [f"{private} outcome=sent reason=lock-agent-identity-unrecognized",
+     f"{public} outcome=sent reason=lock-agent-identity-unrecognized"],
+)
 agent_rows = [
-    (legacy, upgraded, both, agents, 1,
-     [f"{private} outcome=sent reason=lock-agent-identity-unrecognized",
-      f"{public} outcome=sent reason=lock-agent-identity-unrecognized"]),
+    legacy_upgrade,
     (lock_for("agent", "maintainer"), foreign, [], agents, 1,
      [f"{private} outcome=skipped reason=no-installed-package-changed",
       f"{public} outcome=skipped reason=no-installed-package-changed"]),
-    (upgraded, exact, both, None, 1,
+    (upgraded, lock_for("agent", "generalist"), both, None, 1,
      [f"{private} outcome=sent reason=lock-agent-catalog-unavailable",
-      f"{public} outcome=sent reason=installed-package-changed"]),
+      f"{public} outcome=sent reason=lock-agent-catalog-unavailable"]),
     (exact, foreign, both[:1], None, 0,
      [f"{private} outcome=sent reason=installed-package-changed",
       f"{public} outcome=skipped reason=no-installed-package-changed"]),
 ]
-for private_lock, public_lock, expected, listing, reads, reasons in agent_rows:
-    log = assert_selection(sender, ([row("agents/runtime.md")], dict(zip(both, [private_lock, public_lock])),
+def assert_agent_selection(script, case):
+    private_lock, public_lock, expected, listing, reads, reasons = case
+    log = assert_selection(script, ([row("agents/runtime.md")], dict(zip(both, [private_lock, public_lock])),
                                      expected, reasons, {}), {agent_directory: listing})
-    assert log.count(f"{source}/contents/{agent_directory}") == reads
+    assert log.count(f"{source}/contents/{agent_directory}") == reads, "wrong agent catalog fetch count"
+
+for case in agent_rows:
+    assert_agent_selection(sender, case)
 
 # Unreadable evidence supplies no coverage decision, so even the inventory waits.
 for flags in [
@@ -468,6 +475,9 @@ with tempfile.TemporaryDirectory() as owner:
          lambda path: assert_selection(path, selection_rows[0]), "wrong consumer log"),
         ("expected_locks <= checked_locks", "True",
          lambda path: assert_selection(path, unlocked_scope), "wrong consumer log"),
+        ('agent_change = any(kind == "agent" for kind, _ in changed)',
+         'agent_change = version == 11 and any(kind == "agent" for kind, _ in changed)',
+         lambda path: assert_agent_selection(path, legacy_upgrade), "wrong consumer log"),
     ):
         assert body.count(old) == 1
         mutant.write_text(body.replace(old, new))
@@ -506,5 +516,5 @@ for key, subject, reply, output, reason in [
         assert request.call_count == (reply is not None)
         assert github_output.read_text() == f"urgent={output}\n"
         assert printed.getvalue().strip().endswith(f"reason={reason}") and "private-error" not in printed.getvalue()
-print(f"pass: {36 + len(selection_rows) + len(agent_rows)}   fail: 0")
+print(f"pass: {37 + len(selection_rows) + len(agent_rows)}   fail: 0")
 PY
