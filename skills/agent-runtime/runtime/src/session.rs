@@ -10,7 +10,9 @@
 //!   first row is `session_meta` with `payload.id`, `payload.cwd` and
 //!   `payload.parent_thread_id` (null for a lead).
 //! - Copilot CLI: `<home>/session-state/<id>/workspace.yaml` with plain
-//!   `id:` and `cwd:` lines, and `events.jsonl` beside it.
+//!   `id:` and `cwd:` lines, written as the session opens, and
+//!   `events.jsonl` beside it, written only at its first turn (see
+//!   [`Written`]).
 //! - Pi: `<sessions root>/<cwd slug>/<stamp>_<id>.jsonl`, whose first row
 //!   is `{"type":"session","id":...,"cwd":...}`.
 //!
@@ -125,7 +127,7 @@ pub fn resume_owner(
         Reading::Gone => return Reading::Gone,
         Reading::Unreadable { cause } => return Reading::Unreadable { cause },
     };
-    match identify(harness, &file, None) {
+    match identify(harness, &file, None, Written::Turned) {
         Ok(Some(lead)) => Reading::Live(Some(lead.cwd)),
         Ok(None) => match harness {
             // A Claude file under the project's directory records its
@@ -248,9 +250,33 @@ fn first_rows(file: &Path, limit: usize) -> Result<Vec<Value>> {
     Ok(rows)
 }
 
+/// How far a session must have gone to count as a lead. Copilot CLI writes
+/// its workspace.yaml as a session opens and `events.jsonl` only at the
+/// session's first turn: a start launched with no prompt stands at its
+/// composer with no events file (Copilot CLI 1.0.112), and one that ended
+/// before its first turn, a failed sign-in among them, leaves no events
+/// file and `copilot --resume=<id>` on it exits 1. Every other harness's
+/// session file reads the same under both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Written {
+    /// Opened: the session a launch started, bound as it opens so its
+    /// brief can be typed into it; a baseline is read the same way, so the
+    /// set that appeared is told against a set of the same kind.
+    Opened,
+    /// Took its first turn: a session a resume can continue, and the one a
+    /// reader holding no launch of its own names.
+    Turned,
+}
+
 /// Read the identity a session file carries, or `None` when the file is not
-/// a lead session for `cwd` (or any cwd when `cwd` is `None`).
-pub fn identify(harness: Harness, file: &Path, cwd: Option<&Path>) -> Result<Option<SessionRef>> {
+/// a lead session for `cwd` (or any cwd when `cwd` is `None`) that has gone
+/// as far as `written`.
+pub fn identify(
+    harness: Harness,
+    file: &Path,
+    cwd: Option<&Path>,
+    written: Written,
+) -> Result<Option<SessionRef>> {
     match harness {
         Harness::Claude => {
             if file.components().any(|c| c.as_os_str() == "subagents") {
@@ -364,14 +390,19 @@ pub fn identify(harness: Harness, file: &Path, cwd: Option<&Path>) -> Result<Opt
             let (Some(id), Some(row_cwd)) = (id, row_cwd) else {
                 return Ok(None);
             };
-            // A session with no event yet is not a lead; an events file
-            // that cannot be read is no evidence of either.
-            let events = file.with_file_name("events.jsonl");
-            match fs::metadata(&events) {
-                Ok(meta) if meta.len() > 0 => {}
-                Ok(_) => return Ok(None),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(e) => return Err(Error::io("stat", &events, e)),
+            // A session with no event yet has not taken a turn; an events
+            // file that cannot be read is no evidence of either.
+            match written {
+                Written::Opened => {}
+                Written::Turned => {
+                    let events = file.with_file_name("events.jsonl");
+                    match fs::metadata(&events) {
+                        Ok(meta) if meta.len() > 0 => {}
+                        Ok(_) => return Ok(None),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                        Err(e) => return Err(Error::io("stat", &events, e)),
+                    }
+                }
             }
             if cwd.is_some_and(|c| c != row_cwd) {
                 return Ok(None);
@@ -689,7 +720,8 @@ fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<Candidat
 /// Every lead session the harness recorded for `cwd` under `home`, oldest
 /// or newest alike: the baseline a launch reads before its window opens, so
 /// the session that appears after it can be told from every neighbour that
-/// stood before. `Gone` is a store with no root for the cwd,
+/// stood before, every session that opened counted as [`new_leads`] counts
+/// one. `Gone` is a store with no root for the cwd,
 /// an empty baseline read; `Unreadable` is a baseline not read, which binds
 /// nothing by appearance later.
 pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<String>> {
@@ -700,7 +732,7 @@ pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<String
     };
     let mut ids = Vec::new();
     for candidate in found {
-        match identify(harness, &candidate.path, Some(cwd)) {
+        match identify(harness, &candidate.path, Some(cwd), Written::Opened) {
             Ok(Some(lead)) => ids.push(lead.id),
             Ok(None) => {}
             Err(_) => {
@@ -717,8 +749,10 @@ pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<String
 /// time: with `since`, the earliest that appeared at or after it, the
 /// session the launch at `since` started (a later one in the same
 /// directory is a second session, run from the first); without, the
-/// newest. `Gone` where none qualifies; `Unreadable` where the store or a
-/// candidate could not be read, which binds nothing.
+/// newest. Only a session that took its first turn qualifies, so one that
+/// ended before it is never named in the running session's place. `Gone`
+/// where none qualifies; `Unreadable` where the store or a candidate could
+/// not be read, which binds nothing.
 pub fn lead_at(
     harness: Harness,
     home: &Path,
@@ -735,7 +769,7 @@ pub fn lead_at(
         if since.is_some_and(|since| candidate.modified < since) {
             continue;
         }
-        match identify(harness, &candidate.path, Some(cwd)) {
+        match identify(harness, &candidate.path, Some(cwd), Written::Turned) {
             Ok(Some(lead)) => {
                 let better = match &best {
                     None => true,
@@ -761,8 +795,10 @@ pub fn lead_at(
 }
 
 /// The lead sessions for `cwd` under `home` that appeared since a launch's
-/// window opened: modified at or after `since` and absent from the
-/// `baseline` read before the window opened. One is the launch's own; two
+/// window opened: opened ([`Written::Opened`]), modified at or after
+/// `since` and absent from the `baseline` read before the window opened,
+/// so a harness that writes its first event only at its first turn is
+/// bound before the brief that makes that turn. One is the launch's own; two
 /// or more cannot be told apart, and none has appeared yet. A set is read
 /// whole or not at all: any candidate that could not be read makes the
 /// reading `Unreadable`, so one readable lead beside an unreadable one binds
@@ -784,7 +820,7 @@ pub fn new_leads(
         if candidate.modified < since {
             continue;
         }
-        match identify(harness, &candidate.path, Some(cwd)) {
+        match identify(harness, &candidate.path, Some(cwd), Written::Opened) {
             Ok(Some(lead)) if !baseline.contains(&lead.id) => appeared.push(lead),
             Ok(_) => {}
             Err(_) => {
@@ -817,39 +853,96 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            identify(Harness::Codex, &lead, Some(Path::new("/w")))
-                .unwrap()
-                .unwrap()
-                .id,
+            identify(
+                Harness::Codex,
+                &lead,
+                Some(Path::new("/w")),
+                Written::Opened
+            )
+            .unwrap()
+            .unwrap()
+            .id,
             "L"
         );
         assert!(
-            identify(Harness::Codex, &child, Some(Path::new("/w")))
-                .unwrap()
-                .is_none()
+            identify(
+                Harness::Codex,
+                &child,
+                Some(Path::new("/w")),
+                Written::Opened
+            )
+            .unwrap()
+            .is_none()
         );
         assert!(
-            identify(Harness::Codex, &lead, Some(Path::new("/other")))
-                .unwrap()
-                .is_none()
+            identify(
+                Harness::Codex,
+                &lead,
+                Some(Path::new("/other")),
+                Written::Opened
+            )
+            .unwrap()
+            .is_none()
         );
     }
 
+    /// A Copilot launch binds the session it opened before that session
+    /// takes a turn: its workspace.yaml in the launch's cwd, written since
+    /// the window opened and absent from the baseline, with no events file
+    /// yet. A turnless folder of another cwd, or one written before the
+    /// window opened, never binds; one that stood in the baseline is
+    /// counted there. A resume and a reader with no launch of its own name
+    /// a session only once it took its first turn.
     #[test]
-    fn a_copilot_session_needs_events_before_it_counts() {
+    fn a_copilot_launch_binds_the_session_it_opened_before_its_first_turn() {
         let dir = tempfile::tempdir().unwrap();
-        let s = dir.path().join("session-state").join("S1");
-        fs::create_dir_all(&s).unwrap();
-        fs::write(s.join("workspace.yaml"), "id: S1\ncwd: /w\n").unwrap();
         let home = dir.path();
+        let cwd = Path::new("/w");
+        let open = |id: &str, cwd: &str| {
+            let s = home.join("session-state").join(id);
+            fs::create_dir_all(&s).unwrap();
+            fs::write(s.join("workspace.yaml"), format!("id: {id}\ncwd: {cwd}\n")).unwrap();
+            s
+        };
+        open("BEFORE", "/w");
+        let Reading::Live(baseline) = lead_ids(Harness::Copilot, home, cwd) else {
+            panic!("the baseline reads")
+        };
+        assert_eq!(baseline, vec!["BEFORE".to_owned()]);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let since = SystemTime::now();
+        // File stamps come from the kernel's coarse clock, which can trail
+        // the precise one by a tick, so the writes follow a pause.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let own = open("OWN", "/w");
+        open("ELSEWHERE", "/other");
+        let leads =
+            |baseline: &[String]| match new_leads(Harness::Copilot, home, cwd, since, baseline) {
+                Reading::Live(found) => found.into_iter().map(|s| s.id).collect::<Vec<_>>(),
+                other => panic!("the leads read: {other:?}"),
+            };
+        assert_eq!(leads(&baseline), vec!["OWN".to_owned()]);
         assert_eq!(
-            lead_ids(Harness::Copilot, home, Path::new("/w")),
-            Reading::Live(Vec::new())
+            leads(&[]),
+            vec!["OWN".to_owned()],
+            "a folder written before the window opened never binds, baseline or not"
         );
-        fs::write(s.join("events.jsonl"), "{\"type\":\"x\"}\n").unwrap();
         assert_eq!(
-            lead_ids(Harness::Copilot, home, Path::new("/w")),
-            Reading::Live(vec!["S1".to_owned()])
+            lead_at(Harness::Copilot, home, cwd, Some(since)),
+            Reading::Gone
+        );
+        assert_eq!(
+            resume_owner(Harness::Copilot, home, cwd, "OWN"),
+            Reading::Gone
+        );
+        fs::write(own.join("events.jsonl"), "{\"type\":\"user.message\"}\n").unwrap();
+        assert_eq!(
+            lead_at(Harness::Copilot, home, cwd, Some(since)).map(|s| s.id),
+            Reading::Live("OWN".to_owned())
+        );
+        assert_eq!(
+            resume_owner(Harness::Copilot, home, cwd, "OWN"),
+            Reading::Live(Some(cwd.to_path_buf()))
         );
     }
 
@@ -1344,9 +1437,14 @@ mod tests {
         ids.sort();
         assert_eq!(ids, vec!["aaaa".to_owned(), "bbbb".to_owned()]);
         assert!(
-            identify(Harness::Claude, &sub, Some(Path::new("/w")))
-                .unwrap()
-                .is_none()
+            identify(
+                Harness::Claude,
+                &sub,
+                Some(Path::new("/w")),
+                Written::Opened
+            )
+            .unwrap()
+            .is_none()
         );
     }
 

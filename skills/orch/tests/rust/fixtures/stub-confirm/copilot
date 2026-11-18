@@ -1,0 +1,23 @@
+#!/bin/bash
+# A Copilot stub named `copilot` that starts as Copilot CLI does with no
+# prompt: it opens its session, `$COPILOT_HOME/session-state/<id>/workspace.yaml`
+# with plain `id:` and `cwd:` lines, draws Copilot's composer (the marker
+# line with a rule under it) and writes no `events.jsonl` until its first
+# turn. Each line it reads is a turn, appended to `events.jsonl` as a
+# `user.message` row whose `data.content` is the line, the shape
+# agent-runtime's session module reads, so a delivery to it is confirmed
+# the way the runtime confirms one to the real harness. It stands until its
+# stdin closes.
+id="0199c002-0000-7000-8000-$(printf '%012d' "$$")"
+state="$COPILOT_HOME/session-state/$id"
+mkdir -p "$state"
+printf 'id: %s\ncwd: %s\n' "$id" "$PWD" > "$state/workspace.yaml"
+printf '%s\n' "$id" > .stub-session-id
+printf '\xe2\x9d\xaf \n'
+printf '\xe2\x94\x80%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+printf '\n'
+while IFS= read -r line; do
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"type":"user.message","data":{"content":"%s"}}\n' "$escaped" >> "$state/events.jsonl"
+done

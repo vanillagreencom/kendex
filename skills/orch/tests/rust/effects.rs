@@ -8726,7 +8726,7 @@ fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_
 /// Through the real launch: a Codex lane and a Copilot lane whose harness
 /// is up at its composer a second before it writes its session (Codex its
 /// rollout, through the private launch home's link to the account's store;
-/// Copilot its first event) bind that session, never `session-unbound`.
+/// Copilot its workspace) bind that session, never `session-unbound`.
 #[test]
 fn a_launch_binds_the_session_its_harness_writes_after_its_composer_is_up() {
     let dir = tempfile::tempdir().unwrap();

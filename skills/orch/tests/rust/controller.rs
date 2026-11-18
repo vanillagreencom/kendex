@@ -1814,6 +1814,57 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     assert!(live(live_controller.pid()));
 }
 
+/// A Copilot controller starts with no prompt, and Copilot writes its
+/// session's first event only at its first turn: the start binds the
+/// session its workspace names in the start's directory, types the brief
+/// into it and confirms the brief as that session's own first turn.
+#[test]
+fn a_copilot_controller_start_binds_the_session_it_opened_and_delivers_the_brief() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(5);
+    runner.init_fleet();
+    let seat = dir.path().join("copilot-home");
+    std::fs::create_dir_all(&seat).unwrap();
+    copilot_gate_passed(&mut runner, &seat);
+    let cwd = runner.state_dir().to_path_buf();
+    let mut controller = pending(&cwd);
+    controller["harness"] = json!("copilot");
+    controller["account"] = json!(seat.display().to_string());
+    controller["home"] = json!(seat.display().to_string());
+    controller["model"] = json!("claude-opus-5.5");
+    let brief = cwd.join("brief.md");
+    std::fs::write(&brief, "START HERE\n").unwrap();
+    let binaries = format!(
+        "copilot={}",
+        fixtures().join("stub-confirm/copilot").display()
+    );
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": controller,
+            "brief_file": brief.display().to_string(),
+        }),
+        &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)],
+    ));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let opened = std::fs::read_to_string(cwd.join(".stub-session-id")).unwrap();
+    let opened = opened.trim_end();
+    assert_eq!(
+        runner.fleet()["controller"]["session_id"],
+        opened,
+        "{report}"
+    );
+    let events = seat.join("session-state").join(opened).join("events.jsonl");
+    let turns: Vec<Value> = std::fs::read_to_string(&events)
+        .unwrap()
+        .lines()
+        .map(|row| serde_json::from_str::<Value>(row).unwrap()["data"]["content"].clone())
+        .collect();
+    assert_eq!(turns, vec![json!("START HERE")], "{report}");
+}
+
 /// A controller's start builds its directory's own install before its
 /// window, through the preparation a lane's launch shares: the orch and
 /// agent-runtime packages linked where an apply puts them, orch's one real

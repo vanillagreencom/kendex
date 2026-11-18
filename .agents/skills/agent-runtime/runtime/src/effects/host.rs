@@ -1408,8 +1408,8 @@ impl Operation<'_> {
     /// same home and directory is never a candidate. A set read whole or not
     /// at all; an unread candidate binds nothing and names its cause. A
     /// harness ready at its composer may write its session moments later
-    /// (Codex its rollout, Copilot its first event), so none found is read
-    /// again within the launch bound before it binds nothing.
+    /// (Codex its rollout), so none found is read again within the launch
+    /// bound before it binds nothing.
     pub fn appeared_session(
         &self,
         harness: Harness,

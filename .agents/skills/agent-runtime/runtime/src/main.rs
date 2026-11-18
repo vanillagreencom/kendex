@@ -1261,7 +1261,12 @@ fn bound_session(rec: &LaunchRecord, home: &Path) -> Binding {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Binding::Unbound,
             Err(_) => return Binding::Unreadable("session-file-unreadable"),
         }
-        return match session::identify(rec.harness, &file, Some(&rec.intent.cwd)) {
+        return match session::identify(
+            rec.harness,
+            &file,
+            Some(&rec.intent.cwd),
+            session::Written::Opened,
+        ) {
             Ok(Some(found)) => Binding::Bound(found),
             Ok(None) => Binding::Unbound,
             Err(_) => Binding::Unreadable("session-file-unreadable"),
