@@ -1,0 +1,275 @@
+name: Dispatch consumer refresh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**'
+      - 'agents/**'
+      - 'hooks/**'
+      - 'commands/**'
+      - 'pi-extensions/**'
+
+permissions: {}
+
+jobs:
+  wait:
+    if: github.repository == 'vanillagreencom/kendex'
+    # Before enabling this workflow, provision this secretless, main-only
+    # environment with a 480-minute wait timer. Each qualifying push waits
+    # independently, so later pushes cannot extend the first unsent window.
+    # The environment owns the wait and uses no runner minutes for it.
+    environment: consumer-dispatch-wait
+    runs-on: ubuntu-latest
+    steps:
+      - run: ':'
+
+  send:
+    needs: wait
+    environment: kendex
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      # Admission order can differ from push order. Keep each matured request
+      # so a later arrival that is already covered cannot evict unsent work.
+      group: kendex-consumer-dispatch
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Mint the fleet dispatch token
+        id: fleet
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          permission-contents: write
+          permission-actions: read
+
+      - name: Dispatch if this push is still uncovered
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLEET_TOKEN: ${{ steps.fleet.outputs.token }}
+        run: |
+          python3 - <<'PY'
+          import io
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import urllib.parse
+          import zipfile
+
+          source = "repos/" + os.environ["GITHUB_REPOSITORY"]
+          trigger = os.environ["GITHUB_SHA"]
+          repo_id = int(os.environ["GITHUB_REPOSITORY_ID"])
+          caller = ".github/workflows/kendex-refresh.yml"
+          workflow = ".github/workflows/consumer-dispatch.yml"
+          receipt_name = "kendex-consumer-dispatch-receipt"
+
+          class ApiError(Exception):
+              pass
+
+          unreadable = (ApiError, KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile)
+
+          def gh(endpoint, *options, fleet=False):
+              # This public run prints only aggregate counts and fixed diagnostics.
+              env = dict(os.environ)
+              token = env.pop("FLEET_TOKEN")
+              if fleet:
+                  env["GH_TOKEN"] = token
+              try:
+                  return subprocess.run(
+                      ["gh", "api", "--hostname", "github.com", *options, endpoint],
+                      env=env, capture_output=True, timeout=45,
+                  )
+              except (OSError, subprocess.TimeoutExpired) as error:
+                  raise ApiError("request-unavailable") from error
+
+          def get(endpoint, *, fleet=False):
+              result = gh(endpoint, fleet=fleet)
+              if result.returncode:
+                  raise ApiError("read-refused")
+              return json.loads(result.stdout)
+
+          def pages(endpoint, *, fleet=False):
+              result = gh(endpoint, "--paginate", "--slurp", fleet=fleet)
+              # gh closes the page array even on an HTTP error on a later page.
+              # Keep successes from those pages for any destinations we can prove.
+              for page in json.loads(result.stdout):
+                  yield page
+              if result.returncode:
+                  raise ApiError("pagination-incomplete")
+
+          def includes(older, newer):
+              if not all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (older, newer)):
+                  raise ValueError("invalid-commit")
+              return older == newer or get(f"{source}/compare/{older}...{newer}")["status"] == "ahead"
+
+          def covered():
+              try:
+                  candidates = [
+                      artifact
+                      for page in pages(f"{source}/actions/artifacts?name={receipt_name}")
+                      for artifact in page["artifacts"]
+                      if artifact["expired"] is False
+                      and artifact["workflow_run"]["repository_id"] == repo_id
+                      and artifact["workflow_run"]["head_repository_id"] == repo_id
+                      and artifact["workflow_run"]["head_branch"] == "main"
+                  ]
+                  if not candidates:
+                      return False
+                  latest = max(candidates, key=lambda artifact: (artifact["created_at"], artifact["id"]))
+                  origin = latest["workflow_run"]
+                  run_id = int(origin["id"])
+                  run = get(f"{source}/actions/runs/{run_id}")
+                  if (run["id"] != run_id or run["path"] != workflow or run["event"] != "push"
+                          or run["head_branch"] != "main" or run["head_sha"] != origin["head_sha"]
+                          or run["repository"]["id"] != repo_id or run["head_repository"]["id"] != repo_id):
+                      raise ValueError("receipt-origin")
+                  # Upload is the final business step. It can be visible while
+                  # GitHub still marks the producer as running.
+                  artifact_id = int(latest["id"])
+                  archive = gh(f"{source}/actions/artifacts/{artifact_id}/zip")
+                  if archive.returncode:
+                      raise ApiError("receipt-download")
+                  with zipfile.ZipFile(io.BytesIO(archive.stdout)) as saved:
+                      entry = saved.getinfo("receipt.json")
+                      if entry.file_size > 1024:
+                          raise ValueError("receipt-size")
+                      receipt = json.loads(saved.read(entry))
+                  attempt = int(receipt["attempt"])
+                  if receipt["run"] != run_id or attempt < 1 or receipt["trigger"] != run["head_sha"]:
+                      raise ValueError("receipt-identity")
+                  producer = get(f"{source}/actions/runs/{run_id}/attempts/{attempt}")
+                  if (producer["id"] != run_id or producer["run_attempt"] != attempt
+                          or not producer["run_started_at"] <= latest["created_at"]):
+                      raise ValueError("receipt-attempt")
+                  return includes(trigger, receipt["covered"])
+              except unreadable:
+                  print("consumer-dispatch: receipt=unreadable")
+                  return False
+
+          def status_and_body(result):
+              # gh api --include gives the status even when the request fails.
+              parts = re.split(rb"\r?\n\r?\n", result.stdout, maxsplit=1)
+              status = re.match(rb"HTTP/\S+ (\d{3})\b", parts[0])
+              if status is None or len(parts) != 2:
+                  raise ApiError("response-unreadable")
+              return int(status[1]), parts[1]
+
+          def collect(endpoint, key):
+              rows = {}
+              totals = set()
+              duplicate = False
+              try:
+                  for page in pages(endpoint, fleet=True):
+                      totals.add(page["total_count"])
+                      for row in page[key]:
+                          duplicate |= row["id"] in rows
+                          rows[row["id"]] = row
+              except unreadable:
+                  return rows, False
+              return rows, not duplicate and totals == {len(rows)}
+
+          def receives(repo):
+              base = "repos/" + repo["full_name"]
+              # A complete workflow inventory distinguishes no caller from an
+              # unreadable repository. A known caller still needs source proof.
+              rows, complete = collect(f"{base}/actions/workflows", "workflows")
+              if not complete:
+                  raise ApiError("workflow-inventory-incomplete")
+              matches = [row for row in rows.values() if row["path"] == caller]
+              if len(matches) > 1:
+                  raise ValueError("duplicate-caller")
+              if not matches or matches[0]["state"] != "active":
+                  return False
+              branch = urllib.parse.quote(repo["default_branch"], safe="")
+              result = gh(
+                  f"{base}/contents/{caller}?ref={branch}",
+                  "--header", "Accept: application/vnd.github.raw+json", fleet=True,
+              )
+              if result.returncode:
+                  raise ApiError("caller-read")
+              # Adoption preserves this event declaration from the shipped
+              # caller. An unfamiliar caller needs investigation before a
+              # receipt can claim the fleet was covered.
+              blocks = re.split(rb"(?m)^(?=[^\s#])", result.stdout)
+              events = next((block for block in blocks if re.match(rb"(?:on|\"on\"|'on'):[ \t]*\r?\n", block)), b"")
+              if not re.search(rb"^  repository_dispatch:[ \t]*\r?\n    types: \[kendex-refresh\]\r?$", events, re.M):
+                  raise ValueError("caller-receiver")
+              return True
+
+          def destinations():
+              repos, complete = collect("installation/repositories", "repositories")
+              complete = complete and repo_id in repos
+              failed = 0
+              targets = []
+              for repo in repos.values():
+                  try:
+                      if repo["id"] != repo_id and not repo["archived"] and not repo["disabled"] and receives(repo):
+                          targets.append(repo["full_name"])
+                  except unreadable:
+                      failed += 1
+              print(f"consumer-dispatch: inventory-complete={str(complete).lower()} discovery-failed={failed}")
+              return complete and failed == 0, targets
+
+          def send():
+              if covered():
+                  print("consumer-dispatch: outcome=covered")
+                  return 0
+              complete, targets = destinations()
+              if not targets:
+                  print("consumer-dispatch: eligible=0")
+                  return 0 if complete else 1
+
+              # Snapshot after discovery and before the first POST. A merge
+              # during fan-out must still get its own chance to dispatch.
+              try:
+                  snapshot = get(f"{source}/git/ref/heads/main")["object"]["sha"]
+                  if not includes(trigger, snapshot):
+                      raise ValueError("trigger-missing")
+              except unreadable:
+                  print("::error::consumer-dispatch: main could not be proved to contain the triggering push")
+                  return 1
+
+              accepted = 0
+              for target in targets:
+                  try:
+                      result = gh(
+                          f"repos/{target}/dispatches", "--include", "--method", "POST",
+                          "--raw-field", "event_type=kendex-refresh", fleet=True,
+                      )
+                      status, _ = status_and_body(result)
+                      accepted += status == 204 and result.returncode == 0
+                  except ApiError:
+                      pass
+              print(f"consumer-dispatch: eligible={len(targets)} accepted={accepted}")
+              if not complete or accepted != len(targets):
+                  return 1
+
+              record = pathlib.Path(os.environ["RUNNER_TEMP"]) / "receipt.json"
+              record.write_text(json.dumps(dict(
+                  covered=snapshot, trigger=trigger,
+                  run=int(os.environ["GITHUB_RUN_ID"]), attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              )))
+              with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                  output.write(f"receipt={record}\n")
+              return 0
+
+          raise SystemExit(send())
+          PY
+
+      - name: Publish the completed dispatch receipt
+        if: steps.dispatch.outputs.receipt != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kendex-consumer-dispatch-receipt
+          path: ${{ steps.dispatch.outputs.receipt }}
+          if-no-files-found: error
+          retention-days: 7
