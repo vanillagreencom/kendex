@@ -797,9 +797,7 @@ pub fn companion_reach(request: &mut Request, settings: &Settings) -> Result<()>
 /// CLI, Pi) has no other identity the review can read.
 const REVIEW_MODEL: &str = "SECOND_OPINION_CURRENT_MODEL";
 
-/// The hold an orch launcher exports to its own children, under which a
-/// `lanes` read prints neither once-per-launch model line; a launched
-/// session prints its own launches' lines.
+/// The inherited hold name cleared from a launched session's environment.
 const MODEL_LINES_HELD: &str = "ORCH_MODEL_LINES_HELD";
 
 /// The variable a Codex session's turn-end context reader takes the

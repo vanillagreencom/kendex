@@ -78,12 +78,12 @@ tracker_ask() { # NAME FAILURE
 #!/usr/bin/env bash
 set -euo pipefail
 case "${TRACKER_FAILURE:-}:$1:$2:${4:-}" in
-  assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
+  assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
 esac
 case "$1:$2" in
   users:list) echo '[{"id":"87654321-4321-4321-4321-cba987654321","name":"Riley Other","email":"other@example.test"},{"id":"12345678-1234-1234-1234-123456789abc","name":"Maya Owner","email":"owner@example.com","display_name":"maya"}]' ;;
   teams:keys) echo '{"urlKey":"workspace","keys":["KEN"]}' ;;
-  issues:get) echo '{"labels":["skills"]}' ;;
+  graphql:--query) echo '{"issue":{"description":"","assignee":{"name":"Maya Owner"},"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}' ;;
   issues:update) echo '{}' ;;
   comments:create) echo '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}' ;;
   *) exit 1 ;;

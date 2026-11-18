@@ -2084,7 +2084,7 @@ cp package-lock.json node_modules/installed-lockfile
         return path, added, [line for line in self.log_since(mark) if line.startswith("npm ")]
 
     def test_relaunch_installs_the_dependencies_the_items_own_tree_commits(self):
-        """KEN-5007: a relaunch installs the lockfile the item's tree commits
+        """A relaunch installs the lockfile the item's tree commits
         at its head, a dependency absent from the base included, into the
         node_modules the tree links; the clone's own pair is put back."""
         path, added, installs = self.relaunch_after_an_added_dependency()
@@ -2123,7 +2123,7 @@ cp package-lock.json node_modules/installed-lockfile
         return path, head, self.create("--relaunch")
 
     def test_relaunch_over_a_conflicting_base_keeps_the_items_work(self):
-        """KEN-2965: a relaunch whose rebase onto the base conflicts keeps the
+        """A relaunch whose rebase onto the base conflicts keeps the
         item's tree on its own head, its commits and files intact, and answers
         tree=unrebased on its create line."""
         path, head, result = self.relaunch_over_a_conflicting_base()

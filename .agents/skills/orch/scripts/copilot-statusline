@@ -36,8 +36,8 @@
 # <key>=<value>` on stderr and exits 1, and the CLI keeps the previous line; the
 # keys are copilot_session_write's own, payload=invalid-json, payload=unbound
 # and record=unwritable, plus missing-tools=jq where jq is not on PATH. A
-# refreshInterval under COPILOT_SESSION_MAX_AGE_S (120 seconds) keeps the
-# record fresh for its readers, which read an older record as unmeasured.
+# refreshInterval under agent-runtime's 120-second record-age bound keeps
+# the record fresh; its reader reports an older record as unmeasured.
 set -euo pipefail
 
 message() { # KEY VALUE

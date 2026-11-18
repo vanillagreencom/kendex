@@ -20,6 +20,30 @@ current_files() {
 }
 
 if [ "${1:-all}" != timing ]; then
+nested_reach() { # GUARD INPUT
+  RC=0
+  OUT="$(cd "$REPO" && "$1" --suite-reach <<<"$2" 2>&1)" || RC=$?
+}
+for input in skills/agent-runtime/runtime/src/launch.rs skills/orch/tests/job/one-job.sh; do
+  nested_reach "$GUARD" "$input"
+  [ "$RC" -eq 0 ] && grep -Fxq skills/orch/tests/one_job.sh <<<"$OUT" \
+    && ! grep -Fxq skills/orch/tests/job/one-job.sh <<<"$OUT" \
+    && ok "nested input $input selects the one-job entry without executing its helper as a suite" \
+    || bad "nested input $input selects the one-job entry without executing its helper as a suite" "$OUT"
+done
+if mutant_guard 's@\*:tests/\*/\*.sh | \*:tests/\*/\*.bash) echo helper@*:tests/lib/*.sh | *:tests/lib/*.bash) echo helper@'; then
+  nested_reach "$MUTANT_TOOLS/guard" skills/agent-runtime/runtime/src/launch.rs
+  [ "$RC" -eq 0 ] && ! grep -Fxq skills/orch/tests/one_job.sh <<<"$OUT" \
+    && ok 'control: omitting the nested implementation loses one-job for an agent-runtime launch change' \
+    || bad 'control: omitting the nested implementation loses one-job for an agent-runtime launch change' "$OUT"
+else
+  bad 'nested implementation control changes the guard'
+fi
+if [ "${1:-all}" = nested ]; then
+  printf 'pass: %d fail: %d\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
 SUITE_LOG="$TMP/suites"
 mkdir -p "$R/tools/tests"
 printf '#!/usr/bin/env bash\nprintf "demo\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/demo/tests/demo.test.sh"

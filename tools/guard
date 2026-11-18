@@ -1590,7 +1590,7 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #              the root of hooks/
 #   lib          a shell file (.sh or .bash) below scripts/<dir>/, which a
 #                script sources or dispatches to
-#   helper       a shell file under tests/lib/, which suites source
+#   helper       a shell file below tests/<dir>/, which suites source or run
 #   module       any other file below scripts/<dir>/
 #   test-module  any other file under tests/lib/
 #   test-program in a DEV_VALIDATE_SCOPED=true run only, a Python file
@@ -1625,7 +1625,7 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # changed test program seeds its file name, and a changed test import its
 # dotted module path, `fixtures.harness` for tests/fixtures/harness.py.
 # Status 1 is a path of no role:
-# run-all.sh, any other file under tests/<dir>/, a Python file under tests/
+# run-all.sh, a non-shell file under tests/<dir>/, a Python file under tests/
 # but tests/lib/ outside a scoped run, a file of hooks/ that is no hook, and
 # anything else.
 # mapped_suites' header says what a scoped run reads for a test module or
@@ -1646,7 +1646,7 @@ path_role() { # DIR REL
       if [[ $RUNTIME_FACTS == *$'\n'"$1 test "*" $2"$'\n'* ]]; then echo rust-target; else echo rust-input; fi
       ;;
     *:scripts/*/*.sh | *:scripts/*/*.bash) echo lib ;;
-    *:tests/lib/*.sh | *:tests/lib/*.bash) echo helper ;;
+    *:tests/*/*.sh | *:tests/*/*.bash) echo helper ;;
     *:scripts/*/*) echo module ;;
     *:tests/lib/*) echo test-module ;;
     *:tests/*/*.py)
@@ -1688,7 +1688,7 @@ skill_suites() { # DIR [shell]
 # file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
-  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py \
+  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*/*.sh "$1"/tests/*/*.bash "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py \
     "$1"/runtime/* "$1"/runtime/src/*.rs "$1"/runtime/src/*/*.rs "$1"/runtime/src/*/*/*.rs "$1"/runtime/src/*/*/*/*.rs \
     "$1"/tests/rust/*.rs; do
     [ -f "$f" ] || continue

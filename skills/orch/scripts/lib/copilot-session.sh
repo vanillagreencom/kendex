@@ -34,8 +34,6 @@
 #
 # Sourced, never run. Bash 3.2-safe, like its callers.
 
-COPILOT_SESSION_MAX_AGE_S="${COPILOT_SESSION_MAX_AGE_S:-120}"
-
 # The record path for one session of the account at HOME. The id is held to the
 # alphabet a session id is spelled in, so no id names a path outside the
 # directory; an empty id or one outside it answers 1.

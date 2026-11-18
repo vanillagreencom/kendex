@@ -41,7 +41,12 @@ TMP_ROOT="$(mktemp -d)" || { echo "dev-stop-check: scratch=mktemp-failed" >&2; e
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev-stop-check: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev-stop-check: scratch=resolve-failed" >&2; exit 1; }
 PLANTED=""
+GONE_PID=""
 cleanup() {
+  if [ -n "$GONE_PID" ]; then
+    kill -TERM "$GONE_PID" 2>/dev/null || :
+    wait "$GONE_PID" 2>/dev/null || :
+  fi
   if [ -n "$PLANTED" ]; then
     kill -TERM "$PLANTED" 2>/dev/null || :
     wait "$PLANTED" 2>/dev/null || :
@@ -63,21 +68,26 @@ RUN_DIR="$TMP_ROOT/cwd"
 mkdir -p "$RUN_DIR" "$TMP_ROOT/home"
 
 # --- The worktrees ----------------------------------------------------------
-# A released run directory as it stands while its child runs:
-# the start record and the launcher's runner record written before the
-# launch; each row adds the child's bare pid and, once it ends, its verdict.
+# The runtime creates job.err before its start record. An attached runner
+# holds the run by its owner's pid and start identity until a verdict lands.
 plant_run() { # WORKTREE -> the run directory
   local dir="$1/tmp/dev-validate-planted"
   mkdir -p "$dir"
+  : >"$dir/job.err"
   printf 'worktree=%s\nstart=1769600000\nquiet-secs=660\npoll-secs=30\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead=%040d\n' "$1" 0 >"$dir/start"
-  printf 'runner=setsid\nline=runner=setsid reason=no-linger\n' >"$dir/runner"
   printf '%s' "$dir"
+}
+record_runner() { # RUN-DIR PID
+  local start
+  start="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$2")"
+  [ -n "$start" ] || { echo 'dev-stop-check: child=identity-unreadable' >&2; exit 1; }
+  printf 'runner=attached\npid=%s\nstart=lstart:%s\nline=runner=attached\n' "$2" "$start" >"$1/runner"
+  printf '%s\n' "$2" >"$1/pid"
 }
 WT_LIVE="$TMP_ROOT/wt.live"
 RUN_LIVE="$(plant_run "$WT_LIVE")"
-# The live child belongs to this fixture until cleanup. A fixed sleep ended
-# before late rows and controls on loaded macOS runners. The ready pipe
-# confirms that the child has acquired the argv the real reader checks.
+# The input pipe keeps the child alive through every row and control.
+# The ready pipe confirms it has started before its identity is read.
 mkfifo "$TMP_ROOT/live-input" "$TMP_ROOT/live-ready"
 exec 8<>"$TMP_ROOT/live-input"
 perl -e '$| = 1; print "ready\n"; while (<STDIN>) {}' -- planted --child --run-dir "$RUN_LIVE" \
@@ -85,17 +95,22 @@ perl -e '$| = 1; print "ready\n"; while (<STDIN>) {}' -- planted --child --run-d
 PLANTED=$!
 IFS= read -r READY <"$TMP_ROOT/live-ready"
 [ "$READY" = ready ] || { echo 'dev-stop-check: child=unready' >&2; exit 1; }
-printf '%s\n' "$PLANTED" >"$RUN_LIVE/pid"
+record_runner "$RUN_LIVE" "$PLANTED"
 WT_DONE="$TMP_ROOT/wt.done"
 RUN_DONE="$(plant_run "$WT_DONE")"
-printf '%s\n' "$PLANTED" >"$RUN_DONE/pid"
+record_runner "$RUN_DONE" "$PLANTED"
 printf 'guard-exit=0 at=2026-10-06T15:02:00Z\n' >"$RUN_DONE/exit"
 WT_GONE="$TMP_ROOT/wt.gone"
 RUN_GONE="$(plant_run "$WT_GONE")"
-sleep 0 &
+perl -e '$| = 1; print "ready\n"; while (<STDIN>) {}' \
+  <"$TMP_ROOT/live-input" >"$TMP_ROOT/live-ready" 2>/dev/null &
 GONE_PID=$!
-wait "$GONE_PID"
-printf '%s\n' "$GONE_PID" >"$RUN_GONE/pid"
+IFS= read -r READY <"$TMP_ROOT/live-ready"
+[ "$READY" = ready ] || { echo 'dev-stop-check: child=unready' >&2; exit 1; }
+record_runner "$RUN_GONE" "$GONE_PID"
+kill -TERM "$GONE_PID"
+wait "$GONE_PID" 2>/dev/null || :
+GONE_PID=""
 WT_EMPTY="$TMP_ROOT/wt.empty"
 mkdir -p "$WT_EMPTY/tmp"
 WT_REMOVED="$TMP_ROOT/wt.removed"

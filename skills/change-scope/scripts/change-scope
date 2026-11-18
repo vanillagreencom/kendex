@@ -415,7 +415,7 @@ launch_consider() { # CLASS CAUSE [unmeasured]
 }
 
 # One ceiling of the narrow-change list, the last line naming it.
-launch_ceiling() { # KEY
+ceiling() { # KEY
   sed -n "s/^$1=\([0123456789][0123456789]*\)\$/\1/p" "$NARROW_CONF" | tail -1
 }
 
@@ -467,8 +467,8 @@ launch_class() { # ARG...
   fi
 
   if [ -n "$production" ]; then
-    if [ ! -r "$NARROW_CONF" ] || ! micro_max="$(launch_ceiling micro_max_production)" ||
-      ! small_max="$(launch_ceiling small_max_production)"; then
+    if [ ! -r "$NARROW_CONF" ] || ! micro_max="$(ceiling micro_max_production)" ||
+      ! small_max="$(ceiling small_max_production)"; then
       launch_consider standard narrow-change-unreadable unmeasured
     elif [ -z "$micro_max" ] || [ -z "$small_max" ]; then
       launch_consider standard narrow-change-ceilings-missing unmeasured
@@ -1677,7 +1677,6 @@ else
   fi
 fi
 
-ceiling() { sed -n "s/^$1=\([0123456789][0123456789]*\)\$/\1/p" "$NARROW_CONF" | tail -1; }
 micro_max=""
 small_max=""
 if ! { micro_max="$(ceiling micro_max_production)" &&
