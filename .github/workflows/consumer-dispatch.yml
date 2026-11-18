@@ -14,8 +14,31 @@ on:
 permissions: {}
 
 jobs:
-  wait:
+  priority:
     if: github.repository == 'vanillagreencom/kendex'
+    environment: kendex
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      urgent: ${{ steps.linear.outputs.urgent }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: /refresh/dispatch-consumers.py
+          sparse-checkout-cone-mode: false
+      - name: Read the merged issue priority
+        id: linear
+        env:
+          KENDEX_DISPATCH_LINEAR_READ_KEY: ${{ secrets.KENDEX_DISPATCH_LINEAR_READ_KEY }}
+        run: python3 refresh/dispatch-consumers.py --priority
+
+  wait:
+    needs: priority
+    if: ${{ !cancelled() && github.repository == 'vanillagreencom/kendex' && (needs.priority.result != 'success' || needs.priority.outputs.urgent != 'true') }}
     # Before enabling this workflow, provision this secretless, main-only
     # environment with a wait timer. KEN-5283 records its duration. Each
     # qualifying push waits independently, so later pushes cannot extend
@@ -26,7 +49,8 @@ jobs:
       - run: ':'
 
   send:
-    needs: wait
+    needs: [priority, wait]
+    if: ${{ !cancelled() && (needs.wait.result == 'success' || (needs.priority.result == 'success' && needs.priority.outputs.urgent == 'true')) }}
     environment: kendex
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -62,6 +86,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FLEET_TOKEN: ${{ steps.fleet.outputs.token }}
+          DISPATCH_URGENT: ${{ needs.priority.result == 'success' && needs.priority.outputs.urgent == 'true' }}
         run: python3 refresh/dispatch-consumers.py
 
       - name: Publish the dispatch attempt receipt

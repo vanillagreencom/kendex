@@ -1,4 +1,5 @@
 # Send the native main-push workflow's consumer refresh event.
+import http.client
 import io
 import json
 import os
@@ -6,16 +7,13 @@ import pathlib
 import re
 import subprocess
 import urllib.parse
+import urllib.request
 import zipfile
 import zlib
 from collections import Counter
 
-source = "repos/" + os.environ["GITHUB_REPOSITORY"]
-trigger = os.environ["GITHUB_SHA"]
-repo_id = int(os.environ["GITHUB_REPOSITORY_ID"])
 caller = ".github/workflows/kendex-refresh.yml"
 workflow = ".github/workflows/consumer-dispatch.yml"
-receipt_name = os.environ["DISPATCH_RECEIPT_NAME"]
 
 class ApiError(Exception):
     def __init__(self, code, output=b""):
@@ -77,7 +75,7 @@ def includes(older, newer):
         raise ValueError("invalid-comparison")
     return status == "ahead"
 
-def covered():
+def last_attempt():
     rows, failure = collect(f"{source}/actions/artifacts?name={receipt_name}", "artifacts", fleet=False)
     if failure:
         raise ApiError(failure)
@@ -88,7 +86,7 @@ def covered():
         and artifact["workflow_run"]["head_branch"] == "main"
     ]
     if not candidates:
-        return False
+        return None
     latest = max(candidates, key=lambda artifact: (artifact["created_at"], artifact["id"]))
     if latest["expired"] is not False:
         raise ValueError("receipt-unavailable")
@@ -115,7 +113,62 @@ def covered():
     if (producer["id"] != run_id or producer["run_attempt"] != attempt
             or not producer["run_started_at"] <= latest["created_at"]):
         raise ValueError("receipt-attempt")
-    return includes(trigger, receipt["attempted"])
+    return receipt["attempted"]
+
+def package(path):
+    directory, *parts = path.split("/")
+    if directory in ("skills", "pi-extensions") and len(parts) >= 2:
+        return directory.removesuffix("s"), parts[0]
+    if directory in ("agents", "commands", "hooks") and len(parts) == 1:
+        extension = ".sh" if directory == "hooks" else ".md"
+        if parts[0].endswith(extension):
+            return directory.removesuffix("s"), parts[0].removesuffix(extension)
+    return None
+
+def changed_packages(previous, snapshot):
+    if previous is None:
+        return None, "no-attempt-receipt"
+    try:
+        comparison = get(f"{source}/compare/{previous}...{snapshot}")
+        files = comparison["files"]
+        # Compare returns at most 300 files for the entire range.
+        if comparison["status"] != "ahead" or not isinstance(files, list) or len(files) >= 300:
+            return None, "comparison-incomplete"
+        changed = set()
+        for row in files:
+            paths = [row["filename"]]
+            if row["status"] == "renamed":
+                paths.append(row["previous_filename"])
+            for path in paths:
+                key = package(path)
+                if key is None:
+                    return None, "shared-input"
+                changed.add(key)
+        return changed, None
+    except unreadable as error:
+        return None, f"comparison-{failure_code(error)}"
+
+def refresh_reason(repo, changed, fallback):
+    if changed is None:
+        return fallback
+    branch = urllib.parse.quote(repo["default_branch"], safe="")
+    try:
+        raw = gh(f"repos/{repo['full_name']}/contents/.kendex-lock.json?ref={branch}",
+                 "--header", "Accept: application/vnd.github.raw+json", fleet=True)
+        lock = json.loads(raw)
+        if lock["version"] not in (11, 12):
+            return "lock-version-unknown"
+        installed = set()
+        for row in lock["entries"].values():
+            item = lock["installations"][row["installation"]] if lock["version"] == 12 else row
+            provenance, kind, name = row["sourceRepo"], item["kind"], item["name"]
+            if not all(isinstance(value, str) and value for value in (provenance, kind, name)):
+                return "lock-malformed-response"
+            if provenance.casefold() == os.environ["GITHUB_REPOSITORY"].casefold():
+                installed.add((kind, name))
+        return "installed-package-changed" if installed & changed else None
+    except (ApiError, AttributeError, KeyError, TypeError, ValueError, OSError) as error:
+        return f"lock-{failure_code(error)}"
 
 def failure_code(error):
     return error.code if isinstance(error, ApiError) else "malformed-response"
@@ -176,12 +229,23 @@ def destinations(failures):
             if failure:
                 failures[f"workflows-{failure}"] += 1
             if eligible:
-                targets.append(repo["full_name"])
+                targets.append(repo)
         except unreadable as error:
             failures[f"caller-{failure_code(error)}"] += 1
     return len(repos), targets
 
-def attempt(targets, failures):
+def gate_clear(target):
+    # A dispatch can bypass the consumer's release job only when no run is
+    # waiting now. An unreadable inspection leaves recovery to the caller.
+    try:
+        reply = get(f"repos/{target}/actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=1",
+                    fleet=True)
+        total = reply["total_count"]
+        return type(total) is int and total == 0 and reply["workflow_runs"] == []
+    except unreadable:
+        return False
+
+def attempt(targets, failures, previous):
     if not targets:
         # A known Fleet with no eligible callers gets a red run. There was
         # no POST to duplicate, so a later trigger can retry discovery.
@@ -197,18 +261,35 @@ def attempt(targets, failures):
     except unreadable as error:
         failures[f"main-{failure_code(error)}"] += 1
         return 0, 0
+    # A newer normal push still goes through its own timer.
+    if os.environ.get("DISPATCH_URGENT") == "true":
+        snapshot = trigger
 
-    accepted = 0
-    for target in targets:
+    changed, fallback = changed_packages(previous, snapshot)
+    attempted = accepted = 0
+    for repo in targets:
+        # The source run is public. Installation IDs identify private targets
+        # without disclosing their names.
+        label = repo["full_name"] if repo.get("private") is False else str(repo["id"])
+        reason = refresh_reason(repo, changed, fallback)
+        if reason is None:
+            print(f"consumer-dispatch: consumer={label} outcome=skipped reason=no-installed-package-changed")
+            continue
+        attempted += 1
+        clear = gate_clear(repo["full_name"])
         try:
             gh(
-                f"repos/{target}/dispatches", "--method", "POST",
-                "--raw-field", "event_type=kendex-refresh", fleet=True,
+                f"repos/{repo['full_name']}/dispatches", "--method", "POST",
+                "--raw-field", "event_type=kendex-refresh",
+                "--field", f"client_payload[gate_clear]={str(clear).lower()}", fleet=True,
             )
         except ApiError as error:
             failures[f"post-{error.code}"] += 1
+            outcome = "failed"
         else:
             accepted += 1
+            outcome = "sent"
+        print(f"consumer-dispatch: consumer={label} outcome={outcome} reason={reason} gate-clear={str(clear).lower()}")
 
     # The daily backstop retries missed deliveries. The attempt receipt
     # keeps later matured triggers from resending to healthy recipients.
@@ -222,11 +303,41 @@ def attempt(targets, failures):
             output.write(f"receipt={record}\n")
     except (OSError, ValueError):
         failures["receipt-write"] += 1
-    return len(targets), accepted
+    return attempted, accepted
+
+def read_priority():
+    key = os.environ.get("KENDEX_DISPATCH_LINEAR_READ_KEY")
+    if not key:
+        return False, "secret-missing"
+    try:
+        event = json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        subject = event["head_commit"]["message"].partition("\n")[0]
+        ids = set(re.findall(r"\bKEN-[0-9]+\b", subject))
+        if len(ids) != 1:
+            return False, "subject-issue-missing" if not ids else "subject-issue-ambiguous"
+        payload = dict(query="query($id: String!) { issue(id: $id) { priority } }",
+                       variables={"id": ids.pop()})
+        request = urllib.request.Request("https://api.linear.app/graphql", json.dumps(payload).encode(),
+                                         {"Authorization": key, "Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=10) as reply:
+            result = json.load(reply)
+        priority = result["data"]["issue"]["priority"]
+        if result.get("errors") or type(priority) is not int or not 0 <= priority <= 4:
+            return False, "linear-response-unreadable"
+        return priority == 1, "linear-urgent" if priority == 1 else "linear-not-urgent"
+    except (AttributeError, KeyError, TypeError, ValueError, OSError, http.client.HTTPException):
+        return False, "linear-response-unreadable"
+
+def priority_route():
+    urgent, reason = read_priority()
+    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+        output.write(f"urgent={str(urgent).lower()}\n")
+    print(f"consumer-dispatch: arrival={'immediate' if urgent else 'normal-wait'} reason={reason}")
 
 def send():
     try:
-        if covered():
+        previous = last_attempt()
+        if previous is not None and includes(trigger, previous):
             print("consumer-dispatch: outcome=covered")
             return 0
     except unreadable + (EOFError, RuntimeError, zlib.error):
@@ -236,7 +347,7 @@ def send():
         return 1
     failures = Counter()
     repos, targets = destinations(failures)
-    attempted, accepted = attempt(targets, failures)
+    attempted, accepted = attempt(targets, failures, previous)
     causes = ",".join(f"{code}:{count}" for code, count in sorted(failures.items()))
     print(f"consumer-dispatch: installation={repos} eligible={len(targets)} "
           f"attempted={attempted} accepted={accepted} failures={causes or 'none'}")
@@ -244,4 +355,12 @@ def send():
 
 
 if __name__ == "__main__":
-    raise SystemExit(send())
+    import sys
+    if sys.argv[1:] == ["--priority"]:
+        priority_route()
+    else:
+        source = "repos/" + os.environ["GITHUB_REPOSITORY"]
+        trigger = os.environ["GITHUB_SHA"]
+        repo_id = int(os.environ["GITHUB_REPOSITORY_ID"])
+        receipt_name = os.environ["DISPATCH_RECEIPT_NAME"]
+        raise SystemExit(send())

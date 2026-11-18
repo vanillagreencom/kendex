@@ -28,10 +28,10 @@ def check_shape(text):
     assert 'concurrency:' not in release and 'environment:' not in release
     assert re.search(r'^    permissions:\n      actions: write\n      contents: read\n      pull-requests: read\n', release, re.M)
     assert 'uses: vanillagreencom/kendex/.github/workflows/refresh-release.yml@v1' in release
-    assert re.search(r'^    if: ' + re.escape(cond) + '$', release, re.M)
+    assert re.search(r'^    if: \$\{\{ ' + re.escape(cond) + r' && !\(.+\) \}\}$', release, re.M)
     assert re.search(r'^    needs: release$', refresh, re.M)
     assert re.search(r'^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@v1$', refresh, re.M)
-    assert re.search(r'^    if: \$\{\{ success\(\) && ' + re.escape("needs.release.outputs.route != 'skip' && " + cond) + r' \}\}$', refresh, re.M)
+    assert re.search(r'^    if: \$\{\{ !cancelled\(\) && ' + re.escape(cond) + r' && \(.+\) \}\}$', refresh, re.M)
     assert re.search(r'^    concurrency:\n      group: kendex-refresh\n      cancel-in-progress: false\n', refresh, re.M)
     return release
 
@@ -40,7 +40,7 @@ for name, old, new in (
     ('workflow-group', '\njobs:\n', '\nconcurrency:\n  group: kendex-refresh\n  cancel-in-progress: false\n\njobs:\n'),
     ('cancel-in-progress', '      cancel-in-progress: false\n', '      cancel-in-progress: true\n'),
     ('no-needs', '    needs: release\n', ''),
-    ('failed-release-enters-group', '${{ success() && ', '${{ !cancelled() && '),
+    ('no-refresh-default-guard', '!cancelled() && ' + cond, '!cancelled()'),
 ):
     assert template.count(old) == 1, name
     try: check_shape(template.replace(old, new))
@@ -88,7 +88,7 @@ def run(script, expected_exit=0, **extra):
     return (root / 'writes').read_text().splitlines(), result.stdout.splitlines()
 
 # A real Actions API read can fail. The shell must report failure, and the
-# caller's success() gate above then keeps refresh outside its group.
+# caller's dependency verdict keeps refresh outside its group.
 assert run(body, 42, FAIL_READ='yes') == ([], [])
 assert body.count('set -euo pipefail') == 1
 try: run(body.replace('set -euo pipefail', 'set -uo pipefail'), 42, FAIL_READ='yes')

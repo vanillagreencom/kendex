@@ -121,22 +121,36 @@ def check(text):
     release, refresh = text.split('  release:\n', 1)[1].split('  refresh:\n', 1)
     assert 'runs-on:' not in release and 'concurrency:' not in release and 'environment:' not in release
     assert 'uses: vanillagreencom/kendex/.github/workflows/refresh-release.yml@v1' in release
-    expression = re.search(r'^    if: \$\{\{ (.+) \}\}$', refresh, re.M).group(1)
-    for success, route, wanted in ((True, 'skip', False), (True, 'full', True),
-                                   (True, 'reviews', True), (True, '', True), (False, 'full', False)):
-        context = dict(github=dict(repository='acme/widgets', ref='refs/heads/main',
-                                   event=dict(repository=dict(default_branch='main'))),
-                       needs=dict(release=dict(result='success' if success else 'failure', outputs=dict(route=route))))
+    conditions = [re.search(r'^    if: \$\{\{ (.+) \}\}$', job, re.M).group(1) for job in (release, refresh)]
+    assert conditions[1].startswith('!cancelled() && ')
+    fleet = 'vanillagreen-fleet-lanes[bot]'
+    for event, actor, attempt, clear, outcome, route, wanted in (
+        ('repository_dispatch', fleet, 1, True, 'skipped', '', 'refresh'),
+        ('repository_dispatch', fleet, 1, False, 'success', 'full', 'release\nrefresh'),
+        ('repository_dispatch', fleet, 1, None, 'success', '', 'release\nrefresh'),
+        ('repository_dispatch', fleet, 2, True, 'success', 'reviews', 'release\nrefresh'),
+        ('repository_dispatch', 'another[bot]', 1, True, 'success', 'skip', 'release'),
+        ('repository_dispatch', fleet, 1, False, 'failure', 'full', 'release'),
+        ('schedule', fleet, 1, True, 'success', 'skip', 'release'),
+        ('workflow_dispatch', fleet, 1, True, 'cancelled', 'full', 'release'),
+    ):
+        context = dict(github=dict(repository='acme/widgets', ref='refs/heads/main', event_name=event,
+                                   run_attempt=attempt, event=dict(repository=dict(default_branch='main'),
+                                   sender=dict(login=actor, type='Bot'), client_payload=dict(gate_clear=clear))),
+                       needs=dict(release=dict(result=outcome, outputs=dict(route=route))))
         result = subprocess.run([sys.executable, sys.argv[3], 'jobs', json.dumps(context)],
-                                input='refresh\trelease\t' + expression + '\n',
+                                input='release\t\t' + conditions[0] + '\nrefresh\trelease\t' + conditions[1] + '\n',
                                 text=True, capture_output=True, check=True, timeout=10)
-        assert result.stdout == ('refresh\n' if wanted else ''), (route, success, result.stdout)
+        assert result.stdout == wanted + '\n', (event, actor, attempt, route, result.stdout)
 for path in sys.argv[1:3]:
     text = Path(path).read_text()
     check(text)
-    clause = "needs.release.outputs.route != 'skip' && "
-    assert text.count(clause) == 1
-    try: check(text.replace(clause, ''))
-    except AssertionError: pass
-    else: raise AssertionError('must-fail: unchanged schedule started refresh')
+    for old, new in ((" && needs.release.outputs.route != 'skip'", ''),
+                     (" && github.run_attempt == 1", ''),
+                     (" && github.event.sender.login == 'vanillagreen-fleet-lanes[bot]'", ''),
+                     ("needs.release.result == 'success'", "needs.release.result != 'skipped'")):
+        assert text.count(old) == 1
+        try: check(text.replace(old, new))
+        except AssertionError: pass
+        else: raise AssertionError('must-fail: changed job route passed ' + old)
 PY
