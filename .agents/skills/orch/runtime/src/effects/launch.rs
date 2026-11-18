@@ -78,7 +78,8 @@ fn closed_by(text: &str, line: &str) -> String {
 }
 
 /// What a hosted lane's brief closes with where the provider kept the item's
-/// retained tree on its own head (`tree=unrebased`).
+/// retained tree on its own head (`tree=unrebased`), and a local lane's
+/// opening where the worktree package kept its reused claim there.
 const UNREBASED_TEXT: &str = "Your retained work is kept as it stands, not rebased onto the base branch. The restack is yours to run.";
 
 fn mode_sentence(mode: LaneOutput) -> &'static str {
@@ -183,8 +184,9 @@ fn cloud_prompt(brief: &str, branch: &str, stages: &Stages, mode: LaneOutput) ->
 const PI_SESSION_ENV_STEP: &str = include_str!("pi-session-env.txt");
 /// The bound on the Claude CLI creating a cloud session.
 const CLOUD_BOUND: Duration = Duration::from_secs(600);
-/// The bound on the worktree package and git during a cloud launch.
-const CLOUD_PREPARE_BOUND: Duration = Duration::from_secs(900);
+/// The bound on the worktree package and git while a launch prepares its
+/// tree: a cloud launch's create and push, a local one's reuse of a claim.
+const WORKTREE_BOUND: Duration = Duration::from_secs(900);
 
 /// The session a launch opens: the lane's bound native session resumed, or
 /// a fresh one, with why where a relaunch could not resume. The route is
@@ -371,6 +373,53 @@ fn same_directory(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// A worktree the package made with `create --no-checkout` is a claim: its
+/// index read from `HEAD`, no file written, marked
+/// `kendex-worktree.checkoutMode claim` in its own config. A local window
+/// never opens in one: the package's guarded reuse (`create ITEM --reuse
+/// --keep-on-conflict`) first writes the lane's branch into it with the
+/// tree's links, and keeps a tree whose rebase conflicts on its own head,
+/// `Ok(true)`, which the lane is told. A directory whose config names no
+/// claim, a directory outside git included, stands as it is, `Ok(false)`.
+/// `Err` is the cause the launch fails with before any window: the mark
+/// unread, the item another session's, the package's refusal or no
+/// answer, or a reuse that handed back another tree than `dir`.
+fn reuse_claim(cli: &Path, dir: &Path, item: &str) -> std::result::Result<bool, String> {
+    let mode = git_line(
+        dir,
+        "checkout-mode",
+        &[
+            "config",
+            "--get",
+            "--default",
+            "",
+            "kendex-worktree.checkoutMode",
+        ],
+    )
+    .map_err(|cause| format!("worktree-mode-unread {cause}"))?;
+    if mode != "claim" {
+        return Ok(false);
+    }
+    let reused = package(
+        cli,
+        dir,
+        "reuse",
+        &["create", item, "--reuse", "--keep-on-conflict"],
+        WORKTREE_BOUND,
+    );
+    let (path, unrebased) = match reused {
+        Ok(path) => (path, false),
+        Err(Package::Unrebased(path)) => (path, true),
+        Err(Package::Owned) => return Err("item-owned exit=75".to_owned()),
+        Err(Package::Failed(cause)) => return Err(format!("worktree-failed {cause}")),
+        Err(Package::Unknown(cause)) => return Err(format!("worktree-reuse-unknown {cause}")),
+    };
+    if !same_directory(Path::new(&path), dir) {
+        return Err(format!("worktree-reuse-elsewhere path={path}"));
+    }
+    Ok(unrebased)
+}
+
 /// The item's standing handoff route, where its state file holds a
 /// `handoff` record no session has resumed (`resumed_at` unset): the
 /// record's `relaunch` word, `fresh` where it names none. `None` with no
@@ -410,6 +459,9 @@ struct LaunchPrep {
     trust: Option<trust::Route>,
     /// What the harness may reach inside its wrapper.
     granted: super::grants::Granted,
+    /// The worktree package reused a claim in the launch directory and kept
+    /// it on its own head (`tree=unrebased`).
+    unrebased: bool,
 }
 
 /// Resolve everything a local launch can refuse before it opens a window:
@@ -431,10 +483,17 @@ fn prepare_launch(
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
+    let unrebased = reuse_claim(&settings.worktree_cli, &cwd, &r.item).map_err(Unready::Gate)?;
+    let opening = opening_brief(r, lane, harness)?;
+    let opening = if unrebased {
+        closed_by(&opening, UNREBASED_TEXT)
+    } else {
+        opening
+    };
     // The file the line reads is the closed brief, held beside the intent.
     let brief = operation
         .hold_brief(&lane_brief(
-            &opening_brief(r, lane, harness)?,
+            &opening,
             harness,
             &r.item,
             settings.lane_output.get()?,
@@ -540,6 +599,7 @@ fn prepare_launch(
         command,
         floor,
         trust: homes.trust,
+        unrebased,
     })
 }
 
@@ -907,6 +967,9 @@ fn local_launch(
     )?;
     if let Some(route) = prep.trust {
         outcome.annotate("trust", json!(route));
+    }
+    if prep.unrebased {
+        outcome.annotate("tree", json!("unrebased"));
     }
     if let Value::Object(granted) = prep.granted.record() {
         for (key, value) in granted {
@@ -1554,10 +1617,16 @@ fn cloud_launch(
         &claim_root,
         "create",
         &["create", &r.item, "--no-checkout"],
-        CLOUD_PREPARE_BOUND,
+        WORKTREE_BOUND,
     ) {
         Ok(path) => PathBuf::from(path),
         Err(Package::Owned) => return failed(operation, "item-owned exit=75"),
+        Err(Package::Unrebased(_)) => {
+            return failed(
+                operation,
+                &format!("worktree-failed exit={REUSE_UNREBASED_EXIT}"),
+            );
+        }
         Err(Package::Failed(cause)) => {
             return failed(operation, &format!("worktree-failed {cause}"));
         }
@@ -1583,10 +1652,11 @@ fn cloud_launch(
         &claim_root,
         "push",
         &["push", &r.item, "--set-upstream"],
-        CLOUD_PREPARE_BOUND,
+        WORKTREE_BOUND,
     ) {
         let cause = match cause {
             Package::Owned => "exit=75".to_owned(),
+            Package::Unrebased(_) => format!("exit={REUSE_UNREBASED_EXIT}"),
             Package::Failed(cause) => cause,
             Package::Unknown(cause) => {
                 return Ok(preparing_held(
@@ -1691,7 +1761,7 @@ fn bundle_forced(file: &Path) -> bool {
 /// One line of `git -C dir ARGS`, or `Err` with git's first stderr line.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the cloud launch's reads of the checkout's origin and the worktree's branch, through the one runner; they act on nothing"
+    reason = "a launch's reads of the checkout's origin, the worktree's branch and its checkout mode, through the one runner; they act on nothing"
 )]
 fn git_line(
     dir: &Path,
@@ -1711,7 +1781,7 @@ fn git_line(
             cwd: None,
             env: &[],
         },
-        CLOUD_PREPARE_BOUND,
+        WORKTREE_BOUND,
     )
     .map_err(|e| e.to_string())?;
     if !out.status.success() {
@@ -1725,20 +1795,26 @@ fn git_line(
 }
 
 /// How the worktree package answered: the item is another session's (75),
-/// a failure with its status and first stderr line (the package never
-/// started included), or no answer: its bound passed or a signal ended it,
-/// so the worktree or the push may stand.
+/// a `--keep-on-conflict` reuse that handed its tree back on its own head
+/// with the tree's path (76), a failure with its status and first stderr
+/// line (the package never started included), or no answer: its bound
+/// passed or a signal ended it, so the worktree or the push may stand.
 enum Package {
     Owned,
+    Unrebased(String),
     Failed(String),
     Unknown(String),
 }
+
+/// The worktree package's exit for a `create --reuse --keep-on-conflict`
+/// whose tree it handed back without the base (`worktree create --help`).
+const REUSE_UNREBASED_EXIT: i32 = 76;
 
 /// `worktree VERB ARGS` in `dir` through the one runner: its stdout, or how
 /// it refused.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the cloud launch's worktree creation and push through the worktree package, the one runner under the launch's tag"
+    reason = "a launch's worktree creation, reuse and push through the worktree package, the one runner under the launch's tag"
 )]
 fn package(
     cli: &Path,
@@ -1774,6 +1850,7 @@ fn package(
     match out.status.code() {
         Some(0) => Ok(host::stdout_text(&out)),
         Some(75) => Err(Package::Owned),
+        Some(REUSE_UNREBASED_EXIT) => Err(Package::Unrebased(host::stdout_text(&out))),
         Some(code) => Err(Package::Failed(format!("exit={code} {first}"))),
         None => Err(Package::Unknown(format!("exit=signal {first}"))),
     }

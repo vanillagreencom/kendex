@@ -5844,6 +5844,249 @@ fn cloud_lane(item: &str, runner: &Runner, wt: &Path) -> Value {
     lane
 }
 
+/// The fleet's own checkout given one commit of `src.txt`, itself as
+/// `origin` with `origin/HEAD` on `main`, and per-worktree config: a launch
+/// in a linked worktree of it is bound to the fleet's repository, and the
+/// worktree package can reuse a tree there.
+fn fleet_repository(runner: &Runner) -> PathBuf {
+    let repo = std::fs::canonicalize(runner.state_dir()).unwrap();
+    for (key, value) in [
+        ("gc.auto", "0"),
+        ("maintenance.auto", "false"),
+        ("extensions.worktreeConfig", "true"),
+    ] {
+        git(&repo, &["config", key, value]);
+    }
+    std::fs::write(repo.join("src.txt"), "src\n").unwrap();
+    git(&repo, &["add", "src.txt"]);
+    commit(&repo, "init");
+    git(&repo, &["branch", "-M", "main"]);
+    let origin = repo.display().to_string();
+    git(&repo, &["remote", "add", "origin", &origin]);
+    git(&repo, &["fetch", "-q", "origin"]);
+    git(&repo, &["remote", "set-head", "origin", "main"]);
+    repo
+}
+
+/// A stopped `claude-cloud` lane on `wt` and the local launch request that
+/// relaunches it there, as an approved pull request's landing lane is
+/// launched after a no-landing stop: the request names the tree the cloud
+/// launch recorded and no host.
+fn cloud_relaunch(item: &str, runner: &Runner, wt: &Path) -> Value {
+    let mut stopped = cloud_lane(item, runner, wt);
+    stopped["status"] = json!("stopped");
+    let mut fleet = runner.fleet();
+    let mut lanes = fleet["lanes"].as_array().cloned().unwrap_or_default();
+    lanes.push(stopped);
+    fleet["lanes"] = Value::Array(lanes);
+    runner.write_fleet(&fleet);
+    let mut request = launch_request(item, wt);
+    request["account"] = json!(runner.state_dir().display().to_string());
+    request
+}
+
+/// Whether `wt` is a checkout: no tracked file missing from disk and no
+/// claim mark.
+fn checked_out(wt: &Path) -> bool {
+    git(wt, &["ls-files", "--deleted"]).is_empty()
+        && git(
+            wt,
+            &[
+                "config",
+                "--get",
+                "--default",
+                "",
+                "kendex-worktree.checkoutMode",
+            ],
+        ) != "claim"
+}
+
+/// An approved cloud pull request's landing lane relaunched locally in the
+/// claim the worktree package made with `create --no-checkout`: the
+/// package's guarded reuse runs before the window, so the lane starts in a
+/// checkout of its branch holding the branch's files, never in the claim.
+#[test]
+fn a_cloud_lanes_local_relaunch_opens_its_window_in_the_reused_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let repo = fleet_repository(&runner);
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    // gh's answer for a branch with no open pull request: nothing, exit 0.
+    write_executable(
+        &bin.join("gh"),
+        "#!/bin/sh\nif [ \"$1 $2\" = 'pr list' ]; then exit 0; fi\nexit 4\n",
+    );
+    let path = tool_path(&[&bin]);
+    let trees = root.join("trees").display().to_string();
+    let created = program(worktree_cli())
+        .args(["create", "KEN-C", "--no-checkout"])
+        .env("PATH", &path)
+        .env("WORKTREE_BASE_DIR", &trees)
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "worktree create: {}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let wt = PathBuf::from(String::from_utf8_lossy(&created.stdout).trim());
+    assert!(
+        wt.starts_with(&trees) && !checked_out(&wt),
+        "the cloud launch's tree is a claim under the row's root"
+    );
+    let request = cloud_relaunch("KEN-C", &runner, &wt);
+    let cli = worktree_cli();
+    let report = effect_report(&runner.op_fleet_env(
+        &request,
+        &[
+            ("WORKTREE_CLI", cli.as_str()),
+            ("PATH", path.as_str()),
+            ("WORKTREE_BASE_DIR", trees.as_str()),
+        ],
+    ));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert!(
+        checked_out(&wt) && wt.join("src.txt").is_file(),
+        "the window opened in a tree without the branch's files: {report}"
+    );
+    assert_eq!(
+        report["intent"]["observation"].get("tree"),
+        None,
+        "{report}"
+    );
+}
+
+/// The guarded reuse's other answers, through a planted package that
+/// records each call: one that refuses, or finds the item another
+/// session's, or hands back another tree, fails the launch with its named
+/// cause and opens no window, the claim left as it stands; one that keeps the tree on its own head
+/// (76) launches in it with `tree: unrebased`; a standing checkout's
+/// relaunch asks the package nothing.
+#[test]
+fn a_cloud_lanes_local_relaunch_ends_on_a_refused_reuse_and_names_an_unrebased_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let repo = fleet_repository(&runner);
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    // (case, item, claim, the package's answer, outcome, cause, tree)
+    let cases = [
+        (
+            "refused",
+            "KEN-F",
+            true,
+            "echo 'worktree-reuse-refused: no' >&2; exit 1",
+            "failed",
+            Some("worktree-failed exit=1 worktree-reuse-refused: no"),
+            None,
+        ),
+        (
+            "owned",
+            "KEN-O",
+            true,
+            "exit 75",
+            "failed",
+            Some("item-owned exit=75"),
+            None,
+        ),
+        (
+            "elsewhere",
+            "KEN-E",
+            true,
+            "echo /nonexistent-tree",
+            "failed",
+            Some("worktree-reuse-elsewhere path=/nonexistent-tree"),
+            None,
+        ),
+        (
+            "unrebased",
+            "KEN-U",
+            true,
+            "git checkout-index -a && git config --worktree kendex-worktree.checkoutMode checkout && pwd -P; exit 76",
+            "confirmed",
+            None,
+            Some("unrebased"),
+        ),
+        (
+            "checkout",
+            "KEN-K",
+            false,
+            "exit 1",
+            "confirmed",
+            None,
+            None,
+        ),
+    ];
+    for (case, item, claim, answer, outcome, cause, tree) in cases {
+        let wt = root.join(case);
+        let at = wt.display().to_string();
+        if claim {
+            git(
+                &repo,
+                &["worktree", "add", "-q", "--no-checkout", &at, "-b", case],
+            );
+            git(&wt, &["read-tree", "HEAD"]);
+            git(
+                &wt,
+                &[
+                    "config",
+                    "--worktree",
+                    "kendex-worktree.checkoutMode",
+                    "claim",
+                ],
+            );
+        } else {
+            git(&repo, &["worktree", "add", "-q", &at, "-b", case]);
+        }
+        let calls = root.join(format!("{case}.calls"));
+        let cli = root.join(format!("{case}.worktree"));
+        write_executable(
+            &cli,
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' \"$(pwd -P)\" \"$*\" >> '{}'\n{answer}\n",
+                calls.display()
+            ),
+        );
+        let request = cloud_relaunch(item, &runner, &wt);
+        let windows = server.panes().len();
+        let report = effect_report(
+            &runner.op_fleet_env(&request, &[("WORKTREE_CLI", &cli.display().to_string())]),
+        );
+        assert_eq!(report["intent"]["outcome"], outcome, "{case}: {report}");
+        let observation = &report["intent"]["observation"];
+        assert_eq!(observation["cause"].as_str(), cause, "{case}: {report}");
+        assert_eq!(observation["tree"].as_str(), tree, "{case}: {report}");
+        let asked = std::fs::read_to_string(&calls).unwrap_or_default();
+        if claim {
+            assert_eq!(
+                asked,
+                format!(
+                    "{}|create {item} --reuse --keep-on-conflict\n",
+                    wt.display()
+                ),
+                "{case}: the guarded reuse, once, in the claim"
+            );
+        } else {
+            assert_eq!(
+                asked, "",
+                "{case}: a standing checkout asks the package nothing"
+            );
+        }
+        if outcome == "failed" {
+            assert_eq!(server.panes().len(), windows, "{case}: a window opened");
+            assert!(!checked_out(&wt), "{case}: the claim was rewritten");
+        } else {
+            assert!(checked_out(&wt), "{case}: launched in a claim");
+        }
+    }
+}
+
 /// A worktree package that cannot start (a script that is not there never
 /// starts: the runner's cause, no `worktree-` keyed line) removed nothing,
 /// so the worktree is held `removal-not-started`: the close `unconfirmed`,
