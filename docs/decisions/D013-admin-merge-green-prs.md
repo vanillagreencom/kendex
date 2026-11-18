@@ -6,7 +6,7 @@
 
 **Status**: Superseded by D027
 
-**Research**: KEN-2023; KEN-3082 for the macOS shards
+**Research**: [KEN-2023](https://linear.app/vanillagreen/issue/KEN-2023/parked-close-on-merge-keeps-an-item-open-when-it-owes-another-pr); [KEN-3082](https://linear.app/vanillagreen/issue/KEN-3082/admin-route-merges-skip-the-queues-macos-skill-shards) for the macOS shards
 
 **Supersedes**: [D003](D003-one-merge-path.md) in part, its one merge path and its zero bypass actors
 

@@ -27,7 +27,7 @@ An attacker who can serve the feed could offer a genuine older download, or anot
 
 ## The canonical example
 
-`crates/core/src/release_digests.rs` with the test `update_over_a_local_feed_refuses_a_command_it_cannot_verify` in `crates/cli/tests/compat.rs`: a feed served from a local directory, a download the document does not name, and a refusal. A new download path starts there.
+`ReleaseDigests` in `crates/core/src/release_digests.rs` verifies the signed release identity and target before its `verify_command` or `verify_app` method checks the download hash. A new download path uses those checks before installing anything.
 
 ## Revisit when
 

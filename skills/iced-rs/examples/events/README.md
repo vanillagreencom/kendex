@@ -1,12 +1,13 @@
-## Events
+# Events
 
-A log of native events displayed using a conditional `Subscription`.
+Use the checkbox to turn event logging on or off. The event subscription stays active when logging is off so the app can handle close requests.
 
-The __[`main`]__ file contains all the code of the example.
+Read the [example source](src/main.rs).
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package events
 ```
-
-[`main`]: src/main.rs

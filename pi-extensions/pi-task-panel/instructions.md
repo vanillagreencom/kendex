@@ -1,6 +1,6 @@
 ## pi-task-panel — `tasks_write` tool
 
-The Pi `tasks_write` tool is the only way the user sees what you're working on. Writing tasks once and ignoring them is the most common failure mode — keep the panel current throughout the turn, not only at the final reply.
+Keep the task panel current throughout non-trivial multi-step work, including before the final reply.
 
 Use:
 

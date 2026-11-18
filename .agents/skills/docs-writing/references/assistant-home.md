@@ -34,11 +34,11 @@ Source: [source procedure](#recurring-workflow). This keeps the reading prerequi
 
 ### Draft folder access
 
-The draft folder opened in the user's current browser session. Access from other sessions remains unchecked.
-
 - Source: [source observation](#sourced-memory-note).
 - Date: 2026-10-12.
 - Supersedes: the earlier unchecked folder note.
+
+The draft folder opened in the user's current browser session. Access from other sessions remains unchecked.
 
 The note's reading route names this subject. The observation establishes access only in the session checked; it grants no action.
 

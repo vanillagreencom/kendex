@@ -6,7 +6,7 @@
 
 **Status**: Active
 
-**Research**: KEN-1584
+**Research**: [KEN-1584](https://linear.app/vanillagreen/issue/KEN-1584/kendex-lockjson-becomes-a-committed-portable-file)
 
 **Decision**: `.kendex-lock.json` is committed with the renders it records and reads as its own in every clone. Nothing in it names the checkout that wrote it: every position is relative to the root, a path source is recorded as its declaration, and the root itself is not written. What only one machine knows, the delivery an install used, when it was made and the root it was written under, is the machine half at `.cache/kendex/lock-local.json`, ignored by git. A field goes in the committed half when its value is the same in every clone at the same commit.
 

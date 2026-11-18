@@ -2,24 +2,21 @@
 description: Cut a kendex release — version bump, tag, draft review — per the app-deploy skill
 argument-hint: "[patch|minor|major]"
 ---
-Cut a kendex release. Optional bump: `$ARGUMENTS` (default: the bump the pending entries call for under `changelog.d/README.md` § Release standard).
-
-The `app-deploy` skill is the procedure and holds what a release carries; this prompt only sequences it.
+Load the `app-deploy` skill (`.agents/skills/app-deploy/SKILL.md`) and follow its complete current `workflows/release.md`. Optional bump: `$ARGUMENTS` (`patch`, `minor` or `major`); default to the bump the pending program entries require under `changelog.d/README.md` § Release standard.
 
 ## Rules
 
 - Release from `main`, clean, equal to `origin/main`. Dirty or untracked files: stage only what should ship, commit first, ask about anything ambiguous or private-looking. Never `git add -A`, never stash.
 - One version in three places, equal to the tag minus `v`: `Cargo.toml` `[workspace.package].version`, `crates/app/tauri.conf.json` `version`, and `Cargo.lock` (run `cargo build -q` after the bump).
 - Pi extension npm versions are not touched here (`/npm-deploy`).
-- Never move an existing tag.
+- Never move an existing version tag. Follow the skill's Major tag and Secrets authority boundaries.
 
-## Steps
+## Release workflow
 
-1. `git fetch origin && git status --short`: must be clean and at `origin/main`. Run `tools/release-previous-tag` and use its output as `<last-tag>`. Stop the release if either command fails.
-2. Run `git diff --stat <last-tag> HEAD` to compare the release tag's files with `HEAD`. Stop the release if the comparison fails. Empty output means no pending file change. Stop the release in that case. Follow the `app-deploy` skill for collation and release notes.
-3. Bump the three version sites and edit the link footer (`app-deploy` step 2); `cargo build -q`; `tools/guard`.
-4. Commit with exactly `Cargo.toml Cargo.lock crates/app/tauri.conf.json CHANGELOG.md changelog.d`, carrying the collation declaration: `COMMIT_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): vX.Y.Z"`. That declaration is what makes `CHANGELOG.md` count as this commit's changelog entry — the version bump under `crates/` obliges one and the fragments were just deleted — so the `commit-msg` lane refuses the commit without it. Then open the release pull request and merge it as `app-deploy` step 3 says.
-5. Follow `app-deploy` step 3 for the pre-tag check, tag target and tag push. The tag starts `.github/workflows/release.yml`, which builds every target and creates a **draft** release. Do not call `gh release create`.
-6. `gh run watch` the release workflow. When it finishes, `gh release view vX.Y.Z` — the draft must list one `kendex-<target>` per target, the app bundles, and `feed.json`. Missing asset → fix the workflow, re-tag only after deleting the failed draft and tag.
-7. Publish the draft: `gh release edit vX.Y.Z --draft=false`. Confirm `releases/latest/download/feed.json` serves the new version. A pre-release tag (`v1.0.0-rc1`) skips this — the workflow publishes it and repoints the `prerelease` channel itself (app-deploy § Pre-releases).
-8. Report: tag, assets, anything skipped.
+Use the skill's workflow for collation, the release pull request, merged-source proof, dispatch, publication and follow-up. Dispatch builds the proven merged commit on `main` and creates its version tag. Do not push a tag to start the release or call `gh release create`.
+
+Keep the prior-tag lookup and file comparison from the workflow's prerequisites. Stop on a failed comparison or no pending file change. Stage exactly `Cargo.toml Cargo.lock crates/app/tauri.conf.json CHANGELOG.md changelog.d` for the release commit, with the workflow's collation declaration.
+
+Check the workflow's declared assets before publication. Follow its retry route on failure; do not delete a version tag to re-tag it. Confirm the stable update feed or pre-release channel through the skill's applicable route.
+
+Report the tag, release commit, workflow run, assets, publication and follow-up outcomes, and anything skipped.

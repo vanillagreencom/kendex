@@ -6,7 +6,7 @@
 
 **Status**: Active
 
-**Research**: KEN-1976
+**Research**: [KEN-1976](https://linear.app/vanillagreen/issue/KEN-1976/copilot-supported-hook-refusals-lose-the-guard-diagnostic-in-model)
 
 **Decision**: The Copilot registration of every catalog hook with a script runs the script and captures its output; where the script exits 2 with stderr and prints only whitespace on stdout, the command writes that stderr as the `permissionDecisionReason` of a deny object on stdout. The status stays the script's. Any other stdout passes through unchanged, so a hook that writes its own Copilot answer is never wrapped twice. A `[[custom-hooks]]` command is registered as written. The wrapper is `copilot_answer` in `crates/core/src/engine/targets.rs`, POSIX `sh` plus `awk`, applied at every event.
 

@@ -18,10 +18,6 @@ kendex add vanillagreencom/kendex --skill iced-rs
 
 The agent loads [SKILL.md](SKILL.md) when it works on an Iced interface. It selects the type of interface element and opens the matching example. It then loads the relevant guide from [references/INDEX.md](references/INDEX.md).
 
-## Setup
-
-Nothing to configure.
-
 ## Licence
 
-MIT, in the repository's LICENSE file.
+The skill uses the repository’s [MIT licence](https://github.com/vanillagreencom/kendex/blob/cbccee4c5e798f65069699486130aa1f94fc4643/LICENSE). The bundled renderer and examples come from [Iced 0.14.0](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/LICENSE).

@@ -1,27 +1,26 @@
-## Todos
+# Todos
 
-A todos tracker inspired by [TodoMVC]. It showcases dynamic layout, text input, checkboxes, scrollables, icons, and async actions! It automatically saves your tasks in the background, even if you did not finish typing them.
+Manage a task list with a changing layout, text inputs, checkboxes, scrolling, and icons. The app saves tasks and text in the new task field in the background.
 
-All the example code is located in the __[`main`]__ file.
+[![A task list with filters and a new task field](https://iced.rs/examples/todos.gif)](https://iced.rs/examples/todos.mp4)
 
-<div align="center">
-  <a href="https://iced.rs/examples/todos.mp4">
-    <img src="https://iced.rs/examples/todos.gif">
-  </a>
-</div>
+The app uses [TodoMVC](https://todomvc.com/) as its model for the list and filters. The desktop app saves to a JSON file. The browser version uses local storage.
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package todos
 ```
 
-The web version can be run with [`trunk`]:
+## Web
 
-```
+With [Trunk](https://trunk-rs.github.io/trunk/guide/) installed, run from the upstream workspace root.
+
+```sh
 cd examples/todos
 trunk serve
 ```
-
-[`main`]: src/main.rs
-[TodoMVC]: http://todomvc.com/
-[`trunk`]: https://trunkrs.dev/

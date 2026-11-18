@@ -2,66 +2,13 @@
 
 > `iced::window` · iced 0.14.0
 
-Window lifecycle: open, close, resize, move, screenshot. Exposes `window::Id`, `window::Event`, `window::Settings`, and event subscriptions. Multi-window via `iced::daemon()`.
+Read when opening, closing, moving, resizing, or capturing an Iced window, or when subscribing to its events.
 
 ## API
 
-### `window::Settings` struct
+See [window tasks and subscriptions](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/runtime/src/window.rs), [`Settings`](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/window/settings.rs), [`Event`](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/window/event.rs), and [`Position`](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/window/position.rs).
 
-```rust
-pub struct Settings {
-    pub size: Size,
-    pub maximized: bool,
-    pub fullscreen: bool,
-    pub position: Position,
-    pub min_size: Option<Size>,
-    pub max_size: Option<Size>,
-    pub visible: bool,
-    pub resizable: bool,
-    pub closeable: bool,
-    pub minimizable: bool,
-    pub decorations: bool,
-    pub transparent: bool,
-    pub blur: bool,
-    pub level: Level,
-    pub icon: Option<Icon>,
-    pub platform_specific: PlatformSpecific,
-    pub exit_on_close_request: bool,
-}
-```
-
-### `window::Event` enum
-
-```rust
-pub enum Event {
-    Opened { position: Option<Point>, size: Size },
-    Closed,
-    Moved(Point),
-    Resized(Size),
-    Rescaled(f32),
-    RedrawRequested(Instant),
-    CloseRequested,
-    Focused,
-    Unfocused,
-    FileHovered(PathBuf),
-    FileDropped(PathBuf),
-    FilesHoveredLeft,
-}
-```
-
-### Event subscriptions
-
-```rust
-pub fn iced::window::resize_events() -> Subscription<(Id, Size)>;
-pub fn iced::window::open_events()   -> Subscription<Id>;
-pub fn iced::window::close_events()  -> Subscription<Id>;
-```
-
-- **`resize_events()`** — Subscribes to every `Event::Resized` in the running application, emitting `(Id, Size)`.
-- **`open_events()`** — Every `Event::Opened`.
-- **`close_events()`** — Every `Event::Closed`.
-
-For everything else, use the general `event::listen_with` and match on `Event::Window(window_event)`.
+Use `open_events()` and `close_events()` for lifecycle notifications by window ID. Use `window::events()` when you need to match another window event or handle several kinds together.
 
 ## Patterns
 
@@ -86,7 +33,6 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 ```
 
-
 ### React to resize events
 
 ```rust
@@ -97,6 +43,8 @@ fn subscription(_state: &State) -> Subscription<Message> {
 
 ### Close on request (with confirmation)
 
+Keep the pending window ID so the confirm action closes the window that requested it.
+
 ```rust
 // In Settings:
 let settings = window::Settings {
@@ -106,22 +54,17 @@ let settings = window::Settings {
 
 // Subscribe:
 fn subscription(_: &State) -> Subscription<Message> {
-    event::listen_with(|event, _status, id| {
-        if let Event::Window(window::Event::CloseRequested) = event {
-            Some(Message::ConfirmClose(id))
-        } else {
-            None
-        }
-    })
+    window::close_requests().map(Message::ConfirmClose)
 }
 
 // In update, decide whether to close:
 Message::ConfirmClose(id) => {
     if state.has_unsaved_changes {
+        state.pending_close = Some(id);
         state.show_confirmation_dialog = true;
         Task::none()
     } else {
-        Task::from(window::close::<Message>(id))
+        window::close(id)
     }
 }
 ```
@@ -129,13 +72,13 @@ Message::ConfirmClose(id) => {
 ## Gotchas
 
 - `window::open` returns both an **id** and a `Task` — you need to store the id if you want to address the window later (resize, move, close).
-- With `iced::application()`, there is always one main window. With `iced::daemon()`, you own every window — the process exits when the last window closes.
-- `exit_on_close_request = false` means the runtime **will not** close the window on the user's request. You must handle `CloseRequested` and issue a `window::close` task yourself, otherwise the window becomes un-closable.
-- `window::Event::RedrawRequested(Instant)` is emitted every frame — do not log it at info level.
-- `decorations = false` removes the title bar on most platforms, but the behaviour on Wayland is inconsistent; test there explicitly.
-- `blur = true` requires `transparent = true` to have any effect, and even then only works on macOS and Linux.
-- `position` is a `window::Position` enum (`Default`, `Centered`, `Specific(Point)`), not a `Point`. Don't pass raw coordinates to the field directly.
-- No way to query the focused window id from `update()` -- track it via `Focused` subscription.
+- `iced::application()` opens an initial window and exits when the last window closes. Use `iced::daemon()` to manage windows explicitly. The daemon stays alive after its last window closes. Use `iced::exit()` to terminate it.
+- Set `exit_on_close_request = false` on each window that needs confirmation. Handle its close request in `update` and return a `window::close` task when the user confirms.
+- Iced forwards `RedrawRequested(Instant)` during redraw handling. Keep these frequent events out of info-level logs. Use `window::frames()` for redraw timestamps in a subscription.
+- Set `decorations = false` to request a window without native borders and title bar. Check the result on your target platform, including Wayland if you target it.
+- For blur on macOS or Linux, enable `transparent` and use a background colour with suitable opacity. See the platform notes in the linked `Settings` declaration.
+- Use `Position::Specific(point)` for fixed coordinates or `Position::SpecificWith` to calculate a position from the window size and monitor resolution.
+- Track focus through `Focused` and `Unfocused` events when the application needs the focused window id.
 
 ## See also
 

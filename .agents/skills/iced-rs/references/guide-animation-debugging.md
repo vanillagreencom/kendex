@@ -1,20 +1,18 @@
 # Animation and Rendering Debugging Checklist
 
-Checklist for animation and rendering bugs in custom Iced widgets.
-
-**When to read**: after checking the obvious (`invalidate_layout`, `request_redraw`, event capture).
+Read when debugging a custom Iced widget after checking layout invalidation, redraw requests, and event capture.
 
 ## Master checklist
 
 ### 1. Is motion state in Tree state or stale widget fields?
 
-`request_redraw()` repaints the existing tree; it does **not** call `view()`. Widget struct fields computed in `view()` stay stale across redraws.
+A redraw request on its own repaints the existing tree. Fields computed in `view()` keep their previous values until the runtime rebuilds the view.
 
 **Check**: is the animated value in `tree.state.downcast_mut::<State>()`, not a widget struct field?
 
 ### 2. Is redraw happening without rebuild?
 
-Animation that depends on `view()` or `App::update()` recomputing values needs messages or tasks that trigger `update()` → `view()`; a `request_redraw()` loop does not run them.
+Use messages or tasks to advance application state during a transition that depends on `App::update()`. The runtime rebuilds the view after processing the messages.
 
 **Check**: does the animation advance via `RedrawRequested` in `Widget::update()`, or depend on `App::update()`?
 
@@ -32,7 +30,7 @@ A hover sensor wrapping content that resizes during the hover-triggered animatio
 
 ### 5. Are there duplicated animated branches?
 
-Crossfading two full trees (collapsed + expanded) in a `stack` doubles events and duplicates identity.
+Crossfading two full trees (collapsed and expanded) in a `stack` gives each branch separate state and handlers. Check which branches receive the event.
 
 **Check**: does the tree contain two copies of the same logical content?
 
@@ -85,8 +83,7 @@ Fixed-pixel travel clips or leaves remnants with variable-height content.
 | Near-transparent remnants after fade | 8, 10 | Partial fade contract; SVG/canvas not fading |
 | Wrong content on items after reorder | 9 | Position-based identity, not key-based |
 | Items clip during entry/exit animation | 11 | Fixed travel distance |
-| "Second click" / delayed visual response | 1, 7 | Stale layout or stale widget fields |
-| Widget "only updates on second click" | 7 | Missing `invalidate_layout()` on state change |
+| Delayed visual response or change visible on second click | 1, 7 | Stale widget fields or layout. If the state transition changes geometry, check for `invalidate_layout()` at the transition. |
 
 ## See also
 

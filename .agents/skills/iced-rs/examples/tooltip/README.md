@@ -1,14 +1,13 @@
-## Tooltip
+# Tooltip
 
-A tooltip.
+Reveal a tooltip on hover. Press the button to change its placement, including an option that follows the cursor.
 
-It displays and positions a widget on another based on cursor position.
+Read the [example source](src/main.rs).
 
-The __[`main`]__ file contains all the code of the example.
+## Run
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package tooltip
 ```
-
-[`main`]: src/main.rs

@@ -17,6 +17,9 @@ export MSYS=winsymlinks:nativestrict
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# A hosted lane exports its own state directory. Fixture readers must resolve
+# their own checkout's state rather than the lane's workflow records.
+unset ORCH_STATE_DIR
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
@@ -650,6 +653,90 @@ while IFS='|' read -r label fixture command rc out err want_state; do
   want_state="${want_state% map=*} map=$(map_file_text "${want_state##* map=}")"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+
+# Activity admission belongs to reuse, before either remote fast-forward or
+# base restack. An absent orch remains a supported standalone installation.
+# Copy the package, never its dependencies.
+saved_activity_script="$WORKTREE_SCRIPT"
+mkdir -p "$TMP_ROOT/activity-packages"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/activity-packages/worktree"
+WORKTREE_SCRIPT="$TMP_ROOT/activity-packages/worktree/scripts/worktree"
+build activity-standalone plain
+standalone_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --restack >"$ROOT/out" 2>"$ROOT/err") || standalone_rc=$?
+assert_eq "$standalone_rc" 0 "without orch: standalone restack still succeeds"
+mkdir -p "$TMP_ROOT/activity-packages/orch/scripts"
+build activity-partial-orch plain
+partial_orch_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || partial_orch_rc=$?
+assert_eq "$partial_orch_rc" 0 "partial orch without activity readers: reuse still succeeds"
+
+# The live reader beside the copy answers `validate entry --live --worktree W`
+# with the replies `orch-runtime validate entry --help` documents: a held run
+# as `run-dir=DIR pid=N` with exit 0, an unreadable run with pid=0, no live run
+# as the line live=none with exit 1, and a runtime setup has not built as exit
+# 69. orch's own validate suite holds the runtime to those replies. Any other
+# argv exits 64, so an idle row also proves the call's shape.
+LIVE_READER="$TMP_ROOT/activity-packages/orch/scripts/orch-runtime"
+live_reader() { # EXIT LINE ; the reader prints LINE, none for '-', and exits EXIT
+  local print=":"
+  [[ "$2" == - ]] || print="printf '%s\\n' '$2'"
+  printf '#!/bin/bash\n[ "$1 $2 $3 $4" = "validate entry --live --worktree" ] && [ -n "${5:-}" ] || exit 64\n%s\nexit %s\n' \
+    "$print" "$1" >"$LIVE_READER"
+  chmod +x "$LIVE_READER"
+}
+activity_rows() {
+  local row code line flags want cause before rc
+  while IFS='|' read -r row code line flags want cause; do
+    live_reader "$code" "$line"
+    build "activity-$row" plain
+    before="$(git -C "$WT" rev-parse HEAD)"
+    rc=0
+    # shellcheck disable=SC2086
+    (cd "$MAIN" && "$WORKTREE_SCRIPT" create topic $flags >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+    assert_eq "$rc" "$want" "$row: activity admission exit"
+    if [[ "$want" == 75 ]]; then
+      assert_eq "$(git -C "$WT" rev-parse HEAD)" "$before" "$row: held branch stays at its head"
+      assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
+        "path=$WT cause=$cause" "$row: structured hold cause"
+    else
+      assert_eq "$(git -C "$WT" merge-base --is-ancestor origin/main HEAD && echo based)" based \
+        "$row: idle branch reaches the base"
+    fi
+  done <<'ACTIVITY'
+run-relaunch|0|run-dir=/runs/dev-validate-1 pid=4242|--reuse --keep-on-conflict|75|run-live
+run-restack|0|run-dir=/runs/dev-validate-1 pid=4242|--restack|75|run-live
+unreadable-run|0|run-dir=/runs/dev-validate-1 pid=0|--reuse|75|run-live
+idle-reuse|1|live=none|--reuse|0|-
+idle-restack|1|live=none|--restack|0|-
+failed-read|2|-|--restack|75|activity-unreadable
+setup-required|69|-|--reuse|75|activity-unreadable
+exit1-without-idle-line|1|-|--reuse|75|activity-unreadable
+exit1-other-line|1|live=some|--reuse|75|activity-unreadable
+ACTIVITY
+}
+activity_rows
+
+# Must-fail control: suppress only the refusal, preserving its matched text.
+python3 - "$WORKTREE_SCRIPT" <<'CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+old = 'if [[ -n "$activity_cause" ]]; then'
+assert s.count(old) == 1
+changed = s.replace(old, 'if false; then # ' + old)
+assert changed != s
+p.write_text(changed)
+CONTROL
+build activity-control plain
+control_head="$(git -C "$WT" rev-parse HEAD)"
+control_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --restack >"$ROOT/out" 2>"$ROOT/err") || control_rc=$?
+assert_eq "$control_rc" 0 "activity control: skipped refusal allows restack"
+assert_eq "$([[ "$(git -C "$WT" rev-parse HEAD)" != "$control_head" ]] && echo moved)" moved \
+  "activity control: held-head assertion rejects skipped refusal"
+WORKTREE_SCRIPT="$saved_activity_script"
 
 echo
 echo "=== retained rebase state before detach relays subprocess output ==="

@@ -38,7 +38,7 @@ Requires Git, awk and standard POSIX tools. Bash 3.2 is supported. Install shell
 
 `PREFLIGHT_SOURCED_LIB_GLOBS` names the directories that hold sourced shell libraries. A new file anywhere under one, without the executable bit, needs no strict-mode preamble.
 
-Set any of these values in `kendex.settings.toml` under `[env]`, in `.kendex/settings.toml`, in `.env.local`, or in the process environment. [references/lanes.md](references/lanes.md) lists the shipped sets.
+Set any of these values in `kendex.settings.toml` under `[env]`, in `.kendex/settings.toml`, in `.env.local`, or in the process environment. [references/lanes.md](references/lanes.md) explains the glob behavior and points to the shipped declarations.
 
 ## Licence
 

@@ -48,7 +48,7 @@ pub const TIERS: [ClassRow; 4] = [
         legacy: "fable",
         claude: Some("fable"),
         gpt: "astra",
-        preferred: "gpt-6-astra",
+        preferred: "gpt-6.2-astra",
     },
     ClassRow {
         class: ModelClass::Standard,
@@ -56,7 +56,7 @@ pub const TIERS: [ClassRow; 4] = [
         legacy: "opus",
         claude: Some("opus"),
         gpt: "sol",
-        preferred: "gpt-6.1-sol",
+        preferred: "gpt-6.2-sol",
     },
     ClassRow {
         class: ModelClass::Light,

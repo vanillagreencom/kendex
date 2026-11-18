@@ -201,10 +201,10 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              as a reviewer on read-only file tools: review
                              mode then embeds the git diff of the pinned
                              range in that target's scope block, the prompt
-                             otherwise unchanged (default: unset, the target
-                             runs the diff command itself; on for pi-copilot
-                             and pi-copilot-gpt on their default command,
-                             any other set value turning it off). The embedded copy
+                             otherwise unchanged. When unset, inlining is on
+                             for claude and for pi-copilot and pi-copilot-gpt
+                             on their default commands. Any other set value
+                             turns it off. The embedded copy
                              is capped at 131072 bytes: a longer diff is cut
                              at its last whole line inside the cap, and the
                              whole diff is kept in an owner-only file in the
@@ -258,8 +258,7 @@ Scope and caller prompts:
   The wrapper derives the review scope from the worktree before invoking the
   external CLI — current branch, diff range (--range or origin/BASE...HEAD),
   diffstat, and the changed-file list are embedded in the prompt, and the
-  diff, capped, for a target set to SECOND_OPINION_<NAME>_INLINE_DIFF=1 and the
-  stock Copilot entries on their default command. audit keeps the supplied
+  capped diff for targets with inlining enabled. audit keeps the supplied
   prompt and appends authoritative starting head/dirty-path bindings. Pass
   --range explicitly when that audit needs a diff: the wrapper supplies the
   pinned range and its diff for every target, with the same cap and whole-diff
@@ -307,7 +306,7 @@ Default commands:
           pi -p --no-session --no-extensions --model MODEL --thinking high
             --tools read,grep,find,ls
           MODEL is github-copilot/claude-opus-5.5 for pi-copilot (identity
-          claude) and github-copilot/gpt-6.1-sol for pi-copilot-gpt
+          claude) and github-copilot/gpt-6.2-sol for pi-copilot-gpt
           (identity codex). Neither is in the default roster: a consumer
           names it in SECOND_OPINION_MODELS, which needs no other key.
           Read-only file tools and no shell, so each is sent the review
@@ -948,7 +947,7 @@ canon_identity() {
   # detected, per-target and roster-derived — so trimming once covers them all.
   kendex_trim id "$1"
   id=$(lower "$id")
-  # Provider-qualified ids — openai-codex/gpt-6.1-sol, openai/gpt-6.1-sol,
+  # Provider-qualified ids — openai-codex/gpt-6.2-sol, openai/gpt-6.2-sol,
   # anthropic/claude-opus-4 — are exactly what Pi and OpenCode show an operator,
   # and those are the operators REQUIRED to declare an identity. Canonicalize on
   # the component after the final slash so the value their harness shows them
@@ -1132,7 +1131,7 @@ stock_copilot_model() {
   [[ -z "${!var:-}" ]] || return 1
   case "$var" in
     SECOND_OPINION_PI_COPILOT_CMD)     printf 'github-copilot/claude-opus-5.5' ;;
-    SECOND_OPINION_PI_COPILOT_GPT_CMD) printf 'github-copilot/gpt-6.1-sol' ;;
+    SECOND_OPINION_PI_COPILOT_GPT_CMD) printf 'github-copilot/gpt-6.2-sol' ;;
     *)                                 return 1 ;;
   esac
 }
@@ -1913,7 +1912,7 @@ REVIEW_CHANGED_FILES=""
 REVIEW_DIFFSTAT=""
 REVIEW_HEAD_SHA=""
 # The full diff of the pinned range, for a target whose
-# SECOND_OPINION_<NAME>_INLINE_DIFF is 1, or a stock Copilot entry with that
+# SECOND_OPINION_<NAME>_INLINE_DIFF is 1, or Claude or stock Copilot with that
 # key unset: a reviewer with read-only file tools
 # and no shell cannot run the diff command the prompt names, and would
 # otherwise review only the file list. Audit always supplies its requested diff.
@@ -1937,7 +1936,8 @@ derive_review_diff() {
     if [[ -n "${!var+x}" ]]; then
       [[ "${!var}" == 1 ]] || return 0
     else
-      stock_copilot_model "$TARGET_CLI" >/dev/null || return 0
+      [[ "$var" == SECOND_OPINION_CLAUDE_INLINE_DIFF ]] ||
+        stock_copilot_model "$TARGET_CLI" >/dev/null || return 0
     fi
   fi
   git_err=$(so_tmpfile)

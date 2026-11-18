@@ -2,53 +2,11 @@
 
 > `iced::widget::stack` · iced 0.14.0
 
-Layers multiple children on top of each other. Children are drawn in order -- later children appear on top. The stack sizes itself to its largest child by default.
+Layers multiple children on top of each other. Children are drawn in order -- later children appear on top. The first child determines the stack's intrinsic size.
 
 ## API
 
-### `Stack` struct
-
-```rust
-pub struct Stack<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Stack<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer,
-{
-    pub fn new() -> Self;
-    pub fn with_children(
-        children: Vec<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-
-    pub fn push(
-        self,
-        child: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-    pub fn push_under(
-        self,
-        child: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-    pub fn extend(
-        self,
-        children: impl IntoIterator<Item = Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn clip(self, clip: bool) -> Self;
-}
-```
-
-### Functions
-
-```rust
-pub fn stack<'a, Message, Theme, Renderer>(
-    children: impl IntoIterator<Item = Element<'a, Message, Theme, Renderer>>,
-) -> Stack<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/stack.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/stack.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -93,7 +51,7 @@ stack![widget_a, widget_b].clip(true)
 ## Gotchas
 
 - `push_under` places the element *beneath* existing children without affecting the stack's intrinsic size. Use it for decorative backgrounds.
-- If any child uses `Length::Fill`, you must explicitly set `Stack::width` or `Stack::height` -- the stack does not auto-detect fill children from a `Vec`.
+- `Stack::from_vec` does not inspect child sizing hints. Set width or height explicitly when using it with fill-sized children. `with_children` and `push` inspect the base child.
 - `clip(true)` introduces a slight rendering overhead; only enable when children genuinely overflow.
 - Children receive events in reverse draw order (top child first). If a top child captures an event, lower children will not see it.
 

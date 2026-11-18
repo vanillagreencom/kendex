@@ -30,18 +30,22 @@ The current handoff defaults to `state/handoff.md` in the [home layout](home-lay
 
 | Section | Required content |
 |---|---|
-| State | The session: where it runs, its holds, its wake registrations and report coverage. Read the next report through `jarvis-session report-due`; retain no due row. The user's open questions as ids. Each task and awaited item as a tracker id with one unresolved next action. The checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log. |
+| State | Entries selected by [State retention](#state-retention). Read the next report through `jarvis-session report-due`; retain no due row. The checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log. |
 | Sub-agents | Each running lane or attached agent: its identity, task source and result destination. For an attached agent, identify its launch prompt and harness reply by the available agent or message ids. For a lane, record its task file and result file paths. Keep unfinished ids, available output locations and unknown state or locations under the emergency rule above. |
 | Instructions in force | Each temporary instruction from the user, its source and the event that ends it. Link the home of a standing rule. |
 | Progress log | One record at the time of each decision, state change, uncertain send, or user message handled without a reply, under the record contract below. |
 
+### State retention
+
+- Keep a State entry only if its absence would cause the successor to act wrongly or repeat work and the successor cannot recover the fact from its owning source. Examples include an unfinished operation with no receipt, a live lane, a temporary instruction, report coverage or a hold. Keep an existing entry whose source is unreadable until a readback succeeds.
+
 An explicit session identity uses the existing `session=ID` token or a State entry opening `- SESSION ID`. Each session identity has one resumable State entry, even when entries carry different ask ids. When State carries a session identity, its checkpoint includes `session ID`; the checkpoint identity and every explicit session identity in that entry agree. The commit check compares staged text only and consults no running session or private transcript.
 
-- Change a State entry with the single `progress-log` call under [Progress records](#progress-records). It replaces the whole entry or removes it and appends the record under the same file lock and write. Put the account in the record, never append it to the old State text. Keep the session entries required in the State row, including the person's words in an open question.
+- Change a State entry with the single `progress-log` call under [Progress records](#progress-records). It replaces the whole entry or removes it and appends the record under the same file lock and write. Put the account in the record, never append it to the old State text.
 - Update session-only state when it changes: an unfinished operation's next step, a running lane's identity or result path, a temporary instruction or its end event, report coverage, or a hold. Change only the affected lines and append the state-change record in the same write. Advance the checkpoint's covered log range with the update.
 - At the scheduled report, refresh changed lines. Commit changed state at each scheduled report unless the user's standing instructions set another commit trigger. Never recompose the whole state for a report.
 - Before succession transfers control, reconcile the checkpoint and later log records against live tracker items, the mailbox and relevant memory notes under [Homes](#homes). Record each correction as a state change and advance the checkpoint's covered log range.
-- Rebuild state from the checkpoint and replay later state-change records in their recorded order. Compare the checkpoint time with the clock and the user's staleness bound. If the state is stale, its covered range is incomplete, or a source disagrees, widen the reads to the relevant source history and earlier log records. Do not refuse recovery solely because the state is stale. Keep an unread source as an unresolved next action.
+- Rebuild state from the checkpoint and replay later state-change records in their recorded order. Compare the checkpoint time with the clock and the user's staleness bound. If the state is stale, its covered range is incomplete, or a source disagrees, widen the reads to the relevant source history and earlier log records. Do not refuse recovery solely because the state is stale.
 
 - An archive may hold `INDEX.md`, one Markdown bullet for each file the handoff replacement step archives: `- FILE dates=START..END entries=JSON`.
   - It does not list the copy `jarvis-session succeed` saves.
@@ -66,9 +70,7 @@ An explicit session identity uses the existing `session=ID` token or a State ent
   - `owner-unanswered` skips a file whose END precedes its window and reads a file with no row or an unreadable END.
   - Listed files that are gone and inside the window print one `owner-unanswered: archive-pruned=COUNT first=PATH last=PATH` line, with the first and last paths in sorted order: the run goes on, and messages only those files covered are listed again.
 - On each `EVENT owner-unanswered` the watch loop adds, answer the message it names, or record what was done about it in the progress log. [Control-host events: Delivery](control-host-events.md#delivery) states when the loop adds it.
-- Keep a line only if its absence would cause the successor to act wrongly or repeat work.
-- Remove a tracker id from State when its item closes. Keep the completion evidence on the item.
-- Before each scheduled-report write and before succession, run `.agents/skills/jarvis/scripts/progress-log --check-state`, adding the `--handoff PATH` that selects the current handoff when it is not the default. In that same write, remove or correct each `closed` entry, and bind, remove or correct each `unbound` entry that carries a task. Keep the session lines the State row requires. Keep an `unread` entry as an unresolved next action. A `not-issue` ref binds no entry.
+- Before each scheduled-report write and before succession, run `.agents/skills/jarvis/scripts/progress-log --check-state`, adding the `--handoff PATH` that selects the current handoff when it is not the default. In that same write, apply [State retention](#state-retention) to the existing entries. Keep completion evidence on its tracker item. A `not-issue` ref binds no entry.
 - Keep standing rules in one home. Link that home rather than repeating its text in the handoff.
 - Remove a temporary instruction when its end event occurs. Remove its copied text when the instruction's standing home now states it.
 - Apply [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer) to handoff contents.

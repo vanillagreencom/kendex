@@ -36,8 +36,8 @@ Each decision has a short markdown document: the choice, why, the rejected alter
 
 ## Setup
 
-- `DECISIONS_DIR`: where the records live, when auto-discovery of `docs/decisions/`, `decisions/`, `doc/decisions/` or `adr/` does not fit. Set it in `kendex.settings.toml` under `[env]`.
-- `DECISIONS_BASE_REF`: the branch `next-id` and `check` compare against, when it is not `origin/HEAD`, `origin/main` or `main`.
+- `DECISIONS_DIR`: override where the records live. Set it in `kendex.settings.toml` under `[env]`.
+- `DECISIONS_BASE_REF`: the base branch used to reserve decision IDs and compare records.
 - `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH`: the ID scheme for an empty index or a deliberate switch. Without them `next-id` follows the last index row, so `D001` and `ADR-0001` both carry forward.
 
 Every key and its default: `decisions --help`.

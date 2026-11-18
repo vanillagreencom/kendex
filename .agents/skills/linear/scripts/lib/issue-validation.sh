@@ -437,7 +437,7 @@ require_issue_header_shape() {
 
 # One parser owns checklist numbering, ticking, triggers, and post-merge deadlines.
 # merge-pr supplies GitHub's mergedAt; watch and reconcile consume the same
-# per-box deadline in the description without a second tracker field.
+# per-box deadline in the description. The native due date is their projection.
 # `child_box` is the number of a parent's one box, "Every child Done or
 # cancelled" (project-management parent-issue-template.md), or null; a
 # container's closer ticks it. `container_open_boxes` lists every other box
@@ -548,15 +548,21 @@ done_when_parse() {
                    elif $trigger_fields.trigger_epoch != null
                         and ($deadline_epoch <= $trigger_fields.trigger_epoch or $deadline_epoch > ($trigger_fields.trigger_epoch + 259200)) then "post-merge-window"
                    else null end) as $deadline_rule
+                | ($deadline_epoch // (if $deadline_hours != null and $trigger_fields.trigger_epoch != null
+                    then $trigger_fields.trigger_epoch + ($deadline_hours * 3600) else null end)) as $deadline_end
                 | .boxes += [({number: $n, checked: (($open | not) or $tick), post_merge: $post,
                                text: $body, evidence: $proof, deadline_epoch: $deadline_epoch, deadline_hours: $deadline_hours,
-                               deadline_rule: $deadline_rule, numeric: $numeric, reading_rule: $reading_rule,
+                               deadline_rule: $deadline_rule, deadline_end: $deadline_end, numeric: $numeric, reading_rule: $reading_rule,
                                retired: $retired} + $fields + {trigger: $trigger} + $trigger_fields)]
                 | if $retired != null then
                     .out += [($line | sub("\\[ \\]\\s*"; (if $retired.kind == "waived" then "Waived: " else "Superseded: " end))),
                              $indent + (if $retired.kind == "waived" then "  Reason: " else "  Replacement: " end) + $retired.text]
                     | .changed = true
                   elif $tick then .out += [$line | sub("\\[ \\]"; "[x]")] | .ticked += 1
+                  elif $open and $trigger_fields.trigger_kind == "merge" and $deadline_hours != null
+                       and $deadline_rule == null and $deadline_end != null then
+                    # Persist the known end so later description edits need no merge read.
+                    .out += [$line[:(-($fields.deadline | length))] + ($deadline_end | todateiso8601)] | .changed = true
                   else .out += [$line] end
                 | if $selected and ($evidence | has($n | tostring)) then
                     .out += [$indent + "  Evidence: " + $proof] | .changed = true
@@ -594,4 +600,16 @@ done_when_parse() {
         | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0
                 or any(.outside_boxes[]; .checked | not) then null
             elif any(.boxes[]; .post_merge and (.checked | not) and .retired == null) then "Verifying" else "Done" end)'
+}
+
+# GraphQL's IssueCreateInput and IssueUpdateInput take a TimelessDate (YYYY-MM-DD).
+# https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts
+# Only a dated open check owns a due date. Empty output means no such check.
+done_when_due_date() {
+    local parsed
+    parsed=$(done_when_parse "$1" '[]' "${2-}") || return 1
+    jq -c '[.errors[].box] as $invalid
+        | [.boxes[] | select(.post_merge and (.checked | not) and .retired == null)
+            | .number as $number | select(($invalid | index($number)) == null) | .deadline_end | values]
+        | min | select(. != null) | todateiso8601 | split("T")[0]' <<<"$parsed"
 }

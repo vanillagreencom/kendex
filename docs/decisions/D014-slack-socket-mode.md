@@ -6,7 +6,7 @@
 
 **Status**: Active (hosted transport and topology → D032)
 
-**Research**: KEN-2082
+**Research**: [KEN-2082](https://linear.app/vanillagreen/issue/KEN-2082/slack-the-relay-receives-owner-messages-over-socket-mode-instead-of)
 
 **Refines**: [D009](D009-slack-relay.md), replacing its polling and its one-relay-per-person topology
 

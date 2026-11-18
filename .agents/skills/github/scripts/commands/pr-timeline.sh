@@ -118,14 +118,14 @@ their start. A partial rerun retains earlier successful jobs and can give
 copied skipped jobs a new start with an old end. Those executions do not
 extend the clean span. The attempt itself must also have passed.
 
-Errors: {"error": "..."} on stderr and exit 1. A connection longer than one
-page (more than 100 commits, reviews, comments per review or marked timeline events) refuses as
-`truncated: <connection>` rather than printing a stamp read from part of the
-history. Each commit's check suites and each suite's check runs are read
-through every page with the GraphQL cursor, up to 20 pages of 50 suites per
-commit and 10 pages of 100 runs per suite; a connection still open at that
-cap refuses the same way, as `truncated: check-suites` or
-`truncated: check-runs`. Each head's status history is read through every
+Errors: {"error": "..."} on stderr and exit 1. Commits and marked timeline
+events are limited to one page of 100 items. Reviews and each review's
+comments are read with the GraphQL cursor up to 10 pages of 100 items per
+connection. The reader follows up to 20 pages of 50 check suites on the
+final head and on the merge commit when present. It follows up to 10 pages
+of 100 check runs per suite. A connection still open at its limit refuses as
+`truncated: <connection>` (commits, timeline, reviews, review-comments,
+check-suites or check-runs). Each head's status history is read through every
 page of the REST commit statuses endpoint, read only for a PR with no
 approval, and the head branch's pushes through every page of the REST
 repository activity endpoint.
@@ -160,6 +160,27 @@ RUNS_PAGE_QUERY='query runsPage($id: ID!, $cursor: String!) {
   node(id: $id) { ... on CheckSuite { checkRuns(first: 100, after: $cursor, filterBy: { checkType: LATEST }) { ...runPage } } }
 }
 '"$RUN_PAGE_FRAGMENT"
+PUSHED_FRAGMENT='fragment pushed on Commit { firstSuite: checkSuites(first: 1) { nodes { createdAt } } }'
+REVIEW_COMMENTS_PAGE_FRAGMENT='fragment reviewCommentPage on PullRequestReviewCommentConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes { replyTo { id } }
+}'
+REVIEWS_PAGE_FRAGMENTS='fragment reviewPage on PullRequestReviewConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes { id state body submittedAt author { __typename login } commit { oid ...pushed } comments(first: 100) { ...reviewCommentPage } }
+}
+'"$PUSHED_FRAGMENT
+$REVIEW_COMMENTS_PAGE_FRAGMENT"
+REVIEWS_PAGE_QUERY='query reviewsPage($owner: String!, $name: String!, $number: Int!, $cursor: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { reviews(first: 100, after: $cursor) { ...reviewPage } }
+  }
+}
+'"$REVIEWS_PAGE_FRAGMENTS"
+REVIEW_COMMENTS_PAGE_QUERY='query reviewCommentsPage($id: ID!, $cursor: String!) {
+  node(id: $id) { ... on PullRequestReview { comments(first: 100, after: $cursor) { ...reviewCommentPage } } }
+}
+'"$REVIEW_COMMENTS_PAGE_FRAGMENT"
 QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -168,7 +189,7 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
       firstCommit: commits(first: 1) { nodes { commit { authoredDate } } }
       headCommit: commits(last: 1) { nodes { commit { oid committedDate ...gate ...suites } } }
       commits(last: 100) { totalCount nodes { commit { oid committedDate ...pushed } } }
-      reviews(first: 100) { totalCount nodes { state body submittedAt author { __typename login } commit { oid ...pushed } comments(first: 100) { totalCount nodes { replyTo { id } } } } }
+      reviews(first: 100) { ...reviewPage }
       timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_SQUASH_ENABLED_EVENT, AUTO_REBASE_ENABLED_EVENT, ADDED_TO_MERGE_QUEUE_EVENT, REVIEW_DISMISSED_EVENT, READY_FOR_REVIEW_EVENT]) {
         pageInfo { hasNextPage }
         nodes {
@@ -187,14 +208,15 @@ QUERY='query($owner: String!, $name: String!, $number: Int!, $gate: String!) {
 }
 fragment gate on Commit { status { context(name: $gate) { state createdAt } } }
 fragment suites on Commit { checkSuites(first: 50) { ...suitePage } }
-fragment pushed on Commit { firstSuite: checkSuites(first: 1) { nodes { createdAt } } }
-'"$SUITE_PAGE_FRAGMENTS"
+'"$SUITE_PAGE_FRAGMENTS
+$REVIEWS_PAGE_FRAGMENTS"
 
-# The page caps the help states: 20 pages of 50 suites per commit, 10 pages
-# of 100 runs per suite. A merge-queue commit carries one suite per workflow
-# run, so a repository with many workflows passes 50 on one commit.
+# A merge-queue commit carries one suite per workflow run, so a repository
+# with many workflows passes 50 on one commit.
 SUITE_PAGES=20
 RUN_PAGES=10
+REVIEW_PAGES=10
+REVIEWS_PATH='.repository.pullRequest.reviews'
 HEAD_PATH='.repository.pullRequest.headCommit.nodes[0].commit'
 MERGE_PATH='.repository.pullRequest.mergeCommit'
 
@@ -203,7 +225,7 @@ MERGE_PATH='.repository.pullRequest.mergeCommit'
 # page ended on, its connection at PAGE_CONN in the page. The walk stops at
 # CAP pages, the first page counted, and leaves hasNextPage true for FILTER
 # to refuse. LABEL names the connection in each refusal: which walk, of
-# which commit or suite, since every page fails with gh_graphql's one text.
+# which PR, review, commit or suite, since every page fails with gh_graphql's one text.
 #   page_to_end CONN PAGE_CONN QUERY CAP LABEL [GH_ARGS...]
 page_to_end() {
     local conn="$1" page_conn="$2" query="$3" cap="$4" label="$5" data cursor page inner pages=1
@@ -222,16 +244,30 @@ page_to_end() {
             return 1
         fi
         # A page with no connection where one was asked for: node(id:) and
-        # object(oid:) answer null for a suite or commit the token cannot
-        # read, and gh_graphql prints null for a response with no data.
+        # object(oid:) can answer null for an object the token cannot read,
+        # and gh_graphql prints null for a response with no data.
         # Merging that would close the walk over part of the history.
         jq -e "$page_conn | type == \"object\" and has(\"pageInfo\")" >/dev/null <<<"$page" \
             || { github_error "pr-timeline: $label page after $cursor carries no connection"; return 1; }
-        # Both values reach jq on stdin: a page of check runs can exceed
+        # Both values reach jq on stdin: a page of reviews or runs can exceed
         # ARG_MAX as an argument.
         data=$(printf '%s\n%s\n' "$data" "$page" | jq -sc "(.[1] | $page_conn) as \$next | .[0]
             | $conn |= (.nodes += \$next.nodes | .pageInfo = \$next.pageInfo)") || return 1
         pages=$((pages + 1))
+    done
+    printf '%s\n' "$data"
+}
+
+# Walk reviews first so a review on any page can have its comments followed.
+page_reviews() { # OWNER NAME NUMBER
+    local owner="$1" name="$2" number="$3" data open_reviews i id
+    data=$(page_to_end "$REVIEWS_PATH" "$REVIEWS_PATH" "$REVIEWS_PAGE_QUERY" "$REVIEW_PAGES" \
+        "reviews of PR $number" -f owner="$owner" -f name="$name" -F number="$number") || return 1
+    open_reviews=$(jq -r "($REVIEWS_PATH.nodes // []) | to_entries[] | select(.value.comments.pageInfo.hasNextPage == true) | .key" <<<"$data") || return 1
+    for i in $open_reviews; do
+        id=$(jq -r "$REVIEWS_PATH.nodes[$i].id" <<<"$data") || return 1
+        data=$(page_to_end "$REVIEWS_PATH.nodes[$i].comments" '.node.comments' "$REVIEW_COMMENTS_PAGE_QUERY" "$REVIEW_PAGES" \
+            "comments of review $id" -f id="$id" <<<"$data") || return 1
     done
     printf '%s\n' "$data"
 }
@@ -255,8 +291,7 @@ page_commit_checks() {
 
 # The response is read in one place: a truncated connection first, since a
 # stamp taken from part of a history is a wrong answer, then the stamps. A
-# check-suites or check-runs connection is still open here only past the
-# page cap, since page_commit_checks read it to its end before that.
+# paged connection is still open here only if it reached the page cap.
 # Timestamps are GitHub's fixed `YYYY-MM-DDThh:mm:ssZ`, so min and max over
 # the strings order them.
 FILTER='
@@ -300,8 +335,8 @@ def rounds($reviews; $pushed):
 | ($p.headCommit.nodes[0].commit) as $head
 | ([$head, $p.mergeCommit] | map(select(. != null)) | map(suites(.)) | add // []) as $all_suites
 | [ (if $p.commits.totalCount > 100 then "commits" else empty end),
-    (if $p.reviews.totalCount > 100 then "reviews" else empty end),
-    (if any($p.reviews.nodes[]; .comments.totalCount > 100) then "review-comments" else empty end),
+    (if $p.reviews.pageInfo.hasNextPage then "reviews" else empty end),
+    (if any($p.reviews.nodes[]; .comments.pageInfo.hasNextPage) then "review-comments" else empty end),
     (if $p.timelineItems.pageInfo.hasNextPage then "timeline" else empty end),
     ([$head, $p.mergeCommit][] | select(. != null) | select(.checkSuites.pageInfo.hasNextPage) | "check-suites"),
     ($all_suites[] | select(.checkRuns.pageInfo.hasNextPage) | "check-runs")
@@ -434,6 +469,7 @@ pr_timeline() {
     data=$(gh_graphql "$QUERY" -f owner="$owner" -f name="$name" -F number="$pr_num" -f gate="$gate") || exit 1
     jq -e '.repository.pullRequest != null' >/dev/null <<<"$data" \
         || { github_error "No PR found: $pr_num"; exit 1; }
+    data=$(page_reviews "$owner" "$name" "$pr_num" <<<"$data") || exit 1
     data=$(page_commit_checks "$HEAD_PATH" "$owner" "$name" <<<"$data") || exit 1
     data=$(page_commit_checks "$MERGE_PATH" "$owner" "$name" <<<"$data") || exit 1
     result=$(jq -c --arg repo "$owner/$name" "$CI_RUN_JQ_DEFS$FILTER" <<<"$data") || { github_error 'pr-timeline: unreadable response'; exit 1; }

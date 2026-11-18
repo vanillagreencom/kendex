@@ -29,23 +29,20 @@ Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.lo
 | Variable | Purpose |
 |----------|---------|
 | `WORKTREE_BASE_DIR` | Parent directory for created worktrees; never inside the repository root |
-| `WORKTREE_HOSTED_NAME` | Directory name for a hosted lane's worktree (`create --hosted`), always under `<parent-of-checkout>/.worktrees/<checkout-name>`; default `lane` |
-| `WORKTREE_DEFAULT_BRANCH` | Names the default branch; unset, the repository's default branch on GitHub is read. git's record of origin's HEAD answers instead with no GitHub repository, with no github skill installed, or after a failed GitHub read, which warns; with no record either, a command that reads the branch refuses |
-| `WORKTREE_SYMLINKS` | Space-separated paths symlinked from the main checkout into each worktree. A pnpm or Next.js project leaves `node_modules` out and installs in each worktree, where pnpm hard-links from its store: a `node_modules` resolving outside the project root is refused, by pnpm with `ERR_PNPM_UNSAFE_MODULES_DIR`, Turbopack with `Symlink node_modules is invalid, it points out of the filesystem root` |
+| `WORKTREE_HOSTED_NAME` | Directory name for a hosted lane's worktree (`create --hosted`) |
+| `WORKTREE_DEFAULT_BRANCH` | Overrides the repository's default branch |
+| `WORKTREE_SYMLINKS` | Space-separated untracked paths symlinked from the main checkout into each worktree |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `link=target` pairs created inside each worktree |
 | `WORKTREE_COPIES` | Space-separated files copied from the main checkout only when neither checkout's Git index owns them; Git-owned files stay with their checkout |
 | `WORKTREE_MKDIRS` | Space-separated gitignored scratch directories created in each worktree |
-| `WORKTREE_SETUP_CMD` | Optional Bash command string run in each worktree after links, copies, directories and Git configuration. Create and app setup hooks refuse a nonzero status and keep the worktree for retry. Requires the github skill and Perl; bound: 3600 seconds |
+| `WORKTREE_SETUP_CMD` | Optional Bash command run after file and Git setup. A failure keeps the worktree for retry through `create --reuse` or the app setup hook |
 | `BOT_NAME` / `BOT_EMAIL` | Git identity for worktree commits |
 | `BOT_SIGNING_KEY` | SSH signing key for those commits |
 | `BOT_REMOTE_NAME` / `BOT_REMOTE_URL` | Remote for bot pushes |
 
 ```toml
 [env]
-# An npm project. A pnpm or Next.js project drops node_modules and installs
-# in each worktree: pnpm refuses the link with ERR_PNPM_UNSAFE_MODULES_DIR,
-# Turbopack with "Symlink node_modules is invalid, it points out of the
-# filesystem root".
+# An npm project; pnpm and Next.js need the private install described below.
 WORKTREE_SYMLINKS = ".env.local .cache node_modules"
 WORKTREE_RELATIVE_SYMLINKS = "ui/.env=../.env.worktree"
 WORKTREE_MKDIRS = "tmp"
@@ -53,13 +50,9 @@ WORKTREE_MKDIRS = "tmp"
 
 For pnpm or Next.js, leave `node_modules` out of `WORKTREE_SYMLINKS` and set `WORKTREE_SETUP_CMD = "pnpm install --frozen-lockfile"`. Each worktree then receives its own dependencies. pnpm hard-links packages from its store.
 
-An empty or unset command runs nothing. The command receives the existing environment and no stdin. Its output goes to stderr. It must finish before it exits and must not start detached services. A failed command keeps its partial files and refuses create without a successful path. Repair links from main if required, then retry with `create <ID> --reuse` or the app setup hook. A dirty reuse retries the command without rebasing. Link repair, branch normalization, standalone restack recovery and `--no-checkout` do not run it.
+Hosted creates run this command on the lane host. The provider must deliver private files before the create that runs setup.
 
-Hosted creates run this command on the lane host. The provider must deliver private files before that create. The static SSH provider's existing-clone route needs the correction tracked by KEN-3905; it currently calls create before private-file delivery and again afterward.
-
-Worktree setup does nothing when the checkout is both the source and the destination, as in a standalone clone or the main checkout: every configured entry would act on its own source.
-
-Point `WORKTREE_SYMLINKS` only at paths git does not carry: an entry does nothing when git carries every path under it, and a directory holding tracked files stays a real directory with only its untracked children linked. Each key's full semantics: `scripts/worktree --help` and `scripts/worktree fix-links --help`.
+Use the full path to `scripts/worktree` in the installed skill directory containing this README, and keep your working directory at the repository's main checkout. Run that executable with `--help` for each key's full semantics, default-branch fallback and refusal conditions, setup requirements and retries. Run it with `fix-links --help` for links beside tracked files.
 
 Wiring the Codex Desktop and Claude Code worktree hooks: [references/hooks.md](references/hooks.md).
 

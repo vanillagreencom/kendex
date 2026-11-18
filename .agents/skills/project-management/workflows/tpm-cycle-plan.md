@@ -38,7 +38,7 @@ Set `velocity.adjustment` only on a trigger: current ≥150% of baseline for 2+ 
 
 ## 3. Backlog Candidates
 
-Use the § 1 `issues.backlog` entries, or fall back to a cache query:
+Use the § 1 `issues.backlog` entries, or fall back to a live query:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --project-id "[ACTIVE_PROJECT_ID]" --state "Backlog" --max

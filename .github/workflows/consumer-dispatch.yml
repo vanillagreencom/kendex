@@ -1,0 +1,75 @@
+name: Dispatch consumer refresh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**'
+      - 'agents/**'
+      - 'hooks/**'
+      - 'commands/**'
+      - 'pi-extensions/**'
+      - 'kendex.toml'
+
+permissions: {}
+
+jobs:
+  wait:
+    if: github.repository == 'vanillagreencom/kendex'
+    # Before enabling this workflow, provision this secretless, main-only
+    # environment with a wait timer. KEN-5283 records its duration. Each
+    # qualifying push waits independently, so later pushes cannot extend
+    # the first unsent window. The wait uses no runner minutes.
+    environment: consumer-dispatch-wait
+    runs-on: ubuntu-latest
+    steps:
+      - run: ':'
+
+  send:
+    needs: wait
+    environment: kendex
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      # Admission order can differ from push order. Keep each matured request
+      # so a later arrival that is already covered cannot evict unsent work.
+      group: kendex-consumer-dispatch
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DISPATCH_RECEIPT_NAME: kendex-consumer-dispatch-attempt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Mint the fleet dispatch token
+        id: fleet
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          permission-contents: write
+          permission-actions: read
+
+      - name: Dispatch if this push is still uncovered
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLEET_TOKEN: ${{ steps.fleet.outputs.token }}
+        run: python3 refresh/dispatch-consumers.py
+
+      - name: Publish the dispatch attempt receipt
+        # Red batches can still cover their source revision for throttling.
+        if: ${{ always() && steps.dispatch.outputs.receipt != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.DISPATCH_RECEIPT_NAME }}
+          path: ${{ steps.dispatch.outputs.receipt }}
+          if-no-files-found: error
+          retention-days: 7

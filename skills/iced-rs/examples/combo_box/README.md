@@ -1,18 +1,15 @@
-## Combo-Box
+# Combo box
 
-A dropdown list of searchable and selectable options.
+Search and select options in a menu positioned relative to the combo box.
 
-It displays and positions an overlay based on the window position of the widget.
+![A searchable combo box menu](combobox.gif)
 
-The __[`main`]__ file contains all the code of the example.
+Read the [example source](src/main.rs).
 
-<div align="center">
-    <img src="combobox.gif">
-</div>
+## Run
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package combo_box
 ```
-
-[`main`]: src/main.rs

@@ -1,109 +1,23 @@
 # Building Custom Widgets with `iced::advanced`
 
-Implement `iced::advanced::widget::Widget` directly for layout, event handling, hit-testing, persistent state, or overlays the built-in widgets don't provide.
+Read when implementing `iced::advanced::Widget` for layout, events, hit-testing, persistent state, or overlays that the built-in widgets cannot express.
 
 **Read order**: this guide → `advanced-widget.md` → `advanced-tree.md` → `advanced-shell.md` → `advanced-layout.md` → the canonical examples (see below).
 
 ## Canonical examples in this skill
 
 - **`examples/custom_widget/src/main.rs`** — Minimal Widget (draws a circle). Start here.
-- **`examples/toast/src/main.rs`** — Animated lifetime, auto-dismiss, overlay positioning, `Widget::overlay()`.
-- **`examples/loupe/src/main.rs`** — Hit-testing with `cursor.position_over()`, overlay rendering.
+- [Toast](../examples/toast/src/main.rs) positions notifications and dismisses them after a timeout from a composite widget overlay.
+- [Loupe](../examples/loupe/src/main.rs) clips and transforms drawing around the cursor.
 - **`examples/modal/src/main.rs`** — Modal via `stack` + `opaque` (no custom overlay).
 - **`examples/custom_shader/`** — Custom GPU widget.
 - **`examples/geometry/src/main.rs`** — Mesh drawing with `Mesh2D` primitive.
 
 Always read at least `custom_widget` before writing your own.
 
-## The Widget trait at a glance
+## Widget API
 
-```rust
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::widget::{self, Widget, tree};
-use iced::advanced::{mouse, renderer, Clipboard, Shell};
-use iced::{Element, Event, Length, Rectangle, Size};
-
-pub struct MyWidget { /* config */ }
-
-impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for MyWidget
-where
-    Renderer: renderer::Renderer,
-{
-    // === REQUIRED ===
-    fn size(&self) -> Size<Length> { /* Fill, Shrink, or Fixed */ }
-
-    fn layout(
-        &mut self,
-        tree: &mut widget::Tree,
-        renderer: &Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node { /* return a Node representing this widget's computed geometry */ }
-
-    fn draw(
-        &self,
-        tree: &widget::Tree,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-    ) { /* draw primitives via the renderer */ }
-
-    // === PERSISTENT STATE (override if your widget keeps state across frames) ===
-    fn tag(&self) -> tree::Tag { tree::Tag::of::<MyState>() }
-    fn state(&self) -> tree::State { tree::State::new(MyState::default()) }
-
-    // === COMPOSITE (override if you wrap child widgets) ===
-    fn children(&self) -> Vec<widget::Tree> { /* children trees */ }
-    fn diff(&self, tree: &mut widget::Tree) { /* reconcile with latest children */ }
-
-    // === EVENTS (override if you care about input) ===
-    fn update(
-        &mut self,
-        tree: &mut widget::Tree,
-        event: &Event,                // NOTE: &Event by reference in 0.14
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-        viewport: &Rectangle,
-    ) { /* handle events, publish messages, capture */ }
-
-    fn mouse_interaction(
-        &self,
-        tree: &widget::Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &Renderer,
-    ) -> mouse::Interaction { mouse::Interaction::None }
-
-    // === OVERLAYS (for popovers, menus, tooltips) ===
-    fn overlay<'a>(
-        &'a mut self,
-        tree: &'a mut widget::Tree,
-        layout: Layout<'a>,
-        renderer: &Renderer,
-        viewport: &Rectangle,
-        translation: iced::Vector,
-    ) -> Option<iced::advanced::overlay::Element<'a, Message, Theme, Renderer>> {
-        None
-    }
-}
-
-impl<'a, Message, Theme, Renderer> From<MyWidget> for Element<'a, Message, Theme, Renderer>
-where
-    Renderer: renderer::Renderer,
-{
-    fn from(widget: MyWidget) -> Self {
-        Element::new(widget)
-    }
-}
-```
-
-Full trait reference: `advanced-widget.md`.
+See the [`Widget` trait](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/widget.rs) for the required `size`, `layout`, and `draw` methods and optional callbacks. Use [advanced-widget.md](advanced-widget.md) to choose which callbacks to implement.
 
 ## Step-by-step checklist
 
@@ -115,7 +29,7 @@ No if: visual styling only → `style` closures. 2D drawing only → `Canvas`. S
 
 ### 2. Design the state
 
-All persistent state lives in `widget::Tree`, **not** the widget struct.
+Keep persistent per-widget interaction and motion state in `widget::Tree`. Use fields on the widget for configuration passed from the view.
 
 ```rust
 #[derive(Default)]
@@ -225,7 +139,7 @@ SVG tint alpha may diverge from text/container/canvas alpha. Before relying on S
 
 1. Verify actual rendered alpha at near-zero opacity values
 2. Compare SVG fade appearance with text fade at the same alpha
-3. If they diverge, use `renderer.with_layer()` with an opacity-controlled clipping region, or a composition path that guarantees uniform opacity
+3. If they diverge, pass the fade value through `Svg::opacity` or use a composition path that applies opacity to every child. `renderer.with_layer()` clips drawing.
 
 ### 5. Handle events in `update`
 
@@ -265,13 +179,13 @@ fn update(
 }
 ```
 
-**Capture when you consume.** After handling a click, call `shell.capture_event()`; otherwise parent containers also react ("the drag is also firing a click").
+Call `shell.capture_event()` when the widget consumes an event. A parent that checks capture status can then stop routing that event.
 
 See `advanced-shell.md` for all Shell methods.
 
 ### 6. Animation
 
-Animation = progress stored in `Tree` state + a redraw request each frame.
+Keep widget-driven progress in Tree state and request another redraw while motion is active.
 
 **Paint-only animation** (color, opacity, transform, fixed bounds):
 
@@ -290,28 +204,26 @@ if state.animation_active {
 }
 ```
 
-**Diagnostic**: "only updates on the second click" → stale layout; add `invalidate_layout()`.
+If geometry updates on a second click, check whether the first interaction invalidated layout.
 
 #### Redraw vs rebuild invariant
 
-`request_redraw()` repaints the existing tree — it does **not** call `view()` or rebuild widget structs.
+A redraw request on its own repaints the existing tree. Published messages and widget invalidation can cause a rebuild.
 
 **Rule**: redraw-driven animation loops keep all motion state in `widget::Tree` state; widget struct fields are frozen until the next `view()`. Animation that depends on `App::update()` values must be driven by messages/tasks, not bare `request_redraw()`.
 
 For scheduled next-frame ticks:
 
 ```rust
-shell.request_redraw_at(
-    window::RedrawRequest::At(Instant::now() + Duration::from_millis(16))
-);
+shell.request_redraw_at(Instant::now() + Duration::from_millis(16));
 ```
 
 ### 7. Hit-testing
 
-Use `Cursor::is_over(bounds)` or `Cursor::position_over(bounds)` (returns `Option<Point>`):
+Use `Cursor::is_over(bounds)` to test containment. Use `position_in(bounds)` for local coordinates and `position_over(bounds)` to keep the original coordinates:
 
 ```rust
-if let Some(local) = cursor.position_over(layout.bounds()) {
+if let Some(local) = cursor.position_in(layout.bounds()) {
     // local.x and local.y are relative to widget origin
 }
 ```
@@ -355,14 +267,19 @@ Event::Mouse(mouse::Event::ButtonPressed(_)) if cursor.is_over(bounds) => {
 
 ### 9. Construction API
 
-Provide a free-function constructor:
+For a custom widget with a message type, provide a free-function constructor and fluent setters:
 
 ```rust
-pub fn my_widget(value: f32) -> MyWidget {
-    MyWidget { value, width: Length::Fill, height: Length::Fixed(40.0) }
+pub fn my_widget<Message>(value: f32) -> MyWidget<Message> {
+    MyWidget {
+        value,
+        width: Length::Fill,
+        height: Length::Fixed(40.0),
+        on_press: None,
+    }
 }
 
-impl MyWidget {
+impl<Message> MyWidget<Message> {
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
         self
@@ -378,9 +295,11 @@ impl MyWidget {
 }
 
 impl<'a, Message: 'a, Theme: 'a, Renderer: 'a + renderer::Renderer>
-    From<MyWidget> for Element<'a, Message, Theme, Renderer>
+    From<MyWidget<Message>> for Element<'a, Message, Theme, Renderer>
+where
+    MyWidget<Message>: Widget<Message, Theme, Renderer>,
 {
-    fn from(w: MyWidget) -> Self { Element::new(w) }
+    fn from(w: MyWidget<Message>) -> Self { Element::new(w) }
 }
 ```
 
@@ -391,19 +310,19 @@ Used in `view()` as `my_widget(self.value).width(300).on_press(Message::Tick).in
 | Symptom | Cause | Fix |
 |--|--|--|
 | `downcast_mut` panics | `tag()` and `state()` disagree | Make sure both use the same concrete type |
-| Widget doesn't update on click | Event not captured; parent swallowed it | `shell.capture_event()` after handling |
+| Click also reaches a parent handler | Widget consumed the click without setting capture status | Call `shell.capture_event()` after handling |
 | Animation stutters or stops | Missing redraw request | `shell.request_redraw()` every animating frame |
 | Animation paints at wrong size | Layout-affecting animation without `invalidate_layout()` | Add `shell.invalidate_layout()` |
 | "Second click only" bug | Stale layout from previous state flip | `shell.invalidate_layout()` when geometry changes |
 | Drag conflicts with scroll | Missing `capture_event()` during drag | Capture while dragging |
 | Compile error `expected Event, found &Event` | Used 0.13 signature | `update` takes `event: &Event` in 0.14 |
-| Compile error in `layout()` signature | Used 0.13 signature | Takes `&mut Tree` in 0.14 |
+| Compile error in `layout()` signature | The receiver or Tree argument does not match the trait | Use `&mut self` and `&mut Tree` |
 | Trait bound `Renderer` unsatisfied | Missing `renderer::Renderer` constraint | Add `where Renderer: renderer::Renderer` |
 | Widget state reset unexpectedly | Changed the `T` in `Tag::of::<T>()` | Keep the state type stable across frames |
 | Layering looks inverted | Wrong draw order in composite widget | Last drawn = on top; reorder draw calls |
 | Hover flickers during animation | Hover sensor on animated bounds | Use stable outer hitbox; see § "Stable hover hit regions" |
 | Near-transparent remnants after fade | Partial fade contract | Audit all rendering paths for opacity; see § "Opacity and fade" |
-| SVG doesn't fade with rest of component | SVG tint alpha diverges from container alpha | Verify renderer behavior; use `with_layer` if needed |
+| SVG does not fade with the rest of the component | Tint and opacity follow separate paths | Check SVG opacity at the fade value |
 | Animation frozen / doesn't advance | Motion state in widget fields, not Tree | Move to `tree.state`; see § "Redraw vs rebuild invariant" |
 
 ## Constraints from the wider framework
@@ -411,7 +330,7 @@ Used in `view()` as `my_widget(self.value).width(300).on_press(Message::Tick).in
 Non-negotiable:
 
 - **Widget tree consistency** — always wrap, conditionally attach the handler. Never `if cond { mouse_area(x).into() } else { x.into() }`. `MouseArea` has **no `on_press_maybe`** (`button`-only); keep the wrapper unconditional and gate the call: `let mut a = mouse_area(x); if cond { a = a.on_press(msg); } a`.
-- **`view()` is pure** — no side effects, no mutable state. All state in `State`, mutated only in `update()`.
+- Keep `view()` free of side effects. Change application state in `update()` and keep persistent widget interaction state in Tree.
 - **Single message per interaction** — one interaction → one message. Composite actions use a state machine in `update()`.
 - **Overlay state isolation** — overlay layers must not affect base layer widget structure.
 

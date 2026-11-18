@@ -6,163 +6,7 @@ The fundamental widget for displaying text. `Text` renders a single fragment; `R
 
 ## API
 
-### `Text` struct
-
-```rust
-pub struct Text<'a, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Theme: Catalog,
-    Renderer: text::Renderer,
-{ /* private fields */ }
-
-impl<'a, Theme, Renderer> Text<'a, Theme, Renderer>
-where
-    Theme: Catalog,
-    Renderer: text::Renderer,
-{
-    pub fn new(fragment: impl IntoFragment<'a>) -> Self;
-    pub fn size(self, size: impl Into<Pixels>) -> Self;
-    pub fn line_height(self, line_height: impl Into<LineHeight>) -> Self;
-    pub fn font(self, font: impl Into<Renderer::Font>) -> Self;
-    pub fn font_maybe(self, font: Option<impl Into<Renderer::Font>>) -> Self;
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn center(self) -> Self;
-    pub fn align_x(self, alignment: impl Into<Alignment>) -> Self;
-    pub fn align_y(self, alignment: impl Into<Vertical>) -> Self;
-    pub fn shaping(self, shaping: Shaping) -> Self;
-    pub fn wrapping(self, wrapping: Wrapping) -> Self;
-    pub fn style(self, style: impl Fn(&Theme) -> Style + 'a) -> Self;
-    pub fn color(self, color: impl Into<Color>) -> Self;
-    pub fn color_maybe(self, color: Option<impl Into<Color>>) -> Self;
-    pub fn class(self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self;
-}
-```
-
-### `Rich` struct (rich text)
-
-```rust
-pub struct Rich<'a, Link, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-{ /* private fields */ }
-
-impl<'a, Link, Message, Theme, Renderer> Rich<'a, Link, Message, Theme, Renderer> {
-    pub fn new() -> Self;
-    pub fn with_spans(spans: impl AsRef<[Span<'a, Link, Renderer::Font>]> + 'a) -> Self;
-    pub fn size(self, size: impl Into<Pixels>) -> Self;
-    pub fn line_height(self, line_height: impl Into<LineHeight>) -> Self;
-    pub fn font(self, font: impl Into<Renderer::Font>) -> Self;
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn center(self) -> Self;
-    pub fn align_x(self, alignment: impl Into<Alignment>) -> Self;
-    pub fn align_y(self, alignment: impl Into<Vertical>) -> Self;
-    pub fn wrapping(self, wrapping: Wrapping) -> Self;
-    pub fn on_link_click(self, f: impl Fn(Link) -> Message + 'a) -> Self;
-    pub fn style(self, style: impl Fn(&Theme) -> Style + 'a) -> Self;
-    pub fn color(self, color: impl Into<Color>) -> Self;
-    pub fn color_maybe(self, color: Option<impl Into<Color>>) -> Self;
-    pub fn class(self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self;
-}
-```
-
-### `Span` struct
-
-```rust
-pub struct Span<'a, Link, Font> {
-    pub text: Cow<'a, str>,
-    pub size: Option<Pixels>,
-    pub line_height: Option<LineHeight>,
-    pub font: Option<Font>,
-    pub color: Option<Color>,
-    pub link: Option<Link>,
-    pub highlight: Option<Highlight>,
-    pub padding: Padding,
-    pub underline: bool,
-    pub strikethrough: bool,
-}
-
-impl<'a, Link, Font> Span<'a, Link, Font> {
-    pub fn new(fragment: impl IntoFragment<'a>) -> Self;
-    pub fn size(self, size: impl Into<Pixels>) -> Self;
-    pub fn line_height(self, line_height: impl Into<LineHeight>) -> Self;
-    pub fn font(self, font: impl Into<Font>) -> Self;
-    pub fn color(self, color: impl Into<Color>) -> Self;
-    pub fn link(self, link: impl Into<Link>) -> Self;
-    pub fn background(self, background: impl Into<Background>) -> Self;
-    pub fn border(self, border: impl Into<Border>) -> Self;
-    pub fn padding(self, padding: impl Into<Padding>) -> Self;
-    pub fn underline(self, underline: bool) -> Self;
-    pub fn strikethrough(self, strikethrough: bool) -> Self;
-    pub fn to_static(self) -> Span<'static, Link, Font>;
-}
-```
-
-### `Catalog` trait + `Style`
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, item: &Self::Class<'_>) -> Style;
-}
-
-pub struct Style {
-    pub color: Option<Color>,
-}
-
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> Style + 'a>;
-
-// Built-in style functions
-pub fn default(_theme: &Theme) -> Style;  // inherits color
-pub fn base(theme: &Theme) -> Style;      // uses theme text color
-```
-
-### Text enums
-
-```rust
-pub enum Shaping {
-    Auto,     // Basic for ASCII, Advanced otherwise (default)
-    Basic,    // No shaping, no font fallback (fast)
-    Advanced, // Full shaping + font fallback (expensive)
-}
-
-pub enum Wrapping {
-    None,        // No wrapping
-    Word,        // Word-level (default)
-    Glyph,       // Glyph-level
-    WordOrGlyph, // Word-level, fallback to glyph if word too long
-}
-
-pub enum LineHeight {
-    Relative(f32),      // Factor of text size (default: 1.3)
-    Absolute(Pixels),   // Fixed height in logical pixels
-}
-```
-
-### Convenience macros and functions
-
-```rust
-// Free function
-pub fn text<'a, Message, Theme, Renderer>(
-    fragment: impl IntoFragment<'a>,
-) -> Text<'a, Theme, Renderer>;
-
-// Macro with format-string support
-text!("Price: {:.2}", price)
-
-// Rich text
-pub fn rich_text<'a, Link, Message, Theme, Renderer>(
-    spans: impl AsRef<[Span<'a, Link, Renderer::Font>]> + 'a,
-) -> Rich<'a, Link, Message, Theme, Renderer>;
-
-// Macro
-rich_text![span("bold").font(Font::BOLD), span(" normal")]
-
-// Span constructor
-pub fn span<'a, Link, Font>(
-    fragment: impl IntoFragment<'a>,
-) -> Span<'a, Link, Font>;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/text.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/text.rs); [core/src/widget/text.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/widget/text.rs); [widget/src/text/rich.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/text/rich.rs); [core/src/text.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/text.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -193,6 +37,7 @@ rich_text![
     }),
     span("Connection lost"),
 ]
+.on_link_click(iced::never)
 .size(14)
 ```
 
@@ -213,7 +58,7 @@ text!("{:+.2}%", change)
 - `Shaping::Basic` silently drops glyphs not in the font. Use `Auto` unless you control the content.
 - `text!()` is a format-string macro (`text!("x: {}", val)`); `text()` is a function taking `IntoFragment`.
 - `Rich` is generic over `Link` -- if you don't use links, the link type can be `()` or use `never` as the handler.
-- `Span` fields like `highlight`, `padding`, `background`, `border` only affect the span's visual decoration, not layout.
+- Span padding expands the background and border decoration; it does not add text layout spacing.
 - `LineHeight::Relative(1.0)` means exactly the font size with no extra spacing.
 
 ## See also

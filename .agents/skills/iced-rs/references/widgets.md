@@ -1,6 +1,6 @@
 # Widget Catalog
 
-Full Iced 0.14 widget catalog. One-line descriptions + canonical example per widget. Load the per-widget API reference (listed in `INDEX.md`) when you need signatures.
+Use this catalog to select an Iced 0.14.0 widget and a bundled example. Load the per-widget reference in `INDEX.md` for usage details. The [pinned widget exports](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/lib.rs) and [constructors](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs) own the API inventory.
 
 ## Layout widgets
 
@@ -10,15 +10,15 @@ Full Iced 0.14 widget catalog. One-line descriptions + canonical example per wid
 | `row` | Horizontal stack | `spacing`, `align_y` | `slider`, `tour` |
 | `container` | Single-child wrapper with padding/alignment/style | `.style(closure)` for custom background/border | `styling` |
 | `stack` | Z-axis layering (overlapping children) | Later children render on top; use with `opaque` for modals | `modal` |
-| `scrollable` | Scrollable region | `on_scroll` fires on user scroll only, not initial render; use `sensor.on_resize` for initial | `scrollable` |
+| `scrollable` | Scrollable region | `on_scroll` reports changed overflowing viewports on scroll or redraw; use a sensor for size without overflow | `scrollable` |
 | `pane_grid` | Resizable docking panes with drag-and-drop | `TitleBar` width must be `Shrink` to preserve pick area | `pane_grid` |
 | `responsive` | Layout that adapts to available size | Prefer `sensor` for dimension queries | — |
 | `float` | Overlay-based floating content (above siblings) | Use for tooltips and popovers | `gallery` |
 | `pin` | Absolute positioning within parent | Use for drag ghosts, context menus | `multi_window` |
 | `table` | Data tables with columns | — | `table` |
 | `center` | Center a single child | — | `tour`, `custom_widget` |
-| `space` | Fixed-size empty spacer | `Space::with_width`, `Space::with_height` | many |
-| `horizontal_rule` / `vertical_rule` | Divider lines | — | `styling` |
+| `space` | Fixed-size empty spacer | `space().width(...)`, `space().height(...)` | many |
+| `rule::horizontal` / `rule::vertical` | Divider lines | — | `styling` |
 | `themer` | Override theme for a subtree | — | — |
 
 ## Input widgets
@@ -27,7 +27,7 @@ Full Iced 0.14 widget catalog. One-line descriptions + canonical example per wid
 |---|---|---|---|
 | `button` | Pressable action trigger | `on_press` fires on mouse-up (release). `on_press_maybe` for conditional enable — never conditionally wrap | `counter`, `modal` |
 | `text_input` | Single-line text field | `on_input`, `on_submit`, `on_paste` | `todos`, `editor` |
-| `text_editor` | Multi-line text editor with cursor, selection, undo | Backed by cosmic-text | `editor` |
+| `text_editor` | Multi-line text editor with cursor and selection | Backed by cosmic-text | `editor` |
 | `checkbox` | Boolean toggle with check mark | `on_toggle` | `styling` |
 | `radio` | Single-choice from group | `Radio::new(label, value, selected, on_click)` | `styling` |
 | `toggler` | On/off switch | `on_toggle` | `styling` |
@@ -55,12 +55,11 @@ Full Iced 0.14 widget catalog. One-line descriptions + canonical example per wid
 | `canvas` | 2D drawing via `canvas::Program` trait | Path/Frame/Cache API; use for custom visualizations | `bezier_tool`, `clock`, `solar_system`, `custom_widget` (indirect) |
 | `shader` | Custom wgpu pipeline via `shader::Program` trait | Full GPU control for dense rendering; 3 trait hierarchy | `custom_shader` |
 | `mouse_area` | Mouse event capture region around arbitrary content | `on_press` fires on mouse-down (vs `button` on mouse-up); use for drag initiation | `loupe`, `multitouch` |
-| `sensor` | Non-visual layout dimension sensor | `on_show` (initial layout) + `on_resize` (changes). Pair with `scrollable.on_scroll` for initial + ongoing dimensions | — |
+| `sensor` | Visibility and size notifications | Use `on_show` for visibility, `on_resize` for size changes; without `on_show`, resize also reports initial size | — |
 | `keyed::Column` | Keyed diffing for dynamic lists | Assigns stable identity to children so state survives reorders | — |
 | `lazy` | Deferred widget construction | Rebuilds child only when key changes; useful when view construction is expensive | `lazy` |
 | `opaque` | Block event propagation through its child | Pair with `stack` to make a layer non-transparent to events | `modal` |
-| `pop` | Remove from parent tree | — | — |
-| `value` | Display a value (debug-inspection) | Debugging aid | — |
+| `value` | Display a value through `ToString` | Produces a text widget | — |
 
 ## Selection rules
 
@@ -119,7 +118,7 @@ See `guide-custom-overlays.md` for the custom Overlay contract.
 text("symbol").size(14).font(Font::MONOSPACE)
 ```
 
-`Font::MONOSPACE` resolves to the first loaded monospace font at application startup. For named system fonts, use `Font::with_name("JetBrains Mono")`. Load custom fonts via the application builder:
+`Font::MONOSPACE` selects the generic monospace family. For named system fonts, use `Font::with_name("JetBrains Mono")`. Load custom fonts via the application builder:
 
 ```rust
 iced::daemon(boot, State::update, State::view)
@@ -130,16 +129,16 @@ For apps with a design system, route all text through a typography role layer ra
 
 ## Event handling reference
 
-| Event source | Fires on | Captured by |
+| Event source | Message condition | Widget |
 |---|---|---|
 | `button.on_press` | Mouse-up over the button | `button` |
 | `mouse_area.on_press` | Mouse-down over the area | `mouse_area` |
 | `mouse_area.on_release` | Mouse-up | `mouse_area` |
-| `mouse_area.on_move` | Cursor move inside area | `mouse_area` |
+| `mouse_area.on_move` | Cursor or bounds change while hovered; reports local coordinates | `mouse_area` |
 | `mouse_area.on_enter` / `on_exit` | Cursor enter / exit boundary | `mouse_area` |
-| `scrollable.on_scroll` | User scroll only (not initial render) | `scrollable` |
+| `scrollable.on_scroll` | Changed viewport with overflow, on scrolling or redraw | `scrollable` |
 | `sensor.on_show` | First layout where sensor is visible | `sensor` |
-| `sensor.on_resize` | Layout size change | `sensor` |
+| `sensor.on_resize` | Size change; also initial size when no `on_show` is set | `sensor` |
 | `text_input.on_input` | Per keystroke | `text_input` |
 | `text_input.on_submit` | Enter key | `text_input` |
 

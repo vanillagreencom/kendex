@@ -143,7 +143,7 @@ The symbol table loads at subscription setup (cold path), is keyed by symbol ID,
 
 ## Price newtype
 
-Optional: wrap `f64` in a `#[repr(transparent)]` newtype with `PartialOrd` but **no `PartialEq`**; equality goes through `prices_equal`. Constructor `debug_assert!`s `is_finite()`. Use for order types; skip on the market-data hot path.
+Optional: wrap `f64` in a `#[repr(transparent)]` newtype with **no `PartialEq`**; equality goes through `prices_equal`. Constructor `debug_assert!`s `is_finite()`. Use for order types; skip on the market-data hot path.
 
 ## Normalize feeds to `f64` at ingest
 

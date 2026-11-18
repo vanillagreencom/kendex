@@ -1,6 +1,6 @@
 # Shell Chrome
 
-Patterns for building app-level shell UI: header bars, action buttons, tab bars, and floating menus.
+Read when building an Iced header bar, action button, tab bar, or floating menu.
 
 ## Token-driven builders
 
@@ -25,9 +25,7 @@ fn shell_action<'a, Message: Clone + 'a>(
 }
 ```
 
-### Why builders, not components
-
-A helper returning `Element` is zero-cost view construction. Reserve custom `Widget` impls for elements needing their own state or event handling.
+Use a helper returning `Element` for repeated composition. Reserve a custom `Widget` implementation for elements that need their own state or event handling.
 
 ### Sizing rules
 
@@ -42,7 +40,7 @@ Dropdown/context menus should derive their width from content rather than using 
 
 ### Width computation
 
-Measure the widest item and apply symmetric horizontal padding:
+Use the widest label and apply symmetric horizontal padding. This example estimates the label width. Use measured text when labels must fit exactly:
 
 ```rust
 fn menu_width(items: &[MenuItem], t: &AppTokens) -> f32 {
@@ -57,12 +55,12 @@ fn menu_width(items: &[MenuItem], t: &AppTokens) -> f32 {
 
 ### Viewport clamping
 
-Menus opened near edges must not overflow the window. Clamp the menu origin so `origin.x + width <= viewport_width` and `origin.y + height <= viewport_height`. Flip above the trigger if there's no room below.
+Menus opened near edges must not overflow the window. Clamp the menu origin so `origin.x + width <= viewport_width` and `origin.y + height <= viewport_height`. Flip above the trigger if there is no room below. Constrain menus larger than the viewport before clamping their origin.
 
 ### Dismiss behavior
 
-- **Click outside**: `mouse_area` wrapping the menu captures clicks; any click outside the menu bounds sends a dismiss message
-- **Hover exit with delay**: start a short timer (~200ms) on `CursorLeft`; cancel if cursor re-enters before the timer fires
+- **Click outside**. Put a `mouse_area` across the dismissal region and wrap the menu content in `opaque` so in-bounds mouse presses on the menu do not reach the dismissal handler.
+- **Hover exit with delay**. Start a short timer (~200ms) when the cursor leaves the menu bounds. Cancel the dismissal if the cursor re-enters before the timer fires.
 
 ### Composition
 

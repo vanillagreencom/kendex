@@ -299,12 +299,24 @@ bin_dir = workspace / 'check-bin'
 bin_dir.mkdir()
 # The wrapper fixes the check's clock without adding a production setting.
 (bin_dir / 'python3').write_text('#!' + sys.executable + '\n'
-    'import datetime, sys\n'
+    'import datetime, json, os, pathlib, subprocess, sys, time\n'
+    'world = json.loads(pathlib.Path(os.environ["CHECK_WORLD"]).read_text())\n'
+    'read = subprocess.check_output\n'
+    'elapsed = 0\n'
+    'def timed_read(args, **kwargs):\n'
+    '    global elapsed\n'
+    '    seconds = next((v for k, v in world.get("read_seconds", {}).items() if k in args[-1]), 0)\n'
+    '    elapsed += min(seconds, kwargs["timeout"])\n'
+    '    if seconds > kwargs["timeout"]: raise subprocess.TimeoutExpired(args, kwargs["timeout"])\n'
+    '    return read(args, **kwargs)\n'
+    'subprocess.check_output = timed_read\n'
+    'time.monotonic = lambda: elapsed\n'
     'class Clock(datetime.datetime):\n'
     '    @classmethod\n'
     '    def now(cls, tz=None): return cls(2026, 10, 17, tzinfo=datetime.timezone.utc)\n'
     'datetime.datetime = Clock\n'
-    'exec(compile(sys.stdin.read(), "<production-step>", "exec"))\n')
+    'exec(compile(sys.stdin.read(), "<production-step>", "exec"))\n'
+    'print("refresh-test-elapsed=" + str(elapsed))\n')
 (bin_dir / 'python3').chmod(0o755)
 transport = '''#!@PYTHON@
 import datetime, io, json, os, pathlib, sys, urllib.parse, zipfile
@@ -359,7 +371,18 @@ world['record'] = dict(inputs=tuple_record, run=8, attempt=1)
 now = datetime.datetime(2026, 10, 17, tzinfo=datetime.timezone.utc)
 recent = (now - datetime.timedelta(hours=1)).isoformat()
 old = (now - datetime.timedelta(hours=25)).isoformat()
-cases = [('unchanged-consumer-sha-differs-from-release', {}, 'skip'),
+cases = [('cumulative-successful-reads', {'read_seconds': {'/actions/workflows/': 31},
+                                          'expected_proof': 'history-window', 'expected_exception': 'TimeoutExpired',
+                                          'expected_elapsed': 180}, 'full'),
+         ('exhausted-before-next-read', {'read_seconds': {'/actions/workflows/': 30},
+                                         'expected_proof': 'history-window', 'expected_exception': 'TimeoutExpired',
+                                         'expected_elapsed': 180}, 'full'),
+         ('paginated-over-15', {'read_seconds': {'/actions/workflows/': 16}}, 'skip'),
+         ('paginated-over-120', {'read_seconds': {'/actions/workflows/': 121},
+                                 'expected_proof': 'history-window', 'expected_exception': 'TimeoutExpired'}, 'full'),
+         ('single-over-15', {'read_seconds': {'/commits/': 16},
+                             'expected_proof': 'consumer-head', 'expected_exception': 'TimeoutExpired'}, 'full'),
+         ('unchanged-consumer-sha-differs-from-release', {}, 'skip'),
          ('changed-release-sha', {'workflow_sha': 'e'*40}, 'full'),
          ('unavailable-release-identity', {'workflow_sha': ''}, 'full')]
 for field in tuple_record:
@@ -491,13 +514,49 @@ def execute_check(body, name, overrides, route):
     assert result.returncode == 0, (name, result.stderr)
     values = dict(line.split('=', 1) for line in outputs.read_text().splitlines())
     assert values['route'] == route, ('refresh-decision', name, values, result.stdout)
-    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/') and overrides.get('workflow_sha', workflow) != ''), ('complete-initial-tuple', name, values)
+    if 'cause=unreadable' in result.stdout:
+        assert re.search(r'proof=\S+ exception=\S+', result.stdout), ('missing-proof', name, result.stdout)
+    for field in ('proof', 'exception'):
+        if 'expected_' + field in overrides:
+            assert field + '=' + overrides['expected_' + field] in result.stdout, ('wrong-diagnostic', name, result.stdout)
+    if 'expected_elapsed' in overrides:
+        observed = float(re.search(r'^refresh-test-elapsed=(\S+)$', result.stdout, re.M).group(1))
+        assert observed == overrides['expected_elapsed'], ('cumulative-deadline', name, observed)
+    if name == 'paginated-over-15':
+        assert re.search(r'refresh-read proof=history-window seconds=16\.000 ', result.stdout), ('missing-read-time', name, result.stdout)
+    if name == 'old-record':
+        assert 'proof=record-age' in result.stdout, ('wrong-proof', name, result.stdout)
+    assert ('record-path' in values) is (overrides.get('fail') not in ('refs', '/commits/') and overrides.get('workflow_sha', workflow) != '' and overrides.get('read_seconds', {}).get('/commits/', 0) <= 15), ('complete-initial-tuple', name, values)
     if 'record-path' in values:
         assert json.loads(pathlib.Path(values['record-path']).read_text()) == dict(inputs=dict(tuple_record, workflow=env['WORKFLOW_SHA']), run=100, attempt=int(env['GITHUB_RUN_ATTEMPT']))
     print('  executed check: ' + name + ' route=' + route)
 
 for name, overrides, route in cases:
     execute_check(check_step['run'], name, overrides, route)
+original = next(line.strip() for line in check_step['run'].splitlines() if line.strip().startswith("print('refresh-check=full cause=unreadable proof='"))
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, original.replace(' proof=', ' failed=') + ' # ' + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'old-record')
+try: execute_check(broken, 'control-missing-proof', case[1], 'full')
+except AssertionError as error: assert error.args[0][0] == 'missing-proof', error
+else: raise AssertionError('must-fail control missed missing proof diagnostic')
+original = "timeout = 120 if '--paginate' in args and '--slurp' in args else 15"
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, original.replace('120', '15') + ' # ' + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'paginated-over-15')
+try: execute_check(broken, 'control-short-pagination-timeout', case[1], 'skip')
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed short pagination timeout')
+original = 'remaining = deadline - started'
+assert check_step['run'].count(original) == 1
+broken = check_step['run'].replace(original, "remaining = float('inf') # " + original)
+assert broken != check_step['run']
+case = next(row for row in cases if row[0] == 'cumulative-successful-reads')
+try: execute_check(broken, 'control-no-cumulative-deadline', case[1], 'full')
+except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
+else: raise AssertionError('must-fail control missed cumulative read deadline')
 original = 'end = min(start + datetime.timedelta(days=7), now)'
 assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, original.replace('days=7', 'days=35') + ' # ' + original)
@@ -540,7 +599,7 @@ case = next(row for row in cases if row[0] == 'record-attempt-2-success')
 try: execute_check(broken, 'control-ignore-producing-attempt', case[1], 'full')
 except AssertionError as error: assert error.args[0][0] == 'refresh-decision', error
 else: raise AssertionError('must-fail control missed producing attempt')
-original = "assert recent['run_attempt'] == previous['attempt']\n            continue"
+original = "assert recent['run_attempt'] == previous['attempt'], 'record-history-attempt'\n            continue"
 assert check_step['run'].count(original) == 1
 broken = check_step['run'].replace(original, original.replace('continue', 'break # continue'))
 assert broken != check_step['run']

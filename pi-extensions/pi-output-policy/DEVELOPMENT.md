@@ -20,15 +20,5 @@ For maintainers. What it does for a consumer is [README.md](README.md). The poli
 bun test ./tests
 ```
 
-| Test file | Contract |
-|---|---|
-| [model-output-detector.test.ts](tests/model-output-detector.test.ts) | Stream input shapes and exact repetition and character thresholds |
-| [model-output-handler.test.ts](tests/model-output-handler.test.ts) | Abort notices, settings snapshots, and message lifecycle resets |
-| [policy-config.test.ts](tests/policy-config.test.ts) | Policy modes and detail exemptions |
-| [process-content.test.ts](tests/process-content.test.ts) | Text budgets, the shared per-result budget, artifacts and their write errors and write slots, explicit overrides, and minimizer interaction |
-| [shell-minimizer.test.ts](tests/shell-minimizer.test.ts) | Retained shell lines, CRLF line ends, and minimizer configuration |
-| [sanitize-details.test.ts](tests/sanitize-details.test.ts) | Detail limits, traversal and byte budgets, unchanged branches by reference, and truncation identifiers |
-| [saved-bytes.test.ts](tests/saved-bytes.test.ts) | Saved-byte accumulation and turn and session resets |
-| [tool-result.test.ts](tests/tool-result.test.ts) | Tool-result sanitization and truncation metadata |
 
 A threshold change ships with the case that fires exactly at the new boundary.

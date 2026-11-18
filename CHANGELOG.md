@@ -6,6 +6,27 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.22.2] - 2026-11-18
+
+### Changed
+
+- Model classes prefer GPT-6.2 Sol for `standard` and GPT-6.2 Astra for `top` on Codex, Copilot CLI and Pi when the harness advertises them. Older available releases remain usable.
+
+  You do: in `kendex.toml`, update copied `model-bindings.codex` and `model-bindings.copilot` entries or explicit model pins to `gpt-6.2-sol` and `gpt-6.2-astra`; removing these static bindings inherits the session model.
+- Pushes repeat no content checks from pre-commit or range checks owned by merge-group CI; only explicitly enabled binary growth checks remain at pre-push.
+
+### Removed
+
+- Remove the blanket lint-suppression spelling check and Rust bare-allow count ratchet from commit-guards. A dispatcher call or setting naming `suppression-ban` now warns and skips it.
+
+  You do: remove `suppression-ban` from `COMMIT_GUARDS_CHECKS` and stop calling its script directly; nothing replaces it.
+
+### Fixed
+
+- `kendex add --allow-repo-effects` no longer prints a render-skipped instruction for a package it sets up in the same run.
+- Arm every new rolling install-record head for the merge queue, including when another pull request is queued, and fail the run if arming fails.
+- Give paginated consumer refresh input reads more time to finish within a shared read budget that leaves time for the full-refresh fallback, and report each read’s duration and the failed proof and exception when a read cannot complete.
+
 ## [1.22.1] - 2026-11-16
 
 ### Fixed
@@ -3099,7 +3120,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.22.1..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.22.2..HEAD
+[1.22.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.2
 [1.22.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.1
 [1.22.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.0
 [1.21.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.21.0

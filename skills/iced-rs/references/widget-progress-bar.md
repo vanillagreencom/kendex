@@ -6,69 +6,7 @@ A non-interactive bar that visualizes the progress of a long-running operation. 
 
 ## API
 
-### `ProgressBar` struct
-
-```rust
-pub struct ProgressBar<'a, Theme = Theme>
-where
-    Theme: Catalog,
-{ /* private fields */ }
-
-impl<'a, Theme> ProgressBar<'a, Theme>
-where
-    Theme: Catalog,
-{
-    pub const DEFAULT_GIRTH: f32 = 30f32;
-
-    pub fn new(range: RangeInclusive<f32>, value: f32) -> Self;
-
-    pub fn length(self, length: impl Into<Length>) -> Self; // width for horizontal, height for vertical
-    pub fn girth(self, girth: impl Into<Length>) -> Self;   // thickness
-    pub fn vertical(self) -> Self;                           // flip orientation
-
-    pub fn style(self, style: impl Fn(&Theme) -> Style + 'a) -> Self
-    where
-        <Theme as Catalog>::Class<'a>: From<Box<dyn Fn(&Theme) -> Style + 'a>>;
-
-    pub fn class(self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self; // feature = "advanced"
-}
-```
-
-### `Style` struct
-
-```rust
-pub struct Style {
-    pub background: Background,  // Background bar (unfilled)
-    pub bar: Background,         // Filled portion
-    pub border: Border,
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>) -> Style;
-}
-```
-
-### Functions & type aliases
-
-```rust
-pub fn progress_bar<'a, Theme>(
-    range: RangeInclusive<f32>,
-    value: f32,
-) -> ProgressBar<'a, Theme>;
-
-pub fn primary(theme: &Theme) -> Style;
-pub fn secondary(theme: &Theme) -> Style;
-pub fn success(theme: &Theme) -> Style;
-pub fn danger(theme: &Theme) -> Style;
-
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> Style + 'a>;
-```
+Iced 0.14.0 owns the declarations, bounds, feature gates and defaults: [widget/src/progress_bar.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/progress_bar.rs); [widget/src/helpers.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs).
 
 ## Patterns
 
@@ -114,9 +52,9 @@ progress_bar(0.0..=1.0, state.danger_level)
 
 - `progress_bar` is **non-interactive** — no messages, no clicks. For a value picker use `widget-slider.md`.
 - The `value` is clamped to the `range`. If `range = 0.0..=100.0` and you pass `150.0`, the bar shows full (100).
-- `DEFAULT_GIRTH = 30.0` pixels — for compact layouts, set `.girth(8.0)` or similar.
-- Vertical progress bars fill **from bottom to top** by default. Flip the visual range if you need top-to-bottom (e.g., use `range = -value..=max` trick).
-- For **indeterminate** progress (spinning), use a `Canvas` animation or pair with `Subscription::time::every` to sweep a synthetic value.
+- Set `.girth(8.0)` for a compact bar; girth is the thickness in either orientation.
+- Vertical progress bars fill from bottom to top. Changing the numeric range does not reverse this direction.
+- For **indeterminate** progress (spinning), use a `Canvas` animation or pair with `iced::time::every` to sweep a synthetic value.
 
 ## See also
 

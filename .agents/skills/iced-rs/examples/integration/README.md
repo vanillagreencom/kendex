@@ -1,17 +1,17 @@
-## `wgpu` integration
+# wgpu integration
 
-A demonstration of how to integrate Iced in an existing [`wgpu`] application.
+Draw an Iced interface inside a wgpu application.
 
-The __[`main`]__ file contains all the code of the example.
+![An Iced interface rendered by an existing wgpu application](https://iced.rs/examples/integration.gif)
 
-<div align="center">
-  <img src="https://iced.rs/examples/integration.gif">
-</div>
+The example connects [wgpu](https://github.com/gfx-rs/wgpu) to Iced’s renderer, input, and window handling.
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package integration
 ```
-
-[`main`]: src/main.rs
-[`wgpu`]: https://github.com/gfx-rs/wgpu

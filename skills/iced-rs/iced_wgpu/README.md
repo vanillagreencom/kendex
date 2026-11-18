@@ -1,20 +1,11 @@
-# `iced_wgpu`
-[![Documentation](https://docs.rs/iced_wgpu/badge.svg)][documentation]
-[![Crates.io](https://img.shields.io/crates/v/iced_wgpu.svg)](https://crates.io/crates/iced_wgpu)
-[![License](https://img.shields.io/crates/l/iced_wgpu.svg)](https://github.com/iced-rs/iced/blob/0.14.0/LICENSE)
-[![Discord Server](https://img.shields.io/discord/628993209984614400?label=&labelColor=6A7EC2&logo=discord&logoColor=ffffff&color=7389D8)](https://discord.gg/3xZJ65GAhd)
+# Iced’s wgpu renderer
 
-`iced_wgpu` is a [`wgpu`] renderer for [`iced_runtime`]. For now, it is the default renderer of Iced on [native platforms].
+Read the bundled renderer source when developing a custom Iced 0.14 shader or tracing how Iced draws a primitive.
 
-[`wgpu`] supports most modern graphics backends: Vulkan, Metal, DX12, OpenGL, and WebGPU.
+## How it works
 
-<p align="center">
-  <img alt="The native target" src="https://raw.githubusercontent.com/iced-rs/iced/0.14.0/docs/graphs/native.png" width="80%">
-</p>
+This directory copies the [Iced 0.14.0 renderer](https://github.com/iced-rs/iced/tree/3997291f318a8bc06fa522f5579836fb3feb94df/wgpu). Iced’s default features include the wgpu renderer and the tiny-skia software fallback. The [Iced manifest](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/Cargo.toml) declares the renderer features. Use the [shader reference](../references/shader.md) for the role of each drawing stage.
 
-[documentation]: https://docs.rs/iced_wgpu
-[`iced_runtime`]: https://github.com/iced-rs/iced/tree/0.14.0/runtime
-[`wgpu`]: https://github.com/gfx-rs/wgpu
-[native platforms]: https://github.com/gfx-rs/wgpu#supported-platforms
-[WebGPU API]: https://gpuweb.github.io/gpuweb/
-[`wgpu_glyph`]: https://github.com/hecrj/wgpu_glyph
+## Licence
+
+[MIT, Iced contributors](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/LICENSE)
