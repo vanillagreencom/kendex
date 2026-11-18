@@ -229,4 +229,4 @@ reviewer = ["reviewer"]
 
 [bundles.jarvis]
 skills = ["jarvis"]
-hooks = ["session-start-row", "lane-mail-check", "jarvis-memory-note"]
+hooks = ["session-start-row", "lane-mail-check", "lane-mail-start", "lane-mail-compact", "jarvis-memory-note"]
