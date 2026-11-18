@@ -18,6 +18,8 @@ When no item retains the outcome, create one in the selected project through the
 
 Read back the binding before delegation or waiting. Preserve the request identity and outcome on that item through every next step. If capture or readback fails, hold the dependent action and keep the original request in its exchange home until capture succeeds.
 
+Before treating an owner thread as handled, read every request in the thread. For each distinct outcome the owner requested or a reply promised, answer it in full or bind it to a tracker item and read back the binding.
+
 ## 3. Reconcile decisions and attempts
 
 Read the item's latest comments, linked decisions and relevant exchanges, including tracker-only decisions with no mailbox ask. Apply the authorized current decision under [Authority](../references/decisions.md#authority). Preserve superseded decisions as history. Resolve a linked answered ask through [Answer an ask](../references/agent-reach.md#answer-an-ask) in the same step that records the answer and resulting next action on the item. An unresolved answer application remains work even when delivery succeeded.
@@ -33,6 +35,8 @@ Compare available evidence with the item's acceptance check under [Acceptance](.
 For terminal or archived items found during adoption, read their completion evidence, later decisions and any native closure history. Retain each unmet outcome on a current item before removing its recovery reference. Reopen the original through the tracker's supported route when authorized, or link an authorized surviving item that retains the original request and every unmet criterion. Read back that destination. An unavailable restoration or disposition remains unresolved; a terminal state alone proves no accepted result.
 
 ## 5. Retain the next action
+
+Before settling an owner thread, follow [Bind the request](#2-bind-the-request).
 
 On the same tracker item, record the current decision, evidence or explicit unknown, existing attempt reference, unresolved next action and responsible actor. For an external wait, retain its condition, evidence source and trigger or review date. For an answer or result awaiting acceptance, retain the acceptance action. Preserve the original criterion when another owner's item completes. Update only changed facts; write no periodic timestamp comment to keep work open.
 
