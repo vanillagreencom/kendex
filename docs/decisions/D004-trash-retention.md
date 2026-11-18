@@ -6,7 +6,7 @@
 
 **Status**: Active (measurement → D005)
 
-**Research**: KEN-1704
+**Research**: [KEN-1704](https://linear.app/vanillagreen/issue/KEN-1704/core-the-trash-is-bounded-by-age-and-size-at-the-end-of-every-apply)
 
 **Decision**: The trash is bounded by `KENDEX_TRASH_KEEP_DAYS` and `KENDEX_TRASH_KEEP_MB`, with the defaults in `crates/core/src/trash.rs`. The pass runs at the end of a completed `apply`, `refresh`, `remove` or `update-pi`, keeps every entry the invocation itself wrote, and removes from the entry that crosses the size bound, newest first. The source-cache mirrors are not bounded: a mirror is kept for the life of the install and removed by hand.
 

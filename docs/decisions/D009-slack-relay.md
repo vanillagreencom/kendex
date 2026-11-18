@@ -6,7 +6,7 @@
 
 **Status**: Active (transport and topology → D014)
 
-**Research**: KEN-1845
+**Research**: [KEN-1845](https://linear.app/vanillagreen/issue/KEN-1845/k1-slack-the-package-that-relays-one-overseer-mailbox-to-one-private)
 
 **Decision**: The `slack` package is one Python standard-library script that relays an overseer mailbox to one private channel. It reads and writes the mailbox only through `lane-mail`, Slack is never the ledger, and the mailbox's locked check-and-append judges every repeated delivery the relay's journal did not record: every inbound delivery carries `--delivery-id channel:ts`, and outbound posts are bounded by two horizons so a restart with no journal never reposts history. The transport and the one-relay-per-machine topology are [D014](D014-slack-socket-mode.md).
 

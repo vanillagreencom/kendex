@@ -6,7 +6,7 @@
 
 **Status**: Active (landing route → D033)
 
-**Research**: KEN-1877
+**Research**: [KEN-1877](https://linear.app/vanillagreen/issue/KEN-1877/lock-stacked-pull-requests-that-change-one-package-conflict-on-kendex)
 
 **Refines**: [D001](D001-portable-lock.md), [D003](D003-one-merge-path.md)
 

@@ -6,7 +6,7 @@
 
 **Status**: Active (queue paths → D028, gate repair → D029)
 
-**Research**: KEN-2069
+**Research**: [KEN-2069](https://linear.app/vanillagreen/issue/KEN-2069/pr-merge-the-merge-route-reads-whether-the-token-can-bypass-the-queue)
 
 **Supersedes**: [D003](D003-one-merge-path.md) in part, the gate-repair break-glass; [D013](D013-admin-merge-green-prs.md) in part, the by-hand merge
 
