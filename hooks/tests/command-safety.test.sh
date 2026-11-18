@@ -536,6 +536,8 @@ environment_rows() {
 [2,["tmux","showenv","-g"],"tmux-argv"]
 [0,["tmux","showenv","-gs","-t","fixture","NAME"],"tmux-argv-named"]
 [2,"bash wrapper.sh tmux showenv -g","tmux-forwarded"]
+[2,"eval \"$PREFIX\" \"tmux showenv -g\"","tmux-expanding-eval"]
+[2,"bash .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha b7aeb66678509d7dde22ff131d4e5bc3ac3f7354 --test 'timeout 5 tmux showenv -g' --build 'true' --mutate 'true'","tmux-unclassified-test"]
 [0,"printf '%s' 'tmux showenv -g'","tmux-command-data"]
 [2,"systemctl show-environment","system-environment"]
 [2,"systemctl --user show-environment","incident"]
@@ -2229,6 +2231,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   done <<'ENVIRONMENT_CONTROLS'
 no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
 tmux-environment|if [ -n "$named" ]; then mode=clean; fi ;;|if [ -n "$named" ]; then mode=clean; else mode=clean; fi ;;|exit=0 expected=2|tmux-session-claude tmux-alias-global
+tmux-evidence|  for value in "$@"; do|  opaque_re=${opaque_re//showenv/show-environment}; for value in "$@"; do|exit=0 expected=2|tmux-expanding-eval tmux-unclassified-test
 unit-environment|elif systemctl_environment; then mode=dump-unknown|elif systemctl_environment; then mode=other|exit=0 expected=2|unit-env-list-claude unit-env-list-codex
 systemctl-property-order|elif [ -z "$verb" ]; then selected=1; fi|else selected=1; fi|exit=0 expected=2|unit-property-after-verb-claude unit-property-after-verb-codex
 reader-file-option|if environment_file_input "$value" "$kind"; then return; fi ;;|if false; then return; fi ;;|exit=0 expected=2|process-environ-ignore-file-claude process-environ-xargs-cluster-codex
