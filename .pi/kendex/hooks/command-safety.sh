@@ -1081,7 +1081,7 @@ environment_dump() { # command kind; arguments are already decoded data
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
   local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
   local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand
-  local stage_chdir stage_chdir_unresolved reader_context_id
+  local stage_program stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
   local stage_reader_context=() executable_reader_context=()
   local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
@@ -1493,7 +1493,7 @@ environment_dump() { # command kind; arguments are already decoded data
       case "$mode" in dump-*) return 0 ;; esac
       stage_args=(${args[@]+"${args[@]}"}); stage_kinds=(${arg_kinds[@]+"${arg_kinds[@]}"})
       stage_unquoted=(${arg_unquoted[@]+"${arg_unquoted[@]}"})
-      stage_chdir=$reader_chdir; stage_chdir_unresolved=$reader_chdir_unresolved
+      stage_program=$program; stage_chdir=$reader_chdir; stage_chdir_unresolved=$reader_chdir_unresolved
       for ((candidate=script_pos+1; candidate<${#stage_args[@]}; candidate++)); do
         # The approved ordinary quoted-data class has the same recorded
         # receiver, head and argument bounds. It recognizes no inner words.
@@ -1513,6 +1513,18 @@ environment_dump() { # command kind; arguments are already decoded data
         environment_producer shell
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
+        if [ "$program" = bash ] && [ "$stage_program" = opaque ] && [ "${stage_args[$script_pos]}" = exec ] &&
+           [ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then
+          # A literal exec child inherits the launcher's directory. With
+          # opaque exec options, retain the caller's context as a candidate.
+          if [ "$candidate" -eq "$((script_pos + 1))" ]; then
+            record_reader_context
+            stage_reader_context[stage]=$reader_context_id
+          elif [[ ${stage_args[$((script_pos + 1))]} == -* ]]; then
+            record_reader_context
+            stage_reader_context[stage]="${stage_reader_context[$stage]} $reader_context_id"
+          fi
+        fi
         case "$mode" in dump-*) return 0 ;; esac
         # A quoted operand past the program can be a whole command string,
         # and so can an expanding one, whose producer selection stops at 0;
@@ -1587,8 +1599,11 @@ environment_dump() { # command kind; arguments are already decoded data
     for doc in $data_source; do
       [ "${literal_kinds[$doc]}" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
       local command_text=${literal_inputs[$doc]}
-      load_reader_context "${stage_reader_context[$stage]}"
-      if environment_dump shell conservative; then return 0; fi
+      # The context register contains only numeric offsets.
+      for reader_context_id in ${stage_reader_context[$stage]}; do
+        load_reader_context "$reader_context_id"
+        if environment_dump shell conservative; then return 0; fi
+      done
     done
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
