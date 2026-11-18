@@ -1,8 +1,8 @@
 # Review Finding Schema
 
-Canonical JSON output shape for every review/QA verdict. Artifact path: `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`, where `{agent}` is the FULL agent name including its `reviewer-` prefix (`reviewer-security` → `review-reviewer-security-20260720-141530.json`). Codebase reviews insert `-codebase` before the timestamp.
+Write and self-validate each review or QA artifact under [reviewer SKILL.md § Output Contract](../SKILL.md#output-contract). Use the path in [codebase-review.md § 3](../workflows/codebase-review.md#3-artifact-validate-return) for a codebase review.
 
-Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`. Store paths as an array without status prefixes; retain Git's quoted and rename spelling. Write these values unchanged in the completed artifact. A failed read is a review failure. The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`. Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) — never shell redirection, heredocs, `tee`, or command substitution. Self-validate with orch's `review-artifact-check` before returning (reviewer SKILL.md § Output Contract).
+Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`. Store paths as an array without status prefixes; retain Git's quoted and rename spelling. Write these values unchanged in the completed artifact. A failed read is a review failure. The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`.
 
 ## Schema
 
@@ -79,7 +79,7 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 | `estimate` | Yes | 1-5 points, a relative size class from 1, smallest, through 5, largest ([project-management § Disposition](../../project-management/SKILL.md#disposition)) |
 | `category` | Suggestions only | `fix` (this PR's concern) or `issue` (track separately) — the orchestrator routes on this field; orch [review-pr.md § 4](../../orch/workflows/review-pr.md#4-handle-review-items) says what reaches a fix round |
 
-`category: "issue"` items become tracked issue candidates: `description` 2-3 sentences, before any evaluation line; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is not an issue — note it in the review summary instead.
+`category: "issue"` items become tracked issue candidates: `description` 2-3 sentences, before any evaluation line; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. Apply [finding-disposition.md § Filing bar](../references/finding-disposition.md#filing-bar) to the impact.
 
 ## Question Fields (PR comment triage only)
 
@@ -99,7 +99,7 @@ Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A revi
 
 ## Measurement Claims
 
-`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Your mutation-stability pairing citation (reviewer SKILL.md § Mutation-Stability Pairing) belongs in `.summary`; the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`. An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
+`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Copy each call's printed `mutation: … stability: …; seconds: …` line into `.summary`; the same numbers written only into a blocker or suggestion are not checked. `review-artifact-check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`. An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
 
 Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`, `values` (an object of numbers) and `samples` (how many samples produced them). It is refused when `name` or `unit` is missing or blank, `samples` is not above zero, or `values` holds no number; a zero value is a result and stays valid. Record it under its true name and unit, never outside `perf_qa` or as a failed measurement:
 
@@ -115,7 +115,7 @@ Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`,
 
 Numbers you are QUOTING — a fixture, a log line, another tool's zeroed run — belong in the `blockers[]`/`suggestions[]` item they are evidence for; those arrays are never scanned.
 
-When YOUR OWN instrument produced nothing, keep the evidence and set the **top-level** `measurement_failed` to a string naming the instrument and what it did:
+When your own instrument yields zero samples or its measuring pipeline exits nonzero, keep the failure evidence and set the **top-level** `measurement_failed` to a string naming the instrument and what it did. Omit measurement numbers for that failed run:
 
 ```json
 {"agent": "reviewer-test", "verdict": "action_required",
