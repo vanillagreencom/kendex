@@ -1726,9 +1726,11 @@ create_issue() {
     input_parts+=("\"teamId\": \"$team_id\"")
 
     if [ -n "$description" ]; then
-        local escaped_desc
+        local escaped_desc due_date
         escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
+        due_date=$(done_when_due_date "$description") || return 1
+        [ -z "$due_date" ] || input_parts+=("\"dueDate\": $due_date")
     fi
     if [ -n "$priority" ]; then
         linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
@@ -2036,8 +2038,12 @@ require_unsynced_description() {
 }
 
 update_issue() {
-    local issue_id="$1"
-    shift
+    write_issue_update false '' "$@"
+}
+
+write_issue_update() {
+    local completing="$1" merge_at="$2" issue_id="$3"
+    shift 3
 
     local state=""
     local labels=""
@@ -2299,13 +2305,14 @@ update_issue() {
     local description_write
     description_write=$(issue_description_write "$description_set" ${attach_paths[@]+"${attach_paths[@]}"}) || return 1
     require_unsynced_description "$issue_id" "$issue_result" "$description_write" "$synced_description" || return 1
-    # The header shape is judged against the stored body, which an owner
-    # action line may be placed on, replaced on or removed from. The sentinel
-    # keeps the stored body's trailing newlines through the capture.
-    if [[ "$description_set" == "true" ]]; then
-        local stored_description
+    local stored_description=""
+    if [[ "$description_write" == true || "$completing" == true || -n "$state" ]]; then
         stored_description=$(jq -r '(.issue.description // "") + "."' <<<"$issue_result") || return 1
-        require_issue_header_shape "$description" "${stored_description%.}" || return 1
+        stored_description="${stored_description%.}"
+    fi
+    # Judge an owner action line against the stored body it was placed on.
+    if [[ "$description_set" == true ]]; then
+        require_issue_header_shape "$description" "$stored_description" || return 1
     fi
     local team_name team_id
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
@@ -2321,7 +2328,7 @@ update_issue() {
     local state_id="" effective_description="$description"
     if [ -n "$state" ]; then
         if [ "$description_set" != true ]; then
-            effective_description=$(jq -r '.issue.description // ""' <<<"$issue_result") || return 1
+            effective_description="$stored_description"
         fi
         state_id=$(resolve_issue_update_state "$issue_result" "$state" "$effective_description") || return 1
         input_parts+=("\"stateId\": \"$state_id\"")
@@ -2409,7 +2416,7 @@ update_issue() {
     # wipe. Non-images queue for attachmentCreate after the update.
     if [ ${#attach_paths[@]} -gt 0 ]; then
         if [[ "$description_set" == false && "$description_write" == true ]]; then
-            description=$(jq -r '.issue.description // empty' <<<"$issue_result") || return 1
+            description="$stored_description"
         fi
         upload_attach_paths "${attach_paths[@]}" || return $?
     fi
@@ -2421,11 +2428,22 @@ update_issue() {
     fi
     # An owner close can clear the last description line. Empty means clear
     # only when the caller supplied it; attachment embeds also write a body.
+    local due_date=""
     if [[ "$description_set" == "true" || -n "$description" ]]; then
         local escaped_desc
         escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
+        due_date=$(done_when_due_date "$description") || return 1
+        if [[ -z "$due_date" && -n "$stored_description" ]]; then
+            local previous_due_date
+            previous_due_date=$(done_when_due_date "$stored_description" "$merge_at") || return 1
+            # Clear only a date previously supplied by an open check.
+            [ -z "$previous_due_date" ] || due_date=null
+        fi
+    elif [[ "$completing" == true ]]; then
+        due_date=$(done_when_due_date "$stored_description") || return 1
     fi
+    [ -z "$due_date" ] || input_parts+=("\"dueDate\": $due_date")
     if [ -n "$priority" ]; then
         linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
         input_parts+=("\"priority\": $priority")
@@ -3909,7 +3927,7 @@ complete_issue() {
         set +e
         # Ticks and evidence preserve the filed body's headers: an issue filed
         # before the header-shape bar still completes.
-        update_result=$(LINEAR_REQUIRE_REACH='' update_issue "$issue_id" "${update_args[@]}")
+        update_result=$(LINEAR_REQUIRE_REACH='' write_issue_update true "$post_merge_at" "$issue_id" "${update_args[@]}")
         update_rc=$?
         set -e
     fi
