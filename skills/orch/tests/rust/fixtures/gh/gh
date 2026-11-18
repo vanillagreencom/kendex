@@ -16,6 +16,11 @@
 # (v2.103.3 `pkg/cmd/api/api.go:492-557`, `:722`); a planted `exit` with an
 # error-free `body` is a call that failed for a cause its output does not
 # carry; any other `body`, `text` or `exit` is printed as for a path.
+# A `text` holding an ESC byte is refused whole, nothing on stdout, gh's
+# message on stderr, exit 1, unless the call ends with
+# `--allow-escape-sequences`, as gh guards a non-JSON body whatever its
+# stdout (v2.104.0 `pkg/cmd/api/api.go` `processResponse`,
+# `pkg/iostreams/content.go` `CopyGuardedContent`).
 # Every call appends its arguments to $GH_FAKE_LOG, so a row can assert
 # what was read and what was not. With the two names unset, the map and
 # the log are `gh.json` and `gh.log` beside the path this was invoked as
@@ -117,7 +122,7 @@ if [ -n "$sign_in" ]; then
   fi
 fi
 acts="${GH_FAKE_REPLIES%.json}.acts.json"
-overlay="" number="" query="" fields=""
+overlay="" number="" query="" fields="" raw=""
 real="$(readlink -f "${BASH_SOURCE[0]}")"
 # act FILTER [ARGS...]: record what an act left on GitHub.
 act() {
@@ -245,6 +250,9 @@ elif [ "$#" -ge 4 ] && [ "${3:-}" = --method ] && [ "${4:-}" = POST ]; then
       fi
       ;;
   esac
+elif [ "$#" -eq 3 ] && [ "$3" = --allow-escape-sequences ]; then
+  raw=true
+  reply=$(jq -c --arg p "$2" '.[$p] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
 elif [ "$#" -ne 2 ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
   exit 64
@@ -281,6 +289,10 @@ if [ -n "$query" ]; then
   reply=$(jq -c --arg q "$query" --argjson bindings "$bindings" -f "$(dirname "$real")/select.jq" <<<"$reply") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
 elif [ -n "$fields" ]; then
   reply=$(jq -c --arg f "$fields" 'if (.body | type) == "object" then .body |= with_entries(select(.key as $k | $f | split(",") | index($k))) else . end' <<<"$reply") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+fi
+if [ -z "$raw" ] && jq -e 'has("text") and (.text | contains("\u001b"))' <<<"$reply" >/dev/null; then
+  echo 'the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway' >&2
+  exit 1
 fi
 jq -r '.stderr // empty' <<<"$reply" >&2
 if jq -e 'has("text")' <<<"$reply" >/dev/null; then

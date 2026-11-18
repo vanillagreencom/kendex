@@ -3140,9 +3140,9 @@ fn every_red_push_run_since_the_last_pass_is_reported_once() {
         jobs_reads(&world),
         [
             "api repos/owner/repo/actions/runs/501/jobs?per_page=100&page=1",
-            "api repos/owner/repo/actions/jobs/5010/logs",
+            "api repos/owner/repo/actions/jobs/5010/logs --allow-escape-sequences",
             "api repos/owner/repo/actions/runs/503/jobs?per_page=100&page=1",
-            "api repos/owner/repo/actions/jobs/5030/logs",
+            "api repos/owner/repo/actions/jobs/5030/logs --allow-escape-sequences",
         ],
         "a green run's jobs are never read"
     );
@@ -3193,6 +3193,112 @@ fn every_red_push_run_since_the_last_pass_is_reported_once() {
         Some(red)
     );
     assert_eq!(jobs_reads(&world).len(), 6, "{:?}", jobs_reads(&world));
+}
+
+/// A completed run of the refresh workflow in GitHub's documented shape.
+fn refresh_run(id: u64, created_at: &str, conclusion: &str) -> Value {
+    json!({"id": id, "run_attempt": 1, "created_at": created_at, "updated_at": created_at,
+        "status": "completed", "conclusion": conclusion, "event": "schedule", "head_branch": "main",
+        "path": ".github/workflows/kendex-refresh.yml", "head_sha": push_head(id),
+        "workflow_id": 2, "repository": {"id": 1296269, "full_name": "owner/repo"},
+        "head_repository": {"id": 1296269, "full_name": "owner/repo"}, "pull_requests": []})
+}
+
+/// One job log the duty cannot read as GitHub sent it is one unread item,
+/// never the pass's failure. A log carrying its producer's colour and title
+/// sequences, which gh refuses to print without its raw-output option, is
+/// read with every control dropped; a log gh fails to answer, or answers
+/// 404, leaves the refresh incident's cause `unread`, as no cause is judged
+/// over a part of the run's failed jobs. In each the pass's merged line
+/// prints beside the refresh line.
+#[test]
+fn an_unreadable_job_log_is_one_unread_item_and_the_pass_goes_on() {
+    let escaped = json!({"text": "2026-10-18T00:00:00.0000000Z \u{1b}[31;1mError: refresh\u{1b}[0m \u{9b}blocked\u{7}\r\n2026-10-18T00:00:01.0000000Z \u{1b}]0;title\u{7}done\n"});
+    let readable = json!({"text": "2026-10-18T00:00:00.0000000Z Error: refresh blocked\n"});
+    let failed = json!({"exit": 1, "stderr": "gh: Server Error (HTTP 502)"});
+    let rows: [(&str, Vec<Option<Value>>, &str); 3] = [
+        (
+            "colour sequences",
+            vec![Some(escaped)],
+            "Error: refresh blocked",
+        ),
+        (
+            "a failed read",
+            vec![Some(readable.clone()), Some(failed)],
+            "unread",
+        ),
+        ("a 404", vec![Some(readable), None], "unread"),
+    ];
+    let (t1, t2) = ("2026-10-18T01:00:00Z", "2026-10-18T02:00:00Z");
+    for (case, logs, cause) in rows {
+        let mut world = World::new();
+        world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+            "lanes": [{"item": "KEN-1", "tracker": "linear", "harness": "claude", "window": null, "host": null, "mail_root": "/w/KEN-1", "launched_at": "2026-09-20T00:00:00Z", "status": "stopped"}]}));
+        world.linear("statuses list", statuses());
+        world.linear("issues list", json!({"body": []}));
+        world.linear("issues bulk-get", json!({"body": {"issues": {"nodes": [{"identifier": "KEN-1", "state": {"type": "started"}, "description": "", "children": {"nodes": []}}]}}}));
+        quiet_github(&mut world);
+        world.gh(
+            "repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1",
+            json!({ "body": [merged_pull(1, "ken-1")] }),
+        );
+        world.gh(
+            "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody%20merged%3A%3E%3D2026-08-15T09%3A00%3A00Z&per_page=100&page=1",
+            json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
+        );
+        let runs = vec![
+            refresh_run(701, t2, "failure"),
+            refresh_run(700, t1, "failure"),
+        ];
+        plant_runs(
+            &mut world,
+            "repos/owner/repo/actions/workflows/kendex-refresh.yml/runs?status=completed&per_page=2",
+            runs.clone(),
+        );
+        plant_runs(
+            &mut world,
+            "repos/owner/repo/actions/workflows/kendex-refresh.yml/runs?per_page=20",
+            runs,
+        );
+        let jobs: Vec<Value> = (0..logs.len() as u64)
+            .map(|i| json!({"id": 7010 + i, "run_id": 701, "name": format!("refresh-{i}"),
+                "head_sha": push_head(701), "status": "completed", "conclusion": "failure",
+                "started_at": t2, "completed_at": t2,
+                "check_run_url": format!("https://api.github.com/repos/owner/repo/check-runs/{}", 7010 + i)}))
+            .collect();
+        world.gh(
+            "repos/owner/repo/actions/runs/701/jobs?per_page=100&page=1",
+            json!({"body": {"total_count": jobs.len(), "jobs": jobs}}),
+        );
+        for (i, log) in logs.into_iter().enumerate() {
+            if let Some(log) = log {
+                world.gh(
+                    &format!("repos/owner/repo/actions/jobs/{}/logs", 7010 + i),
+                    log,
+                );
+            }
+        }
+        let clock = FakeClock::new();
+        let mut body = github::body(world.github_context(
+            world.settings(&[]),
+            Some(SINCE),
+            &["owner/repo"],
+            Shared::default(),
+        ));
+        let mut baseline = Baseline::default();
+        let said = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000)
+            .unwrap_or_else(|e| panic!("{case}: {e}"));
+        assert_eq!(
+            rendered(&said),
+            vec![
+                "EVENT merged 1 ken-1 owner/repo".to_owned(),
+                format!(
+                    "EVENT refresh-failing owner/repo runs=2 last=701 since={t1} report=initial cause={cause}"
+                ),
+            ],
+            "{case}"
+        );
+    }
 }
 
 /// A cancelled run decides nothing when the watch picks the run that

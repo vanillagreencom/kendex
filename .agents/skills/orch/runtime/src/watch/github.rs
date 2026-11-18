@@ -365,20 +365,19 @@ impl Gh<'_> {
     /// What one `gh api` read answered: the bytes of a call that exited
     /// zero, or `None` where the last status gh wrote is 404. A refused
     /// sign-in is renewed and the read asked once more; one that cannot be
-    /// renewed refuses `github-auth-failed`.
-    fn answer(&self, read: &'static str, path: &str) -> Result<Option<Vec<u8>>> {
+    /// renewed refuses `github-auth-failed`. `flags` follow the path.
+    fn answer(&self, read: &'static str, path: &str, flags: &[&str]) -> Result<Option<Vec<u8>>> {
+        let args: Vec<&str> = ["api", path].iter().chain(flags).copied().collect();
         let (pairs, seen) = sign_in_now();
-        let answer = match self.adding_env(pairs).run(read, &["api", path], None) {
+        let answer = match self.adding_env(pairs).run(read, &args, None) {
             Ok(Answer::Failed(failed)) if failed.sign_in_refused() => match renew_sign_in(seen)? {
                 Renewal::Unowned => Ok(Answer::Failed(failed)),
-                Renewal::Selected(pairs) => {
-                    match self.adding_env(pairs).run(read, &["api", path], None) {
-                        Ok(Answer::Failed(again)) if again.sign_in_refused() => {
-                            return Err(refused_again(&again));
-                        }
-                        other => other,
+                Renewal::Selected(pairs) => match self.adding_env(pairs).run(read, &args, None) {
+                    Ok(Answer::Failed(again)) if again.sign_in_refused() => {
+                        return Err(refused_again(&again));
                     }
-                }
+                    other => other,
+                },
             },
             other => other,
         };
@@ -399,7 +398,7 @@ impl Gh<'_> {
         read: &'static str,
         path: &str,
     ) -> Result<Option<T>> {
-        match self.answer(read, path)? {
+        match self.answer(read, path, &[])? {
             None => Ok(None),
             Some(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| {
                 refused(
@@ -410,11 +409,16 @@ impl Gh<'_> {
         }
     }
 
-    /// The raw text an endpoint printed (a job's log); a 404 is `None`.
+    /// The text an endpoint printed (a job's log) with no terminal control
+    /// left in it; a 404 is `None`. gh refuses a non-JSON body holding an
+    /// ESC byte unless asked to print it raw (v2.104.0
+    /// `pkg/cmd/api/api.go` `processResponse`), and Actions logs carry
+    /// their producers' colour sequences, so the raw body is asked for and
+    /// its controls dropped here.
     fn text(&self, read: &'static str, path: &str) -> Result<Option<String>> {
         Ok(self
-            .answer(read, path)?
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
+            .answer(read, path, &["--allow-escape-sequences"])?
+            .map(|bytes| printable(&String::from_utf8_lossy(&bytes))))
     }
 
     /// Every member of a collection whose pages carry a total
@@ -1550,11 +1554,11 @@ fn parse_failing(text: &str) -> Option<Standing> {
 
 /// The cause line of a failed run's job logs: the last line of the highest
 /// rank among `failed:`, `FAIL check=`, `Error:`, `refresh-error=` and a
-/// `kendex-hook-` mention; `unread` with none.
-fn refresh_cause(logs: &[String]) -> String {
+/// `kendex-hook-` mention; `unread` with none, or with a log unread.
+fn refresh_cause(logs: Option<&[String]>) -> String {
     let mut best = 0;
     let mut cause = String::new();
-    for line in logs.iter().flat_map(|log| log.lines()) {
+    for line in logs.unwrap_or_default().iter().flat_map(|log| log.lines()) {
         let text = strip_log_prefix(line);
         let (rank, found) = if text.starts_with("failed: ") {
             (5, text.to_owned())
@@ -1581,6 +1585,49 @@ fn refresh_cause(logs: &[String]) -> String {
     }
 }
 
+/// `raw` with no terminal control left: each ECMA-48 control sequence
+/// (`ESC [` parameters, intermediates and its final byte), control string
+/// (`ESC ]`, `P`, `X`, `^` or `_`, to its BEL or string terminator, never
+/// past the line) and other escape dropped whole, so a coloured line reads
+/// as its words, then every control character but a line feed and a tab.
+/// The last step alone holds the guarantee; the first keeps the words.
+fn printable(raw: &str) -> String {
+    let parameter = |n: &char| ('\u{20}'..='\u{3f}').contains(n);
+    let intermediate = |n: &char| ('\u{20}'..='\u{2f}').contains(n);
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    while chars.next_if(parameter).is_some() {}
+                    chars.next_if(|n| ('\u{40}'..='\u{7e}').contains(n));
+                }
+                Some(']' | 'P' | 'X' | '^' | '_') => {
+                    chars.next();
+                    while let Some(n) = chars.next_if(|n| *n != '\n') {
+                        if n == '\u{7}' {
+                            break;
+                        }
+                        if n == '\u{1b}' {
+                            chars.next_if_eq(&'\\');
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    while chars.next_if(intermediate).is_some() {}
+                    chars.next_if(|n| ('\u{30}'..='\u{7e}').contains(n));
+                }
+            }
+        } else if !c.is_control() || c == '\n' || c == '\t' {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// A job log line without its leading timestamp, as `gh api` prints the
 /// log (`<stamp> <text>`), and without a trailing carriage return.
 fn strip_log_prefix(line: &str) -> &str {
@@ -1588,13 +1635,17 @@ fn strip_log_prefix(line: &str) -> &str {
     text.strip_suffix('\r').unwrap_or(text)
 }
 
-/// The logs of a run's failed jobs, one text per job.
+/// The names of a run's failed jobs and their logs, one text per job, or
+/// `None` for the logs where any one could not be read: that log is one
+/// unread item of `incident`, named on stderr with its cause, and the
+/// pass goes on.
 fn failed_job_logs(
     gh: &Gh,
+    (incident, workflow): (&str, &str),
     repo: &str,
     run: u64,
     failing: &[&str],
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<(Vec<String>, Option<Vec<String>>)> {
     let path = format!("repos/{repo}/actions/runs/{run}/jobs");
     let Some(jobs) = gh.collection::<JobsPage>("jobs", &path)? else {
         return Err(refused(
@@ -1603,7 +1654,7 @@ fn failed_job_logs(
         ));
     };
     let mut names = BTreeSet::new();
-    let mut logs = Vec::new();
+    let mut logs = Some(Vec::new());
     for job in jobs {
         let conclusion = match &job.conclusion {
             Nullable::Present(c) => c.word(),
@@ -1614,8 +1665,28 @@ fn failed_job_logs(
         }
         names.insert(job.name.clone());
         let log_path = format!("repos/{repo}/actions/jobs/{}/logs", job.id);
-        if let Some(text) = gh.text("job-log", &log_path)? {
-            logs.push(text);
+        match gh.text("job-log", &log_path) {
+            Ok(Some(text)) => {
+                if let Some(logs) = &mut logs {
+                    logs.push(text);
+                }
+            }
+            Ok(None) => {
+                let cause = refused(
+                    "github-read-failed",
+                    &[
+                        ("read", "job-log"),
+                        ("path", &log_path),
+                        ("cause", "http-404"),
+                    ],
+                );
+                unread_note(incident, repo, workflow, "job-log", Some(run), &cause);
+                logs = None;
+            }
+            Err(cause) => {
+                unread_note(incident, repo, workflow, "job-log", Some(run), &cause);
+                logs = None;
+            }
         }
     }
     Ok((names.into_iter().collect(), logs))
@@ -1757,8 +1828,14 @@ fn refresh(
                 continue;
             }
         }
-        let (_, logs) = failed_job_logs(gh, repo, run.id, &["failure"])?;
-        let cause = refresh_cause(&logs);
+        let (_, logs) = failed_job_logs(
+            gh,
+            ("refresh", REFRESH_WORKFLOW),
+            repo,
+            run.id,
+            &["failure"],
+        )?;
+        let cause = refresh_cause(logs.as_deref());
         let mut passes = 0;
         if let Standing::Failing {
             passes: prior,
@@ -1826,8 +1903,11 @@ fn failing_conclusions(event: &str) -> &'static [&'static str] {
 /// The suites a failed log names: the producer
 /// summary lines, `suite=… fail=N`, `FAILED: …`, `FAIL …` and the
 /// runner's own timeouts; the cause is the first, the failures the suite
-/// names, unique.
-fn main_push_failures(logs: &[String]) -> (String, Option<Vec<String>>) {
+/// names, unique; with a log unread, `unread` and no failures known.
+fn main_push_failures(logs: Option<&[String]>) -> (String, Option<Vec<String>>) {
+    let Some(logs) = logs else {
+        return ("unread".to_owned(), None);
+    };
     let mut cause = None;
     let mut failures = BTreeSet::new();
     for line in logs.iter().flat_map(|log| log.lines()) {
@@ -2007,8 +2087,9 @@ fn main_push(
                     });
                     continue;
                 }
-                let (jobs, logs) = failed_job_logs(gh, repo, run.id, failing)?;
-                let (cause, failures) = main_push_failures(&logs);
+                let (jobs, logs) =
+                    failed_job_logs(gh, ("main-push", workflow), repo, run.id, failing)?;
+                let (cause, failures) = main_push_failures(logs.as_deref());
                 let jobs_json = serde_json::to_string(&jobs).unwrap_or_default();
                 let prior: Option<(String, Option<Vec<String>>)> = baseline
                     .get(row, &row_key)
@@ -2178,8 +2259,8 @@ fn judge_push(
     };
     let mut jobs_of: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     for run in reported {
-        let (jobs, logs) = failed_job_logs(gh, repo, run.id, failing)?;
-        let (cause, _) = main_push_failures(&logs);
+        let (jobs, logs) = failed_job_logs(gh, ("main-push", workflow), repo, run.id, failing)?;
+        let (cause, _) = main_push_failures(logs.as_deref());
         produced.events.push(Event::MainPushFailing {
             repo: repo.to_owned(),
             workflow: workflow.to_owned(),
@@ -2203,7 +2284,9 @@ fn judge_push(
             let jobs = match (jobs_of.remove(&run.id), known) {
                 (Some(jobs), _) => jobs,
                 (None, Some(red)) => red.jobs.clone(),
-                (None, None) => failed_job_logs(gh, repo, run.id, failing)?.0,
+                (None, None) => {
+                    failed_job_logs(gh, ("main-push", workflow), repo, run.id, failing)?.0
+                }
             };
             Some(RedRun {
                 run: run.id,
@@ -2271,17 +2354,31 @@ fn budget_producer(run: &WorkflowRun) -> bool {
     }
 }
 
-/// A budget read that could not be judged: named on stderr in the
-/// released watch's words, the run left pending for the next pass.
-fn budget_unread(repo: &str, read: &str, run: Option<u64>, cause: &Error) {
+/// A read of `incident`'s that could not be judged: named on stderr in the
+/// released watch's words (`refresh-unread`, `main-push-unread`), the
+/// rest of the pass going on.
+fn unread_note(
+    incident: &str,
+    repo: &str,
+    workflow: &str,
+    read: &str,
+    run: Option<u64>,
+    cause: &Error,
+) {
     let run = run.map(|r| format!(" run={r}")).unwrap_or_default();
     let _ = std::io::Write::write_all(
         &mut std::io::stderr(),
         format!(
-            "main-push-unread repo={repo} workflow={BUDGET_WORKFLOW} read={read}{run} cause={cause}\n"
+            "{incident}-unread repo={repo} workflow={workflow} read={read}{run} cause={cause}\n"
         )
         .as_bytes(),
     );
+}
+
+/// A budget read that could not be judged, the run left pending for the
+/// next pass.
+fn budget_unread(repo: &str, read: &str, run: Option<u64>, cause: &Error) {
+    unread_note("main-push", repo, BUDGET_WORKFLOW, read, run, cause);
 }
 
 /// The budget warnings of a completed run:
@@ -2714,15 +2811,47 @@ mod tests {
     #[test]
     fn the_cause_is_the_last_line_of_the_highest_rank() {
         let log = "2026-01-01T00:00:00.0000000Z Error: first\n2026-01-01T00:00:01.0000000Z failed: suite\tx\r\n2026-01-01T00:00:02.0000000Z Error: later\n".to_owned();
-        assert_eq!(refresh_cause(&[log]), "failed: suite x");
+        assert_eq!(refresh_cause(Some(&[log][..])), "failed: suite x");
         assert_eq!(
-            refresh_cause(&["2026-01-01T00:00:00Z fine\n".to_owned()]),
+            refresh_cause(Some(&["2026-01-01T00:00:00Z fine\n".to_owned()][..])),
             "unread"
         );
-        let (cause, failures) = main_push_failures(&[
+        assert_eq!(refresh_cause(None), "unread");
+        let (cause, failures) = main_push_failures(Some(&[
             "2026-01-01T00:00:00Z suite=a fail=2 pass=1\n2026-01-01T00:00:00Z FAILED: b\n2026-01-01T00:00:00Z suite=c fail=0\n".to_owned(),
-        ]);
+        ][..]));
         assert_eq!(cause, "suite=a fail=2 pass=1");
         assert_eq!(failures, Some(vec!["b".to_owned(), "suite=a".to_owned()]));
+        assert_eq!(main_push_failures(None), ("unread".to_owned(), None));
+    }
+
+    /// A job log's terminal controls: every sequence form drops whole, an
+    /// unterminated control string stops at its line's end, and no control
+    /// but a line feed or a tab survives any input, a lone or trailing ESC,
+    /// a C1 control and a bare carriage return included.
+    #[test]
+    fn a_job_logs_controls_drop_and_its_words_stay() {
+        let rows = [
+            ("\u{1b}[31;1mError:\u{1b}[0m x", "Error: x"),
+            ("\u{1b}]0;title\u{7}a", "a"),
+            ("\u{1b}]8;;https://x\u{1b}\\link", "link"),
+            ("\u{1b}Pq#0\u{1b}\\b", "b"),
+            ("\u{1b}(Bc\u{1b}7d", "cd"),
+            ("\u{1b}]open\nnext", "\nnext"),
+            ("\u{9b}31mx\u{7}\u{8}y\rz\u{7f}", "31mxyz"),
+            ("a\tb\n", "a\tb\n"),
+            ("tail\u{1b}", "tail"),
+            ("tail\u{1b}[", "tail"),
+            ("", ""),
+        ];
+        for (raw, want) in rows {
+            let got = printable(raw);
+            assert_eq!(got, want, "{raw:?}");
+            assert!(
+                !got.chars()
+                    .any(|c| c.is_control() && c != '\n' && c != '\t'),
+                "{raw:?}"
+            );
+        }
     }
 }
