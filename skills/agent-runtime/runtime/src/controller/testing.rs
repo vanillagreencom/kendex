@@ -223,11 +223,9 @@ pub(super) fn alt(record: &Document, key: &str) -> Value {
     }
 }
 
-/// `ol_owns($server; $start; $session)`, member for member, with jq's typed
-/// equality: `ol_names`, the record naming `$server` as the string `--arg`
-/// hands jq, `$session` as its `pane` (or `session`), and `$start` as its
-/// `server_start`'s `tostring`; or `ol_unstarted`, the same server and
-/// session with `server_start` null.
+/// A record belongs to its named server and pane, or session when the pane
+/// is unset. The server PID is a string. A missing or null server start
+/// leaves the record unbound to a particular lifetime of that server.
 pub(super) fn ol_owns(record: &Document, server: &str, start: &str, session: &str) -> bool {
     let names_server_and_session = alt(record, "server") == server
         && (match record.get("pane") {
@@ -263,9 +261,8 @@ pub(super) fn successor() -> Pending {
     }
 }
 
-/// The fixture controller as the requester saw it. `server` is the string
-/// the shell writers hand jq through `--arg`; a lane's `launch.server` is a
-/// number.
+/// The requester compares the controller's `server` as a string. A lane's
+/// `launch.server` is a number.
 pub(super) fn expected() -> OverseerExpected {
     OverseerExpected {
         server: json!("41020"),

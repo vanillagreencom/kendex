@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use super::host::{Foreground, Observed, Recorded, SessionFloor, unanswering};
 use super::obligations::{Discharge, Obligations, PaneEnd, PaneRef, ReceiptEnd};
-use super::{Close, Operation, POLL, Pane, Server, receipt};
+use super::{Close, Operation, POLL, Pane, Server, Target, receipt};
 use crate::error::Result;
 use crate::intent::{Obligation, Opening, Phase, Role};
 
@@ -68,10 +68,8 @@ pub enum TurnConfirm {
 /// What a reconcile at `opening` settled on, the same reading
 /// for a launch and a succession.
 pub enum Recovered {
-    /// The pane the receipt names, its registered pid live under `identity`
-    /// read from the kernel: adopt it and continue as from `window-opened`
-    /// under that identity alone. `registered` is the receipt
-    /// as read, for the record.
+    /// The pane the receipt names and the identity recovered for its session.
+    /// `registered` keeps the receipt's evidence for the record.
     Adopted {
         pane: Pane,
         identity: Identity,
@@ -638,7 +636,7 @@ impl Operation<'_> {
     /// standing; else nothing opened. No pane is enumerated
     /// and no window's name, option or environment is read. Every read here
     /// is three-valued; an adopted pane is recorded as
-    /// `window-opened` under the registered identity before the caller goes
+    /// `window-opened` under the recovered identity before the caller goes
     /// on.
     pub fn recover_opening(&mut self, opening: &Opening) -> Result<Recovered> {
         let server = match tmux::server(Path::new(&opening.socket)) {
@@ -777,9 +775,9 @@ impl Operation<'_> {
     /// read through the one identity reader, over the recorded set. The receipt
     /// was read and the registered pane adopted, written before any close,
     /// so a run killed at the close has the adopted pane
-    /// and the receipt-read durable. Live: the pane, read by exact id, is
-    /// adopted under that identity and no other; its pane gone leaves that live
-    /// pid an obligation the failure cannot discharge, held `pid-live`. Gone:
+    /// and the receipt-read durable. A live registered pid can be the
+    /// confinement wrapper, so the foreground judge identifies the lane's
+    /// harness. A gone pane leaves that live pid owed, held `pid-live`. Gone:
     /// the registered pid holds nothing, and the pane it registered is closed
     /// through the signal-writing close, which records the first signal before
     /// the kill and discharges the pane by its own answer, a close that did not
@@ -802,9 +800,41 @@ impl Operation<'_> {
         self.write()?;
         Ok(match identity {
             Reading::Live(identity) => match tmux::pane_fields(server, &registered.pane) {
-                // The pane stands: adopted under the registered identity, which
-                // becomes an obligation of the attempt.
                 Reading::Live(fields) => {
+                    let identity = if let Some(harness) = self.harness {
+                        let target = Target::new(&self.run.settings.harness_binaries, harness)?;
+                        match crate::observe::foreground(
+                            fields.pid,
+                            &|name| target.owns(name),
+                            None,
+                        ) {
+                            ProcessReading::Harness { identity } => identity,
+                            // A remote lane's own registered SSH process
+                            // represents its session on this host.
+                            ProcessReading::ForegroundOther { name, pid }
+                                if name == "ssh" && pid == identity.pid =>
+                            {
+                                identity
+                            }
+                            ProcessReading::Unread { cause } => {
+                                return Ok(Recovered::Pending {
+                                    note: "identity-unreadable",
+                                    cause: Some(cause.to_owned()),
+                                });
+                            }
+                            ProcessReading::ShellsOnly
+                            | ProcessReading::HarnessUp
+                            | ProcessReading::ForegroundShell { .. }
+                            | ProcessReading::ForegroundOther { .. } => {
+                                return Ok(Recovered::Pending {
+                                    note: "identity-pending",
+                                    cause: None,
+                                });
+                            }
+                        }
+                    } else {
+                        identity
+                    };
                     self.add(Obligation::Process(identity.clone()))?;
                     Recovered::Adopted {
                         pane: fields.pane,
@@ -907,6 +937,123 @@ impl Operation<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_confined_receipt_recovers_the_harness_below_its_wrapper() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = tmux::Private::start(dir.path());
+        let server = &server.0;
+        let mut settings = crate::effects::testing::settings(dir.path());
+        settings.harness_binaries = crate::settings::Judged::of(
+            "harness-binaries",
+            Ok([(Harness::Claude, "/bin/sleep".into())].into()),
+        );
+        let env = crate::journal::Env {
+            now_secs: 1,
+            now_nanos: 1_000_000_000,
+            nonce: 77,
+            owner: None,
+        };
+        let path = dir.path().join(crate::record::FLEET_FILE_NAME);
+        let run = crate::effects::testing::run(
+            &path,
+            &settings,
+            &env,
+            dir.path(),
+            dir.path().join("lane-mail"),
+            &crate::clock::SystemClock,
+        );
+        let intent = json!({
+            "id": "launch-session:KEN-T:1-1", "op": "launch-session", "target": "KEN-T",
+            "revision": 0, "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed"
+        });
+        let mut fleet: Value = serde_json::from_str(crate::effects::testing::FLEET).unwrap();
+        fleet["intents"] = json!([intent]);
+        std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
+        let intent = serde_json::from_value(intent).unwrap();
+        let mut operation = Operation::open(
+            &run,
+            &intent,
+            crate::effects::Bootstrap::Launch {
+                launch: None,
+                harness: Some(Harness::Claude),
+                auxiliary: None,
+            },
+        )
+        .unwrap();
+        let opening = operation
+            .opening(server, &SessionFloor::Baseline(vec![]), None, None, false)
+            .unwrap();
+        // The wrapper stays in the pane while its child holds the terminal with it.
+        let command = LaunchCommand {
+            program: "/bin/sh".to_owned(),
+            args: vec![
+                "-c".to_owned(),
+                "read -r ready; /bin/sleep 30 & child=$!; trap 'kill \"$child\"; wait \"$child\"' HUP; wait \"$child\""
+                    .to_owned(),
+            ],
+            env: Default::default(),
+            env_remove: vec![],
+            cwd: dir.path().to_path_buf(),
+            brief_arg: None,
+            brief_path: None,
+            confinement: None,
+        };
+        let pane = operation
+            .open_window(server, "t", "wrapped", &command, &opening, false)
+            .unwrap()
+            .ok()
+            .expect("the wrapper's window opened");
+        let Some(Phase::Opening { opening }) = operation.phase.clone() else {
+            panic!("the intent is still opening");
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let registered = loop {
+            if let receipt::Reading::Present(registered) =
+                receipt::read(&operation.receipt_path(), &intent.id).unwrap()
+            {
+                break registered;
+            }
+            assert!(std::time::Instant::now() < deadline, "no pane receipt");
+            std::thread::sleep(POLL);
+        };
+        let waiting = operation.recover_opening(&opening).unwrap();
+        tmux::send_line(&pane, "ready").unwrap();
+        let harness = loop {
+            let rows = process::table().unwrap();
+            if let Some(child) = rows
+                .iter()
+                .find(|row| row.ppid == registered.pid && row.name == "sleep")
+                && let Reading::Live(identity) = process::identity(child.pid)
+            {
+                break identity;
+            }
+            assert!(std::time::Instant::now() < deadline, "no wrapper child");
+            std::thread::sleep(POLL);
+        };
+        let Recovered::Adopted {
+            identity,
+            registered: evidence,
+            ..
+        } = operation.recover_opening(&opening).unwrap()
+        else {
+            panic!("the foreground harness was not adopted");
+        };
+        assert_eq!(identity, harness, "recover the harness under the wrapper");
+        assert!(
+            operation
+                .principal_keys()
+                .contains(&Obligation::Process(harness))
+        );
+        assert_eq!(evidence["pid"], registered.pid);
+        assert!(matches!(
+            waiting,
+            Recovered::Pending {
+                note: "identity-pending",
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn the_brief_wait_requires_the_brief_after_its_cursor() {

@@ -1271,9 +1271,8 @@ fn succeed(
         return waiting.unready(operation, Some(session.session_id), note, observation);
     }
 
-    // --- Retire the predecessor and confirm its exact terminal state. A
-    // failure here is before the successor takes over: stop the waiting
-    // runner exactly and leave the predecessor in control. ---
+    // --- Retire the predecessor and confirm its exact terminal state.
+    // A signalled stop must resolve before either controller takes over. ---
     // The process that asked for the succession answers from the
     // predecessor's own pane as often as not; retiring that pane ends it.
     // It has only its reply left to make once the job holds the lease, so
@@ -1322,10 +1321,25 @@ fn succeed(
             // retirement with the pending restored.
             operation.release_retirement(&overseer, &stop)?;
             if let Some(note) = note {
-                // The predecessor was not retired: the runner is abandoned and
-                // the predecessor's handles stand with the stop's cause until
-                // a reconcile reads them. A pid holding another process is one
-                // stale reading, counted for the reconcile's second.
+                // A signalled predecessor may still exit. Keep the runner
+                // available for reconcile to publish once retirement resolves.
+                if matches!(
+                    stop.answer(),
+                    Stop::Timeout { .. }
+                        | Stop::Unreadable {
+                            signalled: true,
+                            ..
+                        }
+                ) {
+                    return Ok(operation
+                        .hold(json!({"retired": false, "note": note}))
+                        .with_wire(Wire {
+                            launch: Some(runner_wire(&opened, Some(runner.identity()))),
+                            ..Wire::default()
+                        }));
+                }
+                // A pid holding another process is one stale reading,
+                // counted for the reconcile's second.
                 let mut stale_obs = json!({});
                 if stale {
                     operation.count_stale(&identity, &mut stale_obs)?;

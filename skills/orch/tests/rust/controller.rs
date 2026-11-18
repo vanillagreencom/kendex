@@ -5071,10 +5071,8 @@ fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pend
     );
 }
 
-/// A stop that signalled and timed out (a `kill` that signals nothing)
-/// holds the succession with the predecessor live; the reconcile, reading
-/// it live, runs the stop again through the signalling method, and with the
-/// host's own `kill` the predecessor ends.
+/// A predecessor that outlives both signals leaves the successor waiting.
+/// Reconcile stops the predecessor and publishes that successor.
 #[test]
 fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() {
     let dir = tempfile::tempdir().unwrap();
@@ -5083,7 +5081,16 @@ fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() 
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    runner.tools = Some(fixtures().join("kill-noop"));
+    let tools = dir.path().join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    write_executable(
+        &tools.join("kill"),
+        format!(
+            "#!/bin/sh\nif [ \"$2\" = {} ]; then exit 0; fi\nexec /bin/kill \"$@\"\n",
+            predecessor.pid(),
+        ),
+    );
+    runner.tools = Some(tools);
     runner
         .env
         .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
@@ -5092,18 +5099,23 @@ fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() 
     assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
     assert_eq!(intent["observation"]["note"], "predecessor-not-retired");
     assert_eq!(intent["obligations"]["signalled"], true);
-    assert!(live(predecessor.pid()), "the noop kill signalled nothing");
+    assert!(live(predecessor.pid()), "the predecessor outlived the stop");
     runner.tools = None;
     let report = runner.reconcile_one();
     assert!(
         !live(predecessor.pid()),
         "the reconcile re-signalled the live predecessor: {report}"
     );
-    assert_ne!(
-        report["intent"]["observation"]["note"], "predecessor-retiring",
-        "a live predecessor is stopped again, not held: {report}"
-    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(report["intent"]["observation"]["retired"], true, "{report}");
+    let fleet = runner.fleet();
+    let controller = &fleet["controller"];
+    assert_eq!(controller["generation"], 4, "{controller}");
+    let pane = controller["pane"].as_str().unwrap();
+    let pid = u32::try_from(controller["harness_pid"].as_u64().unwrap()).unwrap();
+    assert!(live(pid), "the published successor is running");
+    assert_eq!(server.panes().len(), 2, "the base pane and one successor");
+    assert_eq!(server.pane_pid(pane), pid);
 }
 
 /// A `native` posture with a narrower permission word launches with exactly

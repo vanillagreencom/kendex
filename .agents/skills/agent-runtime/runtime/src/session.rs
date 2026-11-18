@@ -21,8 +21,8 @@
 //!
 //! The same files record each user turn, which is how a delivery is
 //! confirmed: a turn the harness itself wrote down arrived, whatever the
-//! pane paste returned. The shapes are those each harness writes in its
-//! home, as the native probe (`tests/native/thin-path.sh`) captured them:
+//! pane paste returned. These are the user-turn rows in each harness's
+//! session file.
 //!
 //! - Claude Code: a `user` row whose `message.content` is a string; a tool
 //!   result is a `user` row too, with an array.

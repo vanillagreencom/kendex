@@ -2124,11 +2124,8 @@ mod tests {
         assert_eq!(fleet(&path).overseer.unwrap().generation, Some(4));
     }
 
-    /// The successor's own watch start keeps the record a confirmed transfer
-    /// leaves only where `ol_owns($server; $start; $pane)` holds for its pane
-    /// on its server, and rebuilds it from `{}` otherwise, dropping the
-    /// generation and the identity the confirmation published. The condition
-    /// is encoded in `ol_owns` above, without jq.
+    /// A confirmed transfer binds the successor's pane and server. When it
+    /// records a server start, only that server lifetime owns the binding.
     #[test]
     fn the_confirmed_transfer_record_is_owned_by_the_successor_pane_on_its_server_unstarted_or_at_its_start()
      {

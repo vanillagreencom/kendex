@@ -2069,8 +2069,8 @@ fn reconcile_window(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     // At `opening` the window may or may not have opened before this
     // process ended: adopt the pane the intent's receipt names, fail the
     // recorded pane that never registered, or fail `nothing-opened`. The
-    // adopted pane is recorded as `window-opened` under the identity the
-    // receipt proved and judged as any other, its receipt noted on the
+    // adopted pane is recorded as `window-opened` under the recovered session
+    // identity and judged as any other, its receipt noted on the
     // outcome; a pending reading binds no pane and leaves the lane as found
     // for the next reconcile. The marker written before the window is read
     // back on the outcome of a launch that ended there.

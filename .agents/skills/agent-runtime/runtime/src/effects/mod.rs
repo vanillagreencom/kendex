@@ -255,9 +255,8 @@ pub fn overseer_target_of(
         .transpose()
 }
 
-/// A pid a record carries as the number the runtime writes or the string a
-/// shell writer's jq `--arg` writes (the controller's `server` and
-/// `harness_pid`).
+/// The controller stores `server` as a string. A lane stores `launch.server`
+/// as a number.
 pub(crate) fn pid_value(value: &Value) -> Option<u64> {
     match value {
         Value::Number(n) => n.as_u64(),

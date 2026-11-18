@@ -1575,8 +1575,9 @@ pub fn adopt_controller(
     super::adoption::apply_adoption(path, r, &read, &settings.account_state, locking)
 }
 
-/// Whether the record names `pane` on the server `pid` at `start`, or at
-/// no start (`ol_owns`): the pane is the recorded controller's own.
+/// Whether the record names `pane` on `server`, with a matching start
+/// where recorded. A record with no server start accepts that pane
+/// on the named server.
 fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool {
     overseer.extra.get("server").and_then(pid_value) == Some(server as u64)
         && overseer.extra.get("pane").and_then(Value::as_str) == Some(pane)

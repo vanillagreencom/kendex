@@ -407,11 +407,9 @@ pub fn pi_composer_drawn(slice: &str) -> bool {
     )
 }
 
-/// Whether the harness's own composer is drawn in the slice. Each rule is
-/// the harness's live input line as the native probe
-/// (`tests/native/thin-path.sh`) captured it at rest: Claude's
-/// marker padded with U+00A0, Codex's `› ` line, Copilot's marker line
-/// framed by a rule under it, Pi's rule, prompt and footer. A shell prompt
+/// At rest the composers draw Claude's marker padded with U+00A0, Codex's
+/// `› ` line, Copilot's marker with a rule below it, and Pi's rule, prompt
+/// and footer. A shell prompt
 /// that happens to start with the marker, `❯ cd … && exec claude …` as the
 /// pane's shell echoes the launch line, matches none of them. Each rule
 /// reads a drawn row: the screen arrives row by row (`host::tmux::capture`),

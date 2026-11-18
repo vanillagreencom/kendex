@@ -6,9 +6,8 @@
 //! process (`$TMUX_PANE`) and the shell's own pid (`$$`), by writing a
 //! temporary name in the receipt's directory and renaming it over the
 //! receipt, so a reader sees the whole object or nothing. The shell then
-//! `exec`s the harness, so the receipt's pid is the harness's pid, and its
-//! identity (pid and start) is read from the kernel table through the one
-//! identity reader as everywhere else. The line runs under `/bin/sh`, so the
+//! `exec`s the launch command. With confinement, the registered pid is the
+//! wrapper's and the harness runs below it. The line runs under `/bin/sh`, so the
 //! pid word and the redirections mean one thing whatever interactive shell
 //! the pane runs.
 //!
@@ -28,7 +27,7 @@ use crate::error::Result;
 pub(super) struct Receipt {
     /// `%N`, the pane whose shell wrote it.
     pub pane: String,
-    /// The shell's pid, the harness's once the shell exec'd it.
+    /// The registering shell's pid, retained by the first exec.
     pub pid: u32,
     /// When the pane wrote it, by the pane's own clock, UTC; carried into
     /// the adoption's observation.
