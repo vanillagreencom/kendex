@@ -9,6 +9,7 @@ on:
       - 'hooks/**'
       - 'commands/**'
       - 'pi-extensions/**'
+      - 'kendex.toml'
 
 permissions: {}
 

@@ -31,6 +31,7 @@ assert trigger.splitlines() == [
     "  push:", "    branches: [main]", "    paths:",
     "      - 'skills/**'", "      - 'agents/**'", "      - 'hooks/**'",
     "      - 'commands/**'", "      - 'pi-extensions/**'",
+    "      - 'kendex.toml'",
 ]
 assert not re.search(r"^concurrency:", workflow, re.M)
 jobs = dict(re.findall(r"(?m)^  (\w+):\n((?: {4}[^\n]*\n|\n)+)", workflow.split("jobs:\n", 1)[1]))
