@@ -203,6 +203,9 @@ impl Word {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wrapper {
     pub program: String,
+    /// The variables the line exports for the wrapper, which hands its own
+    /// environment to the harness; see [`linux_env`].
+    pub env: Vec<(String, Word)>,
     /// Ends with `--`; the harness's program and words follow.
     pub words: Vec<Word>,
     pub file: PathBuf,
@@ -256,6 +259,7 @@ pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Conf
         Answer::Confined => Confinement::Confined {
             wrapper: Wrapper {
                 program: WRAPPER.to_owned(),
+                env: linux_env(grants),
                 words: linux_words(grants),
                 file: grants.file.clone(),
                 text: serde_json::to_string(grants).expect("grants serialize"),
@@ -290,27 +294,31 @@ pub fn linux_words(grants: &Grants) -> Vec<Word> {
         }
         pair(&mut words, "--bind-try", Path::new(X11_SOCKETS));
     }
-    for (name, value) in [
-        (CONFINED_VAR, "1".to_owned()),
-        (GRANTS_VAR, grants.file.display().to_string()),
-    ] {
-        words.extend([plain("--setenv"), plain(name), Word::Plain(value)]);
-    }
-    for name in TEMP_VARS {
-        words.extend([plain("--setenv"), plain(name), plain("/tmp")]);
-    }
-    if let Some(file) = &grants.gh_token {
-        words.extend([
-            plain("--setenv"),
-            plain(GH_TOKEN_VAR),
-            Word::Text(file.clone()),
-        ]);
-    }
     for name in ["TMUX", "TMUX_PANE"] {
         words.extend([plain("--unsetenv"), plain(name)]);
     }
     words.push(plain("--"));
     words
+}
+
+/// The variables the wrapper hands the harness for `grants`, each a shell
+/// name. They go in the wrapper's environment, which bwrap passes on,
+/// never as `--setenv` words: every local user reads a process's words
+/// through `/proc` for as long as it runs, and the lane's token is among
+/// the values.
+pub fn linux_env(grants: &Grants) -> Vec<(String, Word)> {
+    let mut env = vec![
+        (CONFINED_VAR.to_owned(), plain("1")),
+        (
+            GRANTS_VAR.to_owned(),
+            plain(&grants.file.display().to_string()),
+        ),
+    ];
+    env.extend(TEMP_VARS.map(|name| (name.to_owned(), plain("/tmp"))));
+    if let Some(file) = &grants.gh_token {
+        env.push((GH_TOKEN_VAR.to_owned(), Word::Text(file.clone())));
+    }
+    env
 }
 
 fn plain(word: &str) -> Word {

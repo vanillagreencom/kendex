@@ -2837,6 +2837,24 @@ fn wrapper_root() -> (tempfile::TempDir, PathBuf) {
     (dir, root)
 }
 
+/// The wrapper's environment and words for `grants`, run as the pane's
+/// line would run them: the environment set on the wrapper's process, the
+/// words after its name. Grants with no display and no token spell no word
+/// the pane's shell expands.
+#[cfg(target_os = "linux")]
+fn plain_wrapper(grants: &agent_runtime::confine::Grants) -> (Vec<(String, String)>, Vec<String>) {
+    use agent_runtime::confine::{Word, linux_env, linux_words};
+    let plain = |word| match word {
+        Word::Plain(word) => word,
+        Word::Display(_) | Word::Text(_) => panic!("a shell word without its grant"),
+    };
+    let env = linux_env(grants)
+        .into_iter()
+        .map(|(name, value)| (name, plain(value)))
+        .collect();
+    (env, linux_words(grants).into_iter().map(plain).collect())
+}
+
 /// The kernel holds what the grants say, for the program and its child:
 /// the home refuses a write, the worktree and the seat's session folder
 /// take one, the seat itself and its settings refuse a write and a
@@ -2846,7 +2864,7 @@ fn wrapper_root() -> (tempfile::TempDir, PathBuf) {
 #[test]
 #[cfg(target_os = "linux")]
 fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the_runtime_sockets() {
-    use agent_runtime::confine::{Grants, Word, linux_words};
+    use agent_runtime::confine::Grants;
     use std::os::unix::net::UnixListener;
     let (_dir, root) = wrapper_root();
     let [home, wt, seat, rt] = ["home", "wt", "seat", "rt"].map(|n| root.join(n));
@@ -2866,13 +2884,7 @@ fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the
         gh_token: None,
         file: root.join("grants.json"),
     };
-    let words: Vec<String> = linux_words(&grants)
-        .into_iter()
-        .map(|word| match word {
-            Word::Plain(word) => word,
-            Word::Display(_) | Word::Text(_) => panic!("a shell word without its grant"),
-        })
-        .collect();
+    let (env, words) = plain_wrapper(&grants);
     let script = r#"touch "$HOME/x" 2>/dev/null && echo home=written || echo home=refused
 sh -c 'touch "$HOME/child"' 2>/dev/null && echo child=written || echo child=refused
 touch "$1/y" && echo worktree=written || echo worktree=refused
@@ -2891,6 +2903,7 @@ echo "confined=${AGENT_RUNTIME_CONFINED:-none}"
         .env_clear()
         .env("HOME", &home)
         .env("PATH", "/usr/bin:/bin")
+        .envs(env)
         .output()
         .unwrap();
     assert!(
@@ -2931,7 +2944,7 @@ echo "confined=${AGENT_RUNTIME_CONFINED:-none}"
 #[test]
 #[cfg(target_os = "linux")]
 fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scratch() {
-    use agent_runtime::confine::{Grants, Word, linux_words};
+    use agent_runtime::confine::Grants;
     let (_dir, root) = wrapper_root();
     let [home, wt, outside] = ["home", "wt", "outside"].map(|n| root.join(n));
     for dir in [&home, &wt, &outside] {
@@ -2947,13 +2960,7 @@ fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scrat
         gh_token: None,
         file: root.join("grants.json"),
     };
-    let words: Vec<String> = linux_words(&grants)
-        .into_iter()
-        .map(|word| match word {
-            Word::Plain(word) => word,
-            Word::Display(_) | Word::Text(_) => panic!("a shell word without its grant"),
-        })
-        .collect();
+    let (env, words) = plain_wrapper(&grants);
     let names = [
         "TMPDIR",
         "CLAUDE_CODE_TMPDIR",
@@ -2972,6 +2979,7 @@ for name in "$@"; do eval "echo $name=\$$name"; done"#;
         .env("HOME", &home)
         .env("PATH", "/usr/bin:/bin")
         .envs(names.map(|name| (name, &outside)))
+        .envs(env)
         .output()
         .unwrap();
     assert!(

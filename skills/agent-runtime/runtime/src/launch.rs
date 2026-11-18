@@ -531,9 +531,12 @@ impl LaunchCommand {
     /// run time. The shell is replaced, so the pane lives exactly as long
     /// as the harness: a pane gone is a harness exited, which is the one
     /// positive reading of an exit a launcher can take from the host.
-    /// A confined command writes its grants file first and runs the
-    /// wrapper as the program, the harness its command: the wrapper's
-    /// process holds the pane, the harness below it.
+    /// A confined command writes its grants file first, exports the
+    /// wrapper's variables with the shell's own `export`, which starts no
+    /// process, and runs the wrapper as the program, the harness its
+    /// command: the wrapper's process holds the pane, the harness below it.
+    /// A launch variable of a name the wrapper sets is left out, so the
+    /// wrapper's value stands.
     pub fn shell_line(&self) -> String {
         let mut line = String::new();
         line.push_str("cd ");
@@ -549,14 +552,24 @@ impl LaunchCommand {
                 shell_quote(&wrapper.text),
                 shell_quote(&wrapper.file.display().to_string())
             ));
+            if !wrapper.env.is_empty() {
+                line.push_str("export");
+                for (name, value) in &wrapper.env {
+                    line.push_str(&format!(" {name}={}", value.shell()));
+                }
+                line.push_str(" && ");
+            }
         }
-        if !self.env_remove.is_empty() || !self.env.is_empty() {
+        let wrapped = |name: &str| wrapper.is_some_and(|w| w.env.iter().any(|(n, _)| n == name));
+        let env_remove: Vec<&String> = self.env_remove.iter().filter(|n| !wrapped(n)).collect();
+        let env: Vec<(&String, &String)> = self.env.iter().filter(|(n, _)| !wrapped(n)).collect();
+        if !env_remove.is_empty() || !env.is_empty() {
             line.push_str("exec env");
-            for name in &self.env_remove {
+            for name in env_remove {
                 line.push_str(" -u ");
                 line.push_str(&shell_quote(name));
             }
-            for (name, value) in &self.env {
+            for (name, value) in env {
                 line.push(' ');
                 line.push_str(&env_word(name, value));
             }
@@ -989,6 +1002,78 @@ mod tests {
             let mut i = named(h);
             i.compaction = Compaction::Native;
             assert!(!build(&i).unwrap().env.contains_key(NAMED), "{h}");
+        }
+    }
+
+    /// A confined line hands the wrapper the lane's token, and every other
+    /// variable the wrapper sets, in the wrapper's environment, which bwrap
+    /// passes to the harness: no word of the wrapper's command line holds
+    /// the token, since every local user reads a process's words through
+    /// `/proc`. A launch variable of a name the wrapper sets does not
+    /// displace the wrapper's value. A stub wrapper records both.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_confined_line_hands_the_wrapper_its_token_in_its_environment_never_its_words() {
+        const TOKEN: &str = "ghs_tokenargv_fixture";
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let bin = root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        crate::host::write_executable(
+            &bin.join(crate::confine::WRAPPER),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{root}/argv'\nenv > '{root}/env'\n",
+                root = root.display()
+            ),
+        );
+        let token = root.join("gh-token");
+        fs::write(&token, TOKEN).unwrap();
+        let file = root.join("grants.json");
+        let mut i = bare(Harness::Pi);
+        i.cwd = root.to_path_buf();
+        i.program = Some(root.join("harness"));
+        i.env.insert("TMPDIR".to_owned(), "/host".to_owned());
+        i.grants = Some(Grants {
+            writable: vec![root.to_path_buf()],
+            seats: Vec::new(),
+            read_only: Vec::new(),
+            runtime_dir: None,
+            sockets: Vec::new(),
+            desktop: false,
+            gh_token: Some(token),
+            file: file.clone(),
+        });
+        let line = build(&i).unwrap().shell_line();
+        let out = Command::new("sh")
+            .args(["-c", &line])
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let argv = fs::read_to_string(root.join("argv")).unwrap();
+        assert!(!argv.contains(TOKEN), "the token is on the wrapper's words");
+        let env: BTreeMap<String, String> = fs::read_to_string(root.join("env"))
+            .unwrap()
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
+            .collect();
+        let grants = file.display().to_string();
+        for (name, value) in [
+            ("GH_TOKEN", TOKEN),
+            ("AGENT_RUNTIME_CONFINED", "1"),
+            ("AGENT_RUNTIME_GRANTS", &grants),
+            ("TMPDIR", "/tmp"),
+            ("CLAUDE_CODE_TMPDIR", "/tmp"),
+            ("CLAUDE_TMPDIR", "/tmp"),
+            ("BUN_TMPDIR", "/tmp"),
+            ("SQLITE_TMPDIR", "/tmp"),
+        ] {
+            assert_eq!(env.get(name).map(String::as_str), Some(value), "{name}");
         }
     }
 

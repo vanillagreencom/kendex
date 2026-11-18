@@ -4267,7 +4267,7 @@ fn a_launched_job_runs_as_its_recorded_group_and_stop_job_ends_it_by_that_record
 #[test]
 #[cfg(target_os = "linux")]
 fn a_job_launched_inside_the_wrapper_stays_inside_and_says_confined() {
-    use agent_runtime::confine::{Grants, Word, linux_words};
+    use agent_runtime::confine::{Grants, Word, linux_env, linux_words};
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let root = dir.path().canonicalize().unwrap();
     assert!(!root.starts_with("/tmp"), "{}", root.display());
@@ -4291,7 +4291,7 @@ exec '{orch}' --no-private-env launch-job --name confined-row --run '{wt}/job' -
             wt = wt.display(),
         ),
     );
-    let words: Vec<String> = linux_words(&Grants {
+    let grants = Grants {
         writable: vec![wt.clone()],
         seats: Vec::new(),
         read_only: Vec::new(),
@@ -4300,19 +4300,23 @@ exec '{orch}' --no-private-env launch-job --name confined-row --run '{wt}/job' -
         desktop: false,
         gh_token: None,
         file: root.join("grants.json"),
-    })
-    .into_iter()
-    .map(|word| match word {
+    };
+    let plain = |word| match word {
         Word::Plain(word) => word,
         Word::Display(_) => panic!("a display word without a desktop grant"),
         Word::Text(_) => panic!("a text word without a token grant"),
-    })
-    .collect();
+    };
+    let env: Vec<(String, String)> = linux_env(&grants)
+        .into_iter()
+        .map(|(name, value)| (name, plain(value)))
+        .collect();
+    let words: Vec<String> = linux_words(&grants).into_iter().map(plain).collect();
     let out = program("bwrap")
         .args(&words)
         .arg(&harness)
         .env("HOME", &home)
         .env("PATH", tool_path(&[&bin]))
+        .envs(env)
         .current_dir(&wt)
         .output()
         .unwrap();
