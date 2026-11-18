@@ -607,7 +607,7 @@ done_when_parse() {
 # Only a dated open check owns a due date. Empty output means no such check.
 done_when_due_date() {
     local parsed
-    parsed=$(done_when_parse "$1" '[]') || return 1
+    parsed=$(done_when_parse "$1" '[]' "${2-}") || return 1
     jq -c '[.errors[].box] as $invalid
         | [.boxes[] | select(.post_merge and (.checked | not) and .retired == null)
             | .number as $number | select(($invalid | index($number)) == null) | .deadline_end | values]

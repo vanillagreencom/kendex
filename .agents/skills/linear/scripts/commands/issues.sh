@@ -2038,12 +2038,12 @@ require_unsynced_description() {
 }
 
 update_issue() {
-    write_issue_update false "$@"
+    write_issue_update false '' "$@"
 }
 
 write_issue_update() {
-    local completing="$1" issue_id="$2"
-    shift 2
+    local completing="$1" merge_at="$2" issue_id="$3"
+    shift 3
 
     local state=""
     local labels=""
@@ -2436,7 +2436,7 @@ write_issue_update() {
         due_date=$(done_when_due_date "$description") || return 1
         if [[ -z "$due_date" && -n "$stored_description" ]]; then
             local previous_due_date
-            previous_due_date=$(done_when_due_date "$stored_description") || return 1
+            previous_due_date=$(done_when_due_date "$stored_description" "$merge_at") || return 1
             # Clear only a date previously supplied by an open check.
             [ -z "$previous_due_date" ] || due_date=null
         fi
@@ -3927,7 +3927,7 @@ complete_issue() {
         set +e
         # Ticks and evidence preserve the filed body's headers: an issue filed
         # before the header-shape bar still completes.
-        update_result=$(LINEAR_REQUIRE_REACH='' write_issue_update true "$issue_id" "${update_args[@]}")
+        update_result=$(LINEAR_REQUIRE_REACH='' write_issue_update true "$post_merge_at" "$issue_id" "${update_args[@]}")
         update_rc=$?
         set -e
     fi
