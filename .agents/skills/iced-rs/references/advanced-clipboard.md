@@ -4,31 +4,14 @@
 
 System clipboard trait. Read/write text via `&mut dyn Clipboard` in `Widget::update()`. `Kind::Standard` for Ctrl+C/V, `Kind::Primary` for X11/Wayland middle-click selection.
 
-## API
+Read when implementing or debugging clipboard behavior in a custom widget or backend. Enable Iced’s `advanced` feature for the `iced::advanced` paths used here.
 
-### Trait definition
+## Declarations
 
-```rust
-pub trait Clipboard {
-    fn read(&self, kind: Kind) -> Option<String>;
-    fn write(&mut self, kind: Kind, contents: String);
-}
-```
+Pinned Iced 0.14.0 declarations, signatures, defaults and implementation:
 
-- **`read(kind)`** — Reads the current content of the clipboard as text. Returns `None` if the clipboard is empty or the operation fails.
-- **`write(kind, contents)`** — Writes the given text contents to the clipboard.
-
-### `Kind` enum
-
-```rust
-pub enum Kind {
-    Standard,
-    Primary,
-}
-```
-
-- **`Standard`** — The standard clipboard (Ctrl+C / Ctrl+V on most systems).
-- **`Primary`** — The primary selection clipboard. Normally only present on X11 and Wayland; middle-click paste.
+- [core/src/clipboard.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/core/src/clipboard.rs).
+- [winit/src/clipboard.rs](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/winit/src/clipboard.rs).
 
 ## Patterns
 
@@ -62,10 +45,10 @@ fn update(
 ## Gotchas
 
 - The trait takes `&self` for `read` but `&mut self` for `write`. You can call `read` from any context that holds a shared reference to the clipboard.
-- Most platforms restrict clipboard access to foreground windows; a `read()` from a background window may silently return `None`.
-- `Kind::Primary` is a no-op on Windows/macOS; both reads return `None` and writes are dropped. Write to both for cross-platform drag-like flows.
+- The winit backend returns `None` for an unavailable connection or a failed read. Handle absence without assuming why it occurred.
+- Primary selection support depends on the platform backend. An unsupported primary read returns `None`; an unsupported primary write is ignored. Use `Kind::Standard` for ordinary copy/paste.
 - The trait is **dyn-compatible** — widgets receive it as `&mut dyn Clipboard` through `update()`.
-- Only text MIME type supported -- no images, files, or custom types.
+- This trait transfers text. It exposes no image, file or custom MIME operation.
 
 ## See also
 
