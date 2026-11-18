@@ -216,6 +216,7 @@ fn automatic_lapse_checks_use_only_the_selected_configuration_owner() {
         (SELECTIONS[2], true),
         (SELECTIONS[3], true),
         (SELECTIONS[4], true),
+        (SELECTIONS[5], true),
     ]) {
         assert_lapsed_owner(row, unreadable_new);
     }
@@ -475,11 +476,27 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
     );
 }
 
+/// The main checkout set the new owner up, which retired the old one
+/// there; the linked work tree carries neither record. Requested or only a
+/// dependency, the new owner stays selected and names the main checkout.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn linked_worktree_consent_stays_with_the_selected_owner() {
-    let fixture = selected_fixture(SELECTIONS[2]);
+    for row in [SELECTIONS[2], SELECTIONS[5]] {
+        assert_linked_owner(row);
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_linked_owner(row: Selection) {
+    let fixture = selected_fixture(row);
     commit_fixture(&fixture.root);
+    let repo = kendex_core::guard::Repo::at(&fixture.root).unwrap();
+    kendex_core::repo_effects::armed::disarm(
+        kendex_core::repo_effects::armed::record_dir(&repo, false),
+        OLD,
+    )
+    .unwrap();
     let linked = fixture.root.parent().unwrap().join("linked");
     git(
         &fixture.root,
@@ -494,12 +511,17 @@ fn linked_worktree_consent_stays_with_the_selected_owner() {
     );
     let linked = linked.canonicalize().unwrap();
     for name in [OLD, NEW] {
-        record_named_install(
+        let reason = match (name, row.dependency_only) {
+            (NEW, true) => required_by(HarnessId::Codex),
+            _ => Reason::Requested,
+        };
+        record_install_for(
             &fixture.env,
             &linked,
             HarnessId::Codex,
             name,
             linked.join(".agents/skills").join(name),
+            reason,
         );
     }
     let rendered = bot_instructions::render(

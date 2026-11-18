@@ -153,24 +153,31 @@ review_control() { # LABEL EXPECT INSTALL — a mutant must fail the row's asser
   [ "$2" = "$(run "" "$3" "")" ] || result=rejected
   assert_eq "control: $1 fails its review-owner row" rejected "$result"
 }
-# label | old status (- means absent) | new status | executable | new record | new armed | expected
+# Where kendex's arming record of each package's setup stands.
+armed_record() { # GIT-DIR PACKAGE
+  mkdir -p "$1/kendex/armed/$2"
+  printf 'fixture\n' >"$1/kendex/armed/$2/-record"
+}
+# label | old status (- means absent) | new status | executable | new record | armed (old, new, both or none) | expected
 # Exact records are consumed by Git hooks and CI logs. These assertions also
 # preserve every old-only record and reject a second checker execution. The
-# new package owns the check only where kendex's record of its setup stands
-# in the work tree, or where no old package resolves.
+# old package owns the check where kendex's record stands for it and not for
+# the new one, or where no new package resolves.
 for review_row in \
-  "old-only|0|-|yes||no|rc=0 $OLD_OK;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "new-only|-|0|yes|fixture=new-review|no|rc=0 $NEW_OK;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "both-installed|0|0|yes|fixture=new-review|yes|$REVIEW_BOTH" \
-  "both-new-unarmed|0|0|yes|fixture=new-review|no|$REVIEW_OLD" \
-  "new-failing|0|1|yes|fixture=new-review|yes|$REVIEW_FAIL" \
-  "new-incomplete|0|2|yes|fixture=new-review|yes|rc=2 $NEW_BAD;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
-  "new-unexecutable|0|0|no|fixture=new-review|yes|rc=2 $NEW;$(broken github-repository-settings);$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
-  "neither-installed|-|-|yes||no|rc=0 $BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "new-unconfigured|0|0|yes|github-standard-check-location=local\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|yes|rc=0 $NEW;github-standard-check-location=local;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "new-older-attested|0|2|yes|github-standard-check-location=unset\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|yes|rc=0 $NEW;github-standard-check-location=unset;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "new-unattested|0|2|yes|github-standard-check-location=hosted\\nbot-instructions: unconfigured=kendex.toml|yes|rc=2 $NEW;github-standard-check-location=hosted;bot-instructions: unconfigured=kendex.toml;pre-commit: unattested=github-repository-settings:kendex.toml;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"; do
-  IFS='|' read -r label old_status new_status executable new_record new_armed expect <<<"$review_row"
+  "old-only|0|-|yes||none|rc=0 $OLD_OK;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-only|-|0|yes|fixture=new-review|none|rc=0 $NEW_OK;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "both-installed|0|0|yes|fixture=new-review|both|$REVIEW_BOTH" \
+  "both-new-armed|0|0|yes|fixture=new-review|new|$REVIEW_BOTH" \
+  "both-neither-armed|0|0|yes|fixture=new-review|none|$REVIEW_BOTH" \
+  "both-old-armed|0|0|yes|fixture=new-review|old|$REVIEW_OLD" \
+  "new-failing|0|1|yes|fixture=new-review|both|$REVIEW_FAIL" \
+  "new-incomplete|0|2|yes|fixture=new-review|both|rc=2 $NEW_BAD;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
+  "new-unexecutable|0|0|no|fixture=new-review|both|rc=2 $NEW;$(broken github-repository-settings);$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
+  "neither-installed|-|-|yes||none|rc=0 $BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-unconfigured|0|0|yes|github-standard-check-location=local\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|both|rc=0 $NEW;github-standard-check-location=local;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-older-attested|0|2|yes|github-standard-check-location=unset\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|both|rc=0 $NEW;github-standard-check-location=unset;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-unattested|0|2|yes|github-standard-check-location=hosted\\nbot-instructions: unconfigured=kendex.toml|both|rc=2 $NEW;github-standard-check-location=hosted;bot-instructions: unconfigured=kendex.toml;pre-commit: unattested=github-repository-settings:kendex.toml;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"; do
+  IFS='|' read -r label old_status new_status executable new_record armed expect <<<"$review_row"
   repo "review-$label"
   [ "$old_status" = - ] || tree bot-instructions fixture=old-review "$old_status"
   if [ "$new_status" != - ]; then
@@ -183,11 +190,28 @@ for review_row in \
     fi
     [ "$executable" = yes ] || chmod -x "$R/.agents/skills/github-repository-settings/scripts/github-repository-settings"
   fi
-  if [ "$new_armed" = yes ]; then
-    mkdir -p "$R/.git/kendex/armed/github-repository-settings"
-    printf 'fixture\n' >"$R/.git/kendex/armed/github-repository-settings/-record"
-  fi
+  case "$armed" in old | both) armed_record "$R/.git" bot-instructions ;; esac
+  case "$armed" in new | both) armed_record "$R/.git" github-repository-settings ;; esac
   assert_eq "$label" "$expect" "$(run "" "$BARE" "")"
+done
+# A linked work tree made by `git worktree add` carries no record of its
+# own; the main checkout's record, in the common directory, decides.
+# label | package the main checkout set up | expected
+for linked_row in \
+  "new|github-repository-settings|$REVIEW_BOTH" \
+  "old|bot-instructions|$REVIEW_OLD"; do
+  IFS='|' read -r label main_armed expect <<<"$linked_row"
+  repo "review-linked-$label"
+  tree bot-instructions fixture=old-review 0
+  tree github-repository-settings fixture=new-review 0
+  git -C "$R" add -A
+  git -C "$R" commit -qm 'feat: review packages'
+  armed_record "$R/.git" "$main_armed"
+  git -C "$R" worktree add -q "$TMP/review-linked-$label-tree"
+  R="$TMP/review-linked-$label-tree"
+  printf 'linked\n' >"$R/c.txt"
+  git -C "$R" add c.txt
+  assert_eq "linked-$label" "$expect" "$(run "" "$BARE" "")"
 done
 R="$TMP/review-both-installed"
 chain_mutant double "$REVIEW_RUN" "$REVIEW_RUN"$'\n    "$PWD/.agents/skills/bot-instructions/scripts/bot-instructions" check --staged'
@@ -195,9 +219,12 @@ review_control double-execution "$REVIEW_BOTH" chain-mutant-double
 R="$TMP/review-new-failing"
 chain_mutant fallback "$REVIEW_RUN" "$REVIEW_RUN"$'\n    if [ "$had_violations" -eq 1 ]; then "$PWD/.agents/skills/bot-instructions/scripts/bot-instructions" check --staged; fi'
 review_control failure-fallback "$REVIEW_FAIL" chain-mutant-fallback
-R="$TMP/review-both-new-unarmed"
-chain_mutant unarmed-owner '{ [ -z "$OLD_SKILL" ] || review_owner_armed; }' 'true'
+R="$TMP/review-both-old-armed"
+chain_mutant unarmed-owner '{ [ -z "$OLD_SKILL" ] || review_set_up github-repository-settings || ! review_set_up bot-instructions; }' 'true'
 review_control unarmed-new-owner "$REVIEW_OLD" chain-mutant-unarmed-owner
+R="$TMP/review-linked-old-tree"
+chain_mutant own-tree-only 'for dir in "$REVIEW_GIT_DIR" "$REVIEW_COMMON_DIR"; do' 'for dir in "$REVIEW_GIT_DIR"; do'
+review_control main-checkout-record "$REVIEW_OLD" chain-mutant-own-tree-only
 R="$TMP/review-new-failing"
 chain_mutant swallowed 'out="$("$check" check --staged 2>&1)" || status=$?' 'out="$("$check" check --staged 2>&1)" || status=0'
 review_control swallowed-status "$REVIEW_FAIL" chain-mutant-swallowed

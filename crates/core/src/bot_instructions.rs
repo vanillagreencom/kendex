@@ -32,14 +32,17 @@ pub(crate) struct Selection<T> {
 /// discovery, the one-run render, the commit offer and the lapse check.
 ///
 /// Walk [`ORDER`]: an installed candidate is selected unless the scope
-/// carries it only as a dependency, its own arming record does not stand
-/// here, and a later candidate is installed. Installing a package to
-/// satisfy another's requirement is not choosing it to own the
-/// repository's files, and the lock's reasons are the only record of which
-/// it was. Only the yielding candidate's own record is read, so a refresh
-/// checkout, which carries no records, renders what an unadopted consumer
-/// renders. An unreadable declaration is a candidate, so it still prevents
-/// fallback unless it yields.
+/// carries it only as a dependency, its own arming record stands neither
+/// here nor in the main checkout of this linked work tree, and a later
+/// candidate is installed. Installing a package to satisfy another's
+/// requirement is not choosing it to own the repository's files, and the
+/// lock's reasons are the only record of which it was. A setup in the main
+/// checkout is the repository's choice, so a linked work tree keeps that
+/// owner selected and is offered its setup beside the main checkout. Only
+/// the yielding candidate's own record is read, so a refresh checkout,
+/// which carries no records, renders what an unadopted consumer renders.
+/// An unreadable declaration is a candidate, so it still prevents fallback
+/// unless it yields.
 pub(crate) fn select_installed(
     scope: &Scope,
     lock: &crate::lock::Lock,
@@ -72,18 +75,20 @@ fn yields(
     if !crate::lock::dependency_only(lock, candidate.name()) {
         return Ok(false);
     }
-    let armed = match (candidate, scope) {
+    let chosen = match (candidate, scope) {
         (InstalledDeclaration::Declared(declared), _) => {
             crate::repo_effects::armed_here(scope, declared)?
+                || crate::repo_effects::set_up_in_main_checkout(scope, declared)?.is_some()
         }
         // Its reach is unreadable, so a record in either git directory
-        // counts, as the lapse check reads one.
+        // counts, as the lapse check reads one; the common one is the main
+        // checkout's.
         (InstalledDeclaration::Unreadable { name, .. }, Scope::Project { root }) => {
             crate::repo_effects::setup::recorded_in_either(root, name)?
         }
         (InstalledDeclaration::Unreadable { .. }, Scope::Global) => false,
     };
-    Ok(!armed)
+    Ok(!chosen)
 }
 
 /// [`select_installed`] over this scope's installed packages, for a caller
@@ -120,6 +125,18 @@ pub(crate) fn configuration_owner(env: &Env, scope: &Scope) -> Result<Option<Dec
 /// Whether this package is one of the configuration candidates.
 pub(crate) fn is_configuration_package(name: &str) -> bool {
     ORDER.contains(&name)
+}
+
+/// The configuration packages among `effects`, in the order one action
+/// sets them up: the predecessor first, so a successor's setup after it
+/// moves the effect through [`superseded_configuration_owner`] and one
+/// owner stays armed.
+pub fn configuration_setups(effects: &[DeclaredEffects]) -> Vec<&DeclaredEffects> {
+    ORDER
+        .iter()
+        .rev()
+        .filter_map(|name| effects.iter().find(|effect| effect.name == *name))
+        .collect()
 }
 
 /// The installed, locally armed predecessor whose licence this package's

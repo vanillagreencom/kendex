@@ -11,7 +11,7 @@ use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
 use super::advisory::Listing;
-use super::engine_common::{apply_report, ask_before_writing, print_report};
+use super::engine_common::{apply_report_first, ask_before_writing, print_report};
 use super::ledger::{Folded, Wrote, say_ledger};
 use super::offers::Blocked;
 use super::{CliResult, fail_refusal, say, scope_label};
@@ -96,13 +96,14 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
             // Every member is installed by now, so the account and its
             // separate yes come last — and the close is handed over, so
             // what the run wrote is reported whatever the reader answers.
-            super::repo_effects::disclose_and_finish(
+            let walked = super::repo_effects::disclose_and_finish(
                 env,
                 scope,
                 &closing.pending,
                 allow_effects,
                 close,
-            )
+            );
+            super::repo_effects::after_first(walked, closing.set_up_failed)
         },
         || super::project::register_destination(env, scope),
     );
@@ -158,6 +159,8 @@ fn finish<C: FnOnce()>(
 struct Closing {
     count: Option<usize>,
     pending: Vec<kendex_core::repo_effects::DeclaredEffects>,
+    /// A configuration setup the apply took first and that failed.
+    set_up_failed: Option<Box<dyn std::error::Error>>,
     blocked: Vec<Blocked>,
     /// The blocked items the collection asked for, which a run with no
     /// terminal ends on.
@@ -191,14 +194,17 @@ fn closing(written: Vec<Written>) -> Closing {
     let mut blocked: Vec<Blocked> = Vec::new();
     let mut skipped = Vec::new();
     let mut scored: Vec<kendex_core::engine::ItemSafety> = Vec::new();
+    let mut set_up_failed = None;
     for step in written {
         blocked.extend(step.blocked);
         skipped.extend(step.skipped);
         scored.extend(step.scored);
+        set_up_failed = set_up_failed.or(step.set_up_failed);
     }
     Closing {
         count,
         pending,
+        set_up_failed,
         blocked,
         skipped,
         scored,
@@ -218,8 +224,11 @@ fn wrote_count(applied: usize, planned_anything: bool) -> Option<usize> {
 /// the count of written operations.
 #[derive(Default)]
 struct Written {
-    /// The repository effects the collection plan declared.
+    /// The repository effects the collection plan declared, less the
+    /// configuration setups the apply took first.
     effects: Vec<kendex_core::repo_effects::DeclaredEffects>,
+    /// The setup the apply took first, where it failed.
+    set_up_failed: Option<Box<dyn std::error::Error>>,
     /// Whether the collection plan contains operations, separating an
     /// empty plan from an apply that wrote nothing.
     planned: bool,
@@ -235,13 +244,15 @@ fn install_report(
     report: &kendex_core::engine::EngineReport,
     wrote: &mut Written,
 ) -> CliResult {
-    wrote.effects.extend(report.repo_effects.iter().cloned());
     wrote.planned = !report.plan.is_empty();
     let blocked = print_report(env, report, Listing::Attention);
     wrote.skipped.extend(report.skipped_asked());
     wrote.blocked.extend(blocked);
     wrote.scored.extend(report.safety.iter().cloned());
-    wrote.applied += apply_report(env, report)?;
+    let (applied, first) = apply_report_first(env, report)?;
+    wrote.applied += applied;
+    wrote.effects.extend(first.remaining(&report.repo_effects));
+    wrote.set_up_failed = first.into_failed();
     Ok(())
 }
 

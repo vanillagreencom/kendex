@@ -211,7 +211,8 @@ pub fn begin(command: &str, flags: CommitFlags) {
     });
 }
 
-/// `add` will apply its newly installed packages' effects after this offer.
+/// `add` said yes to its newly installed packages' effects with
+/// `--allow-repo-effects`.
 pub(super) fn adding_with_repo_effects() -> bool {
     SESSION.get().is_some_and(|session| {
         session.command == "add" && session.flags.allow_repo_effects == Some(true)
@@ -253,12 +254,14 @@ fn asked(root: &Path) -> bool {
 /// failure count.
 ///
 /// `before` is what the project held before the write, read by the caller
-/// while it still could be.
+/// while it still could be. `set_up` says a setup already ran in this
+/// action, so a package it left holding the commit is not set up again.
 pub fn after_writing(
     env: &Env,
     scope: &Scope,
     generated: &GeneratedPaths,
     before: &Before,
+    set_up: bool,
 ) -> CliResult {
     let Scope::Project { root } = scope else {
         return Ok(());
@@ -266,7 +269,7 @@ pub fn after_writing(
     if asked(root) || cancelled() {
         return Ok(());
     }
-    let outcome = match make(env, scope, root, generated, before) {
+    let outcome = match make(env, scope, root, generated, before, set_up) {
         // Nothing kendex owns had changed by this write: not an answer,
         // so a later report the same verb applies into this project can
         // still offer. `drift-hook` writes an empty report before the one
@@ -297,6 +300,7 @@ fn make(
     root: &std::path::Path,
     generated: &GeneratedPaths,
     before: &Before,
+    mut set_up: bool,
 ) -> Result<Option<Outcome>, Box<dyn std::error::Error>> {
     let default = Session {
         flags: CommitFlags::default(),
@@ -305,7 +309,6 @@ fn make(
     let session = SESSION.get().unwrap_or(&default);
     let style = ui::style();
     let mut generated = generated.clone();
-    let mut set_up = false;
     // Read again after a setup: the renders kendex reads back join the
     // offer (`set_up_here` says which), and the packages are asked again
     // whether they now stand behind them.

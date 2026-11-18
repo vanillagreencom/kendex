@@ -10,14 +10,23 @@ fn package(project: &Path, name: &str) {
     let package = project.join("catalog/skills").join(name);
     fs::create_dir_all(&package).unwrap();
     fs::write(package.join("SKILL.md"), format!(
-        "---\nname: {name}\ndescription: fixture configuration\nrepo-effects:\n  summary: fixture configuration\n  writes: ['.github/copilot-instructions.md', '{name}.effect']\n  installer: scripts/effect render\n  uninstaller: scripts/effect retire\n  checker: scripts/effect check\n---\n"
+        "---\nname: {name}\ndescription: fixture configuration\nrepo-effects:\n  summary: fixture {name} effect\n  writes: ['.github/copilot-instructions.md', '{name}.effect']\n  installer: scripts/effect render\n  uninstaller: scripts/effect retire\n  checker: scripts/effect check\n---\n"
     )).unwrap();
+    // A write appends to `../renders-<name>`, beside every checkout the
+    // fixtures make, and `../refuse-<name>` makes the write refuse.
     executable(
         &package.join("scripts/effect"),
         &format!(
-            "#!/bin/sh\ncase \"$1\" in\ncheck) test \"$(cat .github/copilot-instructions.md)\" = '{name}' ;;\nretire) rm -f .github/copilot-instructions.md {name}.effect ;;\nrender)\n if [ \"${{2-}}\" = --discover ]; then\n  printf 'would write .github/copilot-instructions.md\\nwould write {name}.effect\\n'\n else\n  mkdir -p .github\n  printf '%s' '{name}' > .github/copilot-instructions.md\n  printf '%s' '{name}' > {name}.effect\n  printf 'wrote .github/copilot-instructions.md\\nwrote {name}.effect\\n'\n fi ;;\nesac\n"
+            "#!/bin/sh\ncase \"$1\" in\ncheck) test \"$(cat .github/copilot-instructions.md)\" = '{name}' ;;\nretire) rm -f .github/copilot-instructions.md {name}.effect ;;\nrender)\n if [ \"${{2-}}\" = --discover ]; then\n  printf 'would write .github/copilot-instructions.md\\nwould write {name}.effect\\n'\n else\n  echo render >> ../renders-{name}\n  if [ -f ../refuse-{name} ]; then echo 'fixture refusal' >&2; exit 1; fi\n  mkdir -p .github\n  printf '%s' '{name}' > .github/copilot-instructions.md\n  printf '%s' '{name}' > {name}.effect\n  printf 'wrote .github/copilot-instructions.md\\nwrote {name}.effect\\n'\n fi ;;\nesac\n"
         ),
     );
+}
+
+/// How many times `name`'s installer wrote beside `checkout`.
+#[allow(clippy::unwrap_used)]
+fn renders(checkout: &Path, name: &str) -> usize {
+    fs::read_to_string(checkout.parent().unwrap().join(format!("renders-{name}")))
+        .map_or(0, |text| text.lines().count())
 }
 
 #[allow(clippy::unwrap_used)]
@@ -82,89 +91,187 @@ fn existing_setup_consent_transfers_the_configuration_effect() {
     }
 }
 
+/// Where the add of a package requiring the new owner runs, and what it
+/// is given.
+#[derive(Clone, Copy, Debug)]
+enum Arrival {
+    /// No `--allow-repo-effects`: the armed old owner keeps the files.
+    Declined,
+    /// `--allow-repo-effects`: the setup moves the files before the offer.
+    Consented,
+    /// The same, in a linked work tree that carries neither record.
+    ConsentedLinked,
+    /// The same, with the new owner's installer refusing.
+    Refused,
+}
+
 /// The KEN-2358 reproduction: an armed old owner, then an add of a package
 /// that requires the new one. Without the setup's say-so the old owner
 /// keeps rendering, its check still fails drift under `verify`, and a
 /// refresh names the pending setup. With `--allow-repo-effects` and a
-/// commit choice, the setup moves the effect before the offer, so the
-/// new owner's render is in the add's own commit.
+/// commit choice, the setup runs once, disclosed once, before the offer,
+/// so the new owner's render is in the add's own commit, in a linked work
+/// tree too. A refused setup leaves the old owner and still closes the add
+/// with its ledger and its registration.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
-    const PENDING: &str = "github-repository-settings: installed as a dependency;";
-    for consent in [false, true] {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = rooted(&tmp);
-        let project = unarmed_consumer(&tmp);
-        package(&project, OLD);
-        git(&project, &["add", "-A"]);
-        git(&project, &["commit", "-q", "-m", "old installer"]);
-        let initial = kendex(
-            &home,
-            &project,
-            &["apply", "--yes", "--commit", "--allow-repo-effects"],
-        );
-        assert!(initial.status.success(), "{}", said(&initial));
-        assert!(armed(&project, OLD));
+    for arrival in [
+        Arrival::Declined,
+        Arrival::Consented,
+        Arrival::ConsentedLinked,
+        Arrival::Refused,
+    ] {
+        assert_arrival(arrival);
+    }
+}
 
-        package(&project, NEW);
-        let requirer = project.join("catalog/skills/requirer");
-        fs::create_dir_all(&requirer).unwrap();
-        fs::write(
-            requirer.join("SKILL.md"),
-            format!("---\nname: requirer\ndescription: fixture requirer\ndependencies:\n  required: [{NEW}]\n---\n"),
-        )
-        .unwrap();
-        git(&project, &["add", "-A"]);
-        git(&project, &["commit", "-q", "-m", "requirer"]);
-        let mut args = vec![
-            "add",
-            "--yes",
-            "--throwaway",
-            "--commit",
-            "catalog",
-            "--skill",
-            "requirer",
-        ];
-        if consent {
-            args.push("--allow-repo-effects");
+#[allow(clippy::unwrap_used)]
+fn assert_arrival(arrival: Arrival) {
+    const PENDING: &str = "github-repository-settings: installed as a dependency;";
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let main = unarmed_consumer(&tmp);
+    package(&main, OLD);
+    git(&main, &["add", "-A"]);
+    git(&main, &["commit", "-q", "-m", "old installer"]);
+    let initial = kendex(
+        &home,
+        &main,
+        &["apply", "--yes", "--commit", "--allow-repo-effects"],
+    );
+    assert!(initial.status.success(), "{}", said(&initial));
+    assert!(armed(&main, OLD));
+
+    package(&main, NEW);
+    let requirer = main.join("catalog/skills/requirer");
+    fs::create_dir_all(&requirer).unwrap();
+    fs::write(
+        requirer.join("SKILL.md"),
+        format!("---\nname: requirer\ndescription: fixture requirer\ndependencies:\n  required: [{NEW}]\n---\n"),
+    )
+    .unwrap();
+    git(&main, &["add", "-A"]);
+    git(&main, &["commit", "-q", "-m", "requirer"]);
+    let project = match arrival {
+        Arrival::ConsentedLinked => {
+            let linked = main.parent().unwrap().join("linked");
+            git(
+                &main,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    "linked",
+                    linked.to_str().unwrap(),
+                ],
+            );
+            linked
         }
-        let output = kendex(&home, &project, &args);
-        let text = said(&output);
-        assert_eq!(output.status.code(), Some(0), "{text}");
-        let owner = if consent { NEW } else { OLD };
-        assert_eq!(
-            fs::read_to_string(project.join(".github/copilot-instructions.md")).unwrap(),
-            owner,
+        Arrival::Declined | Arrival::Consented | Arrival::Refused => main.clone(),
+    };
+    if let Arrival::Refused = arrival {
+        fs::write(project.parent().unwrap().join(format!("refuse-{NEW}")), "").unwrap();
+    }
+    let rendered_before = renders(&project, NEW);
+    let mut args = vec![
+        "add",
+        "--yes",
+        "--throwaway",
+        "--commit",
+        "catalog",
+        "--skill",
+        "requirer",
+    ];
+    let consent = !matches!(arrival, Arrival::Declined);
+    if consent {
+        args.push("--allow-repo-effects");
+    }
+    let output = kendex(&home, &project, &args);
+    let text = said(&output);
+    let moved = matches!(arrival, Arrival::Consented | Arrival::ConsentedLinked);
+    assert_eq!(
+        output.status.code(),
+        Some(if let Arrival::Refused = arrival { 1 } else { 0 }),
+        "{arrival:?}\n{text}"
+    );
+    let owner = if moved { NEW } else { OLD };
+    assert_eq!(
+        fs::read_to_string(project.join(".github/copilot-instructions.md")).unwrap(),
+        owner,
+        "{arrival:?}\n{text}"
+    );
+    assert_eq!(armed(&project, NEW), moved, "{arrival:?}\n{text}");
+    assert_eq!(
+        armed(&project, OLD),
+        matches!(arrival, Arrival::Declined | Arrival::Refused),
+        "{arrival:?}\n{text}"
+    );
+    assert_eq!(
+        text.contains(PENDING),
+        matches!(arrival, Arrival::Declined | Arrival::Refused),
+        "{arrival:?}\n{text}"
+    );
+    // The package's own summary is in every disclosure block, so it counts
+    // the blocks the add printed: one, before the setup or the decline.
+    assert_eq!(
+        text.matches(&format!("fixture {NEW} effect")).count(),
+        1,
+        "{arrival:?}\n{text}"
+    );
+    // One setup, then the action's own render through the owner it leaves;
+    // a refused setup leaves the render to the old owner.
+    let writes = match arrival {
+        Arrival::Declined => 0,
+        Arrival::Consented | Arrival::ConsentedLinked => 2,
+        Arrival::Refused => 1,
+    };
+    assert_eq!(
+        renders(&project, NEW) - rendered_before,
+        writes,
+        "{arrival:?}\n{text}"
+    );
+    let committed = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(
+        committed.lines().any(|line| line == "kendex.toml"),
+        "{arrival:?}\n{committed}\n{text}"
+    );
+    assert_eq!(
+        committed
+            .lines()
+            .any(|line| line == format!("{NEW}.effect")),
+        moved,
+        "{arrival:?}\n{committed}\n{text}"
+    );
+    if let Arrival::Refused = arrival {
+        assert!(text.contains("fixture refusal"), "{text}");
+        // The closing ledger line is the add's result for its scope.
+        let ledger = format!("{}: added ", project.display());
+        assert!(text.lines().any(|line| line.starts_with(&ledger)), "{text}");
+        assert!(
+            kendex_core::settings::load(&kendex_core::env::Env::host_rooted(&home))
+                .unwrap()
+                .projects
+                .contains(&project),
             "{text}"
         );
-        assert_eq!(armed(&project, OLD), !consent, "{text}");
-        assert_eq!(armed(&project, NEW), consent, "{text}");
-        assert_eq!(text.contains(PENDING), !consent, "{text}");
-        let committed = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
-        assert_eq!(
-            committed
-                .lines()
-                .any(|line| line == format!("{NEW}.effect")),
-            consent,
-            "{committed}\n{text}"
-        );
-        if consent {
-            continue;
-        }
-
-        fs::write(project.join(".github/copilot-instructions.md"), "drift").unwrap();
-        let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
-        assert_eq!(verified.status.code(), Some(1), "{}", said(&verified));
-
-        let refreshed = kendex(
-            &home,
-            &project,
-            &["refresh", "--yes", "--scope", "project", "--leave"],
-        );
-        let text = said(&refreshed);
-        assert!(refreshed.status.success(), "{text}");
-        assert!(text.contains(PENDING), "{text}");
-        assert!(!armed(&project, NEW), "{text}");
     }
+    if !matches!(arrival, Arrival::Declined) {
+        return;
+    }
+
+    fs::write(project.join(".github/copilot-instructions.md"), "drift").unwrap();
+    let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+    assert_eq!(verified.status.code(), Some(1), "{}", said(&verified));
+
+    let refreshed = kendex(
+        &home,
+        &project,
+        &["refresh", "--yes", "--scope", "project", "--leave"],
+    );
+    let text = said(&refreshed);
+    assert!(refreshed.status.success(), "{text}");
+    assert!(text.contains(PENDING), "{text}");
+    assert!(!armed(&project, NEW), "{text}");
 }

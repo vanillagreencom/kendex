@@ -169,6 +169,85 @@ pub fn disclose_and_finish(
     walked
 }
 
+/// The configuration setups an `add --allow-repo-effects` took between its
+/// write and its render.
+///
+/// The flag already says yes to every effect the add brings, and the
+/// configuration owner's setup decides which package renders the review
+/// files. Taken before the render, that render runs through the owner the
+/// setup leaves and the add's own commit offer carries its files, whatever
+/// the previous owner's state; taken after the offer, those files would
+/// land uncommitted. Each consent is spent once: the add's walkthrough
+/// leaves out what this step took.
+#[derive(Default)]
+pub struct SetUpFirst {
+    /// Every configuration package among the add's effects.
+    taken: Vec<String>,
+    /// The setup that failed, held so the add still closes with its ledger
+    /// and its registration before it reports the failure.
+    failed: Option<Box<dyn std::error::Error>>,
+}
+
+impl SetUpFirst {
+    /// Whether a setup ran in this action, so the commit offer runs none
+    /// again.
+    pub fn ran(&self) -> bool {
+        !self.taken.is_empty()
+    }
+
+    /// The effects left for the add's own walkthrough.
+    pub fn remaining(&self, effects: &[DeclaredEffects]) -> Vec<DeclaredEffects> {
+        effects
+            .iter()
+            .filter(|effect| !self.taken.contains(&effect.name))
+            .cloned()
+            .collect()
+    }
+
+    /// The held failure, for a caller that reports it itself.
+    pub fn into_failed(self) -> Option<Box<dyn std::error::Error>> {
+        self.failed
+    }
+}
+
+/// Take the configuration setups of an add run with `--allow-repo-effects`,
+/// predecessor first: [`kendex_core::bot_instructions::configuration_setups`].
+/// Every other verb, and an add without the flag, takes none here.
+pub fn set_up_first(env: &Env, report: &EngineReport) -> SetUpFirst {
+    if !super::commit_offer::adding_with_repo_effects() {
+        return SetUpFirst::default();
+    }
+    let setups: Vec<DeclaredEffects> =
+        kendex_core::bot_instructions::configuration_setups(&report.repo_effects)
+            .into_iter()
+            .cloned()
+            .collect();
+    if setups.is_empty() {
+        return SetUpFirst::default();
+    }
+    let scope = &report.plan.scope;
+    let walked = disclose(env, scope, &setups)
+        .and_then(|shown_to_them| walkthrough(env, scope, &shown_to_them, true));
+    SetUpFirst {
+        taken: setups.into_iter().map(|effect| effect.name).collect(),
+        failed: walked.err(),
+    }
+}
+
+/// An add's effects outcome: the walkthrough's, then a setup [`set_up_first`]
+/// held. The walkthrough ran later and its error carries a cancel's exit
+/// code, so it is the one returned; the held failure is said beside it.
+pub fn after_first(walked: CliResult, failed: Option<Box<dyn std::error::Error>>) -> CliResult {
+    match (walked, failed) {
+        (walked, None) => walked,
+        (Ok(()), Some(failed)) => Err(failed),
+        (Err(error), Some(failed)) => {
+            fail_refusal("warning: ", failed.as_ref());
+            Err(error)
+        }
+    }
+}
+
 pub fn walkthrough(
     env: &Env,
     scope: &Scope,

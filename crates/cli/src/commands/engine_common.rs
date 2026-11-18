@@ -255,12 +255,23 @@ pub fn confirm_and_apply(
     report: &EngineReport,
     yes: bool,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    let (applied, first) = confirm_and_apply_first(env, report, yes)?;
+    first.into_failed().map_or(Ok(applied), Err)
+}
+
+/// [`confirm_and_apply`] for `add`, which closes on its ledger before it
+/// reports a setup it took first: [`super::repo_effects::SetUpFirst`].
+pub(super) fn confirm_and_apply_first(
+    env: &Env,
+    report: &EngineReport,
+    yes: bool,
+) -> Result<(usize, super::repo_effects::SetUpFirst), Box<dyn std::error::Error>> {
     if !report.plan.is_empty()
         && confirm_writing(report.plan.ops.len(), yes)? == Confirmation::Declined
     {
         return Err("cancelled — these changes were not written".into());
     }
-    apply_report(env, report)
+    apply_report_first(env, report)
 }
 
 /// The question asked before `changes` writes, counting exactly them.
@@ -292,14 +303,32 @@ pub(super) fn confirm_writing(
 /// an earlier run left uncommitted, and `run again with --commit` has to
 /// mean something. The empty plan itself writes nothing.
 pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn std::error::Error>> {
+    let (applied, first) = apply_report_first(env, report)?;
+    first.into_failed().map_or(Ok(applied), Err)
+}
+
+/// [`apply_report`], handing back the setup an add took first rather than
+/// failing on it.
+pub(super) fn apply_report_first(
+    env: &Env,
+    report: &EngineReport,
+) -> Result<(usize, super::repo_effects::SetUpFirst), Box<dyn std::error::Error>> {
     let wrote = apply_report_accounted(env, report, None)?;
-    wrote.after.map_err(AfterFailed::into_error)?;
-    Ok(wrote.applied)
+    if let Err(after) = wrote.after {
+        if let Some(failed) = wrote.first.into_failed() {
+            super::fail_refusal("warning: ", failed.as_ref());
+        }
+        return Err(after.into_error());
+    }
+    Ok((wrote.applied, wrote.first))
 }
 
 /// What [`apply_report`] wrote, apart from what failed after it.
 pub(super) struct Wrote {
     pub applied: usize,
+    /// The configuration setup an add took between the write and the
+    /// render.
+    pub first: super::repo_effects::SetUpFirst,
     /// The steps after the write: the configuration render and the commit
     /// offer. Their failure leaves the write on disk.
     pub after: Result<(), AfterFailed>,
@@ -344,14 +373,23 @@ pub(super) fn apply_report_accounted(
         None => before_writing(report),
     };
     let applied = write_report(env, report)?;
+    let first = super::repo_effects::set_up_first(env, report);
     let after = match rendered(env, report) {
-        Ok(generated) => {
-            super::commit_offer::after_writing(env, &report.plan.scope, &generated, &before)
-                .map_err(AfterFailed::Offer)
-        }
+        Ok(generated) => super::commit_offer::after_writing(
+            env,
+            &report.plan.scope,
+            &generated,
+            &before,
+            first.ran(),
+        )
+        .map_err(AfterFailed::Offer),
         Err(error) => Err(AfterFailed::Render { error, before }),
     };
-    Ok(Wrote { applied, after })
+    Ok(Wrote {
+        applied,
+        first,
+        after,
+    })
 }
 
 /// Render the configuration a plan's packages own after its write, and
@@ -364,13 +402,7 @@ fn rendered(
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
-        let setup_pending = super::commit_offer::adding_with_repo_effects()
-            && report.repo_effects.iter().any(|effect| {
-                effect.name == skipped.declared.name && effect.root == skipped.declared.root
-            });
-        if !setup_pending {
-            ui::report::notice(&skipped.line());
-        }
+        ui::report::notice(&skipped.line());
         if super::repo_effects::set_up_beside_main(env, &report.plan.scope, skipped)? {
             kendex_core::bot_instructions::add_to_generated(
                 env,
@@ -380,30 +412,7 @@ fn rendered(
         }
     }
     if let Some(pending) = bot_instructions.pending() {
-        // `add --allow-repo-effects` already says yes to this arrival's
-        // setup after the offer. Taken here instead, the setup's render
-        // joins this action's offer rather than a later one.
-        let setup_pending = super::commit_offer::adding_with_repo_effects()
-            && report.repo_effects.iter().any(|effect| {
-                effect.name == pending.successor.name && effect.root == pending.successor.root
-            });
-        if setup_pending {
-            let shown = super::repo_effects::disclose(
-                env,
-                &report.plan.scope,
-                std::slice::from_ref(&pending.successor),
-            )?;
-            if let [disclosure] = shown.as_slice() {
-                super::repo_effects::apply(env, &report.plan.scope, &disclosure.declared)?;
-                kendex_core::bot_instructions::add_to_generated(
-                    env,
-                    &report.plan.scope,
-                    &mut generated,
-                )?;
-            }
-        } else {
-            ui::report::notice(&pending.line());
-        }
+        ui::report::notice(&pending.line());
     }
     bot_instructions.add_to(&mut generated);
     Ok(generated)

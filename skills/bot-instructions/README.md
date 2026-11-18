@@ -2,7 +2,7 @@
 
 Review instructions for GitHub review bots. Repository owners use one configuration file to set the rules each bot reads.
 
-When github-repository-settings declares repository effects, core selects that package as the review-file owner. This package stays installed as its temporary renderer and retains its declaration for transfer and recovery.
+When github-repository-settings declares repository effects, core selects that package as the review-file owner, except where it was installed only as another package's dependency and is set up neither in this checkout nor in its main checkout: this package then keeps the files until that setup. This package stays installed as its temporary renderer and retains its declaration for transfer and recovery.
 
 ## Features
 
