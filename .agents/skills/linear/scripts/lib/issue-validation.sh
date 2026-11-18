@@ -604,18 +604,12 @@ done_when_parse() {
 
 # GraphQL's IssueCreateInput and IssueUpdateInput take a TimelessDate (YYYY-MM-DD).
 # https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts
-# Empty output preserves an independent date. JSON null clears a checklist's date.
+# Only a dated open check owns a due date. Empty output means no such check.
 done_when_due_date() {
-    local parsed due_date
+    local parsed
     parsed=$(done_when_parse "$1" '[]') || return 1
-    due_date=$(jq -c 'select(any(.boxes[]; .post_merge)) | [.errors[].box] as $invalid
+    jq -c '[.errors[].box] as $invalid
         | [.boxes[] | select(.post_merge and (.checked | not) and .retired == null)
             | .number as $number | select(($invalid | index($number)) == null) | .deadline_end | values]
-        | min | if . == null then null else todateiso8601 | split("T")[0] end' <<<"$parsed") || return 1
-    if [[ -n $due_date ]]; then
-        printf '%s\n' "$due_date"
-    elif [[ -n ${2-} ]]; then
-        parsed=$(done_when_parse "$2" '[]') || return 1
-        jq -c 'select(any(.boxes[]; .post_merge)) | null' <<<"$parsed"
-    fi
+        | min | select(. != null) | todateiso8601 | split("T")[0]' <<<"$parsed"
 }

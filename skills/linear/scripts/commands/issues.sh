@@ -1730,7 +1730,7 @@ create_issue() {
         escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
         due_date=$(done_when_due_date "$description") || return 1
-        [[ -z "$due_date" || "$due_date" == null ]] || input_parts+=("\"dueDate\": $due_date")
+        [ -z "$due_date" ] || input_parts+=("\"dueDate\": $due_date")
     fi
     if [ -n "$priority" ]; then
         linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
@@ -2433,7 +2433,13 @@ write_issue_update() {
         local escaped_desc
         escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
-        due_date=$(done_when_due_date "$description" "$stored_description") || return 1
+        due_date=$(done_when_due_date "$description") || return 1
+        if [[ -z "$due_date" && -n "$stored_description" ]]; then
+            local previous_due_date
+            previous_due_date=$(done_when_due_date "$stored_description") || return 1
+            # Clear only a date previously supplied by an open check.
+            [ -z "$previous_due_date" ] || due_date=null
+        fi
     elif [[ "$completing" == true ]]; then
         due_date=$(done_when_due_date "$stored_description") || return 1
     fi
