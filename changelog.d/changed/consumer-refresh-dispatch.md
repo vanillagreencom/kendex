@@ -1,3 +1,3 @@
-- Automatic package updates reach only consumers that install a changed package when their lock can be read. After adopting the updated refresh caller, consumers use one runner job when no refresh is waiting on its environment gate.
+- Automatic package updates skip a consumer when its lock records rule out every changed package. Shared inputs and unreadable evidence keep delivery. A full Refresh kendex run from this release adopts the updated caller. A dispatch with a clear gate can then use one runner job.
 
-  You do: nothing (migrated on apply)
+  You do: nothing

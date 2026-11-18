@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Surface: kendex's main-push dispatch workflow and its executed sender.
 # Inputs: .github/workflows/consumer-dispatch.yml, refresh/dispatch-consumers.py,
-# refresh/kendex-refresh.yml.
+# refresh/kendex-refresh.yml, skills/harness-ci/tests/lib/gh-eval.py.
 set -euo pipefail
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$TEST_DIR/../../.."
@@ -23,10 +23,11 @@ import zipfile
 
 root = pathlib.Path(sys.argv[1])
 workflow = (root / ".github/workflows/consumer-dispatch.yml").read_text()
+gh_eval = str(root / "skills/harness-ci/tests/lib/gh-eval.py")
 caller = ".github/workflows/kendex-refresh.yml"
 shipped = (root / "refresh/kendex-refresh.yml").read_bytes()
 
-# The native controls are declarations. The hosted run proves elapsed timing.
+# The hosted run proves elapsed timing.
 trigger = re.search(r"^on:\n((?: +[^\n]+\n)+)", workflow, re.M)[1]
 assert trigger.splitlines() == [
     "  push:", "    branches: [main]", "    paths:",
@@ -35,10 +36,12 @@ assert trigger.splitlines() == [
     "      - 'kendex.toml'",
 ]
 assert not re.search(r"^concurrency:", workflow, re.M)
-jobs = dict(re.findall(r"(?m)^  (\w+):\n((?: {4}[^\n]*\n|\n)+)", workflow.split("jobs:\n", 1)[1]))
+def workflow_jobs(text):
+    return dict(re.findall(r"(?m)^  (\w+):\n((?: {4}[^\n]*\n|\n)+)", text.split("jobs:\n", 1)[1]))
+
+jobs = workflow_jobs(workflow)
 assert re.search(r"^    environment: consumer-dispatch-wait$", jobs["wait"], re.M)
 assert "needs: priority" in jobs["wait"]
-assert "(needs.priority.result != 'success' || needs.priority.outputs.urgent != 'true')" in jobs["wait"]
 assert not re.search(r"^    (concurrency|env):|secrets\.", jobs["wait"], re.M)
 priority_job = jobs["priority"]
 assert "environment: kendex" in priority_job
@@ -47,7 +50,6 @@ assert "KENDEX_DISPATCH_LINEAR_READ_KEY: ${{ secrets.KENDEX_DISPATCH_LINEAR_READ
 assert "run: python3 refresh/dispatch-consumers.py --priority" in priority_job
 send_job = jobs["send"]
 assert "needs: [priority, wait]" in send_job and "environment: kendex" in send_job
-assert "needs.wait.result == 'success' || (needs.priority.result == 'success' && needs.priority.outputs.urgent == 'true')" in send_job
 assert re.search(r"^    concurrency:\n(?:      #[^\n]+\n)*      group: \S+\n"
                  r"      queue: max\n      cancel-in-progress: false$", send_job, re.M)
 
@@ -67,9 +69,46 @@ assert re.search(r"^        uses: actions/upload-artifact@[0-9a-f]{40}\b", uploa
 assert "name: ${{ env.DISPATCH_RECEIPT_NAME }}" in upload
 assert "path: ${{ " + receipt_output + " }}" in upload
 
+def check_routes(text):
+    parsed = workflow_jobs(text)
+    requests = []
+    for name, dependencies in (("wait", "priority"), ("send", "priority,wait")):
+        clause = re.search(r"^    if: \$\{\{ (.+) \}\}$", parsed[name], re.M)[1]
+        requests.append(f"{name}\t{dependencies}\t{clause}\n")
+    flag = re.search(r"^          DISPATCH_URGENT: \$\{\{ (.+) \}\}$", parsed["send"], re.M)[1]
+    for priority, urgent, wait, wanted_jobs, wanted_flag in (
+        ("success", "true", "skipped", ["send"], True),
+        ("success", "false", "skipped", ["wait"], False),
+        ("success", "false", "success", ["wait", "send"], False),
+        ("failure", "", "success", ["wait", "send"], False),
+        ("failure", "true", "skipped", ["wait"], False),
+        ("success", "false", "failure", ["wait"], False),
+    ):
+        context = json.dumps(dict(github=dict(repository="vanillagreencom/kendex"),
+                                  needs=dict(priority=dict(result=priority, outputs=dict(urgent=urgent)),
+                                             wait=dict(result=wait))))
+        def evaluate(*args, **kwargs):
+            return subprocess.run([sys.executable, gh_eval, *args], text=True, capture_output=True,
+                                  timeout=10, check=True, **kwargs).stdout
+        assert evaluate("jobs", context, input="".join(requests)).splitlines() == wanted_jobs, "wrong job route"
+        assert json.loads(evaluate("value", context, flag)) is wanted_flag, "wrong urgent flag"
+
+check_routes(workflow)
+for old, new, verdict in (
+    ("!cancelled() && (needs.wait.result", "success() && (needs.wait.result", "wrong job route"),
+    ("DISPATCH_URGENT: ${{ needs.priority.result == 'success' && ", "DISPATCH_URGENT: ${{ ", "wrong urgent flag"),
+):
+    assert workflow.count(old) == 1
+    try:
+        check_routes(workflow.replace(old, new))
+    except AssertionError as error:
+        assert error.args == (verdict,)
+    else:
+        raise AssertionError("must-fail control accepted a changed dispatch job route")
+
 source = "repos/vanillagreencom/kendex"
 repo_id = 42
-a, b, c, d, e = [char * 40 for char in "abcde"]
+a, b, c, d, e, f = [char * 40 for char in "abcdef"]
 
 def repository(name, identifier, **fields):
     return dict(id=identifier, full_name="vanillagreencom/" + name, default_branch="trunk",
@@ -78,13 +117,15 @@ def repository(name, identifier, **fields):
 repos = [
     repository("kendex", repo_id), repository("private-first", 43),
     repository("private-absent", 44), repository("private-disabled", 45, fork=True),
-    repository("private-last", 46, fork=True),
+    repository("public-last", 46, fork=True, private=False),
 ]
 
 def run(trigger, main, *, script=sender, previous=None, receipt_failure=None, inventory="full",
-        denied=False, post_failure=None, files=None, locks=None, urgent=False, expected_lines=(), gates=None):
+        denied=False, post_failure=None, files=None, locks=None, urgent=False, expected_lines=(), gates=None,
+        compares=None, trees=None, catalog_files=None):
     log = []
     gates = gates or {}
+    ranges = list(compares if compares is not None else [(trigger, main, "ahead" if trigger < main else "behind")])
     run_id = 101 if previous is None else 102
     conf = dict(
         GITHUB_REPOSITORY=source.removeprefix("repos/"), GITHUB_REPOSITORY_ID=str(repo_id),
@@ -135,9 +176,17 @@ def run(trigger, main, *, script=sender, previous=None, receipt_failure=None, in
             return answer({"object": {"sha": main}})
         if endpoint.startswith(source + "/compare/"):
             old, new = endpoint.rsplit("/", 1)[1].split("...")
+            assert ranges, "unexpected comparison"
+            requested_old, requested_new, status, *with_files = ranges.pop(0)
+            assert (old, new) == (requested_old, requested_new), "wrong comparison range"
             if receipt_failure == "comparison":
                 return answer({"status": None})
-            return answer({"status": "ahead" if old < new else "behind", "files": files})
+            return answer(dict(status=status, **({"files": files} if with_files else {})))
+        if endpoint.startswith(source + "/contents/"):
+            assert args[4:-1] == ["--header", "Accept: application/vnd.github.raw+json"]
+            key = endpoint.removeprefix(source + "/contents/")
+            data = (catalog_files or {}).get(key)
+            return answer(data) if data is not None else answer(code=1)
 
         if endpoint == "installation/repositories":
             first_page = page({"total_count": len(repos), "repositories": repos[:3]})
@@ -165,10 +214,18 @@ def run(trigger, main, *, script=sender, previous=None, receipt_failure=None, in
             if repo == "private-first" and denied:
                 return answer(code=1, stderr=b"gh: private-api-error (HTTP 404)\n")
             return answer(shipped)
-        if tail == "contents/.kendex-lock.json?ref=trunk":
+        if tail == "git/ref/heads/trunk":
+            return answer(dict(object=dict(sha=f)))
+        if tail.startswith("contents/"):
             assert args[4:-1] == ["--header", "Accept: application/vnd.github.raw+json"]
-            lock = (locks or {}).get(repo)
+            path, ref = tail.removeprefix("contents/").split("?ref=")
+            assert ref == f
+            lock = (locks or {}).get(repo if path == ".kendex-lock.json" else (repo, path))
             return answer(lock) if lock is not None else answer(code=1, stderr=b"private-api-error")
+        if tail == f"git/trees/{f}?recursive=1":
+            default = dict(truncated=False, tree=[dict(path=".kendex-lock.json")])
+            tree = (trees or {}).get(repo, default)
+            return answer(tree) if tree is not None else answer(code=1, stderr=b"private-api-error")
         if tail == "actions/workflows/kendex-refresh.yml/runs?status=waiting&per_page=1":
             case = gates.get(repo, "clear")
             if case == "unreadable":
@@ -207,19 +264,22 @@ def run(trigger, main, *, script=sender, previous=None, receipt_failure=None, in
         assert "private-" not in printed.getvalue()
 
     posts = [endpoint.split("/")[2] for endpoint in log if endpoint.endswith("/dispatches")]
+    if compares is not None:
+        assert not ranges, "missing comparison"
     lines = printed.getvalue().splitlines()
     for line in expected_lines:
-        assert any(row.split(" gate-clear=")[0] == "consumer-dispatch: " + line for row in lines), lines
+        assert any(row.split(" gate-clear=")[0] == "consumer-dispatch: " + line for row in lines), "wrong consumer log"
     summary = dict(re.findall(r"(\w+)=(\S+)", lines[-1]))
     return result, posts, receipt, log, summary
 
-both = ["private-first", "private-last"]
+both = ["private-first", "public-last"]
+private, public = "43", "vanillagreencom/public-last"
 result, posts, receipt, log, summary = run(a, b)
 assert result == 0 and posts == both
 assert receipt == dict(attempted=b, trigger=a, run=101, attempt=1)
 assert summary == dict(installation="5", eligible="2", attempted="2", accepted="2", failures="none")
 snapshot = log.index(source + "/git/ref/heads/main")
-assert log.index(f"repos/vanillagreencom/private-last/contents/{caller}?ref=trunk") < snapshot
+assert log.index(f"repos/vanillagreencom/public-last/contents/{caller}?ref=trunk") < snapshot
 assert snapshot < log.index("repos/vanillagreencom/private-first/dispatches")
 
 # The sender attempted all callers at C even though the first POST failed.
@@ -230,16 +290,19 @@ assert partial == dict(attempted=c, trigger=a, run=101, attempt=1)
 assert summary == dict(installation="5", eligible="2", attempted="2", accepted="1", failures="post-command-failed:1")
 
 def assert_covered(script):
-    result, posts, receipt_output, log, _ = run(b, d, previous=partial, script=script)
+    result, posts, receipt_output, log, _ = run(b, d, previous=partial, script=script,
+                                                compares=[(b, c, "ahead")])
     assert (result, posts, receipt_output) == (0, [], None), "covered push dispatched again"
     assert f"{source}/compare/{b}...{c}" in log
     assert "installation/repositories" not in log
 
 assert_covered(sender)
 # D matures on its own timer. A still later E can be included in that batch.
-result, posts, newer, _, _ = run(d, e, previous=partial)
+normal_compares = [(d, c, "behind"), (d, e, "ahead"), (c, e, "ahead", "files")]
+result, posts, newer, _, _ = run(d, e, previous=partial, compares=normal_compares)
 assert result == 0 and posts == both and newer["attempted"] == e
-result, posts, urgent_receipt, _, _ = run(d, e, previous=partial, urgent=True)
+result, posts, urgent_receipt, _, _ = run(d, e, previous=partial, urgent=True,
+    compares=[(d, c, "behind"), (d, e, "ahead"), (c, d, "ahead", "files")])
 assert result == 0 and posts == both and urgent_receipt["attempted"] == d
 result, posts, _, _, _ = run(a, b, gates={both[0]: "waiting", both[1]: "unreadable"})
 assert result == 0 and posts == both
@@ -253,32 +316,71 @@ last = dict(version=11, entries={"alias": entry("skill", "review-gate", "vanilla
                                  "hook": entry("hook", "cloud-git-hooks")})
 renamed = [dict(status="renamed", filename="skills/new/references/deep.md",
                 previous_filename="skills/review-gate/references/deep.md")]
-for files, locks, expected, reasons in [
+def row(path, status="modified"):
+    return dict(status=status, filename=path)
+
+def lock_for(kind, name, provenance="vanillagreencom/kendex"):
+    return dict(version=11, entries={"item": entry(kind, name, provenance)})
+
+render = ".agents/skills/jarvis/references/finance.md"
+source_files = {f".kendex-generated.json?ref={ref}": [render] for ref in (c, e)}
+source_files[f"pi-extensions/pi-hooks/package.json?ref={c}"] = dict(name="@vanillagreen/pi-hooks")
+source_files[f"pi-extensions/pi-hooks-next/package.json?ref={e}"] = dict(name="@vanillagreen/pi-hooks-next")
+nested_path = "nested/.kendex-lock.json"
+nested_lock = dict(truncated=False, tree=[dict(path=nested_path, type="blob", mode="100644")])
+pi_renamed = [dict(status="renamed", filename="pi-extensions/pi-hooks-next/index.ts",
+                   previous_filename="pi-extensions/pi-hooks/index.ts")]
+
+selection_rows = [
     (renamed, dict(zip(both, [first, last])), both[:1],
-     ["43 outcome=sent reason=installed-package-changed", "46 outcome=skipped reason=no-installed-package-changed"]),
+     [f"{private} outcome=sent reason=installed-package-changed", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
     (renamed, {both[0]: first}, both,
-     ["46 outcome=sent reason=lock-command-failed"]),
+     [f"{public} outcome=sent reason=lock-command-failed"], {}),
     (renamed, {both[0]: first, both[1]: dict(version=12, entries=first["entries"])}, both,
-     ["46 outcome=sent reason=lock-malformed-response"]),
-    ([dict(status="modified", filename="kendex.toml")], {}, both,
-     ["43 outcome=sent reason=shared-input", "46 outcome=sent reason=shared-input"]),
-    ([dict(status="modified", filename="skills/review-gate/" + str(i)) for i in range(300)], {}, both,
-     ["43 outcome=sent reason=comparison-incomplete"]),
-    ([dict(status="modified", filename="hooks/cloud-git-hooks.sh")], dict(zip(both, [first, last])), both[1:],
-     ["43 outcome=skipped reason=no-installed-package-changed", "46 outcome=sent reason=installed-package-changed"]),
-]:
-    result, posts, record, log, _ = run(d, e, previous=partial, files=files, locks=locks,
-                                         expected_lines=["consumer=" + line for line in reasons])
+     [f"{public} outcome=sent reason=lock-malformed-response"], {}),
+    ([row("kendex.toml")], {}, both,
+     [f"{private} outcome=sent reason=shared-input", f"{public} outcome=sent reason=shared-input"], {}),
+    ([row("docs/unmapped.md")], {}, both, [f"{private} outcome=sent reason=shared-input"], {}),
+    ([row("skills/review-gate/" + str(i)) for i in range(300)], {}, both,
+     [f"{private} outcome=sent reason=comparison-incomplete"], {}),
+    ([row("hooks/cloud-git-hooks.sh")], dict(zip(both, [first, last])), both[1:],
+     [f"{private} outcome=skipped reason=no-installed-package-changed", f"{public} outcome=sent reason=installed-package-changed"], {}),
+    ([row("skills/jarvis/references/finance.md"), row(render), row(".kendex-lock.json")],
+     {both[0]: lock_for("skill", "jarvis"), both[1]: last}, both[:1],
+     [f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
+    (renamed, {both[0]: first, both[1]: last, (both[1], nested_path): first}, both,
+     [f"{public} outcome=sent reason=installed-package-changed"], {both[1]: nested_lock}),
+    (renamed, {both[0]: first, both[1]: last}, both,
+     [f"{public} outcome=sent reason=lock-tree-incomplete"], {both[1]: dict(tree=[], truncated=True)}),
+    (renamed, {both[0]: first, both[1]: last}, both,
+     [f"{public} outcome=sent reason=lock-command-failed"], {both[1]: nested_lock}),
+    (renamed, {both[0]: lock_for("skill", "review-gate", "git@github.com:VanillaGreenCom/kendex.git"), both[1]: last}, both[:1],
+     [f"{private} outcome=sent reason=lock-source-unrecognized", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
+    (pi_renamed, {both[0]: lock_for("pi-extension", "@vanillagreen/pi-hooks"), both[1]: last}, both[:1],
+     [f"{private} outcome=sent reason=installed-package-changed", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
+    ([row("pi-extensions/unreadable/index.ts", "removed")], {}, both,
+     [f"{private} outcome=sent reason=comparison-command-failed", f"{public} outcome=sent reason=comparison-command-failed"], {}),
+]
+
+def assert_selection(script, case):
+    files, locks, expected, reasons, trees = case
+    result, posts, record, log, _ = run(d, e, script=script, previous=partial, files=files, locks=locks,
+        expected_lines=["consumer=" + line for line in reasons], compares=normal_compares,
+        catalog_files=source_files, trees=trees)
     assert (result, posts, record["attempted"]) == (0, expected, e)
     if locks:
-        assert all(f"repos/vanillagreencom/{name}/contents/.kendex-lock.json?ref=trunk" in log for name in both)
+        assert all(f"repos/vanillagreencom/{name}/contents/.kendex-lock.json?ref={f}" in log for name in both)
+
+for case in selection_rows:
+    assert_selection(sender, case)
 
 # Unreadable evidence supplies no coverage decision, so even the inventory waits.
 for flags in [
-    {"previous": dict(partial, attempt=2)},
-    {"receipt_failure": "listing"},
-    {"receipt_failure": "incomplete"},
-    {"previous": partial, "receipt_failure": "comparison"},
+    {"previous": dict(partial, attempt=2), "compares": []},
+    {"previous": dict(partial, attempted=None), "compares": []},
+    {"receipt_failure": "listing", "compares": []},
+    {"receipt_failure": "incomplete", "compares": []},
+    {"previous": partial, "receipt_failure": "comparison", "compares": [(b, c, "ahead")]},
 ]:
     result, posts, receipt_output, log, summary = run(b, d, **flags)
     assert (result, posts, receipt_output) == (1, [], None), flags
@@ -291,7 +393,7 @@ assert (result, posts, receipt_output) == (1, [], None)
 assert summary["failures"] == "main-trigger-missing:1"
 
 for flags, expected_posts, accepted, installed, failure in [
-    ({"denied": True}, ["private-last"], 1, 5, "caller-command-failed"),
+    ({"denied": True}, ["public-last"], 1, 5, "caller-command-failed"),
     ({"inventory": "timeout"}, ["private-first"], 1, 3, "inventory-timeout"),
     ({"inventory": "interrupted"}, ["private-first"], 1, 3, "inventory-command-failed"),
     ({"inventory": "missing-page"}, ["private-first"], 1, 3, "inventory-incomplete"),
@@ -307,25 +409,33 @@ result, posts, receipt_output, _, summary = run(a, b, inventory="source-only")
 assert (result, posts, receipt_output) == (1, [], None)
 assert summary == dict(installation="1", eligible="0", attempted="0", accepted="0", failures="no-eligible-callers:1")
 
-# The fixture must catch a sender that ignores a valid attempt receipt.
-needle = "if previous is not None and includes(trigger, previous):"
 body = sender.read_text()
-assert body.count(needle) == 1
 with tempfile.TemporaryDirectory() as owner:
     mutant = pathlib.Path(owner) / sender.name
-    mutant.write_text(body.replace(needle, "if False:  # " + needle))
-    try:
-        assert_covered(mutant)
-    except AssertionError as error:
-        assert error.args == ("covered push dispatched again",)
-    else:
-        raise AssertionError("must-fail control skipped the coverage check")
+    for old, new, probe, verdict in (
+        ("previous is not None and includes(trigger, previous)", "False",
+         assert_covered, "wrong comparison range"),
+        ("compare/{previous}...{snapshot}", "compare/{trigger}...{snapshot}",
+         lambda path: assert_selection(path, selection_rows[0]), "wrong comparison range"),
+        ('repo["full_name"] if repo.get("private") is False else str(repo["id"])', 'str(repo["id"])',
+         lambda path: assert_selection(path, selection_rows[0]), "wrong consumer log"),
+    ):
+        assert body.count(old) == 1
+        mutant.write_text(body.replace(old, new))
+        try:
+            probe(mutant)
+        except AssertionError as error:
+            assert error.args == (verdict,), error.args
+        else:
+            raise AssertionError("must-fail control did not catch sender change")
 
-for key, reply, output, reason in [
-    ("fixture", {"data": {"issue": {"priority": 1}}}, "true", "linear-urgent"),
-    ("fixture", {"data": {"issue": {"priority": 2}}}, "false", "linear-not-urgent"),
-    ("fixture", {"errors": [{"message": "private-error"}]}, "false", "linear-response-unreadable"),
-    ("", None, "false", "secret-missing"),
+scoped_subject = "fix(KEN-5294): Follow KEN-5283"
+for key, subject, reply, output, reason in [
+    ("fixture", scoped_subject, {"data": {"issue": {"priority": 1}}}, "true", "linear-urgent"),
+    ("fixture", "Refresh KEN-5294", {"data": {"issue": {"priority": 2}}}, "false", "linear-not-urgent"),
+    ("fixture", scoped_subject, {"errors": [{"message": "private-error"}]}, "false", "linear-response-unreadable"),
+    ("fixture", "Refresh KEN-5294 and KEN-5283", None, "false", "subject-issue-ambiguous"),
+    ("", scoped_subject, None, "false", "secret-missing"),
 ]:
     def linear(request, *, timeout):
         assert request.full_url == "https://api.linear.app/graphql" and timeout > 0
@@ -336,7 +446,7 @@ for key, reply, output, reason in [
     with tempfile.TemporaryDirectory() as owner:
         event = pathlib.Path(owner) / "event.json"
         github_output = pathlib.Path(owner) / "output"
-        event.write_text(json.dumps(dict(head_commit=dict(message="fix(KEN-5294): Refresh\n\nKEN-5283"))))
+        event.write_text(json.dumps(dict(head_commit=dict(message=subject + "\n\nKEN-5284"))))
         conf = dict(GITHUB_EVENT_PATH=str(event), GITHUB_OUTPUT=str(github_output), KENDEX_DISPATCH_LINEAR_READ_KEY=key)
         printed = io.StringIO()
         with unittest.mock.patch.dict(os.environ, conf, clear=True), \
@@ -344,8 +454,8 @@ for key, reply, output, reason in [
              unittest.mock.patch.object(urllib.request, "urlopen", side_effect=linear) as request, \
              contextlib.redirect_stdout(printed):
             runpy.run_path(str(sender), run_name="__main__")
-        assert request.call_count == bool(key)
+        assert request.call_count == (reply is not None)
         assert github_output.read_text() == f"urgent={output}\n"
         assert printed.getvalue().strip().endswith(f"reason={reason}") and "private-error" not in printed.getvalue()
-print("pass: 29   fail: 0")
+print(f"pass: {35 + len(selection_rows)}   fail: 0")
 PY

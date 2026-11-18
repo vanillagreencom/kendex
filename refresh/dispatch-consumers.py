@@ -11,6 +11,7 @@ import urllib.request
 import zipfile
 import zlib
 from collections import Counter
+from functools import cache
 
 caller = ".github/workflows/kendex-refresh.yml"
 workflow = ".github/workflows/consumer-dispatch.yml"
@@ -24,7 +25,7 @@ class ApiError(Exception):
 unreadable = (ApiError, KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile)
 
 def gh(endpoint, *options, fleet=False):
-    # This public run prints only aggregate counts and fixed diagnostics.
+    # Private response bodies and credentials stay out of this public log.
     env = dict(os.environ)
     token = env.pop("FLEET_TOKEN")
     if fleet:
@@ -44,6 +45,10 @@ def gh(endpoint, *options, fleet=False):
 
 def get(endpoint, *, fleet=False):
     return json.loads(gh(endpoint, fleet=fleet))
+
+def contents(base, path, ref, *, fleet=False):
+    return gh(f"{base}/contents/{urllib.parse.quote(path)}?ref={urllib.parse.quote(ref, safe='')}",
+              "--header", "Accept: application/vnd.github.raw+json", fleet=fleet)
 
 def pages(endpoint, *, fleet=False):
     # gh's jq filter writes one JSON line per fully read page. A later
@@ -113,9 +118,14 @@ def last_attempt():
     if (producer["id"] != run_id or producer["run_attempt"] != attempt
             or not producer["run_started_at"] <= latest["created_at"]):
         raise ValueError("receipt-attempt")
-    return receipt["attempted"]
+    attempted = receipt["attempted"]
+    if not isinstance(attempted, str):
+        raise ValueError("receipt-attempted")
+    return attempted
 
 def package(path):
+    if not isinstance(path, str):
+        raise ValueError("comparison-path")
     directory, *parts = path.split("/")
     if directory in ("skills", "pi-extensions") and len(parts) >= 2:
         return directory.removesuffix("s"), parts[0]
@@ -128,6 +138,21 @@ def package(path):
 def changed_packages(previous, snapshot):
     if previous is None:
         return None, "no-attempt-receipt"
+
+    @cache
+    def generated(ref):
+        paths = json.loads(contents(source, ".kendex-generated.json", ref))
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise ValueError("generated-inventory")
+        return set(paths)
+
+    @cache
+    def pi_name(directory, ref):
+        name = json.loads(contents(source, f"pi-extensions/{directory}/package.json", ref))["name"]
+        if not isinstance(name, str) or not name:
+            raise ValueError("pi-package-name")
+        return name
+
     try:
         comparison = get(f"{source}/compare/{previous}...{snapshot}")
         files = comparison["files"]
@@ -136,38 +161,83 @@ def changed_packages(previous, snapshot):
             return None, "comparison-incomplete"
         changed = set()
         for row in files:
-            paths = [row["filename"]]
-            if row["status"] == "renamed":
-                paths.append(row["previous_filename"])
-            for path in paths:
+            status, name = row["status"], row["filename"]
+            if status == "renamed":
+                paths = [(row["previous_filename"], previous), (name, snapshot)]
+            elif status == "removed":
+                paths = [(name, previous)]
+            elif status in ("added", "copied"):
+                paths = [(name, snapshot)]
+            elif status in ("modified", "changed"):
+                paths = [(name, previous), (name, snapshot)]
+            else:
+                return None, "comparison-incomplete"
+            for path, ref in paths:
+                if path == "kendex.toml":
+                    return None, "shared-input"
                 key = package(path)
                 if key is None:
+                    # D007's install record and kendex-generated renders
+                    # describe this checkout, not additional catalog inputs.
+                    if path in (".kendex-lock.json", ".kendex-generated.json") or path in generated(ref):
+                        continue
                     return None, "shared-input"
                 changed.add(key)
+                if key[0] == "pi-extension":
+                    changed.add((key[0], pi_name(key[1], ref)))
         return changed, None
     except unreadable as error:
         return None, f"comparison-{failure_code(error)}"
 
+def lock_match(base, path, ref, changed):
+    lock = json.loads(contents(base, path, ref, fleet=True))
+    version = lock["version"]
+    if version not in (11, 12):
+        return "lock-version-unknown"
+    for row in lock["entries"].values():
+        item = lock["installations"][row["installation"]] if version == 12 else row
+        provenance, kind, name = row["sourceRepo"], item["kind"], item["name"]
+        if not all(isinstance(value, str) and value for value in (provenance, kind, name)):
+            return "lock-malformed-response"
+        if (kind, name) in changed:
+            if provenance.casefold() == source.removeprefix("repos/").casefold():
+                return "installed-package-changed"
+            # Only a plain, distinct GitHub owner/repo proves a non-match.
+            # The engine also accepts URL spellings; keep them conservative.
+            if not re.fullmatch(r"[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+", provenance) or provenance.casefold().endswith(".git"):
+                return "lock-source-unrecognized"
+    return None
+
 def refresh_reason(repo, changed, fallback):
     if changed is None:
         return fallback
+    if not changed:
+        return None
+    base = "repos/" + repo["full_name"]
     branch = urllib.parse.quote(repo["default_branch"], safe="")
+    lock_path = ".kendex-lock.json"
     try:
-        raw = gh(f"repos/{repo['full_name']}/contents/.kendex-lock.json?ref={branch}",
-                 "--header", "Accept: application/vnd.github.raw+json", fleet=True)
-        lock = json.loads(raw)
-        if lock["version"] not in (11, 12):
-            return "lock-version-unknown"
-        installed = set()
-        for row in lock["entries"].values():
-            item = lock["installations"][row["installation"]] if lock["version"] == 12 else row
-            provenance, kind, name = row["sourceRepo"], item["kind"], item["name"]
-            if not all(isinstance(value, str) and value for value in (provenance, kind, name)):
-                return "lock-malformed-response"
-            if provenance.casefold() == os.environ["GITHUB_REPOSITORY"].casefold():
-                installed.add((kind, name))
-        return "installed-package-changed" if installed & changed else None
-    except (ApiError, AttributeError, KeyError, TypeError, ValueError, OSError) as error:
+        ref = get(f"{base}/git/ref/heads/{branch}", fleet=True)["object"]["sha"]
+        if not re.fullmatch(r"[0-9a-f]{40}", ref):
+            return "lock-head-unreadable"
+        reason = lock_match(base, lock_path, ref, changed)
+        if reason is not None:
+            return reason
+        # A root non-match alone cannot rule out nested project scopes. Use
+        # one immutable branch snapshot for all lock and Git tree reads.
+        tree = get(f"{base}/git/trees/{ref}?recursive=1", fleet=True)
+        if tree["truncated"] is not False or not isinstance(tree["tree"], list):
+            return "lock-tree-incomplete"
+        for entry in tree["tree"]:
+            path = entry["path"]
+            if path.endswith("/" + lock_path):
+                if entry["type"] != "blob" or entry["mode"] not in ("100644", "100755"):
+                    return "lock-tree-incomplete"
+                reason = lock_match(base, path, ref, changed)
+                if reason is not None:
+                    return reason
+        return None
+    except unreadable + (AttributeError,) as error:
         return f"lock-{failure_code(error)}"
 
 def failure_code(error):
@@ -200,11 +270,7 @@ def receives(repo):
         raise ApiError("duplicate-caller")
     if not matches or matches[0]["state"] != "active":
         return False, failure
-    branch = urllib.parse.quote(repo["default_branch"], safe="")
-    body = gh(
-        f"{base}/contents/{caller}?ref={branch}",
-        "--header", "Accept: application/vnd.github.raw+json", fleet=True,
-    )
+    body = contents(base, caller, repo["default_branch"], fleet=True)
     # Adoption preserves this event declaration from the shipped
     # caller. An unfamiliar caller needs investigation before a
     # receipt can claim the fleet was covered.
@@ -268,7 +334,7 @@ def attempt(targets, failures, previous):
     changed, fallback = changed_packages(previous, snapshot)
     attempted = accepted = 0
     for repo in targets:
-        # The source run is public. Installation IDs identify private targets
+        # The source run is public. Repository IDs identify private targets
         # without disclosing their names.
         label = repo["full_name"] if repo.get("private") is False else str(repo["id"])
         reason = refresh_reason(repo, changed, fallback)
@@ -312,7 +378,9 @@ def read_priority():
     try:
         event = json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
         subject = event["head_commit"]["message"].partition("\n")[0]
-        ids = set(re.findall(r"\bKEN-[0-9]+\b", subject))
+        # A scoped conventional commit can cite other issues in its title.
+        scope = re.match(r"^[a-z]+\((KEN-[0-9]+)\)!?:", subject)
+        ids = {scope[1]} if scope else set(re.findall(r"\bKEN-[0-9]+\b", subject))
         if len(ids) != 1:
             return False, "subject-issue-missing" if not ids else "subject-issue-ambiguous"
         payload = dict(query="query($id: String!) { issue(id: $id) { priority } }",
