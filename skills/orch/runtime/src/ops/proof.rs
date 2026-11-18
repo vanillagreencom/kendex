@@ -255,8 +255,8 @@ fn excused(s: &Stage, runs: &[&Stage]) -> bool {
 
 /// Whether the stage is the tree's own local evidence that did not pass: a
 /// validate row at `tree` that ran its own command (not a reuse, and not a
-/// `ci` row, which ran nothing locally) and is red, lost, stopped,
-/// bound-ended or still open, and not an excused failure.
+/// `ci` row, which ran nothing locally) and is red, lost, stopped or still
+/// open, and not an excused failure.
 fn unpassed_at(tree: &str, s: &Stage, excused_rounds: &[&Stage]) -> bool {
     s.kind == StageKind::Validate
         && s.proof

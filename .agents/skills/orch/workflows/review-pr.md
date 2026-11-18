@@ -213,7 +213,7 @@ External review runs beside the internal panel when the consumer's policy choose
    ```
 
 3. Select an eligible finished thread or spawn each reviewer in `REVIEWERS_TO_LAUNCH` under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse). On Codex, take the spawn parameters for each canonical reviewer name from `.agents/skills/agent-runtime/scripts/agent-runtime subagent spawn --harness codex <reviewer-name>`, and reuse an eligible finished reviewer thread through `followup_task` with the complete delegation below.
-4. When a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that spawned. Continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record it in one write; on Codex, `[OBSERVED_SPAWN_COUNT]` counts assigned reusable threads as well as fresh spawns. A proved continuation records it without resetting `review_wave_done`:
+4. When a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that spawned. Continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record it in one write; on Codex, `[OBSERVED_SPAWN_COUNT]` counts assigned reusable threads as well as fresh spawns. The write keeps `review_wave_done` on every wave:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"wave-start","slots_observed":[OBSERVED_SPAWN_COUNT]}'

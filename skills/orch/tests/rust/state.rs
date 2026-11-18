@@ -536,6 +536,56 @@ fn head_budget_take_spends_once_and_ci_fix_counts_across_new_heads() {
     assert_eq!(key, "record-missing");
 }
 
+#[test]
+fn an_overseer_reset_after_a_cap_ruling_reopens_the_same_head_budget() {
+    let store = Store::new();
+    store.init(ITEM);
+    store.init_fleet();
+    for (kind, setting) in [
+        ("ci-fix", "CI_FIX_MAX_CYCLES"),
+        ("review-wait", "REVIEW_MAX_EXTERNAL_ROUNDS"),
+    ] {
+        let take = || {
+            store.ok_env(
+                &[
+                    "state",
+                    "head-budget",
+                    "take",
+                    "--item",
+                    ITEM,
+                    "--kind",
+                    kind,
+                    "--head",
+                    "same-head",
+                ],
+                &[(setting, "1")],
+            )
+        };
+        assert_eq!(take()["verdict"], "continue");
+        assert_eq!(take()["verdict"], "at-cap");
+        let ruling = store.write_file(
+            "ruling.json",
+            &json!({"kind": "ruling", "item": ITEM, "text": format!("Continue {kind}")})
+                .to_string(),
+        );
+        store.ok(&["state", "log", "append", "--fleet", &ruling]);
+        assert_eq!(take()["verdict"], "at-cap");
+        let reset = store.ok(&[
+            "state",
+            "head-budget",
+            "reset",
+            "--item",
+            ITEM,
+            "--kind",
+            kind,
+        ]);
+        assert_eq!(reset["result"], "reset");
+        let reopened = take();
+        assert_eq!(reopened["verdict"], "continue");
+        assert_eq!(reopened["attempts"], 1);
+    }
+}
+
 /// `record` renders the named stop with its remaining work into the comment
 /// file; `record-if-empty` keeps a precise stop over a generic one and
 /// renders nothing, so the comment is written once; a cleared stop records
@@ -3114,6 +3164,23 @@ fn a_counted_round_adds_one_to_its_own_counter() {
         json!([]),
         "the ledger stands"
     );
+}
+
+#[test]
+fn recording_the_thread_limit_keeps_completed_reviewers_out_of_the_next_wave() {
+    let store = Store::new();
+    store.init(ITEM);
+    store.op_ok(&json!({"op": "record-agents", "step": "wave-start"}));
+    store.op_ok(&json!({"op": "record-agents", "step": "returned", "agent": "rev-a"}));
+    store.op_ok(&json!({"op": "record-agents", "step": "wave-start", "slots_observed": 1}));
+
+    let path = store.item_path(ITEM);
+    let state = store.doc(&path);
+    assert_eq!(state["reviewer_slots_observed"], 1);
+    assert_eq!(state["review_wave_done"], json!(["rev-a"]));
+
+    store.op_ok(&json!({"op": "record-agents", "step": "wave-start"}));
+    assert_eq!(store.doc(&path)["review_wave_done"], json!([]));
 }
 
 /// The reviewer set names each id and runtime type by one of its agents,

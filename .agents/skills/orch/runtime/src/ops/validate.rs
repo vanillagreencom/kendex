@@ -9,8 +9,8 @@
 //! nothing here runs a process.
 //!
 //! The reuse judge over the stages, [`reuse`], is the start's own reading of
-//! the proof rows already on the item: the proof reader's `round` need
-//! (`ops::proof`) for the pass, and the bound-ended run beside it.
+//! the proof rows already on the item through the proof reader's `round`
+//! need (`ops::proof`).
 use agent_runtime::intent::Notice;
 use agent_runtime::record::{self, Document};
 use std::fs;
@@ -490,11 +490,20 @@ fn stop(path: &Path, doc: &mut Document, r: &RecordStop, env: &Env) -> Result<St
     })
 }
 
+/// The writer puts the command's raw log text after the sentinel's fields.
+fn sentinel_parts(line: &str) -> (&str, Option<&str>) {
+    line.split_once(" last-line=")
+        .map_or((line, None), |(fields, log)| (fields, Some(log)))
+}
+
 /// The cause a sentinel line ends with where the run's tree outgrew the
 /// run's own memory bound, the kernel's kill at its unit's cap or its
 /// executor's end of it: `cause=memory-cap limit=<bytes> peak=<bytes>`.
 pub fn memory_cap_cause(line: &str) -> Option<&str> {
-    line.find(" cause=memory-cap ").map(|at| &line[at + 1..])
+    let (fields, _) = sentinel_parts(line);
+    fields
+        .find(" cause=memory-cap ")
+        .map(|at| &fields[at + 1..])
 }
 
 /// The cause a failed run's wait and end notice state from its sentinel:
@@ -504,15 +513,18 @@ pub fn failure_cause(line: &str) -> Option<String> {
     if let Some(cause) = memory_cap_cause(line) {
         return Some(cause.to_owned());
     }
-    if line.trim_end().ends_with(" cause=memory-host") {
+    let (fields, last_line) = sentinel_parts(line);
+    if fields.trim_end().ends_with(" cause=memory-host") {
         return Some("cause=memory-host".to_owned());
     }
-    let tail = &line[line.find(" cause=stalled ")? + 1..];
-    let (head, last_line) = tail.split_once(" last-line=")?;
-    let step = head
+    let stall = &fields[fields.find(" cause=stalled ")? + 1..];
+    let step = stall
         .split(' ')
         .find_map(|word| word.strip_prefix("step="))?;
-    Some(format!("cause=stalled step={step} last-line={last_line}"))
+    Some(format!(
+        "cause=stalled step={step} last-line={}",
+        last_line?
+    ))
 }
 
 /// The word a sentinel line names: the memory cap's cause is a failure
@@ -521,12 +533,13 @@ pub fn failure_cause(line: &str) -> Option<String> {
 /// `guard-exit=0` a pass, any other exit a failure. `None` for a line that
 /// is no sentinel.
 pub fn sentinel_outcome(line: &str) -> Option<StageOutcome> {
-    let exit = line.strip_prefix("guard-exit=")?;
+    let (fields, _) = sentinel_parts(line);
+    let exit = fields.strip_prefix("guard-exit=")?;
     let exit = exit.split(' ').next()?;
     exit.parse::<u32>().ok()?;
     Some(if memory_cap_cause(line).is_some() {
         StageOutcome::Fail
-    } else if line.contains(" verdict=no-verdict") {
+    } else if fields.contains(" verdict=no-verdict") {
         StageOutcome::NoVerdict
     } else if exit == "0" {
         StageOutcome::Pass

@@ -293,11 +293,12 @@ enum Verb {
         #[arg(allow_hyphen_values = true)]
         event: Option<String>,
     },
-    /// The review admission a launched lane asks from its own shell before
-    /// an attached panel or a process-owned reviewer starts: the session and
-    /// transcript its own tool call recorded at its pane, read and judged as
-    /// its turn end judges them. One JSON line `verdict` (`room`, `due` or,
-    /// for a Codex attached launch the reserve alone refuses,
+    /// Review admission reads the session and transcript bound at the lane's
+    /// pane. Outside a lane, it reads a JSON object on stdin with `harness`,
+    /// `session_id` and `transcript_path`. In a lane, run it from the lane's
+    /// own shell before an attached panel or a process-owned reviewer starts.
+    /// It judges the inputs as a turn end does. One JSON line `verdict`
+    /// (`room`, `due` or, for a Codex attached launch the reserve alone refuses,
     /// `alternate-review`), `decision`, `source` at exit 0; a keyed refusal
     /// on stderr at exit 2.
     #[command(group = clap::ArgGroup::new("launch").required(true))]
@@ -515,14 +516,17 @@ enum Verb {
         /// need.
         #[arg(long)]
         base: Option<String>,
-        /// The round whose own rows a recovery reads.
+        /// The round whose own rows a recovery reads, or the open round
+        /// whose begun exception a `--need round` read cites.
         #[arg(long, required_if_eq("need", "recovery"))]
         round: Option<String>,
         /// round, submit, restack or recovery.
         #[arg(long, value_parser = parse_need)]
         need: orch_runtime::ops::proof::Need,
-        /// The exception {by, id, excused} a round closed `pass-excused`
-        /// began with; its failed run proves its tree for this read alone.
+        /// The exception {by, id, excused} the round began with. For an
+        /// open round, use `--need round --round ID` to read its selected
+        /// ended failure at the current committed tree. Publication
+        /// requires the round to close `pass-excused`.
         #[arg(long)]
         exception_file: Option<std::path::PathBuf>,
     },
@@ -1414,13 +1418,18 @@ enum FindingsOp {
 
 /// The checkout the runtime runs in and the settings it acts on, resolved once
 /// per process from the command line, the project files and the environment.
-fn resolve_settings(flags: &Flags) -> Result<Settings> {
+fn load_settings(flags: &Flags) -> Result<Settings> {
     let cwd = std::env::current_dir()
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e)))?;
     let roots = agent_runtime::settings::roots(&cwd)?;
     let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     let settings = settings::load(&roots, &environment, flags)?;
     orch_runtime::provider::install(settings.dispatch.clone());
+    Ok(settings)
+}
+
+fn resolve_settings(flags: &Flags) -> Result<Settings> {
+    let settings = load_settings(flags)?;
     settings.tell_skipped();
     Ok(settings)
 }
@@ -1589,7 +1598,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }),
         Verb::Ready { duties } => ready_verb(&duties, &flags)?,
         Verb::Host { host, args } => {
-            resolve_settings(&flags)?;
+            load_settings(&flags)?; // Mailbox reads the first stderr line.
             std::process::exit(orch_runtime::provider::verb(host.as_deref(), &args))
         }
         Verb::State { op } => state_verb(op, &flags, locking)?,

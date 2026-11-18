@@ -1426,9 +1426,7 @@ fn resolve(
 
 // --- The run directory ------------------------------------------------------------
 
-/// Why this host's process tree cannot be read, where it cannot: the
-/// executor then sees no stall, and the run is ended only by its stop and
-/// the round's close.
+/// Why the executor may have only log growth as evidence of work.
 fn quiet_clock_unavailable() -> Option<&'static str> {
     agent_runtime::process::tree(std::process::id())
         .err()
@@ -1450,7 +1448,7 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64, memory: &MemoryBound
         line(format!("expected-secs={secs}"));
     }
     if let Some(cause) = quiet_clock_unavailable() {
-        line(format!("quiet-clock=unavailable cause={cause}"));
+        line(format!("quiet-clock=log-only cause={cause}"));
     }
     match memory {
         MemoryBound::Held { bytes, rule } => {
@@ -1594,7 +1592,7 @@ fn started_line(run_dir: &Path, proof: &Proof, memory: &MemoryBound) -> String {
         .map(|c| format!(" ci-fallback={c}"))
         .unwrap_or_default();
     let quiet_clock = quiet_clock_unavailable()
-        .map(|cause| format!(" quiet-clock=unavailable cause={cause}"))
+        .map(|cause| format!(" quiet-clock=log-only cause={cause}"))
         .unwrap_or_default();
     let expected = proof
         .expected_secs

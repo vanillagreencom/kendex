@@ -7,8 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use agent_runtime::clock;
+use agent_runtime::clock::{self, Clock};
 use agent_runtime::effects::Reach;
+use agent_runtime::{process::Member, reading::Unreadable};
 use serde::Serialize;
 
 use super::{KILL_GRACE, apply, ci_env, item_of_run_dir, load};
@@ -48,13 +49,9 @@ pub struct RunReply {
     pub notice: Option<String>,
 }
 
-/// The transition environment at this moment: the command's stamp re-read
-/// after a wait that outlasted the one it started with (the child run for
-/// the run's whole bound; the stop's wait for the job), so the close, its
-/// notice's send and the stop's finishing transition carry the clock of the
-/// close, never the launch's: a stage `end` stamped at the job's launch
-/// second would read a sentinel time later than it as out of bounds. The
-/// nonce and the owner identity stay the command's.
+/// Read the transition's stamp after the command or stop wait finishes.
+/// The stage's end must be at or after the sentinel time. The nonce and
+/// owner identity stay the command's.
 #[allow(
     clippy::disallowed_methods,
     reason = "the job's and the stop's own stamp at their close, the command's clock read again after a wait the command's first stamp predates"
@@ -88,22 +85,21 @@ fn stage_of(path: &Path, run_dir: &str) -> Result<(Vec<Stage>, usize)> {
     Ok((stages, index))
 }
 
-/// The run's `start` record field.
-fn start_field(run_dir: &Path, key: &str) -> Option<String> {
-    let text = fs::read_to_string(run_dir.join("start")).ok()?;
-    text.lines()
-        .find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
-        .map(str::to_owned)
+pub fn execute(run_dir: &Path, clock: &dyn Clock, group_leader: &Path) -> Result<()> {
+    execute_reading_tree(run_dir, clock, group_leader, agent_runtime::process::tree)
 }
+
+type TreeReader = fn(u32) -> std::result::Result<Vec<Member>, Unreadable>;
 
 #[allow(
     clippy::disallowed_methods,
     reason = "the executor owns its command group and reaps it on every return"
 )]
-pub fn execute(
+fn execute_reading_tree(
     run_dir: &Path,
-    clock: &dyn agent_runtime::clock::Clock,
+    clock: &dyn Clock,
     group_leader: &Path,
+    read_tree: TreeReader,
 ) -> Result<()> {
     use std::io::Write;
     use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -289,7 +285,7 @@ pub fn execute(
         match agent_runtime::process::identity(pid) {
             agent_runtime::reading::Reading::Gone => break End::Exited,
             agent_runtime::reading::Reading::Live(_) => {
-                progress.observe(clock)?;
+                progress.observe(clock, read_tree)?;
                 if let Some((limit, peak)) = progress.outgrew() {
                     break End::Outgrew { limit, peak };
                 }
@@ -342,8 +338,10 @@ pub fn execute(
         "exit",
         &sentinel(status, &ended_at, &end, memory.as_ref(), host_kill),
     )?;
-    if !matches!(end, End::Exited) {
-        stop_tree(pid)?;
+    if !matches!(end, End::Exited)
+        && let Ok(members) = read_tree(pid)
+    {
+        stop_tree(members)?;
     }
     group.end()
 }
@@ -358,18 +356,13 @@ enum End {
     Outgrew { limit: u64, peak: u64 },
 }
 
-/// Stop every process at or below the ended command's leader, a member
-/// that left the leader's group included.
+/// Stop the observed tree, including members outside the leader's group.
 #[allow(
     clippy::disallowed_methods,
     reason = "the command owner ends every identity of the stalled tree it spawned"
 )]
-fn stop_tree(leader: u32) -> Result<()> {
+fn stop_tree(members: Vec<Member>) -> Result<()> {
     use agent_runtime::process;
-    let members = process::tree(leader).map_err(|e| Error::ValidateUnreadable {
-        read: "command-tree",
-        cause: e.cause.to_owned(),
-    })?;
     let identities: Vec<_> = members.into_iter().map(|member| member.id).collect();
     match process::stop_identities(&identities, Duration::from_secs(KILL_GRACE))? {
         process::Stop::AlreadyGone | process::Stop::Stopped { .. } => Ok(()),
@@ -431,8 +424,7 @@ const CPU_WORK_MS: u64 = 1000;
 /// [`CPU_WORK_MS`]. Each line of the `progress` record says how long the
 /// command has shown none of the three; a person and a wait read it, and only
 /// the executor judges it: a command quiet for the start's `quiet-secs` has
-/// stalled. A reading that cannot see the tree restarts the count, since a
-/// silent log alone is no sign of a stall: a compile prints nothing.
+/// stalled. With an unread tree, log growth is the evidence of work.
 struct Progress {
     record: fs::File,
     log: PathBuf,
@@ -504,7 +496,7 @@ impl Progress {
         clippy::disallowed_methods,
         reason = "the executor's poll reads its injected clock and stamps the line it appends"
     )]
-    fn observe(&mut self, clock: &dyn agent_runtime::clock::Clock) -> Result<()> {
+    fn observe(&mut self, clock: &dyn Clock, read_tree: TreeReader) -> Result<()> {
         use std::io::Write;
         let now = clock.now();
         if now < self.next_read {
@@ -520,7 +512,7 @@ impl Progress {
         }
         // The executor's own warnings in the log are no work of the command.
         self.log_bytes = log_bytes + self.steps.warn(&self.log, now)?;
-        let tree = match agent_runtime::process::tree(self.leader) {
+        let tree = match read_tree(self.leader) {
             Ok(members) => {
                 let cpu: u64 = members.iter().map(|m| m.cpu_ms).sum();
                 let rss: u64 = members.iter().map(|m| m.rss_bytes).sum();
@@ -541,10 +533,7 @@ impl Progress {
                 }
                 line
             }
-            Err(unread) => {
-                worked = true;
-                format!("tree=unread cause={}", unread.cause)
-            }
+            Err(unread) => format!("tree=unread cause={}", unread.cause),
         };
         if worked {
             self.worked = now;
@@ -1092,11 +1081,11 @@ pub fn run(
     let path = state::item_path(&settings.state_dir, item);
     let (stages, index) = stage_of(&path, run_dir)?;
     let stage = &stages[index];
-    let Some(proof) = &stage.proof else {
+    if stage.proof.is_none() {
         return Err(Error::RunUnstarted {
             run_dir: run_dir.to_owned(),
         });
-    };
+    }
     if stage.end.is_some() {
         // A second run of the same job: the close stands, nothing is sent.
         return Ok(RunReply {
@@ -1110,22 +1099,12 @@ pub fn run(
         });
     }
     let run_dir_path = PathBuf::from(run_dir);
-    let worktree = start_field(&run_dir_path, "worktree")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            run_dir_path
-                .parent()
-                .and_then(Path::parent)
-                .map(Path::to_path_buf)
-                .unwrap_or_default()
-        });
-    let _ = (worktree, proof);
     execute(
         &run_dir_path,
         &agent_runtime::clock::SystemClock,
         &super::group_leader(settings),
     )?;
-    // The close's own clock: the child ran for up to the run's bound.
+    // Stamp the close after the command ends.
     let env = &env_now(env);
     // The stage as it stands once the child ended: a `validate stop` that
     // ended the child recorded its intent on the stage before it did.
@@ -1545,8 +1524,78 @@ mod tests {
     use super::*;
     use crate::ops::validate::{end_notice, failure_cause, memory_cap_cause, sentinel_outcome};
 
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the row plants a silent command under its private run directory"
+    )]
+    fn a_quiet_run_ends_stalled_when_its_process_tree_is_unreadable() {
+        use agent_runtime::clock::SystemClock;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct TestClock(Instant, AtomicU64);
+        impl Clock for TestClock {
+            fn now(&self) -> Instant {
+                self.0 + Duration::from_secs(self.1.load(Ordering::Relaxed))
+            }
+            fn wall(&self) -> SystemTime {
+                UNIX_EPOCH + Duration::from_secs(self.1.load(Ordering::Relaxed))
+            }
+            fn sleep(&self, _: Duration) {
+                self.1.fetch_add(1, Ordering::Relaxed);
+                SystemClock.sleep(Duration::from_millis(10));
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let run = dir.path();
+        fs::write(
+            run.join("start"),
+            format!("worktree={}\nquiet-secs=2\n", run.display()),
+        )
+        .unwrap();
+        fs::write(run.join("runner"), "runner=setsid\nline=fixture\n").unwrap();
+        fs::write(run.join("cmd"), "exec /bin/sleep 5").unwrap();
+        let clock = TestClock(SystemClock.now(), AtomicU64::new(0));
+        execute_reading_tree(run, &clock, run, |_| {
+            Err(Unreadable {
+                cause: "tree-unread-here",
+            })
+        })
+        .unwrap();
+        let line = fs::read_to_string(run.join("exit")).unwrap();
+        assert_eq!(sentinel_outcome(&line), Some(StageOutcome::Fail), "{line}");
+        assert!(
+            failure_cause(line.trim_end())
+                .is_some_and(|cause| cause.starts_with("cause=stalled step=run")),
+            "{line}"
+        );
+    }
+
     fn events(max: u64, oom_kill: u64) -> String {
         format!("low 0\nhigh 0\nmax {max}\noom {oom_kill}\noom_kill {oom_kill}\noom_group_kill 0\n")
+    }
+
+    #[test]
+    fn a_stalled_runs_log_tail_cannot_supply_its_verdict_or_cause() {
+        for log in [
+            "tool: verdict=no-verdict",
+            "tool: cause=memory-host",
+            "tool: cause=memory-cap limit=100 peak=200 last-line=other text",
+        ] {
+            let end = End::Stalled(Stalled {
+                quiet_secs: 10,
+                step: "run".into(),
+                last_line: log.into(),
+            });
+            let line = sentinel(124, "2026-01-01T00:00:00Z", &end, None, false);
+            let line = line.trim_end();
+            assert_eq!(sentinel_outcome(line), Some(StageOutcome::Fail), "{line}");
+            assert_eq!(
+                failure_cause(line),
+                Some(format!("cause=stalled step=run last-line={log}"))
+            );
+        }
     }
 
     /// A run whose own cgroup reached its cap while an OOM killer took a

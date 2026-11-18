@@ -3,7 +3,7 @@
 # the JSON map at $LINEAR_FAKE_REPLIES, keyed by the verb words joined by a
 # space ("statuses list", "issues list", "issues list --assignee", "issues
 # update", "issues bulk-get", "comments bulk-list"), a `graphql --query DOC`
-# read by `graphql` and the document's operation name ("graphql Children"):
+# read by `graphql` and the document's operation name ("graphql OwnerItem"):
 # {exit?, body?, text?, stderr?}. `body` is printed as JSON,
 # `text` as raw bytes, `stderr` to stderr, `exit` is the status, 0 when
 # absent; a key with no entry is a failed call (exit 1, as the CLI exits on
@@ -18,9 +18,37 @@
 # between fork and exec (ETXTBSY).
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
+if [ "${0##*/}" = curl ]; then
+  config=$(cat) || exit 65
+  payload=$(sed -n 's/^data = //p' <<<"$config" | jq -r) || exit 65
+  cursor=$(jq -r '.variables.after // ""' <<<"$payload") || exit 65
+  case "$cursor" in
+    '') page=first ;;
+    child-next) page=second ;;
+    *) exit 65 ;;
+  esac
+  printf '%s\n' "$page" >>"$LINEAR_PAGE_LOG"
+  jq -cj --arg page "$page" '{data: {issue: .[$page]}}' -- "$LINEAR_PAGE_REPLIES" || exit 65
+  printf '___HTTP_CODE___200'
+  exit 0
+fi
 : "${LINEAR_FAKE_REPLIES:=$here/linear.json}"
 : "${LINEAR_FAKE_LOG:=$here/linear.log}"
 printf '%s\n' "$*" >> "$LINEAR_FAKE_LOG"
+if [ -n "${LINEAR_PAGE_REPLIES:-}" ] &&
+   { [ "${1:-}" = graphql ] || [ "${1:-} ${2:-}" = 'issues get' ]; }; then
+  {
+    curl_path=$(command -v curl) || exit 65
+    if [ "$curl_path" != "$here/bin/curl" ]; then
+      printf 'linear-fake: curl outside fixture: %s\n' "$curl_path" >&2
+      exit 65
+    fi
+    source_path=$(readlink -f "${BASH_SOURCE[0]}") || exit 65
+    source_dir=$(dirname -- "$source_path") || exit 65
+    cd -- "$here/checkout" || exit 65
+    exec "$source_dir/../../../../../linear/scripts/linear.sh" "$@"
+  } 2>"$here/pages.err"
+fi
 if [ "${1:-}" = done-when ]; then
   real="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../../../linear/scripts" && pwd)/linear.sh"
   exec "$real" "$@"

@@ -346,8 +346,8 @@ pub enum RecordAgents {
     /// The reviewer slots the open child sessions hold, after each child
     /// proved ended is `closed`.
     Slots {},
-    /// A reviewer wave starts with no reviewer returned; `slots_observed` is
-    /// the spawn count the harness allowed this wave.
+    /// Start a fresh review wave, or record the spawn count the harness
+    /// allowed in `slots_observed` and keep the completed reviewers.
     WaveStart {
         #[serde(default)]
         slots_observed: Option<u64>,
@@ -514,9 +514,9 @@ pub(crate) fn record_agents(
         }
         RecordAgents::Slots {} => Ok(slots(doc)),
         RecordAgents::WaveStart { slots_observed } => {
-            record::set(doc, "review_wave_done", json!([]));
-            if let Some(slots) = slots_observed {
-                record::set(doc, "reviewer_slots_observed", *slots);
+            match slots_observed {
+                Some(slots) => record::set(doc, "reviewer_slots_observed", *slots),
+                None => record::set(doc, "review_wave_done", json!([])),
             }
             Ok(json!({"step": "wave-start", "slots_observed": slots_observed}))
         }

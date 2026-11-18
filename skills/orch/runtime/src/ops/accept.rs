@@ -741,61 +741,18 @@ struct ParentRead {
     in_pr_bundle: bool,
 }
 
-/// The parent's children to the three levels the package's items nest; the
-/// read refuses an answer with a page left open, so the set is whole.
-const CHILDREN: &str = "query Children($id: String!) { issue(id: $id) { children { \
-    pageInfo { hasNextPage } nodes { identifier title state { type } children { \
-    pageInfo { hasNextPage } nodes { identifier title state { type } children { \
-    pageInfo { hasNextPage } nodes { identifier title state { type } } } } } } } } }";
-
-#[derive(Debug, Deserialize)]
-struct ChildrenAnswer {
-    issue: ChildrenOf,
-}
-
+/// The complete, flattened children from `issues get ID --format=safe`.
 #[derive(Debug, Deserialize)]
 struct ChildrenOf {
-    children: ChildPage,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChildPage {
-    nodes: Vec<ChildNode>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChildNode {
-    identifier: String,
-    title: String,
-    state: ChildState,
-    children: Option<ChildPage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChildState {
-    #[serde(rename = "type")]
-    kind: String,
+    children: Vec<ChildRead>,
 }
 
 /// One child at any depth, each before its own children.
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 struct ChildRead {
     id: String,
     title: String,
     state_type: String,
-}
-
-fn flatten_children(nodes: Vec<ChildNode>, into: &mut Vec<ChildRead>) {
-    for node in nodes {
-        into.push(ChildRead {
-            id: node.identifier,
-            title: node.title,
-            state_type: node.state.kind,
-        });
-        if let Some(page) = node.children {
-            flatten_children(page.nodes, into);
-        }
-    }
 }
 
 impl ChildRead {
@@ -1095,20 +1052,17 @@ fn close_held(tracker_cli: &Path, root: &Path, id: &str) -> Closing<ContainerClo
     let decision = loop {
         match decide(id, &parent, children.as_deref(), validation.as_deref()) {
             Decision::ReadChildren => {
-                let variables = serde_json::json!({ "id": id }).to_string();
                 let bytes = linear(
                     "children",
-                    &["graphql", "--query", CHILDREN, "--variables", &variables],
+                    &["issues", "get", id, "--format=safe"],
                     "children-unreadable",
                 )?;
-                let answer: ChildrenAnswer =
+                let answer: ChildrenOf =
                     serde_json::from_slice(&bytes).map_err(|_| refuse("children-response"))?;
-                let mut read = Vec::new();
-                flatten_children(answer.issue.children.nodes, &mut read);
-                if read.iter().any(|c| c.id.is_empty()) {
+                if answer.children.iter().any(|c| c.id.is_empty()) {
                     return Err(refuse("children-response"));
                 }
-                children = Some(read);
+                children = Some(answer.children);
             }
             Decision::ReadValidation => {
                 let bytes = linear(

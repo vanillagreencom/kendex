@@ -876,6 +876,37 @@ fn host_verb_busy_is_its_own_key() {
     );
 }
 
+#[test]
+fn a_host_call_prints_no_settings_warning_ahead_of_its_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().canonicalize().unwrap();
+    support::git_checkout(&project);
+    let private = write(&project, ".env.local", "ORCH_PR_ORDER=$(false)\n");
+    let mut env = support::hold_host_slots(&project);
+    env.push(("ORCH_LANE_HOST".into(), plant_provider(&project)));
+    let warning = format!(
+        "settings-skipped path={} key=ORCH_PR_ORDER reason=shell-form\n",
+        private.display()
+    );
+    let busy = "orch-runtime: host-busy count=1 cap=1 verb=cat item=K-1\n";
+    let host = ["host", "cat", "--item", "K-1", "/p"];
+    for (args, home, code, stderr) in [
+        (&["cycle", "report"][..], &project, 0, warning.as_str()),
+        (&host[..], &project, 1, busy),
+        (&host[..], &project.join("open-home"), 7, "err:cat\n"),
+    ] {
+        let out = support::program(env!("CARGO_BIN_EXE_orch-runtime"))
+            .current_dir(&project)
+            .envs(env.iter().cloned())
+            .env("HOME", home)
+            .args(args)
+            .output()
+            .unwrap();
+        let actual = (out.status.code(), support::stderr(&out));
+        assert_eq!(actual, (Some(code), stderr.to_owned()), "{args:?}");
+    }
+}
+
 /// A slot whose owner is gone, or whose pid now names a process of
 /// another start, holds nothing: under a cap of one, both are reclaimed
 /// and the call runs.

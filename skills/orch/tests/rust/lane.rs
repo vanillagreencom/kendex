@@ -5353,26 +5353,24 @@ fn container_replies(state: &str, children: Value, summarized: bool) -> Value {
         "errors": [], "child_box": 3, "unmet_branch_boxes": [3]}),
     ];
     for child in children.as_array().unwrap() {
-        results.push(
-            json!({"id": child["identifier"], "ok": true, "state_ok": true, "has_summary": true}),
-        );
+        results.push(json!({"id": child["id"], "ok": true, "state_ok": true, "has_summary": true}));
     }
     json!({
         "issues bulk-get": {"body": [{"state_type": state, "in_pr_bundle": false}]},
-        "graphql Children": {"body": {"issue": {"children": child_page(children)}}},
+        "issues get": {"body": {"children": children}},
         "issues validate-completion": {"body": {"results": results}},
         "issues complete": {"body": {}},
         "issues update": {"body": {}},
     })
 }
 
-/// One closed page of children, as the children document answers it.
+/// One closed Linear connection.
 fn child_page(nodes: Value) -> Value {
     json!({"pageInfo": {"hasNextPage": false}, "nodes": nodes})
 }
 
 fn child(id: &str, state: &str) -> Value {
-    json!({"identifier": id, "title": format!("work {id}"), "state": {"type": state}})
+    json!({"id": id, "title": format!("work {id}"), "state_type": state})
 }
 
 /// A container closes only when its last child ends, by one decision table
@@ -5403,8 +5401,7 @@ fn a_container_closes_only_when_its_children_end() {
     invalid["issues validate-completion"]["body"]["results"][0]["errors"] = json!([{"box": 4}]);
     let mut bundle = container_replies("started", done.clone(), false);
     bundle["issues bulk-get"]["body"][0]["in_pr_bundle"] = json!(true);
-    let mut nested = child("KEN-1", "completed");
-    nested["children"] = child_page(json!([child("KEN-3", "started")]));
+    let nested = json!([child("KEN-1", "completed"), child("KEN-3", "started")]);
     let mut unread = container_replies("started", done.clone(), false);
     unread["issues validate-completion"] = json!({"body": {"results": []}});
     let rows: Vec<Case> = vec![
@@ -5421,7 +5418,7 @@ fn a_container_closes_only_when_its_children_end() {
         ),
         (
             "a grandchild open",
-            container_replies("started", json!([nested]), false),
+            container_replies("started", nested, false),
             "deferred KEN-3\n",
             None,
             None,
@@ -5813,6 +5810,75 @@ fn a_container_close_infers_no_cascade() {
     );
 }
 
+#[test]
+fn a_container_closes_after_reading_the_second_children_page() {
+    let first = child("KEN-1", "canceled");
+    let second = child("KEN-2", "completed");
+    let raw = |child: &Value| {
+        let mut node = json!({
+            "id": child["id"],
+            "identifier": child["id"],
+            "title": child["title"],
+            "state": {"type": child["state_type"]}
+        });
+        for field in ["children", "labels", "relations", "inverseRelations"] {
+            node[field] = child_page(json!([]));
+        }
+        node
+    };
+    let replies = container_replies("started", json!([first, second]), true);
+    let mut container = Container::new(replies, Some(json!({"pr list": {"body": []}})));
+    let state = container.fleet.state_dir();
+    let pages = state.join("pages.json");
+    let log = state.join("pages.log");
+    std::os::unix::fs::symlink(
+        fixtures().join("linear-fixture/linear.sh"),
+        state.join("bin/curl"),
+    )
+    .unwrap();
+    let closed = child_page(json!([]));
+    std::fs::write(
+        &pages,
+        json!({
+            "first": {
+                "id": "container", "identifier": "KEN-C",
+                "labels": closed, "relations": closed, "inverseRelations": closed,
+                "children": {
+                    "nodes": [raw(&first)],
+                    "pageInfo": {"hasNextPage": true, "endCursor": "child-next"}
+                }
+            },
+            "second": {"id": "container", "children": child_page(json!([raw(&second)]))}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    container.fleet.env.extend([
+        ("LINEAR_API_KEY_OVERRIDE".into(), "fixture".into()),
+        ("LINEAR_PAGE_REPLIES".into(), pages.display().to_string()),
+        ("LINEAR_PAGE_LOG".into(), log.display().to_string()),
+    ]);
+
+    let out = container.close("KEN-C");
+    assert_eq!(
+        stdout_of(&out),
+        "closed KEN-C\n",
+        "{}\nrequests: {:?}\nLinear: {:?}",
+        stderr(&out),
+        std::fs::read_to_string(&log),
+        std::fs::read_to_string(container.fleet.state_dir().join("pages.err"))
+    );
+    assert_eq!(std::fs::read_to_string(log).unwrap(), "first\nsecond\n");
+    assert!(
+        container
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("issues complete KEN-C")),
+        "{:?}",
+        container.calls()
+    );
+}
+
 /// A parent id that is not one item key refuses `invalid-parent` at exit 2
 /// before any tracker read.
 #[test]
@@ -6078,15 +6144,15 @@ fn a_container_close_refuses_each_read_by_its_key() {
         ),
         (
             "children that fail",
-            with("graphql Children", json!({"exit": 1})),
+            with("issues get", json!({"exit": 1})),
             "children-unreadable",
             0,
         ),
         (
             "a child with no id",
             with(
-                "graphql Children",
-                json!({"body": {"issue": {"children": child_page(json!([child("", "completed")]))}}}),
+                "issues get",
+                json!({"body": {"children": [child("", "completed")]}}),
             ),
             "children-response",
             0,
