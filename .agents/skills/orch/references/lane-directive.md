@@ -94,6 +94,7 @@ The transition's refusals end the `op` at exit 1 with `ok: false` and the refusa
 | `item-ineligible` (`item`, `cause`) | The item is a container, by its children or its `agent:multi` label outside an in-PR bundle. | Launch its unblocked children. |
 | `launch-blocked` (`item`, `blockers`), `launch-blocked-unread` (`item`, `read`) | The [Ancestor gate](skill-rules.md#ancestor-gate) found an open blocker on a `linear` item or a container ancestor, or could not read one. | Merge or complete the blockers, or repair the tracker read. Never launch around it. |
 | `launch-overlap` (`item`, `file`, `holder`) | A live lane of the same repository holds the file and is in its review, or owns a pull request. | Launch once that lane stops, or name the file in `in_scope` where the brief adds to it append-only. |
+| `lane-repo-conflict` (`item`, `repo`, `lane_repo`) | An `admit-paths` request named another repository than its lane records (`none` where it records none). | Leave `repo` out: the lane's own is judged. |
 | `holder-unreadable` (`holder`, `read`), `holders-unreadable` (`repo`, `read`), `touched-unreadable` (`read`) | A holder's identity, touched set or stage, the repository's open pull requests, or the candidate's own touched set could not be read. | Repair the read the key names. |
 | `join-unreachable` (`item`, `holder`, `route`) | The holder a launch would join is hosted or a cloud session. | Launch once that lane stops. |
 | `join-unsent`, `join-tier-narrower` | The join's brief did not reach the holder's mailbox, or the joined set needs a wider cycle than the holder's tier. | Repair the mailbox, or launch once the holder stops. |
@@ -120,6 +121,7 @@ The effect's refusals come after the transition recorded the lane `preparing` wi
 | `tmux-session-unresolved`, `tmux-session-missing` (`session`, `socket`) | § Tmux session. |
 | `session-owned-elsewhere`, `session-store-unreadable` | A relaunch's bound session belongs to another directory, or the destination home's store could not be read. The same request meets the same refusal: repair the store, or report the session to the operator. |
 | `marker-item-invalid`, `marker-git-failed`, `marker-unsafe` and the marker's write refusals (`item`, `path`) | The lane's marker under the worktree's common git directory could not be written. Repair that git directory. |
+| `worktree-mode-unread`, `item-owned`, `worktree-failed`, `worktree-reuse-unknown`, `worktree-reuse-elsewhere` | Git could not read the `mail_root`'s checkout mode, or the `mail_root` is a claim (`create --no-checkout`) and the worktree package's guarded reuse found the item another session's, refused, gave no answer, or returned another tree; no window opened. Repair what the cause names, then send the `launch-lane` request again. |
 
 ### Harness gate
 
@@ -156,7 +158,7 @@ The launch closes a local or hosted lane's brief with three texts, each on a lin
 2. For Claude Code and Copilot CLI, the line that arms the lane's mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). Codex and Pi get none.
 3. The output-mode sentence of [skill-rules.md § Lane Output](skill-rules.md#lane-output), for the mode the launch's settings resolve; a hosted lane's is its control host's.
 
-A hosted relaunch whose provider kept the item's tree on its own head (observation `tree: unrebased`) also closes the brief with the sentence that the retained work is not rebased and the restack is the lane's. A cloud launch sends the brief as the session's description, closed by the cloud session words, `runtime/src/effects/cloud-session.txt`, in place of the unattended words.
+A hosted relaunch whose provider, or a local launch whose worktree package, kept the item's tree on its own head (observation `tree: unrebased`) also closes the brief with the sentence that the retained work is not rebased and the restack is the lane's. A cloud launch sends the brief as the session's description, closed by the cloud session words, `runtime/src/effects/cloud-session.txt`, in place of the unattended words.
 
 The brief is every harness's first message: Claude Code, Codex and Pi take it as the line's last word, and Copilot CLI as the value of `-i`. It opens the lane's workflow, `/orch start [ITEM]` or the tier's verb, in the form its harness takes ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A first launch reads the tier the brief states, its verb or its one `item-tier` line, into the record's `tier` and `tier_inputs`; a relaunch keeps the record's.
 
@@ -214,7 +216,7 @@ A relaunch is the item's `launch-lane` request sent again over its standing reco
    .agents/skills/orch/scripts/orch-runtime op --fleet --effect-exit --request [REQUEST_FILE]
    ```
 
-   Exit 0 is a stop confirmed, the record `stopped`. Exit 3 is a close that failed, its cause in the observation. Exit 75 is a close still open, which its reconcile settles. The close stops the harness only on proof that it is idle or gone: a working lane fails `not-idle`, and a lane holding an unanswered ask fails `ask-unanswered` whatever it reads. Add `"interrupt": true` inside `no_landing` only for a session that is unusable, as after a model switch; it waives the idle proof alone. An open close lists what still stands in its observation's `remaining`. A `pane` row marked `unaddressable: true` names a pane with no tmux server: find it with `tmux list-panes -a`, end what it runs by hand, and report the open intent to the operator.
+   Exit 0 is a stop confirmed, the record `stopped`. Exit 3 is a close that failed, its cause in the observation. Exit 75 is a close still open, which a repeat of the same request settles. The close stops the harness only on proof that it is idle or gone: a working lane fails `not-idle`, and a lane holding an unanswered ask fails `ask-unanswered` while its harness runs, idle or not. Add `"interrupt": true` inside `no_landing` only for a session that is unusable, as after a model switch; it waives the idle proof alone. An open close lists what still stands in its observation's `remaining`. A `pane` row marked `unaddressable: true` names a pane with no tmux server: find it with `tmux list-panes -a`, end what it runs by hand, and report the open intent to the operator.
 
 3. Compose the relaunch request from the record and send it as § Launch gate's request is sent:
 

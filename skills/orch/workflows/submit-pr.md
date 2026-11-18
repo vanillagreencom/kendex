@@ -628,7 +628,7 @@ A pull request merges on exactly four deterministic gates. Gates 2 and 4 check r
 | 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0`, every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`), and `check-review-replies` exits 0 |
 | 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`, or a recorded `pr_approval.forced` or `pr_approval.reviewer_down` meets it. `off`: not applicable |
 
-**Gate 4 reads the recorded mode.** The runtime records the gate mode once per item, so a retarget that moves the base keeps it ([gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing)). Read it for gate 4 and the § 7 report:
+**Gate 4 reads the recorded mode.** The runtime records the gate mode once per base, and the review call after a retarget that moves the base records the new base's mode ([gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing)). Read it for gate 4 and the § 7 report:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /pr_review/mode

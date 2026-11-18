@@ -6,9 +6,9 @@ Load where a workflow reads the review gate, requests Copilot or waits on one pu
 
 Bind `[REVIEW_BASE_CHECKOUT]` to a checkout of the target pull request's consumer base, never the catalog checkout or the pull request's updated tree. If that checkout is unavailable, stop.
 
-The gate mode is the `mode` of [the review call](#the-review-call)'s reply. The runtime resolves it on the item's first call and records it as `pr_review.mode`. Every later call reads that record, so a retarget to another base keeps the mode the first call read.
+The gate mode is the `mode` of [the review call](#the-review-call)'s reply. The runtime resolves it on the first call to a base and records it as `pr_review.mode` with that base. Every later call to the same base reads that record; a call after a retarget to another base reads that base's rules before its verdict and records their mode.
 
-The first call reads the consumer's `REVIEW_GATE_MODE` from the base checkout's `kendex.settings.toml`, `.kendex/settings.toml` and private env file, never from the caller's environment, and runs nothing from that checkout. `off` is the mode. `enforce`, or no value, reads GitHub's approval requirement on the base: the base's ruleset pull-request rules, then classic branch protection's required reviews. A ruleset rule that requires an approval, a code-owner review, a last-push approval or a team minimum is `approval`, and so is enabled classic protection with a required-reviews object at any count. Anything else is `off`. A failed read is an `unreadable` reply with no mode, never `off`: repeat the call, and report a second failure instead of picking a mode.
+The first call to a base reads the consumer's `REVIEW_GATE_MODE` from the base checkout's `kendex.settings.toml`, `.kendex/settings.toml` and private env file, never from the caller's environment, and runs nothing from that checkout. `off` is the mode. `enforce`, or no value, reads GitHub's approval requirement on the base: the base's ruleset pull-request rules, then classic branch protection's required reviews. A ruleset rule that requires an approval, a code-owner review, a last-push approval or a team minimum is `approval`, and so is enabled classic protection with a required-reviews object at any count. Anything else is `off`. A failed read is an `unreadable` reply with no mode, never `off`: repeat the call, and report a second failure instead of picking a mode.
 
 | `mode` | Meaning | Route |
 |--------|---------|-------|
@@ -127,7 +127,7 @@ A wait is a running waiter, never a session sitting at its prompt.
 
 ## Stacked pull requests
 
-Under the `approval` gate mode, the review call settles a stacked pull request's Copilot request as any other head's ([§ Copilot requests](#copilot-requests)), whatever base the repository's automatic-review rulesets target; which bases those rulesets target is the github skill's [automatic-review.md](../../github/references/automatic-review.md). Merging the bottom of a stack retargets the next pull request onto the new base without moving its head: its head record stands, and its gate mode stays the one the item recorded. Where the new base's diff needs Copilot's review, push a new head, whose request [§ Copilot requests](#copilot-requests) settles.
+Under the `approval` gate mode, the review call settles a stacked pull request's Copilot request as any other head's ([§ Copilot requests](#copilot-requests)), whatever base the repository's automatic-review rulesets target; which bases those rulesets target is the github skill's [automatic-review.md](../../github/references/automatic-review.md). Merging the bottom of a stack retargets the next pull request onto the new base without moving its head: its head record stands, and its next review call reads the new base's gate mode ([§ Gate-mode routing](#gate-mode-routing)). Where the new base's diff needs Copilot's review, push a new head, whose request [§ Copilot requests](#copilot-requests) settles.
 
 ## GitHub authentication
 
