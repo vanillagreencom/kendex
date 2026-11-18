@@ -446,6 +446,7 @@ reader_environment_arguments() {
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
     local env_chdir env_chdir_word xargs_launch="" builtin_head=$pos
+    local exec_option_re='^-[cl]*(a.*)?$' exec_name_needed
     split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
     shell_forwarder=""; shell_forwarded_pos=""
     # Other is unresolved. An existing arm's proof must establish clean.
@@ -467,9 +468,35 @@ environment_producer() { # command kind
             # launcher reaches an opaque operand but proves no dispatch.
             if [ "$program_pos" -eq "$builtin_head" ]; then
               shell_forwarded_pos=$pos
-              case "${args[$pos]:-}:${arg_kinds[$pos]:-}" in
-                --:literal | --:dollar-literal) shell_forwarded_pos=$((pos + 1)) ;;
-              esac
+              if [ "$program" = exec ]; then
+                # Bash's exec help names -c, -l and -a NAME. The first a
+                # in a short cluster takes the rest or the next word as NAME.
+                exec_name_needed=""
+                while [ "$shell_forwarded_pos" -lt "${#args[@]}" ]; do
+                  value=${args[$shell_forwarded_pos]}
+                  [ -n "$exec_name_needed" ] || [[ $value == -?* && $value != -- ]] || break
+                  # An expanding word can change the argument boundary.
+                  case "${arg_kinds[$shell_forwarded_pos]}:${arg_unquoted[$shell_forwarded_pos]}" in
+                    *:pattern) shell_forwarded_pos=""; break ;;
+                    literal:* | dollar-literal:*) ;;
+                    *) shell_forwarded_pos=""; break ;;
+                  esac
+                  if [ -n "$exec_name_needed" ]; then
+                    exec_name_needed=""
+                  elif [[ $value =~ $exec_option_re ]]; then
+                    [ "${BASH_REMATCH[1]:-}" != a ] || exec_name_needed=1
+                  else
+                    shell_forwarded_pos=""; break
+                  fi
+                  shell_forwarded_pos=$((shell_forwarded_pos + 1))
+                done
+                [ -z "$exec_name_needed" ] || shell_forwarded_pos=""
+              fi
+              if [ -n "$shell_forwarded_pos" ]; then
+                case "${args[$shell_forwarded_pos]:-}:${arg_kinds[$shell_forwarded_pos]:-}" in
+                  --:literal | --:dollar-literal) shell_forwarded_pos=$((shell_forwarded_pos + 1)) ;;
+                esac
+              fi
             fi
             program=opaque; compound=1
           fi
@@ -1092,7 +1119,8 @@ environment_dump() { # command kind; arguments are already decoded data
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
   local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
   local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand
-  local shell_forwarder shell_forwarded_pos exec_operand builtin_operand stage_chdir stage_chdir_unresolved reader_context_id
+  local shell_forwarder shell_forwarded_pos selected_forwarder selected_operand next_candidate
+  local stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
   local stage_reader_context=() executable_reader_context=()
   local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
@@ -1458,13 +1486,10 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     # Scan all forwarded operands for conservative detection. Only the
     # selected builtin dispatch can transfer the stdin directory.
-    script_pos=$script_operand; script_string=$source_pos; exec_operand=""; builtin_operand=""
-    if [ -n "$shell_forwarder" ]; then
+    script_pos=$script_operand; script_string=$source_pos
+    selected_forwarder=$shell_forwarder; selected_operand=$shell_forwarded_pos
+    if [ -n "$selected_forwarder" ]; then
       script_pos=$program_pos; script_string=""
-      case "$shell_forwarder" in
-        exec) exec_operand=$shell_forwarded_pos ;;
-        builtin) builtin_operand=$shell_forwarded_pos ;;
-      esac
     fi
     data_source="$data_source$deferred_piped_source"
     # The approved data and file-writing classes are data. Every other
@@ -1527,25 +1552,21 @@ environment_dump() { # command kind; arguments are already decoded data
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
         reader_chdir=$stage_chdir; reader_chdir_unresolved=$stage_chdir_unresolved
         environment_producer shell
-        if [ "$candidate" = "$builtin_operand" ] && [ -n "$shell_forwarded_pos" ]; then
-          case "$shell_forwarder" in
-            exec) exec_operand=$((candidate + shell_forwarded_pos)) ;;
-            builtin) builtin_operand=$((candidate + shell_forwarded_pos)) ;;
-          esac
-        fi
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
-        if [ "$program" = bash ] && [ -n "$exec_operand" ] &&
-           [ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then
-          # A literal exec child inherits the launcher's directory. With
-          # opaque exec options, retain the caller's context as a candidate.
-          if [ "$candidate" -eq "$exec_operand" ]; then
-            record_reader_context
-            stage_reader_context[stage]=$reader_context_id
-          elif [[ ${stage_args[$exec_operand]} == -* ]]; then
-            record_reader_context
-            stage_reader_context[stage]="${stage_reader_context[$stage]} $reader_context_id"
-          fi
+        if [ "$candidate" = "$selected_operand" ]; then
+          selected_operand=""
+          case "$selected_forwarder" in
+            builtin)
+              selected_forwarder=$shell_forwarder
+              [ -z "$shell_forwarded_pos" ] || selected_operand=$((candidate + shell_forwarded_pos)) ;;
+            exec)
+              if [ "$program" = bash ] &&
+                 [ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then
+                record_reader_context
+                stage_reader_context[stage]=$reader_context_id
+              fi ;;
+          esac
         fi
         case "$mode" in dump-*) return 0 ;; esac
         # A quoted operand past the program can be a whole command string,
@@ -1558,7 +1579,14 @@ environment_dump() { # command kind; arguments are already decoded data
            [ "${stage_unquoted[$candidate]%%:*}" != 1 ] && [ "$producer_end" -le 1 ]; then
           environment_queue "${stage_args[$candidate]}" "${stage_kinds[$candidate]}" forwarded
         fi
-        [ "$producer_end" -le 1 ] || candidate=$((candidate + producer_end - 2))
+        if [ "$producer_end" -gt 1 ]; then
+          next_candidate=$((candidate + producer_end - 1))
+          # An exploratory candidate can span the proven executable.
+          if [ -n "$selected_operand" ] && [ "$selected_operand" -lt "$next_candidate" ]; then
+            next_candidate=$selected_operand
+          fi
+          candidate=$((next_candidate - 1))
+        fi
       done
       mode=opaque-clean
     fi
@@ -1621,11 +1649,8 @@ environment_dump() { # command kind; arguments are already decoded data
     for doc in $data_source; do
       [ "${literal_kinds[$doc]}" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
       local command_text=${literal_inputs[$doc]}
-      # The context register contains only numeric offsets.
-      for reader_context_id in ${stage_reader_context[$stage]}; do
-        load_reader_context "$reader_context_id"
-        if environment_dump shell conservative; then return 0; fi
-      done
+      load_reader_context "${stage_reader_context[$stage]}"
+      if environment_dump shell conservative; then return 0; fi
     done
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
