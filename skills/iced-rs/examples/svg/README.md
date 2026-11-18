@@ -1,17 +1,17 @@
-## SVG
+# SVG
 
-An application that renders the [Ghostscript Tiger] by leveraging the `Svg` widget.
+Display the Ghostscript Tiger with Iced’s SVG widget.
 
-The __[`main`]__ file contains all the code of the example.
+![The Ghostscript Tiger](resources/tiger.svg)
 
-<div align="center">
-  <img src="resources/tiger.svg">
-</div>
+The [Ghostscript Tiger](https://commons.wikimedia.org/wiki/File:Ghostscript_Tiger.svg) is the bundled SVG asset.
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package svg
 ```
-
-[`main`]: src/main.rs
-[Ghostscript Tiger]: https://commons.wikimedia.org/wiki/File:Ghostscript_Tiger.svg

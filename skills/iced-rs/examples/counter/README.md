@@ -1,24 +1,26 @@
-## Counter
+# Counter
 
-The classic counter example explained in the [`README`](https://github.com/iced-rs/iced/blob/0.14.0/README.md).
+Increment or decrement a value with two buttons.
 
-The __[`main`]__ file contains all the code of the example.
+![A counter with increment and decrement buttons](https://iced.rs/examples/counter.gif)
 
-<div align="center">
-  <img src="https://iced.rs/examples/counter.gif">
-</div>
+See the [Iced counter walkthrough](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/README.md).
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package counter
 ```
 
-The web version can be run with [`trunk`]:
+## Web
 
-```
+With [Trunk](https://trunk-rs.github.io/trunk/guide/) installed, run from the upstream workspace root.
+
+```sh
 cd examples/counter
 trunk serve
 ```
-
-[`main`]: src/main.rs
-[`trunk`]: https://trunkrs.dev/

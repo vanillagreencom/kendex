@@ -1,121 +1,56 @@
-# Examples
-These are the examples of the published Iced 0.14.0 release, copied from the `examples/` directory of its tag. They match that release; the upstream `master` branch can contain breaking changes.
+# Iced 0.14 examples
 
-## [Tour](tour)
-A simple UI tour that can run both on native platforms and the web! It showcases different widgets that can be built using Iced.
+These example files come from the [Iced 0.14.0 release](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/Cargo.toml). Open an example below to read its source and choose how to run it. Run the examples in the upstream workspace with Rust 1.88 or later.
 
-The __[`main`](tour/src/main.rs)__ file contains all the code of the example! All the cross-platform GUI is defined in terms of __state__, __messages__, __update logic__ and __view logic__.
+## Install
 
-<div align="center">
-  <a href="https://iced.rs/examples/tour.mp4">
-    <img src="https://iced.rs/examples/tour.gif">
-  </a>
-</div>
-
-[`iced_winit`]: https://github.com/iced-rs/iced/tree/0.14.0/winit
-[`iced_native`]: https://docs.rs/iced_native
-[`iced_wgpu`]: ../iced_wgpu
-[`iced_web`]: https://github.com/iced-rs/iced_web
-[`winit`]: https://github.com/rust-windowing/winit
-[`wgpu`]: https://github.com/gfx-rs/wgpu
-
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
-cargo run --package tour
+```sh
+git clone --branch 0.14.0 https://github.com/iced-rs/iced
+cd iced
 ```
 
-## [Todos](todos)
-A todos tracker inspired by [TodoMVC]. It showcases dynamic layout, text input, checkboxes, scrollables, icons, and async actions! It automatically saves your tasks in the background, even if you did not finish typing them.
+## Examples
 
-The example code is located in the __[`main`](todos/src/main.rs)__ file.
+| Example | What it shows |
+|---|---|
+| [Arc](arc/README.md) | Use Canvas to draw a rotating arc |
+| [Bézier tool](bezier_tool/README.md) | Draw Bézier curves on an interactive Canvas |
+| [Checkbox](checkbox/README.md) | Toggle checkboxes and compare built-in and custom styles |
+| [Clock](clock/README.md) | Draw a clock face and hands on Canvas and update them on timer ticks |
+| [Color palette](color_palette/README.md) | Choose a base color and view the derived palette |
+| [Combo box](combo_box/README.md) | Search and select options in a menu positioned relative to the combo box |
+| [Counter](counter/README.md) | Increment or decrement a value with two buttons |
+| [Custom widget](custom_widget/README.md) | Draw a circle from a custom widget |
+| [Download progress](download_progress/README.md) | Start several downloads and show each one’s progress |
+| [Events](events/README.md) | Use the checkbox to turn event logging on or off |
+| [Exit](exit/README.md) | Select Exit, then confirm to close the window |
+| [Game of Life](game_of_life/README.md) | Pan, zoom, and edit the grid without fixed edges while the simulation advances in the background |
+| [Geometry](geometry/README.md) | Draw an indexed mesh from a custom widget |
+| [wgpu integration](integration/README.md) | Draw an Iced interface inside a wgpu application |
+| [Loading spinners](loading_spinners/README.md) | Show animated circular and linear spinners for work without a known completion percentage |
+| [Pane grid](pane_grid/README.md) | Split panes horizontally or vertically, resize them with the mouse, and drag them to rearrange the grid |
+| [Pick list](pick_list/README.md) | Select an option from a menu positioned relative to the pick list |
+| [Pokédex](pokedex/README.md) | Load a random Pokédex entry and its sprite |
+| [Progress bar](progress_bar/README.md) | Use a slider to change the progress bar’s value |
+| [QR code generator](qr_code/README.md) | Enter text and preview the corresponding QR code |
+| [Scrollable](scrollable/README.md) | Compare scroll directions, alignment, and scrollbar dimensions and styles |
+| [Sierpiński triangle](sierpinski_triangle/README.md) | Draw a Sierpiński triangle on Canvas |
+| [Slider](slider/README.md) | Select a value with a horizontal or vertical slider |
+| [Solar system](solar_system/README.md) | Animate a solar system on Canvas using rotation and translation |
+| [Stopwatch](stopwatch/README.md) | Start, stop, and reset a stopwatch |
+| [Styling](styling/README.md) | Compare widget styles across Iced themes, including light and dark |
+| [SVG](svg/README.md) | Display the Ghostscript Tiger with Iced’s SVG widget |
+| [Todos](todos/README.md) | Manage and filter a task list |
+| [Tooltip](tooltip/README.md) | Reveal a tooltip on hover |
+| [Tour](tour/README.md) | Try Iced widgets in a single app that runs on desktop and in a browser |
+| [WebSocket](websocket/README.md) | Send messages through a WebSocket connection to a local echo server |
 
-<div align="center">
-  <a href="https://iced.rs/examples/todos.mp4">
-    <img src="https://iced.rs/examples/todos.gif" height="400px">
-  </a>
-</div>
+## Coffee
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
-cargo run --package todos
-```
+[Coffee](https://github.com/hecrj/coffee), an experimental 2D game engine, was an early Iced user. Its [basic GUI pull request](https://github.com/hecrj/coffee/pull/35) opened in May 2019.
 
-[TodoMVC]: http://todomvc.com/
+![Coffee’s game interface](https://iced.rs/examples/coffee.gif)
 
-## [Game of Life](game_of_life)
-An interactive version of the [Game of Life], invented by [John Horton Conway].
+## Licence
 
-It runs a simulation in a background thread while allowing interaction with a `Canvas` that displays an infinite grid with zooming, panning, and drawing support.
-
-The relevant code is located in the __[`main`](game_of_life/src/main.rs)__ file.
-
-<div align="center">
-  <img src="https://iced.rs/examples/game_of_life.gif">
-</div>
-
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
-cargo run --package game_of_life
-```
-
-[Game of Life]: https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life
-[John Horton Conway]: https://en.wikipedia.org/wiki/John_Horton_Conway
-
-## [Styling](styling)
-An example showcasing custom styling with a light and dark theme.
-
-The example code is located in the __[`main`](styling/src/main.rs)__ file.
-
-<div align="center">
-  <img src="https://iced.rs/examples/styling.gif">
-</div>
-
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
-cargo run --package styling
-```
-
-## Extras
-A bunch of simpler examples exist:
-
-- [`bezier_tool`](bezier_tool), a Paint-like tool for drawing Bézier curves using the `Canvas` widget.
-- [`clock`](clock), an application that uses the `Canvas` widget to draw a clock and its hands to display the current time.
-- [`color_palette`](color_palette), a color palette generator based on a user-defined root color.
-- [`counter`](counter), the classic counter example explained in the [`README`](https://github.com/iced-rs/iced/blob/0.14.0/README.md).
-- [`custom_widget`](custom_widget), a demonstration of how to build a custom widget that draws a circle.
-- [`download_progress`](download_progress), a basic application that asynchronously downloads a dummy file of 100 MB and tracks the download progress.
-- [`events`](events), a log of native events displayed using a conditional `Subscription`.
-- [`geometry`](geometry), a custom widget showcasing how to draw geometry with the `Mesh2D` primitive in [`iced_wgpu`](../iced_wgpu).
-- [`integration`](integration), a demonstration of how to integrate Iced in an existing [`wgpu`] application.
-- [`pane_grid`](pane_grid), a grid of panes that can be split, resized, and reorganized.
-- [`pick_list`](pick_list), a dropdown list of selectable options.
-- [`pokedex`](pokedex), an application that displays a random Pokédex entry (sprite included!) by using the [PokéAPI].
-- [`progress_bar`](progress_bar), a simple progress bar that can be filled by using a slider.
-- [`scrollable`](scrollable), a showcase of various scrollable content configurations.
-- [`sierpinski_triangle`](sierpinski_triangle), a [sierpiński triangle](https://en.wikipedia.org/wiki/Sierpi%C5%84ski_triangle) Emulator, use `Canvas` and `Slider`.
-- [`solar_system`](solar_system), an animated solar system drawn using the `Canvas` widget and showcasing how to compose different transforms.
-- [`stopwatch`](stopwatch), a watch with start/stop and reset buttons showcasing how to listen to time.
-- [`svg`](svg), an application that renders the [Ghostscript Tiger] by leveraging the `Svg` widget.
-
-Each is a crate of the upstream workspace, not of this copy. To run one, clone that workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
-cargo run --package <example>
-```
-
-[`lyon`]: https://github.com/nical/lyon
-[PokéAPI]: https://pokeapi.co/
-[Ghostscript Tiger]: https://commons.wikimedia.org/wiki/File:Ghostscript_Tiger.svg
-[`wgpu`]: https://github.com/gfx-rs/wgpu
-
-## [Coffee]
-Since [Iced was born in May 2019], it has been powering the user interfaces in
-[Coffee], an experimental 2D game engine.
-
-
-<div align="center">
-  <img src="https://iced.rs/examples/coffee.gif">
-</div>
-
-[Iced was born in May 2019]: https://github.com/hecrj/coffee/pull/35
-[`ui` module]: https://docs.rs/coffee/0.3.2/coffee/ui/index.html
-[Coffee]: https://github.com/hecrj/coffee
+[Iced’s MIT licence and copyright notice](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/LICENSE)

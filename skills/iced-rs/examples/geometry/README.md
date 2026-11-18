@@ -1,16 +1,17 @@
-## Geometry
+# Geometry
 
-A custom widget showcasing how to draw geometry with the `Mesh2D` primitive in [`iced_wgpu`](../../iced_wgpu).
+Draw an indexed mesh from a custom widget.
 
-The __[`main`]__ file contains all the code of the example.
+![A custom widget that draws an indexed mesh](https://iced.rs/examples/geometry.gif)
 
-<div align="center">
-  <img src="https://iced.rs/examples/geometry.gif">
-</div>
+See the [bundled renderer](../../iced_wgpu/README.md) for the rendering code.
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package geometry
 ```
-
-[`main`]: src/main.rs

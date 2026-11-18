@@ -1,13 +1,15 @@
-## Color palette
+# Color palette
 
-A color palette generator, based on a user-defined root color.
+Choose a base color and view the derived palette.
 
-<div align="center">
-  <img src="screenshot.png">
-</div>
+![A palette from a base color](screenshot.png)
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
+Read the [example source](src/main.rs).
 
-```
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package color_palette
 ```

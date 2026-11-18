@@ -1,14 +1,15 @@
-## Slider
+# Slider
 
-A `Slider` is a bar and a handle that selects a single value from a range of values.
-There exists both `Slider` and `VerticalSlider` depending on which orientation you need.
+Select a value from a range with a horizontal `Slider` or a `VerticalSlider`.
 
-<div align="center">
-    <img src="sliders.gif">
-</div>
+![Horizontal and vertical sliders](sliders.gif)
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
+Read the [example source](src/main.rs).
 
-```
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package slider
 ```

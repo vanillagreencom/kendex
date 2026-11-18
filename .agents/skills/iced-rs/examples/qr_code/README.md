@@ -1,16 +1,15 @@
-## QR Code Generator
+# QR code generator
 
-A basic QR code generator that showcases the `QRCode` widget.
+Enter text and preview it with Iced’s QR code widget.
 
-The __[`main`]__ file contains all the code of the example.
+![A QR code generated from entered text](https://iced.rs/examples/qr_code.gif)
 
-<div align="center">
-  <img src="https://iced.rs/examples/qr_code.gif">
-</div>
+Read the [example source](src/main.rs).
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package qr_code
 ```
-
-[`main`]: src/main.rs

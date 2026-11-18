@@ -1,14 +1,17 @@
-## Sierpinski Triangle Emulator
+# Sierpiński triangle
 
-A simple [Sierpiński triangle](https://en.wikipedia.org/wiki/Sierpi%C5%84ski_triangle) Emulator, use canvas and slider.
+Draw a Sierpiński triangle on Canvas. Use the slider to change the number of iterations.
 
-Left-click add fixed point, right-click remove fixed point.
+![A Sierpiński triangle drawn on Canvas](https://iced.rs/examples/sierpinski_triangle.gif)
 
-<div align="center">
-  <img src="https://iced.rs/examples/sierpinski_triangle.gif">
-</div>
+Within the Canvas, left-click to add a fixed point and right-click to remove the last one. Read about the [Sierpiński triangle](https://en.wikipedia.org/wiki/Sierpi%C5%84ski_triangle).
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package sierpinski_triangle
 ```
