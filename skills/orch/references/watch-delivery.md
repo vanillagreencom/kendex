@@ -56,7 +56,7 @@ The shell `read` loop numbers each line as it arrives. `awk` is not used: `mawk`
 | Claude Code | `Monitor` on the numbered follow, `timeout_ms` at its maximum. | At each expiry or stop, from the line after the last number delivered. |
 | Codex | `write_stdin` polls on a follow: [codex-runtime.md § Standing watch](codex-runtime.md#standing-watch). | Poll again once each poll's output is handled. |
 | Pi | `bg_task` output wakes on a follow: [pi-runtime.md § Standing watch (Pi)](pi-runtime.md#standing-watch-pi). | Respawn in the cases its Re-arm and Exit rows name. |
-| Copilot CLI | § Single passes is this harness's standing follow. A background follow's exit starts a new turn only after a turn that ended without `Task complete`, so never end a turn with `Task complete` while overseeing; the watch's typed line is the net under it. Measured on Copilot CLI 1.0.112 with autopilot. | Start the next pass after each return. |
+| Copilot CLI | § Single passes is this harness's standing follow. Run each pass as a sync-mode shell call with `initial_wait` 520 seconds, never in async mode. On Copilot CLI 1.0.114, an async pass's exit woke no turn once Autopilot ended, and a sync pass that outlived its wait woke the session at its exit (measured by the kendex Jarvis session on 2026-11-18). A call that returns at its wait with no line leaves its pass running: start no second pass, because that pass's exit wakes the session. A background follow's exit starts a new turn only after a turn that ended without `Task complete`, so never end a turn with `Task complete` while overseeing; the watch's typed line is the net under it. Measured on Copilot CLI 1.0.112 with autopilot. | Start the next pass after each pass exits. |
 
 ## Single passes
 
@@ -78,9 +78,9 @@ while :; do
 done
 ```
 
-The quiet bound, 6300 seconds, is above the watch's default heartbeat of 6000 seconds (`--max-loops` 25 × `--interval` 240), so while the watch lives a pass ends on a line.
+The quiet bound, 6300 seconds, is above the watch's default heartbeat of 6000 seconds (`--max-loops` 25 × `--interval` 240), so while the watch lives a pass ends on a line. The bound is also above a Copilot CLI call's 520-second wait, so a quiet call returns at its wait's end, never earlier.
 
-1. Run the follow as the harness's background command. Its exit wakes the session.
+1. Run the follow as the harness's background command, in the mode its § Repeat watch row names. Its exit wakes the session.
 2. Handle each numbered line, then start the next pass after the last line handled.
 3. A quiet expiry is rare: it means the watch missed its heartbeat. Read the claim and `oversee-watch.err` as § Claim directs before any recovery, keep the next unhandled line unchanged, and start the next pass.
 
