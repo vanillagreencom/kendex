@@ -508,6 +508,9 @@ fn user_text(harness: Harness, row: &Value) -> Option<String> {
 }
 
 fn claude_user_text(text: &str) -> String {
+    if let Some(command) = claude_command_text(text) {
+        return command;
+    }
     let mut remaining = text;
     let mut unwrapped = String::new();
     while let Some(start) = remaining.find("<pasted_content") {
@@ -531,6 +534,28 @@ fn claude_user_text(text: &str) -> String {
     }
     unwrapped.push_str(remaining);
     unwrapped
+}
+
+/// The slash command a row records as typed, `/name args`. Claude Code
+/// (2.1.325, its command record) writes a typed command as three tags
+/// joined by a newline: `command-message` holding the name,
+/// `command-name` holding `/` and the name, and `command-args` holding the
+/// arguments, absent where it took none. Only a row that is that record
+/// whole reads as the command; any other text is `None`.
+fn claude_command_text(text: &str) -> Option<String> {
+    let rest = text.strip_prefix("<command-message>")?;
+    let (name, rest) = rest.split_once("</command-message>\n<command-name>/")?;
+    if name.is_empty() {
+        return None;
+    }
+    let rest = rest.strip_prefix(name)?.strip_prefix("</command-name>")?;
+    if rest.is_empty() {
+        return Some(format!("/{name}"));
+    }
+    let args = rest
+        .strip_prefix("\n<command-args>")?
+        .strip_suffix("</command-args>")?;
+    Some(format!("/{name} {args}"))
 }
 
 fn text_parts(content: &Value) -> Option<String> {
@@ -1265,6 +1290,50 @@ mod tests {
                 "malformed block after a valid block",
                 "\n\n<pasted_content id=\"a1\">\nfirst\n</pasted_content id=\"a1\">\n\n\n<pasted_content id=\"b2\">\nsecond",
                 "\n\n<pasted_content id=\"a1\">\nfirst\n</pasted_content id=\"a1\">\n\n\n<pasted_content id=\"b2\">\nsecond",
+            ),
+        ];
+        for (name, text, expected) in rows {
+            let row = serde_json::json!({"type":"user", "message":{"content":text}});
+            assert_eq!(
+                normalize_user_text(&user_text(Harness::Claude, &row).unwrap()),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    /// A row reads as the typed command only when it is Claude Code's
+    /// command record whole; any other text stays as written.
+    #[test]
+    fn claude_command_records_read_as_the_typed_command_only_when_whole() {
+        let record = "<command-message>orch</command-message>\n<command-name>/orch</command-name>\n<command-args>oversee</command-args>";
+        let rows = [
+            ("with arguments", record.to_owned(), "/orch oversee"),
+            (
+                "no arguments",
+                "<command-message>orch</command-message>\n<command-name>/orch</command-name>"
+                    .to_owned(),
+                "/orch",
+            ),
+            (
+                "name unlike the message",
+                record.replace("/orch<", "/other<"),
+                "<command-message>orch</command-message>\n<command-name>/other</command-name>\n<command-args>oversee</command-args>",
+            ),
+            (
+                "text after the record",
+                format!("{record}\nmore"),
+                "<command-message>orch</command-message>\n<command-name>/orch</command-name>\n<command-args>oversee</command-args>\nmore",
+            ),
+            (
+                "text before the record",
+                format!("typed {record}"),
+                "typed <command-message>orch</command-message>\n<command-name>/orch</command-name>\n<command-args>oversee</command-args>",
+            ),
+            (
+                "empty name",
+                "<command-message></command-message>\n<command-name>/</command-name>".to_owned(),
+                "<command-message></command-message>\n<command-name>/</command-name>",
             ),
         ];
         for (name, text, expected) in rows {

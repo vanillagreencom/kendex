@@ -142,6 +142,35 @@ fn resolved(path: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
 }
 
+/// Where a read-only grant binds. A path that stands as a link binds the
+/// file it leads to, read-only at that file's own path: bwrap mounts on no
+/// link, and the harness reads through the link to the bound file. A
+/// read-only bind grants no write wherever its file lies, and the
+/// carve-outs follow every writable bind, so a target inside a writable
+/// grant stays read-only too. The target binds wherever it lies, outside
+/// the seat included: an operator's seat links its settings to the
+/// operator's own, which the seat already reads. A link whose target cannot
+/// be read, absent or refused, refuses `grant-link-unreadable` naming the
+/// link: the harness could not read through it, and the lane could make an
+/// absent target. Any other path binds where it stands, or where
+/// [`Granted::write`] makes it.
+fn read_only_bind(path: PathBuf) -> Result<PathBuf> {
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(&path)
+            .and_then(|target| std::fs::File::open(&target).map(|_| target))
+            .map_err(|e| {
+                refused(
+                    "grant-link-unreadable",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("cause", &e.to_string()),
+                    ],
+                )
+            }),
+        Ok(_) | Err(_) => Ok(path),
+    }
+}
+
 /// The grants of a local launch of `item` on `harness` from `mail_root`
 /// under `homes`: writable its checkout (the root, and the common git
 /// folder of a linked worktree with its hooks, its configuration and the
@@ -296,6 +325,13 @@ pub(super) fn of(
     let token = match answer {
         Answer::Confined => gh_token(),
         Answer::Unconfined { .. } => None,
+    };
+    let read_only = match answer {
+        Answer::Confined => read_only
+            .into_iter()
+            .map(read_only_bind)
+            .collect::<Result<Vec<_>>>()?,
+        Answer::Unconfined { .. } => read_only,
     };
     let grants = Grants {
         writable,

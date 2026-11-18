@@ -867,6 +867,22 @@ fn deliver_matches_only_the_sent_text_after_the_cursor_on_readback() {
             "first\nsecond",
             "",
         ),
+        (
+            &[
+                "<command-message>orch</command-message>\n<command-name>/orch</command-name>\n<command-args>oversee</command-args>",
+            ],
+            0,
+            "/orch oversee",
+            "",
+        ),
+        (
+            &[
+                "<command-message>orch</command-message>\n<command-name>/orch</command-name>\n<command-args>oversee now</command-args>",
+            ],
+            0,
+            "/orch oversee",
+            "turn-unmatched",
+        ),
     ];
     for (texts, cursor, sent, cause) in rows {
         let content: String = texts
@@ -2954,6 +2970,77 @@ echo "tmpdir=$TMPDIR""#;
         ["scratch=written", "tmpdir=/tmp"]
     );
     assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+}
+
+/// A confined setup that fails because the wrapper cannot make a mount (a
+/// read-only grant naming a link, which bwrap refuses as a destination)
+/// names the wrapper's refusal; a setup that fails under words that stand
+/// keeps its own `runtime-unbuilt`.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_confined_setup_whose_words_fail_names_the_wrapper_and_one_that_fails_itself_is_unbuilt() {
+    use agent_runtime::Error;
+    use agent_runtime::confine::{Grants, Host, confinement};
+    use agent_runtime::effects::prepare::build_runtimes;
+    use agent_runtime::harness::Harness;
+    use agent_runtime::launch::LaunchCommand;
+    let (_dir, root) = wrapper_root();
+    let wt = root.join("wt");
+    let setup = ".agents/skills/orch/scripts/setup";
+    std::fs::create_dir_all(wt.join(setup).parent().unwrap()).unwrap();
+    write_executable(
+        &wt.join(setup),
+        "#!/bin/sh\necho 'setup: failed' >&2\nexit 3\n",
+    );
+    std::fs::write(root.join("settings-file.json"), "{}").unwrap();
+    std::os::unix::fs::symlink(root.join("settings-file.json"), root.join("settings.json"))
+        .unwrap();
+    let refusal = |read_only: Vec<PathBuf>| {
+        let grants = Grants {
+            writable: vec![wt.clone()],
+            seats: Vec::new(),
+            read_only,
+            runtime_dir: None,
+            sockets: Vec::new(),
+            desktop: false,
+            gh_token: None,
+            file: root.join("grants.json"),
+        };
+        let command = LaunchCommand {
+            program: "claude".to_owned(),
+            args: Vec::new(),
+            env: std::collections::BTreeMap::new(),
+            env_remove: Vec::new(),
+            cwd: wt.clone(),
+            brief_arg: None,
+            brief_path: None,
+            confinement: Some(confinement(Host::Linux, Harness::Claude, &grants).unwrap()),
+        };
+        match build_runtimes(&[setup], &command) {
+            Err(Error::Refused { key, fields }) => (key, fields),
+            other => panic!("{other:?}"),
+        }
+    };
+    let (key, fields) = refusal(vec![root.join("settings.json")]);
+    assert_eq!(key, "confinement-failed", "{fields:?}");
+    let field = |fields: &[(String, String)], name: &str| {
+        fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        field(&fields, "setup"),
+        wt.join(setup).display().to_string()
+    );
+    assert!(
+        field(&fields, "detail").starts_with("bwrap: "),
+        "bwrap's own line: {fields:?}"
+    );
+    let (key, fields) = refusal(Vec::new());
+    assert_eq!(key, "runtime-unbuilt", "{fields:?}");
+    assert_eq!(field(&fields, "detail"), "setup: failed");
 }
 
 /// The probe judges the `PATH` the launch's shell searches: no `bwrap`

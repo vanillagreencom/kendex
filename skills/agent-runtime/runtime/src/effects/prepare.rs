@@ -435,7 +435,9 @@ const SHELL: &str = "/bin/sh";
 /// and with the command's environment: the setup reaches what the harness
 /// will and nothing more. An unconfined command runs each as the launcher.
 /// A setup that refuses, or gives no answer within its bound, refuses the
-/// launch `runtime-unbuilt` with the setup's last line.
+/// launch `runtime-unbuilt` with the setup's last line; a confined setup
+/// whose words fail with nothing under them refuses `confinement-failed`
+/// with the wrapper's line instead.
 #[allow(
     clippy::disallowed_methods,
     reason = "each package's own setup, through the one runner, before the window it serves opens"
@@ -485,6 +487,12 @@ pub fn build_runtimes(setups: &[&str], command: &LaunchCommand) -> Result<()> {
             )
         })?;
         if !out.status.success() {
+            if let Some(detail) = wrapper_refusal(command, place) {
+                return Err(refused(
+                    "confinement-failed",
+                    &[("setup", &at), ("detail", &detail)],
+                ));
+            }
             let stderr = host::stderr_text(&out);
             let line = stderr.lines().rev().find(|l| !l.trim().is_empty());
             let status = out
@@ -502,6 +510,42 @@ pub fn build_runtimes(setups: &[&str], command: &LaunchCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The wrapper's own last line where a confined command's words fail with
+/// nothing under them: the words run over `/bin/sh -c :`, so a refusal
+/// there is a mount or namespace the wrapper could not make, never the
+/// setup's. `None` for an unconfined command, for words that stand, and
+/// where the trial cannot run at all, which leaves the setup's own cause.
+fn wrapper_refusal(command: &LaunchCommand, place: Place) -> Option<String> {
+    match &command.confinement {
+        Some(Confinement::Confined { .. }) => {}
+        Some(Confinement::Unconfined { .. }) | None => return None,
+    }
+    let line = LaunchCommand {
+        program: SHELL.to_owned(),
+        args: vec!["-c".to_owned(), ":".to_owned()],
+        brief_arg: None,
+        brief_path: None,
+        ..command.clone()
+    }
+    .shell_line();
+    let out = host::run_tagged_in(
+        "launch",
+        "wrapper-trial",
+        Path::new(SHELL),
+        "trial",
+        &["-c", &line],
+        place,
+        SETUP_BOUND,
+    )
+    .ok()?;
+    if out.status.success() {
+        return None;
+    }
+    let stderr = host::stderr_text(&out);
+    let line = stderr.lines().rev().find(|l| !l.trim().is_empty());
+    Some(line.unwrap_or("").to_owned())
 }
 
 /// The trust record a launch of `harness` under `home` needs for `cwd`,

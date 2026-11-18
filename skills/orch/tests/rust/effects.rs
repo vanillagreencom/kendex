@@ -10997,6 +10997,117 @@ fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harn
     );
 }
 
+/// A Claude lane on a seat whose settings file is a link launches, whether
+/// the link leads outside the seat to the operator's own settings, as every
+/// operator seat's does, or to a file inside the seat: its setup and its
+/// harness run under words that bind the file the link leads to read-only,
+/// so the lane reads the settings through the link and is refused a write
+/// to them. A link whose target cannot be read, absent or refused, refuses
+/// the launch by name.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_on_a_seat_whose_settings_are_a_link_reads_them_and_is_refused_a_write() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut world = Confined::new();
+    let setup = world
+        .runner
+        .state_dir()
+        .join(".agents/skills/orch/scripts/setup");
+    std::fs::create_dir_all(setup.parent().unwrap()).unwrap();
+    write_executable(&setup, "#!/bin/sh\n");
+    let operator = world.dir.path().join("operator/.claude/settings.json");
+    let inside = world.dir.path().join("seat-in/shared/settings.json");
+    for (item, seat, target) in [
+        ("KEN-L", world.dir.path().join("seat-out"), operator),
+        ("KEN-K", world.dir.path().join("seat-in"), inside),
+    ] {
+        std::fs::create_dir_all(&seat).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "{\"theme\": \"dark\"}\n").unwrap();
+        let link = seat.join("settings.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        world.file_env(&link.display().to_string());
+        world.probe_env(
+            "PROBE_RUN",
+            &format!("echo \"settings=$(cat '{}')\"", link.display()),
+        );
+        let mut request = launch_request(item, world.runner.state_dir());
+        request["account"] = json!(seat.display().to_string());
+        world.launch(&request);
+        let probe = world.probe(item, 1);
+        let settings = std::fs::read_to_string(&target).unwrap();
+        assert!(
+            probe.contains(&format!("settings={}", settings.trim_end())),
+            "{item}: {probe}"
+        );
+        assert!(
+            probe.contains("file=settings.json refused"),
+            "{item}: {probe}"
+        );
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "{item}: the seat's link stands"
+        );
+    }
+
+    // Review seats, which no trust record writes before the grants.
+    let refused_file = world.dir.path().join("operator/refused.toml");
+    std::fs::write(&refused_file, "").unwrap();
+    std::fs::set_permissions(&refused_file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    for (item, name, target) in [
+        (
+            "KEN-M",
+            "codex-gone",
+            world.dir.path().join("operator/gone.toml"),
+        ),
+        ("KEN-N", "codex-refused", refused_file.clone()),
+    ] {
+        let seat = world.dir.path().join("seats").join(name);
+        std::fs::create_dir_all(&seat).unwrap();
+        std::fs::write(seat.join("auth.json"), "{}").unwrap();
+        let link = seat.join("config.toml");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        world
+            .runner
+            .env
+            .retain(|(var, _)| var != "AGENT_RUNTIME_ACCOUNT_DIRS");
+        world.runner.env.extend([
+            (
+                "AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
+                seat.display().to_string(),
+            ),
+            ("SECOND_OPINION_MODELS".to_owned(), "codex".to_owned()),
+        ]);
+        let report = effect_report(
+            &world
+                .runner
+                .op_fleet(&launch_request(item, world.runner.state_dir())),
+        );
+        assert_eq!(report["intent"]["outcome"], "failed", "{item}: {report}");
+        let observation = &report["intent"]["observation"];
+        assert_eq!(
+            observation["cause"], "grant-link-unreadable",
+            "{item}: {report}"
+        );
+        assert_eq!(
+            observation["path"],
+            std::fs::canonicalize(&seat)
+                .unwrap()
+                .join("config.toml")
+                .display()
+                .to_string(),
+            "{item}: the refusal names the link: {report}"
+        );
+    }
+    assert!(
+        std::fs::symlink_metadata(world.dir.path().join("operator/gone.toml")).is_err(),
+        "nothing made at an absent target"
+    );
+}
+
 /// A confined lane's `gh` reads the token the launch handed it, the bus it
 /// would read a login over hidden; the token's file is the lane's alone and
 /// is gone after the close.
