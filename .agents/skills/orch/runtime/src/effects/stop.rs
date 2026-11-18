@@ -28,7 +28,8 @@ use super::lane_operation::{LaneOperation, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
 use crate::state::{CloseGround, Lane, LaneMembers, TerminalVerdict};
-use crate::watch::hosted::{Asked, HostClosed};
+use crate::watch::hosted::{self, Asked, HostClosed};
+use crate::watch::lanes::{self, LaneState};
 use agent_runtime::effects::{
     EffectOutcome, Foreground, Identity, Observed, ProcessRead, ProcessReading, Reading, State,
     Stop, Word,
@@ -94,9 +95,22 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     let Some(identity) = operation.engine_ref().harness_identity() else {
         // A viewer's window runs no harness, whatever its foreground shows
         // while a person watches: nothing in it is read or stopped, and the
-        // finish closes the window.
+        // finish closes the window. Where the close keeps the sandbox, the
+        // harness it runs is the provider's to stop, after the guard its
+        // provider's reading of the lane answers; a close with no stated
+        // ground goes on only where that reading is the harness gone.
         if lane.viewer() {
-            let mut observation = json!({"identity": "none", "stop": "window-only"});
+            let provider = provider_stops(close.ground, &lane);
+            let stop = if provider { "provider" } else { "window-only" };
+            let mut observation = json!({"identity": "none", "stop": stop});
+            if provider && let Err((cause, fields)) = close.guard_hosted(run, &operation) {
+                return Ok(close.refuse_or_hold(operation, cause, fields));
+            }
+            if provider_reads_gone(close.ground, &lane)
+                && let Err((cause, fields)) = close.hosted_gone(run)
+            {
+                return Ok(close.refuse_or_hold(operation, cause, fields));
+            }
             if close.wake_held(&mut operation, &mut observation)? {
                 return Ok(close.hold(operation, observation));
             }
@@ -330,11 +344,89 @@ impl Close<'_> {
                 }
             }
         }
-        Ok(match operation.unanswered_ask(self.lane) {
+        Ok(self.no_ask(operation))
+    }
+
+    /// What must hold before a viewer's hosted harness is stopped through
+    /// its provider, read as the close before its transition reads the lane:
+    /// a harness read exited or gone needs nothing; a live one is asked for
+    /// its unanswered asks, and a disposition that does not interrupt needs
+    /// it idle by its provider's screen. The `Err` is the refusal's cause and
+    /// fields.
+    fn guard_hosted(
+        &self,
+        run: &Run,
+        operation: &LaneOperation,
+    ) -> std::result::Result<(), (&'static str, Value)> {
+        let state = self.hosted_state(run);
+        match &state {
+            LaneState::Exited | LaneState::Gone => return Ok(()),
+            // A walled harness takes no turn either, as `guard_live` reads it.
+            LaneState::Idle { .. } | LaneState::Walled { .. } => {}
+            LaneState::Working
+            | LaneState::Asking
+            | LaneState::RateLimitSwitch
+            | LaneState::Unreadable { .. }
+            | LaneState::Unjudged { .. }
+                if self.interrupts() => {}
+            // The state's own word, as `lane status` prints it.
+            LaneState::Working | LaneState::Asking | LaneState::RateLimitSwitch => {
+                return Err((
+                    "not-idle",
+                    serde_json::to_value(&state).unwrap_or(Value::Null),
+                ));
+            }
+            LaneState::Unreadable { cause } | LaneState::Unjudged { cause } => {
+                return Err(("idle-unproved", json!({"pane": cause})));
+            }
+        }
+        self.no_ask(operation)
+    }
+
+    /// A hosted viewer's harness read gone before a close with no stated
+    /// ground goes on, as the op reads a recorded identity gone for any
+    /// other lane: the provider's status exited, or a host that holds no
+    /// lane of the item. A live harness refuses `lane-live` with its state,
+    /// a status read that failed `harness-unreadable` with its cause.
+    fn hosted_gone(&self, run: &Run) -> std::result::Result<(), (&'static str, Value)> {
+        let state = self.hosted_state(run);
+        match &state {
+            LaneState::Exited | LaneState::Gone => Ok(()),
+            LaneState::Unjudged { cause } if hosted::status_unowned(cause, self.item) => Ok(()),
+            LaneState::Unreadable { cause } => Err(("harness-unreadable", json!({"cause": cause}))),
+            LaneState::Unjudged { cause } if cause.starts_with("harness-probe-failed") => {
+                Err(("harness-unreadable", json!({"cause": cause})))
+            }
+            // The provider read it running: its screen's state, judged or not.
+            LaneState::Unjudged { .. }
+            | LaneState::Idle { .. }
+            | LaneState::Walled { .. }
+            | LaneState::Working
+            | LaneState::Asking
+            | LaneState::RateLimitSwitch => Err((
+                "lane-live",
+                serde_json::to_value(&state).unwrap_or(Value::Null),
+            )),
+        }
+    }
+
+    /// The lane as the close before its transition reads it: its provider
+    /// first, then the screen.
+    fn hosted_state(&self, run: &Run) -> LaneState {
+        let socket = self
+            .overseer
+            .and_then(agent_runtime::effects::overseer_socket);
+        lanes::judge(run.settings, self.lane, socket.as_deref(), None)
+    }
+
+    /// The live harness's mailbox holds no unanswered ask; the `Err` is the
+    /// refusal's cause and fields.
+    fn no_ask(&self, operation: &LaneOperation) -> std::result::Result<(), (&'static str, Value)> {
+        match operation.unanswered_ask(self.lane) {
             Ok(None) => Ok(()),
             Ok(Some(ask)) => Err(("ask-unanswered", json!({"ask": ask}))),
             Err(cause) => Err(("ask-check-failed", json!({"detail": cause}))),
-        })
+        }
     }
 
     /// Stop the lane's detached wake turn and every other process the set
@@ -354,9 +446,10 @@ impl Close<'_> {
         )
     }
 
-    /// The provider's stop of a lane that exits in its window, asked after
-    /// its exit, then its status read exited within the close bound, as the
-    /// close before its transition asks it of every other hosted lane:
+    /// The provider's stop of a lane [`provider_stops`] names, asked after a
+    /// window lane's exit, then its status read exited within the close
+    /// bound, as the close before its transition asks it of every other
+    /// hosted lane:
     /// `true` once stopped or skipped, written under `host_stop`; `false`
     /// with the refusal's key under `host_stop` and its fields beside it,
     /// `exit-timeout` or `pane-read-failed` among them, which the repeat
@@ -647,7 +740,7 @@ impl Close<'_> {
 /// Whether a close on `ground` owes a close-out only its finish discharges:
 /// the item's files on the tracker's terminal verdict, the provider's close
 /// of a hosted sandbox on any ground but `no-landing`, the provider's stop
-/// of a lane that exits in its window. None leaves a handle the reconcile
+/// [`provider_stops`] names. None leaves a handle the reconcile
 /// can read, and each is safe to ask again (the archive of no files writes
 /// nothing, a provider that no longer holds the item answers
 /// `closed=absent`, a stop of a group already ended signals nothing), so
@@ -661,9 +754,22 @@ fn owes_close_out(ground: Option<&CloseGround>, lane: &Lane) -> bool {
 
 /// Whether the close's effect asks the provider's stop: a lane that exits
 /// in its window ([`Lane::exits_in_window`]), on any ground but a
-/// host-absent close, which has no host to ask.
+/// host-absent close, which has no host to ask; and a hosted viewer's lane
+/// on the `no-landing` ground, whose kept sandbox the provider's close
+/// never ends and whose window runs no harness.
 fn provider_stops(ground: Option<&CloseGround>, lane: &Lane) -> bool {
-    lane.exits_in_window() && !ground.is_some_and(CloseGround::host_absent)
+    let kept_viewer = lane.viewer()
+        && lane.provider_hosted()
+        && matches!(ground, Some(CloseGround::NoLanding { .. }));
+    (lane.exits_in_window() || kept_viewer) && !ground.is_some_and(CloseGround::host_absent)
+}
+
+/// Whether the close's effect needs a hosted viewer's harness read gone
+/// before it acts: a close with no stated ground, which the op admits on a
+/// viewer's lane with no identity to read, while the provider's close it
+/// asks would end a live harness and its sandbox.
+fn provider_reads_gone(ground: Option<&CloseGround>, lane: &Lane) -> bool {
+    lane.viewer() && lane.provider_hosted() && matches!(ground, Some(CloseGround::Exited))
 }
 
 /// Whether the provider's close ends the lane's sandbox on `ground`: a

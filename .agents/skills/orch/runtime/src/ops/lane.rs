@@ -1583,9 +1583,10 @@ pub(super) fn launch_lane(
 /// lane's recorded harness through the one identity reader. Without a
 /// stated ground the harness must read gone; a recorded pane with no
 /// identity is a lane not known exited, unless that pane is a viewer's,
-/// which holds no harness. A `no-landing` disposition needs a
-/// readable harness, idle or gone; the idle proof is the effect's, where the
-/// screen is read.
+/// which holds no harness: a hosted viewer's harness is its provider's,
+/// which the effect reads gone before it acts. A `no-landing` disposition
+/// needs a readable harness, idle or gone; the idle proof is the effect's,
+/// where the screen is read.
 fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<CloseGround> {
     let reading = recorded_harness(lane, host);
     let unreadable = |cause: &str| Error::HarnessUnreadable {

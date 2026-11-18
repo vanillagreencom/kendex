@@ -7581,6 +7581,213 @@ fn an_exited_pane_verb_lane_holding_its_viewer_closes_on_its_exit() {
     assert_eq!(close["close"]["ground"], "exited", "{close}");
 }
 
+/// A `pane=verb` lane's viewer window runs no harness, so the direct
+/// `no-landing` close of a live one stops the hosted harness through its
+/// provider: the lane reads `stopped` only once the provider's status reads
+/// it exited after its stop; a status still running past the close bound
+/// holds with the record as it was; an unanswered ask refuses with nothing
+/// stopped; and the recovery close without `interrupt` refuses a working
+/// harness `not-idle`, its idle proof read through the provider. A close
+/// with no ground ends only a harness read gone: one the provider reads
+/// running refuses `lane-live` with nothing stopped.
+#[test]
+fn a_direct_close_of_a_live_detached_viewer_stops_its_harness_through_its_provider() {
+    struct Row {
+        name: &'static str,
+        /// The `no_landing` disposition's `interrupt`; `None` states no
+        /// ground.
+        interrupt: Option<bool>,
+        exits: bool,
+        working: bool,
+        ask: bool,
+        outcome: &'static str,
+        observed: (&'static str, &'static str),
+        stops: bool,
+    }
+    let rows = [
+        Row {
+            name: "stopped",
+            interrupt: Some(true),
+            exits: true,
+            working: true,
+            ask: false,
+            outcome: "confirmed",
+            observed: ("host_stop", "stopped processes=1"),
+            stops: true,
+        },
+        Row {
+            name: "exit unanswered",
+            interrupt: Some(true),
+            exits: false,
+            working: false,
+            ask: false,
+            outcome: "unconfirmed",
+            observed: ("host_stop", "exit-timeout"),
+            stops: true,
+        },
+        Row {
+            name: "ask unanswered",
+            interrupt: Some(true),
+            exits: true,
+            working: false,
+            ask: true,
+            outcome: "failed",
+            observed: ("cause", "ask-unanswered"),
+            stops: false,
+        },
+        Row {
+            name: "recovery of a working harness",
+            interrupt: Some(false),
+            exits: true,
+            working: true,
+            ask: false,
+            outcome: "failed",
+            observed: ("cause", "not-idle"),
+            stops: false,
+        },
+        Row {
+            name: "bare close of a live harness",
+            interrupt: None,
+            exits: true,
+            working: false,
+            ask: false,
+            outcome: "failed",
+            observed: ("cause", "lane-live"),
+            stops: false,
+        },
+    ];
+    for row in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let mut world = HostedLaunch::new(&server, dir.path(), record);
+        world
+            .runner
+            .env
+            .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
+        let mut answers = json!({});
+        for file in [
+            "to-lane.jsonl",
+            "to-overseer.jsonl",
+            "to-lane.cursor",
+            "to-lane.cursor.lock",
+        ] {
+            answers[format!(
+                "cat --item KEN-H {}/tmp/lane-mail/KEN-H/{file}",
+                world.host()
+            )] = json!({"exit": 2});
+        }
+        if row.ask {
+            // The lane's ask as its mailbox writes it, read back through the
+            // provider from the lane's worktree on its host.
+            let mail = dir.path().join("mail");
+            std::fs::create_dir_all(&mail).unwrap();
+            git_checkout(&mail);
+            std::fs::write(mail.join("ask.txt"), "which base").unwrap();
+            let out = program(lane_mail())
+                .current_dir(&mail)
+                .args(["ask", "--item", "KEN-H", "--file"])
+                .arg(mail.join("ask.txt"))
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", stderr(&out));
+            for file in ["to-overseer.jsonl", "to-overseer.jsonl.numbering"] {
+                let written = mail.join("tmp/lane-mail/KEN-H").join(file);
+                answers[format!(
+                    "cat --item KEN-H {}/tmp/lane-mail/KEN-H/{file}",
+                    world.host()
+                )] = match std::fs::read_to_string(written) {
+                    Ok(text) => json!({"stdout": text}),
+                    Err(_) => json!({"exit": 2}),
+                };
+            }
+        }
+        world.plant_detached("exec true", answers.clone());
+        let panes = server.panes();
+        let launched = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(
+            launched["intent"]["outcome"], "confirmed",
+            "{}: {launched}",
+            row.name
+        );
+        assert_eq!(world.runner.fleet()["lanes"][0]["viewer"], true);
+        let viewer = new_panes(&server, &panes);
+        assert_eq!(viewer.len(), 1, "{}: {viewer:?}", row.name);
+
+        // The harness reads running at the close's first read, then exited at
+        // every read after the provider's stop where the row's provider
+        // answers it.
+        let status = "status --item KEN-H --harness claude";
+        let from = world.verbs().len();
+        let read = world.verbs().iter().filter(|v| *v == status).count();
+        let mut answers = answers;
+        answers[format!("{status}#{}", read + 1)] = json!({"stdout": "running\n"});
+        if row.exits {
+            for nth in read + 2..read + 12 {
+                answers[format!("{status}#{nth}")] = json!({"stdout": "exited\n"});
+            }
+        }
+        if row.working {
+            answers["capture --item KEN-H"] =
+                json!({"stdout": "❯ do the thing\n✻ Working… (esc to interrupt)\n"});
+        }
+        world.plant_detached("exec true", answers);
+
+        let mut request = json!({"op": "close-owned-resources", "item": "KEN-H"});
+        if let Some(interrupt) = row.interrupt {
+            request["no_landing"] =
+                json!({"reason": "model-switch", "source": "overseer", "interrupt": interrupt});
+        }
+        let out = world.runner.op_fleet(&request);
+        let report = effect_report(&out);
+        let verbs = world.verbs()[from..].to_vec();
+        assert_eq!(
+            report["intent"]["outcome"], row.outcome,
+            "{}: {report}\n{verbs:?}",
+            row.name
+        );
+        assert_eq!(
+            report["intent"]["observation"][row.observed.0], row.observed.1,
+            "{}: {report}\n{verbs:?}",
+            row.name
+        );
+        let stop = verbs
+            .iter()
+            .position(|v| v == "stop --item KEN-H --harness claude");
+        assert_eq!(stop.is_some(), row.stops, "{}: {verbs:?}", row.name);
+        assert!(
+            !verbs.iter().any(|v| v == "close --item KEN-H"),
+            "{}: the sandbox is the lane's still: {verbs:?}",
+            row.name
+        );
+        if let Some(stop) = stop {
+            assert!(
+                verbs[stop + 1..].iter().any(|v| v == status),
+                "{}: the exit read after the stop: {verbs:?}",
+                row.name
+            );
+        }
+        let confirmed = row.outcome == "confirmed";
+        assert_eq!(
+            world.runner.fleet()["lanes"][0]["status"],
+            if confirmed { "stopped" } else { "running" },
+            "{}: {}",
+            row.name,
+            world.runner.fleet()
+        );
+        assert_eq!(
+            server.panes().len(),
+            if confirmed {
+                panes.len()
+            } else {
+                panes.len() + 1
+            },
+            "{}: the viewer closes only on a confirmed stop",
+            row.name
+        );
+    }
+}
+
 /// A hold stand-in whose row never releases it would stay on the machine
 /// after the suite: each one ends within its bound.
 #[test]
