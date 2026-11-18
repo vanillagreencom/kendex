@@ -228,15 +228,25 @@ def refresh_reason(repo, changed, fallback):
         tree = get(f"{base}/git/trees/{ref}?recursive=1", fleet=True)
         if tree["truncated"] is not False or not isinstance(tree["tree"], list):
             return "lock-tree-incomplete"
+        expected_locks = set()
+        checked_locks = set()
         for entry in tree["tree"]:
             path = entry["path"]
-            if path.endswith("/" + lock_path):
+            directory, _, name = path.rpartition("/")
+            if not directory:
+                continue
+            if name == "kendex.toml" and entry["type"] == "blob":
+                expected_locks.add(f"{directory}/{lock_path}")
+            elif name == lock_path:
                 if entry["type"] != "blob" or entry["mode"] not in ("100644", "100755"):
                     return "lock-tree-incomplete"
                 reason = lock_match(base, path, ref, changed)
                 if reason is not None:
                     return reason
-        return None
+                checked_locks.add(path)
+        # A refresh can install into a project without publishing a lock-only
+        # update. A pinned manifest still needs usable sibling lock evidence.
+        return None if expected_locks <= checked_locks else "lock-scope-missing"
     except unreadable + (AttributeError,) as error:
         return f"lock-{failure_code(error)}"
 

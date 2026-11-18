@@ -115,7 +115,7 @@ def repository(name, identifier, **fields):
                 archived=False, disabled=False, **fields)
 
 repos = [
-    repository("kendex", repo_id), repository("private-first", 43),
+    repository("kendex", repo_id), repository("private-first", 43, private=True),
     repository("private-absent", 44), repository("private-disabled", 45, fork=True),
     repository("public-last", 46, fork=True, private=False),
 ]
@@ -301,9 +301,6 @@ assert_covered(sender)
 normal_compares = [(d, c, "behind"), (d, e, "ahead"), (c, e, "ahead", "files")]
 result, posts, newer, _, _ = run(d, e, previous=partial, compares=normal_compares)
 assert result == 0 and posts == both and newer["attempted"] == e
-result, posts, urgent_receipt, _, _ = run(d, e, previous=partial, urgent=True,
-    compares=[(d, c, "behind"), (d, e, "ahead"), (c, d, "ahead", "files")])
-assert result == 0 and posts == both and urgent_receipt["attempted"] == d
 result, posts, _, _, _ = run(a, b, gates={both[0]: "waiting", both[1]: "unreadable"})
 assert result == 0 and posts == both
 
@@ -319,17 +316,33 @@ renamed = [dict(status="renamed", filename="skills/new/references/deep.md",
 def row(path, status="modified"):
     return dict(status=status, filename=path)
 
+result, posts, urgent_receipt, _, _ = run(d, e, previous=partial, urgent=True,
+    files=[row("skills/review-gate/references/adoption.md")], locks=dict(zip(both, [first, last])),
+    compares=[(d, c, "behind"), (d, e, "ahead"), (c, d, "ahead", "files")],
+    expected_lines=[f"consumer={private} outcome=sent reason=installed-package-changed",
+                    f"consumer={public} outcome=skipped reason=no-installed-package-changed"])
+assert result == 0 and posts == both[:1] and urgent_receipt["attempted"] == d
+
 def lock_for(kind, name, provenance="vanillagreencom/kendex"):
     return dict(version=11, entries={"item": entry(kind, name, provenance)})
 
 render = ".agents/skills/jarvis/references/finance.md"
 source_files = {f".kendex-generated.json?ref={ref}": [render] for ref in (c, e)}
-source_files[f"pi-extensions/pi-hooks/package.json?ref={c}"] = dict(name="@vanillagreen/pi-hooks")
+for ref in (c, e):
+    source_files[f"pi-extensions/pi-hooks/package.json?ref={ref}"] = dict(name="@vanillagreen/pi-hooks")
 source_files[f"pi-extensions/pi-hooks-next/package.json?ref={e}"] = dict(name="@vanillagreen/pi-hooks-next")
 nested_path = "nested/.kendex-lock.json"
-nested_lock = dict(truncated=False, tree=[dict(path=nested_path, type="blob", mode="100644")])
+nested_manifest = dict(path="nested/kendex.toml", type="blob", mode="100644")
+nested_entry = dict(path=nested_path, type="blob", mode="100644")
+nested_lock = dict(truncated=False, tree=[nested_entry, nested_manifest])
 pi_renamed = [dict(status="renamed", filename="pi-extensions/pi-hooks-next/index.ts",
                    previous_filename="pi-extensions/pi-hooks/index.ts")]
+
+unlocked_scope = (
+    renamed, {both[0]: first, both[1]: last, (both[1], "other/.kendex-lock.json"): last}, both,
+    [f"{public} outcome=sent reason=lock-scope-missing"],
+    {both[1]: dict(truncated=False, tree=[dict(nested_entry, path="other/.kendex-lock.json"), nested_manifest])},
+)
 
 selection_rows = [
     (renamed, dict(zip(both, [first, last])), both[:1],
@@ -350,6 +363,9 @@ selection_rows = [
      [f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
     (renamed, {both[0]: first, both[1]: last, (both[1], nested_path): first}, both,
      [f"{public} outcome=sent reason=installed-package-changed"], {both[1]: nested_lock}),
+    (renamed, {both[0]: first, both[1]: last, (both[1], nested_path): last}, both[:1],
+     [f"{public} outcome=skipped reason=no-installed-package-changed"], {both[1]: nested_lock}),
+    unlocked_scope,
     (renamed, {both[0]: first, both[1]: last}, both,
      [f"{public} outcome=sent reason=lock-tree-incomplete"], {both[1]: dict(tree=[], truncated=True)}),
     (renamed, {both[0]: first, both[1]: last}, both,
@@ -357,6 +373,9 @@ selection_rows = [
     (renamed, {both[0]: lock_for("skill", "review-gate", "git@github.com:VanillaGreenCom/kendex.git"), both[1]: last}, both[:1],
      [f"{private} outcome=sent reason=lock-source-unrecognized", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
     (pi_renamed, {both[0]: lock_for("pi-extension", "@vanillagreen/pi-hooks"), both[1]: last}, both[:1],
+     [f"{private} outcome=sent reason=installed-package-changed", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
+    ([row("pi-extensions/pi-hooks/package.json")],
+     {both[0]: lock_for("pi-extension", "@vanillagreen/pi-hooks"), both[1]: last}, both[:1],
      [f"{private} outcome=sent reason=installed-package-changed", f"{public} outcome=skipped reason=no-installed-package-changed"], {}),
     ([row("pi-extensions/unreadable/index.ts", "removed")], {}, both,
      [f"{private} outcome=sent reason=comparison-command-failed", f"{public} outcome=sent reason=comparison-command-failed"], {}),
@@ -419,6 +438,8 @@ with tempfile.TemporaryDirectory() as owner:
          lambda path: assert_selection(path, selection_rows[0]), "wrong comparison range"),
         ('repo["full_name"] if repo.get("private") is False else str(repo["id"])', 'str(repo["id"])',
          lambda path: assert_selection(path, selection_rows[0]), "wrong consumer log"),
+        ("expected_locks <= checked_locks", "True",
+         lambda path: assert_selection(path, unlocked_scope), "wrong consumer log"),
     ):
         assert body.count(old) == 1
         mutant.write_text(body.replace(old, new))
@@ -457,5 +478,5 @@ for key, subject, reply, output, reason in [
         assert request.call_count == (reply is not None)
         assert github_output.read_text() == f"urgent={output}\n"
         assert printed.getvalue().strip().endswith(f"reason={reason}") and "private-error" not in printed.getvalue()
-print(f"pass: {35 + len(selection_rows)}   fail: 0")
+print(f"pass: {36 + len(selection_rows)}   fail: 0")
 PY
