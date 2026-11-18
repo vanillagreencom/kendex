@@ -17,9 +17,9 @@ jobs:
   wait:
     if: github.repository == 'vanillagreencom/kendex'
     # Before enabling this workflow, provision this secretless, main-only
-    # environment with a 60-minute wait timer. Each qualifying push waits
-    # independently, so later pushes cannot extend the first unsent window.
-    # The environment owns the wait and uses no runner minutes for it.
+    # environment with a wait timer. KEN-5283 records its duration. Each
+    # qualifying push waits independently, so later pushes cannot extend
+    # the first unsent window. The wait uses no runner minutes.
     environment: consumer-dispatch-wait
     runs-on: ubuntu-latest
     steps:
