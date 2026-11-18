@@ -1831,7 +1831,7 @@ fn package(
         args,
         Place {
             cwd: Some(dir),
-            env: &[],
+            env: crate::settings::worktree_env(),
         },
         bound,
     )

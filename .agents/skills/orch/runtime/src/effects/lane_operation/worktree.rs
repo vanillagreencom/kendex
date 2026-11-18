@@ -238,7 +238,7 @@ fn package_remove(cli: &Path, main: &str, path: &str) -> std::result::Result<Rem
         &["remove", path],
         host::Place {
             cwd: Some(Path::new(main)),
-            env: &[],
+            env: crate::settings::worktree_env(),
         },
         CLI_TIMEOUT,
     )
@@ -697,7 +697,7 @@ pub(super) fn merged(cli: &Path, project: &Path, item: &str) -> std::result::Res
         &["merged", item],
         host::Place {
             cwd: Some(project),
-            env: &[],
+            env: crate::settings::worktree_env(),
         },
         CLI_TIMEOUT,
     )

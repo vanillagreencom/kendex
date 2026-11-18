@@ -1881,7 +1881,7 @@ fn cleanup(cli: &Path, tree: &Path, owner: &str) -> (&'static str, u64, Value) {
     ];
     let place = host::Place {
         cwd: Some(tree),
-        env: &[],
+        env: crate::settings::worktree_env(),
     };
     match host::run_tagged_in(
         PRUNE_TAG,

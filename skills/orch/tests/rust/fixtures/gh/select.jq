@@ -179,15 +179,17 @@ def SCHEMA: {
   },
   "PullRequestCommit": {"commit": ["Commit", false]},
   "PullRequestReviewConnection": {
-    "totalCount": ["S", false], "nodes": ["PullRequestReview", true]
+    "pageInfo": ["PageInfo", false], "totalCount": ["S", false],
+    "nodes": ["PullRequestReview", true]
   },
   "PullRequestReview": {
-    "state": ["S", false], "body": ["S", false], "submittedAt": ["S", false],
+    "id": ["S", false], "state": ["S", false], "body": ["S", false], "submittedAt": ["S", false],
     "author": ["Actor", false], "commit": ["Commit", false],
     "comments": ["PullRequestReviewCommentConnection", false, PAGE]
   },
   "PullRequestReviewCommentConnection": {
-    "totalCount": ["S", false], "nodes": ["PullRequestReviewComment", true]
+    "pageInfo": ["PageInfo", false], "totalCount": ["S", false],
+    "nodes": ["PullRequestReviewComment", true]
   },
   "PullRequestReviewComment": {
     "id": ["S", false], "replyTo": ["PullRequestReviewComment", false],

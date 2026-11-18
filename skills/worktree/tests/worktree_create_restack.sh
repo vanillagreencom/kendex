@@ -717,6 +717,26 @@ ACTIVITY
 }
 activity_rows
 
+# A runtime that runs this package names itself in ORCH_RUNTIME_BINARY and is
+# asked in place of the reader beside the copy, here one setup has not built:
+# the named runtime's live=none admits, and a named runtime that cannot start
+# holds rather than leaving the tree unasked.
+live_reader 1 live=none
+mv "$LIVE_READER" "$TMP_ROOT/named-runtime"
+live_reader 69 -
+build activity-named-runtime plain
+named_rc=0
+(cd "$MAIN" && ORCH_RUNTIME_BINARY="$TMP_ROOT/named-runtime" "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || named_rc=$?
+assert_eq "$named_rc" 0 "named runtime: its live=none admits over the unbuilt reader beside the copy"
+build activity-named-runtime-absent plain
+named_before="$(git -C "$WT" rev-parse HEAD)"
+named_rc=0
+(cd "$MAIN" && ORCH_RUNTIME_BINARY="$TMP_ROOT/absent-runtime" "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || named_rc=$?
+assert_eq "$named_rc" 75 "named runtime that cannot start: the reuse is held"
+assert_eq "$(git -C "$WT" rev-parse HEAD)" "$named_before" "named runtime that cannot start: held branch stays at its head"
+assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
+  "path=$WT cause=activity-unreadable" "named runtime that cannot start: structured hold cause"
+
 # Must-fail control: suppress only the refusal, preserving its matched text.
 python3 - "$WORKTREE_SCRIPT" <<'CONTROL'
 from pathlib import Path

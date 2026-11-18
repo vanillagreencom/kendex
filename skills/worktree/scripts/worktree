@@ -2582,10 +2582,17 @@ reuse_respects_session_lease() {
   # Partial installs may lack the live reader. Only the printed line live=none
   # admits reuse: the runtime prints a run it cannot read as a held run, and a
   # runtime that cannot answer, such as one setup has not built, holds too.
-  local orch_scripts="$SCRIPT_DIR/../../orch/scripts" activity_cause="" live_answer=""
-  if [[ -e "$orch_scripts/orch-runtime" || -L "$orch_scripts/orch-runtime" ]]; then
+  # A runtime that runs this package names itself in ORCH_RUNTIME_BINARY and
+  # is asked in place of the wrapper, whose cached build may not exist.
+  local live_reader="$SCRIPT_DIR/../../orch/scripts/orch-runtime" activity_cause="" live_answer=""
+  if [[ -n "${ORCH_RUNTIME_BINARY:-}" ]]; then
+    live_reader="$ORCH_RUNTIME_BINARY"
+  elif [[ ! -e "$live_reader" && ! -L "$live_reader" ]]; then
+    live_reader=""
+  fi
+  if [[ -n "$live_reader" ]]; then
     rc=0
-    live_answer="$("$orch_scripts/orch-runtime" validate entry --live --worktree "$wt" 2>/dev/null)" || rc=$?
+    live_answer="$("$live_reader" validate entry --live --worktree "$wt" 2>/dev/null)" || rc=$?
     case "$rc" in
       0) activity_cause=run-live ;;
       1) [[ "$live_answer" == live=none ]] || activity_cause=activity-unreadable ;;

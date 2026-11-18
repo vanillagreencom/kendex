@@ -2,8 +2,9 @@
 //! (`agent_runtime::settings`, its ladder and its account and engine key
 //! blocks), with the command line's state directory over every rung.
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use agent_runtime::settings::{
@@ -24,6 +25,28 @@ pub const CLOSE_SECS_KEY: &str = "ORCH_LANE_CLOSE_SECS";
 pub const WORKTREE_CLI_KEY: &str = "WORKTREE_CLI";
 /// The worktree package's program under the project's install.
 pub const WORKTREE_CLI_DEFAULT: &str = ".agents/skills/worktree/scripts/worktree";
+/// The runtime the worktree package's reuse guard asks whether a run is
+/// live in a tree it would reuse (`worktree create --help`).
+const WORKTREE_RUNTIME_ENV: &str = "ORCH_RUNTIME_BINARY";
+
+static THIS_RUNTIME: LazyLock<Option<PathBuf>> = LazyLock::new(|| std::env::current_exe().ok());
+static WORKTREE_ENV: LazyLock<Vec<(&'static str, &'static OsStr)>> = LazyLock::new(|| {
+    THIS_RUNTIME
+        .as_deref()
+        .map(|exe| (WORKTREE_RUNTIME_ENV, exe.as_os_str()))
+        .into_iter()
+        .collect()
+});
+
+/// The environment every worktree package child is started with: this
+/// executable as the runtime its reuse guard asks, so a runtime asking about
+/// its own work never depends on the wrapper's cached build of the sources
+/// beside the package, which may be absent or another build. Where the
+/// platform cannot name this executable nothing is added, and the guard asks
+/// that wrapper and holds on its silence.
+pub fn worktree_env() -> &'static [(&'static str, &'static OsStr)] {
+    &WORKTREE_ENV
+}
 /// The agent-runtime command the wake duty delivers through; empty finds
 /// the installed agent-runtime package's own wrapper.
 pub const AGENT_RUNTIME_KEY: &str = "ORCH_AGENT_RUNTIME";

@@ -847,13 +847,16 @@ mod push {
     }
 
     /// A published branch, a base that moved, and the worktree skill's own
-    /// guarded restack, which leaves its hop in the map.
+    /// guarded restack, which leaves its hop in the map. The restack's live
+    /// read asks this build of the runtime, as an install's wrapper would
+    /// ask its own.
     fn restacked(repo: &Repo) {
         let out = repo.push("branch");
         assert_eq!(exit(&out), Some(0), "{}", stderr(&out));
         repo.advance("moved");
         let out = program(worktree_cli())
             .args(["create", &repo.item, "--restack"])
+            .env("ORCH_RUNTIME_BINARY", support::binary())
             .env("PATH", tool_path(&[&repo.root.join("bin")]))
             .current_dir(&repo.main)
             .output()

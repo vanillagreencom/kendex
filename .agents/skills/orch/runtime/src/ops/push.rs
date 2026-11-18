@@ -652,7 +652,7 @@ fn push_once(cli: &Path, worktree: &Path, args: &[String]) -> Result<PushRun> {
     argv.extend(args.iter().map(String::as_str));
     let place = Place {
         cwd: Some(worktree),
-        env: &[],
+        env: settings::worktree_env(),
     };
     match host::run_tagged_in_own_group(TAG, "worktree", cli, "push", &argv, place, BOUND) {
         Ok(out) => Ok(PushRun {

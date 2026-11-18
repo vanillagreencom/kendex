@@ -5735,7 +5735,7 @@ fn pull_seven_timeline() -> Value {
             "status": {"context": {"state": "SUCCESS", "createdAt": "2026-09-20T10:25:00Z"}},
             "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}]},
         "commits(last: 100)": {"totalCount": 0, "nodes": []},
-        "reviews": {"totalCount": 0, "nodes": []},
+        "reviews": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []},
         "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []}
     }}}}})
 }

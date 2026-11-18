@@ -310,8 +310,12 @@ Options:
                   issue worktree is absent. A fork PR checks out origin's
                   refs/pull/NUMBER/head as local branch fork-pr-NUMBER, with
                   no upstream
-  --reuse         Explicitly reuse an existing issue worktree: refuses a
-                  foreign session-guard lease by name (exit 75), refreshes its
+  --reuse         Explicitly reuse an existing issue worktree: holds a tree
+                  unless orch-runtime prints live=none for it
+                  (worktree-resume-held, exit 75), asking $ORCH_RUNTIME_BINARY
+                  when set, else orch's wrapper where it is installed beside
+                  this package; refuses a foreign session-guard lease by
+                  name (exit 75), refreshes its
                   own lease in place, and skips the rebase for a tree with
                   uncommitted work. A clean tree whose branch is an ancestor
                   of its remote branch, whose commits another machine pushed,
