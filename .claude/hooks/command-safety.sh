@@ -33,7 +33,7 @@ history_git_argv() { # START [launched]
       -C | -c | --git-dir | --work-tree | --namespace | --config-env | --shallow-file | --attr-source)
         cursor=$((cursor + 1))
         [ "${arg_kinds[$cursor]:-}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
-        if [ "$value" = -C ]; then words[${#words[@]}]=${args[$cursor]}; tildes[${#tildes[@]}]=${arg_unquoted[$cursor]}; fi ;;
+        if [ "$value" = -C ]; then words[${#words[@]}]=${args[$cursor]}; tildes[${#tildes[@]}]=${arg_unquoted[$cursor]%%:*}; fi ;;
       -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=* | --attr-source=*) ;;
       -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --no-literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
       --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path | --list-cmds=*) break ;;
@@ -445,8 +445,10 @@ reader_environment_arguments() {
 # evidence, never proof of routing; unseen program semantics are not judged.
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
-    local env_chdir env_chdir_unresolved xargs_launch=""
+    local env_chdir env_chdir_word xargs_launch="" builtin_head=$pos
+    local exec_option_re='^-[cl]*(a.*)?$' exec_name_needed
     split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
+    shell_forwarder=""; shell_forwarded_pos=""
     # Other is unresolved. An existing arm's proof must establish clean.
     mode=other
     # Only these literal forwarding forms are part of the input contract.
@@ -461,12 +463,48 @@ environment_producer() { # command kind
       case "$program" in
         exec | builtin)
           if [ "$1" = shell ] && [ "${args[$((pos - 1))]}" = "$program" ]; then
+            shell_forwarder=$program
+            # A command prefix can reach a shell builtin. An external
+            # launcher reaches an opaque operand but proves no dispatch.
+            if [ "$program_pos" -eq "$builtin_head" ]; then
+              shell_forwarded_pos=$pos
+              if [ "$program" = exec ]; then
+                # Bash's exec help names -c, -l and -a NAME. The first a
+                # in a short cluster takes the rest or the next word as NAME.
+                exec_name_needed=""
+                while [ "$shell_forwarded_pos" -lt "${#args[@]}" ]; do
+                  value=${args[$shell_forwarded_pos]}
+                  [ -n "$exec_name_needed" ] || [[ $value == -?* && $value != -- ]] || break
+                  # An expanding word can change the argument boundary.
+                  case "${arg_kinds[$shell_forwarded_pos]}:${arg_unquoted[$shell_forwarded_pos]}" in
+                    *:pattern) shell_forwarded_pos=""; break ;;
+                    literal:* | dollar-literal:*) ;;
+                    *) shell_forwarded_pos=""; break ;;
+                  esac
+                  if [ -n "$exec_name_needed" ]; then
+                    exec_name_needed=""
+                  elif [[ $value =~ $exec_option_re ]]; then
+                    [ "${BASH_REMATCH[1]:-}" != a ] || exec_name_needed=1
+                  else
+                    shell_forwarded_pos=""; break
+                  fi
+                  shell_forwarded_pos=$((shell_forwarded_pos + 1))
+                done
+                [ -z "$exec_name_needed" ] || shell_forwarded_pos=""
+              fi
+              if [ -n "$shell_forwarded_pos" ]; then
+                case "${args[$shell_forwarded_pos]:-}:${arg_kinds[$shell_forwarded_pos]:-}" in
+                  --:literal | --:dollar-literal) shell_forwarded_pos=$((shell_forwarded_pos + 1)) ;;
+                esac
+              fi
+            fi
             program=opaque; compound=1
           fi
           break ;;
         command)
           case "${args[$pos]:-}" in -v | -V) pos=${#args[@]}; break ;; -p) pos=$((pos + 1)) ;; esac
           [ "${args[$pos]:-}" != -- ] || pos=$((pos + 1))
+          if [ "$program_pos" -eq "$builtin_head" ] && [ "${args[$program_pos]}" = command ]; then builtin_head=$pos; fi
           continue ;;
         sudo)
           while [ "$pos" -lt "${#args[@]}" ]; do
@@ -487,7 +525,7 @@ environment_producer() { # command kind
           continue ;;
         env)
           split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
-          options_ended=""; null_output=""; env_chdir=""; env_chdir_unresolved=""
+          options_ended=""; null_output=""; env_chdir=""; env_chdir_word=""
           while [ "$pos" -lt "${#args[@]}" ]; do
             value=${args[$pos]}
             case "${arg_kinds[$pos]}" in dollar-literal | ansi-escaped) break ;; esac
@@ -501,18 +539,12 @@ environment_producer() { # command kind
                 # A non-literal operand such as "$@" can expand to no word,
                 # and env then takes the next word as that operand.
                 [ "${arg_kinds[$((pos + 1))]:-}" = literal ] || { mode=dump-unknown; return; }
-                case "$value" in -C | --chdir) env_chdir=${args[$((pos + 1))]}; env_chdir_unresolved="" ;; esac
+                case "$value" in -C | --chdir) env_chdir_word=$((pos + 1)); env_chdir=${args[$env_chdir_word]} ;; esac
                 pos=$((pos + 2)) ;;
               --unset=*) pos=$((pos + 1)) ;;
               --chdir=* | -C?*)
-                if [ "${arg_kinds[$pos]}" = literal ]; then
-                  case "$value" in --*) env_chdir=${value#*=} ;; *) env_chdir=${value:2} ;; esac
-                  env_chdir_unresolved=""
-                else
-                  # An attached value does not obscure which option took it.
-                  # Only a relative environment-file read needs its location.
-                  env_chdir=""; env_chdir_unresolved=1
-                fi
+                env_chdir_word=$pos
+                case "$value" in --*) env_chdir=${value#*=} ;; *) env_chdir=${value:2} ;; esac
                 pos=$((pos + 1)) ;;
               --help | --version) pos=${#args[@]}; program=""; break ;;
               --) options_ended=1; pos=$((pos + 1)); continue ;;
@@ -521,13 +553,18 @@ environment_producer() { # command kind
               *) break ;;
             esac
           done
-          if [ -n "$env_chdir_unresolved" ]; then
-            reader_chdir_unresolved=1
-          else
-            case "$env_chdir" in
-              /*) reader_chdir=$env_chdir; reader_chdir_unresolved="" ;;
-              ?*) reader_chdir=${reader_chdir:+$reader_chdir/}$env_chdir ;;
-            esac
+          if [ -n "$env_chdir_word" ]; then
+            # Shell expansion can change the directory, even when some
+            # fragments in the word are quoted. The path was never resolved.
+            if [ "${arg_kinds[$env_chdir_word]}" != literal ] ||
+               [[ ${arg_unquoted[$env_chdir_word]} == *:pattern ]]; then
+              reader_chdir_unresolved=1
+            else
+              case "$env_chdir" in
+                /*) reader_chdir=$env_chdir; reader_chdir_unresolved="" ;;
+                ?*) reader_chdir=${reader_chdir:+$reader_chdir/}$env_chdir ;;
+              esac
+            fi
           fi
           if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then
             mode=dump-lines; [ -z "$null_output" ] || mode=dump-nul
@@ -686,7 +723,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
     case "$state" in
       name) state=body; continue ;;
       body | loop | conditional)
-        if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]}" = 1 ]; then
+        if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]%%:*}" = 1 ]; then
           case "$value:$state" in '{:body' | do:loop) state=head ;; esac
         fi
         continue ;;
@@ -695,7 +732,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
         state=head ;;
     esac
     if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then continue; fi
-    if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]}" = 1 ]; then
+    if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]%%:*}" = 1 ]; then
       case "$value" in
         if | then | elif | else | while | until | do | '{' | '!')
           syntax_head=1; continue ;;
@@ -1064,9 +1101,10 @@ relative_targeting() { # collect | judge; environment_dump owns the stage facts
   return 1
 }
 
-# A word's quoting, which the tokenizer stores per word: 1 when no byte is
-# quoted, escaped or expanded, ~ when only bytes after its leading ~/ are,
-# and empty otherwise. Bash expands a tilde prefix, the bytes up to the first
+# A word's quoting is 1 when no byte is quoted, escaped or expanded, ~
+# when only bytes after its leading ~/ are, and empty otherwise. The
+# tokenizer appends :pattern when a shell span can expand a pathname.
+# Bash expands a tilde prefix, the bytes up to the first
 # unquoted /, when none of them is quoted, so a 1 or ~ word starting ~/ is
 # expanded. Called where a quote, escape or expansion first touches the word.
 word_quoted() {
@@ -1075,12 +1113,13 @@ word_quoted() {
 }
 
 environment_dump() { # command kind; arguments are already decoded data
-  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted=""
+  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted="" pathname_pattern=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local reader_dirs=(${source_reader_dirs[@]+"${source_reader_dirs[@]}"}) reader_dirs_unresolved=${source_reader_dirs_unresolved:-}
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
   local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
   local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand
+  local shell_forwarder shell_forwarded_pos selected_forwarder selected_operand next_candidate
   local stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
   local stage_reader_context=() executable_reader_context=()
@@ -1138,6 +1177,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # decisions; growing a word byte by byte exceeds the hook budget.
       if [[ ${text:$i} =~ $span_re ]]; then
         span=${BASH_REMATCH[0]}; word=$word$span; active=1
+        if [ -z "$quote$pathname_pattern" ] && [ "$1" != env-split ] &&
+           [[ $span == *[\*\?\[\{\}]* ]]; then pathname_pattern=1; fi
         i=$((i + ${#span}))
         continue
       fi
@@ -1187,8 +1228,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
       if [ "$1" != env-split ] && { { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; }; then
-        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; compound=1; needs_target=""
+        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${pathname_pattern:+:pattern}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+        word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; pathname_pattern=""; compound=1; needs_target=""
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
@@ -1248,10 +1289,10 @@ environment_dump() { # command kind; arguments are already decoded data
             active=""
           fi
           if [ -n "$active" ]; then
-            unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
+            unquoted_words[${#tokens[@]}]=${bare:-$tilde}${pathname_pattern:+:pattern}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
             needs_target=""
           fi
-          word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""
+          word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; pathname_pattern=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
           case "$c" in
             '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
@@ -1307,7 +1348,7 @@ environment_dump() { # command kind; arguments are already decoded data
     # Undecoded split text can also hide the git word itself.
     [ -z "$split_undecoded" ] || history_record unresolved-git-argv unknown
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
-    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}${pathname_pattern:+:pattern}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
   for ((j=0; j<${#appended_args[@]}; j++)); do
     tokens[${#tokens[@]}]=${appended_args[$j]}
@@ -1443,12 +1484,12 @@ environment_dump() { # command kind; arguments are already decoded data
       mode=other
       if [ -z "$stdin_program" ] && environment_main_evidence "${args[@]}"; then mode=dump-unknown; fi
     fi
-    # Forwarded operands: a shell's script operand, or the word after exec or
-    # builtin, which take no option grammar here. A command string, unlike a
-    # script file, can run its first forwarded word, $0, as shell text.
+    # Scan all forwarded operands for conservative detection. Only the
+    # selected builtin dispatch can transfer the stdin directory.
     script_pos=$script_operand; script_string=$source_pos
-    if [ "$program" = opaque ] && [ -n "$program_pos" ]; then
-      case "${args[$program_pos]}" in exec | builtin) script_pos=$program_pos; script_string="" ;; esac
+    selected_forwarder=$shell_forwarder; selected_operand=$shell_forwarded_pos
+    if [ -n "$selected_forwarder" ]; then
+      script_pos=$program_pos; script_string=""
     fi
     data_source="$data_source$deferred_piped_source"
     # The approved data and file-writing classes are data. Every other
@@ -1501,7 +1542,7 @@ environment_dump() { # command kind; arguments are already decoded data
            [ "${#stage_args[@]}" -eq 3 ] && [ "$candidate" -eq 2 ] && [ "${#starts[@]}" -eq 1 ] &&
            [ "$start" -eq 0 ] && [ "$end" -eq 3 ] && [ "${stage_kinds[1]}" = literal ] &&
            [ "$program_pos" = 0 ] && [ "${stage_kinds[$candidate]}" = literal ] &&
-           [ "${stage_unquoted[$candidate]}" != 1 ] && [ -z "$input_redirect$output" ]; then continue; fi
+           [ "${stage_unquoted[$candidate]%%:*}" != 1 ] && [ -z "$input_redirect$output" ]; then continue; fi
         # Waiter launchers execute forwarded argv, so each operand is judged
         # as a possible head by the one producer, beside its own operands.
         limit=${#stage_args[@]}
@@ -1513,6 +1554,20 @@ environment_dump() { # command kind; arguments are already decoded data
         environment_producer shell
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
+        if [ "$candidate" = "$selected_operand" ]; then
+          selected_operand=""
+          case "$selected_forwarder" in
+            builtin)
+              selected_forwarder=$shell_forwarder
+              [ -z "$shell_forwarded_pos" ] || selected_operand=$((candidate + shell_forwarded_pos)) ;;
+            exec)
+              if [ "$program" = bash ] &&
+                 [ -n "$data_source$incoming_sources" ] && [ -n "$reader_chdir$reader_chdir_unresolved" ]; then
+                record_reader_context
+                stage_reader_context[stage]=$reader_context_id
+              fi ;;
+          esac
+        fi
         case "$mode" in dump-*) return 0 ;; esac
         # A quoted operand past the program can be a whole command string,
         # and so can an expanding one, whose producer selection stops at 0;
@@ -1521,10 +1576,17 @@ environment_dump() { # command kind; arguments are already decoded data
         # a design question for this forwarded-form rule, not a case patch
         # (Jarvis ruling, KEN-4728).
         if { [ -n "$script_string" ] || [ "$candidate" -gt "$((script_pos + 1))" ]; } && [ -z "$output" ] &&
-           [ "${stage_unquoted[$candidate]}" != 1 ] && [ "$producer_end" -le 1 ]; then
+           [ "${stage_unquoted[$candidate]%%:*}" != 1 ] && [ "$producer_end" -le 1 ]; then
           environment_queue "${stage_args[$candidate]}" "${stage_kinds[$candidate]}" forwarded
         fi
-        [ "$producer_end" -le 1 ] || candidate=$((candidate + producer_end - 2))
+        if [ "$producer_end" -gt 1 ]; then
+          next_candidate=$((candidate + producer_end - 1))
+          # An exploratory candidate can span the proven executable.
+          if [ -n "$selected_operand" ] && [ "$selected_operand" -lt "$next_candidate" ]; then
+            next_candidate=$selected_operand
+          fi
+          candidate=$((next_candidate - 1))
+        fi
       done
       mode=opaque-clean
     fi
