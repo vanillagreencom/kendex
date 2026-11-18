@@ -1,15 +1,17 @@
-## Download progress
+# Download progress
 
-A basic application that asynchronously downloads multiple dummy files of 100 MB and tracks the download progress.
+Start several downloads and show each one’s progress.
 
-The example implements a custom `Subscription` in the __[`download`](src/download.rs)__ module. This subscription downloads and produces messages that can be used to keep track of its progress.
+![Multiple downloads with progress bars](https://iced.rs/examples/download_progress.gif)
 
-<div align="center">
-  <img src="https://iced.rs/examples/download_progress.gif">
-</div>
+[The download helper](src/download.rs) uses a byte stream to report progress to `Task::sip`. The configured download requests a model shard from Hugging Face. The server must return a content length for the example to show progress.
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
+Read the [example source](src/main.rs).
 
-```
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package download_progress
 ```

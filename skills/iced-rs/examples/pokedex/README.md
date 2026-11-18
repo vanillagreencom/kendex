@@ -1,15 +1,17 @@
 # Pokédex
-An application that loads a random Pokédex entry using the [PokéAPI].
 
-All the example code can be found in the __[`main`](src/main.rs)__ file.
+Load a random Pokédex entry and its sprite.
 
-<div align="center">
-  <img src="https://iced.rs/examples/pokedex.gif">
-</div>
+![A Pokédex entry with a sprite](https://iced.rs/examples/pokedex.gif)
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+The example needs network access to [PokéAPI](https://pokeapi.co/) for the entry and to its [sprite repository](https://github.com/PokeAPI/sprites) for the image.
+
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package pokedex
 ```
-
-[PokéAPI]: https://pokeapi.co/

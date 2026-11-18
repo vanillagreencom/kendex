@@ -1,16 +1,15 @@
-## Stopwatch
+# Stopwatch
 
-A watch with start/stop and reset buttons showcasing how to listen to time.
+Start, stop, and reset a stopwatch. The timer subscription runs while the stopwatch is active.
 
-The __[`main`]__ file contains all the code of the example.
+![A stopwatch with start, stop, and reset controls](https://iced.rs/examples/stopwatch.gif)
 
-<div align="center">
-  <img src="https://iced.rs/examples/stopwatch.gif">
-</div>
+Read the [example source](src/main.rs).
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package stopwatch
 ```
-
-[`main`]: src/main.rs

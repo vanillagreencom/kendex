@@ -1,13 +1,15 @@
 # Styling
-An example showcasing custom styling with a light and dark theme.
 
-All the example code is located in the __[`main`](src/main.rs)__ file.
+Compare widget styles across Iced themes, including light and dark.
 
-<div align="center">
-  <img src="https://iced.rs/examples/styling.gif">
-</div>
+![Widgets with light and dark styling](https://iced.rs/examples/styling.gif)
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Read the [example source](src/main.rs).
+
+## Run
+
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package styling
 ```

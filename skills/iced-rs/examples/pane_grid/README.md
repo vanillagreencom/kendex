@@ -1,26 +1,17 @@
-## Pane grid
+# Pane grid
 
-A grid of panes that can be split, resized, and reorganized.
+Split panes horizontally or vertically, resize them with the mouse, and drag them to rearrange the grid. The app tracks the focused pane and provides keyboard shortcuts.
 
-This example showcases the `PaneGrid` widget, which features:
+![An interface with resizable, draggable panes](https://iced.rs/examples/pane_grid.gif)
 
-* Vertical and horizontal splits
-* Tracking of the last active pane
-* Mouse-based resizing
-* Drag and drop to reorganize panes
-* Hotkey support
-* Configurable modifier keys
-* API to perform actions programmatically (`split`, `swap`, `resize`, etc.)
+The keyboard handler uses Iced’s command modifier. The [pane state API](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/pane_grid/state.rs) lets callers split, swap, and resize panes from application code.
 
-The __[`main`]__ file contains all the code of the example.
+Read the [example source](src/main.rs).
 
-<div align="center">
-  <img src="https://iced.rs/examples/pane_grid.gif">
-</div>
+## Run
 
-These sources are a read-only copy. To run it, clone the upstream workspace at the release (`git clone --branch 0.14.0 https://github.com/iced-rs/iced`) and, from its root:
-```
+Run from the root of the [Iced 0.14.0 workspace](../README.md#install).
+
+```sh
 cargo run --package pane_grid
 ```
-
-[`main`]: src/main.rs
