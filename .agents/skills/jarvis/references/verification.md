@@ -33,6 +33,7 @@
 - Associate a recurring question with a named tool that reads its answer from the source.
 - Keep durable corrections in the instructions or tool that own them. Keep unfinished work in the tracker, with the check that closes it, under [long-session.md:Homes](long-session.md#homes).
 - When you or the user find an error of yours, state it and its repair in one line. Then name the step that produced it, a tool, rule or habit, and change that step so the error cannot recur.
+- To accept a fix for a recurring mistake, repeat the operation that triggered it through its ordinary entry point. Use a second caller where one exists. Require the repeated operation to show that the mistake stopped, even when a valid memory note exists.
 - Keep the Done-when box for a fix you sent to another owner on a linked check item in the session's own task project, under [long-session.md:Homes](long-session.md#homes). Keep the box and check item open until you record the check where the problem was seen. Until then, tell the user it was sent, with its id, never that it is fixed. The other owner's Done mark is not that check and does not close the check item.
 
 Approval conditions belong to [decisions.md](decisions.md). Message types belong to [communication.md](communication.md).
