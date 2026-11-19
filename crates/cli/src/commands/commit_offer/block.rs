@@ -19,6 +19,7 @@ use kendex_core::commit_offer::{
     Withheld,
 };
 use kendex_core::decision::Need;
+use kendex_core::repo_effects::DeclaredEffects;
 
 use super::Asking;
 use crate::ui::{self, Key, Span, Status, Style};
@@ -227,6 +228,54 @@ pub fn stale_way_on(style: &Style, set_up: bool, flag: bool) -> Vec<String> {
             ),
         ),
     }
+}
+
+/// Where a held successor's setup is left to the action's walkthrough
+/// after this offer: the routes that set up the held packages, each named,
+/// so the step covers the same packages the reasons above it name. Only a
+/// held package in `walked`, the batch that walkthrough asks for, is told
+/// to say yes when kendex asks below; any other is set up on its package
+/// page. `--allow-repo-effects` is never named: a retry of the action finds
+/// the successor already installed and brings no effect for the flag to
+/// say yes to.
+pub fn walkthrough_way_on(
+    style: &Style,
+    stale: &[Stale],
+    walked: &[DeclaredEffects],
+) -> Vec<String> {
+    let (asked, page_only): (Vec<&Stale>, Vec<&Stale>) = stale.iter().partition(|held| {
+        walked
+            .iter()
+            .any(|effect| effect.name == held.disclosure.declared.name)
+    });
+    let step = |held: &[&Stale], asked: bool| -> Option<String> {
+        let names: Vec<&str> = held
+            .iter()
+            .map(|held| held.disclosure.name.as_str())
+            .collect();
+        let page = match names.len() {
+            0 => return None,
+            1 => "its package page",
+            _ => "each package page",
+        };
+        let routes = match asked {
+            true => format!("when kendex asks below, or with Set up on {page} in the app"),
+            false => format!("with Set up on {page} in the app"),
+        };
+        Some(format!("set {} up {routes}", names.join(" and ")))
+    };
+    let steps: Vec<String> = [step(&asked, true), step(&page_only, false)]
+        .into_iter()
+        .flatten()
+        .collect();
+    said_as(
+        style,
+        Status::Decision,
+        &format!(
+            "{}, then commit these files with what it renders",
+            steps.join("; ")
+        ),
+    )
 }
 
 /// A commit that would split a package's changed files: no setup clears

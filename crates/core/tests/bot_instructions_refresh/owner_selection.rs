@@ -450,6 +450,7 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
         &scan,
         &generated,
         &scan.carried(),
+        commit_offer::Deferred::default(),
     )
     .unwrap();
     assert_eq!(
@@ -474,6 +475,109 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
             String::new()
         },
     );
+}
+
+/// The configuration owner's state, and the package held beside the
+/// deferred successor, in one row of the table below.
+struct DeferredRow {
+    what: &'static str,
+    old_armed: bool,
+    beside: bool,
+}
+
+/// A dependency-only successor the action sets up after its offer holds
+/// the commit, and its setup retires the old owner, so the old owner's row
+/// is the successor's: a row for each would name two setups where one
+/// clears both. A package that is not a configuration candidate keeps its
+/// own row.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_deferred_successor_stands_for_the_configuration_owner() {
+    for row in [
+        DeferredRow {
+            what: "old owner set up here, its check failing",
+            old_armed: true,
+            beside: false,
+        },
+        DeferredRow {
+            what: "old owner not set up here",
+            old_armed: false,
+            beside: false,
+        },
+        DeferredRow {
+            what: "beside another package not set up here",
+            old_armed: false,
+            beside: true,
+        },
+    ] {
+        let what = row.what;
+        let fixture = selected_fixture(SELECTIONS[4]);
+        if !row.old_armed {
+            let repo = kendex_core::guard::Repo::at(&fixture.root).unwrap();
+            kendex_core::repo_effects::armed::disarm(
+                kendex_core::repo_effects::armed::record_dir(&repo, false),
+                OLD,
+            )
+            .unwrap();
+        }
+        let mut names = vec![OLD, NEW];
+        if row.beside {
+            install(&fixture, "beside", false);
+            names.push("beside");
+        }
+        git(&fixture.root, &["add", "-A"]);
+        commit_fixture(&fixture.root);
+        let mut generated = GeneratedPaths::default();
+        for name in names {
+            let declaration = fixture
+                .root
+                .join(".agents/skills")
+                .join(name)
+                .join("SKILL.md");
+            let text = fs::read_to_string(&declaration).unwrap();
+            fs::write(&declaration, format!("{text}\nchanged\n")).unwrap();
+            generated.whole.insert(declaration);
+        }
+        let installed =
+            kendex_core::engine::installed_declaration(&fixture.env, &fixture.scope, NEW)
+                .unwrap()
+                .unwrap();
+        let successor = bot_instructions::pending_successor(
+            &fixture.env,
+            &fixture.scope,
+            std::slice::from_ref(&installed),
+        )
+        .unwrap();
+        assert_eq!(
+            successor.as_ref().map(|one| one.name.as_str()),
+            Some(NEW),
+            "{what}: premise"
+        );
+        let scan = offer_scan(&fixture, &generated);
+        let held = commit_offer::stale(
+            &fixture.env,
+            &fixture.scope,
+            &scan,
+            &generated,
+            &scan.carried(),
+            commit_offer::Deferred {
+                successor: successor.as_ref(),
+                walked: &[],
+            },
+        )
+        .unwrap();
+        let mut expected = vec![(NEW, Staleness::NotSetUp)];
+        if row.beside {
+            expected.insert(0, ("beside", Staleness::NotSetUp));
+        }
+        assert_eq!(
+            held.iter()
+                .map(|held| (held.disclosure.name.as_str(), held.why.clone()))
+                .collect::<Vec<_>>(),
+            expected,
+            "{what}"
+        );
+    }
 }
 
 /// The main checkout set the new owner up, which retired the old one

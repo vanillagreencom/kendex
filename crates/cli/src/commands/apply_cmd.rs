@@ -152,7 +152,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         let walked = super::repo_effects::disclose_and_finish(
             env,
             &scope,
-            &first.remaining(&report.repo_effects),
+            first.remaining(),
             args.allow_repo_effects,
             || {
                 // The deep work just ran; record it for the session-start

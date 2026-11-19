@@ -224,8 +224,8 @@ fn wrote_count(applied: usize, planned_anything: bool) -> Option<usize> {
 /// the count of written operations.
 #[derive(Default)]
 struct Written {
-    /// The repository effects the collection plan declared, less the
-    /// configuration setups the apply took first.
+    /// The repository effects the collection plan declared that its
+    /// walkthrough asks for: [`super::repo_effects::SetUpFirst::remaining`].
     effects: Vec<kendex_core::repo_effects::DeclaredEffects>,
     /// The setup the apply took first, where it failed.
     set_up_failed: Option<Box<dyn std::error::Error>>,
@@ -251,7 +251,7 @@ fn install_report(
     wrote.scored.extend(report.safety.iter().cloned());
     let (applied, first) = apply_report_first(env, report)?;
     wrote.applied += applied;
-    wrote.effects.extend(first.remaining(&report.repo_effects));
+    wrote.effects.extend_from_slice(first.remaining());
     wrote.set_up_failed = first.into_failed();
     Ok(())
 }
