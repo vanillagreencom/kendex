@@ -19,6 +19,10 @@ class Controls(unittest.TestCase):
             ("capture-exclusivity", "scripts/human-input", 'os.O_WRONLY | os.O_CREAT | os.O_EXCL', 'os.O_WRONLY | os.O_CREAT', "human_input_test.py", "HumanInput.test_capture_exclusive"),
             ("private-mode", "scripts/lib/op_fifo.py", " and stat.S_IMODE(info.st_mode) == mode", "", "op_broker_test.py", "Broker.test_private_transport"),
             ("caller-link-recheck", "scripts/lib/op_fifo.py", 'if stat_fields(read("%d/stat" % pid)) != (parent, started):', "if False:", "op_broker_test.py", "Broker.test_caller_identity"),
+            ("caller-peer-user", "scripts/lib/op_fifo.py", "if uid != os.getuid() or pid <= 0:", "if pid <= 0:", "op_broker_test.py", "Broker.test_unverified_peer"),
+            ("session-start-day", "scripts/lib/op_fifo.py", "str(moment.tm_mday)", '"%02d" % moment.tm_mday', "op_broker_test.py", "Broker.test_caller_identity"),
+            # Against session-backend.sh's real record of this process; a Linux-only case, since macOS names no caller.
+            ("session-start-second", "scripts/lib/op_fifo.py", 'boot + ticks // os.sysconf("SC_CLK_TCK")', 'boot + 1 + ticks // os.sysconf("SC_CLK_TCK")', "op_broker_test.py", "Broker.test_op_request_record"),
             ("required-agent-browser", "SKILL.md", '- command: agent-browser', '- command: missing-fixture-replacement', "command_declarations_test.py", "Declaration.test_missing_agent_browser"),
         ]
         baseline_env = dict(os.environ, JARVIS_TOOL_SCRIPTS=str(PACKAGE / "scripts"), JARVIS_TOOL_SKILL=str(PACKAGE / "SKILL.md"))

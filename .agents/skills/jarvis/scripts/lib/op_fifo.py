@@ -31,8 +31,13 @@ REQUEST_BYTES = 4096
 STDERR_BYTES = 4096
 TTY_LEADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "op_tty.py")
 SOCKET = "requests.sock"
+# sockaddr_un's sun_path bytes on macOS, its terminating NUL included: sys/un.h.
+SUN_PATH = 104
 # The only entries a broker leaves in its directory, with their file types.
 OWN_ENTRIES = {"lock": stat.S_ISREG, SOCKET: stat.S_ISSOCK}
+# The FIFO broker this one replaced can leave its request FIFO after a crash, and a killed client its reply FIFO.
+# A restart removes them; drop this once no consumer's directory can still hold one from that broker.
+LEGACY_FIFOS = r"requests|[0-9a-f]{32}\.reply"
 # Each verb's request field, which its allow-list entry lists and its log line names as the reference.
 SUBJECTS = {"read": "reference", "op": "args", "script": "path"}
 # The characters systemd.unit(5) allows in a unit name, with @ for a template instance.
@@ -87,12 +92,25 @@ def open_script(path):
     return private(fd, stat.S_ISREG, 0o700, "script=private-owner-required")
 
 
+def entry_kind(name):
+    """Return the file type test of an entry a broker may leave by that name, or None."""
+    return stat.S_ISFIFO if re.fullmatch(LEGACY_FIFOS, name) else OWN_ENTRIES.get(name)
+
+
 def check_own_entries(directory):
     """Refuse a reused directory holding anything a broker did not leave."""
     for name in os.listdir(directory):
-        kind = OWN_ENTRIES.get(name)
+        kind = entry_kind(name)
         if kind is None or not kind(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode):
             raise Refusal("directory=foreign")
+
+
+def remove_legacy_fifos(directory):
+    """Behind the lock, remove the FIFOs the FIFO broker and its clients left."""
+    for name in os.listdir(directory):
+        if re.fullmatch(LEGACY_FIFOS, name) and stat.S_ISFIFO(os.stat(name, dir_fd=directory,
+                                                                        follow_symlinks=False).st_mode):
+            os.unlink(name, dir_fd=directory)
 
 
 def lock_directory(directory):
@@ -109,16 +127,24 @@ def lock_directory(directory):
     return fd
 
 
+def socket_address(directory, root):
+    """Name the request socket in the opened directory for bind and connect.
+
+    On Linux the name goes through the directory's descriptor, so a deep directory meets no sun_path limit; on
+    macOS, which has no such name, it is the path, which main bounds."""
+    return "/proc/self/fd/%d/%s" % (directory, SOCKET) if sys.platform == "linux" else str(root / SOCKET)
+
+
 def listen(directory, root):
     """Bind the request socket in the opened broker directory and return it listening, nonblocking."""
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         mask = os.umask(0o177)
         try:
-            listener.bind(str(root / SOCKET))
+            listener.bind(socket_address(directory, root))
         finally:
             os.umask(mask)
-        # bind resolves the path again, so the entry checked is the one in the directory the broker opened.
+        # On macOS bind resolves the path again, so the entry checked is the one in the directory the broker opened.
         check_socket(directory)
         listener.listen()
         listener.setblocking(False)
@@ -262,9 +288,19 @@ def peer_caller(connection, home):
         return None, str(refusal)
 
 
-def protection():
-    """Name what the allow list protects: each verified caller on Linux, any caller of a listed reference on macOS."""
+def protection(allow_list):
+    """Name what the allow list protects: nothing when none is set, each verified caller on Linux, any caller of a
+    listed reference on macOS."""
+    if allow_list is None:
+        return "none"
     return "unit" if sys.platform == "linux" else "listed-any-caller"
+
+
+def granted(allow_list):
+    """Return the cause a served request's log line names."""
+    # A broker with no list serves every request, as it did before the list existed, so a refresh that brings the
+    # list never stops a working broker.
+    return STATUS_CAUSES["ok"] if allow_list is not None else "list=unset"
 
 
 def valid_entry(entry):
@@ -333,6 +369,8 @@ def authorize(verb, subject, identity, allow_list):
     """Return the cause that refuses the request, or None when the allow list names it for this caller.
 
     identity is peer_caller's answer: the caller and None, or None and the cause that refused the peer."""
+    if allow_list is None:
+        return None
     caller, unverified = identity
     try:
         callers = read_allow_list(allow_list)
@@ -585,7 +623,7 @@ def respond(request, identity, allow_list, op, env, route):
             return status("read-failed")
         if result.returncode:
             return status("read-failed")
-        return {"status": "ok", "value": encoded(result.stdout)}, STATUS_CAUSES["ok"]
+        return {"status": "ok", "value": encoded(result.stdout)}, granted(allow_list)
     if verb not in ("op", "script"):
         return status("invalid-request")
     # On macOS an inherited ACL can open a mode-700 directory to another user.
@@ -621,7 +659,7 @@ def respond(request, identity, allow_list, op, env, route):
     finally:
         if script is not None:
             os.close(script)
-    return {"status": "ok", "exit": result.returncode, "stdout": encoded(result.stdout)}, STATUS_CAUSES["ok"]
+    return {"status": "ok", "exit": result.returncode, "stdout": encoded(result.stdout)}, granted(allow_list)
 
 
 def log_field(value):
@@ -629,12 +667,13 @@ def log_field(value):
     return json.dumps(value, separators=(",", ":")).replace(" ", "\\u0020")
 
 
-def log_request(caller, request, reply, cause):
+def log_request(caller, request, reply, cause, allow_list):
     """Write the request's one log line: never a value or a reply body."""
     verb = request.get("verb")
-    known = verb in SUBJECTS
+    # The verb is the client's JSON, which can be a list or an object that no dict lookup accepts.
+    known = isinstance(verb, str) and verb in SUBJECTS
     print("op-broker: request time=%s protection=%s caller=%s verb=%s reference=%s outcome=%s cause=%s" % (
-        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), protection(), caller or "unverified",
+        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), protection(allow_list), caller or "unverified",
         verb if known else "invalid", log_field(request.get(SUBJECTS[verb]) if known else None), reply["status"],
         cause), file=sys.stderr, flush=True)
 
@@ -653,7 +692,7 @@ def answer(connection, op, env, route, allow_list, home):
     else:
         request = {}
         reply, cause = status("invalid-request")
-    log_request(identity[0], request, reply, cause)
+    log_request(identity[0], request, reply, cause, allow_list)
     try:
         send(connection.fileno(), json.dumps(reply).encode() + b"\n", time.monotonic() + CALL_SECONDS)
     except (OSError, Refusal):
@@ -683,6 +722,8 @@ def broker(args):
         if reused:
             check_own_entries(directory)
         lock = lock_directory(directory)
+        if reused:
+            remove_legacy_fifos(directory)
         env, route = session(op, args.account or os.environ.get("OP_ACCOUNT"))
         if keepalive is not None and route == "app-integration":
             # Each app call leads its own terminal session, which needs its own native authorization.
@@ -694,7 +735,7 @@ def broker(args):
         except FileNotFoundError:
             pass
         listener = listen(directory, args.directory)
-        print("op-broker: state=ready protection=" + protection(), flush=True)
+        print("op-broker: state=ready protection=" + protection(args.allow_list), flush=True)
         renewing = False
         while True:
             # After a successful call, an idle broker renews the session before it expires.
@@ -757,7 +798,7 @@ def client(args):
         deadline = time.monotonic() + CLIENT_SECONDS
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         connection.settimeout(CLIENT_SECONDS)
-        connection.connect(str(args.directory / SOCKET))
+        connection.connect(socket_address(directory, args.directory))
         connection.setblocking(False)
         send(connection.fileno(), request, deadline)
         content = record(args.request["verb"], json.loads(receive(connection.fileno(), deadline)))
@@ -800,6 +841,7 @@ def main(kind):
                "broker renews whenever it has been idle that many seconds after a successful call, with op whoami "
                "for OP_SESSION; unset, it never renews. App integration with a selected keepalive refuses at "
                "startup with keepalive=unsupported cause=per-terminal-authorization. "
+               "Without an allow list the broker serves every request and logs protection=none. "
                "The broker reads its allow list again for each request. On Linux it serves only what the "
                "caller's entry lists: jarvis-session for the process the --home session record names and its "
                "descendants, otherwise the first systemd service in the caller's parent chain. On macOS, which "
@@ -812,14 +854,15 @@ def main(kind):
     parser.add_argument("--directory", type=Path,
                         help="absolute private directory dedicated to the broker, otherwise JARVIS_OP_DIRECTORY; "
                              "the broker reuses an existing one only when it holds nothing but its own lock and "
-                             "request socket")
+                             "request socket, or the FIFOs a FIFO broker left, which it removes; on macOS the "
+                             "socket path must stay under " + str(SUN_PATH) + " bytes")
     if kind == "broker":
         parser.add_argument("--account", help="1Password account, otherwise OP_ACCOUNT")
         parser.add_argument("--allow-list", type=Path,
                             help="absolute mode-600 JSON allow list outside the directory, otherwise "
                                  "JARVIS_OP_ALLOW_LIST: {\"callers\": {CALLER: {\"read\": [REF], \"op\": [[ARG]], "
                                  "\"script\": [PATH]}}}, where CALLER is jarvis-session or a NAME.service unit that "
-                                 "may hold one * for a generated part")
+                                 "may hold one * for a generated part; unset, every request is served")
         parser.add_argument("--home", type=Path,
                             help="Linux: absolute Jarvis home whose session record names the jarvis-session "
                                  "caller, otherwise JARVIS_OP_HOME; unset, no caller is jarvis-session")
@@ -841,18 +884,18 @@ def main(kind):
         args.request = client_request(parser, args.request)
     if not args.directory.is_absolute() or (kind == "client" and not args.output.is_absolute()):
         parser.exit(2, "op-" + kind + ": path=absolute-required\n")
+    if sys.platform != "linux" and len(os.fsencode(args.directory / SOCKET)) >= SUN_PATH:
+        parser.exit(2, "op-" + kind + ": directory=path-too-long\n")
     if kind == "broker":
-        if args.allow_list is None:
-            if not os.environ.get("JARVIS_OP_ALLOW_LIST"):
-                parser.exit(2, "op-broker: setting=JARVIS_OP_ALLOW_LIST\n")
+        if args.allow_list is None and os.environ.get("JARVIS_OP_ALLOW_LIST"):
             args.allow_list = Path(os.environ["JARVIS_OP_ALLOW_LIST"])
         if args.home is None and os.environ.get("JARVIS_OP_HOME"):
             args.home = Path(os.environ["JARVIS_OP_HOME"])
-        if not args.allow_list.is_absolute() or (args.home is not None and not args.home.is_absolute()):
+        if any(path is not None and not path.is_absolute() for path in (args.allow_list, args.home)):
             parser.exit(2, "op-broker: path=absolute-required\n")
         # A list inside the directory would be a foreign entry there, and a restart would refuse the directory.
         inside = os.path.realpath(args.directory)
-        if os.path.commonpath([inside, os.path.realpath(args.allow_list)]) == inside:
+        if args.allow_list is not None and os.path.commonpath([inside, os.path.realpath(args.allow_list)]) == inside:
             parser.exit(2, "op-broker: allow-list=inside-directory\n")
     def cancel(signum, _frame):
         raise Cancelled(signum)

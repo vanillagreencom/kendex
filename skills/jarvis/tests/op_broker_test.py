@@ -72,8 +72,8 @@ def request_fields(line):
     return fields
 
 
-def logged(caller, verb, reference, outcome, cause):
-    return {"protection": PROTECTION, "caller": caller or "unverified",
+def logged(caller, verb, reference, outcome, cause, protection=PROTECTION):
+    return {"protection": protection, "caller": caller or "unverified",
             "verb": verb, "reference": reference, "outcome": outcome, "cause": cause}
 
 
@@ -121,14 +121,18 @@ class Broker(World):
         self.allowed.write_text(json.dumps({"callers": callers}))
         self.allowed.chmod(0o600)
 
-    def start(self, body=None, args=None, terminal=True, leader=False, grants=FIXTURE_GRANTS):
+    def start(self, body=None, args=None, terminal=True, leader=False, grants=FIXTURE_GRANTS, protection=PROTECTION,
+              home=True):
         self.executable("op", body or OP)
         self.directory = self.root / "broker"
         if grants is not None:
             self.allow(grants)
         if sys.platform == "linux":
             self.record_test_process()
-        self.env["JARVIS_OP_HOME"] = str(self.home)
+        if home:
+            self.env["JARVIS_OP_HOME"] = str(self.home)
+        else:
+            self.env.pop("JARVIS_OP_HOME", None)
         if args is None:
             args = ["--directory", str(self.directory), "--account", "fixture-account", "--allow-list", str(self.allowed),
                     "--home", str(self.home)]
@@ -157,7 +161,7 @@ class Broker(World):
         self.addCleanup(stop)
         self.assertTrue(select.select([process.stdout], [], [], 10)[0], "broker did not report readiness")
         self.assertEqual(process.stdout.readline(),
-                         b"op-broker: state=ready protection=" + PROTECTION.encode() + b"\n")
+                         b"op-broker: state=ready protection=" + protection.encode() + b"\n")
         return process
 
     def journal(self, process):
@@ -365,6 +369,8 @@ elif sys.argv[1]=='read':
                 (b'{"verb": "op", "args": ["whoami", 1]}', "op", ["whoami", 1]),
                 (b'{"verb": "script", "path": "relative-script"}', "script", "relative-script"),
                 (b"[]", "invalid", None), (b"not-json", "invalid", None),
+                # A verb no dict lookup accepts.
+                (b'{"verb": []}', "invalid", None), (b'{"verb": {}}', "invalid", None),
                 # A listed read padded past the longest line opq sends.
                 (b'{"verb": "read", "reference": "op://fixture/item/password", "pad": "' + b"x" * 5000 + b'"}',
                  "invalid", None))
@@ -473,8 +479,7 @@ elif sys.argv[1]=='read':
         self.assertEqual([call["verb"] for call in calls], ["whoami", "vault", "item"] * 2)
         self.assertTrue(all((call["session"], call["account"]) == ("service-session", "service-account") for call in calls))
         for missing, key in (("OP_SESSION", b"op-broker: session=OP_SESSION-required"),
-                             ("JARVIS_OP_DIRECTORY", b"op-broker: setting=JARVIS_OP_DIRECTORY"),
-                             ("JARVIS_OP_ALLOW_LIST", b"op-broker: setting=JARVIS_OP_ALLOW_LIST")):
+                             ("JARVIS_OP_DIRECTORY", b"op-broker: setting=JARVIS_OP_DIRECTORY")):
             with self.subTest(missing=missing):
                 env = {name: value for name, value in self.env.items() if name != missing}
                 result = subprocess.run([sys.executable, "-B", str(SCRIPTS / "op-broker")], env=env,
@@ -534,8 +539,12 @@ elif sys.argv[1]=='read':
             ("leftover", existing({"lock": stat.S_IFREG, "requests.sock": stat.S_IFSOCK}), None, None),
             ("foreign-entry", existing({"lock": stat.S_IFREG, "notes": stat.S_IFREG}), b"op-broker: directory=foreign", None),
             ("foreign-requests", existing({"requests.sock": stat.S_IFREG}), b"op-broker: directory=foreign", None),
-            ("fifo-broker", existing({"lock": stat.S_IFREG, "requests": stat.S_IFIFO}), b"op-broker: directory=foreign",
-             None),
+            # A FIFO broker's crash leaves its request FIFO, and a killed client its reply FIFO: a restart removes them.
+            ("fifo-broker", existing({"lock": stat.S_IFREG, "requests": stat.S_IFIFO, "0" * 32 + ".reply": stat.S_IFIFO}),
+             None, None),
+            ("fifo-reply", existing({"f" * 32 + ".reply": stat.S_IFIFO}), None, None),
+            ("foreign-fifo-name", existing({"requests": stat.S_IFREG}), b"op-broker: directory=foreign", None),
+            ("foreign-reply-name", existing({"F" * 32 + ".reply": stat.S_IFIFO}), b"op-broker: directory=foreign", None),
             ("public", existing({}, mode=0o755), b"op-broker: directory=private-owner-required", None),
             ("busy", running, b"op-broker: directory=busy", None),
         )
@@ -1095,40 +1104,105 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         self.assertEqual(process.returncode, 0, stderr)
         self.assertNotIn(b"fixture-value", stderr)
 
-    @unittest.skipUnless(sys.platform == "linux", "caller identity is Linux only")
+    @unittest.skipUnless(sys.platform == "linux", "SO_PEERCRED is Linux only")
     def test_unverified_peer(self):
         module = load("lib/op_fifo.py")
-        self.executable("op", OP)
-        # Any caller the broker verifies would be served, so only an unverified one is refused.
-        self.callers({key: {"read": ["op://fixture/item/password"]} for key in ("jarvis-session", "*.service")})
-        directory = self.root / "peer"
-        directory.mkdir(mode=0o700)
-        fd = module.open_directory(directory)
-        listener = module.listen(fd, directory)
-        line = b'{"verb": "read", "reference": "op://fixture/item/password"}\n'
-        try:
-            # subprocess.run reaps the peer before the broker accepts it, so its id names no process.
-            subprocess.run([sys.executable, "-c", "import socket,sys\ns=socket.socket(socket.AF_UNIX)\n"
-                            "s.connect(sys.argv[1])\ns.sendall(sys.argv[2].encode())\n",
-                            str(directory / "requests.sock"), line.decode()], check=True, timeout=10)
-            self.assertTrue(select.select([listener], [], [], 5)[0], "the peer did not connect")
-            connection, _ = listener.accept()
-            with connection, redirect_stderr(io.StringIO()) as stderr:
-                module.answer(connection, str(self.bin / "op"), self.env, "session", self.allowed, None)
-            self.assertEqual([request_fields(entry) for entry in stderr.getvalue().splitlines()],
-                             [logged(None, "read", "op://fixture/item/password", "not-allowed", "caller=unverified")])
-            # A peer of another user is unverified too.
+        # The parent chain names a verified caller, so only the peer's user can refuse it.
+        rows = (("same-user", 0, ("jarvis-session", None)), ("other-user", 1, (None, "caller=unverified")))
+        for name, offset, expected in rows:
             ends = socket.socketpair()
             try:
-                with patch.object(module.os, "getuid", return_value=os.getuid() + 1):
-                    self.assertEqual(module.peer_caller(ends[0], None), (None, "caller=unverified"))
+                with self.subTest(row=name), patch.object(module, "chain_caller", return_value="jarvis-session"), \
+                     patch.object(module.os, "getuid", return_value=os.getuid() + offset):
+                    self.assertEqual(module.peer_caller(ends[0], None), expected)
             finally:
                 for end in ends:
                     end.close()
-        finally:
-            listener.close()
-            os.close(fd)
-        self.assertFalse(self.log.exists(), "an unverified peer reached op")
+
+    def test_list_settings(self):
+        password = "op://fixture/item/password"
+        output = self.root / "value"
+
+        def request(process, *words):
+            result = self.opq(*words, output=output)
+            self.assertTrue(select.select([process.stderr], [], [], 10)[0], "broker logged no request")
+            return result, request_fields(process.stderr.readline())
+
+        def stop(process):
+            process.terminate()
+            _, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, stderr)
+
+        # No list: every request serves, as before the list existed, and the log still names the caller.
+        process = self.start(args=["--directory", str(self.root / "broker"), "--home", str(self.home)], grants=None,
+                             protection="none")
+        rows = [(["read", password], "read", password), (["read", "op://fixture/item/newline"], "read",
+                                                           "op://fixture/item/newline")]
+        if sys.platform == "linux":
+            rows.append((["op", "--", "item", "delete", "fixture"], "op", ["item", "delete", "fixture"]))
+        for words, verb, subject in rows:
+            with self.subTest(list="unset", verb=verb, subject=subject):
+                result, fields = request(process, *words)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output.unlink()
+                self.assertEqual(fields, logged(HOST_CALLER, verb, subject, "ok", "list=unset", protection="none"))
+        stop(process)
+        if sys.platform != "linux":
+            return
+        # A list but no home: the recorded session process is no jarvis-session caller, so its entry serves nobody.
+        process = self.start(args=["--directory", str(self.root / "broker"), "--allow-list", str(self.allowed)],
+                             grants={"read": [password]}, home=False)
+        result, fields = request(process, "read", password)
+        self.refused(result, output, b"op-client: read=not-allowed")
+        self.assertNotEqual(fields["caller"], "jarvis-session")
+        cause = "caller=unverified" if fields["caller"] == "unverified" else "caller=unlisted"
+        self.assertEqual(fields, logged(fields["caller"], "read", password, "not-allowed", cause))
+        stop(process)
+
+    def test_socket_path_bound(self):
+        module = load("lib/op_fifo.py")
+        # The socket path, directory and separator included, of a directory named n bytes long under the root.
+        fixed = len(os.fsencode(self.root / "requests.sock")) + 1
+        self.assertLess(fixed, module.SUN_PATH - 1, "the scratch root leaves no room for a directory name")
+        longest, too_long = (self.root / ("d" * (module.SUN_PATH - extra - fixed)) for extra in (1, 0))
+
+        def served(directory):
+            """Bind the broker's socket in directory, connect a client to it and return the bytes one line carries."""
+            directory.mkdir(mode=0o700)
+            broker, client = module.open_directory(directory), module.open_directory(directory)
+            try:
+                with module.listen(broker, directory) as listener, socket.socket(socket.AF_UNIX) as connection:
+                    connection.connect(module.socket_address(client, directory))
+                    connection.sendall(b"line\n")
+                    self.assertTrue(select.select([listener], [], [], 5)[0], "the client did not connect")
+                    accepted, _ = listener.accept()
+                    with accepted:
+                        return module.receive(accepted.fileno(), module.time.monotonic() + 5)
+            finally:
+                os.close(broker)
+                os.close(client)
+                shutil.rmtree(directory)
+
+        # Linux names the socket through the directory's descriptor, so a directory past the macOS bound serves.
+        if sys.platform == "linux":
+            self.assertEqual(served(self.root / ("d" * 200)), b"line")
+        output = self.root / "out"
+        with patch.object(module, "sys", Platform("darwin")):
+            # macOS names it by path: the longest directory whose socket path fits sun_path serves.
+            self.assertEqual(served(longest), b"line")
+            # One byte longer refuses before anything exists.
+            for kind, argv in (("broker", ["op-broker", "--directory", str(too_long)]),
+                               ("client", ["opq", "--directory", str(too_long), "--output", str(output), "read",
+                                           "op://fixture/item/password"])):
+                with self.subTest(kind=kind):
+                    with patch.object(sys, "argv", argv), redirect_stderr(io.StringIO()) as stderr:
+                        with self.assertRaises(SystemExit) as refused:
+                            module.main(kind)
+                    self.assertEqual((refused.exception.code, stderr.getvalue().splitlines()[0]),
+                                     (2, "op-" + kind + ": directory=path-too-long"))
+                    self.assertFalse(too_long.exists())
+                    self.assertFalse(output.exists())
+
 
 def deadline_worker():
     world = World()
