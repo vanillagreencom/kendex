@@ -396,10 +396,12 @@ count() { # TEXT NEEDLE
 # toy_line OUTPUT CLONE: the toy crate's rustc line from `cargo check -v`,
 # with the clone's path, the incremental session dir and the unit hashes the
 # profile's incremental setting feeds taken out, so two fixtures' lines
-# compare equal exactly when their other flags do.
+# compare equal exactly when their other flags do. Cargo's build-dir layout
+# that names each unit's output dir build/<crate>/<unit hash>/ carries that
+# hash in every path under that dir.
 toy_line() {
   local line=""
-  line="$(sed -n 's/ -C incremental=[^ ]*//; s/ -C metadata=[^ ]*//; s/ -C extra-filename=[^ ]*//; /--crate-name toy/p' <<<"$1")"
+  line="$(sed -n 's/ -C incremental=[^ ]*//; s/ -C metadata=[^ ]*//; s/ -C extra-filename=[^ ]*//; s#/build/toy/[0-9a-f]*/#/build/toy/<unit>/#g; /--crate-name toy/p' <<<"$1")"
   printf '%s' "${line//"$2"/<clone>}"
 }
 

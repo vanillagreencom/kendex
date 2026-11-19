@@ -735,7 +735,7 @@ while IFS='|' read -r rule kind settings want edit control_want; do
         case "$setting" in *=+*) setting="${setting%%=*}=$(($(date +%s) + ${setting#*=+}))" ;; esac
         args+=("$setting")
       done
-      run_bounded "$B" "${args[@]}" RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+      run_bounded "$B" ${args[@]+"${args[@]}"} RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
         RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
         GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
       got="$(bound_outcome "$B")"

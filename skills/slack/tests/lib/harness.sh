@@ -166,6 +166,7 @@ landed() {
 }
 # sk_stall_delivery ROOT: a real lane-mail send with no flock and a one-shot
 # stalled jq delivery scan. The marker proves the shipped guard holds its lock.
+# The PATH keeps ps: with no /proc, agent-runtime reads process identity there.
 sk_stall_delivery() {
   env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C python3 - "$1" "$SK_LANE_MAIL" <<'PY'
 import pathlib, shlex, shutil, sys
@@ -174,7 +175,7 @@ bin_dir = root / "tmp/no-flock-bin"
 bin_dir.mkdir()
 for name in ("bash", "sh", "cat", "tail", "mkdir", "mv", "rm", "rmdir", "date", "awk", "sed", "git",
              "tr", "head", "sleep", "cp", "ln", "wc", "sort", "grep", "dirname", "basename", "touch",
-             "chmod", "id", "uname", "mktemp", "env", "python3", "find", "cut", "sha256sum"):
+             "chmod", "id", "uname", "mktemp", "env", "python3", "find", "cut", "sha256sum", "ps"):
     command = shutil.which(name)
     if command is None:
         sys.exit("mutex fixture: command-missing=" + name)
