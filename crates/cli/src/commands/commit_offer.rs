@@ -390,11 +390,13 @@ fn make(
         if !stale.is_empty() {
             let held = Held {
                 set_up: ran_for(&set_up, &stale),
-                walkthrough: left.is_some_and(|left| {
-                    stale
-                        .iter()
-                        .any(|one| one.disclosure.declared.name == left.name)
-                }),
+                walkthrough: left
+                    .filter(|left| {
+                        stale
+                            .iter()
+                            .any(|one| one.disclosure.declared.name == left.name)
+                    })
+                    .map(|left| left.name.as_str()),
                 answered,
                 // The flag says yes only beside a choice flag that commits,
                 // `--leave` having returned above. With no choice flag a
@@ -507,12 +509,13 @@ fn ran_for(set_up: &[(String, SetUp)], stale: &[commit_offer::Stale]) -> Option<
 
 /// Where the offer stands when a package holds its commit.
 #[derive(Clone, Copy)]
-struct Held {
+struct Held<'a> {
     /// The setup a held package already had in this action.
     set_up: Option<SetUp>,
-    /// The successor of [`Earlier::left_to_walkthrough`] holds the commit:
-    /// its setup is left to the action's walkthrough after the offer.
-    walkthrough: bool,
+    /// The successor of [`Earlier::left_to_walkthrough`] that holds the
+    /// commit: its setup is left to the action's walkthrough after the
+    /// offer.
+    walkthrough: Option<&'a str>,
     /// The choice a flag named, if one did.
     answered: Option<Route>,
     /// Who gives the setup its yes.
@@ -534,7 +537,7 @@ fn hold(
     scope: &Scope,
     scan: &commit_offer::Scan,
     stale: &[commit_offer::Stale],
-    held: Held,
+    held: Held<'_>,
     generated: &mut GeneratedPaths,
 ) -> Result<Hold, Box<dyn std::error::Error>> {
     let style = ui::style();
@@ -554,9 +557,10 @@ fn hold(
     // The action's only consent for that setup comes after the offer, at
     // a terminal, or is not given, so the offer neither commits over it nor
     // sets it up: it names the setup.
-    if held.walkthrough {
+    if let Some(successor) = held.walkthrough {
         ui::stderr(&block::walkthrough_way_on(
             &style,
+            successor,
             std::io::stdin().is_terminal(),
         ));
         return Ok(Hold::Ended(match held.answered {
