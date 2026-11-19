@@ -6,7 +6,7 @@ Read the matching section when [oversee.md § Lane directive](../workflows/overs
 
 The account judge is `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]`; `--lane [CONFIG_DIR]` judges one named account. A request with `judge_account: true` checks its named account through the same judge.
 
-Read `.result.answer`. `lane` names the account in `.result.record.config_dir`. `unjudged` is never a verdict: repair what `.result.record.cause` names. Any other answer refuses; on a walled one, read the roster. The 5-hour window is no wall.
+Read `.result.answer`. `lane` names the account in `.result.record.config_dir`. `unjudged` is never a verdict: repair what `.result.record.cause` names. `cloud-repo-unset` is a cloud-session account with no access to this checkout's repository under `ORCH_LANE_CLOUD_REPOS`. Any other answer refuses; on a walled one, read the roster. The 5-hour window is no wall.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime lane roster
@@ -71,8 +71,10 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
 - `item-ineligible`: the item is a container; launch its unblocked children.
 - `launch-overlap`: launch once that lane stops, or name the file in `in_scope` where the brief adds to it append-only.
-- `join-unreachable`, `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder stops.
+- `join-unreachable`: the holder is hosted or a cloud session. Launch once that lane stops.
+- `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder stops.
 - `tier-narrower`: brief the judged cycle.
+- `lane-repo-conflict`: leave `repo` out of the `admit-paths` request; the lane's own is judged.
 - `launch-class-missing`: name both `class` and `class_reason`, under [skill-rules.md § Model class](skill-rules.md#model-class). A relaunch naming neither keeps the record's.
 - `launch-class-missed`: launch at `standard` or above.
 - `launch-model-missing`, `launch-effort-missing`: name the model and effort the account was judged on.
@@ -86,20 +88,20 @@ A first launch whose touched set meets a live lane of the same repository before
 
 ### After the lane is recorded `preparing`
 
-The effect's refusal settles the launch intent `failed` and records the lane `stopped`, with the key as the observation's `cause`. `.agents/skills/orch/scripts/orch-runtime state inspect --fleet` shows it. Fix what it names before retrying. If a failed cloud launch leaves an item worktree claim, resolve that claim with its owner before sending the request again. These causes need more:
+The effect's refusal settles the launch intent `failed` and records the lane `stopped`, with the key as the observation's `cause`. Under `--effect-exit` the reply's `settled` intent carries that observation; `.agents/skills/orch/scripts/orch-runtime state inspect --fleet` shows it. Fix what it names before retrying. If a failed cloud launch leaves an item worktree claim, resolve that claim with its owner before sending the request again. These causes need more:
 
 - `bypass-refused`: the account's owner removes the recorded `skipDangerousModePermissionPrompt: false`, or the lane launches without the bypass word.
 - `harness-binary-missing`: install the harness, or name it in `AGENT_RUNTIME_HARNESS_BINARIES` as `harness=/absolute/path`.
 - `permission-mismatch`: drop the bypass word, or name a narrower one.
-- `home-relative`, `no-context-reader`: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup).
+- `home-relative`, `no-context-reader`: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup). Repair what `file` names.
 - `tmux-session-unresolved`, `tmux-session-missing`: § Tmux session.
 - `session-owned-elsewhere`, `session-store-unreadable`: the same request meets the same refusal. Repair the store, or report the session to the operator.
 
 ### Harness gate
 
-A `cause` from the harness gate (agent-runtime `effects/prepare/gate.rs`) is repaired as the lane's harness says; a hosted Pi or Copilot lane meets the gate on the host's own files:
+The harness gate (agent-runtime `effects/prepare/gate.rs`) admits only a lane whose compaction is off and whose turns its hooks record. A `cause` from it is repaired as the lane's harness says; a hosted Pi or Copilot lane meets the gate on the host's own files:
 
-- Pi: [pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi). After the repair, send the item's `launch-lane` request again, as `retry=launch-lane` says.
+- Pi: [pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi). Pi needs automatic compaction off in its settings, no project setting turning it on, and an installed pi-hooks carrier that supplies `context_window` and wakes on mail. Its causes are `compaction-on`, `pi-settings-unreadable`, `pi-carrier-unreadable`, `pi-carrier-unresolved`, `pi-selection-unresolved`, `pi-mail-wake-missing`, `pi-mail-wake-off` and `unsupported-for-oversee harness=pi`. After the repair, send the item's `launch-lane` request again, as `retry=launch-lane` says.
 - Copilot: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup). Install the three lane-mail hooks through kendex, switch them back on, or repair kendex.
 - `host-pi-claude-seat`: launch the Pi lane locally, or on a `github-copilot/` or `anthropic/` model.
 - `home-unresolved`: name the account.
@@ -124,7 +126,7 @@ Use `terminal` where the item is finished. To relaunch it, use the `no_landing` 
 
 Write the brief with the harness's file tool under the checkout's `tmp/`, and name its absolute path as the request's `brief_file`. Keep the file until the launch settles. A launch with no `brief_file` starts the lane on the start workflow for its item, which continues from the item's handoff record.
 
-The brief opens the lane's workflow, `/orch start [ITEM]` or the tier's verb, in the form its harness takes ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A first launch reads the tier the brief states, by its verb or its one `item-tier` line; a relaunch keeps the record's. The launch closes the brief with the unattended words, the lane mailbox monitor's arm line for Claude Code and Copilot CLI ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)), and the output-mode sentence of [skill-rules.md § Lane Output](skill-rules.md#lane-output).
+The brief opens the lane's workflow, `/orch start [ITEM]` or the tier's verb, in the form its harness takes ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A first launch reads the tier the brief states, by its verb or its one `item-tier` line; a relaunch keeps the record's. The launch closes a local or hosted lane's brief with the unattended words, the lane mailbox monitor's arm line for Claude Code and Copilot CLI ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)), and the output-mode sentence of [skill-rules.md § Lane Output](skill-rules.md#lane-output). A cloud launch's brief takes the cloud session words in place of the unattended words.
 
 ## Obligation lineage
 

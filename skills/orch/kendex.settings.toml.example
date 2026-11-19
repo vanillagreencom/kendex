@@ -117,8 +117,9 @@ PR_COPILOT_REQUESTS = "on"
 
 # Maximum seconds the review call, orch-runtime copilot-wait and an
 # approve-head request with hold_copilot hold on Copilot's work on a head, in
-# whole seconds above zero. Each reader's refusal of another value, and where
-# approve-head's hold starts: references/settings.md. What the review
+# whole seconds above zero. Each reader names its refusal of another value in
+# its own output. Where approve-head's hold starts: references/settings.md.
+# What the review
 # call holds and from when: references/gates.md § Copilot requests;
 # copilot-wait's bound: workflows/review-pr-comments.md § 1. Requires the
 # overseer token app's repository Checks: read permission.
@@ -182,8 +183,9 @@ REVIEWER_SLOT_BUDGET = "0"
 
 # The overseer's head approval, the approve-head request: the file its app
 # token is read from on every call, and the app's bot login, which each
-# approval records and its read-back matches. Where the token file must sit
-# and each refusal: references/settings.md. The GitHub reader credentials
+# approval records and its read-back matches. What the token file must be:
+# references/copilot-head-notices.md § What the runtime checks; approve-head
+# names each refusal in its own output. The GitHub reader credentials
 # the approval's review-reply check passes on, GH_TOKEN, GITHUB_TOKEN,
 # GH_BOT_TOKEN and GH_HOST, come from the environment or .env.local; keep a
 # token out of every tracked file.
@@ -224,7 +226,8 @@ REVIEWER_SLOT_BUDGET = "0"
 # value refuses the start as setting-invalid. Unset holds the run to the room
 # the host gives the start; a value over that room refuses the start as
 # memory-short. A run the bound kills fails with cause=memory-cap, its limit
-# and its peak. The start line and the unread room: references/settings.md.
+# and its peak. The start's own started line names the bound it set, or that
+# it read no room.
 # ORCH_VALIDATE_MEMORY_MAX = "8G"
 
 # --- Talking to you -----------------------------------------------------------

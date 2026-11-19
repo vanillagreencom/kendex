@@ -68,9 +68,9 @@ Route the `request` before the verdict word:
 
 - `requested`: the call sent the request. Go on to the verdict.
 - `existing`: Copilot's work or review already stands on the head, so no request was needed. Go on to the verdict.
-- `fallback`: no request went out, and `cause` says why. The fallback stands on every later call for that head.
+- `fallback`: no request went out, and `cause` says why. The fallback stands on every later call for that head, except a `draft` fallback, which lapses as `draft` says.
   - `off`: the call recorded the fallback while `PR_COPILOT_REQUESTS` was `off`.
-  - `draft`: the head is a draft the call was not asked to mark ready. Keep the draft.
+  - `draft`: the head is a draft the call was not asked to mark ready. Keep the draft. This fallback lapses once the gate's ready mark lands, or once the view and `pulls/N` both read the head ready. That call answers the head's request as on a head with no request recorded, and starts the head's hold and review period.
   - `refresh`: the consumer's base-checkout `REVIEW_GATE_REFRESH_REVIEW=overseer` declares this pull request its refresh head. The head takes [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval).
   - `no-files`: Copilot's current-head answer says it could review no files. The head takes the same Fallback approval with no further request.
   - `refused` with `exit`: GitHub answered the request with a 4xx refusal.

@@ -331,7 +331,7 @@ A handoff does not confirm that its session stopped: a relaunch refuses `lane-li
 
 ### `idle-after-return`
 
-`EVENT idle-after-return [LANE]`, then an optional note: the lane read idle on two passes in a row, or a local Codex lane read idle after its turn. Read the closing lines under it.
+`EVENT idle-after-return [LANE]`, then an optional note: the lane read idle on two passes in a row, or a local Codex lane read idle after its turn. Pane dialogs and walls take priority over a local lane's session rows except on Pi; Codex's current failed-turn marker below its last prompt and above its idle composer can end a Working row. Hosted Pi lanes use their own Stop rows; other hosted lanes keep their provider's screen reading. Read the closing lines under it.
 
 - `cause=length`: the model's output limit cut the turn, and the lane has not finished. Send it a one-line continuation directive.
 - `cause=api-error` is a turn its provider's API ended. The watch resumes a lane the wake reaches once, with no line. So this line is a second such end, a resume the wake could not type, or a lane the wake does not reach: wake the lane with a continuation directive.

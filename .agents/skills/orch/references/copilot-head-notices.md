@@ -20,7 +20,7 @@ A `copilot-declined-unchanged` approval sets `hold_copilot` to `false` and adds 
 
 ## What the runtime checks
 
-The consumer supplies its own GitHub App identity. `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names the file holding the app's installation token, which the consumer's own tooling writes. `ORCH_OVERSEER_REVIEW_LOGIN` names the app's login. [settings.md § Review and CI](settings.md#review-and-ci) states the token file's form.
+The consumer supplies its own GitHub App identity. `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names the file holding the app's installation token, which the consumer's own tooling writes. `ORCH_OVERSEER_REVIEW_LOGIN` names the app's login. `approve-head` reads the token file only when it is a regular file this user owns, with no group or other bits, under a parent this user owns with no group or other write bit, holding one word ([security.rs](../runtime/src/watch/security.rs) `read_token`).
 
 The runtime approves only a live head that starts with `head`, and posts only after `github.sh check-review-replies [N]` passes on that head.
 

@@ -242,7 +242,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 .agents/skills/linear/scripts/linear.sh issues validate-completion [ISSUE_ID] --include-children-of [ISSUE_ID]
 ```
 
-- **HEAD.** On `no-change`, B reads no HEAD; the check's answer already holds the unmoved HEAD. On `hand-over`, HEAD must differ from `pre_delegate_sha`. On `accept-excused`, the selected receipt's `.commit` must equal HEAD; an unchanged HEAD is allowed. Read its begun exception by adding `--round [DEV_ROUND_ID] --exception-file [EXCEPTION_FILE]` to the proof command below. Otherwise HEAD must differ from `pre_delegate_sha`. Where HEAD did not move, the round's proof must be complete for HEAD's tree. Read the tree, then run the runtime's proof reader over the round's `validate` entries. It must answer `complete` in `.result.proof`:
+- **HEAD.** On `no-change`, B reads no HEAD; the check's answer already holds the unmoved HEAD. On `hand-over`, HEAD must differ from `pre_delegate_sha`. On `accept-excused`, the selected receipt's `.commit` must equal HEAD; an unchanged HEAD is allowed. Read its begun exception by adding `--round [DEV_ROUND_ID] --exception-file [EXCEPTION_FILE]` to the proof command below. Otherwise HEAD must differ from `pre_delegate_sha`, unless it did not move and the round's proof is complete for HEAD's tree. Read the tree, then run the runtime's proof reader over the round's `validate` entries. It must answer `complete` in `.result.proof`:
 
   ```bash
   git -C "[WORKTREE_PATH]" rev-parse "HEAD^{tree}"
