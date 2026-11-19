@@ -10,7 +10,7 @@ Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a
 
 For each alert:
 
-1. **Dismiss** it where it is not real, or its code is not reachable in what the repository ships or runs, such as a `scope=development` package no build or test runs, or a finding in test code. Dismiss through GitHub with GitHub's reason and a one-line comment:
+1. **Dismiss** it where it is not real, or its code is not reachable in what the repository ships or runs, such as a `scope=development` package no build or test runs, or a finding in test code. An alert's code is reachable where input from outside the repository's reviewed content and its trusted services can reach the vulnerable code in a build, test or shipped path. Before judging, read the earlier `alerts_triaged` verdicts for the same package or advisory. Dismiss through GitHub with GitHub's reason and a one-line comment:
 
    ```bash
    gh api -X PATCH repos/[OWNER/REPO]/[KIND]/alerts/[N] -f state=dismissed -f dismissed_reason=[REASON] -f dismissed_comment=[LINE]

@@ -497,7 +497,8 @@ for phase, expected in (
     os.killpg(process.pid, signal.SIGTERM)
     os.close(writer)
     writer = None
-    output, _ = process.communicate(timeout=grace)
+    # The row asserts the cancelled output and exit code, not the stop time, so a loaded runner gets a margin.
+    output, _ = process.communicate(timeout=grace + 20)
     assert process.returncode == 143, output
     selected = [line.removeprefix("guard-note: selected-suite=") for line in output.splitlines()
                 if line.startswith("guard-note: selected-suite=")]
