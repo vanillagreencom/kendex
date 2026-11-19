@@ -218,9 +218,10 @@ pub(super) enum Walk {
     /// The verb walks no effects. `remove` carries the flag only for the
     /// offer's setup.
     No,
-    /// `add` or `apply` without the flag: the action's only consent for an
-    /// effect comes after the offer, from a person at a terminal, or is
-    /// not given where nobody is there.
+    /// `add` or `apply` without the flag: the walkthrough after the offer
+    /// asks for each effect at a terminal, and with nobody there no effect
+    /// is set up. The offer's hold can still set up a held package, save
+    /// the pending successor of [`Earlier::left_to_walkthrough`].
     Asking,
     /// `add` or `apply` with the flag.
     Allowed,
