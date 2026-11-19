@@ -6630,16 +6630,19 @@ fn stop_live_watch(runner: &Runner, state: &Path) {
 }
 
 /// The first launch's brief outlives the process that wrote it, because the
-/// runtime delivers it, and a start held before delivery is delivered by a
-/// reconcile that runs after the launch ended. The row drives the
-/// workflow's launch into the real runtime's `start-controller`, the join
-/// of the request and the runtime's effect that a row pinned against a
-/// fixture of either half misses: the gated Codex stub holds the start
-/// before delivery and the start answers `unconfirmed`; the brief file the
-/// intent names stands under the state directory; a repeated launch before
-/// the release meets the same intent and holds, opening no second runner
-/// and no watch; the gate released, the next reconcile binds the session,
-/// types that file's text and publishes the controller, one intent.
+/// runtime confirms it, and a start held after its brief was typed is
+/// completed by a reconcile that runs after the launch ended, never typing
+/// it again. The row drives the workflow's launch into the real runtime's
+/// `start-controller`, the join of the request and the runtime's effect
+/// that a row pinned against a fixture of either half misses: the start
+/// types the brief at the gated Codex stub's composer, the stub writes no
+/// rollout until the gate is released, and the start answers `unconfirmed`
+/// with the brief recorded as typed and no session bound; the brief file
+/// the intent names stands under the state directory; a repeated launch
+/// before the release meets the same intent and holds, opening no second
+/// runner and no watch; the gate released, the next reconcile binds the
+/// session, confirms that file's text as its one turn and publishes the
+/// controller, one intent.
 #[test]
 fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() {
     let dir = tempfile::tempdir().unwrap();
@@ -6688,6 +6691,8 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     let intent = intents[0].clone();
     assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
     assert_eq!(intent["observation"]["note"], "session-unbound", "{intent}");
+    assert_eq!(intent["phase"]["phase"], "delivering", "typed: {intent}");
+    assert!(intent["phase"].get("session").is_none(), "{intent}");
     assert!(fleet["controller"].get("generation").is_none(), "{fleet}");
     let brief = Path::new(intent["phase"]["brief"].as_str().unwrap());
     assert!(
@@ -6716,8 +6721,8 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(runner_pane(&server), pane, "the same runner");
     assert_eq!(units_started(&bin), 0, "no watch before the controller");
 
-    // The rollout appears; the reconcile delivers the launch's brief and
-    // publishes the controller.
+    // The rollout appears, holding the typed line; the reconcile binds it,
+    // confirms the launch's brief and publishes the controller.
     release_hold(&gate, secs(10), || format!("{:?}", server.window_names()));
     // The reconcile binds the runner by the rollout's `session_meta` line,
     // which the stub writes after it makes the directory.
@@ -6754,7 +6759,73 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(
         codex_turns(&account),
         vec![text.trim_end().to_owned()],
-        "the reconcile typed the file the launch wrote"
+        "the start typed the file the launch wrote, once"
+    );
+    assert_eq!(units_started(&bin), 1, "the controller's one watch");
+    let state = runner
+        .state_dir()
+        .join(agent_runtime::record::FLEET_FILE_NAME);
+    stop_live_watch(&runner, &state);
+}
+
+/// A Codex whose rollout appears only at its first user turn completes its
+/// start in one call: the brief is typed once at its composer, the session
+/// that appeared for the cwd after the window opened is bound, the brief is
+/// confirmed as that session's first turn and the controller is published
+/// with its one watch.
+#[test]
+fn a_codex_start_whose_session_appears_at_its_first_turn_types_its_brief_then_binds() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, mut env) = watch_world(runner.state_dir());
+    let work = runner.state_dir().join("work");
+    let account = runner.state_dir().join("codex-account");
+    std::fs::create_dir(&work).unwrap();
+    github_skill_under(&work);
+    std::fs::create_dir(&account).unwrap();
+    std::fs::write(
+        account.join("config.toml"),
+        format!(
+            "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+            work.display()
+        ),
+    )
+    .unwrap();
+    let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "codex");
+    let launched = workflow_launch(
+        &runner,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "codex",
+        "gpt-6-astra",
+        &fixtures().join("stub-codex-first-turn/codex"),
+    )
+    .run();
+    let started = launched.started();
+    assert_eq!(
+        started["outcome"],
+        "confirmed",
+        "{started}\n{}",
+        stderr(launched.op())
+    );
+    let fleet = runner.fleet();
+    let overseer = &fleet["controller"];
+    assert_eq!(overseer["generation"], 1, "{overseer}");
+    assert_eq!(overseer["harness"], "codex", "{overseer}");
+    assert_eq!(overseer["pane"], runner_pane(&server), "{overseer}");
+    let intent = &fleet["intents"][0];
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let brief = Path::new(intent["phase"]["brief"].as_str().unwrap());
+    let text = std::fs::read_to_string(brief)
+        .unwrap_or_else(|e| panic!("the brief left with the launch: {} {e}", brief.display()));
+    assert_eq!(
+        codex_turns(&account),
+        vec![text.trim_end().to_owned()],
+        "the start typed the file the launch wrote, once"
     );
     assert_eq!(units_started(&bin), 1, "the controller's one watch");
     let state = runner

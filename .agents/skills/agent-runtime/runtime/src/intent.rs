@@ -280,9 +280,10 @@ pub struct OpenedPane {
     pub home_implicit: bool,
 }
 
-/// The runner's own native session file, bound once before the brief is
-/// pasted: the effect and every reconcile count that file alone, never a
-/// neighbour in the same home and directory.
+/// The runner's own native session file, bound once, before the brief is
+/// pasted or, for a harness that writes it only at its first turn, after:
+/// the effect and every reconcile count that file alone, never a neighbour
+/// in the same home and directory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundSession {
     pub session_id: String,
@@ -320,7 +321,14 @@ pub enum Phase {
         opened: OpenedPane,
         /// The user turns the bound file held before the paste.
         turns_before: u64,
-        session: BoundSession,
+        /// `None` where the brief is typed before any session is bound
+        /// ([`Harness::session_written_at_first_turn`]): a reconcile binds
+        /// the session that appeared since the window opened and confirms
+        /// the brief as its first turn.
+        ///
+        /// [`Harness::session_written_at_first_turn`]: crate::harness::Harness::session_written_at_first_turn
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<BoundSession>,
         /// The lines the brief holds, as typed.
         lines: u64,
     },

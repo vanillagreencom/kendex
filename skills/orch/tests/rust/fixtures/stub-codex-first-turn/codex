@@ -1,0 +1,30 @@
+#!/bin/bash
+# A stub Codex for the orch-runtime live-effect tests, named `codex` so the
+# kernel records the harness's own process name for it; the `#!` line names
+# bash directly, since `env` would exec bash under its own name. It draws
+# Codex's composer line (`› Ask Codex to do anything`, the marker the judge
+# reads the pane idle by) at once and writes its rollout only when it reads
+# its first line on stdin, as Codex CLI 0.169.0 writes no rollout before its
+# first user turn. The rollout is Codex's shape as agent-runtime's `session`
+# module reads it: under `sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl`
+# under CODEX_HOME, a `session_meta` row naming the id and this directory,
+# then one `event_msg` row completing a `UserMessage` item per line read,
+# the first line included. It launches no model and reaches no account; it
+# stands until its stdin closes, which a kill-server or a window kill does.
+printf '\xe2\x80\xba Ask Codex to do anything\n'
+home="${CODEX_HOME:?}"
+rollout=""
+while IFS= read -r line; do
+  if [ -z "$rollout" ]; then
+    id="stub-$$"
+    day="$home/sessions/$(date -u +%Y/%m/%d)"
+    mkdir -p "$day" || exit 4
+    rollout="$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$id.jsonl"
+    printf '{"timestamp":"%s","type":"session_meta","payload":{"id":"%s","cwd":"%s","parent_thread_id":null,"source":"cli"}}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$id" "$PWD" > "$rollout"
+  fi
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"%s-%s","content":[{"type":"text","text":"%s"}]}}}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$id" "$RANDOM" "$escaped" >> "$rollout"
+done

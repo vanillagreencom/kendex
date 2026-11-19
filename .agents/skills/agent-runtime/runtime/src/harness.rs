@@ -230,6 +230,18 @@ impl Harness {
         self.session_id_words("").is_some()
     }
 
+    /// Whether a fresh session of this harness writes its native file only
+    /// at its first user turn, so a brief held for its composer is typed
+    /// before the session can be bound. Codex CLI 0.169.0 writes no rollout
+    /// before its first turn; Claude Code's file is named by its fixed id,
+    /// and Copilot CLI's workspace.yaml stands as the session opens.
+    pub fn session_written_at_first_turn(self) -> bool {
+        match self {
+            Harness::Codex => true,
+            Harness::Claude | Harness::Copilot | Harness::Pi => false,
+        }
+    }
+
     /// The word before a model id, with the model as the next argument.
     pub fn model_flag(self) -> &'static str {
         match self {

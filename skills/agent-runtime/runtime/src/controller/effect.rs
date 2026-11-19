@@ -1531,10 +1531,37 @@ fn complete_transfer(
             }
         }
         // A brief recorded as delivering may have been pasted: it is never
-        // pasted again, and the turn is waited for as after a delivery.
+        // pasted again, and the turn is waited for as after a delivery. One
+        // typed before its session could be bound binds it now, by the same
+        // rule as before a paste.
         Phase::Delivering {
             turns_before,
-            session,
+            session: None,
+            ..
+        } => match bind_runner_session(&operation, successor, opened)? {
+            Ok(session) => {
+                operation.record_phase(Phase::Delivered {
+                    opened: opened.clone(),
+                    turns_before: *turns_before,
+                    session: session.clone(),
+                })?;
+                (*turns_before, session)
+            }
+            Err(undelivered) => {
+                return Ok(unconfirmed_after_retirement(
+                    operation,
+                    opened,
+                    runner,
+                    None,
+                    &undelivered.note,
+                    by,
+                    undelivered.observation,
+                ));
+            }
+        },
+        Phase::Delivering {
+            turns_before,
+            session: Some(session),
             ..
         }
         | Phase::Delivered {
@@ -1665,15 +1692,44 @@ fn undelivered(note: &str, session_id: Option<String>, observation: Value) -> Un
     }
 }
 
+/// The runner's own session bound, or the refusal that stops its delivery:
+/// a store that could not be read whole names its cause, and zero or
+/// several candidates bind none.
+fn bind_runner_session(
+    operation: &Operation,
+    successor: &Successor,
+    opened: &OpenedPane,
+) -> Result<std::result::Result<BoundSession, Undelivered>> {
+    Ok(match successor.bind_session(operation, opened)? {
+        Binding::Bound(session) => Ok(session),
+        Binding::Unreadable { cause } => Err(undelivered(
+            "session-store-unreadable",
+            None,
+            json!({"cause": cause}),
+        )),
+        Binding::Absent => Err(undelivered("session-unbound", None, json!({}))),
+        Binding::Ambiguous(sessions) => Err(undelivered(
+            "session-ambiguous",
+            None,
+            json!({"sessions": sessions}),
+        )),
+    })
+}
+
 /// Bind the runner's own session file and type the held `brief` into its
 /// pane: the user turns that file held before the paste and the bound
-/// session, or what stopped the delivery. A brief is never pasted without
-/// the session bound, so the turn that confirms it is the runner's own; a
-/// store that could not be read whole stops it with the cause, the runner
-/// live. The `delivering` phase is written before the paste and
-/// `delivered` after: a brief refused before the paste leaves the phase as
-/// it stood, so a repeat types it; one whose paste went unanswered is never
-/// typed again, and its turn alone says whether it went in.
+/// session, or what stopped the delivery. The session is bound before the
+/// paste, except for a fresh session of a harness that writes it only at
+/// its first turn (`session_written_at_first_turn`): its brief is typed
+/// first and the one session that appeared since the window opened is bound
+/// after, holding no turn before the brief. Either way the turn that
+/// confirms it is the runner's own; a store that could not be read whole
+/// stops it with the cause, the runner live. The `delivering` phase is
+/// written before the paste and `delivered` once the session is bound after
+/// it: a brief refused before the paste leaves the phase as it stood, so a
+/// repeat types it; one whose paste went unanswered, or whose session was
+/// not yet bound, is never typed again, and its turn alone says whether it
+/// went in.
 fn deliver_brief(
     operation: &mut Operation,
     successor: &Successor,
@@ -1681,34 +1737,24 @@ fn deliver_brief(
     opened: &OpenedPane,
     brief: &Path,
 ) -> Result<std::result::Result<(u64, BoundSession), Undelivered>> {
-    let session = match successor.bind_session(operation, opened)? {
-        Binding::Bound(session) => session,
-        Binding::Unreadable { cause } => {
-            return Ok(Err(undelivered(
-                "session-store-unreadable",
-                None,
-                json!({"cause": cause}),
-            )));
-        }
-        Binding::Absent => return Ok(Err(undelivered("session-unbound", None, json!({})))),
-        Binding::Ambiguous(sessions) => {
-            return Ok(Err(undelivered(
-                "session-ambiguous",
-                None,
-                json!({"sessions": sessions}),
-            )));
+    let typed_first =
+        opened.session_id.is_none() && successor.harness.session_written_at_first_turn();
+    let bound = if typed_first {
+        None
+    } else {
+        match bind_runner_session(operation, successor, opened)? {
+            Ok(session) => Some(session),
+            Err(undelivered) => return Ok(Err(undelivered)),
         }
     };
-    let turns_before = operation.user_turns(successor.harness, Path::new(&session.file))?;
+    let turns_before = match &bound {
+        Some(session) => operation.user_turns(successor.harness, Path::new(&session.file))?,
+        None => 0,
+    };
+    let bound_id = || bound.as_ref().map(|s| s.session_id.clone());
     let text = match read_brief(brief) {
         Ok(text) => text,
-        Err(e) => {
-            return Ok(Err(undelivered(
-                e.key(),
-                Some(session.session_id),
-                json!({}),
-            )));
-        }
+        Err(e) => return Ok(Err(undelivered(e.key(), bound_id(), json!({})))),
     };
     let text = text.trim_end();
     let delivered = match operation.standing_pane(pane.clone()) {
@@ -1718,7 +1764,7 @@ fn deliver_brief(
             Phase::Delivering {
                 opened: opened.clone(),
                 turns_before,
-                session: session.clone(),
+                session: bound.clone(),
                 lines: text.lines().count() as u64,
             },
         )?,
@@ -1730,12 +1776,15 @@ fn deliver_brief(
         crate::effects::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
     };
     if let Some((note, cause)) = stopped {
-        return Ok(Err(undelivered(
-            note,
-            Some(session.session_id),
-            json!({"cause": cause}),
-        )));
+        return Ok(Err(undelivered(note, bound_id(), json!({"cause": cause}))));
     }
+    let session = match bound {
+        Some(session) => session,
+        None => match bind_runner_session(operation, successor, opened)? {
+            Ok(session) => session,
+            Err(undelivered) => return Ok(Err(undelivered)),
+        },
+    };
     operation.record_phase(Phase::Delivered {
         opened: opened.clone(),
         turns_before,

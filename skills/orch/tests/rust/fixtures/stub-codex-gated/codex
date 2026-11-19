@@ -5,9 +5,10 @@
 # It draws Codex's composer line (`› Ask Codex to do anything`, the marker
 # the judge reads the pane idle by) at once and writes its rollout only
 # after the row releases the FIFO `rollout-gate` under CODEX_HOME: until
-# then the runner stands at its composer with no session file, the state a
-# real Codex account's session is in between its composer and its first
-# rollout write, which the runtime's binding reads as `session-unbound`. A
+# then the runner stands with no session file whatever was typed into it, a
+# rollout written later than the first turn's typing, which the runtime's
+# binding reads as `session-unbound`; a line typed before the release waits
+# in the terminal and is read, and recorded, after it. A
 # gate the row never made ends this process, so the runtime reads the runner
 # exited rather than a start that was never held. The rollout is Codex's
 # shape as agent-runtime's `session` module reads it: under
