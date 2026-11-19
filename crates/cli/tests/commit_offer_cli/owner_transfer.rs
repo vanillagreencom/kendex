@@ -113,10 +113,10 @@ enum Arrival {
     /// nothing up and commits nothing, and the setup runs once.
     DeclinedAtTerminal,
     /// The same add with `--commit` at a terminal in a linked work tree
-    /// that carries neither record, saying yes to the old owner's setup
-    /// beside the main checkout's and then to the new owner's in the
-    /// walkthrough: the old owner armed before the offer still leaves the
-    /// new one's setup to the walkthrough, so the offer commits nothing.
+    /// that carries neither record, saying yes to the new owner's setup in
+    /// the walkthrough: the old owner, set up in the main checkout, is not
+    /// offered a setup here that the new owner's would retire, and the
+    /// offer commits nothing.
     LinkedAtTerminal,
     /// The same add at a terminal with no commit choice and neither owner
     /// installed before, saying yes to the walkthrough's setup of both:
@@ -222,11 +222,7 @@ impl Arrival {
     fn steps(self) -> Vec<(String, &'static str)> {
         let walkthrough = (format!("make {NEW}'s repository changes?"), "y");
         match self {
-            Arrival::DeclinedAtTerminal => vec![walkthrough],
-            Arrival::LinkedAtTerminal => vec![
-                (format!("set {OLD} up in this work tree too?"), "y"),
-                walkthrough,
-            ],
+            Arrival::DeclinedAtTerminal | Arrival::LinkedAtTerminal => vec![walkthrough],
             Arrival::FreshAtTerminal | Arrival::TableOnDiskAtTerminal => {
                 vec![("make the repository changes of 2 packages?".to_owned(), "y")]
             }
@@ -305,8 +301,8 @@ impl Arrival {
 /// drift under `verify`, a refresh names the pending setup, and a later
 /// apply commits. At a terminal the setup the walkthrough asks for runs
 /// once, after an offer that set nothing up and committed nothing, in a
-/// linked work tree whose old owner was set up beside the main checkout's
-/// before the offer, and with no owner installed before too. A new owner
+/// linked work tree whose old owner is set up only in the main checkout,
+/// and with no owner installed before too. A new owner
 /// with no configuring table in the manifest holds nothing, so the offer
 /// commits. With `--allow-repo-effects`
 /// and a commit choice, the setup runs once, disclosed once, before the offer,

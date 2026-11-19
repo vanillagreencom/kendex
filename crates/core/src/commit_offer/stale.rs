@@ -127,6 +127,10 @@ pub enum Staleness {
 /// reports it where kendex set it up.
 ///
 /// `deferred` is what the action making this offer sets up only after it.
+/// Its successor, where it holds, stands for the configuration owner: that
+/// setup takes the files over from the owner, retiring it where it is set
+/// up here, so the owner's row is dropped, save a [`Staleness::Split`],
+/// which no setup clears.
 pub fn stale(
     env: &Env,
     scope: &Scope,
@@ -215,6 +219,10 @@ pub fn stale(
             deferred,
         )?
     {
+        held.retain(|(declared, why)| {
+            !crate::bot_instructions::is_configuration_package(&declared.name)
+                || matches!(why, Staleness::Split { .. })
+        });
         held.push((successor.clone(), Staleness::NotSetUp));
     }
     if let Some(candidate) = candidate {

@@ -376,24 +376,23 @@ pub(super) fn apply_report_accounted(
     let applied = write_report(env, report)?;
     let first = super::repo_effects::set_up_first(env, report);
     let walked = walked(report, &first);
-    let after = match rendered(env, report) {
-        Ok(generated) => left_to_walkthrough(env, report)
-            .and_then(|left| {
-                super::commit_offer::after_writing(
-                    env,
-                    &report.plan.scope,
-                    &generated,
-                    &before,
-                    &super::commit_offer::Earlier {
-                        ran: first.ran(),
-                        deferred: kendex_core::commit_offer::Deferred {
-                            successor: left.as_ref(),
-                            walked: &walked,
-                        },
-                    },
-                )
-            })
-            .map_err(AfterFailed::Offer),
+    let rendered = left_to_walkthrough(env, report)
+        .and_then(|left| Ok((rendered(env, report, left.as_ref())?, left)));
+    let after = match rendered {
+        Ok((generated, left)) => super::commit_offer::after_writing(
+            env,
+            &report.plan.scope,
+            &generated,
+            &before,
+            &super::commit_offer::Earlier {
+                ran: first.ran(),
+                deferred: kendex_core::commit_offer::Deferred {
+                    successor: left.as_ref(),
+                    walked: &walked,
+                },
+            },
+        )
+        .map_err(AfterFailed::Offer),
         Err(error) => Err(AfterFailed::Render { error, before }),
     };
     Ok(Wrote {
@@ -407,9 +406,10 @@ pub(super) fn apply_report_accounted(
 /// action can consent to only after the offer, at a terminal, or not at
 /// all: an `add` or `apply` without `--allow-repo-effects` that brought a
 /// successor selection passes over for an installed predecessor,
-/// [`kendex_core::bot_instructions::pending_successor`]. Read after the
-/// render, so a predecessor a setup armed after that render still leaves
-/// the successor named. `None` where the walkthrough would not offer it.
+/// [`kendex_core::bot_instructions::pending_successor`]. Arming the
+/// predecessor does not change which successor yields, so the reading
+/// before the render holds at the offer too. `None` where the walkthrough
+/// would not offer it.
 fn left_to_walkthrough(
     env: &Env,
     report: &EngineReport,
@@ -448,20 +448,33 @@ fn walked(
 /// Render the configuration a plan's packages own after its write, and
 /// hand back the generated paths the offer after it covers, the plan's
 /// own and the render's.
+///
+/// `left` is the successor [`left_to_walkthrough`] names. Its setup takes
+/// the files over from the skipped predecessor, so the skip names that
+/// setup alone, and the predecessor is not offered a setup beside the main
+/// checkout that the successor's setup would retire, as
+/// [`kendex_core::bot_instructions::configuration_setup`] leaves a
+/// predecessor that arrives beside it.
 fn rendered(
     env: &Env,
     report: &EngineReport,
+    left: Option<&kendex_core::repo_effects::DeclaredEffects>,
 ) -> Result<kendex_core::engine::GeneratedPaths, Box<dyn std::error::Error>> {
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
-        ui::report::notice(&skipped.line());
-        if super::repo_effects::set_up_beside_main(env, &report.plan.scope, skipped)? {
-            kendex_core::bot_instructions::add_to_generated(
-                env,
-                &report.plan.scope,
-                &mut generated,
-            )?;
+        match left {
+            Some(successor) => ui::report::notice(&skipped.line_left_to(&successor.name)),
+            None => {
+                ui::report::notice(&skipped.line());
+                if super::repo_effects::set_up_beside_main(env, &report.plan.scope, skipped)? {
+                    kendex_core::bot_instructions::add_to_generated(
+                        env,
+                        &report.plan.scope,
+                        &mut generated,
+                    )?;
+                }
+            }
         }
     }
     if let Some(pending) = bot_instructions.pending() {

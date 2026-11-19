@@ -402,6 +402,17 @@ impl Skipped {
             ),
         }
     }
+
+    /// The line a surface prints where the action that rendered installed
+    /// `successor`, a configuration successor whose setup that action asks
+    /// for after this render: that setup takes the files over from this
+    /// package, so it is the one step named.
+    pub fn line_left_to(&self, successor: &str) -> String {
+        format!(
+            "{name}: render skipped; {successor} renders this repository's review files once it is set up here: use Set up on the {successor} package page",
+            name = self.declared.name
+        )
+    }
 }
 
 #[derive(Clone, Copy)]

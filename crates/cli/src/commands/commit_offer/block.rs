@@ -229,21 +229,32 @@ pub fn stale_way_on(style: &Style, set_up: bool, flag: bool) -> Vec<String> {
     }
 }
 
-/// Where the held successor `name`'s setup is left to the action's
-/// walkthrough after this offer: the routes that set it up. It is named,
-/// since a predecessor not set up here can be held beside it. `asked` is
-/// whether that walkthrough asks at a terminal. `--allow-repo-effects` is
-/// never named: a retry of the action finds the successor already
+/// Where a held successor's setup is left to the action's walkthrough
+/// after this offer: the routes that set up the held packages, each named,
+/// so the step covers the same packages the reasons above it name. `asked`
+/// is whether that walkthrough asks at a terminal. `--allow-repo-effects`
+/// is never named: a retry of the action finds the successor already
 /// installed and brings no effect for the flag to say yes to.
-pub fn walkthrough_way_on(style: &Style, name: &str, asked: bool) -> Vec<String> {
+pub fn walkthrough_way_on(style: &Style, stale: &[Stale], asked: bool) -> Vec<String> {
+    let names: Vec<&str> = stale
+        .iter()
+        .map(|held| held.disclosure.name.as_str())
+        .collect();
+    let page = match names.len() {
+        1 => "its package page",
+        _ => "each package page",
+    };
     let routes = match asked {
-        true => "when kendex asks below, or with Set up on its package page in the app",
-        false => "with Set up on its package page in the app",
+        true => format!("when kendex asks below, or with Set up on {page} in the app"),
+        false => format!("with Set up on {page} in the app"),
     };
     said_as(
         style,
         Status::Decision,
-        &format!("set {name} up {routes}, then commit these files with what it renders"),
+        &format!(
+            "set {} up {routes}, then commit these files with what it renders",
+            names.join(" and ")
+        ),
     )
 }
 
