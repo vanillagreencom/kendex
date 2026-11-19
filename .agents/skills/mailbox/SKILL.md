@@ -20,8 +20,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Mailbox
 
-Use `scripts/lane-mail` to send, read and resolve repository messages, and to keep an owner question open past its deadline. Its `--help` defines verbs, envelopes, receipts and refusal keys.
+Use `scripts/lane-mail` to send, read and resolve repository messages. It also keeps an owner question open past its deadline. Its `--help` defines verbs, envelopes, receipts and refusal keys.
 
 Owner questions and notices work with mailbox installed alone. A directive to an overseer needs the reader that orch records. Lane sends, hosted mail, compaction and notice attachments need orch installed beside mailbox. These operations refuse before writing when their required helper is absent. Worktree lookup and owner-question tracker updates use their optional sibling skills when installed.
 
-System dependencies: Bash 3.2, jq and Python 3.8 or later. All mailbox writers use `scripts/lib/file-lock.sh` and `scripts/lib/mailbox-append.sh`.
+System dependencies: Bash 3.2, jq and Python 3.8 or later. Every mailbox writer uses `scripts/lib/file-lock.sh` and `scripts/lib/mailbox-append.sh`.
