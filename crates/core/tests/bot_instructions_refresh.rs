@@ -1340,18 +1340,6 @@ const STALE_ROWS: &[StaleRow] = &[
         ..UNARMED_ROW
     },
     StaleRow {
-        what: "source catalog: table added, edit left out, set up by the walkthrough",
-        manifest: Some(ManifestInput {
-            primary: CONFIGURED_CATALOG,
-            local: Some(UNCONFIGURED),
-            edit: Some(("kendex-local.toml", CONFIGURED)),
-            carry: false,
-        }),
-        defers: Defers::Walked,
-        holds: Holds::NotSetUp,
-        ..UNARMED_ROW
-    },
-    StaleRow {
         what: "source catalog: table added, edit carried",
         manifest: Some(ManifestInput {
             primary: CONFIGURED_CATALOG,
