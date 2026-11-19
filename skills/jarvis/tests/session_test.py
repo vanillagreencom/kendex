@@ -976,7 +976,8 @@ class SessionContract(unittest.TestCase):
                     validate(stopped.stdout, stopped.returncode, "stop")
                     if origin == "app-off":
                         self.assertEqual(self.call("start")[0]["reason"], "app-off")
-                        self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "off")
+                        if BootReceiptScenario.applicable:
+                            self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "off")
                         self.assertIsNone(self.call("status")[0]["terminal"])
                 finally:
                     self.call("stop")

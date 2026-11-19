@@ -93,7 +93,13 @@ def main():
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
         baseline = run_case(skills, env, list(dict.fromkeys(test for *_, test in CONTROLS)))
         assert baseline.returncode == 0, "clean cases failed\n" + baseline.stdout + baseline.stderr
+        rejected = 0
         for name, relative, old, new, test in CONTROLS:
+            # The boot rows run only where the boot receipt's producer does,
+            # as session_test.BootReceiptScenario decides; elsewhere no row
+            # reaches the planted defect.
+            if name == "boot" and not Path("/proc/sys/kernel/random/boot_id").is_file():
+                continue
             path = skills / relative
             original = path.read_text()
             assert original.count(old) == 1, name
@@ -109,7 +115,8 @@ def main():
             # an import, fixture setup or command-launch failure.
             assert "FAILED (failures=" in result.stderr, name + "\n" + result.stdout + result.stderr
             print("control: rejected=" + name, flush=True)
-        print("pass: " + str(len(CONTROLS)) + " fail: 0")
+            rejected += 1
+        print("pass: " + str(rejected) + " fail: 0")
 
 
 if __name__ == "__main__":

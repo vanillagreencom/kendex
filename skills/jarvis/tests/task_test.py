@@ -103,13 +103,15 @@ class TaskContract(unittest.TestCase):
         # The running controller the home's fleet record names: this pane's
         # own process on the private server, live under its recorded start.
         holder = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
-        ticks = Path("/proc", holder, "stat").read_text().rsplit(")", 1)[1].split()[19]
+        # The start in the form every host's reader compares; no /proc on macOS.
+        holder_start = subprocess.run(["ps", "-o", "lstart=", "-p", holder], check=True, text=True, capture_output=True,
+                                      env=dict(os.environ, LC_ALL="C", TZ="UTC")).stdout.strip()
         fleet = self.root / "orch-state/workflow-state-oversee.json"
         fleet.parent.mkdir(parents=True)
         fleet.write_text(json.dumps({"controller": {
             "runtime": "tmux", "generation": 1, "server": server, "server_start": int(started), "server_socket": socket,
             "pane": pane, "harness": "claude", "account": str(self.root / "controller-account"), "harness_pid": holder,
-            "harness_start": "ticks:" + ticks, "cwd": str(self.home), "seat": "jarvis"}}))
+            "harness_start": "lstart:" + holder_start, "cwd": str(self.home), "seat": "jarvis"}}))
         self.record_path.parent.mkdir(parents=True)
         self.task_file = self.home / "task brief.md"
         self.task_file.write_text("Inspect the selected site. Write the Output section.\n")
