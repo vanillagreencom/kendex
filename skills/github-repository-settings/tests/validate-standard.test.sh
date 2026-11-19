@@ -114,6 +114,11 @@ settings_consumer explicitly-empty 'GITHUB_STANDARD_PLATFORM_CHECKS = ""'
 settings_consumer missing-workflow "$ENABLED"
 settings_consumer invalid-workflow "$ENABLED" 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "false"'
 settings_consumer invalid-enabled 'GITHUB_STANDARD_PLATFORM_CHECKS = "maybe"'
+# The committed opt-in, overridden by the private file KENDEX_ENV_FILE
+# selects; the default private file would leave the report enabled.
+settings_consumer selected-private-off "$ENABLED" "$WORKFLOW" 'KENDEX_ENV_FILE = "private.env"'
+printf '%s\n' 'GITHUB_STANDARD_PLATFORM_CHECKS=false' >"$TMP/consumer-selected-private-off/private.env"
+printf '%s\n' 'GITHUB_STANDARD_PLATFORM_CHECKS=true' >"$TMP/consumer-selected-private-off/.env.local"
 settings_consumer legacy-path "$CONTEXTS"
 settings_consumer legacy-values "$ENABLED" "$WORKFLOW" \
   "${CONTEXTS/GITHUB_STANDARD_/REVIEW_GATE_STANDARD_}" \
@@ -435,7 +440,7 @@ ROWS
 
 # A disabled report must stop before the first GitHub read. Force that
 # read to fail so an accidentally enabled route cannot pass this table.
-for consumer in disabled explicitly-off explicitly-empty; do
+for consumer in disabled explicitly-off explicitly-empty selected-private-off; do
   CONSUMER="$TMP/consumer-$consumer"
   run "$BASE" repository
   if [ "$RC" -eq 0 ] && [ -z "$OUT" ] && grep -qx 'note check=standard-platform-checks value=disabled' <<<"$RAW"; then
@@ -464,6 +469,20 @@ fi
 CONSUMER="$TMP/consumer-full"
 REPORT="$SKILL/scripts/validate-standard.sh"
 
+# The control ignores the private-file selector in a disposable copy.
+cp "$SKILL/scripts/validate-standard.sh" "$TMP/standard-report.keep"
+file_edit "$SKILL" scripts/validate-standard.sh 1 '^private_file=.*:-\.env\.local' \
+  's/^private_file=\${private_file:-\.env\.local}$/private_file=.env.local/'
+CONSUMER="$TMP/consumer-selected-private-off"
+run "$BASE" repository
+if [ "$RC" -ne 0 ] && ! grep -qx 'note check=standard-platform-checks value=disabled' <<<"$RAW"; then
+  ok "control: a report that ignores KENDEX_ENV_FILE turns the selected opt-out red"
+else
+  bad "control: a report that ignores KENDEX_ENV_FILE" "$RAW"
+fi
+CONSUMER="$TMP/consumer-full"
+cp "$TMP/standard-report.keep" "$SKILL/scripts/validate-standard.sh"
+
 # The control reads one retired key in a disposable copy of the loader.
 cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
 file_edit "$SKILL" scripts/lib/standard.sh 1 '^  WANT_CHECKS_BYPASS=' \
@@ -472,8 +491,8 @@ drift_case "control: a retired key read" "" "" "" "" retired
 if [ "$CASE_MATCH" = false ]; then ok "control: a loader that reads a retired key turns the retired-key case red"
 else bad "control: a loader that reads a retired key" "$CASE_DIFF"; fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
-file_edit "$SKILL" scripts/lib/standard.sh 1 '^  rg_setting "\$1" "" .env.local 3' \
-  's/^  rg_setting "\$1" "" .env.local 3.*$/  status=3/'
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  rg_setting "\$1" "" "\$3" 3' \
+  's/^  rg_setting "\$1" "" "\$3" 3.*$/  status=3/'
 drift_case "control: prefer legacy keys" "" "" "" "" precedence
 if [ "$CASE_MATCH" = false ]; then ok "control: ignoring replacement settings turns precedence red"
 else bad "control: ignoring replacement settings" "$CASE_DIFF"; fi

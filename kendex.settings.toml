@@ -100,10 +100,15 @@ SECOND_OPINION_CODEX_ROOM_CMD = ".agents/skills/agent-runtime/scripts/agent-runt
 # Empty disables.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md .github/instructions/code-review.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
+# This repository runs the read-only GitHub ruleset and CI report.
+GITHUB_STANDARD_PLATFORM_CHECKS = "true"
+
+# The numeric ID of this repository, which hosts
+# .github/workflows/request-copilot-review.yml.
+GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "1190866154"
+
 # The contexts kendex's own required-checks ruleset requires once "Review
 # gate" leaves it: the CI jobs the ruleset lists, by name.
-GITHUB_STANDARD_PLATFORM_CHECKS = "true"
-GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "1190866154"
 GITHUB_STANDARD_CONTEXTS = "CI"
 
 # This repository uses remote review and keeps the full review output.

@@ -52,7 +52,7 @@ Write each comment block for the consumer who reads it. The first line says what
 
 ## Naming
 
-Prefix keys with the skill name in upper-snake. For review-gate, use `REVIEW_GATE_SETTINGS_FILE`. A skill can deliberately ship a companion package's key.
+Prefix keys with the skill name in upper-snake: `ORCH_STATE_DIR` for a skill named `orch`. A convention, not enforced; a skill can deliberately ship a companion package's key, or keep a shorter family prefix, such as github-repository-settings' `GITHUB_STANDARD_*` keys.
 
 ## Where a value comes from
 

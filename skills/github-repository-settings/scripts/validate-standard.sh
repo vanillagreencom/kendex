@@ -11,7 +11,7 @@
 # bypass actors, and that row would be unreadable there. The permission each
 # row's reads need is in print_usage.
 #
-# Report protocol: ok/advisory/FAIL check=KEY value=VALUE, then indented
+# Report protocol: ok/advisory/FAIL/note check=KEY value=VALUE, then indented
 # explanation, the records rg_report in lib/diagnostics.sh prints. VALUE is
 # the observed state; `unreadable` in it means a read failed, which is never
 # a match. Human explanation is not parsed. Full contract: print_usage or --help.
@@ -48,7 +48,8 @@ checks the review-secret environment and the app installation; this report
 reads neither.
 
 One verdict line per row, ok, advisory or FAIL, VALUE being what was
-observed. An advisory row departs from a requirement the 1.3.0 standard
+observed. A disabled report prints one
+`note check=standard-platform-checks value=disabled` line and no rows. An advisory row departs from a requirement the 1.3.0 standard
 added and reads as a match until 2.0: it fails nothing and leaves the exit
 code alone, and the run prints one review-gate-warning=standard-advisory
 line to stderr, VALUE the advisory rows, naming each row's new form. The
@@ -198,7 +199,10 @@ die() { # CODE VALUE MESSAGE
 
 [ -r "$REVIEW_LIB/settings.sh" ] || die settings-load "$REVIEW_LIB/settings.sh" "could not load the settings library"
 . "$REVIEW_LIB/settings.sh" || exit 2
-platform_checks="$(rg_setting GITHUB_STANDARD_PLATFORM_CHECKS "$platform_default")" || exit 2
+# The selected private file is the one the package's review-file command reads.
+private_file="$(rg_setting KENDEX_ENV_FILE '' '')" || exit 2
+private_file=${private_file:-.env.local}
+platform_checks="$(rg_setting GITHUB_STANDARD_PLATFORM_CHECKS "$platform_default" "$private_file")" || exit 2
 case "$platform_checks" in
   "" | false)
     rg_report note standard-platform-checks disabled "Set GITHUB_STANDARD_PLATFORM_CHECKS to true to report GitHub settings."
@@ -207,14 +211,14 @@ case "$platform_checks" in
   true) ;;
   *) die settings-value GITHUB_STANDARD_PLATFORM_CHECKS "Use true, false or an empty string." ;;
 esac
-WANT_WORKFLOW_REPOSITORY="$(rg_setting GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID "$workflow_repository_default")" || exit 2
+WANT_WORKFLOW_REPOSITORY="$(rg_setting GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID "$workflow_repository_default" "$private_file")" || exit 2
 if [[ ! "$WANT_WORKFLOW_REPOSITORY" =~ ^[1-9][0-9]*$ ]]; then
   die settings-value GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID "Set the positive numeric GitHub repository ID of the required review workflow."
 fi
 if [ ! -r "$SCRIPT_DIR/lib/standard.sh" ] || ! . "$SCRIPT_DIR/lib/standard.sh" 2>/dev/null; then
   die standard-lib-load "$SCRIPT_DIR/lib/standard.sh" "could not load the standard library"
 fi
-rg_standard_load "$SCRIPT_DIR/../standard.json" || exit 2
+rg_standard_load "$SCRIPT_DIR/../standard.json" "$private_file" || exit 2
 
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf -- "$SCRATCH"' EXIT
@@ -303,7 +307,8 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" 'if type == "array" then .[
   # RULES already parsed as an array of rule objects, so a failed query
   # here is this script's own fault.
   # The organization ruleset requests the Copilot review through its
-  # workflow (references/adoption.md). The source row judges the
+  # workflow, which ../../review-gate/references/adoption.md § Central Copilot request workflow
+  # describes. The source row judges the
   # workflow's identity, its repository and path, because the owner re-pins
   # the sha on each workflow change; the review row also requires the pin.
   # An unrelated required workflow satisfies neither.
@@ -495,8 +500,7 @@ fi
 
 # Every repository under the standard reports the aggregate CI context on
 # the pull_request and merge_group legs. What its ruleset requires is
-# references/platform-checks.md
-# § Repo-side wiring. An Actions job reports its
+# references/platform-checks.md. An Actions job reports its
 # name as a check context on the commit it ran for. The pull request the
 # default branch's head merged holds the head where the pull_request leg ran.
 # The merge_group leg ran on the head itself, which the merge queue merged;

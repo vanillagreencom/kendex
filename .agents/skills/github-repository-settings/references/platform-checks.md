@@ -8,11 +8,11 @@ Set the report keys in the `[env]` table of [kendex.settings.toml](../kendex.set
 .agents/skills/github-repository-settings/scripts/validate-standard.sh
 ```
 
-The report reads the branch rules and the latest merge's pull-request and merge-group CI contexts. It writes no GitHub settings. The organization's own tooling owns GitHub App installation, the review-secret environment and its secrets. In the vanillagreen organization, fleet performs that work. Refresh adoption retains its environment check.
+The report reads the default branch's rules, each ruleset that holds them with its bypass actors, the branch's classic protection, and the latest merge's pull-request and merge-group CI contexts. The bypass-actor read needs Administration write; `--help` gives each row's permission. It writes no GitHub settings. The organization's own tooling owns GitHub App installation, the review-secret environment and its secrets. In the vanillagreen organization, fleet performs that work. Refresh adoption retains its environment check.
 
 ## Settings
 
-The shared settings reader checks process values, `.env.local`, `.kendex/settings.toml` and `kendex.settings.toml`, in that order. `REVIEW_GATE_SETTINGS_FILE` selects an explicit TOML file in place of the two project files. `/dev/null` uses process values and defaults alone.
+The shared settings reader checks process values, the private env file (`.env.local`, or the file `KENDEX_ENV_FILE` names), `.kendex/settings.toml` and `kendex.settings.toml`, in that order. `REVIEW_GATE_SETTINGS_FILE` selects an explicit TOML file in place of the two project files. `/dev/null` uses process values and defaults alone.
 
 | Setting | Value |
 | --- | --- |
@@ -39,7 +39,7 @@ The report and its settings moved to github-repository-settings. Set the opt-in 
 
 A replacement key in any settings layer takes precedence, including when explicitly empty. The report warns when it reads a previous key because its replacement is absent. The old script path warns and forwards. An explicit call to that path supplies the previous enablement and workflow repository defaults when those settings are absent. Setting the opt-in to `"false"` or `""` also disables the legacy path.
 
-review-gate now requires github-repository-settings, so updating review-gate installs this package as a dependency. Where bot-instructions is set up, bot-instructions keeps rendering and checking the review files until this package is set up, and `kendex apply` and `kendex refresh` name the pending setup. To move the review files, choose `GITHUB_STANDARD_CHECK_LOCATION`, then use Set up on this package's page, or run the `add` or `apply` that brings review-gate with `--allow-repo-effects`. Without that flag, a scripted `add --commit` or `apply --commit` in a checkout where bot-instructions is set up commits nothing, names the setup and exits 1.
+review-gate now requires github-repository-settings, so updating review-gate installs this package. Where it arrives only as review-gate's dependency and bot-instructions is set up, bot-instructions keeps rendering and checking the review files until this package is set up, and `kendex apply` and `kendex refresh` name the pending setup. A project that lists this package itself, or installs it through a bundle that lists it, such as workflow, already selects it as the review-file owner: until it is set up, neither package renders the review files, and `kendex apply` names its setup. To move the review files, choose `GITHUB_STANDARD_CHECK_LOCATION`, then use Set up on this package's page, or run the `add` or `apply` that brings review-gate with `--allow-repo-effects`. Without that flag, a scripted `add --commit` or `apply --commit` in a checkout where bot-instructions is set up commits nothing, names the setup and exits 1.
 
 Two cases need a manual step. In a linked work tree, or in a repository where neither package is set up, an `add` can commit before the setup prompt, and the setup then rewrites the review files after that commit; commit those changes after the setup. The setup is recorded only in the local clone. A fresh clone and the consumer refresh run render through bot-instructions again. Set this package up in each clone. With `GITHUB_STANDARD_BOT_REVIEW = "on"`, both packages write the same review files, so the refresh pull request carries no review-file change; with `"off"`, it restores bot-instructions' full output.
 

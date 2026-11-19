@@ -544,10 +544,18 @@ def lifecycle_environment(home):
                 GIT_CEILING_DIRECTORIES=str(home))
 
 
-def report_dependency(binary):
-    home = scratch / "report-dependency"
+def report_dependency(binary, name="report-dependency", drop_requirement=False):
+    home = scratch / name
     root = home / "project"
-    lifecycle_catalog(root)
+    catalog = lifecycle_catalog(root)
+    if drop_requirement:
+        manifest = catalog / "review-gate/SKILL.md"
+        source = manifest.read_text()
+        original = "required: [harness-ci, github-repository-settings]"
+        assert source.count(original) == 1
+        changed = source.replace(original, "required: [harness-ci]")
+        assert changed != source
+        manifest.write_text(changed, newline="")
     (root / "kendex.toml").write_text('''schema = 7
 [install]
 harnesses = ["codex"]
@@ -564,11 +572,11 @@ path = "catalog"
     report = subprocess.run([bash, str(scripts / "validate-standard.sh")], cwd=root,
                             env=dict(env, GITHUB_STANDARD_PLATFORM_CHECKS="false"),
                             capture_output=True, text=True)
+    if drop_requirement:
+        return report
     assert report.returncode == 0, report
     assert report.stderr.count("review-gate-warning=deprecated-path ") == 1, report
     assert "note check=standard-platform-checks value=disabled" in report.stdout, report
-    assert not (root / ".git/kendex/armed/github-repository-settings").exists()
-    assert not (root / ".github").exists()
 
 
 def core_recovery(binary, name, break_cleanup=False):
@@ -765,7 +773,14 @@ binary = lifecycle_engine()
 if binary is not None:
     report_dependency(binary)
     completed += 1
-    print("pass: review-gate installs the compatibility report without arming review-file writes")
+    print("pass: review-gate installs the compatibility report as a dependency")
+    # The forwarder's own refusal, a stable diagnostic key, is the red result.
+    unresolved = report_dependency(binary, "control-report-dependency", drop_requirement=True)
+    if unresolved.returncode == 2 and "review-gate-error=standard-report-load" in unresolved.stderr:
+        completed += 1
+        print("control rejected: review-gate without the report requirement")
+    else:
+        raise AssertionError(f"control survived: review-gate without the report requirement {unresolved}")
     core_recovery(binary, "core-recovery")
     completed += 1
     print("pass: core recovery preserves the armed predecessor")

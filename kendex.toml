@@ -130,7 +130,7 @@ agents = [
 ]
 skills = [
   "reviewer",
-  "github-repository-settings",
+  "review-gate",
   "second-opinion",
   "code-quality",
   "docs-writing",
