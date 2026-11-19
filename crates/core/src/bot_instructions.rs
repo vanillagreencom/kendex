@@ -127,16 +127,30 @@ pub(crate) fn is_configuration_package(name: &str) -> bool {
     ORDER.contains(&name)
 }
 
-/// The configuration packages among `effects`, in the order one action
-/// sets them up: the predecessor first, so a successor's setup after it
-/// moves the effect through [`superseded_configuration_owner`] and one
-/// owner stays armed.
-pub fn configuration_setups(effects: &[DeclaredEffects]) -> Vec<&DeclaredEffects> {
-    ORDER
+/// The configuration setup one action takes among the effects it brings.
+pub struct ConfigurationSetup<'a> {
+    /// The successor-most configuration package among them, the one set
+    /// up.
+    pub set_up: &'a DeclaredEffects,
+    /// The predecessors that arrived beside it, never set up.
+    pub superseded: Vec<&'a DeclaredEffects>,
+}
+
+/// The configuration packages among `effects`: the successor-most is the
+/// one set up. Its setup alone moves the effect, retiring a predecessor
+/// armed here through [`superseded_configuration_owner`], so a predecessor
+/// that arrives beside it is not set up: its setup would arm an owner the
+/// successor's retires, and its render can refuse a file the successor's
+/// settings leave alone.
+pub fn configuration_setup(effects: &[DeclaredEffects]) -> Option<ConfigurationSetup<'_>> {
+    let mut present = ORDER
         .iter()
-        .rev()
-        .filter_map(|name| effects.iter().find(|effect| effect.name == *name))
-        .collect()
+        .filter_map(|name| effects.iter().find(|effect| effect.name == *name));
+    let set_up = present.next()?;
+    Some(ConfigurationSetup {
+        set_up,
+        superseded: present.collect(),
+    })
 }
 
 /// The installed, locally armed predecessor whose licence this package's

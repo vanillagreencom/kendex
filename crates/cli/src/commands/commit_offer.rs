@@ -257,14 +257,15 @@ fn asked(root: &Path) -> bool {
 ///
 /// `before` is what the project held before the write, read by the caller
 /// while it still could be. `set_up` names the packages this action has
-/// already set up, so one of them still holding the commit is not set up
-/// again; another held package is set up as the offer would.
+/// already run a setup for and how each ended, so one of them still
+/// holding the commit is not set up again; another held package is set up
+/// as the offer would.
 pub fn after_writing(
     env: &Env,
     scope: &Scope,
     generated: &GeneratedPaths,
     before: &Before,
-    set_up: &[String],
+    set_up: &[(String, SetUp)],
 ) -> CliResult {
     let Scope::Project { root } = scope else {
         return Ok(());
@@ -303,7 +304,7 @@ fn make(
     root: &std::path::Path,
     generated: &GeneratedPaths,
     before: &Before,
-    set_up: &[String],
+    set_up: &[(String, SetUp)],
 ) -> Result<Option<Outcome>, Box<dyn std::error::Error>> {
     let default = Session {
         flags: CommitFlags::default(),
@@ -368,9 +369,7 @@ fn make(
         };
         if !stale.is_empty() {
             let held = Held {
-                set_up: stale
-                    .iter()
-                    .any(|one| set_up.contains(&one.disclosure.declared.name)),
+                set_up: earlier(&set_up, &stale),
                 answered,
                 // The flag says yes only beside a choice flag that commits,
                 // `--leave` having returned above. With no choice flag a
@@ -385,7 +384,11 @@ fn make(
             match hold(env, scope, &scan, &stale, held, &mut generated)? {
                 Hold::Ended(outcome) => return Ok(Some(outcome)),
                 Hold::SetUp => {
-                    set_up.extend(stale.into_iter().map(|one| one.disclosure.declared.name));
+                    set_up.extend(
+                        stale
+                            .into_iter()
+                            .map(|one| (one.disclosure.declared.name, SetUp::Finished)),
+                    );
                     continue;
                 }
             }
@@ -437,11 +440,35 @@ fn answer(
     routes::take(offer, generated, before, choice, message, Asking::No)
 }
 
+/// How a setup this action already ran for a package ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SetUp {
+    Finished,
+    Failed,
+}
+
+/// The earlier setup the held packages had in this action: a failed one
+/// over a finished one, since either ends the offer and the failure is
+/// the cause.
+fn earlier(set_up: &[(String, SetUp)], stale: &[commit_offer::Stale]) -> Option<SetUp> {
+    let ended = |held: &commit_offer::Stale| {
+        set_up
+            .iter()
+            .find(|(name, _)| *name == held.disclosure.declared.name)
+            .map(|(_, ended)| *ended)
+    };
+    let ended: Vec<SetUp> = stale.iter().filter_map(ended).collect();
+    match ended.contains(&SetUp::Failed) {
+        true => Some(SetUp::Failed),
+        false => ended.first().copied(),
+    }
+}
+
 /// Where the offer stands when a package holds its commit.
 #[derive(Clone, Copy)]
 struct Held {
-    /// A held package was already set up in this action.
-    set_up: bool,
+    /// The setup a held package already had in this action.
+    set_up: Option<SetUp>,
     /// The choice a flag named, if one did.
     answered: Option<Route>,
     /// Who gives the setup its yes.
@@ -481,20 +508,31 @@ fn hold(
         }));
     }
     // One setup per package. A package still not ready after its own
-    // setup ran is not one a second run of it fixes.
+    // setup ran is not one a second run of it fixes, and one whose setup
+    // failed is not run again either. The installer's own words close the
+    // action, after its ledger.
     let picked = match (held.set_up, held.yes) {
-        (true, _) | (false, Yes::Nobody) => {
-            ui::stderr(&block::stale_way_on(&style, held.set_up, held.flag));
-            return Ok(Hold::Ended(match (held.set_up, held.answered) {
+        (Some(SetUp::Failed), _) => {
+            ui::stderr(&block::set_up_failed(
+                &style,
+                block::SetUpStep::Installer,
+                "",
+            ));
+            return Ok(Hold::Ended(Outcome::CommitRefused));
+        }
+        (Some(SetUp::Finished), _) | (None, Yes::Nobody) => {
+            let ran = held.set_up.is_some();
+            ui::stderr(&block::stale_way_on(&style, ran, held.flag));
+            return Ok(Hold::Ended(match (ran, held.answered) {
                 (false, None) => Outcome::Nothing,
                 (true, _) | (false, Some(_)) => Outcome::CommitRefused,
             }));
         }
-        (false, Yes::Given) => {
+        (None, Yes::Given) => {
             block::disclose_stale(stale);
             block::Held::SetUp
         }
-        (false, Yes::Ask) => block::pick_stale(stale)?,
+        (None, Yes::Ask) => block::pick_stale(stale)?,
     };
     match picked {
         block::Held::Leave => Ok(Hold::Ended(Outcome::Nothing)),
