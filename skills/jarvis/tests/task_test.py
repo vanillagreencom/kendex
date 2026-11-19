@@ -436,16 +436,18 @@ sys.exit(task.main())
                          [self.terminal["window"]])
 
     def test_a_short_task_is_judged_up_to_the_wall_and_on_its_projected_wall(self):
-        # A Claude account past the launch bound with room below its wall,
-        # and a named one whose reading is well inside the bound while a
-        # lane's burn to its week's reset projects it past the wall.
+        # A Claude account past the launch bound with room below its wall;
+        # a named one inside the bound whose one charged lane hour projects
+        # it past the bound; and a named one below its wall whose lane hour
+        # projects it past the wall.
         spent = self.plant("claude", 97)
-        named = self.plant("claude", 50, self.root / "named-claude")
+        named = self.plant("claude", 93, self.root / "named-claude")
+        near = self.plant("claude", 98, self.root / "near-claude")
         rows = (("full task", (), 0, "account-none", False),
                 ("short task on the controller seat", ("--short",), 0, "account-none", True),
                 ("short task", ("--short",), 0, None, False),
-                ("full task on a named account", ("--account", named), 30, None, False),
-                ("short task on a named account", ("--short", "--account", named), 30, "account-walled", False))
+                ("full task on a named account", ("--account", named), 100, None, False),
+                ("short task on a named account", ("--short", "--account", near), 100, "account-walled", False))
         fleet = self.root / "orch-state/workflow-state-oversee.json"
         for index, (case, args, burn, refusal, seat) in enumerate(rows):
             with self.subTest(case=case):

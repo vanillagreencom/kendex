@@ -608,7 +608,11 @@ class Session:
                           reason=reason, intent="start", failure=None)
             self.write(record)
             self.detach(dict(pending, window=SESSION_NAME, seat=SEAT), socket, start_brief(private))
-            return self.answer(record, self.status()), 0
+            # The detached start records its outcome under this lock, so until
+            # this call returns a start that is not running is still starting.
+            answer = self.answer(record, self.status())
+            return (answer if answer["state"] == "running" else
+                    self.answer(record, state="starting", reason="launching")), 0
 
     def detach(self, pending, socket, brief):
         # The start runs to its confirmation past this call's bound, so a
