@@ -130,7 +130,7 @@ Launch settings and Codex compaction: [skill-rules.md](skill-rules.md) § Coordi
 | `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended. `native` keeps the harness's own prompts. | `bypass` |
 | `AGENT_RUNTIME_HARNESS_BINARIES` | `harness=/absolute/path` pairs, comma-separated, for a harness not on `PATH`. | unset |
 
-A local lane on Linux runs confined, except a Copilot CLI lane. Every lane on macOS runs unconfined.
+A local lane on Linux runs confined, except a Copilot CLI lane and a Codex lane whose home holds a link leading outside its grants, named `linked-seat` in its launch record and in `orch-runtime ready`. Every lane on macOS runs unconfined.
 
 ## Accounts
 

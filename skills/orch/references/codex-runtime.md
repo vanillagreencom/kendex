@@ -66,7 +66,7 @@ Where an execpolicy rule refuses top-level `git rebase`, no user authorization o
 
 ## Confinement
 
-On Linux a local Codex lane runs inside agent-runtime's `bwrap` wrapper; on any other host it runs unconfined ([agent-runtime SKILL.md § Confinement](../../agent-runtime/SKILL.md#confinement)).
+On Linux a local Codex lane runs inside agent-runtime's `bwrap` wrapper, except on a seat whose links lead outside its grants (`linked-seat`); on any other host it runs unconfined ([agent-runtime SKILL.md § Confinement](../../agent-runtime/SKILL.md#confinement)).
 
 ## Standing watch
 

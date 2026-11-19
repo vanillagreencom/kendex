@@ -2882,6 +2882,7 @@ fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the
         sockets: vec![rt.join("agent.sock")],
         desktop: false,
         gh_token: None,
+        unconfined: None,
         file: root.join("grants.json"),
     };
     let (env, words) = plain_wrapper(&grants);
@@ -2958,6 +2959,7 @@ fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scrat
         sockets: Vec::new(),
         desktop: false,
         gh_token: None,
+        unconfined: None,
         file: root.join("grants.json"),
     };
     let (env, words) = plain_wrapper(&grants);
@@ -3031,6 +3033,7 @@ fn a_confined_setup_whose_words_fail_names_the_wrapper_and_one_that_fails_itself
             sockets: Vec::new(),
             desktop: false,
             gh_token: None,
+            unconfined: None,
             file: root.join("grants.json"),
         };
         let command = LaunchCommand {

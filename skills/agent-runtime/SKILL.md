@@ -52,6 +52,7 @@ Inside, `TMPDIR` and each harness's own temporary-folder variable name the priva
 The account seat a confined lane runs on is read-only, except the session folders its harness writes. `Harness::home_writes` in `runtime/src/harness.rs` names those folders per harness. The runtime grants a folder that is a link where the link leads, and refuses the launch for a link that leads nowhere. A Codex home and a Pi root are granted whole, with the settings file read-only. Each of Pi's `extensions/`, `hooks/` and `packages/` stays read-only where it exists. The launch creates no absent folder, so the lane can create one.
 
 - Copilot CLI runs unconfined on every host.
+- A launch whose grants name an `unconfined` cause runs unconfined under it.
 - Every harness runs unconfined on a host other than Linux.
 - The launch record names the answer and its cause. No setting changes it.
 

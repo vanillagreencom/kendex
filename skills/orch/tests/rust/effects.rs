@@ -11380,6 +11380,70 @@ fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_lead
     assert!(std::fs::symlink_metadata(outside.join("shared/absent")).is_err());
 }
 
+/// A Codex seat whose state store and session folder are links into a
+/// folder no grant names, as every operator Codex seat's are, cannot hold a
+/// confined lane: Codex writes through the links into the read-only tree.
+/// The lane on it launches unconfined under the cause `linked-seat`, which
+/// its record names, and writes through the links. A seat whose one link is
+/// its settings file, read-only by design, keeps its lane confined.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_codex_lane_on_a_seat_linked_outside_its_grants_runs_unconfined_by_name() {
+    use std::os::unix::fs::symlink;
+    let mut world = Confined::new();
+    world.runner.verify = Some(1);
+    let (_outside, outside) = outside_tmp();
+    let codex = world.runner.state_dir().join("probe-codex").join("codex");
+    std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+    write_executable(&codex, probe_script(&fixtures().join("stub-record/codex")));
+    world.runner.env.push((
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+        format!("codex={}", codex.display()),
+    ));
+    let shared = outside.join("shared");
+    std::fs::create_dir_all(shared.join("sessions")).unwrap();
+    for name in ["state_5.sqlite", "config.toml"] {
+        std::fs::write(shared.join(name), "").unwrap();
+    }
+    let linked = outside.join("codex-linked");
+    let plain = outside.join("codex-plain");
+    for seat in [&linked, &plain] {
+        std::fs::create_dir_all(seat).unwrap();
+        std::fs::write(seat.join("auth.json"), "{}").unwrap();
+        symlink(shared.join("config.toml"), seat.join("config.toml")).unwrap();
+    }
+    for name in ["state_5.sqlite", "sessions"] {
+        symlink(shared.join(name), linked.join(name)).unwrap();
+    }
+    for (item, seat, confinement) in [
+        (
+            "KEN-CL",
+            &linked,
+            json!({"state": "unconfined", "cause": "linked-seat"}),
+        ),
+        ("KEN-CU", &plain, json!({"state": "confined"})),
+    ] {
+        world.file_env(&seat.join("state_5.sqlite").display().to_string());
+        world.probe_env("PROBE_RUN", &folder_writes(seat, &["sessions"]));
+        let mut request = launch_request(item, world.runner.state_dir());
+        request["harness"] = json!("codex");
+        request["account"] = json!(seat.display().to_string());
+        let report = effect_report(&world.runner.op_fleet(&request));
+        assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
+        assert_eq!(
+            report["intent"]["observation"]["confinement"], confinement,
+            "{item}: {report}"
+        );
+        let probe = world.probe(item, 1);
+        assert!(
+            probe.contains("file=state_5.sqlite written"),
+            "{item}: {probe}"
+        );
+        assert!(probe.contains("folder=sessions written"), "{item}: {probe}");
+    }
+    assert!(shared.join("sessions/probe").is_file());
+}
+
 /// The pane hands the lane a temporary-folder variable naming a host folder,
 /// as a user service manager publishes `CLAUDE_CODE_TMPDIR`: inside the
 /// wrapper it names the wrapper's own `/tmp`, which the lane writes, and the

@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::confine::{self, Answer, Grants, Host};
+use agent_runtime::confine::{self, Answer, Cause, Grants, Host};
 use agent_runtime::effects::prepare::LaunchHome;
 use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
@@ -217,7 +217,8 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 /// the lane's private folder, and a runtime cache of its own in its tree. A confined launch whose worktree's `tmp`
 /// leads outside it is refused `grant-tmp-linked`: the link's target is
 /// shared, the state directory or another lane's folder among what it can
-/// hold.
+/// hold. A Codex lane whose home holds a link leading outside these grants
+/// runs unconfined under `linked-seat` ([`linked_seat`]).
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's reads of the paths it grants and of `gh auth token`, before the window; it writes nothing"
@@ -374,6 +375,19 @@ pub(super) fn of(
         read_only.push(shared.clone());
         kept.push(shared.clone());
     }
+    let linked = answer == Answer::Confined
+        && harness == Harness::Codex
+        && match homes.named.as_deref().and_then(resolved) {
+            Some(home) => linked_seat(&home, &writable, &read_only)?,
+            None => false,
+        };
+    let answer = if linked {
+        Answer::Unconfined {
+            cause: Cause::LinkedSeat,
+        }
+    } else {
+        answer
+    };
     let own_cache = (answer == Answer::Confined).then(|| root.join("tmp").join(OWN_RUNTIME_CACHE));
     let private = folder(&root, item);
     let token = match answer {
@@ -397,6 +411,7 @@ pub(super) fn of(
         sockets: Vec::new(),
         desktop,
         gh_token: token.as_ref().map(|_| private.join(GH_TOKEN_FILE)),
+        unconfined: linked.then_some(Cause::LinkedSeat),
         file: private.join(GRANTS_FILE),
     };
     Ok(Granted {
@@ -449,6 +464,77 @@ pub(crate) fn writable_beside_checkout(settings: &Settings) -> Result<Vec<PathBu
         &[],
     )?);
     Ok(folders)
+}
+
+/// The configured Codex seats whose lanes run unconfined under
+/// `linked-seat`, judged as a launch judges its Codex home: against the
+/// folders [`writable_beside_checkout`] names, the seats among them, with
+/// the seat's settings file read-only. `orch-runtime ready` names them.
+pub(crate) fn linked_seats(settings: &Settings) -> Result<Vec<PathBuf>> {
+    let writable = writable_beside_checkout(settings)?;
+    let configured = agent_runtime::accounts::listing::configured(
+        &settings.accounts.get()?.account_dirs,
+        settings.home.as_deref(),
+        &mut Vec::new(),
+    )
+    .map_err(|cause| refused("grant-seats-unread", &[("cause", &cause)]))?;
+    let (name, _) = settings_file(Harness::Codex);
+    let mut linked = Vec::new();
+    for (kind, dir) in configured {
+        if kind != Harness::Codex {
+            continue;
+        }
+        if let Some(seat) = resolved(Path::new(&dir))
+            && linked_seat(&seat, &writable, &[seat.join(name)])?
+        {
+            linked.push(seat);
+        }
+    }
+    Ok(linked)
+}
+
+/// Whether the Codex home `seat` holds a link its harness writes through
+/// that leads outside `writable`, or into `read_only`: the kernel would
+/// refuse the harness's write, so its lane runs unconfined under
+/// [`Cause::LinkedSeat`]. A link `read_only` names, the settings file, is
+/// read through, never written. A link whose target does not stand
+/// refuses `grant-link-unreadable` naming it, and a home that cannot be read
+/// `grant-seats-unread`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the launch reads the links of the Codex home it grants before the window; it writes nothing"
+)]
+fn linked_seat(seat: &Path, writable: &[PathBuf], read_only: &[PathBuf]) -> Result<bool> {
+    let failed = |key: &'static str, path: &Path, e: std::io::Error| {
+        refused(
+            key,
+            &[
+                ("path", &path.display().to_string()),
+                ("cause", &e.to_string()),
+            ],
+        )
+    };
+    let entries = std::fs::read_dir(seat).map_err(|e| failed("grant-seats-unread", seat, e))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|e| failed("grant-seats-unread", seat, e))?
+            .path();
+        let link = std::fs::symlink_metadata(&path)
+            .map_err(|e| failed("grant-seats-unread", &path, e))?
+            .file_type()
+            .is_symlink();
+        if !link || read_only.contains(&path) {
+            continue;
+        }
+        let target =
+            std::fs::canonicalize(&path).map_err(|e| failed("grant-link-unreadable", &path, e))?;
+        if !writable.iter().any(|grant| target.starts_with(grant))
+            || read_only.iter().any(|kept| target.starts_with(kept))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The variable a variable-named folder is read from, absolute only.

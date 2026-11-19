@@ -1041,6 +1041,7 @@ mod tests {
             sockets: Vec::new(),
             desktop: false,
             gh_token: Some(token),
+            unconfined: None,
             file: file.clone(),
         });
         let line = build(&i).unwrap().shell_line();

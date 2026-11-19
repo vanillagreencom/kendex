@@ -4299,6 +4299,7 @@ exec '{orch}' --no-private-env launch-job --name confined-row --run '{wt}/job' -
         sockets: Vec::new(),
         desktop: false,
         gh_token: None,
+        unconfined: None,
         file: root.join("grants.json"),
     };
     let plain = |word| match word {

@@ -109,6 +109,11 @@ pub struct Grants {
     /// text is read as the line runs, so no record holds it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gh_token: Option<PathBuf>,
+    /// The launcher found these grants cannot hold the harness: the launch
+    /// runs unconfined under this cause where the harness's own answer
+    /// would confine it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unconfined: Option<Cause>,
     /// Where the launch writes these grants for the lane to read.
     pub file: PathBuf,
 }
@@ -128,6 +133,13 @@ pub enum Cause {
     /// The host is not Linux: only bwrap's words are spelled, so a launch
     /// there runs as it did before any confinement.
     MacosProfileUnbuilt,
+    /// The Codex home holds a link its harness writes through that leads
+    /// outside the grants, as a seat whose state stores and session folders
+    /// link a shared folder does: binding each link's target alone cannot
+    /// hold SQLite, whose `-wal` and `-shm` beside the target another
+    /// session's last close unlinks and makes anew, so a lane's binds
+    /// would keep the old files. The launcher names it in [`Grants::unconfined`].
+    LinkedSeat,
 }
 
 /// Whether a harness runs inside the wrapper.
@@ -231,8 +243,9 @@ impl Confinement {
 }
 
 /// The confinement a launch of `harness` on `host` under `grants` runs
-/// with: the answer, and for a confined one the wrapper. A relative path
-/// is refused, since the pane's directory is not this process's.
+/// with: the answer, unconfined by the grants' own cause where the answer
+/// would confine, and for a confined one the wrapper. A relative path is
+/// refused, since the pane's directory is not this process's.
 pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Confinement> {
     let paths = grants
         .writable
@@ -254,9 +267,11 @@ pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Conf
             ));
         }
     }
-    Ok(match answer(host, harness) {
-        Answer::Unconfined { cause } => Confinement::Unconfined { cause },
-        Answer::Confined => Confinement::Confined {
+    Ok(match (answer(host, harness), grants.unconfined) {
+        (Answer::Unconfined { cause }, _) | (Answer::Confined, Some(cause)) => {
+            Confinement::Unconfined { cause }
+        }
+        (Answer::Confined, None) => Confinement::Confined {
             wrapper: Wrapper {
                 program: WRAPPER.to_owned(),
                 env: linux_env(grants),
@@ -399,6 +414,7 @@ mod tests {
             sockets: Vec::new(),
             desktop: false,
             gh_token: None,
+            unconfined: None,
             file: PathBuf::from("/x/grants.json"),
         }
     }
