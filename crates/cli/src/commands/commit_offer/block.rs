@@ -229,6 +229,23 @@ pub fn stale_way_on(style: &Style, set_up: bool, flag: bool) -> Vec<String> {
     }
 }
 
+/// Where the held successor's setup is left to the action's walkthrough
+/// after this offer: the routes that set it up. `asked` is whether that
+/// walkthrough asks at a terminal. `--allow-repo-effects` is never named: a
+/// retry of the action finds the successor already installed and brings no
+/// effect for the flag to say yes to.
+pub fn walkthrough_way_on(style: &Style, asked: bool) -> Vec<String> {
+    let routes = match asked {
+        true => "when kendex asks below, or with Set up on its package page in the app",
+        false => "with Set up on its package page in the app",
+    };
+    said_as(
+        style,
+        Status::Decision,
+        &format!("set it up {routes}, then commit these files with what it renders"),
+    )
+}
+
 /// A commit that would split a package's changed files: no setup clears
 /// it, so the files are left as diffs for the person to commit together.
 pub fn split_way_on(style: &Style) -> Vec<String> {

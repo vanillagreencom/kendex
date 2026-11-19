@@ -221,7 +221,8 @@ pub(super) enum Walk {
     /// `add` or `apply` without the flag: the walkthrough after the offer
     /// asks for each effect at a terminal, and with nobody there no effect
     /// is set up. The offer's hold can still set up a held package, save
-    /// the pending successor of [`Earlier::left_to_walkthrough`].
+    /// where the pending successor of [`Earlier::left_to_walkthrough`]
+    /// holds it.
     Asking,
     /// `add` or `apply` with the flag.
     Allowed,
@@ -375,8 +376,9 @@ fn make(
         // stale, and one whose check fails over the commit itself each hold
         // it.
         let carried = scan.carried();
-        let stale = match commit_offer::stale(env, scope, &scan, &generated, &carried) {
-            Ok(stale) => with_left(stale, earlier.left_to_walkthrough),
+        let left = earlier.left_to_walkthrough;
+        let stale = match commit_offer::stale(env, scope, &scan, &generated, &carried, left) {
+            Ok(stale) => stale,
             Err(error) => {
                 ui::stderr(&block::not_vouched(&style, root, &error.to_string()));
                 return Ok(Some(match answered {
@@ -388,7 +390,11 @@ fn make(
         if !stale.is_empty() {
             let held = Held {
                 set_up: ran_for(&set_up, &stale),
-                walkthrough: earlier.left_to_walkthrough.is_some(),
+                walkthrough: left.is_some_and(|left| {
+                    stale
+                        .iter()
+                        .any(|one| one.disclosure.declared.name == left.name)
+                }),
                 answered,
                 // The flag says yes only beside a choice flag that commits,
                 // `--leave` having returned above. With no choice flag a
@@ -473,33 +479,13 @@ pub struct Earlier<'a> {
     /// the commit is not set up again; another held package is set up as
     /// the offer would.
     pub ran: &'a [(String, SetUp)],
-    /// A configuration successor the action installed beside a predecessor
-    /// armed in this checkout, whose render named the successor's pending
-    /// setup. The action's only consent for that setup comes after this
-    /// offer, at a terminal, or is not given, and a setup after the commit
-    /// would rewrite the review files it carried, so the offer holds the
-    /// commit on it and sets nothing up.
-    pub left_to_walkthrough: Option<&'a kendex_core::repo_effects::Disclosure>,
-}
-
-/// The held packages with the pending successor of
-/// [`Earlier::left_to_walkthrough`], which no check holds: the armed
-/// predecessor stands behind the files now, and the action's only consent
-/// for the successor's setup comes after the offer, at a terminal, or is
-/// not given.
-fn with_left(
-    mut stale: Vec<commit_offer::Stale>,
-    left: Option<&kendex_core::repo_effects::Disclosure>,
-) -> Vec<commit_offer::Stale> {
-    if let Some(left) = left
-        && !stale.iter().any(|one| one.disclosure.name == left.name)
-    {
-        stale.push(commit_offer::Stale {
-            disclosure: left.clone(),
-            why: commit_offer::Staleness::NotSetUp,
-        });
-    }
-    stale
+    /// A configuration successor the action installed that selection
+    /// passes over for an installed predecessor. The action's only consent
+    /// for its setup comes after this offer, at a terminal, or is not given,
+    /// and a setup after the commit would rewrite the review files it
+    /// carried, so core holds the commit on it and the offer sets nothing
+    /// up.
+    pub left_to_walkthrough: Option<&'a kendex_core::repo_effects::DeclaredEffects>,
 }
 
 /// The earlier setup the held packages had in this action: a failed one
@@ -524,8 +510,8 @@ fn ran_for(set_up: &[(String, SetUp)], stale: &[commit_offer::Stale]) -> Option<
 struct Held {
     /// The setup a held package already had in this action.
     set_up: Option<SetUp>,
-    /// A held package's setup is left to the action's walkthrough after
-    /// the offer.
+    /// The successor of [`Earlier::left_to_walkthrough`] holds the commit:
+    /// its setup is left to the action's walkthrough after the offer.
     walkthrough: bool,
     /// The choice a flag named, if one did.
     answered: Option<Route>,
@@ -569,7 +555,10 @@ fn hold(
     // a terminal, or is not given, so the offer neither commits over it nor
     // sets it up: it names the setup.
     if held.walkthrough {
-        ui::stderr(&block::stale_way_on(&style, false, held.flag));
+        ui::stderr(&block::walkthrough_way_on(
+            &style,
+            std::io::stdin().is_terminal(),
+        ));
         return Ok(Hold::Ended(match held.answered {
             None => Outcome::Nothing,
             Some(_) => Outcome::CommitRefused,

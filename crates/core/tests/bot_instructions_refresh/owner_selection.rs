@@ -450,6 +450,7 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
         &scan,
         &generated,
         &scan.carried(),
+        None,
     )
     .unwrap();
     assert_eq!(

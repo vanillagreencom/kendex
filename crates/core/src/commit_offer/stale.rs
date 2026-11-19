@@ -106,12 +106,20 @@ pub enum Staleness {
 /// A declaration that will not read is passed over: it names neither the
 /// files nor the check, and `repo_effects::lapsed` is the reading that
 /// reports it where kendex set it up.
+///
+/// `left` is a configuration successor the action installed whose setup it
+/// leaves until after this offer:
+/// [`crate::bot_instructions::pending_successor`]. That setup moves the
+/// review files after the commit, so the successor holds the commit as
+/// [`Staleness::NotSetUp`] under the same configuring-table rule, though no
+/// check of the predecessor that judges its files holds it.
 pub fn stale(
     env: &Env,
     scope: &Scope,
     scan: &Scan,
     generated: &GeneratedPaths,
     carried: &BTreeSet<String>,
+    left: Option<&DeclaredEffects>,
 ) -> crate::error::Result<Vec<Stale>> {
     let mut candidate: Option<Candidate> = None;
     let mut held = Vec::new();
@@ -143,11 +151,8 @@ pub fn stale(
         }
         let why = match crate::repo_effects::armed_here(scope, &declared)? {
             false => {
-                if let Some(key) = &declared.effects.configured_by {
-                    let built = Candidate::ensure(&mut candidate, &scan.root, generated, carried)?;
-                    if !built.configured(&scan.root, key)? {
-                        continue;
-                    }
+                if !configured(&mut candidate, scan, generated, carried, &declared)? {
+                    continue;
                 }
                 Staleness::NotSetUp
             }
@@ -176,10 +181,34 @@ pub fn stale(
         };
         held.push((declared, why));
     }
+    if let Some(successor) = left
+        && !held
+            .iter()
+            .any(|(declared, _)| declared.name == successor.name)
+        && configured(&mut candidate, scan, generated, carried, successor)?
+    {
+        held.push((successor.clone(), Staleness::NotSetUp));
+    }
     if let Some(candidate) = candidate {
         candidate.close()?;
     }
     disclosed(env, scope, held)
+}
+
+/// Whether a package not set up here has anything to render from in the
+/// commit: a package naming a configuring table the commit's manifest lacks
+/// renders nothing once set up, so it holds nothing.
+fn configured(
+    candidate: &mut Option<Candidate>,
+    scan: &Scan,
+    generated: &GeneratedPaths,
+    carried: &BTreeSet<String>,
+    declared: &DeclaredEffects,
+) -> crate::error::Result<bool> {
+    let Some(key) = &declared.effects.configured_by else {
+        return Ok(true);
+    };
+    Candidate::ensure(candidate, &scan.root, generated, carried)?.configured(&scan.root, key)
 }
 
 /// What one reading of a set-up package's check holds the commit with,

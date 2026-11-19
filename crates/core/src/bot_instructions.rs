@@ -153,6 +153,25 @@ pub fn configuration_setup(effects: &[DeclaredEffects]) -> Option<ConfigurationS
     })
 }
 
+/// The configuration successor among `installed`, the effects one action
+/// installed, that selection passes over for an installed predecessor
+/// until its own setup moves the files: [`Selection::pending`].
+///
+/// Read from the selection when asked, never from a render's
+/// [`RenderedPaths::pending`]: a render through a predecessor not armed here
+/// names no successor, and a setup the action takes after that render, in a
+/// linked work tree or at its commit offer, can arm that predecessor before
+/// the offer. Arming the predecessor does not change which successor
+/// yields, so this reading still names it.
+pub fn pending_successor(
+    env: &Env,
+    scope: &Scope,
+    installed: &[DeclaredEffects],
+) -> Result<Option<DeclaredEffects>> {
+    let pending = configuration_selection(env, scope)?.and_then(|selection| selection.pending);
+    Ok(pending.filter(|successor| installed.iter().any(|effect| effect.name == successor.name)))
+}
+
 /// The installed, locally armed predecessor whose licence this package's
 /// explicit setup replaces: a later candidate in [`ORDER`]. The setup is
 /// the consent that moves the effect, so a successor that yields to the
