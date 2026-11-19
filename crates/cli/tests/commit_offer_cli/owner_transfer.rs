@@ -127,6 +127,12 @@ enum Arrival {
     /// the manifest lacks: its setup would render nothing, so the offer
     /// commits.
     Unconfigured,
+    /// An apply with `--commit` at a terminal of the requirer of both
+    /// owners, neither installed before, each naming a configuring table
+    /// that only the working tree's manifest carries, saying yes to the
+    /// walkthrough's setup of both: that setup reads the table the commit
+    /// leaves out, so the offer commits nothing.
+    TableOnDiskAtTerminal,
     /// `--allow-repo-effects`: the setup moves the files before the offer.
     Consented,
     /// The same, in a linked work tree that carries neither record.
@@ -155,7 +161,10 @@ impl Arrival {
     fn applied(self) -> bool {
         matches!(
             self,
-            Arrival::DeclinedApply | Arrival::ConsentedApply | Arrival::RefusedApply
+            Arrival::DeclinedApply
+                | Arrival::ConsentedApply
+                | Arrival::RefusedApply
+                | Arrival::TableOnDiskAtTerminal
         )
     }
 
@@ -168,7 +177,10 @@ impl Arrival {
     fn at_terminal(self) -> bool {
         matches!(
             self,
-            Arrival::DeclinedAtTerminal | Arrival::LinkedAtTerminal | Arrival::FreshAtTerminal
+            Arrival::DeclinedAtTerminal
+                | Arrival::LinkedAtTerminal
+                | Arrival::FreshAtTerminal
+                | Arrival::TableOnDiskAtTerminal
         )
     }
 
@@ -184,7 +196,11 @@ impl Arrival {
 
     /// The offer refuses the commit `--commit` chose, which exits 1.
     fn refuses_commit(self) -> bool {
-        self.declined() || matches!(self, Arrival::LinkedAtTerminal)
+        self.declined()
+            || matches!(
+                self,
+                Arrival::LinkedAtTerminal | Arrival::TableOnDiskAtTerminal
+            )
     }
 
     /// The action runs in a linked work tree of the main checkout.
@@ -194,7 +210,12 @@ impl Arrival {
 
     /// The manifest table the new owner renders from.
     fn configured_by(self) -> Option<&'static str> {
-        matches!(self, Arrival::Unconfigured).then_some(OLD)
+        matches!(self, Arrival::Unconfigured | Arrival::TableOnDiskAtTerminal).then_some(OLD)
+    }
+
+    /// The manifest table the old owner renders from.
+    fn old_configured_by(self) -> Option<&'static str> {
+        matches!(self, Arrival::TableOnDiskAtTerminal).then_some(OLD)
     }
 
     /// The questions asked at the terminal, in order, and the answers.
@@ -206,7 +227,7 @@ impl Arrival {
                 (format!("set {OLD} up in this work tree too?"), "y"),
                 walkthrough,
             ],
-            Arrival::FreshAtTerminal => {
+            Arrival::FreshAtTerminal | Arrival::TableOnDiskAtTerminal => {
                 vec![("make the repository changes of 2 packages?".to_owned(), "y")]
             }
             Arrival::Declined
@@ -232,7 +253,10 @@ impl Arrival {
     fn fresh(self) -> bool {
         matches!(
             self,
-            Arrival::ConsentedFresh | Arrival::RefusedOwner | Arrival::FreshAtTerminal
+            Arrival::ConsentedFresh
+                | Arrival::RefusedOwner
+                | Arrival::FreshAtTerminal
+                | Arrival::TableOnDiskAtTerminal
         )
     }
 
@@ -256,6 +280,7 @@ impl Arrival {
                 | Arrival::DeclinedAtTerminal
                 | Arrival::LinkedAtTerminal
                 | Arrival::FreshAtTerminal
+                | Arrival::TableOnDiskAtTerminal
         )
     }
 
@@ -302,6 +327,7 @@ fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
         Arrival::LinkedAtTerminal,
         Arrival::FreshAtTerminal,
         Arrival::Unconfigured,
+        Arrival::TableOnDiskAtTerminal,
         Arrival::Consented,
         Arrival::ConsentedLinked,
         Arrival::ConsentedFresh,
@@ -321,7 +347,7 @@ fn assert_arrival(arrival: Arrival) {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let main = unarmed_consumer(&tmp);
-    package(&main, OLD, None);
+    package(&main, OLD, arrival.old_configured_by());
     git(&main, &["add", "-A"]);
     git(&main, &["commit", "-q", "-m", "old installer"]);
     let initial = match arrival.fresh() {
@@ -342,7 +368,9 @@ fn assert_arrival(arrival: Arrival) {
 
     package(&main, NEW, arrival.configured_by());
     let required = match arrival {
-        Arrival::ConsentedFresh | Arrival::FreshAtTerminal => format!("{NEW}, {OLD}"),
+        Arrival::ConsentedFresh | Arrival::FreshAtTerminal | Arrival::TableOnDiskAtTerminal => {
+            format!("{NEW}, {OLD}")
+        }
         Arrival::ConsentedBeside => {
             let other = main.join("catalog/skills/workfx");
             fs::create_dir_all(&other).unwrap();
@@ -384,6 +412,12 @@ fn assert_arrival(arrival: Arrival) {
     }
     git(&main, &["add", "-A"]);
     git(&main, &["commit", "-q", "-m", "requirer"]);
+    if matches!(arrival, Arrival::TableOnDiskAtTerminal) {
+        let manifest = main.join("kendex.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str("\n[bot-instructions]\nschema = 1\n");
+        fs::write(&manifest, text).unwrap();
+    }
     let project = match arrival.linked() {
         true => {
             let linked = main.parent().unwrap().join("linked");

@@ -70,7 +70,7 @@ pub use run::{
     CommitFailure, Committed, Opened, Pushed, abandon_branch, body, by_hand, commit,
     open_pull_request, push, push_head, start_branch,
 };
-pub use stale::{Stale, Staleness, stale};
+pub use stale::{Deferred, Stale, Staleness, stale};
 
 #[cfg(test)]
 mod tests;

@@ -516,13 +516,18 @@ fn held_by_scope(
     generated: &kendex_core::engine::GeneratedPaths,
 ) -> Result<HeldBy, String> {
     let read = |carried: &BTreeSet<String>| -> Result<Vec<StalePackage>, String> {
-        Ok(
-            commit_offer::stale(env, scope, scan, generated, carried, None)
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .map(StalePackage::from)
-                .collect(),
+        Ok(commit_offer::stale(
+            env,
+            scope,
+            scan,
+            generated,
+            carried,
+            commit_offer::Deferred::default(),
         )
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(StalePackage::from)
+        .collect())
     };
     let all = read(&scan.carried())?;
     let action = match scan.carry.pending() {

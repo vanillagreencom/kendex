@@ -1468,7 +1468,7 @@ fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
             &scan,
             &generated,
             &scan.carried(),
-            None,
+            commit_offer::Deferred::default(),
         );
         if let Holds::InvalidManifest = row.holds {
             assert!(
@@ -1536,7 +1536,7 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
         &scan,
         &generated,
         &scan.carried(),
-        None,
+        commit_offer::Deferred::default(),
     )
     .expect("the packages are asked");
     assert_eq!(
@@ -1560,7 +1560,7 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
         &scan,
         &generated,
         &scan.carried(),
-        None,
+        commit_offer::Deferred::default(),
     )
     .expect("the packages are asked again");
     assert!(stale.is_empty(), "still held after the setup: {stale:?}");
@@ -1826,7 +1826,7 @@ fn a_commit_is_held_only_where_the_check_over_it_fails() {
             &scan,
             &generated,
             &carried,
-            None,
+            commit_offer::Deferred::default(),
         )
         .expect("the packages are asked");
 

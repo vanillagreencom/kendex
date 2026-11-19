@@ -221,7 +221,7 @@ pub(super) enum Walk {
     /// `add` or `apply` without the flag: the walkthrough after the offer
     /// asks for each effect at a terminal, and with nobody there no effect
     /// is set up. The offer's hold can still set up a held package, save
-    /// where the pending successor of [`Earlier::left_to_walkthrough`]
+    /// where the pending successor of [`Earlier::deferred`]
     /// holds it.
     Asking,
     /// `add` or `apply` with the flag.
@@ -376,17 +376,18 @@ fn make(
         // stale, and one whose check fails over the commit itself each hold
         // it.
         let carried = scan.carried();
-        let left = earlier.left_to_walkthrough;
-        let stale = match commit_offer::stale(env, scope, &scan, &generated, &carried, left) {
-            Ok(stale) => stale,
-            Err(error) => {
-                ui::stderr(&block::not_vouched(&style, root, &error.to_string()));
-                return Ok(Some(match answered {
-                    None => Outcome::Nothing,
-                    Some(_) => Outcome::CommitRefused,
-                }));
-            }
-        };
+        let left = earlier.deferred.successor;
+        let stale =
+            match commit_offer::stale(env, scope, &scan, &generated, &carried, earlier.deferred) {
+                Ok(stale) => stale,
+                Err(error) => {
+                    ui::stderr(&block::not_vouched(&style, root, &error.to_string()));
+                    return Ok(Some(match answered {
+                        None => Outcome::Nothing,
+                        Some(_) => Outcome::CommitRefused,
+                    }));
+                }
+            };
         if !stale.is_empty() {
             let held = Held {
                 set_up: ran_for(&set_up, &stale),
@@ -481,13 +482,14 @@ pub struct Earlier<'a> {
     /// the commit is not set up again; another held package is set up as
     /// the offer would.
     pub ran: &'a [(String, SetUp)],
-    /// A configuration successor the action installed that selection
-    /// passes over for an installed predecessor. The action's only consent
-    /// for its setup comes after this offer, at a terminal, or is not given,
-    /// and a setup after the commit would rewrite the review files it
-    /// carried, so core holds the commit on it and the offer sets nothing
-    /// up.
-    pub left_to_walkthrough: Option<&'a kendex_core::repo_effects::DeclaredEffects>,
+    /// What the action sets up only after this offer, in its walkthrough.
+    /// Its `successor` is a configuration successor the action installed
+    /// that selection passes over for an installed predecessor. The
+    /// action's only consent for its setup comes after this offer, at a
+    /// terminal, or is not given, and a setup after the commit would
+    /// rewrite the review files it carried, so core holds the commit on it
+    /// and the offer sets nothing up.
+    pub deferred: commit_offer::Deferred<'a>,
 }
 
 /// The earlier setup the held packages had in this action: a failed one
@@ -512,7 +514,7 @@ fn ran_for(set_up: &[(String, SetUp)], stale: &[commit_offer::Stale]) -> Option<
 struct Held<'a> {
     /// The setup a held package already had in this action.
     set_up: Option<SetUp>,
-    /// The successor of [`Earlier::left_to_walkthrough`] that holds the
+    /// The successor of [`Earlier::deferred`] that holds the
     /// commit: its setup is left to the action's walkthrough after the
     /// offer.
     walkthrough: Option<&'a str>,

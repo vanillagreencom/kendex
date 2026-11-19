@@ -450,7 +450,7 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
         &scan,
         &generated,
         &scan.carried(),
-        None,
+        commit_offer::Deferred::default(),
     )
     .unwrap();
     assert_eq!(

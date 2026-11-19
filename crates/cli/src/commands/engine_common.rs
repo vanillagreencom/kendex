@@ -375,6 +375,7 @@ pub(super) fn apply_report_accounted(
     };
     let applied = write_report(env, report)?;
     let first = super::repo_effects::set_up_first(env, report);
+    let walked = walked(report, &first);
     let after = match rendered(env, report) {
         Ok(generated) => left_to_walkthrough(env, report)
             .and_then(|left| {
@@ -385,7 +386,10 @@ pub(super) fn apply_report_accounted(
                     &before,
                     &super::commit_offer::Earlier {
                         ran: first.ran(),
-                        left_to_walkthrough: left.as_ref(),
+                        deferred: kendex_core::commit_offer::Deferred {
+                            successor: left.as_ref(),
+                            walked: &walked,
+                        },
                     },
                 )
             })
@@ -418,6 +422,27 @@ fn left_to_walkthrough(
         &report.plan.scope,
         &report.repo_effects,
     )?)
+}
+
+/// The effects the action's walkthrough after its commit offer sets up once
+/// it has its yes: what [`super::repo_effects::SetUpFirst`] left of the
+/// effects the plan brought. None for a verb that walks no effects, or
+/// where nobody is at a terminal to ask and no flag said yes.
+fn walked(
+    report: &EngineReport,
+    first: &super::repo_effects::SetUpFirst,
+) -> Vec<kendex_core::repo_effects::DeclaredEffects> {
+    let allowed = match super::commit_offer::walk() {
+        super::commit_offer::Walk::No => return Vec::new(),
+        super::commit_offer::Walk::Asking => false,
+        super::commit_offer::Walk::Allowed => true,
+    };
+    match super::repo_effects::yes(allowed, std::io::stdin().is_terminal()) {
+        super::repo_effects::Yes::Nobody => Vec::new(),
+        super::repo_effects::Yes::Given | super::repo_effects::Yes::Ask => {
+            first.remaining(&report.repo_effects)
+        }
+    }
 }
 
 /// Render the configuration a plan's packages own after its write, and
