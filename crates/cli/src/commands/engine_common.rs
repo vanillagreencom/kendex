@@ -399,11 +399,13 @@ pub(super) fn apply_report_accounted(
     })
 }
 
-/// The configuration successor this action installed whose setup it
-/// leaves to its walkthrough after the offer: an `add` or `apply` without
-/// `--allow-repo-effects`, where the armed predecessor rendered because the
-/// successor arrived as a dependency. Its disclosure, the one the
-/// walkthrough shows; `None` where the walkthrough would not offer it.
+/// The configuration successor this action installed, whose setup the
+/// action can consent to only after the offer, at a terminal, or not at
+/// all: an
+/// `add` or `apply` without `--allow-repo-effects`, where the predecessor
+/// armed in this checkout rendered because the successor arrived as a
+/// dependency. Its disclosure, the one the walkthrough shows; `None` where
+/// the walkthrough would not offer it.
 fn left_to_walkthrough(
     env: &Env,
     report: &EngineReport,

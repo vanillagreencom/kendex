@@ -218,8 +218,9 @@ pub(super) enum Walk {
     /// The verb walks no effects. `remove` carries the flag only for the
     /// offer's setup.
     No,
-    /// `add` or `apply` without the flag: each effect is asked after the
-    /// offer.
+    /// `add` or `apply` without the flag: the action's only consent for an
+    /// effect comes after the offer, from a person at a terminal, or is
+    /// not given where nobody is there.
     Asking,
     /// `add` or `apply` with the flag.
     Allowed,
@@ -471,15 +472,20 @@ pub struct Earlier<'a> {
     /// the commit is not set up again; another held package is set up as
     /// the offer would.
     pub ran: &'a [(String, SetUp)],
-    /// A configuration successor the action installed whose setup it
-    /// leaves to its walkthrough after this offer. That setup would
-    /// rewrite the review files after the commit, so the offer holds the
+    /// A configuration successor the action installed beside a predecessor
+    /// armed in this checkout, whose render named the successor's pending
+    /// setup. The action's only consent for that setup comes after this
+    /// offer, at a terminal, or is not given, and a setup after the commit
+    /// would rewrite the review files it carried, so the offer holds the
     /// commit on it and sets nothing up.
     pub left_to_walkthrough: Option<&'a kendex_core::repo_effects::Disclosure>,
 }
 
-/// The held packages with the one the walkthrough sets up after the offer,
-/// which no check holds: the armed predecessor stands behind the files now.
+/// The held packages with the pending successor of
+/// [`Earlier::left_to_walkthrough`], which no check holds: the armed
+/// predecessor stands behind the files now, and the action's only consent
+/// for the successor's setup comes after the offer, at a terminal, or is
+/// not given.
 fn with_left(
     mut stale: Vec<commit_offer::Stale>,
     left: Option<&kendex_core::repo_effects::Disclosure>,
@@ -558,8 +564,9 @@ fn hold(
             Some(_) => Outcome::CommitRefused,
         }));
     }
-    // The walkthrough after the offer asks for that setup, so the offer
-    // neither commits over it nor sets it up: it names the setup.
+    // The action's only consent for that setup comes after the offer, at
+    // a terminal, or is not given, so the offer neither commits over it nor
+    // sets it up: it names the setup.
     if held.walkthrough {
         ui::stderr(&block::stale_way_on(&style, false, held.flag));
         return Ok(Hold::Ended(match held.answered {

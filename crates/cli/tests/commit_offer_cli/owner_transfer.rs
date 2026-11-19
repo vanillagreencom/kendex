@@ -95,13 +95,19 @@ fn existing_setup_consent_transfers_the_configuration_effect() {
 /// and what it is given.
 #[derive(Clone, Copy, Debug)]
 enum Arrival {
-    /// No `--allow-repo-effects`: the armed old owner keeps the files, and
-    /// the offer commits nothing over the setup the walkthrough asks for
-    /// after it, and names that setup.
+    /// No `--allow-repo-effects`: the armed old owner keeps the files. The
+    /// action's only consent for the new owner's setup comes after the
+    /// offer, at a terminal, or is not given, as here with nobody there, so
+    /// the offer commits nothing and names that setup. A later action that
+    /// did not install the new owner commits as before.
     Declined,
     /// The same, from the requirer written into `kendex.toml` by hand and
     /// applied.
     DeclinedApply,
+    /// The same add at a terminal with no commit choice, saying yes to the
+    /// setup the walkthrough asks for after the offer: the offer sets
+    /// nothing up and commits nothing, and the setup runs once.
+    DeclinedAtTerminal,
     /// `--allow-repo-effects`: the setup moves the files before the offer.
     Consented,
     /// The same, in a linked work tree that carries neither record.
@@ -134,14 +140,18 @@ impl Arrival {
         )
     }
 
-    /// Run without `--allow-repo-effects`.
+    /// Run with `--commit` and without `--allow-repo-effects`.
     fn declined(self) -> bool {
         matches!(self, Arrival::Declined | Arrival::DeclinedApply)
     }
 
+    fn at_terminal(self) -> bool {
+        matches!(self, Arrival::DeclinedAtTerminal)
+    }
+
     /// The action's offer commits.
     fn commits(self) -> bool {
-        !self.declined() && !matches!(self, Arrival::RefusedOwner)
+        !self.declined() && !self.at_terminal() && !matches!(self, Arrival::RefusedOwner)
     }
 
     /// Neither owner is installed before the action.
@@ -166,6 +176,7 @@ impl Arrival {
                 | Arrival::ConsentedFresh
                 | Arrival::ConsentedBeside
                 | Arrival::ConsentedApply
+                | Arrival::DeclinedAtTerminal
         )
     }
 
@@ -178,8 +189,10 @@ impl Arrival {
 /// The KEN-2358 reproduction: an armed old owner, then an add of a package
 /// that requires the new one. Without the setup's say-so the old owner
 /// keeps rendering, the commit is held on the setup, its check still fails
-/// drift under `verify`, and a refresh names the pending setup. With `--allow-repo-effects` and a
-/// commit choice, the setup runs once, disclosed once, before the offer,
+/// drift under `verify`, a refresh names the pending setup, and a later
+/// apply commits. At a terminal the setup the walkthrough asks for runs
+/// once, after an offer that set nothing up. With `--allow-repo-effects`
+/// and a commit choice, the setup runs once, disclosed once, before the offer,
 /// so the new owner's render is in the action's own commit, in a linked
 /// work tree too, with no owner installed before, beside another held
 /// package, and from a declaration written by hand and applied. A refused
@@ -193,6 +206,7 @@ fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
     for arrival in [
         Arrival::Declined,
         Arrival::DeclinedApply,
+        Arrival::DeclinedAtTerminal,
         Arrival::Consented,
         Arrival::ConsentedLinked,
         Arrival::ConsentedFresh,
@@ -250,6 +264,7 @@ fn assert_arrival(arrival: Arrival) {
         }
         Arrival::Declined
         | Arrival::DeclinedApply
+        | Arrival::DeclinedAtTerminal
         | Arrival::Consented
         | Arrival::ConsentedLinked
         | Arrival::Refused
@@ -290,6 +305,7 @@ fn assert_arrival(arrival: Arrival) {
         }
         Arrival::Declined
         | Arrival::DeclinedApply
+        | Arrival::DeclinedAtTerminal
         | Arrival::Consented
         | Arrival::ConsentedFresh
         | Arrival::ConsentedBeside
@@ -311,21 +327,34 @@ fn assert_arrival(arrival: Arrival) {
     let rendered_before = renders(&project, NEW);
     let old_rendered_before = renders(&project, OLD);
     let mut args = match arrival.applied() {
-        true => vec!["apply", "--yes", "--commit"],
+        true => vec!["apply", "--yes"],
         false => vec![
             "add",
             "--yes",
             "--throwaway",
-            "--commit",
             "catalog",
             "--skill",
             "requirer",
         ],
     };
-    if !arrival.declined() {
+    if !arrival.at_terminal() {
+        args.push("--commit");
+    }
+    if !arrival.declined() && !arrival.at_terminal() {
         args.push("--allow-repo-effects");
     }
-    let output = kendex(&home, &project, &args);
+    let output = match arrival.at_terminal() {
+        true => {
+            let mut command = kendex_command(&home, &project, &args);
+            command.env("KENDEX_UI", "plain");
+            crate::pty::conversation(
+                command,
+                &[(&format!("make {NEW}'s repository changes?"), "y")],
+                crate::pty::Stderr::Terminal,
+            )
+        }
+        false => kendex(&home, &project, &args),
+    };
     let text = said(&output);
     let moved = arrival.moved();
     assert_eq!(
@@ -351,7 +380,7 @@ fn assert_arrival(arrival: Arrival) {
     assert_eq!(armed(&project, OLD), arrival.kept(), "{arrival:?}\n{text}");
     assert_eq!(
         text.contains(PENDING),
-        arrival.kept(),
+        arrival.kept() || arrival.at_terminal(),
         "{arrival:?}\n{text}"
     );
     // The package's own summary is in every disclosure block, so it counts
@@ -362,11 +391,14 @@ fn assert_arrival(arrival: Arrival) {
         "{arrival:?}\n{text}"
     );
     // One setup, then the action's own render through the owner it leaves;
-    // a refused setup is not run again.
-    let writes = match (moved, arrival.refused()) {
-        (true, _) => 2,
-        (false, true) => 1,
-        (false, false) => 0,
+    // a refused setup is not run again, and a setup after the offer is the
+    // action's last write.
+    let writes = if arrival.at_terminal() || arrival.refused() {
+        1
+    } else if moved {
+        2
+    } else {
+        0
     };
     assert_eq!(
         renders(&project, NEW) - rendered_before,
@@ -422,6 +454,26 @@ fn assert_arrival(arrival: Arrival) {
     let text = said(&refreshed);
     assert!(refreshed.status.success(), "{text}");
     assert!(text.contains(PENDING), "{text}");
+    assert!(!armed(&project, NEW), "{text}");
+
+    // A later apply did not install the new owner, so nothing holds its
+    // commit over that setup: the old owner's render of a drifted file is
+    // committed.
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "declined"]);
+    fs::write(project.join(".github/copilot-instructions.md"), "drift").unwrap();
+    git(&project, &["commit", "-q", "-am", "drift"]);
+    let applied = kendex(&home, &project, &["apply", "--yes", "--commit"]);
+    let text = said(&applied);
+    assert_eq!(applied.status.code(), Some(0), "{text}");
+    assert_ne!(head_subject(&project), "drift", "{text}");
+    let committed = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(
+        committed
+            .lines()
+            .any(|line| line == ".github/copilot-instructions.md"),
+        "{committed}\n{text}"
+    );
     assert!(!armed(&project, NEW), "{text}");
 }
 
