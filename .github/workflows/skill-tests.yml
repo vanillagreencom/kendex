@@ -536,14 +536,21 @@ jobs:
     # `guards-tools-tail` legs are cut
     # to the targets the file header states, eight minutes on Linux and
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
-    # margin; their figures are above their steps.
+    # margin; their figures are above their steps. The Linux `guards-tools`
+    # leg stands past its target and takes the 30-minute ceiling: its four
+    # Linux-only ci-class-job-set suites run tools/ci-job-set about a hundred
+    # times each, and each run answers through `tools/guard --suite-reach`,
+    # 3.8s a call against 0.44s before the reach. In merge-group run
+    # 44575133029 the leg spent 222s before its suites, and ci-class-job-set
+    # alone needs about 740s, past a 15-minute deadline in any shard; no
+    # seam splits one suite.
     # Slack retains the budget of the rest shard it splits from on both OSes.
     # Jarvis keeps the ceiling and run-all deadline its suites had in `rest`.
     # `orch-rest` builds kendex and the two package runtimes and runs the
     # runtimes' Rust targets: it takes the 30-minute ceiling until the first
     # merge group that runs the orch legs records each leg's per-suite seconds and
     # step times here, the measurement every orch budget is owed.
-    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'jarvis' || matrix.shard == 'orch-rest') && 30 || 15 }}
+    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'jarvis' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-tools') && 30 || 15 }}
     # change-scope's change-scope suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
