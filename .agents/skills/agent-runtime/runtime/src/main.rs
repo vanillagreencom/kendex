@@ -2496,7 +2496,8 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
     use controller::transition::Request;
     let loaded = HandOverSettings::load()?;
     loaded.accounts.tell_skipped();
-    let env = Env::system()?;
+    // A verb that stamps a record reads this process's identity in its own
+    // arm; a read such as `status` answers where that read cannot.
     let effect_settings = loaded.effect_settings();
     match op {
         ControllerOp::Successor {
@@ -2574,6 +2575,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
         } => {
             let reach = reach.named(&record)?;
             let r = Request::StartController(Box::new(request_file(&request)?));
+            let env = Env::system()?;
             let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
             hand_over(&run, &r, effect_exit)
         }
@@ -2585,6 +2587,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
         } => {
             let reach = reach.named(&record)?;
             let r = Request::RequestTransfer(Box::new(request_file(&request)?));
+            let env = Env::system()?;
             let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
             hand_over(&run, &r, effect_exit)
         }
@@ -2595,6 +2598,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
         } => {
             let reach = reach.named(&record)?;
             let r = Request::StopController(controller::transition::StopController {});
+            let env = Env::system()?;
             let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
             hand_over(&run, &r, effect_exit)
         }
@@ -2657,6 +2661,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
         }
         ControllerOp::Reconcile { record, reach } => {
             let reach = reach.named(&record)?;
+            let env = Env::system()?;
             let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
             let reconciled = controller::run::reconcile(&run)?;
             serde_json::to_value(reconciled).map_err(|source| Error::Json {
@@ -2670,6 +2675,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             handoff,
             keep_prior,
         } => {
+            let env = Env::system()?;
             let written = controller::handoff::write(
                 &record,
                 &body,
@@ -2726,6 +2732,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
                 launched,
                 observed,
             };
+            let env = Env::system()?;
             controller::rewrite(&record, record::Locking::FLOCK, |doc| {
                 controller::model::record_model_check(
                     &record,
@@ -2753,6 +2760,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             reach,
         } => {
             let reach = reach.named(&record)?;
+            let env = Env::system()?;
             let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
             let recorded = controller::run::run_job(&run, &intent)?;
             serde_json::to_value(recorded).map_err(|source| Error::Json {
