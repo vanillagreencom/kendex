@@ -22,7 +22,7 @@ Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 
 - On a satellite, `jarvis-session forward --home HOME --record PATH` forwards a confirmed owner request to the main, under [Agent reach: Forward](../references/agent-reach.md#forward).
 - Use `jarvis-session forward-drain --home HOME` under [Agent reach: Status](../references/agent-reach.md#status).
 - Read `jarvis-session status --home HOME --main` for forwarding status; its output names its fields, states and causes. Follow [Agent reach: Status](../references/agent-reach.md#status) for kept answers.
-- While the main session is unregistered, a request whose receipt was lost reads `queued` with `overseer-absent`, though the main already holds it. The next delivery or the answer settles it. [Agent reach: Forward](../references/agent-reach.md#forward) states how often it lands.
+- While the main session is unregistered, a request whose receipt was lost reads `queued` with `overseer-absent`, though the main already holds it. The next delivery or the answer settles it.
 - Stop through `.agents/skills/jarvis/scripts/jarvis-session stop --home HOME`. An app that turns Jarvis off uses `--origin app-off`. Only `start --origin app-on` clears that Off. A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
 
 ## Task command

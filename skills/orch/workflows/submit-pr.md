@@ -252,7 +252,7 @@ Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto
    - Write one `N: text` line under `## Done-when evidence` for each branch-provable Done-when box. `N` is the box's number in section order from 1; the text is its proving artifact at the head. Keep the section current on every body update. The runtime's close reads it where the lane cannot complete the item.
    - Include each proposed rule once, and do not perform it.
    - Take decision paths only from `decisions search --issue [ISSUE_ID]`. Check each with `test -f [DECISION_FILE_PATH]`, one command per path. Omit a path that fails.
-   - Include qualified started bundle children in the child `Closes` lines: this pull request carries their implementation. Merge-pr completes each child again after merge and hands its remaining checks to the overseer.
+   - Include qualified started bundle children in the child `Closes` lines: this pull request carries their implementation.
 
 4. **Create or update the pull request.** Never defer, queue or gate CI behind bot review activity. `[ISSUE_TITLE]` comes from `.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --repo [OWNER/REPO] --json title --jq '.title'`.
 
@@ -369,7 +369,7 @@ The request refuses a head that moved from `[PREPARED_HEAD]`, before validation 
 - A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal in the reply's `push` output returns to [merge-pr-restack.md](merge-pr-restack.md). That route returns here after its guarded restack and rules reload.
 - A red validation publishes nothing. A failed push sends no completion notice.
 
-**Verification.** Verify the published head where it stands. The verification is pinned to `[PUSHED_SHA]`, never the branch's later head or a pull request, and the runtime records the verdict itself. `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` answers from `[WORKTREE_PATH]`, whatever the item's tracker.
+**Verification.** Verify the published head where it stands. The verification is pinned to `[PUSHED_SHA]`, never the branch's later head or a pull request. `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` answers from `[WORKTREE_PATH]`, whatever the item's tracker.
 
 ```bash
 jq -cn --arg repo "[OWNER/REPO]" --arg base "[BASE]" --arg head "[PUSHED_SHA]" \
@@ -380,7 +380,7 @@ jq -cn --arg repo "[OWNER/REPO]" --arg base "[BASE]" --arg head "[PUSHED_SHA]" \
 
 | Reply | Action |
 |--------|--------|
-| `ok` true, `result.status` `complete` | The verdict is recorded. Bind `[VERDICT]` to `result.verdict`. The op records a `fail` on a published head as read; name it in the completion notice. Its fix is a new item |
+| `ok` true, `result.status` `complete` | Bind `[VERDICT]` to `result.verdict`. The op records a `fail` on a published head as read; name it in the completion notice. Its fix is a new item |
 | `ok` true, `result.status` `pending` | Not final. The op runs no wait of its own. Repeat the same call every 180 seconds until `CI_WAIT_MAX_SECS` seconds have passed since the first call (`.agents/skills/orch/scripts/orch-env CI_WAIT_MAX_SECS 600`). A `pending` reply at that point is unconfirmed: record nothing, and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice |
 | `ok` true, `result.status` `unreadable` | Run the call once more. If it repeats, record nothing and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice. Never record a verdict that did not arrive |
 | `ok` false | Report the refusal's key with the pushed SHA in the completion notice. Do not repeat transport |

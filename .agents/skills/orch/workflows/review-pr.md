@@ -20,7 +20,7 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, where `[DIR]` 
 
 1. Resolve `ISSUE_ID` with `git-context issue-from-branch .`, and resolve `TRACKER` ([Tracker Resolution](../SKILL.md#workflow-execution)).
 2. Run `.agents/skills/orch/scripts/orch-runtime state exists --item [ISSUE_ID]`.
-3. When the state is absent, read `[BRANCH]` with `git-context branch [WT_PATH]`, then run `.agents/skills/orch/scripts/orch-runtime state init --item [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`. The round-start prune reads the worktree from state.
+3. When the state is absent, read `[BRANCH]` with `git-context branch [WT_PATH]`, then run `.agents/skills/orch/scripts/orch-runtime state init --item [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`.
 4. This path has no dev return, so § 5 derives the QA signals from the diff scan and your judgment alone.
 
 ---

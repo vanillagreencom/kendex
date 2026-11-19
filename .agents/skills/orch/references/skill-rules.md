@@ -1,6 +1,6 @@
 # Skill rules
 
-Read the named section when an orch workflow delegates work, closes a round, coordinates lanes or writes lane output. [../SKILL.md](../SKILL.md) § Skill Rules routes here.
+Read the named section when an orch workflow delegates work, closes a round, coordinates lanes or writes lane output.
 
 ## Delegation
 
@@ -85,7 +85,7 @@ On other surfaces, recompute the reviewer slots at every review-cycle start:
 
 Within the slots, apply [§ Delegation](#delegation) before reusing reviewers by exact name. Spawn only the missing or context-exhausted ones. Over the slots, or on a thread-limit spawn error, run waves. Each wave's `record-agents` `wave-start` step records the spawn count the harness allowed as `slots_observed`.
 
-Review state lives on disk, never in a reviewer's session memory. On a surface with a close call, a QA agent spawns and shuts down per task. Codex MultiAgentV2 keeps finished threads for eligible reuse.
+Review state lives on disk, never in a reviewer's session memory. On a surface with a close call, a QA agent spawns and shuts down per task.
 
 ### Codex thread reuse
 
@@ -180,7 +180,7 @@ A brief or workflow names a setting and its reader, `orch-env NAME DEFAULT` ([sc
 
 ### Voice requests
 
-Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval and the explicit confirmation of destructive and money steps. Read communication's [voice wording](../../communication/references/voice.md) before the spoken reply.
+Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval, the explicit confirmation of destructive and money steps, and the voice wording to read before the spoken reply.
 
 ### Containers
 
@@ -307,7 +307,7 @@ Every field is required. For an item judged by the filing bar, `kept` means it c
 
 No person reads a lane's pane. The overseer learns a lane's state from `lane-mail`, the lane status file and what the watch reads off the pane.
 
-`ORCH_LANE_OUTPUT` ([settings.md](settings.md)) takes `quiet` or `normal`; `normal` prints every block as written. Every launch the runtime makes closes the lane's brief on the sentence for the mode its settings resolve: `runtime/src/effects/lane-output-quiet.txt` or `runtime/src/effects/lane-output-normal.txt`. The lane's first reply therefore already follows it ([lane-directive.md § Brief file](lane-directive.md#brief-file)). A brief sent through a harness's own session launcher ([oversee.md](../workflows/oversee.md) § 1) closes on the sentence for the mode `orch-env ORCH_LANE_OUTPUT quiet` prints. A lane follows the mode its brief states. A lane whose brief states none reads `orch-env ORCH_LANE_OUTPUT quiet`.
+`ORCH_LANE_OUTPUT` ([settings.md](settings.md)) takes `quiet` or `normal`; `normal` prints every block as written. Every launch the runtime makes closes the lane's brief on the sentence for the mode its settings resolve: `runtime/src/effects/lane-output-quiet.txt` or `runtime/src/effects/lane-output-normal.txt` ([lane-directive.md § Brief file](lane-directive.md#brief-file)). A brief sent through a harness's own session launcher ([oversee.md](../workflows/oversee.md) § 1) closes on the sentence for the mode `orch-env ORCH_LANE_OUTPUT quiet` prints. A lane follows the mode its brief states. A lane whose brief states none reads `orch-env ORCH_LANE_OUTPUT quiet`.
 
 The mode governs a lane: a session whose launch brief names a lane status file and a mailbox ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A session with no such brief has a person at its pane and prints as written, whatever the setting.
 

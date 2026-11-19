@@ -9,7 +9,7 @@ cargo build                # a development binary at runtime/target/debug/agent-
 ../scripts/setup           # the shipped route: a release build in the user cache, never in the tree
 ```
 
-`cargo build` and `cargo test` write to `runtime/target/`. `.gitignore` excludes it, and no render carries it. `scripts/setup` builds into the cache its `--help` names, under a key from `scripts/lib/key.sh`. To try setup without touching the real cache, point `AGENT_RUNTIME_CACHE` at a scratch folder. `../tests/setup/setup.sh` runs setup against the fake cargo beside it.
+`scripts/setup` builds into the cache its `--help` names, under a key from `scripts/lib/key.sh`. To try setup without touching the real cache, point `AGENT_RUNTIME_CACHE` at a scratch folder. `../tests/setup/setup.sh` runs setup against the fake cargo beside it.
 
 `../scripts/setup --runtime DIR --name NAME` builds a dependent crate the same way, with the dependency's inputs in its key. orch's `scripts/setup` is that caller. Its suite is `skills/orch/tests/setup.sh`.
 
@@ -21,7 +21,7 @@ cargo test --test integration     # the process-protocol tests alone
 cargo test record::               # one module's unit tests
 ```
 
-`runtime/Cargo.toml` sets `autotests = false`, so the package's top-level `tests/` stays out of renders. Each integration target is a `[[test]]` row in `runtime/Cargo.toml` whose path is under `../tests/rust/`. Give a new integration file its own row. The targets run the built binary through `CARGO_BIN_EXE_agent-runtime`.
+`runtime/Cargo.toml` sets `autotests = false`, so the package's top-level `tests/` stays out of renders. Each integration target is a `[[test]]` row in `runtime/Cargo.toml` whose path is under `../tests/rust/`. Give a new integration file its own row.
 
 ## Lint
 

@@ -10,7 +10,7 @@ Three packages run agent work on a repository. Each owns one kind of state.
 - agent-runtime owns the session. Its runtime, `skills/agent-runtime/runtime/`, builds the harness command and wraps it in its confinement. It opens the window, holds the process and session identity, types into the pane and stops by identity. It holds no tracker, review, report or fleet policy.
 - mailbox owns the messages. Its program, `skills/mailbox/scripts/lane-mail`, writes every box, judges every delivery key and moves every read cursor.
 
-The manifests set the direction. `skills/orch/runtime/Cargo.toml` depends on the agent-runtime crate, and `skills/orch/SKILL.md` requires agent-runtime and mailbox. The agent-runtime crate depends on neither, so it cannot name an orch type. `skills/mailbox/SKILL.md` declares orch and agent-runtime optional, and `lane-mail` runs their programs only for the verbs that need them. No runtime links mailbox code: each runs `lane-mail` and decodes its reply.
+The manifests set the direction. `skills/orch/runtime/Cargo.toml` depends on the agent-runtime crate, and `skills/orch/SKILL.md` requires agent-runtime and mailbox. The agent-runtime crate depends on neither, so it cannot name an orch type. `skills/mailbox/SKILL.md` declares orch and agent-runtime optional, and `lane-mail` runs their programs only for the verbs that need them.
 
 ## Why
 
@@ -20,7 +20,7 @@ One owner per truth also keeps each package usable alone. A caller with no repos
 
 ## Rules
 
-- Do decide in an orch transition and act in an effect. A transition under `ops/` persists the intent beside the record change it judges, and never runs the effect. `effects::run` runs the effect and records what it observed through `record-outcome`. One intent per target may be open, and a repeated request reconciles it. A crash between the decision and the act leaves an intent to re-observe, never a second effect.
+- Do decide in an orch transition and act in an effect. A transition under `ops/` persists the intent beside the record change it judges, and never runs the effect. The effect records what it observed. One intent per target may be open, and a repeated request reconciles it. A crash between the decision and the act leaves an intent to re-observe, never a second effect.
 - Do record before an act that cannot be taken back: the launch phase before the window opens and before each wait, the wake's mark before it types, the owed directive before a session send.
 - Do reach the host from orch only through agent-runtime's operation handle, `agent_runtime::effects::Operation`. `skills/orch/runtime/src/effects/lane_operation.rs::fn open` opens it. `skills/orch/runtime/clippy.toml` lists agent-runtime's tmux, process, session, trust, job and record primitives and `std::process::Command` as disallowed methods. The `skill-tests` workflow runs `cargo clippy --all-targets -- -D warnings` on each package runtime. It refuses an ordinary call of a listed method outside the functions that carry a reviewed allowance. A new acting function in agent-runtime joins that list in the same change.
 - Do let orch choose and agent-runtime spell. orch picks the harness, account, model and brief. `skills/orch/runtime/src/effects/grants.rs` derives what the harness may write; in a seat, that is only what `skills/agent-runtime/runtime/src/harness.rs::fn home_writes` names. Never put a harness flag on a command line, read a harness's session files or compose a stop outside agent-runtime. `skills/agent-runtime/runtime/src/launch.rs::pub fn build` is the one command builder. It wraps the command in the confinement `confine.rs` derives from those grants.
@@ -32,21 +32,9 @@ Review holds each rule that names no list, workflow or test.
 
 ## The canonical example
 
-A validation run's end notice crosses the three owners in turn, from its send to the lane's next turn.
-
-1. orch decides to tell the lane. `skills/orch/runtime/src/send.rs::fn send_notice` routes a lane with no session channel to `Mailbox::send_directive`: one run of `lane-mail send --item ITEM --directive --file F --delivery-id KEY`.
-2. mailbox stores it. `lane-mail send` appends the envelope to the lane's `to-lane.jsonl` and judges the key under its lock. A replay answers `delivery-repeated` and lands nothing.
-3. orch notices it. The mail duty reads every lane box in one `drain_many` call. `skills/orch/runtime/src/watch/mail.rs::fn lane_turn` sets an `unread` row while the box holds lines past the lane's cursor.
-4. orch decides to wake the lane, and agent-runtime types. The wake duty writes its mark, then `skills/orch/runtime/src/watch/wake.rs::fn paste` runs agent-runtime's `deliver` verb. `skills/agent-runtime/runtime/src/main.rs::fn deliver` types only into a pane its judge reads idle, and confirms by a new user turn in that session's own file. The typed line tells the lane to run `lane-mail inbox`; the message never passes through agent-runtime.
-5. mailbox hands the message over. At the lane's next hook, `skills/orch/runtime/src/turnend/mail.rs::pub(super) fn check` reads the unread lines with `lane-mail inbox --peek`, which moves no cursor, and carries them as context. `Ack::settle` runs `lane-mail inbox --ack COUNT` once that answer is written.
+A validation run's end notice to a lane with no session channel is the smallest complete crossing. `skills/orch/runtime/src/send.rs::fn send_notice` sends it as one `lane-mail send --directive` with a delivery key, and mailbox answers a replay `delivery-repeated` and lands nothing. The watch sees the unread line, writes its wake mark, and runs agent-runtime's `deliver` verb from `skills/orch/runtime/src/watch/wake.rs::fn paste`. `deliver` types only into a pane it reads idle, and the typed line only tells the lane to run `lane-mail inbox`; the message never passes through agent-runtime. At the lane's next hook, `skills/orch/runtime/src/turnend/mail.rs` reads the lines with `lane-mail inbox --peek` and acknowledges them only once its answer is written.
 
 Copy this shape for a new crossing: orch decides and records, agent-runtime acts on the session, and `lane-mail` holds the message.
-
-## Reading route
-
-- [skills/orch/DEVELOPMENT.md](../../skills/orch/DEVELOPMENT.md): the runtime's stack, its tests and the rule for adding an effect-boundary allowance.
-- [skills/agent-runtime/SKILL.md](../../skills/agent-runtime/SKILL.md): the execution contract, its verbs, outcomes and stop by identity. [skills/agent-runtime/DEVELOPMENT.md](../../skills/agent-runtime/DEVELOPMENT.md): its build and lint.
-- [skills/mailbox/SKILL.md](../../skills/mailbox/SKILL.md) and `lane-mail --help`: the verbs, envelopes, receipts and refusal keys.
 
 ## Revisit when
 
@@ -54,4 +42,4 @@ A second caller needs to move an item record or a lane without orch, or a harnes
 
 ## Not governed
 
-What a turn end answers and when the watch wakes a lane: orch's own decisions, held by its tests under `skills/orch/tests/rust/`. The runtime's stack and storage: the reading route's first entry.
+What a turn end answers and when the watch wakes a lane: orch's own decisions, held by its tests under `skills/orch/tests/rust/`. The runtime's stack, storage and tests: [skills/orch/DEVELOPMENT.md](../../skills/orch/DEVELOPMENT.md).

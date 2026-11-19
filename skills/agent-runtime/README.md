@@ -4,16 +4,16 @@ A command and Rust library that starts one AI coding-agent session, watches it, 
 
 ## Features
 
-- Turns one launch intent into the command line for Claude Code, Codex, Copilot CLI or Pi.
-- Records each session's process as a pid with its start time, and stops exactly that process tree.
+- Turns one launch request into the command line for Claude Code, Codex, Copilot CLI or Pi.
+- Records which process each session runs, and stops exactly that process tree.
 - Runs the session in a tmux pane on a private server, which it confirms before every read and write.
-- Runs a worker's session inside a kernel boundary on Linux, writable only where its launch grants.
-- Judges a screen as idle, working, asking, walled, exited or unjudged, with one reader.
+- Runs a worker's session in a sandbox on Linux.
+- Tells whether a session is idle, working, asking, stopped by an account limit or exited, and says so when it cannot tell.
 - Finds the session file each harness writes for a working directory.
-- Reads each account's plan room and picks the account a launch spends.
-- Keeps launch records as locked, revisioned JSON that preserves fields it does not know.
+- Reads how much use each account has left and picks the account a launch uses.
+- Keeps launch records as JSON that another package can add its own fields to.
 - Answers every command with one versioned JSON reply, `agent-runtime-v1`.
-- Builds itself once into a user cache keyed by its own sources, and refuses to run before that build exists.
+- Builds itself once into a user cache, rebuilds when its sources change, and refuses to run before that build exists.
 - Builds a dependent package's runtime, such as orch's, the same way.
 
 ## Install
@@ -38,22 +38,22 @@ You write a small JSON file. It names the harness, the folder, how far the harne
 
 ## Harnesses
 
-| Harness | Support | Runs inside the boundary | Tested on |
-|---|---|---|---|
-| Claude Code | first-class | on Linux | 2.1.310, 2026-10-26, Linux 7.3.0-5-cachyos, private tmux server with pane paste |
-| Codex | first-class | on Linux | 0.164.0, 2026-10-26, Linux 7.3.0-5-cachyos, private tmux server with pane paste |
-| Copilot CLI | first-class | never: it reads its login over the session bus the boundary hides | 1.0.103, 2026-10-26, Linux 7.3.0-5-cachyos, private tmux server with pane paste |
-| Pi | first-class | on Linux | 1.4.0, 2026-10-26, Linux 7.3.0-5-cachyos, private tmux server with pane paste |
+| Harness | Runs in the sandbox | Tested version |
+|---|---|---|
+| Claude Code | on Linux | 2.1.310 |
+| Codex | on Linux | 0.164.0 |
+| Copilot CLI | never: the sandbox would hide its sign-in | 1.0.103 |
+| Pi | on Linux | 1.4.0 |
 
-Any other harness is untested. The runtime refuses a harness name it does not know.
+Each version was tested on Linux on 2026-10-26. The runtime refuses a harness name it does not know.
 
 ## Platforms
 
-| Platform | Route |
+| Platform | Support |
 |---|---|
-| Linux | Supported: build, tmux host, process identity from `/proc`, the boundary through `bwrap`. |
-| macOS | Supported: build, tmux host, process identity from `ps`. Every session runs outside the boundary. |
-| Windows | Pure logic and protocol only. The tmux route is unproved. |
+| Linux | Supported, with the sandbox. |
+| macOS | Supported. Every session runs outside the sandbox. |
+| Windows | Sessions are unsupported; only the library's logic builds and is tested. |
 
 ## Setup
 
@@ -64,7 +64,7 @@ Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`
 | `AGENT_RUNTIME_ACCOUNT_DIRS` | The account folders a launch may pick from, separated by `:`. |
 | `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended. `native` keeps the harness's own prompts. |
 | `AGENT_RUNTIME_HARNESS_BINARIES` | Where a harness is installed when it is not on `PATH`, as `harness=/absolute/path` pairs. |
-| `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | Where account usage and wall records live: an absolute or `~/` path. |
+| `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | Where account usage and limit records live: an absolute or `~/` path. |
 
 ## Licence
 

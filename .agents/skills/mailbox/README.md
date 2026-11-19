@@ -6,7 +6,7 @@ A repository mailbox for AI coding sessions and the owner who answers their ques
 
 - Keeps questions, notices and answers in the repository.
 - Reads pending questions and resolves them through one mailbox.
-- Delivers lane and peer messages when orch supplies a recorded reader.
+- With orch installed, also carries messages between orch's lanes, their overseer and peer sessions.
 
 ## Install
 
@@ -16,7 +16,7 @@ kendex add vanillagreencom/kendex --skill mailbox
 
 ## How it works
 
-Each repository keeps its messages on disk. Sessions read the mailbox through `lane-mail`. A lock protects messages when writers send at the same time. Orch supplies the session records for lane and peer delivery.
+Each repository keeps its messages on disk. Sessions send and read them with the `lane-mail` command. Two sessions sending at once never lose a message.
 
 ## Licence
 

@@ -1,10 +1,10 @@
 # Orchestration development
 
-Maintainer notes for the orch package: its runtime under `runtime/`, its scripts and its suites. People using the package read [README.md](README.md); agents read [SKILL.md](SKILL.md). Why orchestration, session execution and messaging have separate owners: the kendex repository's `docs/architecture/orchestration.md`.
+Maintainer notes for the orch package: its runtime under `runtime/`, its scripts and its suites.
 
 ## Prerequisites
 
-- What [README.md § Setup](README.md#setup) names. `orch-runtime ready` checks each and names the fix for one missing or refused. `lane-host-ssh`'s suite also needs the provider's Python 3 and `flock`.
+- What [README.md § Setup](README.md#setup) names. `orch-runtime ready` checks each and names the fix for one missing or refused.
 - The suites run on Linux, and on macOS for the subset `tools/macos-test-contracts` selects, as CI runs them. A suite that reaches `orch-runtime` before `setup` built it fails on `orch-runtime: setup-required`.
 
 ## Build
@@ -14,14 +14,14 @@ skills/orch/scripts/setup                  # builds agent-runtime, then orch-run
 skills/orch/scripts/orch-runtime --help    # every verb's contract
 ```
 
-`setup` builds through agent-runtime's `scripts/setup`. [SKILL.md § Scripts](SKILL.md#scripts) states what `setup` and the `orch-runtime` entry print, and the entry's refusal where no built binary stands. Both refuse when `agent-runtime` is not the sibling package beside orch.
+`setup` and the `orch-runtime` entry refuse when agent-runtime is not the sibling package beside orch.
 
 ## Stack
 
-- **Language.** The runtime is two Rust crates, `orch-runtime` here and agent-runtime beside it. Each is its own Cargo workspace with a committed `Cargo.lock`, and `setup` builds each into a native executable. Revisit the language only for a demonstrated packaging or platform blocker.
-- **Libraries.** clap parses the commands. Serde and serde_json carry the typed records and the machine output. thiserror names the error kinds. Process I/O, waits, timers and cancellation run on Tokio inside agent-runtime; `orch-runtime` takes no Tokio dependency. Add a dependency only for a need the code has.
-- **Storage.** Durable state is versioned local JSON: one record per item under `items/<ITEM>/` of the state directory, and one fleet record beside them. agent-runtime's `record.rs` writes each record under one OS-backed writer lock per file, as a temporary file renamed over the target, after an explicit revision check. `orch-runtime reconcile` re-observes an open intent (`docs/architecture/orchestration.md` § Rules) by its recorded identity: a file write does not make a process start, a delivery and a record update one transaction. Mailboxes are append-only JSONL files. Logs, transcripts and artifacts are files named by identity. The package has no database, server or event bus.
-- **Interfaces.** Requests and results that cross an executable or a remote boundary are versioned JSON. Rust types carry them inside the process. Human diagnostics stay apart from machine output. Git, `gh`, the Linear client, tmux, SSH and each harness's own CLI stay external commands at their package boundaries. Bash stays only for the entries `§ Shell that stays` names. JavaScript stays where the host requires it, such as the Copilot CLI context extension agent-runtime installs. Model classes resolve through kendex's `tier-model`, never a table copied into the runtime.
+- **Language.** The runtime is two Rust crates, `orch-runtime` here and agent-runtime beside it, each its own Cargo workspace with a committed `Cargo.lock`. Revisit the language only for a demonstrated packaging or platform blocker.
+- **Libraries.** Process I/O, waits, timers and cancellation run on Tokio inside agent-runtime; `orch-runtime` takes no Tokio dependency. Add a dependency only for a need the code has.
+- **Storage.** Durable state is versioned local JSON: one record per item under `items/<ITEM>/` of the state directory, and one fleet record beside them, each written through agent-runtime's `record.rs`. Mailboxes are append-only JSONL files. The package has no database, server or event bus.
+- **Interfaces.** Requests and results that cross an executable or a remote boundary are versioned JSON. Human diagnostics stay apart from machine output. Git, `gh`, the Linear client, tmux, SSH and each harness's own CLI stay external commands. Bash stays only for the entries § Shell that stays names, and JavaScript only where the host requires it. Model classes resolve through kendex's `tier-model`, never a table copied into the runtime.
 
 ## Tests
 
@@ -34,16 +34,14 @@ bash skills/orch/tests/run-all.sh =lane-marker                # that suite alone
 cargo test --manifest-path skills/orch/runtime/Cargo.toml     # the runtime's rows
 ```
 
-The runner's header states every argument, CI's `--shard` among them. A set of fragments and that set negated split the battery: every suite runs in exactly one half. `tools/tests/orch-shard-partition.test.sh` holds that each suite lands in exactly one CI shard on Linux and macOS.
+The runner's header states every argument, CI's `--shard` among them. A set of fragments and that set negated split the battery: every suite runs in exactly one half.
 
 The suites run from the catalog checkout. A kendex render leaves out `tests/` and this file.
 
-- **Rust rows.** The integration rows are the `[[test]]` targets `runtime/Cargo.toml` names under `tests/rust/`. The unit rows sit in `runtime/src/`. A row that runs the runtime's code in the test process starts with `support::isolated_row` (`tests/rust/support.rs`). It reruns the row alone in a child of the test binary, so the runtime's git reads never see the operator's git configuration.
-- **Shell suites.** Each `tests/*.sh` builds its own sandbox with stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` finds the suites when it runs, so a new suite needs no registration. It runs them `nproc` at a time, so a suite keeps every file, socket and process it makes inside its own sandbox. A suite that holds a fixed wall-clock window a loaded host misses goes in `run-all.sh`'s `ALONE` list. A suite asserts through `tests/lib/assertions.sh` and defines none of its names; `tests/assertions.test.sh` holds the library. A shell wait runs on `tests/lib/virtual-clock.sh`, whose `date` and `sleep` stubs turn a poll budget into arithmetic over a file.
-- **One job.** `tests/one_job.sh` runs `tests/job/one-job.sh`: whole repository jobs in a disposable consumer, on the real operations, with `tests/job/stub-harness` as the harness and fakes for the external services.
-- **Jobs.** The detached job runner is agent-runtime's `runtime/src/effects/job.rs`. `a_launched_job_runs_as_its_recorded_group_and_stop_job_ends_it_by_that_record` in `tests/rust/controller.rs` holds the `launch-job` and `stop-job` answers a caller reads.
-- **Hosts.** `tests/lane-host-ssh.sh` runs `tests/lib/lane-host-ssh-tests.py` against the static SSH provider, in temporary git repositories behind an SSH transport stub. No suite proves live SSH connectivity.
-- **Secret pattern.** `tests/secret-value.test.sh` reads [references/secret-value.ere](references/secret-value.ere) by the reader contract in that file's header, and runs every row through both readers the header names.
+- **Rust rows.** A row that runs the runtime's code in the test process starts with `support::isolated_row` (`tests/rust/support.rs`), so the runtime's git reads never see the operator's git configuration.
+- **Shell suites.** Each `tests/*.sh` builds its own sandbox with stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` finds the suites when it runs, so a new suite needs no registration. It runs them `nproc` at a time, so a suite keeps every file, socket and process it makes inside its own sandbox. A suite that holds a fixed wall-clock window a loaded host misses goes in `run-all.sh`'s `ALONE` list. A suite asserts through `tests/lib/assertions.sh` and defines none of its names. A shell wait runs on `tests/lib/virtual-clock.sh`, whose `date` and `sleep` stubs turn a poll budget into arithmetic over a file.
+- **One job.** `tests/one_job.sh` runs whole repository jobs in a disposable consumer, on the real operations, with `tests/job/stub-harness` as the harness and fakes for the external services.
+- **Hosts.** `tests/lane-host-ssh.sh` runs the static SSH provider in temporary git repositories behind an SSH transport stub. No suite proves live SSH connectivity.
 
 Every shell suite carries this line directly under its `set -...o pipefail`. `tests/one_job.sh` is the exception: its `tests/job/one-job.sh` carries it.
 
@@ -51,13 +49,13 @@ Every shell suite carries this line directly under its `set -...o pipefail`. `te
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 ```
 
-The line clears `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE`, which outrank `git -C <path>`. A library under `tests/lib/` runs git in its suite's shell, so the library is cleared only where the suite sources `git-env.sh` first. `tests/git-env-isolation.test.sh` holds both.
+A library under `tests/lib/` runs git in its suite's shell, so the library is cleared only where the suite sources `git-env.sh` first. `tests/git-env-isolation.test.sh` holds the line and the library case.
 
 Run a probe that imports a Python fixture with `python3 -B`: a bytecode cache under the catalog becomes a render input.
 
 ## Effect boundary
 
-The runtime is its own Cargo workspace. In `skills/orch/runtime/`, run:
+In `skills/orch/runtime/`, run:
 
 ```bash
 cargo clippy --all-targets -- -D warnings
@@ -70,7 +68,7 @@ cargo clippy --all-targets -- -D warnings
 A file under `scripts/` stays only for one of these reasons. A file with none leaves.
 
 - **It runs before the runtime is built.** `setup` and `orch-runtime`. `lane-marker` writes a lane's launch record; `lane-host-ssh`'s `create` runs it on a host before that host's runtime is built. `lib/lane-context.sh` holds the reads `lane-marker` and `copilot-statusline` share.
-- **It moves the base.** `sync-base` and `resolve-base-branch`. `lane-host-ssh` runs the clone's own `sync-base` before the runtime exists there, and merge-pr's close-out runs it in the main checkout. `post-merge` runs `sync-base`, the repository's command, `kendex refresh` and `kendex verify` in the base checkout, then `setup` for that checkout's own install; `post-merge --help` states its modes. `base-freshness` reads the worktree skill's `lib/base-reading.sh`, the reading `worktree push` rebases by.
+- **It moves the base.** `sync-base` and `resolve-base-branch`. `lane-host-ssh` runs the clone's own `sync-base` before the runtime exists there, and merge-pr's close-out runs it in the main checkout. `post-merge` runs `sync-base` in the base checkout; `post-merge --help` states its steps and modes. `base-freshness` reads the worktree skill's `lib/base-reading.sh`, the reading `worktree push` rebases by.
 - **A provider is an executable.** `lane-host-ssh` follows the provider contract of [lane-host.md](schemas/lane-host.md). Its remote half runs on a host with no runtime.
 - **The harness runs it by path.** `copilot-statusline`, the `statusLine` command of a Copilot CLI session, with `lib/copilot-session.sh`.
 - **Workflow fences run it.** `git-context`, and `orch-env`, which reads a setting through the shared loader `lib/kendex-env.sh`.
@@ -84,7 +82,7 @@ Every shell file here follows two rules:
 
 The ladder is the github skill's `scripts/gh-auth-ladder`; its library header states the steps. The runtime selects a credential through it in three places:
 
-- `orch-runtime watch run` runs the ladder before its claim, and `orch-runtime report` before its first GitHub read. Each then restarts itself in place under the selection with `--credential-selected` (`reexec_with_github_auth` in `runtime/src/main.rs`). A ladder that selects nothing refuses the verb. On a refused sign-in the watch runs the ladder again, and its reads and its GitHub-reading children take the renewed pair (`install_sign_in` in `runtime/src/watch/github.rs`). A sign-in the watch cannot renew reaches the owner as an event ([oversee-events.md § `github-auth-failed`](references/oversee-events.md#github-auth-failed)).
+- `orch-runtime watch run` runs the ladder before its claim, and `orch-runtime report` before its first GitHub read (`reexec_with_github_auth` in `runtime/src/main.rs`). A ladder that selects nothing refuses the verb. On a refused sign-in the watch runs the ladder again (`install_sign_in` in `runtime/src/watch/github.rs`). A sign-in the watch cannot renew reaches the owner as an event ([oversee-events.md § `github-auth-failed`](references/oversee-events.md#github-auth-failed)).
 - `orch-runtime validate` reads the base branch's required contexts under the pair the ladder selects for the worktree (`runtime/src/validate/mod.rs`).
 - The `approve-head` request reads its token from the file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names.
 
