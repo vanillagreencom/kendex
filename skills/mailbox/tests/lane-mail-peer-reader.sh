@@ -270,6 +270,11 @@ for mode in process private; do
 done
 rm -rf -- "$TMP_ROOT/sender/tmp/lane-mail/overseer"
 plant_record "$TMP_ROOT/sender/tmp" '{"window":"@1"}'
+# The peer's ask the answer rows reply to, as a peer ask lands in the
+# sender's own mailbox: peer send --re answers only a line it received.
+mkdir -p "$TMP_ROOT/sender/tmp/lane-mail/overseer"
+printf '%s\n' '{"id":"1790000000-1-1","kind":"ask","at":"2026-01-01T00:00:00Z","from":"overseer:peer","to":"peer","text":"Yours?"}' \
+  > "$TMP_ROOT/sender/tmp/lane-mail/overseer/to-lane.jsonl"
 
 # The record the runtime writes, under the state directory the peer's
 # settings file names: the reader places it where the writer did.

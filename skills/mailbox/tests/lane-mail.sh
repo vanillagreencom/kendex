@@ -717,11 +717,28 @@ assert_eq "$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")" "Owner not
 # The peer answers from its own checkout, naming the asker by path.
 PEER_A="$LANE"
 LANE="$PEER_B"
+# An answer joins its ask only through the whole id. A truncated one, the
+# epoch an overseer once sent alone, and one never received are refused
+# before either append: the asker's mailbox and the answerer's record hold
+# what they held.
+peer_answer_files() {
+  cat -- "$PEER_A/tmp/lane-mail/overseer/to-lane.jsonl"
+  printf -- '--\n'
+  cat -- "$PEER_B/tmp/lane-mail/overseer/to-overseer.jsonl" 2>/dev/null || printf 'absent\n'
+}
+for re in "${PEER_ASK%%-*}" 1790000000-1-1; do
+  before="$(peer_answer_files)"
+  lm peer send --repo "$PEER_A" --re "$re" --file "$(text a 'It is ours.')"
+  assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$re" "peer send --re $re, no line this overseer received, is refused"
+  assert_eq "$(peer_answer_files)" "$before" "the refused peer answer $re lands on neither side"
+done
 lm peer send --repo "$PEER_A" --re "$PEER_ASK" --file "$(text a 'It is ours.')"
 assert_eq "$RC=$(jq -rs 'map(select(.kind == "answer")) | .[0] | .from + " " + .re + " " + .text' \
   < "$PEER_A/tmp/lane-mail/overseer/to-lane.jsonl")" \
   "0=overseer:peer_b $PEER_ASK It is ours." "peer send --re answers the asker's ask from the peer's own checkout"
 assert_eq "${OUT%% id=*}" "lane-mail: sent item=overseer" "peer send prints the receipt send prints"
+assert_eq "$(jq -r 'select(.kind == "answer") | .re' < "$PEER_B/tmp/lane-mail/overseer/to-overseer.jsonl")" \
+  "$PEER_ASK" "the delivered peer answer is recorded in the answerer's own mailbox"
 LANE="$PEER_A"
 lm pending --item overseer
 assert_eq "$RC=$(jq -c 'select(.kind == "ask")' <<<"$OUT")" "0=" "the answered peer ask is no longer pending"
@@ -894,6 +911,25 @@ lm drain --item KEN-1 --root "$LANE" --after 0
 chmod 644 "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
 assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl" \
   "a mailbox that cannot be read is refused, never reported as empty"
+# The overseer folder in three states, through each read a watch makes: absent
+# and holding only its read marker read empty; a folder the reader cannot
+# search is refused, never an empty mailbox, whatever the Python. The store's
+# own diagnostic precedes the keyed line, so the row looks for that line.
+for row in 'absent|0=count=0 first=' 'marker|0=count=0 first=' 'unsearchable|2=lane-mail: file-unreadable='; do
+  IFS='|' read -r state want <<<"$row"
+  new_lane "overseer_$state"
+  box="$LANE/tmp/lane-mail/overseer"
+  [ "$state" = absent ] || { mkdir -p "$box"; printf '0\n' >"$box/to-overseer.seen"; }
+  [ "$state" != unsearchable ] || { chmod 000 "$box"; want="$want$box"; }
+  for read in 'drain --after 0 --receipts' 'events --box to-overseer --after 0' 'events --box to-lane --after 0'; do
+    # shellcheck disable=SC2086
+    lm $read --item overseer
+    got="$RC=$(head -n 1 <<<"$OUT")"
+    [ "$RC" -eq 0 ] || got="$RC=$(grep -Fx -m 1 "lane-mail: file-unreadable=$box" "$TMP_ROOT/err" || true)"
+    assert_eq "$got" "$want" "an overseer folder $state reads as the row says through $read"
+  done
+  [ "$state" != unsearchable ] || chmod 755 "$box"
+done
 
 # Every local mailbox component, planted as a symlink or as the wrong kind of
 # file, is refused before any verb reads or writes through it. UNSAFE is the

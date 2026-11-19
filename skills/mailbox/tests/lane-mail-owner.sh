@@ -1271,7 +1271,7 @@ assert_eq "$RC=$(field "$BOX/to-lane.jsonl" '.kind' | wc -l | tr -d ' ')" "0=2" 
 
 new_repo control_ref
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
-mutant ref-lane-only 'lm_ask_find "$REF" ||' 'false ||'
+mutant ref-lane-only 'lm_ask_find "$id" ||' 'false ||'
 lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
 

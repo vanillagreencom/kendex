@@ -10,6 +10,7 @@ import json
 import errno
 import os
 from pathlib import Path
+import stat
 import sys
 import subprocess
 import tempfile
@@ -83,12 +84,21 @@ class StoreRefusal(ValueError):
 
 
 def validate_mailbox(box):
-    """The path rule shared by lane-mail and in-process mailbox readers."""
+    """The path rule shared by lane-mail and in-process mailbox readers.
+
+    Only a missing path reads as absent. Any other lstat error, such as a
+    folder the reader cannot search, raises for the caller's unreadable
+    refusal: pathlib's is_symlink and exists return False for it on 3.14.
+    """
     for path in (box.parent, box, box / "to-overseer.jsonl", box / "to-lane.jsonl",
                  box / "to-overseer.jsonl.numbering", box / "to-lane.jsonl.numbering",
                  box / "to-lane.cursor", box / "to-lane.cursor.lock", box / "to-lane.watch"):
+        try:
+            mode = os.lstat(path).st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            continue
         directory = path in (box.parent, box)
-        if path.is_symlink() or path.exists() and not (path.is_dir() if directory else path.is_file()):
+        if not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)):
             raise StoreRefusal("mailbox-unsafe", path)
 
 

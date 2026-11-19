@@ -382,7 +382,10 @@ Peer side, one other repository's overseer mailbox per call:
               read from REPO's settings files, as data, to place its record,
               and no file of REPO's is sourced. An answer (--re) has no pane
               check: the asker's `wait --item overseer --id` reads it with
-              no named session. After delivery, an answer also appends to
+              no named session. Its --re is the whole id of a line a peer
+              overseer sent to this repository's own to-lane.jsonl; any
+              other id refuses `ref-unknown` before either append. After
+              delivery, an answer also appends to
               this repository's own to-overseer.jsonl so compact can close
               the inbound ask without reading REPO
 
@@ -682,7 +685,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     memory-too-long) text='A memory proposal takes at most 256 UTF-8 bytes of text.' ;;
     open-invalid) text='--open takes exactly one https URL.' ;;
     progress-needs-ref) text='A progress notice requires --ref to bind the step report to its request.' ;;
-    ref-unknown) text='No owner note in to-lane.jsonl and no owner ask in to-overseer.jsonl carries that id, so nothing here can be answered by it; a line a peer overseer sent and a resolution there are neither. Read the note or the ask again and pass the id it carries.' ;;
+    ref-unknown) text='No message this reply may answer carries exactly that id, so nothing here can be answered by it. A --ref names an owner note in to-lane.jsonl or an owner ask in to-overseer.jsonl; a line a peer overseer sent and a resolution there are neither. A peer send --re names a line a peer overseer sent to this overseer'"'"'s own to-lane.jsonl. Read the message again and pass the whole id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
     recommend-missing) text='The ask carries no recommendation, so no default can stand for it: close it without --default.' ;;
     draft-field) text='A draft is a JSON object of exactly recipient, medium and text, each a string holding a non-blank character. lane-mail computes text_hash itself, so a draft that names it is refused too.' ;;
@@ -2119,23 +2122,26 @@ lm_ask_find() { # ID
 # The host worker delivers owner requests with send --delivery-id. Read each
 # possible reference under the lock its writers take, then copy the delivery
 # id before releasing it. Take only one file lock at a time; the ask's or
-# notice's append takes its own lock after this read.
-lm_ref_find() {
-  local path ref_json
-  for path in "$TO_LANE" "$TO_OVERSEER"; do
+# notice's append takes its own lock after this read. The id matches a line of
+# CLASS in TO_LANE, the box's to-lane.jsonl, or an owner ask in TO_OVERSEER
+# where one is named.
+lm_ref_find() { # ID CLASS TO_LANE [TO_OVERSEER]
+  local id="$1" class="$2" lane="$3" path ref_json
+  shift 2
+  for path in "$@"; do
     [ -f "$path" ] || continue
     exec 9<"$path" || refuse file-unreadable "$path"
     orch_take_lock 9 "$path" 30 || { trap lm_cleanup EXIT; refuse lock-failed "$path"; }
     trap lm_cleanup EXIT
     LM_HELD_PATH="$path"
-    if [ "$path" = "$TO_LANE" ]; then
-      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+    if [ "$path" = "$lane" ]; then
+      lm_fetch "$path" "$WORK_DIR/lane.raw"
       lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
       ref_json="$(lm_objects "$WORK_DIR/lane.jsonl" |
-        jq -c --arg id "$REF" "$MAILBOX_CLASS_JQ"' select(.id == $id and overseer_mail_class == "owner-note")' |
+        jq -c --arg id "$id" --arg class "$class" "$MAILBOX_CLASS_JQ"' select(.id == $id and overseer_mail_class == $class)' |
         awk 'NR == 1')" || refuse file-unreadable "$path"
     else
-      lm_ask_find "$REF" || ASK_JSON=""
+      lm_ask_find "$id" || ASK_JSON=""
       ref_json="$ASK_JSON"
     fi
     if [ -n "$ref_json" ]; then
@@ -2146,7 +2152,7 @@ lm_ref_find() {
     orch_release_lock
     [ -z "$ref_json" ] || return 0
   done
-  refuse ref-unknown "$REF"
+  refuse ref-unknown "$id"
 }
 
 # Refuses `resolved-already` where a close of MSGID stands in to-lane.jsonl.
@@ -2569,7 +2575,7 @@ case "$VERB" in
       # answer nothing the owner wrote. The note is judged by the class the
       # watch reports it under, so a line the watch calls a peer's is never
       # the owner's here.
-      lm_ref_find
+      lm_ref_find "$REF" owner-note "$TO_LANE" "$TO_OVERSEER"
     fi
     [ -z "$ATTACH" ] || lm_attach_confined
     OWNER_TRACKER_ACTIVE=0
@@ -2799,6 +2805,19 @@ case "$VERB" in
     # either append rather than delivering a question nobody can answer.
     [ "$PEER_VERB" != ask ] || lm_require_overseer data "$OWN_ROOT"
     [ "$HOST" -eq 1 ] || lm_require_overseer data "$ROOT"
+    # An answer joins its ask only through the exact id, so one naming no
+    # peer line this overseer received is refused before either append. That
+    # line is in this repository's own mailbox, local even when REPO's is
+    # hosted.
+    if [ -n "$MSGID" ]; then
+      PEER_HOST="$HOST"
+      HOST=0
+      lm_box "$OWN_ROOT"
+      lm_plain
+      lm_ref_find "$MSGID" peer "$TO_LANE"
+      HOST="$PEER_HOST"
+      lm_box "$ROOT"
+    fi
     if [ "$PEER_VERB" = ask ]; then
       LINE="$(lm_envelope ask)"
     elif [ -n "$MSGID" ]; then
