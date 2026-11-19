@@ -153,9 +153,10 @@ pub fn configuration_setup(effects: &[DeclaredEffects]) -> Option<ConfigurationS
     })
 }
 
-/// The configuration successor among `installed`, the effects one action
-/// installed, that selection passes over for an installed predecessor
-/// until its own setup moves the files: [`Selection::pending`].
+/// The configuration successor among `walked`, the effects one action
+/// installed and leaves to its walkthrough, that selection passes over for
+/// an installed predecessor until its own setup moves the files:
+/// [`Selection::pending`].
 ///
 /// Read from the selection when asked, never from a render's
 /// [`RenderedPaths::pending`]: a render through a predecessor not armed here
@@ -166,10 +167,10 @@ pub fn configuration_setup(effects: &[DeclaredEffects]) -> Option<ConfigurationS
 pub fn pending_successor(
     env: &Env,
     scope: &Scope,
-    installed: &[DeclaredEffects],
+    walked: &[DeclaredEffects],
 ) -> Result<Option<DeclaredEffects>> {
     let pending = configuration_selection(env, scope)?.and_then(|selection| selection.pending);
-    Ok(pending.filter(|successor| installed.iter().any(|effect| effect.name == successor.name)))
+    Ok(pending.filter(|successor| walked.iter().any(|effect| effect.name == successor.name)))
 }
 
 /// The installed, locally armed predecessor whose licence this package's

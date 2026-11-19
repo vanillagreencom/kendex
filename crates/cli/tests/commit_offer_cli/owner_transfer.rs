@@ -119,9 +119,10 @@ enum Arrival {
     /// offer commits nothing.
     LinkedAtTerminal,
     /// The same add at a terminal with no commit choice and neither owner
-    /// installed before, saying yes to the walkthrough's setup of both:
-    /// the old owner not set up here is not offered a setup that would let
-    /// the offer commit before the new owner's setup.
+    /// installed before, saying yes to the walkthrough's setup of the new
+    /// owner alone: the old owner not set up here is not offered a setup
+    /// that would let the offer commit before the new owner's setup, and
+    /// the walkthrough leaves it out, as `--allow-repo-effects` does.
     FreshAtTerminal,
     /// The `Declined` add where the new owner names a configuring table
     /// the manifest lacks: its setup would render nothing, so the offer
@@ -130,8 +131,8 @@ enum Arrival {
     /// An apply with `--commit` at a terminal of the requirer of both
     /// owners, neither installed before, each naming a configuring table
     /// that only the working tree's manifest carries, saying yes to the
-    /// walkthrough's setup of both: that setup reads the table the commit
-    /// leaves out, so the offer commits nothing.
+    /// walkthrough's setup of the new owner alone: that setup reads the
+    /// table the commit leaves out, so the offer commits nothing.
     TableOnDiskAtTerminal,
     /// `--allow-repo-effects`: the setup moves the files before the offer.
     Consented,
@@ -222,10 +223,10 @@ impl Arrival {
     fn steps(self) -> Vec<(String, &'static str)> {
         let walkthrough = (format!("make {NEW}'s repository changes?"), "y");
         match self {
-            Arrival::DeclinedAtTerminal | Arrival::LinkedAtTerminal => vec![walkthrough],
-            Arrival::FreshAtTerminal | Arrival::TableOnDiskAtTerminal => {
-                vec![("make the repository changes of 2 packages?".to_owned(), "y")]
-            }
+            Arrival::DeclinedAtTerminal
+            | Arrival::LinkedAtTerminal
+            | Arrival::FreshAtTerminal
+            | Arrival::TableOnDiskAtTerminal => vec![walkthrough],
             Arrival::Declined
             | Arrival::DeclinedApply
             | Arrival::Consented
@@ -302,7 +303,8 @@ impl Arrival {
 /// apply commits. At a terminal the setup the walkthrough asks for runs
 /// once, after an offer that set nothing up and committed nothing, in a
 /// linked work tree whose old owner is set up only in the main checkout,
-/// and with no owner installed before too. A new owner
+/// and with no owner installed before too, where the old owner the add
+/// brings is not set up. A new owner
 /// with no configuring table in the manifest holds nothing, so the offer
 /// commits. With `--allow-repo-effects`
 /// and a commit choice, the setup runs once, disclosed once, before the offer,
@@ -524,12 +526,18 @@ fn assert_arrival(arrival: Arrival) {
         writes,
         "{arrival:?}\n{text}"
     );
-    // A predecessor that was never armed here is never set up before the
-    // offer. The walkthrough after it asks for every effect the add brings.
-    if arrival.fresh() && !arrival.at_terminal() {
+    // A predecessor that was never armed here, arriving beside the new
+    // owner, is never set up: not before the offer, and not by the
+    // walkthrough after it, whose one setup is the new owner's.
+    if arrival.fresh() {
         assert_eq!(
             renders(&project, OLD),
             old_rendered_before,
+            "{arrival:?}\n{text}"
+        );
+        assert_eq!(
+            text.matches(&format!("fixture {OLD} effect")).count(),
+            0,
             "{arrival:?}\n{text}"
         );
     }

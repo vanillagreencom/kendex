@@ -396,6 +396,7 @@ fn make(
                         .iter()
                         .any(|one| one.disclosure.declared.name == left.name)
                 }),
+                walked: earlier.deferred.walked,
                 answered,
                 // The flag says yes only beside a choice flag that commits,
                 // `--leave` having returned above. With no choice flag a
@@ -509,12 +510,15 @@ fn ran_for(set_up: &[(String, SetUp)], stale: &[commit_offer::Stale]) -> Option<
 
 /// Where the offer stands when a package holds its commit.
 #[derive(Clone, Copy)]
-struct Held {
+struct Held<'a> {
     /// The setup a held package already had in this action.
     set_up: Option<SetUp>,
     /// The successor of [`Earlier::deferred`] holds the commit: its
     /// setup is left to the action's walkthrough after the offer.
     walkthrough: bool,
+    /// The packages that walkthrough asks for:
+    /// [`commit_offer::Deferred::walked`].
+    walked: &'a [kendex_core::repo_effects::DeclaredEffects],
     /// The choice a flag named, if one did.
     answered: Option<Route>,
     /// Who gives the setup its yes.
@@ -536,7 +540,7 @@ fn hold(
     scope: &Scope,
     scan: &commit_offer::Scan,
     stale: &[commit_offer::Stale],
-    held: Held,
+    held: Held<'_>,
     generated: &mut GeneratedPaths,
 ) -> Result<Hold, Box<dyn std::error::Error>> {
     let style = ui::style();
@@ -557,11 +561,7 @@ fn hold(
     // a terminal, or is not given, so the offer neither commits over it nor
     // sets it up: it names the setup.
     if held.walkthrough {
-        ui::stderr(&block::walkthrough_way_on(
-            &style,
-            stale,
-            std::io::stdin().is_terminal(),
-        ));
+        ui::stderr(&block::walkthrough_way_on(&style, stale, held.walked));
         return Ok(Hold::Ended(match held.answered {
             None => Outcome::Nothing,
             Some(_) => Outcome::CommitRefused,

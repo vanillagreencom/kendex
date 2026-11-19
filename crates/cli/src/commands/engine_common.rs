@@ -375,8 +375,8 @@ pub(super) fn apply_report_accounted(
     };
     let applied = write_report(env, report)?;
     let first = super::repo_effects::set_up_first(env, report);
-    let walked = walked(report, &first);
-    let rendered = left_to_walkthrough(env, report)
+    let walked = walked(&first);
+    let rendered = left_to_walkthrough(env, report, &first)
         .and_then(|left| Ok((rendered(env, report, left.as_ref())?, left)));
     let after = match rendered {
         Ok((generated, left)) => super::commit_offer::after_writing(
@@ -388,7 +388,7 @@ pub(super) fn apply_report_accounted(
                 ran: first.ran(),
                 deferred: kendex_core::commit_offer::Deferred {
                     successor: left.as_ref(),
-                    walked: &walked,
+                    walked,
                 },
             },
         )
@@ -404,8 +404,9 @@ pub(super) fn apply_report_accounted(
 
 /// The configuration successor this action installed whose setup the
 /// action can consent to only after the offer, at a terminal, or not at
-/// all: an `add` or `apply` without `--allow-repo-effects` that brought a
-/// successor selection passes over for an installed predecessor,
+/// all: an `add` or `apply` without `--allow-repo-effects` whose
+/// walkthrough batch, [`super::repo_effects::SetUpFirst::remaining`],
+/// carries a successor selection passes over for an installed predecessor,
 /// [`kendex_core::bot_instructions::pending_successor`]. Arming the
 /// predecessor does not change which successor yields, so the reading
 /// before the render holds at the offer too. `None` where the walkthrough
@@ -413,6 +414,7 @@ pub(super) fn apply_report_accounted(
 fn left_to_walkthrough(
     env: &Env,
     report: &EngineReport,
+    first: &super::repo_effects::SetUpFirst,
 ) -> Result<Option<kendex_core::repo_effects::DeclaredEffects>, Box<dyn std::error::Error>> {
     if super::commit_offer::walk() != super::commit_offer::Walk::Asking {
         return Ok(None);
@@ -420,28 +422,25 @@ fn left_to_walkthrough(
     Ok(kendex_core::bot_instructions::pending_successor(
         env,
         &report.plan.scope,
-        &report.repo_effects,
+        first.remaining(),
     )?)
 }
 
 /// The effects the action's walkthrough after its commit offer sets up once
-/// it has its yes: what [`super::repo_effects::SetUpFirst`] left of the
-/// effects the plan brought. None for a verb that walks no effects, or
-/// where nobody is at a terminal to ask and no flag said yes.
+/// it has its yes: [`super::repo_effects::SetUpFirst::remaining`]. None for
+/// a verb that walks no effects, or where nobody is at a terminal to ask
+/// and no flag said yes.
 fn walked(
-    report: &EngineReport,
     first: &super::repo_effects::SetUpFirst,
-) -> Vec<kendex_core::repo_effects::DeclaredEffects> {
+) -> &[kendex_core::repo_effects::DeclaredEffects] {
     let allowed = match super::commit_offer::walk() {
-        super::commit_offer::Walk::No => return Vec::new(),
+        super::commit_offer::Walk::No => return &[],
         super::commit_offer::Walk::Asking => false,
         super::commit_offer::Walk::Allowed => true,
     };
     match super::repo_effects::yes(allowed, std::io::stdin().is_terminal()) {
-        super::repo_effects::Yes::Nobody => Vec::new(),
-        super::repo_effects::Yes::Given | super::repo_effects::Yes::Ask => {
-            first.remaining(&report.repo_effects)
-        }
+        super::repo_effects::Yes::Nobody => &[],
+        super::repo_effects::Yes::Given | super::repo_effects::Yes::Ask => first.remaining(),
     }
 }
 

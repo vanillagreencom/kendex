@@ -170,7 +170,8 @@ pub fn disclose_and_finish(
 }
 
 /// The configuration setup an `add` or `apply` with `--allow-repo-effects`
-/// took between its write and its render.
+/// took between its write and its render, and the effects it left for the
+/// action's walkthrough after the commit offer.
 ///
 /// The flag already says yes to every effect the action brings, and the
 /// configuration owner's setup decides which package renders the review
@@ -178,12 +179,15 @@ pub fn disclose_and_finish(
 /// setup leaves and the action's own commit offer carries its files,
 /// whatever the previous owner's state; taken after the offer, those files
 /// would land uncommitted. Each consent is spent once: the action's
-/// walkthrough leaves out the package set up and the predecessors it
-/// supersedes.
+/// walkthrough leaves out the package set up. With or without the flag it
+/// leaves out the predecessors
+/// [`kendex_core::bot_instructions::configuration_setup`] supersedes, so the
+/// commit offer, which reads this batch, and the walkthrough name the same
+/// setups.
 #[derive(Default)]
 pub struct SetUpFirst {
-    /// Every configuration package among the action's effects.
-    left_out: Vec<String>,
+    /// The effects the action's walkthrough after the offer asks for.
+    remaining: Vec<DeclaredEffects>,
     /// The package set up, and how its setup ended.
     ran: Vec<(String, super::commit_offer::SetUp)>,
     /// The setup that failed, held so the action still closes with its
@@ -199,12 +203,8 @@ impl SetUpFirst {
     }
 
     /// The effects left for the action's own walkthrough.
-    pub fn remaining(&self, effects: &[DeclaredEffects]) -> Vec<DeclaredEffects> {
-        effects
-            .iter()
-            .filter(|effect| !self.left_out.contains(&effect.name))
-            .cloned()
-            .collect()
+    pub fn remaining(&self) -> &[DeclaredEffects] {
+        &self.remaining
     }
 
     /// The held failure, for a caller that reports it itself.
@@ -216,20 +216,30 @@ impl SetUpFirst {
 /// Take the configuration setup of an `add` or `apply` run with
 /// `--allow-repo-effects`:
 /// [`kendex_core::bot_instructions::configuration_setup`]. Every other
-/// verb, and either one without the flag, takes none here.
+/// verb, and either one without the flag, takes none here, and its
+/// walkthrough still leaves the superseded predecessors out.
 pub fn set_up_first(env: &Env, report: &EngineReport) -> SetUpFirst {
-    if super::commit_offer::walk() != super::commit_offer::Walk::Allowed {
-        return SetUpFirst::default();
-    }
-    let Some(setup) = kendex_core::bot_instructions::configuration_setup(&report.repo_effects)
-    else {
-        return SetUpFirst::default();
-    };
-    let set_up = setup.set_up.clone();
-    let left_out = std::iter::once(&set_up.name)
-        .chain(setup.superseded.iter().map(|effect| &effect.name))
-        .cloned()
+    let effects = &report.repo_effects;
+    let setup = kendex_core::bot_instructions::configuration_setup(effects);
+    let mut left_out: Vec<&str> = setup
+        .iter()
+        .flat_map(|setup| setup.superseded.iter().copied())
+        .map(|effect| effect.name.as_str())
         .collect();
+    let set_up = match setup {
+        Some(setup) if super::commit_offer::walk() == super::commit_offer::Walk::Allowed => {
+            setup.set_up
+        }
+        Some(_) | None => {
+            return SetUpFirst {
+                remaining: without(effects, &left_out),
+                ..SetUpFirst::default()
+            };
+        }
+    };
+    left_out.push(&set_up.name);
+    let remaining = without(effects, &left_out);
+    let set_up = set_up.clone();
     let scope = &report.plan.scope;
     let walked = disclose(env, scope, std::slice::from_ref(&set_up))
         .and_then(|shown_to_them| walkthrough(env, scope, &shown_to_them, true));
@@ -238,10 +248,19 @@ pub fn set_up_first(env: &Env, report: &EngineReport) -> SetUpFirst {
         Err(error) => (super::commit_offer::SetUp::Failed, Some(error)),
     };
     SetUpFirst {
-        left_out,
+        remaining,
         ran: vec![(set_up.name, ended)],
         failed,
     }
+}
+
+/// `effects` less the packages named in `left_out`.
+fn without(effects: &[DeclaredEffects], left_out: &[&str]) -> Vec<DeclaredEffects> {
+    effects
+        .iter()
+        .filter(|effect| !left_out.contains(&effect.name.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// An action's effects outcome: the walkthrough's, then a setup
