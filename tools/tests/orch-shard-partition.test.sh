@@ -1659,11 +1659,11 @@ plant "$WORKFLOW" " || matrix.shard == 'rest' || matrix.shard == 'jarvis'" " || 
   "$TMP/runtime-rest-linux.yml" "skill-suites-shard/$RUNTIME_STEP"
 check "must-fail: a build step keeping rest to Linux names the macOS leg whose presence suite would refuse" "macOS rest" \
   "$(unbuilt_runtime_legs "$TMP/runtime-rest-linux.yml" macOS "$TMP/runtime-suites-macos")"
-printf '%s\t%s\n' node skills/jarvis/tests/controls.test.sh linear skills/jarvis/tests/succession-controls.test.sh \
+printf '%s\t%s\n' review-gate skills/jarvis/tests/controls.test.sh linear skills/jarvis/tests/succession-controls.test.sh \
   pi-claude-bridge skills/jarvis/tests/owner-note.test.sh > "$TMP/runtime-jarvis-owners"
 runtime_suites "$TMP/runtime-jarvis-owners" "$TMP/runtime-jarvis-suites"
 check "must-fail: Jarvis's controls, succession-controls and owner-note suites on legs that build nothing name each leg" \
-  "$(printf '%s\n' 'Linux linear' 'Linux node' 'Linux pi-claude-bridge')" \
+  "$(printf '%s\n' 'Linux linear' 'Linux pi-claude-bridge' 'Linux review-gate')" \
   "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-jarvis-suites")"
 TARGETS_STEP="the package runtimes' Rust targets"
 targets_runs() { # WORKFLOW SHARD OS RUST_TARGETS ; whether the targets step runs on that leg
