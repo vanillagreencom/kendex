@@ -692,10 +692,8 @@ with_token() {
 # pull_request rule whose value for any row is not of the row's kind, prints
 # `unverified`. Rows are checked in order, so the first gap is printed.
 #
-# review-gate's validate-standard.sh reads the thread-resolution flag inside
-# its own audit of the default branch; it is a sibling skill's report, not a
-# predicate this command can call, so the flag is read here too, beside the
-# approval count and stale-dismissal flag that audit does not read.
+# This gate uses the active enforcement requirements for this PR's base.
+# github-repository-settings reports the organization standard separately.
 merge_gate_gap() {
     local pr_num="$1" token="$2" allow="" base="" rules="" gap=""
     local -a shape=(

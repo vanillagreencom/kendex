@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bash-runtime: 3.2
 # Inputs: SKILL.md, scripts/, ../../tools/ci-job-set, ../bot-instructions/, ../review-gate/scripts/lib/settings.sh,
-# ../review-gate/scripts/lib/diagnostics.sh. Exercises the package's library calls.
+# ../review-gate/scripts/lib/diagnostics.sh, ../review-gate/SKILL.md,
+# ../review-gate/scripts/validate-standard.sh. Exercises the package's library calls and install dependencies.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export MSYS=winsymlinks:nativestrict
@@ -521,9 +522,7 @@ def lifecycle_engine():
     return None
 
 
-def core_recovery(binary, name, break_cleanup=False):
-    home = scratch / name
-    root = home / "project"
+def lifecycle_catalog(root):
     catalog = root / "catalog/skills"
     root.mkdir(parents=True)
     for package in ("github-repository-settings", "bot-instructions", "review-gate"):
@@ -534,6 +533,48 @@ def core_recovery(binary, name, break_cleanup=False):
         dependency.mkdir()
         (dependency / "SKILL.md").write_text(
             f"---\nname: {package}\ndescription: Inert fixture dependency\n---\nFixture.\n")
+    return catalog
+
+
+def lifecycle_environment(home):
+    return dict(environment, HOME=str(home), KENDEX_REAL_HOME=str(home),
+                XDG_CONFIG_HOME=str(home / ".config"), XDG_STATE_HOME=str(home / ".local/state"),
+                XDG_DATA_HOME=str(home / ".local/share"), XDG_CACHE_HOME=str(home / ".cache"),
+                KENDEX_UI="plain", KENDEX_BACKGROUND_REFRESH="off", GIT_CONFIG_NOSYSTEM="1",
+                GIT_CEILING_DIRECTORIES=str(home))
+
+
+def report_dependency(binary):
+    home = scratch / "report-dependency"
+    root = home / "project"
+    lifecycle_catalog(root)
+    (root / "kendex.toml").write_text('''schema = 7
+[install]
+harnesses = ["codex"]
+method = "copy"
+[sources.cat]
+path = "catalog"
+''')
+    env = lifecycle_environment(home)
+    subprocess.run(["git", "init", "-q", str(root)], env=env, check=True, capture_output=True)
+    installed = subprocess.run([binary, "add", "cat", "--skill", "review-gate", "--yes", "--leave", "--throwaway"],
+                               cwd=root, env=env, capture_output=True, text=True)
+    assert installed.returncode == 0, installed
+    scripts = root / ".agents/skills/review-gate/scripts"
+    report = subprocess.run([bash, str(scripts / "validate-standard.sh")], cwd=root,
+                            env=dict(env, GITHUB_STANDARD_PLATFORM_CHECKS="false"),
+                            capture_output=True, text=True)
+    assert report.returncode == 0, report
+    assert report.stderr.count("review-gate-warning=deprecated-path ") == 1, report
+    assert "note check=standard-platform-checks value=disabled" in report.stdout, report
+    assert not (root / ".git/kendex/armed/github-repository-settings").exists()
+    assert not (root / ".github").exists()
+
+
+def core_recovery(binary, name, break_cleanup=False):
+    home = scratch / name
+    root = home / "project"
+    catalog = lifecycle_catalog(root)
     if break_cleanup:
         target = catalog / "github-repository-settings/scripts/github-repository-settings"
         source = target.read_text()
@@ -576,11 +617,7 @@ macroscope = false
 ''')
     (root / "AGENTS.md").write_bytes(agents_bytes)
     (root / "personal.bin").write_bytes(bytes(range(256)))
-    env = dict(environment, HOME=str(home), KENDEX_REAL_HOME=str(home),
-               XDG_CONFIG_HOME=str(home / ".config"),
-               XDG_DATA_HOME=str(home / ".local/share"), XDG_CACHE_HOME=str(home / ".cache"),
-               KENDEX_UI="plain", KENDEX_BACKGROUND_REFRESH="off", GIT_CONFIG_NOSYSTEM="1",
-               GIT_CEILING_DIRECTORIES=str(home))
+    env = lifecycle_environment(home)
     for args in (("init", "-q"), ("config", "gc.auto", "0"),
                  ("config", "maintenance.auto", "false")):
         subprocess.run(["git", "-C", str(root), *args], env=env, check=True, capture_output=True)
@@ -726,6 +763,9 @@ finally:
 
 binary = lifecycle_engine()
 if binary is not None:
+    report_dependency(binary)
+    completed += 1
+    print("pass: review-gate installs the compatibility report without arming review-file writes")
     core_recovery(binary, "core-recovery")
     completed += 1
     print("pass: core recovery preserves the armed predecessor")

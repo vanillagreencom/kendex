@@ -1,6 +1,6 @@
 # GitHub repository settings
 
-Select local review instructions or enabled GitHub review files for a repository.
+Select local review instructions or enabled GitHub review files for a repository. To report live rulesets, required checks and merge settings, opt in to [platform checks](references/platform-checks.md).
 
 ## Operations
 
@@ -11,7 +11,7 @@ Select local review instructions or enabled GitHub review files for a repository
 
 ## Setup
 
-Install this package with its required `bot-instructions` and `review-gate` dependencies. Python 3.11 or later is required by bot-instructions. Use kendex 1.21.0 or later.
+Install this package with its required `bot-instructions` and `review-gate` dependencies. Python 3.11 or later is required by bot-instructions. Use kendex 1.23.0 or later.
 
 Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` before adoption. Remote review defaults to `off`. Set `GITHUB_STANDARD_BOT_REVIEW` to `on` to render the bots enabled in the existing `[bot-instructions]` manifest table. Put these settings under `[env]` as shown in [the settings example](kendex.settings.toml.example).
 

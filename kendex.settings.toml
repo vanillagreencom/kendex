@@ -102,7 +102,9 @@ SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md .github/instructions/code-review
 
 # The contexts kendex's own required-checks ruleset requires once "Review
 # gate" leaves it: the CI jobs the ruleset lists, by name.
-REVIEW_GATE_STANDARD_CONTEXTS = "CI"
+GITHUB_STANDARD_PLATFORM_CHECKS = "true"
+GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "1190866154"
+GITHUB_STANDARD_CONTEXTS = "CI"
 
 # This repository uses remote review and keeps the full review output.
 GITHUB_STANDARD_BOT_REVIEW = "on"

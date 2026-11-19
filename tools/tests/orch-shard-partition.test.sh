@@ -470,7 +470,7 @@ pooled_fault() { # FAULT; the current pooled table row supplies its suite
 
 POOLED_ROWS='rest|all other skill suites|skills/github/tests|check-review-replies-threads.test
 mailbox|Mailbox suites|skills/mailbox/tests|alone
-review-gate|review-gate suites|skills/review-gate/tests|validate-standard.test
+review-gate|review-gate suites|skills/review-gate/tests|diagnostics-report.test
 refresh|refresh suites|refresh/tests|refresh-report.test
 guards-commit|commit-guards suites|skills/commit-guards/tests|atomic-install.test
 guards-commit-tail|pre-push and md-refs suites|skills/commit-guards/tests|pre-push.test

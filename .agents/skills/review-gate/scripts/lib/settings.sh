@@ -279,10 +279,11 @@ rg_dotenv_layer() { # FILE NAME
   printf '%s' "$val"
 }
 
-rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonzero
-               # on a present-but-unparseable assignment. Empty PRIVATE_FILE
+rg_setting() { # NAME DEFAULT [PRIVATE_FILE [ABSENT_STATUS]] — resolved value on stdout.
+               # Use ABSENT_STATUS=3 to distinguish absence from an empty value.
+               # An unreadable or malformed value returns 1. Empty PRIVATE_FILE
                # skips dotenv when resolving the setting that selects its path.
-  local name="$1" default="$2" private_file="${3-.env.local}" line val file table status matches
+  local name="$1" default="$2" private_file="${3-.env.local}" absent_status="${4-0}" line val file table status matches
   # The name is interpolated into ERE patterns below; constrain it to the
   # identifier shape every real key has, so a metacharacter can neither
   # misgrep nor inject pattern syntax.
@@ -326,7 +327,7 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
   # it (doc-limits, commit-guards) answering the sentinel identically.
   if [ "${REVIEW_GATE_SETTINGS_FILE:-}" = "/dev/null" ]; then
     printf '%s' "$default"
-    return 0
+    return "$absent_status"
   fi
   if [ -n "$private_file" ]; then
     status=0
@@ -385,6 +386,7 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
   fi
   done
   printf '%s' "$default"
+  return "$absent_status"
 }
 
 # A packed list setting as one trimmed, non-empty entry per line. pipefail
