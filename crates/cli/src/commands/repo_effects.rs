@@ -169,6 +169,96 @@ pub fn disclose_and_finish(
     walked
 }
 
+/// The configuration setup an `add` or `apply` with `--allow-repo-effects`
+/// took between its write and its render.
+///
+/// The flag already says yes to every effect the action brings, and the
+/// configuration owner's setup decides which package renders the review
+/// files. Taken before the render, that render runs through the owner the
+/// setup leaves and the action's own commit offer carries its files,
+/// whatever the previous owner's state; taken after the offer, those files
+/// would land uncommitted. Each consent is spent once: the action's
+/// walkthrough leaves out the package set up and the predecessors it
+/// supersedes.
+#[derive(Default)]
+pub struct SetUpFirst {
+    /// Every configuration package among the action's effects.
+    left_out: Vec<String>,
+    /// The package set up, and how its setup ended.
+    ran: Vec<(String, super::commit_offer::SetUp)>,
+    /// The setup that failed, held so the action still closes with its
+    /// ledger and its registration before it reports the failure.
+    failed: Option<Box<dyn std::error::Error>>,
+}
+
+impl SetUpFirst {
+    /// The setup this action ran and how it ended, which the commit offer
+    /// does not run again.
+    pub fn ran(&self) -> &[(String, super::commit_offer::SetUp)] {
+        &self.ran
+    }
+
+    /// The effects left for the action's own walkthrough.
+    pub fn remaining(&self, effects: &[DeclaredEffects]) -> Vec<DeclaredEffects> {
+        effects
+            .iter()
+            .filter(|effect| !self.left_out.contains(&effect.name))
+            .cloned()
+            .collect()
+    }
+
+    /// The held failure, for a caller that reports it itself.
+    pub fn into_failed(self) -> Option<Box<dyn std::error::Error>> {
+        self.failed
+    }
+}
+
+/// Take the configuration setup of an `add` or `apply` run with
+/// `--allow-repo-effects`:
+/// [`kendex_core::bot_instructions::configuration_setup`]. Every other
+/// verb, and either one without the flag, takes none here.
+pub fn set_up_first(env: &Env, report: &EngineReport) -> SetUpFirst {
+    if super::commit_offer::walk() != super::commit_offer::Walk::Allowed {
+        return SetUpFirst::default();
+    }
+    let Some(setup) = kendex_core::bot_instructions::configuration_setup(&report.repo_effects)
+    else {
+        return SetUpFirst::default();
+    };
+    let set_up = setup.set_up.clone();
+    let left_out = std::iter::once(&set_up.name)
+        .chain(setup.superseded.iter().map(|effect| &effect.name))
+        .cloned()
+        .collect();
+    let scope = &report.plan.scope;
+    let walked = disclose(env, scope, std::slice::from_ref(&set_up))
+        .and_then(|shown_to_them| walkthrough(env, scope, &shown_to_them, true));
+    let (ended, failed) = match walked {
+        Ok(()) => (super::commit_offer::SetUp::Finished, None),
+        Err(error) => (super::commit_offer::SetUp::Failed, Some(error)),
+    };
+    SetUpFirst {
+        left_out,
+        ran: vec![(set_up.name, ended)],
+        failed,
+    }
+}
+
+/// An action's effects outcome: the walkthrough's, then a setup
+/// [`set_up_first`] held. The walkthrough ran later and its error carries a
+/// cancel's exit code, so it is the one returned; the held failure is said
+/// beside it.
+pub fn after_first(walked: CliResult, failed: Option<Box<dyn std::error::Error>>) -> CliResult {
+    match (walked, failed) {
+        (walked, None) => walked,
+        (Ok(()), Some(failed)) => Err(failed),
+        (Err(error), Some(failed)) => {
+            fail_refusal("warning: ", failed.as_ref());
+            Err(error)
+        }
+    }
+}
+
 pub fn walkthrough(
     env: &Env,
     scope: &Scope,

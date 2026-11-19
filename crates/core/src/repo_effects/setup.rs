@@ -56,9 +56,9 @@ impl std::fmt::Display for TransferStep {
     }
 }
 
-/// Set up the explicitly authorized package. When it is the selected
-/// configuration owner, retire the locally armed predecessor without removing
-/// its package. Both terminal and desktop spend their existing consent here.
+/// Set up the explicitly authorized package. When it succeeds a locally armed
+/// configuration predecessor, retire that predecessor without removing its
+/// package. Both terminal and desktop spend their existing consent here.
 pub fn apply(
     env: &crate::env::Env,
     scope: &Scope,
@@ -442,8 +442,9 @@ pub enum Lapse {
 /// that reports the gate as standing has to have measured it, and one that
 /// could not measure it says so rather than passing. The reason travels in
 /// `said`.
-/// Only the selected configuration owner's checker runs; selection precedes
-/// consent and includes unreadable declarations so they cannot permit fallback.
+/// Only the configuration owner `bot_instructions::select_installed` chooses
+/// runs its checker; unreadable declarations are candidates there, so they
+/// cannot permit fallback.
 ///
 /// The same two answers for a declaration that will not read. Its reach is
 /// unknown, so the record is looked for in both of the repository's git
@@ -459,26 +460,21 @@ pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<
         return Ok(Vec::new());
     };
     let installed = crate::engine::installed_declarations(env, scope)?;
-    let configuration_owner = crate::bot_instructions::select_configuration_owner(|name| {
-        installed
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let configuration_owner = crate::bot_instructions::select_installed(scope, &lock, |name| {
+        Ok(installed
             .iter()
-            .any(|installed| {
-                let installed_name = match installed {
-                    crate::engine::InstalledDeclaration::Declared(declared) => &declared.name,
-                    crate::engine::InstalledDeclaration::Unreadable { name, .. } => name,
-                };
-                installed_name == name
-            })
-            .then_some(name)
-    });
+            .find(|installed| installed.name() == name)
+            .cloned())
+    })?
+    .map(|selection| selection.owner.name().to_owned());
     let mut lapsed = Vec::new();
     for installed in &installed {
         let (name, lapse, said) = match installed {
             crate::engine::InstalledDeclaration::Declared(declared) => {
-                let configuration = crate::bot_instructions::select_configuration_owner(|name| {
-                    (name == declared.name).then_some(name)
-                });
-                if configuration.is_some() && configuration != configuration_owner {
+                if crate::bot_instructions::is_configuration_package(&declared.name)
+                    && configuration_owner.as_deref() != Some(declared.name.as_str())
+                {
                     continue;
                 }
                 let status = status(scope, declared, Ask::Surface);
@@ -517,7 +513,7 @@ pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<
 /// Whether kendex recorded arming this package in either of the
 /// repository's git directories — the question for a package whose reach
 /// cannot be read off its declaration. No work tree is no record.
-fn recorded_in_either(root: &std::path::Path, name: &str) -> crate::error::Result<bool> {
+pub(crate) fn recorded_in_either(root: &std::path::Path, name: &str) -> crate::error::Result<bool> {
     let Some(repo) = crate::guard::Repo::probe(root)? else {
         return Ok(false);
     };

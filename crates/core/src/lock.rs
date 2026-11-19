@@ -556,6 +556,26 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// Whether the scope carries this skill only because other installed items
+/// require it. A request or a bundle membership on any row is the scope's
+/// own choice. A row with no recorded reason predates reasons, so it is
+/// never read as dependency-only.
+pub fn dependency_only(lock: &Lock, name: &str) -> bool {
+    let mut rows = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Skill && entry.name == name)
+        .peekable();
+    rows.peek().is_some()
+        && rows.all(|entry| {
+            !entry.reasons.is_empty()
+                && entry.reasons.iter().all(|reason| match reason {
+                    Reason::RequiredBy { .. } => true,
+                    Reason::Requested | Reason::MemberOf { .. } => false,
+                })
+        })
+}
+
 pub mod branch;
 mod file;
 mod roots;

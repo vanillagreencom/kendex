@@ -6,7 +6,7 @@ use kendex_core::model::Scope;
 use kendex_core::manifest::Method;
 
 use super::advisory::Listing;
-use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
+use super::engine_common::{confirm_and_apply_first, parse_harnesses, print_report};
 use super::ledger::{Folded, Wrote, say_ledger};
 use super::{CliResult, fail_refusal, harness_picker, install_destination};
 use crate::ui;
@@ -292,11 +292,11 @@ fn write_and_close(
 ) -> CliResult {
     let blocked = print_report(env, report, Listing::Attention);
     let skipped = report.skipped_asked();
-    let applied = confirm_and_apply(env, report, yes)?;
+    let (applied, first) = confirm_and_apply_first(env, report, yes)?;
     let walked = super::repo_effects::disclose_and_finish(
         env,
         scope,
-        &report.repo_effects,
+        &first.remaining(&report.repo_effects),
         allow_effects,
         || {
             // "done" answered whether the process ended, never what it
@@ -316,6 +316,7 @@ fn write_and_close(
             );
         },
     );
+    let walked = super::repo_effects::after_first(walked, first.into_failed());
     // Unconditional here, where the collection close reads its own count
     // first: a collection can refuse its first step having written
     // nothing, and `add` cannot. `ops::add` puts the manifest save in

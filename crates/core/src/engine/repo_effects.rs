@@ -281,6 +281,26 @@ pub enum InstalledDeclaration {
     },
 }
 
+impl InstalledDeclaration {
+    /// The installed package's name, whether or not its declaration reads.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Declared(declared) => &declared.name,
+            Self::Unreadable { name, .. } => name,
+        }
+    }
+
+    /// The declaration a caller about to run the package needs, refusing
+    /// one that will not read for the reason [`installed_declaration`]
+    /// gives.
+    pub(crate) fn into_declared(self) -> Result<DeclaredEffects> {
+        match self {
+            Self::Declared(declared) => Ok(*declared),
+            Self::Unreadable { at, .. } => Err(unreadable(&at)),
+        }
+    }
+}
+
 /// Every installed package's declaration in one scope — for a verb that
 /// asks after the standing of everything the scope carries rather than one
 /// name it was handed. A package that declares nothing, or whose files are
@@ -298,25 +318,37 @@ pub fn installed_declarations(env: &Env, scope: &Scope) -> Result<Vec<InstalledD
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
     let mut found = Vec::new();
     for name in &crate::lock::skill_names(&lock) {
-        let Some(installed) = installed_tree(env, scope, &lock, name)? else {
-            continue;
-        };
-        found.push(match declaration(&installed.text) {
-            Declaration::Effects(effects) => {
-                InstalledDeclaration::Declared(Box::new(DeclaredEffects {
-                    name: name.clone(),
-                    root: installed.root,
-                    effects: *effects,
-                }))
-            }
-            Declaration::Absent => continue,
-            Declaration::Unreadable => InstalledDeclaration::Unreadable {
-                name: name.clone(),
-                at: installed.declaration,
-            },
-        });
+        found.extend(installed_entry(env, scope, &lock, name)?);
     }
     Ok(found)
+}
+
+/// One name's member of [`installed_declarations`], read against a lock the
+/// caller already loaded. `None` where the package declares nothing or its
+/// files are gone.
+pub(crate) fn installed_entry(
+    env: &Env,
+    scope: &Scope,
+    lock: &crate::lock::Lock,
+    name: &str,
+) -> Result<Option<InstalledDeclaration>> {
+    let Some(installed) = installed_tree(env, scope, lock, name)? else {
+        return Ok(None);
+    };
+    Ok(match declaration(&installed.text) {
+        Declaration::Effects(effects) => {
+            Some(InstalledDeclaration::Declared(Box::new(DeclaredEffects {
+                name: name.to_owned(),
+                root: installed.root,
+                effects: *effects,
+            })))
+        }
+        Declaration::Absent => None,
+        Declaration::Unreadable => Some(InstalledDeclaration::Unreadable {
+            name: name.to_owned(),
+            at: installed.declaration,
+        }),
+    })
 }
 
 fn declaration_of(

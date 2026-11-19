@@ -211,11 +211,34 @@ pub fn begin(command: &str, flags: CommitFlags) {
     });
 }
 
-/// `add` will apply its newly installed packages' effects after this offer.
-pub(super) fn adding_with_repo_effects() -> bool {
-    SESSION.get().is_some_and(|session| {
-        session.command == "add" && session.flags.allow_repo_effects == Some(true)
-    })
+/// Whether this run walks its newly installed packages' effects after the
+/// offer, and whether `--allow-repo-effects` already said yes to them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Walk {
+    /// The verb walks no effects. `remove` carries the flag only for the
+    /// offer's setup.
+    No,
+    /// `add` or `apply` without the flag: the walkthrough after the offer
+    /// asks for each effect at a terminal, and with nobody there no effect
+    /// is set up. The offer's hold can still set up a held package, save
+    /// the pending successor of [`Earlier::left_to_walkthrough`].
+    Asking,
+    /// `add` or `apply` with the flag.
+    Allowed,
+}
+
+pub(super) fn walk() -> Walk {
+    let Some(session) = SESSION.get() else {
+        return Walk::No;
+    };
+    match (
+        matches!(session.command.as_str(), "add" | "apply"),
+        session.flags.allow_repo_effects == Some(true),
+    ) {
+        (false, _) => Walk::No,
+        (true, false) => Walk::Asking,
+        (true, true) => Walk::Allowed,
+    }
 }
 
 /// The record, whole even after a panic elsewhere poisoned the lock: an
@@ -253,12 +276,14 @@ fn asked(root: &Path) -> bool {
 /// failure count.
 ///
 /// `before` is what the project held before the write, read by the caller
-/// while it still could be.
+/// while it still could be. `earlier` is what the action did or left
+/// about setups before this offer.
 pub fn after_writing(
     env: &Env,
     scope: &Scope,
     generated: &GeneratedPaths,
     before: &Before,
+    earlier: &Earlier,
 ) -> CliResult {
     let Scope::Project { root } = scope else {
         return Ok(());
@@ -266,7 +291,7 @@ pub fn after_writing(
     if asked(root) || cancelled() {
         return Ok(());
     }
-    let outcome = match make(env, scope, root, generated, before) {
+    let outcome = match make(env, scope, root, generated, before, earlier) {
         // Nothing kendex owns had changed by this write: not an answer,
         // so a later report the same verb applies into this project can
         // still offer. `drift-hook` writes an empty report before the one
@@ -297,6 +322,7 @@ fn make(
     root: &std::path::Path,
     generated: &GeneratedPaths,
     before: &Before,
+    earlier: &Earlier,
 ) -> Result<Option<Outcome>, Box<dyn std::error::Error>> {
     let default = Session {
         flags: CommitFlags::default(),
@@ -305,7 +331,7 @@ fn make(
     let session = SESSION.get().unwrap_or(&default);
     let style = ui::style();
     let mut generated = generated.clone();
-    let mut set_up = false;
+    let mut set_up = earlier.ran.to_vec();
     // Read again after a setup: the renders kendex reads back join the
     // offer (`set_up_here` says which), and the packages are asked again
     // whether they now stand behind them.
@@ -350,7 +376,7 @@ fn make(
         // it.
         let carried = scan.carried();
         let stale = match commit_offer::stale(env, scope, &scan, &generated, &carried) {
-            Ok(stale) => stale,
+            Ok(stale) => with_left(stale, earlier.left_to_walkthrough),
             Err(error) => {
                 ui::stderr(&block::not_vouched(&style, root, &error.to_string()));
                 return Ok(Some(match answered {
@@ -361,7 +387,8 @@ fn make(
         };
         if !stale.is_empty() {
             let held = Held {
-                set_up,
+                set_up: ran_for(&set_up, &stale),
+                walkthrough: earlier.left_to_walkthrough.is_some(),
                 answered,
                 // The flag says yes only beside a choice flag that commits,
                 // `--leave` having returned above. With no choice flag a
@@ -376,7 +403,11 @@ fn make(
             match hold(env, scope, &scan, &stale, held, &mut generated)? {
                 Hold::Ended(outcome) => return Ok(Some(outcome)),
                 Hold::SetUp => {
-                    set_up = true;
+                    set_up.extend(
+                        stale
+                            .into_iter()
+                            .map(|one| (one.disclosure.declared.name, SetUp::Finished)),
+                    );
                     continue;
                 }
             }
@@ -428,11 +459,74 @@ fn answer(
     routes::take(offer, generated, before, choice, message, Asking::No)
 }
 
+/// How a setup this action already ran for a package ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SetUp {
+    Finished,
+    Failed,
+}
+
+/// What the action did or left about setups before its offer.
+#[derive(Default)]
+pub struct Earlier<'a> {
+    /// The setups it ran and how each ended, so one of them still holding
+    /// the commit is not set up again; another held package is set up as
+    /// the offer would.
+    pub ran: &'a [(String, SetUp)],
+    /// A configuration successor the action installed beside a predecessor
+    /// armed in this checkout, whose render named the successor's pending
+    /// setup. The action's only consent for that setup comes after this
+    /// offer, at a terminal, or is not given, and a setup after the commit
+    /// would rewrite the review files it carried, so the offer holds the
+    /// commit on it and sets nothing up.
+    pub left_to_walkthrough: Option<&'a kendex_core::repo_effects::Disclosure>,
+}
+
+/// The held packages with the pending successor of
+/// [`Earlier::left_to_walkthrough`], which no check holds: the armed
+/// predecessor stands behind the files now, and the action's only consent
+/// for the successor's setup comes after the offer, at a terminal, or is
+/// not given.
+fn with_left(
+    mut stale: Vec<commit_offer::Stale>,
+    left: Option<&kendex_core::repo_effects::Disclosure>,
+) -> Vec<commit_offer::Stale> {
+    if let Some(left) = left
+        && !stale.iter().any(|one| one.disclosure.name == left.name)
+    {
+        stale.push(commit_offer::Stale {
+            disclosure: left.clone(),
+            why: commit_offer::Staleness::NotSetUp,
+        });
+    }
+    stale
+}
+
+/// The earlier setup the held packages had in this action: a failed one
+/// over a finished one, since either ends the offer and the failure is
+/// the cause.
+fn ran_for(set_up: &[(String, SetUp)], stale: &[commit_offer::Stale]) -> Option<SetUp> {
+    let ended = |held: &commit_offer::Stale| {
+        set_up
+            .iter()
+            .find(|(name, _)| *name == held.disclosure.declared.name)
+            .map(|(_, ended)| *ended)
+    };
+    let ended: Vec<SetUp> = stale.iter().filter_map(ended).collect();
+    match ended.contains(&SetUp::Failed) {
+        true => Some(SetUp::Failed),
+        false => ended.first().copied(),
+    }
+}
+
 /// Where the offer stands when a package holds its commit.
 #[derive(Clone, Copy)]
 struct Held {
-    /// A setup already ran in this offer.
-    set_up: bool,
+    /// The setup a held package already had in this action.
+    set_up: Option<SetUp>,
+    /// A held package's setup is left to the action's walkthrough after
+    /// the offer.
+    walkthrough: bool,
     /// The choice a flag named, if one did.
     answered: Option<Route>,
     /// Who gives the setup its yes.
@@ -471,21 +565,42 @@ fn hold(
             Some(_) => Outcome::CommitRefused,
         }));
     }
-    // One setup per offer. A package still not ready after its own setup
-    // ran is not one a second run of it fixes.
+    // The action's only consent for that setup comes after the offer, at
+    // a terminal, or is not given, so the offer neither commits over it nor
+    // sets it up: it names the setup.
+    if held.walkthrough {
+        ui::stderr(&block::stale_way_on(&style, false, held.flag));
+        return Ok(Hold::Ended(match held.answered {
+            None => Outcome::Nothing,
+            Some(_) => Outcome::CommitRefused,
+        }));
+    }
+    // One setup per package. A package still not ready after its own
+    // setup ran is not one a second run of it fixes, and one whose setup
+    // failed is not run again either. The installer's own words close the
+    // action, after its ledger.
     let picked = match (held.set_up, held.yes) {
-        (true, _) | (false, Yes::Nobody) => {
-            ui::stderr(&block::stale_way_on(&style, held.set_up, held.flag));
-            return Ok(Hold::Ended(match (held.set_up, held.answered) {
+        (Some(SetUp::Failed), _) => {
+            ui::stderr(&block::set_up_failed(
+                &style,
+                block::SetUpStep::Installer,
+                "",
+            ));
+            return Ok(Hold::Ended(Outcome::CommitRefused));
+        }
+        (Some(SetUp::Finished), _) | (None, Yes::Nobody) => {
+            let ran = held.set_up.is_some();
+            ui::stderr(&block::stale_way_on(&style, ran, held.flag));
+            return Ok(Hold::Ended(match (ran, held.answered) {
                 (false, None) => Outcome::Nothing,
                 (true, _) | (false, Some(_)) => Outcome::CommitRefused,
             }));
         }
-        (false, Yes::Given) => {
+        (None, Yes::Given) => {
             block::disclose_stale(stale);
             block::Held::SetUp
         }
-        (false, Yes::Ask) => block::pick_stale(stale)?,
+        (None, Yes::Ask) => block::pick_stale(stale)?,
     };
     match picked {
         block::Held::Leave => Ok(Hold::Ended(Outcome::Nothing)),

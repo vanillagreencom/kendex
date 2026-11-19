@@ -255,8 +255,9 @@ pub enum SetUpStep {
     ReadBack,
 }
 
-/// A setup chosen at the offer that did not run through: the step that
-/// failed, then its own words.
+/// A setup that did not run through: the step that failed, then its own
+/// words. A setup the action ran before its offer passes none, since the
+/// action says them at its close.
 pub fn set_up_failed(style: &Style, step: SetUpStep, why: &str) -> Vec<String> {
     let said = match step {
         SetUpStep::Installer => "the setup did not finish; nothing was committed",

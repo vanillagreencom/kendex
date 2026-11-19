@@ -20,7 +20,15 @@ mod owner_transfer;
 
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_kendex"))
+    kendex_command(home, cwd, args)
+        .output()
+        .expect("kendex binary runs")
+}
+
+/// The run [`kendex`] makes, for a caller that wires its own streams.
+fn kendex_command(home: &Path, cwd: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
         .args(args)
         .current_dir(cwd)
         .env_clear()
@@ -29,9 +37,8 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .env("PATH", path_with_fake_gh(home))
         // The ssh `hosted_origin` writes; kendex's git keeps an inherited
         // ssh command, and no other fixture pushes over ssh.
-        .env("GIT_SSH_COMMAND", home.join("dev/fake-ssh"))
-        .output()
-        .expect("kendex binary runs")
+        .env("GIT_SSH_COMMAND", home.join("dev/fake-ssh"));
+    command
 }
 
 fn said(output: &Output) -> String {

@@ -93,6 +93,46 @@ fn requirer_provenance_distinguishes_unknown_and_per_tool_carriers() {
     }
 }
 
+/// One row per harness: each row's reasons, and whether the skill reads as
+/// carried only for its requirers.
+#[test]
+fn a_skill_is_dependency_only_when_every_row_records_only_requirers() {
+    let required = Reason::RequiredBy {
+        by: InstallRef {
+            source: "kendex".into(),
+            kind: ItemKind::Skill,
+            name: "requirer".into(),
+            harness: HarnessId::Claude,
+        },
+    };
+    let member = Reason::MemberOf {
+        bundle: BundleRef {
+            source: "kendex".into(),
+            name: "set".into(),
+        },
+    };
+    for (rows, expected) in [
+        (vec![], false),
+        (vec![vec![required.clone()]], true),
+        (vec![vec![required.clone()], vec![required.clone()]], true),
+        (vec![vec![required.clone(), Reason::Requested]], false),
+        (vec![vec![required.clone()], vec![Reason::Requested]], false),
+        (vec![vec![required.clone(), member.clone()]], false),
+        (vec![vec![required.clone()], vec![]], false),
+        (vec![vec![]], false),
+    ] {
+        let mut lock = Lock::default();
+        for (harness, reasons) in [HarnessId::Claude, HarnessId::Codex].into_iter().zip(&rows) {
+            let mut row = entry(None);
+            row.harness = harness;
+            row.reasons = reasons.iter().cloned().collect();
+            lock.entries
+                .insert(entry_key(ItemKind::Skill, "gh", harness), row);
+        }
+        assert_eq!(dependency_only(&lock, "gh"), expected, "{rows:?}");
+    }
+}
+
 #[test]
 fn lock_round_trips_and_missing_file_is_empty() {
     let tmp = tempfile::tempdir().unwrap();
