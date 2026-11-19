@@ -259,8 +259,9 @@ pub fn confirm_and_apply(
     first.into_failed().map_or(Ok(applied), Err)
 }
 
-/// [`confirm_and_apply`] for `add`, which closes on its ledger before it
-/// reports a setup it took first: [`super::repo_effects::SetUpFirst`].
+/// [`confirm_and_apply`] for `add` and `apply`, which close on their ledger
+/// before they report a setup they took first:
+/// [`super::repo_effects::SetUpFirst`].
 pub(super) fn confirm_and_apply_first(
     env: &Env,
     report: &EngineReport,
@@ -307,8 +308,8 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
     first.into_failed().map_or(Ok(applied), Err)
 }
 
-/// [`apply_report`], handing back the setup an add took first rather than
-/// failing on it.
+/// [`apply_report`], handing back the setup the action took first rather
+/// than failing on it.
 pub(super) fn apply_report_first(
     env: &Env,
     report: &EngineReport,
@@ -326,8 +327,8 @@ pub(super) fn apply_report_first(
 /// What [`apply_report`] wrote, apart from what failed after it.
 pub(super) struct Wrote {
     pub applied: usize,
-    /// The configuration setup an add took between the write and the
-    /// render.
+    /// The configuration setup an `add` or `apply` took between the write
+    /// and the render.
     pub first: super::repo_effects::SetUpFirst,
     /// The steps after the write: the configuration render and the commit
     /// offer. Their failure leaves the write on disk.

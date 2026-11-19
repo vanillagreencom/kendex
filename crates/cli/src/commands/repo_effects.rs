@@ -169,22 +169,22 @@ pub fn disclose_and_finish(
     walked
 }
 
-/// The configuration setups an `add --allow-repo-effects` took between its
-/// write and its render.
+/// The configuration setups an `add` or `apply` with `--allow-repo-effects`
+/// took between its write and its render.
 ///
-/// The flag already says yes to every effect the add brings, and the
+/// The flag already says yes to every effect the action brings, and the
 /// configuration owner's setup decides which package renders the review
 /// files. Taken before the render, that render runs through the owner the
-/// setup leaves and the add's own commit offer carries its files, whatever
-/// the previous owner's state; taken after the offer, those files would
-/// land uncommitted. Each consent is spent once: the add's walkthrough
-/// leaves out what this step took.
+/// setup leaves and the action's own commit offer carries its files,
+/// whatever the previous owner's state; taken after the offer, those files
+/// would land uncommitted. Each consent is spent once: the action's
+/// walkthrough leaves out what this step took.
 #[derive(Default)]
 pub struct SetUpFirst {
-    /// Every configuration package among the add's effects.
+    /// Every configuration package among the action's effects.
     taken: Vec<String>,
-    /// The setup that failed, held so the add still closes with its ledger
-    /// and its registration before it reports the failure.
+    /// The setup that failed, held so the action still closes with its
+    /// ledger and its registration before it reports the failure.
     failed: Option<Box<dyn std::error::Error>>,
 }
 
@@ -195,7 +195,7 @@ impl SetUpFirst {
         &self.taken
     }
 
-    /// The effects left for the add's own walkthrough.
+    /// The effects left for the action's own walkthrough.
     pub fn remaining(&self, effects: &[DeclaredEffects]) -> Vec<DeclaredEffects> {
         effects
             .iter()
@@ -210,11 +210,12 @@ impl SetUpFirst {
     }
 }
 
-/// Take the configuration setups of an add run with `--allow-repo-effects`,
-/// predecessor first: [`kendex_core::bot_instructions::configuration_setups`].
-/// Every other verb, and an add without the flag, takes none here.
+/// Take the configuration setups of an `add` or `apply` run with
+/// `--allow-repo-effects`, predecessor first:
+/// [`kendex_core::bot_instructions::configuration_setups`]. Every other
+/// verb, and either one without the flag, takes none here.
 pub fn set_up_first(env: &Env, report: &EngineReport) -> SetUpFirst {
-    if !super::commit_offer::adding_with_repo_effects() {
+    if !super::commit_offer::walking_with_repo_effects() {
         return SetUpFirst::default();
     }
     let setups: Vec<DeclaredEffects> =
@@ -234,8 +235,8 @@ pub fn set_up_first(env: &Env, report: &EngineReport) -> SetUpFirst {
     }
 }
 
-/// An add's effects outcome: the walkthrough's, then a setup [`set_up_first`]
-/// held. The walkthrough ran later and its error carries a cancel's exit
+/// An action's effects outcome: the walkthrough's, then a setup
+/// [`set_up_first`] held. The walkthrough ran later and its error carries a cancel's exit
 /// code, so it is the one returned; the held failure is said beside it.
 pub fn after_first(walked: CliResult, failed: Option<Box<dyn std::error::Error>>) -> CliResult {
     match (walked, failed) {

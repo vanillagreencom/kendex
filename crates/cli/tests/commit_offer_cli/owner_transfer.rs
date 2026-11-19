@@ -110,6 +110,9 @@ enum Arrival {
     ConsentedBeside,
     /// The same, with the new owner's installer refusing.
     Refused,
+    /// `apply --allow-repo-effects` of the requirer written into
+    /// `kendex.toml` by hand: the same setup before the offer as an add's.
+    ConsentedApply,
 }
 
 /// The KEN-2358 reproduction: an armed old owner, then an add of a package
@@ -119,8 +122,9 @@ enum Arrival {
 /// commit choice, the setup runs once, disclosed once, before the offer,
 /// so the new owner's render is in the add's own commit, in a linked work
 /// tree too, with no owner installed before, and beside another held
-/// package. A refused setup leaves the old owner and still closes the add
-/// with its ledger and its registration.
+/// package, and from a declaration written by hand and applied. A refused
+/// setup leaves the old owner and still closes the add with its ledger and
+/// its registration. Every row leaves the checkout clean.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
@@ -131,6 +135,7 @@ fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
         Arrival::ConsentedFresh,
         Arrival::ConsentedBeside,
         Arrival::Refused,
+        Arrival::ConsentedApply,
     ] {
         assert_arrival(arrival);
     }
@@ -151,7 +156,8 @@ fn assert_arrival(arrival: Arrival) {
         | Arrival::Consented
         | Arrival::ConsentedLinked
         | Arrival::ConsentedBeside
-        | Arrival::Refused => kendex(
+        | Arrival::Refused
+        | Arrival::ConsentedApply => kendex(
             &home,
             &main,
             &["apply", "--yes", "--commit", "--allow-repo-effects"],
@@ -183,9 +189,11 @@ fn assert_arrival(arrival: Arrival) {
             );
             format!("{NEW}, workfx")
         }
-        Arrival::Declined | Arrival::Consented | Arrival::ConsentedLinked | Arrival::Refused => {
-            NEW.to_owned()
-        }
+        Arrival::Declined
+        | Arrival::Consented
+        | Arrival::ConsentedLinked
+        | Arrival::Refused
+        | Arrival::ConsentedApply => NEW.to_owned(),
     };
     let requirer = main.join("catalog/skills/requirer");
     fs::create_dir_all(&requirer).unwrap();
@@ -194,6 +202,13 @@ fn assert_arrival(arrival: Arrival) {
         format!("---\nname: requirer\ndescription: fixture requirer\ndependencies:\n  required: [{required}]\n---\n"),
     )
     .unwrap();
+    let applied = matches!(arrival, Arrival::ConsentedApply);
+    if applied {
+        let manifest = main.join("kendex.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str("\n[skills.requirer]\nsource = \"cat\"\n");
+        fs::write(&manifest, text).unwrap();
+    }
     git(&main, &["add", "-A"]);
     git(&main, &["commit", "-q", "-m", "requirer"]);
     let project = match arrival {
@@ -216,21 +231,25 @@ fn assert_arrival(arrival: Arrival) {
         | Arrival::Consented
         | Arrival::ConsentedFresh
         | Arrival::ConsentedBeside
-        | Arrival::Refused => main.clone(),
+        | Arrival::Refused
+        | Arrival::ConsentedApply => main.clone(),
     };
     if let Arrival::Refused = arrival {
         fs::write(project.parent().unwrap().join(format!("refuse-{NEW}")), "").unwrap();
     }
     let rendered_before = renders(&project, NEW);
-    let mut args = vec![
-        "add",
-        "--yes",
-        "--throwaway",
-        "--commit",
-        "catalog",
-        "--skill",
-        "requirer",
-    ];
+    let mut args = match applied {
+        true => vec!["apply", "--yes", "--commit"],
+        false => vec![
+            "add",
+            "--yes",
+            "--throwaway",
+            "--commit",
+            "catalog",
+            "--skill",
+            "requirer",
+        ],
+    };
     let consent = !matches!(arrival, Arrival::Declined);
     if consent {
         args.push("--allow-repo-effects");
@@ -243,6 +262,7 @@ fn assert_arrival(arrival: Arrival) {
             | Arrival::ConsentedLinked
             | Arrival::ConsentedFresh
             | Arrival::ConsentedBeside
+            | Arrival::ConsentedApply
     );
     assert_eq!(
         output.status.code(),
@@ -280,7 +300,8 @@ fn assert_arrival(arrival: Arrival) {
         Arrival::Consented
         | Arrival::ConsentedLinked
         | Arrival::ConsentedFresh
-        | Arrival::ConsentedBeside => 2,
+        | Arrival::ConsentedBeside
+        | Arrival::ConsentedApply => 2,
         Arrival::Refused => 1,
     };
     assert_eq!(
@@ -289,8 +310,16 @@ fn assert_arrival(arrival: Arrival) {
         "{arrival:?}\n{text}"
     );
     let committed = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
-    assert!(
+    // An add writes the declaration; an apply reads the one committed.
+    assert_eq!(
         committed.lines().any(|line| line == "kendex.toml"),
+        !applied,
+        "{arrival:?}\n{committed}\n{text}"
+    );
+    assert!(
+        committed
+            .lines()
+            .any(|line| line == ".claude/skills/requirer/SKILL.md"),
         "{arrival:?}\n{committed}\n{text}"
     );
     assert_eq!(
@@ -305,6 +334,26 @@ fn assert_arrival(arrival: Arrival) {
             .lines()
             .any(|line| line == ".claude/skills/workfx/SKILL.md"),
         matches!(arrival, Arrival::ConsentedBeside),
+        "{arrival:?}\n{committed}\n{text}"
+    );
+    // What the action installed and what the configuration owner it leaves
+    // rendered are all in its commit.
+    let successor = format!("{NEW}.effect");
+    assert_eq!(
+        git(
+            &project,
+            &[
+                "status",
+                "--porcelain",
+                "--",
+                ".claude",
+                ".github",
+                ".kendex-lock.json",
+                ".kendex-generated.json",
+                &successor,
+            ]
+        ),
+        "",
         "{arrival:?}\n{committed}\n{text}"
     );
     if let Arrival::Refused = arrival {

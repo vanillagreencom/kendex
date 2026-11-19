@@ -4,7 +4,7 @@ use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::Scope;
 
 use super::advisory::Listing;
-use super::engine_common::{confirm_and_apply, print_report_for, print_unmanaged};
+use super::engine_common::{confirm_and_apply_first, print_report_for, print_unmanaged};
 use super::ledger::{Folded, Wrote, say_ledger_with, say_preview};
 use super::{CliResult, fail_refusal, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
@@ -143,15 +143,16 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         // The same close as refresh, for the same reason: what this run
         // wrote is one of its outcomes, and the installs it refused and
         // the scores it read are the others.
-        let applied = confirm_and_apply(env, &report, args.yes)?;
+        let (applied, first) = confirm_and_apply_first(env, &report, args.yes)?;
         // A declaration written by hand installs here, and it gets the
         // same account and the same separate yes an `add` gives it —
         // asked after the write, so the scope is finalized whatever the
-        // answer and before any error from it leaves this loop.
+        // answer and before any error from it leaves this loop. A
+        // configuration setup the flag already took is not walked again.
         let walked = super::repo_effects::disclose_and_finish(
             env,
             &scope,
-            &report.repo_effects,
+            &first.remaining(&report.repo_effects),
             args.allow_repo_effects,
             || {
                 // The deep work just ran; record it for the session-start
@@ -185,12 +186,13 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 );
             },
         );
+        let walked = super::repo_effects::after_first(walked, first.into_failed());
         // After the write, the way `add` registers what it installed
         // into: a project named by a command that never stood in it is
         // one the app sees. The temporary-path gate above already passed
         // for this path.
         //
-        // `confirm_and_apply` has written by the time the effects step
+        // `confirm_and_apply_first` has written by the time the effects step
         // runs, so registration is not that step's to skip: an installer
         // that failed, or a walkthrough nobody answered, leaves the
         // packages on disk in a folder the app would never show.

@@ -211,11 +211,13 @@ pub fn begin(command: &str, flags: CommitFlags) {
     });
 }
 
-/// `add` said yes to its newly installed packages' effects with
-/// `--allow-repo-effects`.
-pub(super) fn adding_with_repo_effects() -> bool {
+/// A verb that walks its newly installed packages' effects, `add` or
+/// `apply`, said yes to them with `--allow-repo-effects`. `remove` carries
+/// the flag only for the offer's setup, and walks no effects.
+pub(super) fn walking_with_repo_effects() -> bool {
     SESSION.get().is_some_and(|session| {
-        session.command == "add" && session.flags.allow_repo_effects == Some(true)
+        matches!(session.command.as_str(), "add" | "apply")
+            && session.flags.allow_repo_effects == Some(true)
     })
 }
 
