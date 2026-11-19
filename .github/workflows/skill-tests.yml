@@ -1363,7 +1363,7 @@ jobs:
       # Linux pool, on a leg that builds the checkout kendex its picker rows
       # need. macOS runs no `jarvis` leg: the rest step below keeps the family
       # there, as the worktree step keeps restack, less the two suites the
-      # macOS steps after this one take.
+      # macOS steps after this one take and the native contracts' linux-only.
       - name: Jarvis suites
         if: matrix.shard == 'jarvis'
         run: |

@@ -168,6 +168,7 @@
     "skills/harness-ci/tests/wiring-shapes.test.sh": "linux-duplicate",
     "skills/jarvis/tests/controls.test.sh": "mixed",
     "skills/jarvis/tests/session.test.sh": "mixed",
+    "skills/jarvis/tests/task.test.sh": "linux-only",
     "skills/linear/tests/must-fail-controls.sh": "linux-only",
     "skills/mailbox/tests/alone.sh": "linux-duplicate",
     "skills/mailbox/tests/file-lock-messages.sh": "mixed",

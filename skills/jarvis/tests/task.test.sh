@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bash-runtime: 3.2
+# Linux only (tools/macos-test-contracts.json): no Jarvis computer runs macOS.
 # Surface: task launch, completion and cleanup in the managed session.
 # Inputs: skills/jarvis/scripts/, skills/jarvis/tests/task_test.py,
 # skills/orch/scripts/, skills/mailbox/scripts/,
