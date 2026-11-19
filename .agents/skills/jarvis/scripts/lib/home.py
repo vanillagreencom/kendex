@@ -1,6 +1,7 @@
 """A Jarvis home's starting files: the one initializer for jarvis-session init and the first manual start."""
 
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -47,6 +48,12 @@ CODEX_CONFIG = ".codex/config.toml"
 GIT_REDIRECTS = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}
 NOT_A_REPOSITORY = re.compile(r"^fatal: not a git repository", re.MULTILINE)
 FEATURES_HEADER = re.compile(r"^[ \t]*\[[ \t]*features[ \t]*\][ \t]*(#[^\r\n]*)?(?=\r?\n|\Z)", re.MULTILINE)
+
+
+def home_state(home):
+    """The private state directory of the resolved HOME: its session record and its forward outbox."""
+    key = hashlib.sha256(os.fsencode(home)).hexdigest()
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "kendex/jarvis" / key
 
 
 class Unmergeable(ValueError):

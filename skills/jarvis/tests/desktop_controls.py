@@ -17,7 +17,8 @@ class Controls(unittest.TestCase):
         rows = [
             ("browser-profile-launch", "scripts/jarvis-browser", '"--user-data-dir=" + str(profile)', '"--user-data-dir=wrong-profile"', "browser_test.py", "Browser.test_profile_and_url"),
             ("capture-exclusivity", "scripts/human-input", 'os.O_WRONLY | os.O_CREAT | os.O_EXCL', 'os.O_WRONLY | os.O_CREAT', "human_input_test.py", "HumanInput.test_capture_exclusive"),
-            ("private-mode", "scripts/lib/op_fifo.py", " or stat.S_IMODE(info.st_mode) != mode", "", "op_broker_test.py", "Broker.test_private_transport"),
+            ("private-mode", "scripts/lib/op_fifo.py", " and stat.S_IMODE(info.st_mode) == mode", "", "op_broker_test.py", "Broker.test_private_transport"),
+            ("caller-link-recheck", "scripts/lib/op_fifo.py", 'if stat_fields(read("%d/stat" % pid)) != (parent, started):', "if False:", "op_broker_test.py", "Broker.test_caller_identity"),
             ("required-agent-browser", "SKILL.md", '- command: agent-browser', '- command: missing-fixture-replacement', "command_declarations_test.py", "Declaration.test_missing_agent_browser"),
         ]
         baseline_env = dict(os.environ, JARVIS_TOOL_SCRIPTS=str(PACKAGE / "scripts"), JARVIS_TOOL_SKILL=str(PACKAGE / "SKILL.md"))

@@ -3,8 +3,9 @@
 ## 1Password broker
 
 - For 1Password work, use the packaged [op-broker](../scripts/op-broker) and [opq](../scripts/opq). Platform: Linux and macOS for `read`. Linux only: `op` requests, `@SCRIPT` requests, a broker whose directory comes from `JARVIS_OP_DIRECTORY`, and a broker that reuses an existing directory. On macOS those refuse `platform=unsupported`, except an existing directory, which refuses `directory=exists`: remove the leftover directory or choose a new path. This route is optional and requires the 1Password CLI, `op`. Read each script's `--help` for command syntax.
-- Give the broker an absolute directory path through `--directory` or `JARVIS_OP_DIRECTORY`, dedicated to the broker. The broker creates a private directory. After a restart it reuses an existing mode-700 directory only when the directory holds nothing but the broker's `lock` file, `requests` pipe and client reply pipes; any other entry refuses `directory=foreign` before the broker changes anything. It refuses `directory=busy` while another broker serves that directory. Select the intended account with `--account` or `OP_ACCOUNT`. Keep directory paths, account identifiers, vault names and item references in the consumer's private settings or account ledger.
+- Give the broker an absolute directory path through `--directory` or `JARVIS_OP_DIRECTORY`, dedicated to the broker. The broker creates a private directory and listens on a mode-600 Unix socket, `requests.sock`, in it; one connection carries one request and its reply. After a restart it reuses an existing mode-700 directory only when the directory holds nothing but the broker's `lock` file and `requests.sock`; any other entry refuses `directory=foreign` before the broker changes anything. A directory that a FIFO broker left, with its `requests` pipe, refuses the same way: remove it. It refuses `directory=busy` while another broker serves that directory. Select the intended account with `--account` or `OP_ACCOUNT`. Keep directory paths, account identifiers, vault names and item references in the consumer's private settings or account ledger.
 - Supply an approved session through `OP_SESSION`. A broker whose stdin is a terminal can instead start one CLI sign-in. Those calls disable desktop app integration, so a sub-agent never raises a desktop approval prompt. A CLI that the 1Password desktop app integration alone registers has no session to supply: set `JARVIS_OP_APP_INTEGRATION=1` instead. Calls then go through the desktop app and keep their native approval route. [1Password scopes authorization to a terminal session and account](https://www.1password.dev/cli/app-integration-security/). On Linux each broker call leads its own terminal session and needs its own authorization. With no `OP_SESSION`, no `JARVIS_OP_APP_INTEGRATION=1` and no terminal on stdin, the broker exits with `session=OP_SESSION-required`. With both `OP_SESSION` and `JARVIS_OP_APP_INTEGRATION=1`, it exits with `session=route-conflict`. Any value other than `1` or empty refuses `setting=JARVIS_OP_APP_INTEGRATION`. The broker keeps a session token in memory only.
+- Give the broker an [allow list](#allow-list). It refuses to start without one.
 - Wait for the broker's `state=ready` message before a client request. Pass the broker directory, unless `JARVIS_OP_DIRECTORY` names it, and an absolute `--output` path. The client creates that file with mode 600 and refuses to overwrite an existing file.
   - `read op://REF` writes the field's value.
   - `op -- ARG...` runs `op` with those arguments inside the broker's session.
@@ -14,16 +15,48 @@
 - The broker runs the script's checked file descriptor, so the script sees `$0` as `/dev/fd/N`. It cannot find sibling files through `dirname "$0"`, and it cannot live on a `noexec` mount. An `op` or `@SCRIPT` request runs with no stdin and no stderr. The broker ends the process group of an `op` or `@SCRIPT` request when its command exits, or after 30 seconds.
 - On Linux the 1Password desktop app names the top-level process of a call in its approval prompt. Version 8.12.42 aborts a call that has no terminal parent before any prompt. So under the app integration on Linux the broker starts every call, `read` and a script included, under a helper that leads a new session on its own pseudo-terminal, and the work runs as the helper's child. The work still has no stdin; work that reads `/dev/tty` waits until the 30-second deadline. The `OP_SESSION` route never asks the app, so it starts its calls without the helper: an `op` or `@SCRIPT` request leads a new session with no terminal, and `read` and the renewal run as direct children of the broker.
 - When the 30-second deadline or a failed start ends an `op` or `@SCRIPT` request, or, under the app integration on Linux, a `read`, the broker logs `op-broker: run=failed cause=deadline seconds=30` or `op-broker: run=failed cause=spawn errno=NAME` to its stderr, the unit's journal. For that `read` the last 4 KiB of `op`'s stderr follows, one `op-broker: stderr=` line per line. The client receives only `run=failed`, or `read=failed` for `read`. An `op` that exits nonzero returns its record and logs nothing.
-- Apply [Secret transfer](#secret-transfer) to the output file. Wait for clients to finish before stopping the broker. The broker removes its directory only when no client reply pipes remain.
+- Apply [Secret transfer](#secret-transfer) to the output file. Wait for clients to finish before stopping the broker. The broker removes its directory when it stops.
+
+### Allow list
+
+- Name the list with `--allow-list` or `JARVIS_OP_ALLOW_LIST`: an absolute path outside the broker directory. Unset, the broker exits with `setting=JARVIS_OP_ALLOW_LIST`; inside the directory, with `allow-list=inside-directory`.
+- The list is a regular JSON file owned by the broker's user, with mode 600. The broker reads it again for each request, so an edit takes effect at the next request.
+
+  ```json
+  {"callers": {
+    "jarvis-neon.service": {"read": ["op://Vault/Neon/credential"]},
+    "jarvis-session": {"read": ["op://Vault/Session/token"], "op": [["item", "list", "--vault", "Vault"]]},
+    "jarvis-auditor-*.service": {"read": ["op://Vault/Audit/credential"]},
+    "jarvis-watch-loop.service": {"script": ["/home/user/bin/env-secret-sync"]}
+  }}
+  ```
+
+- On Linux each key names a caller: `jarvis-session` or a service unit name. The broker reads the peer's process id and user from the socket, and a peer of another user refuses. From the peer it walks the parent chain in `/proc`, and reads each process again after its parent, so a link that changes during the walk refuses. The first rule that matches names the caller:
+  1. `jarvis-session`: the chain holds the process that the Jarvis session record of the broker's home names, by its process id and start time. Name the home with `--home` or `JARVIS_OP_HOME`. Unset, no caller is `jarvis-session`. The broker needs the same `XDG_STATE_HOME` as `jarvis-session` to find the record. A home it cannot resolve refuses `home=unreadable`, and a record it cannot parse refuses `record=unreadable`.
+  2. A unit: the first process in the chain whose cgroup v2 path ends in a `.service` unit names that unit. `systemd-run --scope` leaves a helper agent the child of the wrapper shell in its `jarvis-NAME.service`, so the helper and every process it starts are `jarvis-NAME.service`.
+  3. Otherwise the caller is unverified and refuses `caller=unverified`.
+- A unit key may hold one `*` for a generated part of the name, which matches at least one character, such as `jarvis-auditor-*.service`. An exact key wins over a pattern. A caller that two patterns match and no exact key names refuses `caller=ambiguous`.
+- `read` serves only a listed reference. `op` runs only an exactly listed argument list. `@SCRIPT` runs only a listed absolute path. Any other request replies `not-allowed` with no value, and the client exits 2 with `read=not-allowed`, `op=not-allowed` or `script=not-allowed`.
+- A missing, unreadable, non-private or malformed list refuses every request, logged as `list=missing`, `list=unreadable`, `list=not-private` or `list=invalid`. A symlink is non-private. An unknown key in the file is malformed.
+- macOS proves no caller. There the broker serves a `read` of a reference that any entry lists, to every caller, and refuses other references. The readiness line names the protection: `op-broker: state=ready protection=unit` on Linux, `protection=listed-any-caller` on macOS.
+- Each request writes one line to the broker's stderr, the unit's journal. It never carries a value or a reply body:
+
+  ```text
+  op-broker: request time=2026-11-19T21:52:02Z protection=unit caller=jarvis-neon.service verb=read reference="op://Vault/Neon/credential" outcome=ok cause=listed
+  ```
+
+  - `reference` is JSON: the reference, the script path or the `op` arguments, with each space written `\u0020`, so every field stays one token. A request the broker cannot parse logs `verb=invalid reference=null`.
+  - `outcome` is the reply's status. `cause` is `listed` for a served request, the refusal key for `not-allowed`, such as `reference=unlisted`, `caller=unlisted`, `caller=unverified` or `list=missing`, and the client's key for any other status, such as `read=failed`.
 
 ### Trust boundary
 
 - Before any sensitive mutation, use the provider's scoped app or delegated identity and verify that the acting principal, destination and operation match the grant. Proceed only when all three match. Keep only a safe receipt with the result and any non-secret reference needed to verify it.
-- The caller-owned mode-700 directory is the trust boundary for `op` and `@SCRIPT` requests. Only the caller's user can write requests, so the broker runs only work that user could run.
+- The caller-owned mode-700 directory is the trust boundary for `op` and `@SCRIPT` requests. Only the caller's user can connect, so the broker runs only work that user could run. Within that user, the allow list limits each caller to its listed secrets, commands and scripts.
+- A unit caller holds only against a process that cannot place itself in a listed unit. Any process of the user can start a transient unit under a listed name that no running unit holds, with `systemd-run --user --unit NAME`. [Moving a process between cgroups needs write access to the common ancestor's `cgroup.procs`](https://docs.kernel.org/admin-guide/cgroup-v2.html#delegation-containment), and systemd delegates the `user@UID.service` tree to the user. Keep confined callers from reaching the user's service manager and from writing under `/sys/fs/cgroup`.
 - Command arguments lie outside the boundary. Other local users can read the arguments of `opq`, of `op` and of every process a script starts, item references included. Pass a secret value to `op` through a mode-600 file or a `--template` file that the script writes, never as an argument.
 - Anyone who can read the broker's journal can read the stderr it logs, so it logs only the stderr of `read` and the renewal, whose arguments the broker chooses. The stderr of an `op` or `@SCRIPT` request, which carries what the programs `op run` and `op plugin run` start print, never reaches the journal.
 - The private-script rule covers only the file named in `@SCRIPT`. A program or file the caller names through `op run`, `op plugin run`, `--out-file` or from inside a script is the caller's own choice. The exclusive mode-600 output guarantee does not cover it.
-- The `op` request gives write authority to every process of the user for the life of the session: item edits and deletes, vault and user commands. Apply [decisions.md:Authority](decisions.md#authority) to each such action.
+- A listed `op` argument list gives its caller that command's authority for the life of the session, such as an item edit or delete. Apply [decisions.md:Authority](decisions.md#authority) to each such action.
 - The keepalive runs only when `JARVIS_OP_KEEPALIVE_SECS` is set for an `OP_SESSION`. After a successful call, the broker renews with `op whoami` whenever it has been idle for that many seconds. Successful renewal keeps the session valid past 1Password's idle expiry. That lifetime is longer than [decisions.md:Evidence and risk](decisions.md#evidence-and-risk) asks for, so set the keepalive only in the [Broker service](#broker-service) unit. The broker never signs out. Stopping the unit stops the renewal, and the approval lapses at 1Password's idle expiry after the last call or renewal. A broker started for one task leaves the keepalive unset, and its approval lapses the same way.
 - A failed renewal logs `op-broker: keepalive=failed`, with `exit=N` when `op` ran and exited nonzero. The keepalive tries again after the next interval, so a network failure does not end renewal. The renewal contacts the 1Password server, so that line does not show that the approval expired. A caller's request returns `op`'s own exit status.
 
@@ -34,6 +67,8 @@ Run the broker as a systemd user unit with no arguments:
 ```ini
 [Service]
 Environment=JARVIS_OP_DIRECTORY=%t/jarvis-op
+Environment=JARVIS_OP_ALLOW_LIST=/path/to/private/op-allow-list.json
+Environment=JARVIS_OP_HOME=/path/to/jarvis-home
 Environment=JARVIS_OP_KEEPALIVE_SECS=600
 EnvironmentFile=%t/jarvis/op-session.env
 ExecStart=/path/to/scripts/op-broker
@@ -50,6 +85,8 @@ For a CLI that the 1Password desktop app integration alone registers, the unit n
 ```ini
 [Service]
 Environment=JARVIS_OP_DIRECTORY=%t/jarvis-op
+Environment=JARVIS_OP_ALLOW_LIST=/path/to/private/op-allow-list.json
+Environment=JARVIS_OP_HOME=/path/to/jarvis-home
 Environment=JARVIS_OP_APP_INTEGRATION=1
 ExecStart=/path/to/scripts/op-broker
 Restart=on-failure
