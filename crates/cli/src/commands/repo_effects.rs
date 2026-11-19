@@ -218,7 +218,7 @@ impl SetUpFirst {
 /// [`kendex_core::bot_instructions::configuration_setup`]. Every other
 /// verb, and either one without the flag, takes none here.
 pub fn set_up_first(env: &Env, report: &EngineReport) -> SetUpFirst {
-    if !super::commit_offer::walking_with_repo_effects() {
+    if super::commit_offer::walk() != super::commit_offer::Walk::Allowed {
         return SetUpFirst::default();
     }
     let Some(setup) = kendex_core::bot_instructions::configuration_setup(&report.repo_effects)

@@ -95,8 +95,13 @@ fn existing_setup_consent_transfers_the_configuration_effect() {
 /// and what it is given.
 #[derive(Clone, Copy, Debug)]
 enum Arrival {
-    /// No `--allow-repo-effects`: the armed old owner keeps the files.
+    /// No `--allow-repo-effects`: the armed old owner keeps the files, and
+    /// the offer commits nothing over the setup the walkthrough asks for
+    /// after it, and names that setup.
     Declined,
+    /// The same, from the requirer written into `kendex.toml` by hand and
+    /// applied.
+    DeclinedApply,
     /// `--allow-repo-effects`: the setup moves the files before the offer.
     Consented,
     /// The same, in a linked work tree that carries neither record.
@@ -123,7 +128,20 @@ enum Arrival {
 
 impl Arrival {
     fn applied(self) -> bool {
-        matches!(self, Arrival::ConsentedApply | Arrival::RefusedApply)
+        matches!(
+            self,
+            Arrival::DeclinedApply | Arrival::ConsentedApply | Arrival::RefusedApply
+        )
+    }
+
+    /// Run without `--allow-repo-effects`.
+    fn declined(self) -> bool {
+        matches!(self, Arrival::Declined | Arrival::DeclinedApply)
+    }
+
+    /// The action's offer commits.
+    fn commits(self) -> bool {
+        !self.declined() && !matches!(self, Arrival::RefusedOwner)
     }
 
     /// Neither owner is installed before the action.
@@ -153,17 +171,14 @@ impl Arrival {
 
     /// The armed old owner keeps the files.
     fn kept(self) -> bool {
-        matches!(
-            self,
-            Arrival::Declined | Arrival::Refused | Arrival::RefusedApply
-        )
+        self.declined() || matches!(self, Arrival::Refused | Arrival::RefusedApply)
     }
 }
 
 /// The KEN-2358 reproduction: an armed old owner, then an add of a package
 /// that requires the new one. Without the setup's say-so the old owner
-/// keeps rendering, its check still fails drift under `verify`, and a
-/// refresh names the pending setup. With `--allow-repo-effects` and a
+/// keeps rendering, the commit is held on the setup, its check still fails
+/// drift under `verify`, and a refresh names the pending setup. With `--allow-repo-effects` and a
 /// commit choice, the setup runs once, disclosed once, before the offer,
 /// so the new owner's render is in the action's own commit, in a linked
 /// work tree too, with no owner installed before, beside another held
@@ -177,6 +192,7 @@ impl Arrival {
 fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
     for arrival in [
         Arrival::Declined,
+        Arrival::DeclinedApply,
         Arrival::Consented,
         Arrival::ConsentedLinked,
         Arrival::ConsentedFresh,
@@ -233,6 +249,7 @@ fn assert_arrival(arrival: Arrival) {
             format!("{NEW}, workfx")
         }
         Arrival::Declined
+        | Arrival::DeclinedApply
         | Arrival::Consented
         | Arrival::ConsentedLinked
         | Arrival::Refused
@@ -272,6 +289,7 @@ fn assert_arrival(arrival: Arrival) {
             linked
         }
         Arrival::Declined
+        | Arrival::DeclinedApply
         | Arrival::Consented
         | Arrival::ConsentedFresh
         | Arrival::ConsentedBeside
@@ -304,8 +322,7 @@ fn assert_arrival(arrival: Arrival) {
             "requirer",
         ],
     };
-    let consent = !matches!(arrival, Arrival::Declined);
-    if consent {
+    if !arrival.declined() {
         args.push("--allow-repo-effects");
     }
     let output = kendex(&home, &project, &args);
@@ -313,7 +330,11 @@ fn assert_arrival(arrival: Arrival) {
     let moved = arrival.moved();
     assert_eq!(
         output.status.code(),
-        Some(if arrival.refused() { 1 } else { 0 }),
+        Some(if arrival.refused() || arrival.declined() {
+            1
+        } else {
+            0
+        }),
         "{arrival:?}\n{text}"
     );
     let owner = match (moved, arrival.kept()) {
@@ -360,10 +381,9 @@ fn assert_arrival(arrival: Arrival) {
             "{arrival:?}\n{text}"
         );
     }
-    if let Arrival::RefusedOwner = arrival {
-        assert_eq!(head_subject(&project), "requirer", "{text}");
-    } else {
-        assert_committed(arrival, &project, &text);
+    match arrival.commits() {
+        true => assert_committed(arrival, &project, &text),
+        false => assert_eq!(head_subject(&project), "requirer", "{arrival:?}\n{text}"),
     }
     if arrival.refused() {
         assert!(text.contains("fixture refusal"), "{text}");
