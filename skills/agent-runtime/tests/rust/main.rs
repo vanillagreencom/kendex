@@ -413,14 +413,18 @@ impl PrivatePane {
     }
 
     /// Replace the pane's shell with `program`, run directly as the pane's
-    /// own process: no shell echoes anything into the pane.
+    /// own process: no shell echoes anything into the pane. tmux runs a
+    /// one-word command through `/bin/sh -c`, and dash, Debian's and
+    /// Ubuntu's `sh`, waits on its last command where bash replaces itself
+    /// with it, so the `exec` is what makes `program` the pane's process.
     fn run(&self, program: &std::path::Path) {
+        let program = agent_runtime::launch::shell_quote(&program.display().to_string());
         self.tmux(&[
             "respawn-pane",
             "-k",
             "-t",
             &self.pane,
-            &program.display().to_string(),
+            &format!("exec {program}"),
         ]);
     }
 
@@ -2670,6 +2674,73 @@ wait"#,
     }
 }
 
+/// A launch into a window whose shell runs under another that waits on it,
+/// as tmux's `sh -c` holds a default command under dash, records the
+/// harness itself: the process the launch line `exec`s, by its own pid and
+/// start, never the wrapper that holds the pane. The trailing `:` keeps
+/// bash from replacing itself, so the wrapper stands on every host.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_launch_under_a_waiting_shell_records_the_harness_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    pane.tmux(&["set-option", "-g", "default-command", "/bin/sh; :"]);
+    let own_pid = dir.path().join("harness-pid");
+    let program = dir.path().join("bin").join("claude");
+    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+    write_executable(
+        &program,
+        format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$$\" > '{}'\nprintf '\\342\\235\\257\\302\\240\\n'\nread -r _\n",
+            own_pid.display()
+        ),
+    );
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let intent = dir.path().join("intent.json");
+    std::fs::write(
+        &intent,
+        serde_json::json!({"harness": "claude", "home": home, "cwd": dir.path(), "program": program})
+            .to_string(),
+    )
+    .unwrap();
+    let record = dir.path().join("record.json");
+    let out = Command::new(binary())
+        .args(["launch", "--intent"])
+        .arg(&intent)
+        .arg("--record")
+        .arg(&record)
+        .arg("--socket")
+        .arg(&pane.socket)
+        .args(["--session", &pane.session, "--window-name", "lane"])
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|_| panic!("no reply: {}", String::from_utf8_lossy(&out.stderr)));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let recorded: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    let harness_pid: u32 = std::fs::read_to_string(&own_pid)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let lane = recorded["pane"]["id"].as_str().expect("the record's pane");
+    let pane_pid: u32 = pane
+        .tmux(&["display-message", "-p", "-t", lane, "#{pane_pid}"])
+        .trim()
+        .parse()
+        .unwrap();
+    assert_ne!(pane_pid, harness_pid, "the wrapper holds the pane");
+    // The first read once the harness is up records its process.
+    let result = inspect(&record, &recorded);
+    assert_eq!(result["harness_process"]["pid"], harness_pid, "{result}");
+    assert_eq!(
+        result["harness_process"]["start"],
+        identity_reading(harness_pid)["start"]
+    );
+}
+
 /// An adoption records the harness identity read in the pane's foreground,
 /// never the caller's word for it; a record of another, live controller
 /// refuses `overseer-live`; a pane holding no harness refuses
@@ -2689,7 +2760,27 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
 
     let dir = tempfile::tempdir().unwrap();
     let pane = PrivatePane::start(dir.path());
-    pane.run_stub(dir.path(), "claude", "echo ready\n");
+    // The harness runs under a shell that waits on it, as tmux's `sh -c`
+    // does under dash, on every host: the trailing `:` keeps bash from
+    // replacing itself too. The harness is the shell's child, never the
+    // pane's own process.
+    let own_pid = dir.path().join("harness-pid");
+    let stub = dir.path().join("bin").join("claude");
+    std::fs::create_dir_all(stub.parent().unwrap()).unwrap();
+    write_executable(
+        &stub,
+        format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$$\" > '{}'\necho ready\nread -r _\n",
+            own_pid.display()
+        ),
+    );
+    pane.tmux(&[
+        "respawn-pane",
+        "-k",
+        "-t",
+        &pane.pane,
+        &format!("'{}'; :", stub.display()),
+    ]);
     pane.await_row(&|row| row == "ready");
     let record = dir.path().join("workflow-state-oversee.json");
     std::fs::write(&record, r#"{"intents": []}"#).unwrap();
@@ -2722,11 +2813,17 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     let fleet = || -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap()
     };
-    let harness_pid: u32 = pane
+    let harness_pid: u32 = std::fs::read_to_string(&own_pid)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let pane_pid: u32 = pane
         .tmux(&["display-message", "-p", "-t", &pane.pane, "#{pane_pid}"])
         .trim()
         .parse()
         .unwrap();
+    assert_ne!(pane_pid, harness_pid, "the wrapper holds the pane");
 
     let (code, answer) = adopt(&pane.pane);
     assert_eq!(code, Some(0), "{answer}");

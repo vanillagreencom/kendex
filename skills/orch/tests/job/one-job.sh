@@ -41,7 +41,11 @@ source "$TEST_DIR/lib/sealed-bin.sh"
 # shellcheck source=../lib/one-job-fixture.sh
 source "$TEST_DIR/lib/one-job-fixture.sh"
 
-TMP_ROOT="$(mktemp -d)" || { echo "one-job: scratch=mktemp-failed" >&2; exit 1; }
+# The root lies outside /tmp, where a TMPDIR left unset puts it: a confined
+# lane runs on a private /tmp, which would hide the consumer's main
+# checkout its worktree's .agents link leads to.
+mkdir -p "$REPO_ROOT/tmp"
+TMP_ROOT="$(mktemp -d "$REPO_ROOT/tmp/one-job.XXXXXX")" || { echo "one-job: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "one-job: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "one-job: scratch=resolve-failed" >&2; exit 1; }
 cleanup() {
