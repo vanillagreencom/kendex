@@ -108,6 +108,17 @@ for dir in "$TMP"/consumer-*; do
   printf '%s\n' "$ENABLED" "$WORKFLOW" >>"$dir/kendex.settings.toml"
 done
 settings_consumer alternate "$ENABLED" 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "7"' "$CONTEXTS"
+# `full`'s workflow, contexts and bypass actors, read from the private file
+# KENDEX_ENV_FILE selects; the default private file holds conflicting ones.
+settings_consumer selected-private "$ENABLED" 'KENDEX_ENV_FILE = "private.env"'
+printf '%s\n' 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID=1190866154' \
+  'GITHUB_STANDARD_CONTEXTS="Cargo (workspace tests); CI"' \
+  'GITHUB_STANDARD_QUEUE_BYPASS="Integration:4925608:always; Integration:5115517:pull_request"' \
+  'GITHUB_STANDARD_CHECKS_BYPASS="Integration:5115517:pull_request"' \
+  >"$TMP/consumer-selected-private/private.env"
+printf '%s\n' 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID=7' 'GITHUB_STANDARD_CONTEXTS=wrong' \
+  'GITHUB_STANDARD_QUEUE_BYPASS=invalid' 'GITHUB_STANDARD_CHECKS_BYPASS=invalid' \
+  >"$TMP/consumer-selected-private/.env.local"
 settings_consumer disabled
 settings_consumer explicitly-off 'GITHUB_STANDARD_PLATFORM_CHECKS = "false"'
 settings_consumer explicitly-empty 'GITHUB_STANDARD_PLATFORM_CHECKS = ""'
@@ -486,16 +497,33 @@ cp "$TMP/standard-report.keep" "$SKILL/scripts/validate-standard.sh"
 # The control reads one retired key in a disposable copy of the loader.
 cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
 file_edit "$SKILL" scripts/lib/standard.sh 1 '^  WANT_CHECKS_BYPASS=' \
-  's/^  WANT_CHECKS_BYPASS=.*$/&\n  rg_standard_actors GITHUB_STANDARD_LAND_BYPASS REVIEW_GATE_STANDARD_SECRETS >\/dev\/null || return 1/'
+  's/^  WANT_CHECKS_BYPASS=.*$/&\n  rg_standard_actors GITHUB_STANDARD_LAND_BYPASS REVIEW_GATE_STANDARD_SECRETS "$private_file" >\/dev\/null || return 1/'
 drift_case "control: a retired key read" "" "" "" "" retired
-if [ "$CASE_MATCH" = false ]; then ok "control: a loader that reads a retired key turns the retired-key case red"
+# The planted retired value, read and refused, is the red result.
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
+  grep -q '^review-gate-error=standard-bypass-invalid value=.*app-id' <<<"$RAW"; then
+  ok "control: a loader that reads a retired key turns the retired-key case red"
 else bad "control: a loader that reads a retired key" "$CASE_DIFF"; fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 file_edit "$SKILL" scripts/lib/standard.sh 1 '^  rg_setting "\$1" "" "\$3" 3' \
   's/^  rg_setting "\$1" "" "\$3" 3.*$/  status=3/'
 drift_case "control: prefer legacy keys" "" "" "" "" precedence
-if [ "$CASE_MATCH" = false ]; then ok "control: ignoring replacement settings turns precedence red"
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
+  grep -qx 'review-gate-error=standard-bypass-invalid value=invalid' <<<"$RAW"; then
+  ok "control: ignoring replacement settings turns precedence red"
 else bad "control: ignoring replacement settings" "$CASE_DIFF"; fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+# The standard settings read the selected private file, not .env.local.
+drift_case "the standard settings read the selected private file" "" "" "" "" selected-private
+if [ "$CASE_MATCH" = true ]; then ok "the standard settings read the selected private file"
+else bad "the standard settings read the selected private file" "$CASE_DIFF"; fi
+file_edit "$SKILL" scripts/lib/standard.sh 4 ' "\$private_file"\)" \|\| return 1$' \
+  's/ "\$private_file")" || return 1$/ .env.local)" || return 1/'
+drift_case "control: the loader ignores the selected private file" "" "" "" "" selected-private
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
+  grep -qx 'review-gate-error=standard-bypass-invalid value=invalid' <<<"$RAW"; then
+  ok "control: a loader that reads .env.local turns the selected-private case red"
+else bad "control: a loader that reads .env.local" "$CASE_DIFF"; fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 
 echo "=== a ruleset holding one rule type admits the standard's actors there ==="
