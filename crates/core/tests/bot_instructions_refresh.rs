@@ -997,6 +997,17 @@ enum Holds {
     Nothing,
 }
 
+/// What the action making the offer sets up only after it, as
+/// `commit_offer::Deferred` names the package under test.
+enum Defers {
+    Nothing,
+    /// The walkthrough after the offer sets the package up.
+    Walked,
+    /// The package is the pending successor, and the walkthrough after the
+    /// offer sets it up.
+    WalkedSuccessor,
+}
+
 /// Manifest bytes at HEAD and an optional edit the offer may carry.
 struct ManifestInput {
     primary: &'static str,
@@ -1018,6 +1029,7 @@ struct StaleRow {
     doctrine_changed: bool,
     rendered: bool,
     declares: fn(&Path, String) -> String,
+    defers: Defers,
     holds: Holds,
 }
 
@@ -1128,6 +1140,7 @@ const UNARMED_ROW: StaleRow = StaleRow {
     doctrine_changed: true,
     rendered: false,
     declares: as_shipped,
+    defers: Defers::Nothing,
     holds: Holds::NotSetUp,
 };
 
@@ -1140,6 +1153,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: true,
         rendered: false,
         declares: as_shipped,
+        defers: Defers::Nothing,
         holds: Holds::OutOfDate,
     },
     StaleRow {
@@ -1149,6 +1163,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: true,
         rendered: true,
         declares: as_shipped,
+        defers: Defers::Nothing,
         holds: Holds::Nothing,
     },
     StaleRow {
@@ -1158,6 +1173,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: true,
         rendered: false,
         declares: check_cannot_answer,
+        defers: Defers::Nothing,
         holds: Holds::Unchecked("fail-check: the manifest would not read"),
     },
     StaleRow {
@@ -1167,6 +1183,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: true,
         rendered: true,
         declares: plain_checker_only,
+        defers: Defers::Nothing,
         holds: Holds::Nothing,
     },
     StaleRow {
@@ -1176,6 +1193,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: false,
         rendered: false,
         declares: as_shipped,
+        defers: Defers::Nothing,
         holds: Holds::Nothing,
     },
     StaleRow {
@@ -1185,6 +1203,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: true,
         rendered: false,
         declares: no_installer,
+        defers: Defers::Nothing,
         holds: Holds::Nothing,
     },
     StaleRow {
@@ -1194,6 +1213,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: true,
         rendered: false,
         declares: writes_into_git,
+        defers: Defers::Nothing,
         holds: Holds::Nothing,
     },
     StaleRow {
@@ -1203,6 +1223,7 @@ const STALE_ROWS: &[StaleRow] = &[
         doctrine_changed: true,
         rendered: false,
         declares: no_checker,
+        defers: Defers::Nothing,
         holds: Holds::Nothing,
     },
     StaleRow {
@@ -1225,6 +1246,31 @@ const STALE_ROWS: &[StaleRow] = &[
             carry: false,
         }),
         holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "consumer: table added, edit left out, set up by the walkthrough",
+        manifest: Some(ManifestInput {
+            primary: UNCONFIGURED,
+            local: None,
+            edit: Some(("kendex.toml", CONFIGURED)),
+            carry: false,
+        }),
+        defers: Defers::Walked,
+        holds: Holds::NotSetUp,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "pending successor untouched by the offer: table added, edit left out, set up by the walkthrough",
+        manifest: Some(ManifestInput {
+            primary: UNCONFIGURED,
+            local: None,
+            edit: Some(("kendex.toml", CONFIGURED)),
+            carry: false,
+        }),
+        doctrine_changed: false,
+        defers: Defers::WalkedSuccessor,
+        holds: Holds::NotSetUp,
         ..UNARMED_ROW
     },
     StaleRow {
@@ -1291,6 +1337,18 @@ const STALE_ROWS: &[StaleRow] = &[
             carry: false,
         }),
         holds: Holds::Nothing,
+        ..UNARMED_ROW
+    },
+    StaleRow {
+        what: "source catalog: table added, edit left out, set up by the walkthrough",
+        manifest: Some(ManifestInput {
+            primary: CONFIGURED_CATALOG,
+            local: Some(UNCONFIGURED),
+            edit: Some(("kendex-local.toml", CONFIGURED)),
+            carry: false,
+        }),
+        defers: Defers::Walked,
+        holds: Holds::NotSetUp,
         ..UNARMED_ROW
     },
     StaleRow {
@@ -1407,7 +1465,9 @@ const STALE_ROWS: &[StaleRow] = &[
 
 /// Each touched package is judged against the offered commit. Manifest
 /// rows distinguish carried changes from prior edits and keep source-catalog
-/// selection tied to that same commit.
+/// selection tied to that same commit; a package the walkthrough after the
+/// offer sets up, in the loop or as the pending successor, also reads the
+/// working tree's table.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
@@ -1462,13 +1522,32 @@ fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
                 "{what}: manifest carry premise"
             );
         }
+        let effects = kendex_core::engine::installed_declaration(
+            &fixture.env,
+            &fixture.scope,
+            "bot-instructions",
+        )
+        .unwrap()
+        .unwrap();
+        let walked = std::slice::from_ref(&effects);
+        let deferred = match row.defers {
+            Defers::Nothing => commit_offer::Deferred::default(),
+            Defers::Walked => commit_offer::Deferred {
+                successor: None,
+                walked,
+            },
+            Defers::WalkedSuccessor => commit_offer::Deferred {
+                successor: Some(&effects),
+                walked,
+            },
+        };
         let stale = commit_offer::stale(
             &fixture.env,
             &fixture.scope,
             &scan,
             &generated,
             &scan.carried(),
-            commit_offer::Deferred::default(),
+            deferred,
         );
         if let Holds::InvalidManifest = row.holds {
             assert!(
