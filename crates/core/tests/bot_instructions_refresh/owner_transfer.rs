@@ -8,7 +8,7 @@ const OLD: &str = "bot-instructions";
 const NEW: &str = "github-repository-settings";
 
 #[allow(clippy::unwrap_used)]
-fn install(f: &Fixture, name: &str) -> kendex_core::repo_effects::DeclaredEffects {
+fn install(f: &Fixture, name: &str, reason: Reason) -> kendex_core::repo_effects::DeclaredEffects {
     let package = f.root.join(".agents/skills").join(name);
     fs::create_dir_all(package.join("scripts")).unwrap();
     fs::write(
@@ -20,7 +20,7 @@ fn install(f: &Fixture, name: &str) -> kendex_core::repo_effects::DeclaredEffect
         "#!/bin/sh\ncase \"$1\" in\ninstall)\n printf '%s' '{name}' > configuration\n printf '%s' '{name}' > {name}.effect\n if [ '{name}' = '{NEW}' ] && [ -f fail-install ]; then exit 7; fi ;;\nretire) rm -f configuration {name}.effect ;;\ncheck) test \"$(cat configuration)\" = '{name}' ;;\nesac\n"
     )).unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-    record_named_install(&f.env, &f.root, HarnessId::Codex, name, package);
+    record_install_for(&f.env, &f.root, HarnessId::Codex, name, package, reason);
     kendex_core::engine::installed_declaration(&f.env, &f.scope, name)
         .unwrap()
         .unwrap()
@@ -49,21 +49,47 @@ fn assert_owner(f: &Fixture, name: &str, armed: bool) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn setup_moves_the_effect_and_record_to_the_selected_owner() {
-    assert_transfer(false);
+    assert_transfer(false, false);
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_failed_transfer_restores_the_previous_effect_and_record() {
-    assert_transfer(true);
+    assert_transfer(true, false);
+}
+
+/// A successor that arrived only as a dependency leaves the old owner
+/// rendering until its own setup, which then moves the effect as for a
+/// requested one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn setup_moves_the_effect_from_a_dependency_only_arrival() {
+    assert_transfer(false, true);
 }
 
 #[allow(clippy::unwrap_used)]
-fn assert_transfer(fail: bool) {
+fn assert_transfer(fail: bool, dependency_only: bool) {
     let f = fixture_with_arming("[install]\nharnesses = [\"codex\"]\n", false);
-    let previous = install(&f, OLD);
+    let previous = install(&f, OLD, Reason::Requested);
     kendex_core::repo_effects::setup::apply(&f.env, &f.scope, &previous).unwrap();
-    let selected = install(&f, NEW);
+    let reason = match dependency_only {
+        true => required_by(HarnessId::Codex),
+        false => Reason::Requested,
+    };
+    let selected = install(&f, NEW, reason);
+    if dependency_only {
+        let rendered = bot_instructions::render(&f.env, &f.scope).unwrap();
+        assert_eq!(
+            rendered
+                .pending()
+                .map(|pending| pending.successor.name.as_str()),
+            Some(NEW)
+        );
+        assert_eq!(
+            fs::read_to_string(f.root.join("configuration")).unwrap(),
+            OLD
+        );
+    }
     if fail {
         fs::write(f.root.join("fail-install"), "").unwrap();
     }
@@ -102,5 +128,12 @@ fn assert_transfer(fail: bool) {
         assert!(recovery.is_empty());
     } else {
         result.unwrap();
+        let rendered = bot_instructions::render(&f.env, &f.scope).unwrap();
+        assert_eq!(rendered.pending(), None);
+        assert_eq!(rendered.skipped(), None);
+        assert_eq!(
+            fs::read_to_string(f.root.join("configuration")).unwrap(),
+            NEW
+        );
     }
 }

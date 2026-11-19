@@ -38,7 +38,9 @@ usage() {
 usage: pre-commit
 
 Runs the staged-scope guard chain: doc-limits, preflight and one review-file
-check (github-repository-settings when installed, otherwise bot-instructions;
+check (github-repository-settings when installed, except bot-instructions
+where kendex set bot-instructions up here or in the main checkout and not
+github-repository-settings; otherwise bot-instructions;
 each resolved from the committing work tree first, then from the
 install beside this skill), the commit-guards batch at commit scope, then the
 optional repo-local entry. Takes no arguments — git passes none to pre-commit. Wire it through
@@ -154,11 +156,39 @@ bot_instructions_check() { # PACKAGE SKILL-DIR: both packages use the bot-instru
   [ -z "$unattested" ] || gg_message unattested "$package:${record#*=}" "$package refused as unconfigured without its renders=none attestation; this copy predates the orphan scan, so update $package"
   return "$status"
 }
+# This hook's owner rule, not kendex's: references/hooks-and-settings.md
+# item 3 states it and the two states where it differs. kendex keeps an
+# armed bot-instructions in charge beside a github-repository-settings that
+# only another package's dependency brought in. The hook reads no lock and
+# no kendex verb reports the selection, so bot-instructions' standing setup
+# without one for its successor is the sign of that state. Both packages
+# have checkout reach: a record sits in the git directory of the work tree
+# that set it up, and the main checkout's is the common directory, which
+# kendex also reads for its beside-main setup offer (kendex
+# crates/core/src/repo_effects/armed.rs, record_dir).
+review_set_up() { # PACKAGE — 0 when kendex set PACKAGE up here or in the main checkout
+  local dir
+  for dir in "$REVIEW_GIT_DIR" "$REVIEW_COMMON_DIR"; do
+    [ ! -f "$dir/kendex/armed/$1/-record" ] || return 0
+  done
+  return 1
+}
 REVIEW_PACKAGE=""
-if REVIEW_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" github-repository-settings)"; then
+NEW_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" github-repository-settings)" || NEW_SKILL=""
+OLD_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)" || OLD_SKILL=""
+if [ -n "$NEW_SKILL" ] && [ -n "$OLD_SKILL" ]; then
+  gg_git_path REVIEW_GIT_DIR "$PWD" rev-parse --absolute-git-dir || gg_fail git-dir "$PWD" "could not read this work tree's git directory"
+  # git answers the common directory relative to the directory it was asked
+  # in, this hook's own, or absolute in git's own form, which on Windows is
+  # drive-qualified; the record lookup below reads it from here as given.
+  gg_git_path REVIEW_COMMON_DIR "$PWD" rev-parse --git-common-dir || gg_fail git-dir "$PWD" "could not read this repository's common git directory"
+fi
+if [ -n "$NEW_SKILL" ] && { [ -z "$OLD_SKILL" ] || review_set_up github-repository-settings || ! review_set_up bot-instructions; }; then
   REVIEW_PACKAGE=github-repository-settings
-elif REVIEW_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
+  REVIEW_SKILL="$NEW_SKILL"
+elif [ -n "$OLD_SKILL" ]; then
   REVIEW_PACKAGE=bot-instructions
+  REVIEW_SKILL="$OLD_SKILL"
 fi
 if [ -n "$REVIEW_PACKAGE" ]; then
   REVIEW_CHECK="$REVIEW_SKILL/scripts/$REVIEW_PACKAGE"

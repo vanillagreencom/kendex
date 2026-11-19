@@ -8,8 +8,12 @@ use std::os::unix::fs::PermissionsExt;
 const NEW: &str = "github-repository-settings";
 const OLD: &str = "bot-instructions";
 
-#[allow(clippy::unwrap_used)]
 fn install(fixture: &Fixture, name: &str, armed: bool) -> PathBuf {
+    install_for(fixture, name, armed, Reason::Requested)
+}
+
+#[allow(clippy::unwrap_used)]
+fn install_for(fixture: &Fixture, name: &str, armed: bool, reason: Reason) -> PathBuf {
     let package = fixture.root.join(".agents/skills").join(name);
     fs::create_dir_all(package.join("scripts")).unwrap();
     fs::write(
@@ -31,12 +35,13 @@ fn install(fixture: &Fixture, name: &str, armed: bool) -> PathBuf {
         fs::Permissions::from_mode(0o755),
     )
     .unwrap();
-    record_named_install(
+    record_install_for(
         &fixture.env,
         &fixture.root,
         HarnessId::Codex,
         name,
         package.clone(),
+        reason,
     );
     if armed {
         let repo = kendex_core::guard::Repo::at(&fixture.root).unwrap();
@@ -49,12 +54,29 @@ fn install(fixture: &Fixture, name: &str, armed: bool) -> PathBuf {
     package
 }
 
+/// `armed` is the new package's record; the old package, where installed,
+/// is always armed. `dependency_only` installs the new package only as
+/// another skill's requirement.
 #[derive(Clone, Copy)]
 struct Selection {
     old: bool,
     new: bool,
     armed: bool,
+    dependency_only: bool,
     selected: &'static str,
+}
+
+impl Selection {
+    /// Whether the selected owner's own record stands, which is what lets
+    /// its code run.
+    fn selected_armed(self) -> bool {
+        self.selected == OLD || self.armed
+    }
+
+    /// The successor this row's selection yielded past.
+    fn pending(self) -> Option<&'static str> {
+        (self.new && self.selected == OLD).then_some(NEW)
+    }
 }
 
 const SELECTIONS: &[Selection] = &[
@@ -62,24 +84,42 @@ const SELECTIONS: &[Selection] = &[
         old: true,
         new: false,
         armed: true,
+        dependency_only: false,
         selected: OLD,
     },
     Selection {
         old: false,
         new: true,
         armed: true,
+        dependency_only: false,
         selected: NEW,
     },
     Selection {
         old: true,
         new: true,
         armed: true,
+        dependency_only: false,
         selected: NEW,
     },
     Selection {
         old: true,
         new: true,
         armed: false,
+        dependency_only: false,
+        selected: NEW,
+    },
+    Selection {
+        old: true,
+        new: true,
+        armed: false,
+        dependency_only: true,
+        selected: OLD,
+    },
+    Selection {
+        old: true,
+        new: true,
+        armed: true,
+        dependency_only: true,
         selected: NEW,
     },
 ];
@@ -93,7 +133,11 @@ fn selected_fixture(row: Selection) -> Fixture {
         fs::remove_dir_all(fixture.root.join(CODEX_PACKAGE)).unwrap();
     }
     if row.new {
-        install(&fixture, NEW, row.armed);
+        let reason = match row.dependency_only {
+            true => required_by(HarnessId::Codex),
+            false => Reason::Requested,
+        };
+        install_for(&fixture, NEW, row.armed, reason);
     }
     git(&fixture.root, &["add", "-A"]);
     fixture
@@ -120,14 +164,20 @@ fn assert_selection(row: Selection, write: bool) {
         let rendered = bot_instructions::render(&fixture.env, &fixture.scope).unwrap();
         assert_eq!(
             rendered.skipped().map(|skip| skip.declared.name.as_str()),
-            (!row.armed).then_some(row.selected),
+            (!row.selected_armed()).then_some(row.selected),
+        );
+        assert_eq!(
+            rendered
+                .pending()
+                .map(|pending| (pending.successor.name.as_str(), pending.owner.as_str())),
+            row.pending().map(|pending| (pending, row.selected)),
         );
         rendered.add_to(&mut generated);
     } else {
         bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut generated).unwrap();
     }
     let calls = fs::read_to_string(fixture.root.join("calls")).unwrap_or_default();
-    if !row.armed {
+    if !row.selected_armed() {
         assert_eq!(calls, "");
         assert!(generated.whole.is_empty());
         assert!(generated.regions.is_empty());
@@ -151,7 +201,7 @@ fn assert_selection(row: Selection, write: bool) {
     for name in [OLD, NEW] {
         assert_eq!(
             fixture.root.join(format!("{name}.md")).exists(),
-            write && row.armed && row.selected == name,
+            write && row.selected_armed() && row.selected == name,
         );
     }
 }
@@ -162,12 +212,12 @@ fn assert_selection(row: Selection, write: bool) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn automatic_lapse_checks_use_only_the_selected_configuration_owner() {
-    for (row, unreadable_new) in SELECTIONS
-        .iter()
-        .copied()
-        .map(|row| (row, false))
-        .chain([(SELECTIONS[2], true), (SELECTIONS[3], true)])
-    {
+    for (row, unreadable_new) in SELECTIONS.iter().copied().map(|row| (row, false)).chain([
+        (SELECTIONS[2], true),
+        (SELECTIONS[3], true),
+        (SELECTIONS[4], true),
+        (SELECTIONS[5], true),
+    ]) {
         assert_lapsed_owner(row, unreadable_new);
     }
 }
@@ -189,7 +239,7 @@ fn assert_lapsed_owner(row: Selection, unreadable_new: bool) {
         .unwrap();
     } else {
         bot_instructions::render(&fixture.env, &fixture.scope).unwrap();
-        if row.armed {
+        if row.selected_armed() {
             fs::remove_file(fixture.root.join("calls")).unwrap();
         }
     }
@@ -210,6 +260,12 @@ fn assert_lapsed_owner(row: Selection, unreadable_new: bool) {
         ("broken-effect", Lapse::NotInForce),
         ("unreadable-effect", Lapse::Unchecked),
     ];
+    // Unread, the new declaration yields only where the row's selection
+    // does; then the old owner's check runs over a tree nothing rendered.
+    let old_checked = unreadable_new && row.selected == OLD;
+    if old_checked {
+        expected.insert(0, (OLD, Lapse::NotInForce));
+    }
     if unreadable_new && row.armed {
         expected.insert(1, (NEW, Lapse::Unchecked));
     }
@@ -221,7 +277,7 @@ fn assert_lapsed_owner(row: Selection, unreadable_new: bool) {
         expected,
     );
     let mut expected_calls = vec!["broken-effect"];
-    if row.armed && !unreadable_new {
+    if (row.selected_armed() && !unreadable_new) || old_checked {
         expected_calls.push(row.selected);
     }
     expected_calls.sort_unstable();
@@ -360,6 +416,10 @@ fn the_commit_offer_checks_only_the_selected_configuration_owner() {
         (SELECTIONS[3], &[OLD][..]),
         (SELECTIONS[2], &[NEW][..]),
         (SELECTIONS[3], &[NEW][..]),
+        (SELECTIONS[4], &[OLD, NEW][..]),
+        (SELECTIONS[4], &[OLD][..]),
+        (SELECTIONS[4], &[NEW][..]),
+        (SELECTIONS[5], &[NEW][..]),
     ] {
         assert_commit_owner(row, changed);
     }
@@ -400,7 +460,7 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
     );
     assert_eq!(
         held[0].why,
-        if row.armed {
+        if row.selected_armed() {
             Staleness::OutOfDate(Vec::new())
         } else {
             Staleness::NotSetUp
@@ -408,7 +468,7 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
     );
     assert_eq!(
         fs::read_to_string(fixture.root.join("calls")).unwrap_or_default(),
-        if row.armed {
+        if row.selected_armed() {
             format!("{}\n", row.selected)
         } else {
             String::new()
@@ -416,11 +476,27 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
     );
 }
 
+/// The main checkout set the new owner up, which retired the old one
+/// there; the linked work tree carries neither record. Requested or only a
+/// dependency, the new owner stays selected and names the main checkout.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn linked_worktree_consent_stays_with_the_selected_owner() {
-    let fixture = selected_fixture(SELECTIONS[2]);
+    for row in [SELECTIONS[2], SELECTIONS[5]] {
+        assert_linked_owner(row);
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_linked_owner(row: Selection) {
+    let fixture = selected_fixture(row);
     commit_fixture(&fixture.root);
+    let repo = kendex_core::guard::Repo::at(&fixture.root).unwrap();
+    kendex_core::repo_effects::armed::disarm(
+        kendex_core::repo_effects::armed::record_dir(&repo, false),
+        OLD,
+    )
+    .unwrap();
     let linked = fixture.root.parent().unwrap().join("linked");
     git(
         &fixture.root,
@@ -435,12 +511,17 @@ fn linked_worktree_consent_stays_with_the_selected_owner() {
     );
     let linked = linked.canonicalize().unwrap();
     for name in [OLD, NEW] {
-        record_named_install(
+        let reason = match (name, row.dependency_only) {
+            (NEW, true) => required_by(HarnessId::Codex),
+            _ => Reason::Requested,
+        };
+        record_install_for(
             &fixture.env,
             &linked,
             HarnessId::Codex,
             name,
             linked.join(".agents/skills").join(name),
+            reason,
         );
     }
     let rendered = bot_instructions::render(
@@ -456,23 +537,61 @@ fn linked_worktree_consent_stays_with_the_selected_owner() {
     assert!(!linked.join("calls").exists());
 }
 
+/// A consumer refresh checkout carries no arming record, so the old
+/// package's record is dropped here too: a dependency-only successor still
+/// yields, and a requested one is still selected.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_one_run_licence_uses_the_selected_owner_without_arming_it() {
-    let fixture = selected_fixture(SELECTIONS[3]);
+    for row in [SELECTIONS[3], SELECTIONS[4]] {
+        let fixture = selected_fixture(row);
+        let repo = kendex_core::guard::Repo::at(&fixture.root).unwrap();
+        kendex_core::repo_effects::armed::disarm(
+            kendex_core::repo_effects::armed::record_dir(&repo, false),
+            OLD,
+        )
+        .unwrap();
+        assert_eq!(
+            bot_instructions::render_once(&fixture.env, &fixture.scope)
+                .unwrap()
+                .unwrap()
+                .code,
+            0
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("calls")).unwrap(),
+            format!("{}\n", row.selected)
+        );
+        for name in [OLD, NEW] {
+            let installed =
+                kendex_core::engine::installed_declaration(&fixture.env, &fixture.scope, name)
+                    .unwrap()
+                    .unwrap();
+            assert!(!kendex_core::repo_effects::armed_here(&fixture.scope, &installed).unwrap());
+        }
+    }
+}
+
+/// The KEN-2358 state: an armed old owner, the new one pulled in as a
+/// dependency. Drift in the old owner's file is still a lapse, because
+/// the old checker is the one that runs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dependency_only_successor_leaves_the_armed_owners_drift_a_lapse() {
+    let fixture = selected_fixture(SELECTIONS[4]);
+    bot_instructions::render(&fixture.env, &fixture.scope).unwrap();
+    fs::remove_file(fixture.root.join("calls")).unwrap();
+    fs::remove_file(fixture.root.join(format!("{OLD}.md"))).unwrap();
+    let lapses = kendex_core::repo_effects::lapsed(&fixture.env, &fixture.scope).unwrap();
     assert_eq!(
-        bot_instructions::render_once(&fixture.env, &fixture.scope)
-            .unwrap()
-            .unwrap()
-            .code,
-        0
+        lapses
+            .iter()
+            .map(|lapse| (lapse.name.as_str(), lapse.lapse))
+            .collect::<Vec<_>>(),
+        [(OLD, kendex_core::repo_effects::Lapse::NotInForce)],
     );
     assert_eq!(
         fs::read_to_string(fixture.root.join("calls")).unwrap(),
-        format!("{NEW}\n")
+        format!("{OLD}\n")
     );
-    let selected = kendex_core::engine::installed_declaration(&fixture.env, &fixture.scope, NEW)
-        .unwrap()
-        .unwrap();
-    assert!(!kendex_core::repo_effects::armed_here(&fixture.scope, &selected).unwrap());
 }

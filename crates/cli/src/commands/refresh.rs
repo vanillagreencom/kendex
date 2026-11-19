@@ -1324,7 +1324,13 @@ fn stopped(
         )),
     }
     if let Some(before) = &written.owed
-        && let Err(error) = after_writing(env, scope, &written.report.generated, before)
+        && let Err(error) = after_writing(
+            env,
+            scope,
+            &written.report.generated,
+            before,
+            &super::commit_offer::Earlier::default(),
+        )
     {
         failures.push(error.to_string());
     }
