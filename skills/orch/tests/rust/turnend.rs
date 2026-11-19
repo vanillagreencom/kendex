@@ -991,6 +991,15 @@ impl World {
         self.mail_root().join(ITEM)
     }
 
+    /// The lane's record of the sessions told at a handoff mark removed, so
+    /// a row's turn end is a session's first at its mark.
+    fn untold(&self) {
+        match fs::remove_file(self.lane_box().join("handoff-told")) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => panic!("untold: {e}"),
+            _ => {}
+        }
+    }
+
     /// One line appended to the lane's box `file`, as the mailbox writes it.
     fn append(&self, file: &str, line: Value) {
         let mut handle = fs::OpenOptions::new()
@@ -2282,6 +2291,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     ];
     for (tokens, env, code, first) in rows {
         let row = format!("{tokens} {env:?}");
+        world.untold();
         let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", *tokens)]);
         let payload = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
         let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], &payload, env);
@@ -2340,6 +2350,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
         "background_tasks": [{"type": "subagent", "id": "a1", "status": "running"},
             {"type": "shell", "id": "b1", "status": "running"}]})
     .to_string();
+    world.untold();
     let out = world.turn("claude", &[], &payload);
     assert_eq!(out.code, 2, "{}", out.stderr);
     let state_dir = world.lane.join("tmp");
@@ -2619,6 +2630,7 @@ fn a_pi_reading_takes_its_window_from_the_payload_or_its_own_record() {
     ];
     for (settings, window, recorded, code, first) in rows {
         let row = format!("{settings} {window:?} {recorded}");
+        world.untold();
         fs::write(agent.join("settings.json"), settings).unwrap();
         if *recorded {
             fs::write(&record, &held).unwrap();
@@ -2648,6 +2660,7 @@ fn a_pi_reading_takes_its_window_from_the_payload_or_its_own_record() {
         ("true", 0, "lane-mail-check: window-unread=p/m", json!(null)),
     ];
     for (answer, code, first, window) in rows {
+        world.untold();
         let _ = fs::remove_file(&record);
         world.pi_registry(&agent, answer);
         let out = world.turn_in(&world.lane, &hooks, &[], &payload, &env);
@@ -2897,8 +2910,16 @@ impl World {
     }
 
     /// A Copilot lead's turn end of `s1`, its transcript under the account's
-    /// store, with `env` added to the account's `COPILOT_HOME`.
+    /// store, with `env` added to the account's `COPILOT_HOME`: each call
+    /// the session's first turn end at a handoff mark.
     fn copilot_stop(&self, env: Env) -> Out {
+        self.untold();
+        self.copilot_stop_again(env)
+    }
+
+    /// [`World::copilot_stop`] of a session already told at any mark it
+    /// was held at.
+    fn copilot_stop_again(&self, env: Env) -> Out {
         let transcript = self.copilot_transcript();
         let payload =
             json!({"sessionId": "s1", "transcriptPath": transcript, "timestamp": 1}).to_string();
@@ -3127,6 +3148,11 @@ fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds()
     world.extension_reading(Some(720_001), 800_000, "s1", EXTENSION);
     let out = world.copilot_stop(&[]);
     assert_eq!(out.first(), "lane-mail-check: context=720001");
+    // Copilot's block on stdout is a hold given once: the session's next
+    // turn end at the mark passes with nothing on stdout.
+    let out = world.copilot_stop_again(&[]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: handoff-stopped=context");
     world.status_line(650_000, 1_000_000, Some(&folder), None);
     let held = "lane-mail-check: context=650000";
     let rows: &[(Option<u64>, &str, &str, &str)] = &[

@@ -136,6 +136,13 @@ pub(super) fn handoff_check(
         Gate::NoMark => return Ok(()),
         Gate::Stands => return Err(turn.pass()),
     };
+    let held = lane_holds(turn, &judge, lane, vars, payload);
+    judge.told_once(turn, held)
+}
+
+/// A launched lane's marks past its gate: every turn end they hold is held
+/// with the handoff that clears it.
+fn lane_holds(turn: &mut Turn, judge: &Judge, lane: &Lane, vars: &Vars, payload: &Payload) -> Flow {
     let pct = judge.context_share(turn)?;
     let mailbox = judge.mailbox.clone();
     let model = match judge.read_and_record(turn, &mailbox)? {
@@ -186,7 +193,28 @@ pub(super) fn handoff_check(
             return Err(turn.refuse(Said::Compacted { instruction }, ""));
         }
     };
-    model::account_mark(turn, &judge, lane, vars, &model)
+    model::account_mark(turn, judge, lane, vars, &model)
+}
+
+/// The record, in a judgement's mailbox directory, of the native sessions
+/// told at a handoff mark: one session id a line, `none` for a payload
+/// naming none.
+const TOLD_RECORD: &str = "handoff-told";
+
+/// `session` added to the told record at `path`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the told record's one append, a line naming the session a handoff mark's hold was given to"
+)]
+fn record_told(path: &Path, session: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(format!("{session}\n").as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 /// The harness and tool names an attached launch is made with. Codex
@@ -568,6 +596,58 @@ impl<'a> Judge<'a> {
             }
             Seat::Lane | Seat::Overseer { .. } => turn.refuse(said, cause),
         }
+    }
+
+    /// A handoff mark's hold, given once per session. `held` is the turn
+    /// end the marks judged: a hold is given where the told record does not
+    /// yet name this session, and the session is recorded. A session already
+    /// told ends the turn instead under `handoff-stopped`, and a lane's
+    /// overseer is sent that fact: each forced turn costs the account it
+    /// spends, and a session that did not hand off when told will not when
+    /// told again. A record that cannot take the session still holds, and
+    /// then only a continued turn (`stop_hook_active`) ends unheld.
+    pub(super) fn told_once(&self, turn: &mut Turn, held: Flow) -> Flow {
+        let answer = match held {
+            Err(answer) if answer.holds_stop() => answer,
+            other => return other,
+        };
+        let Some(refused) = turn.refused.take() else {
+            unreachable!("a turn end a mark holds is held by the turn's one refusal")
+        };
+        let path = self.mailbox.join(TOLD_RECORD);
+        let session = match self.payload.session.as_str() {
+            "" => "none",
+            session => session,
+        };
+        let told = std::fs::read_to_string(&path)
+            .is_ok_and(|text| text.lines().any(|line| line == session));
+        if !told {
+            let unrecorded = match record_told(&path, session) {
+                Ok(()) => return Err(answer),
+                Err(cause) => Said::ToldUnrecorded(path).text(&cause),
+            };
+            if !self.payload.active {
+                let mut answer = answer;
+                answer.stderr.push_str(&unrecorded);
+                answer.stderr.push('\n');
+                return Err(answer);
+            }
+            turn.stderr.push_str(&unrecorded);
+            turn.stderr.push('\n');
+        }
+        let notes = answer.stderr.get(..refused.notes).unwrap_or_default();
+        turn.stderr.insert_str(0, notes);
+        let key = refused
+            .line
+            .split_once('=')
+            .map_or(refused.line.as_str(), |(key, _)| key);
+        turn.note(&Said::HandoffStopped(key.to_owned()), &refused.line);
+        if matches!(self.seat, Seat::Lane) {
+            super::mail::stop_notice(turn, self.vars, self.lane, key, &refused.line);
+        }
+        let mut passed = turn.pass();
+        passed.ack = answer.ack;
+        Err(passed)
     }
 
     /// The context mark's share, refused, as its token count is, on a value
@@ -1070,7 +1150,7 @@ impl<'a> Judge<'a> {
         let word = format!("'{}'", record.replace('\'', r"'\''"));
         let reader = shell_quoted(&self.settings.lane_mail_cli);
         Ok(format!(
-            "{agent}\nReach the next safe point first, a pushed head, a landed merge or a held PR; never interrupt a round or leave an unpushed tree. There, write the handoff record and send the notice, then end the session:\n{init}  {runtime}{state_args} op --item {item} --request-json {word}\n  {reader} notice --item {item} --file [FILE NAMING WHAT IS LEFT]\nThis refusal repeats at every turn end until that record stands."
+            "{agent}\nReach the next safe point first, a pushed head, a landed merge or a held PR; never interrupt a round or leave an unpushed tree. There, write the handoff record and send the notice, then end the session:\n{init}  {runtime}{state_args} op --item {item} --request-json {word}\n  {reader} notice --item {item} --file [FILE NAMING WHAT IS LEFT]\nThis refusal is given once in this session: a later turn end without that record ends the turn, and the overseer is told this lane stopped."
         ))
     }
 
@@ -1116,7 +1196,7 @@ impl<'a> Judge<'a> {
             .map(|kind| format!(" --mark {kind}"))
             .unwrap_or_default();
         format!(
-            "{agent}\nReach a safe point first, with no merged event part-handled and no lane waiting on an answer only the root can give. There, rewrite the overseer handoff file and succeed this session through the orch runtime: choose the successor with\n  {runtime} successor --fleet --cwd {root} --predecessor {predecessor}{mark}\nthen ask for request-transfer with cause live, the reply's .result.successor as the successor and its .result.expected as the expected record, the call waiting for the transfer's own outcome:\n  {runtime} op --fleet --effect-exit --request [REQUEST FILE]\nWhere either refuses or exits nonzero, tell the user a fresh overseer session must be started by hand, then record the handoff and end this session:\n  {runtime} op --fleet --request-json {word}\nWrite the record as it stands above: the two names in it are what end this refusal for this session and for no other. It repeats at every turn end until the succession lands or that record stands."
+            "{agent}\nReach a safe point first, with no merged event part-handled and no lane waiting on an answer only the root can give. There, rewrite the overseer handoff file and succeed this session through the orch runtime: choose the successor with\n  {runtime} successor --fleet --cwd {root} --predecessor {predecessor}{mark}\nthen ask for request-transfer with cause live, the reply's .result.successor as the successor and its .result.expected as the expected record, the call waiting for the transfer's own outcome:\n  {runtime} op --fleet --effect-exit --request [REQUEST FILE]\nWhere either refuses or exits nonzero, tell the user a fresh overseer session must be started by hand, then record the handoff and end this session:\n  {runtime} op --fleet --request-json {word}\nWrite the record as it stands above: the two names in it are what end this refusal for this session and for no other. It is given once in this session: a later turn end without the succession or that record ends the turn."
         )
     }
 }

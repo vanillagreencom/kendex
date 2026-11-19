@@ -230,6 +230,16 @@ struct Turn {
     /// The settings load's notices, said once each after the answer's own
     /// lines, so a harness reads the keyed line first.
     skipped: Vec<String>,
+    /// The last refusal built: what a handoff mark's once-only hold names
+    /// when it ends the turn instead.
+    refused: Option<Refused>,
+}
+
+/// A refusal's keyed line, `key=value`, and the length of the notes ahead
+/// of its text on the answer's stderr.
+struct Refused {
+    line: String,
+    notes: usize,
 }
 
 impl Turn {
@@ -250,6 +260,7 @@ impl Turn {
             notice: None,
             wake: None,
             skipped: Vec::new(),
+            refused: None,
         }
     }
 
@@ -284,6 +295,11 @@ impl Turn {
     /// judged.
     fn refuse(&mut self, said: Said, cause: &str) -> Answer {
         let mut text = said.text(cause);
+        let (key, value) = said.key();
+        self.refused = Some(Refused {
+            line: format!("{key}={value}"),
+            notes: self.stderr.len(),
+        });
         if self.arm == Some(Arm::Deliver)
             && let Some(notice) = self.notice.take()
         {

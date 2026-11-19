@@ -770,6 +770,117 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
     }
 }
 
+/// A lane past its seat's reserve is told to hand off once. A later turn
+/// end of the same session without the handoff, continued or fresh, ends
+/// the turn under `handoff-stopped` and sends the overseer a
+/// `lane-stopped` notice from the lane; a new session is told again; the
+/// handoff record written passes the turn end as it always did.
+#[test]
+fn a_lane_told_at_its_seat_reserve_is_held_once_and_its_stop_told_to_the_overseer() {
+    let world = TurnWorld::new();
+    let lane = lane_in(&world);
+    let now = now_ms() / 1000;
+    let planted = plant_listing(&world.root, &world.account_state(), &[account_row(92)], now);
+    fs::write(fleet_path(&lane), json!({ "lanes": [] }).to_string()).unwrap();
+    let Reading::Live(own) = process::identity(std::process::id()) else {
+        panic!("this test's own identity reads");
+    };
+    let account = world.home.join(".aclaude").display().to_string();
+    agent_runtime::group::seat(&world.account_state(), &fleet_path(&lane), &own, &account).unwrap();
+    let mut env = planted.env;
+    env.push(("CLAUDE_CONFIG_DIR".to_owned(), account));
+    env.push((
+        "LANE_MAIL_CLI".to_owned(),
+        lane_mail().display().to_string(),
+    ));
+    let stop_of = |session: &str, active: bool| {
+        json!({"hook_event_name": "Stop", "session_id": session, "stop_hook_active": active})
+            .to_string()
+    };
+    let sent = || {
+        let outbox = lane
+            .join("tmp/lane-mail")
+            .join(ITEM)
+            .join("to-overseer.jsonl");
+        fs::read_to_string(outbox).unwrap_or_default()
+    };
+    let stopped = format!("lane-mail-check: lane-stopped={ITEM}");
+
+    let told = world.turn(&lane, "claude", &[], &stop_of(SESSION, false), &env);
+    assert_eq!(told.code, 2, "{}", told.stderr);
+    let line = account_line(&told).unwrap_or_default();
+    assert!(
+        line.starts_with("seat-reserve=8 bucket=weekly"),
+        "{}",
+        told.stderr
+    );
+    assert!(!sent().contains(&stopped), "{}", sent());
+
+    for (case, payload) in [
+        ("continued", stop_of(SESSION, true)),
+        ("fresh", stop_of(SESSION, false)),
+    ] {
+        let out = world.turn(&lane, "claude", &[], &payload, &env);
+        assert_eq!(
+            (out.code, out.stdout.as_str()),
+            (0, ""),
+            "{case}: {}",
+            out.stderr
+        );
+        assert_eq!(
+            out.keyed().first().copied(),
+            Some("handoff-stopped=seat-reserve"),
+            "{case}: {}",
+            out.stderr
+        );
+        assert!(
+            sent().contains(&stopped),
+            "{case}: {}\n{}",
+            out.stderr,
+            sent()
+        );
+    }
+
+    let other = world.turn(&lane, "claude", &[], &stop_of("native-2", false), &env);
+    assert_eq!(other.code, 2, "{}", other.stderr);
+
+    // A record that cannot take the session still holds a fresh turn end,
+    // and then a continued one ends the turn.
+    let record = lane.join("tmp/lane-mail").join(ITEM).join("handoff-told");
+    fs::remove_file(&record).unwrap();
+    fs::create_dir(&record).unwrap();
+    let unrecorded = format!("handoff-told-unrecorded={}", record.display());
+    for (active, code, stop) in [(false, 2, false), (true, 0, true)] {
+        let out = world.turn(&lane, "claude", &[], &stop_of("native-4", active), &env);
+        assert_eq!(out.code, code, "{active}: {}", out.stderr);
+        let keyed = out.keyed();
+        assert!(
+            keyed.contains(&unrecorded.as_str()),
+            "{active}: {}",
+            out.stderr
+        );
+        assert_eq!(
+            keyed.contains(&"handoff-stopped=seat-reserve"),
+            stop,
+            "{active}: {}",
+            out.stderr
+        );
+    }
+    fs::remove_dir(&record).unwrap();
+
+    let state = support::item_record(&lane.join("tmp"), ITEM);
+    fs::create_dir_all(state.parent().unwrap()).unwrap();
+    fs::write(&state, json!({"handoff": {"remaining": ["x"]}}).to_string()).unwrap();
+    let handed = world.turn(&lane, "claude", &[], &stop_of("native-3", false), &env);
+    assert_eq!(
+        (handed.code, handed.stdout.as_str()),
+        (0, ""),
+        "{}",
+        handed.stderr
+    );
+    assert_eq!(account_line(&handed), None, "{}", handed.stderr);
+}
+
 /// A row of the listing for `harness`'s own directory under the home,
 /// walled at 98 percent of its binding bucket.
 fn walled_home_row(harness: &str) -> Value {

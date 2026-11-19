@@ -368,6 +368,20 @@ pub enum Said {
         need: String,
         instruction: String,
     },
+    /// A session already told at a handoff mark ends a turn without its
+    /// handoff record: the key of the line it was told under.
+    HandoffStopped(String),
+    /// The notice a lane that stopped at a handoff mark sends its overseer:
+    /// the lane's item and the key it was told under.
+    LaneStopped {
+        item: String,
+        told: String,
+    },
+    /// The stop notice's send ended other than with its receipt.
+    StopNoticeUnsent(String),
+    /// The record of the sessions told at a handoff mark could not take
+    /// this one.
+    ToldUnrecorded(PathBuf),
 }
 
 /// Whose model recovery started, as the explanation of a switch names what
@@ -410,7 +424,7 @@ pub struct Reached {
 }
 
 impl Said {
-    fn key(&self) -> (&'static str, String) {
+    pub(super) fn key(&self) -> (&'static str, String) {
         match self {
             Said::Arm(word) => ("arm", word.clone()),
             Said::PayloadUnreadable => ("payload", "unreadable".to_owned()),
@@ -548,6 +562,10 @@ impl Said {
                 "seat-reserve",
                 format!("{headroom} bucket={bucket} need={need}"),
             ),
+            Said::HandoffStopped(told) => ("handoff-stopped", told.clone()),
+            Said::LaneStopped { item, .. } => ("lane-stopped", item.clone()),
+            Said::StopNoticeUnsent(status) => ("stop-notice-unsent", status.clone()),
+            Said::ToldUnrecorded(path) => ("handoff-told-unrecorded", path.display().to_string()),
         }
     }
 
@@ -910,6 +928,17 @@ impl Said {
                 instruction,
             } => format!(
                 "The account judge requires handoff from this overseer seat. The binding bucket {bucket} has {headroom} percent headroom left, and the seat keeps {need} percent of its window for the overseer, the room under min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT). No handoff record stands. Hand this lane off at the next safe point.\n{instruction}"
+            ),
+            Said::HandoffStopped(_) => "this session was already told to write its handoff record at a mark this turn end still meets, and ended this turn without it. The hook holds no further turn end of this session at a handoff mark, so a session that does not hand off spends no forced turns: the turn ends and the session stays stopped. A lane's overseer is sent that fact as a notice from the lane. The line this turn end met follows:".to_owned(),
+            Said::LaneStopped { told, .. } => format!(
+                "this lane was told once to write its handoff record at its {told} mark and ended a later turn without it. Its turn-end check holds it no further, so the lane stays stopped until its overseer hands it off, closes it or directs it. The line its turn end met follows:"
+            ),
+            Said::StopNoticeUnsent(status) => format!(
+                "this session stopped at a handoff mark without its handoff record, and the notice that tells the overseer so exited {status}, so nobody is told; the turn ends rather than loop on the refusal. The sender's words follow:"
+            ),
+            Said::ToldUnrecorded(path) => format!(
+                "{}, the sessions told at a handoff mark, could not take this session, so a later turn end cannot read that it was told; the refusal is given, and only a continued turn ends unheld:",
+                path.display()
             ),
         }
     }

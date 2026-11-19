@@ -375,6 +375,37 @@ fn idle_notice(
     turn.note(&Said::IdleNotice(item.to_owned()), "");
 }
 
+/// The overseer told through the lane's own mailbox, as a notice from the
+/// lane, that the lane stopped at the handoff mark it was told at under
+/// `told`, the line its turn end met under it. A send that fails is said;
+/// the turn ends either way.
+pub(super) fn stop_notice(turn: &mut Turn, vars: &Vars, lane: &Lane, told: &str, line: &str) {
+    let Some(item) = &lane.item else {
+        return;
+    };
+    let reader = match mail_reader(turn, lane, vars) {
+        Ok(reader) => reader,
+        Err((said, cause)) => {
+            turn.note(&said, &cause);
+            return;
+        }
+    };
+    let said = Said::LaneStopped {
+        item: item.clone(),
+        told: told.to_owned(),
+    };
+    let noticed = match Scratch::holding(&said.text(line)) {
+        Ok(scratch) => Mailbox::new(reader).notice(item, &lane.root, &scratch.0, None),
+        Err(cause) => {
+            turn.note(&Said::StopNoticeUnsent("unwritten".to_owned()), &cause);
+            return;
+        }
+    };
+    if let Err(refusal) = noticed {
+        turn.note(&Said::StopNoticeUnsent(status(&refusal)), &cause(&refusal));
+    }
+}
+
 /// The lane's last judged turn end: the count of asks and notices it had
 /// sent, whether this judge held it, and the status file's state then,
 /// one line `COUNT[ held][ status=STATE]` in the lane's mailbox directory.

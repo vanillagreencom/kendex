@@ -90,8 +90,21 @@ fn jarvis_marks(
         scripts,
     };
     let judge = Judge::controller(lane, vars, payload, settings, PathBuf::new(), mailbox, seat);
+    let held = jarvis_held(turn, &judge, payload, jarvis, &key);
+    judge.told_once(turn, held)
+}
+
+/// A managed Jarvis session's context mark on its bound transcript, a
+/// reached mark held with Jarvis's succession.
+fn jarvis_held(
+    turn: &mut Turn,
+    judge: &Judge,
+    payload: &Payload,
+    jarvis: &Jarvis,
+    key: &str,
+) -> Flow {
     let gap = |turn: &mut Turn, gap: &str| {
-        gap_record(turn, &judge.mailbox, &payload.session, &key, gap);
+        gap_record(turn, &judge.mailbox, &payload.session, key, gap);
     };
     let transcript = &payload.transcript;
     let owned = transcript_owned(
@@ -210,7 +223,20 @@ fn overseer(
         home: controller.home.clone(),
     };
     let judge = Judge::controller(lane, vars, payload, settings, file.into(), mailbox, seat);
-    let read = context_read(turn, &judge, payload, &controller.home, &caller_key)?;
+    let held = overseer_held(turn, &judge, payload, controller, &caller_key);
+    judge.told_once(turn, held)
+}
+
+/// The overseer's reading and marks, each hold given with the succession
+/// that clears it.
+fn overseer_held(
+    turn: &mut Turn,
+    judge: &Judge,
+    payload: &Payload,
+    controller: &Controller,
+    key: &str,
+) -> Flow {
+    let read = context_read(turn, judge, payload, &controller.home, key)?;
     // The compaction backstop is a verdict, not a reading: no judge derives
     // it, and it is refused whatever the succession setting, as the context
     // mark is.
@@ -218,7 +244,7 @@ fn overseer(
         let instruction = judge.instruction(turn, Value::Null, None)?;
         return Err(turn.refuse(Said::Compacted { instruction }, ""));
     }
-    overseer_marks(turn, &judge, controller, &read)
+    overseer_marks(turn, judge, controller, &read)
 }
 
 /// The overseer's marks, judged once by the runtime's one judge of a

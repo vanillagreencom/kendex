@@ -397,8 +397,18 @@ fn session_compaction(world: &TurnWorld, env: &[(String, String)]) -> TurnOut {
     world.turn(&world.checkout, "copilot", &["compact"], &payload, env)
 }
 
-/// The turn end of `SESSION`, run in the world's checkout.
+/// The turn end of `SESSION`, run in the world's checkout: each call the
+/// session's first turn end at a handoff mark.
 fn session_stop(world: &TurnWorld, env: &[(String, String)]) -> TurnOut {
+    match fs::remove_file(overseer_box(world).join("handoff-told")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => panic!("untold: {e}"),
+        _ => {}
+    }
+    session_stop_again(world, env)
+}
+
+/// [`session_stop`] of a session already told at any mark it was held at.
+fn session_stop_again(world: &TurnWorld, env: &[(String, String)]) -> TurnOut {
     let payload = json!({"sessionId": SESSION, "timestamp": 1}).to_string();
     world.turn(&world.checkout, "copilot", &[], &payload, env)
 }
@@ -592,6 +602,16 @@ fn an_overseers_automatic_compaction_is_flagged_in_the_overseer_box_under_its_pa
         );
         assert!(reason.contains(ROUTE), "off {off}: {reason}");
     }
+    // The overseer is held once a session at a mark too: its next turn end
+    // without the succession or the record passes.
+    let out = session_stop_again(&world, &env);
+    assert_eq!((out.code, blocked(&out)), (0, None), "{}", out.stderr);
+    assert_eq!(
+        out.keyed().first().copied(),
+        Some("handoff-stopped=compacted"),
+        "{}",
+        out.stderr
+    );
     fs::remove_file(overseer_box(&world).join("compaction.json")).unwrap();
     for (name, pane) in [("another pane", Some("%5")), ("outside tmux", None)] {
         let out = session_compaction(&world, &copilot_env(&world, pane, &account));
