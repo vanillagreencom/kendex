@@ -73,7 +73,7 @@ while IFS='|' read -r name pattern replacement; do
   sk_assert_red "$PROBE_RC" 0 "$name: removing the reader rule fails the same probe"
 done <<'ROWS'
 cache|previous["stamp"] == before|True
-safety|if path.is_symlink() or path.exists() and not (path.is_dir() if directory else path.is_file()):|if False:
+safety|if not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)):|if False:
 stability|if retry or writer() or before != stamp():|if retry or writer():
 deadline|if time.monotonic() >= deadline:|if False:
 pair-lock|fcntl.flock(fd, fcntl.LOCK_EX|None # fcntl.flock(fd, fcntl.LOCK_EX
