@@ -6,6 +6,32 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-11-20
+
+### Added
+
+- A consumer refresh's Consumer settings section now names the setting that replaces a renamed one, such as `AGENT_RUNTIME_ACCOUNT_MAX_PCT` for `ORCH_LANE_MAX_PCT`, beside the row that reports the old name as retired.
+- Refresh and `kendex check` flag saved settings that match a package default. They also flag undeclared keys when verified package templates establish that no installation declares them. Add `# keep-default` after a value to keep an intentional default match without a notice.
+
+### Changed
+
+- Automatic package updates skip a consumer when its lock records rule out every changed package. Shared inputs, incomplete package comparisons and missing or unreadable lock evidence keep delivery. An unreadable dispatch receipt leaves delivery to the daily refresh. A full Refresh kendex run from this release adopts the updated caller. A dispatch with a clear gate can then use one runner job.
+
+  You do: nothing
+- A consumer refresh whose committed settings scan fails now names the file it read, `refresh-error=settings-extraction value=<checkout>/kendex.settings.toml`, instead of the checkout's `.agents/skills/orch` folder.
+
+### Removed
+
+- The consumer refresh no longer checks the controller preference. Its pull request and run summary carry no `## Settings` section for refused or deprecated preference entries, and its run log no longer prints `refresh-settings=orch-absent` or a `preference-deprecated` line. A controller start or succession refuses an invalid entry where the runtime reads it, with `preference-invalid entry=…`. `## Consumer settings` still names retired settings.
+
+### Fixed
+
+- A review-file package that arrives only because another package requires it no longer takes the repository's review files over from an armed bot-instructions. bot-instructions keeps rendering and checking them, so `kendex verify` and the commit offer still catch drift, and `kendex apply` and `kendex refresh` name the pending setup. An add or apply without `--allow-repo-effects` that installs the new package while bot-instructions stays in charge commits nothing and names that setup, in a main checkout, a linked work tree and a fresh repository alike, so a yes to the setup after the commit offer no longer leaves the review files changed after a reported commit. That run names one step, the new package's setup: a linked work tree no longer asks to set bot-instructions up there first, bot-instructions is not named as a second package to set up, and where the add or apply brings both, the setup kendex asks for after the commit offer is the new package's alone. The held offer points to that question only for a package it will ask about, and to the package page for any other. Where the manifest has no `[bot-instructions]` table, the new package renders nothing, so the add or apply commits. A table added to `kendex.toml` but left out of the commit still holds it when the add or apply can set the package up after its commit offer. Set the new package up on its package page, or add the requiring package, or apply a hand-written declaration of it, with `--allow-repo-effects`, to move the files to it. That add or apply runs the setup once, before its commit offer, so its commit carries the new package's files, and the offer still sets up any other package it brings that holds the commit. Where it brings bot-instructions too, only the new package is set up, and a setup that fails is not run again at the commit offer.
+- Accept the safety finding on the launch flag table of the agent-runtime skill's runtime, which emits `--dangerously-skip-permissions` only for a caller's bypass permission intent.
+- A skill that ships a crate built in place is read and rendered without the build tool's output: a directory holding a `CACHEDIR.TAG` with the Cache Directory Tagging Specification's signature, such as Cargo's `target/`, is left out at every depth of a skill, so a large binary there no longer makes the skill unreadable, and a `build/` or `target/` an author wrote by hand stays content.
+- The `dependencies.commands` floor check runs a command at the path it was found on PATH instead of resolving its symlink first, so a toolchain proxy such as rustup's `cargo` reports the proxied tool's version and `kendex check` no longer warns that `cargo` is below its floor on a rustup install.
+- The safety score reads a Rust file's comments, its `#[cfg(test)]` code and the Rust files under a package's test directory as naming a switch, not using it, and so reads the operands a shell test compares with `[`, `[[` or `test`, so a test's data or a doc comment no longer counts as turning permission prompts off; a string literal in shipped Rust code still does.
+
 ## [1.22.2] - 2026-11-18
 
 ### Changed
@@ -3120,7 +3146,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.22.2..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.23.0..HEAD
+[1.23.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.23.0
 [1.22.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.2
 [1.22.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.1
 [1.22.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.0

@@ -1,1 +1,0 @@
-- A consumer refresh's Consumer settings section now names the setting that replaces a renamed one, such as `AGENT_RUNTIME_ACCOUNT_MAX_PCT` for `ORCH_LANE_MAX_PCT`, beside the row that reports the old name as retired.
