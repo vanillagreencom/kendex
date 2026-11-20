@@ -263,8 +263,10 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     // The second hold, the brief, typed while the predecessor still runs:
     // released, the job confirms the turn, retires the predecessor, whose
     // exit closes the pane the op asked from, and publishes from beyond it.
+    // Its three waits before the stop are each bounded by the verify bound,
+    // so the row waits the settle bound, not a shorter one.
     release_hold(&fifo, secs(30), evidence);
-    wait_until("the predecessor stopped", secs(20), || !live(pid));
+    wait_until("the predecessor stopped", SETTLE, || !live(pid));
     wait_until("the predecessor's pane closed", secs(10), || {
         !server.panes().contains(&pane)
     });
@@ -3095,7 +3097,9 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
     );
     // The job retires the predecessor: the stub ends and its exit closes
     // the pane the op asked from; the job outlives both and records `off`.
-    wait_until("the predecessor stopped", secs(20), || !live(pid));
+    // The job's own waits before the stop are each bounded by the verify
+    // bound, so the row waits the settle bound, not a shorter one.
+    wait_until("the predecessor stopped", SETTLE, || !live(pid));
     wait_until("the predecessor's pane closed", secs(10), || {
         !server.panes().contains(&pane)
     });
