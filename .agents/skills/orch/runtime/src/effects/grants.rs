@@ -76,10 +76,11 @@ pub(crate) fn folder(mail_root: &Path, item: &str) -> PathBuf {
 pub(super) struct Granted {
     pub grants: Grants,
     pub answer: Answer,
-    /// The empty settings files and hook registrations a read-only
-    /// carve-out needs where the seat holds none: bwrap refuses a carve-out
-    /// whose file is absent, and a seat left writable there lets the lane
-    /// write settings or hooks that run in the operator's next session.
+    /// The empty settings files, hook registrations and per-worktree git
+    /// configuration a read-only carve-out needs where none stands: bwrap
+    /// refuses a carve-out whose file is absent, and a folder left writable
+    /// there lets the lane write settings, hooks or git configuration that
+    /// run in the operator's next session.
     missing: Vec<(PathBuf, &'static str)>,
     usage: Option<PathBuf>,
     /// The item's own folder of the state directory, made before the window
@@ -122,14 +123,20 @@ enum AbsentForm {
     Folder,
 }
 
-/// The empty form of an absent code entry of a `harness` seat: Codex's hook
-/// registration holding no hook, as kendex's hook writer serializes one
-/// (`crates/core/src/configedit/mod.rs` `ConfigEdit::apply`), and Codex's
-/// command rules folder holding no rule. `None` for an entry left absent.
+/// A hook registration holding no hook, as kendex's hook writer serializes
+/// one (`crates/core/src/configedit/mod.rs` `ConfigEdit::apply`).
+const EMPTY_HOOKS: &str = "{\n  \"hooks\": {}\n}\n";
+
+/// The empty form of an absent code entry of a `harness` seat: Codex's and
+/// the pi-hooks carrier's hook registrations holding no hook, Codex's
+/// command rules folder holding no rule and the carrier's hook scripts
+/// folder holding no script. `None` for an entry left absent.
 fn absent_form(harness: Harness, entry: &str) -> Option<AbsentForm> {
     match (harness, entry) {
-        (Harness::Codex, "hooks.json") => Some(AbsentForm::File("{\n  \"hooks\": {}\n}\n")),
-        (Harness::Codex, "rules") => Some(AbsentForm::Folder),
+        (Harness::Codex, "hooks.json") | (Harness::Pi, "kendex/hooks.json") => {
+            Some(AbsentForm::File(EMPTY_HOOKS))
+        }
+        (Harness::Codex, "rules") | (Harness::Pi, "kendex/hooks") => Some(AbsentForm::Folder),
         _ => None,
     }
 }
@@ -194,6 +201,43 @@ fn read_only_bind(path: PathBuf) -> Result<PathBuf> {
     }
 }
 
+/// Bind `folder`, which holds a read-only entry below a writable seat's top
+/// level, writable in place: the kernel renames no mount point, so the lane
+/// cannot move the folder off its entry and plant a new one at its path.
+/// One absent is made before the window. A link refuses `grant-link-unheld`
+/// naming it, since a link can be renamed whatever its target, and a folder
+/// that cannot be read `grant-seats-unread`.
+fn hold_folder(
+    folder: PathBuf,
+    writable: &mut Vec<PathBuf>,
+    made: &mut Vec<PathBuf>,
+) -> Result<()> {
+    if writable.contains(&folder) {
+        return Ok(());
+    }
+    match std::fs::symlink_metadata(&folder) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(refused(
+                "grant-link-unheld",
+                &[("path", &folder.display().to_string())],
+            ));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => made.push(folder.clone()),
+        Err(e) => {
+            return Err(refused(
+                "grant-seats-unread",
+                &[
+                    ("path", &folder.display().to_string()),
+                    ("cause", &e.to_string()),
+                ],
+            ));
+        }
+    }
+    writable.push(folder);
+    Ok(())
+}
+
 /// Where a read-only seat's session folder binds writable: a link binds the
 /// folder it leads to, at that folder's own path, since bwrap mounts on no
 /// link; one absent is made before the window. A link whose target does
@@ -224,8 +268,9 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 
 /// The grants of a local launch of `item` on `harness` from `mail_root`
 /// under `homes`: writable its checkout (the root, and the common git
-/// folder of a linked worktree with its hooks, its configuration and the
-/// launch records every lane's hook resolves read-only), the item's own
+/// folder of a linked worktree with its hooks, its configuration, the main
+/// checkout's per-worktree configuration and the launch records every
+/// lane's hook resolves read-only), the item's own
 /// folder of the state directory, whose other entries stay read-only, and
 /// the room pick's usage records; in the seats its own launch runs under and
 /// every configured account of a harness its second opinion can run on,
@@ -273,6 +318,7 @@ pub(super) fn of(
     let mut writable = vec![root.clone()];
     let mut read_only = Vec::new();
     let mut kept = Vec::new();
+    let mut missing = Vec::new();
     if let Some(common) = resolved(&checkout.common) {
         if !common.starts_with(&root) {
             writable.push(common.clone());
@@ -282,6 +328,16 @@ pub(super) fn of(
                 read_only.push(common.join(name));
             }
         }
+        // The main checkout's per-worktree configuration, which git reads
+        // there under `extensions.worktreeConfig` (the worktree package
+        // sets it): a `core.fsmonitor` planted in it runs at the operator's
+        // next `git status` in that checkout. An empty one is written where
+        // none stands, so the lane cannot make one.
+        let worktree_config = common.join("config.worktree");
+        if std::fs::symlink_metadata(&worktree_config).is_err() {
+            missing.push((worktree_config.clone(), ""));
+        }
+        read_only.push(worktree_config);
         // The launcher alone writes these: a marker names the root another
         // lane's hook resolves.
         for name in ["lane-mail", "lane-launch"] {
@@ -329,7 +385,6 @@ pub(super) fn of(
             seats.push((dir, kind));
         }
     }
-    let mut missing = Vec::new();
     let mut seat_paths: Vec<PathBuf> = Vec::new();
     for (seat, kind) in seats {
         if seat_paths.contains(&seat) {
@@ -361,6 +416,12 @@ pub(super) fn of(
                 // the host, and Pi stops at start over an empty `hooks/`.
                 // The lane can make any other that is absent.
                 for entry in code {
+                    if let Some(folder) = Path::new(entry)
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                    {
+                        hold_folder(seat.join(folder), &mut writable, &mut kept)?;
+                    }
                     let path = seat.join(entry);
                     if std::fs::symlink_metadata(&path).is_ok() {
                         read_only.push(path);
@@ -729,7 +790,8 @@ impl Granted {
 
     /// Write what the grants stand on before the window: the usage folder,
     /// the item's own folder, the read-only folders, each absent settings
-    /// file and hook registration in its empty form, the lane's own runtime cache, and the token
+    /// file, hook registration and per-worktree git configuration in its
+    /// empty form, the lane's own runtime cache, and the token
     /// at mode 0600 in the lane's private folder, which the marker made.
     #[allow(
         clippy::disallowed_methods,

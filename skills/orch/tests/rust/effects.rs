@@ -11334,6 +11334,107 @@ fn a_pi_lane_leaves_the_pi_root_s_absent_code_folders_absent_and_starts() {
     }
 }
 
+/// A Pi lane is refused the global hooks the pi-hooks carrier runs in the
+/// operator's next Pi session, under the Pi root's `kendex/`: the scripts
+/// folder where it stands, and the registration where it was absent, whose
+/// empty form the launch writes. The lane cannot rename `kendex/` away from
+/// them to plant a new one, and writes its session state beside them.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_pi_lane_is_refused_the_kendex_hooks_of_its_root_and_writes_its_session_state_beside_them() {
+    let mut world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let root = outside.join("pi-root");
+    pi_root_ready(&root);
+    let kendex = root.join("kendex");
+    std::fs::create_dir_all(kendex.join("hooks")).unwrap();
+    let operators_script = "#!/bin/sh\nexit 0\n";
+    std::fs::write(kendex.join("hooks/guard.sh"), operators_script).unwrap();
+    let seat = outside.join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let bin = outside.join("pi-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    write_executable(
+        &bin.join("pi"),
+        "#!/bin/bash\nprintf '%s\\n' '────────────────────────────────' '────────────────────────────────' '~/work (main)' '0.4%/1.0M'\nwhile IFS= read -r _line; do :; done\n",
+    );
+    let probe_pi = world.runner.state_dir().join("probe-pi").join("pi");
+    std::fs::create_dir_all(probe_pi.parent().unwrap()).unwrap();
+    write_executable(&probe_pi, probe_script(&bin.join("pi")));
+    world.runner.env.extend([
+        (
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!("pi={}", probe_pi.display()),
+        ),
+        ("PI_CODING_AGENT_DIR".to_owned(), root.display().to_string()),
+    ]);
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "(printf x > '{k}/hooks.json') 2>/dev/null && echo registry=planted || echo registry=refused\n(printf x > '{k}/hooks/guard.sh') 2>/dev/null && echo script=planted || echo script=refused\nmv '{k}' '{k}.moved' 2>/dev/null && echo kendex=moved || echo kendex=held\n{{ mkdir -p '{k}/sessions/s1' && printf x > '{k}/sessions/s1/state.json'; }} 2>/dev/null && echo sessions=written || echo sessions=refused",
+            k = kendex.display()
+        ),
+    );
+    let mut request = launch_request("KEN-PK", world.runner.state_dir());
+    request["harness"] = json!("pi");
+    request["model"] = json!("pi-claude/fable");
+    request["account"] = json!(seat.display().to_string());
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert!(
+        matches!(
+            report["intent"]["outcome"].as_str(),
+            Some("confirmed" | "unconfirmed")
+        ),
+        "{report}"
+    );
+    let probe = world.probe("KEN-PK", 1);
+    for line in [
+        "registry=refused",
+        "script=refused",
+        "kendex=held",
+        "sessions=written",
+    ] {
+        assert!(probe.contains(line), "{line}: {probe}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(kendex.join("hooks.json")).unwrap(),
+        "{\n  \"hooks\": {}\n}\n",
+        "the absent registration stands in its empty form"
+    );
+    assert_eq!(
+        std::fs::read_to_string(kendex.join("hooks/guard.sh")).unwrap(),
+        operators_script
+    );
+}
+
+/// A lane in a linked worktree is refused the main checkout's per-worktree
+/// git configuration, which git reads there under `extensions.worktreeConfig`
+/// and whose `core.fsmonitor` runs at the operator's next `git status`: the
+/// launch writes it empty where none stood, and the lane cannot write it.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_is_refused_the_main_checkout_s_per_worktree_git_configuration() {
+    let world = Confined::new();
+    let state = world.runner.state_dir().to_path_buf();
+    let wt = world.linked_worktree("ken-w");
+    let config = state.join(".git/config.worktree");
+    assert!(
+        std::fs::symlink_metadata(&config).is_err(),
+        "no per-worktree configuration stands before the launch"
+    );
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "(printf '[core]\\n\\tfsmonitor = planted\\n' >> '{c}') 2>/dev/null && echo worktree-config=planted || echo worktree-config=refused",
+            c = config.display()
+        ),
+    );
+    world.launch(&launch_request("KEN-W", &wt));
+    let probe = world.probe_in(&wt, "KEN-W", 1);
+    assert!(probe.contains("worktree-config=refused"), "{probe}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
+}
+
 /// A Pi lane starts past Pi's "Trust project folder?", which Pi asks before
 /// its composer unless its line carries `--approve` or its root's
 /// `trust.json` trusts the folder, with nobody at the pane to answer.

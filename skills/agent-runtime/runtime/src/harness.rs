@@ -42,7 +42,10 @@ pub enum HomeWrites {
     Folders(&'static [&'static str]),
     /// The harness cannot start in a read-only home, so the home is bound
     /// writable, and these entries it loads code from stay read-only where
-    /// they stand: a bind over an absent one would make it in the home.
+    /// they stand: a bind over an absent one would make it in the home. An
+    /// entry is a path under the home; one below its top level needs its
+    /// folder bound in place too, since the kernel moves no mount point and
+    /// a folder that is none can be renamed away from its read-only entry.
     Whole(&'static [&'static str]),
 }
 
@@ -133,8 +136,17 @@ impl Harness {
             // the read-only `config.toml` enables it.
             Harness::Codex => HomeWrites::Whole(&["hooks.json", "hooks", "AGENTS.md", "rules"]),
             // Pi takes a lock folder beside its top-level files as it starts
-            // (`trust.json.lock`), and stops where it cannot.
-            Harness::Pi => HomeWrites::Whole(&["extensions", "hooks", "packages"]),
+            // (`trust.json.lock`), and stops where it cannot. The pi-hooks
+            // carrier runs the global hooks `kendex/hooks.json` registers,
+            // from `kendex/hooks/`; kendex's other packages write their
+            // session state beside them under `kendex/`.
+            Harness::Pi => HomeWrites::Whole(&[
+                "extensions",
+                "hooks",
+                "packages",
+                "kendex/hooks.json",
+                "kendex/hooks",
+            ]),
         }
     }
 
