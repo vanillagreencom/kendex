@@ -1884,11 +1884,13 @@ jobs:
     # diff-scoped, against the merge group's base, which is the tree the
     # change lands on; its findings (fail-open bash, dead doc citations,
     # broken JSON/TOML) are the classes that otherwise surface as bot-review
-    # round-trips. CI requires it on every merge group.
+    # round-trips. CI requires it on every merge group. Its time follows the
+    # diff's size, and a diff that rewrites a whole package takes about four
+    # minutes, so the ceiling leaves room above that.
     name: Preflight (diff-scoped deterministic checks)
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

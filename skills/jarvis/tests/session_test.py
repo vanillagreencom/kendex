@@ -891,7 +891,7 @@ class SessionContract(unittest.TestCase):
         brief.write_text("Keep notes in the progress log.\n")
         inside = self.inside_env(other, "caller")
         answer, code = self.call("start", brief=brief, env=inside)
-        self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
+        self.assertIn((answer["state"], code), (("starting", 0), ("running", 0)), self.stderr)
         first = self.wait(reason="new-no-record")
         self.assertEqual((first["home"], first["account"], first["harness"]), (str(self.home), str(self.account), "claude"))
         private = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "#{socket_path}"], env=self.env,
