@@ -350,7 +350,7 @@ def home_check(home, handoff):
                         target = (path if path.startswith("state/") else
                                   os.path.relpath(archive_dir(handoff) / path.removeprefix("archive/"), home))
                         if not tracked_archive(home, target, tracked):
-                            failures.append((name, number, "predecessor-archive", "workflows/session.md:102"))
+                            failures.append((name, number, "predecessor-archive", "workflows/session.md#handoff-replacement"))
             try:
                 entries = state_entries(lines)
             except LookupError:
@@ -372,7 +372,7 @@ def home_check(home, handoff):
                 durable = state_ids(opening)
                 key = named if named is not None else next(iter(tokens + durable[0] + durable[1]), None)
                 if key is not None and key in seen:
-                    failures.append((name, number, "state-entry-ambiguous", "references/long-session.md:87"))
+                    failures.append((name, number, "state-entry-ambiguous", "references/long-session.md#progress-records"))
                 seen.add(key)
                 # change_state writes the named key followed by a colon delimiter.
                 session_text = opening if named is None else named + " " + rest
