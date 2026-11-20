@@ -208,11 +208,14 @@ check_app_archive() {
   answers "$archive" "$dir/kendex.app/Contents/MacOS/kendex"
 }
 
+readonly HDIUTIL_ATTEMPTS=3
+readonly HDIUTIL_PAUSE_SECONDS=2
+
 # hdiutil info's documented plist interface identifies unmounted devices too.
 # Match only this check's image: the runner also holds macOS system images.
 # Python's standard plist parser avoids parsing the human-readable listing.
 detach_image() { # DMG — release every attachment of this image
-  local dmg=$1 device
+  local dmg=$1 device attempt
   hdiutil info -plist >"$TMP/images.plist" || return 1
   python3 - "$dmg" "$TMP/images.plist" >"$TMP/devices" <<'PY' || return 1
 import os
@@ -230,7 +233,14 @@ for image in images:
         print(devices[0])
 PY
   while IFS= read -r device; do
-    hdiutil detach -force "$device" >/dev/null || return 1
+    # A runner can hold a device briefly after reading the image. Give it
+    # the same retry window as attach and report only the final refusal.
+    for ((attempt = 1; attempt <= HDIUTIL_ATTEMPTS; attempt++)); do
+      hdiutil detach -force "$device" >/dev/null 2>"$TMP/detach" && continue 2
+      [ "$attempt" -eq "$HDIUTIL_ATTEMPTS" ] || sleep "$HDIUTIL_PAUSE_SECONDS"
+    done
+    cat "$TMP/detach" >&2
+    return 1
   done <"$TMP/devices"
 }
 
@@ -240,7 +250,7 @@ PY
 # seconds, and the refusal carries hdiutil's own words from the last one.
 attach() { # DMG MOUNT — mounted read-only at MOUNT, or the extract refusal
   local dmg=$1 mount=$2 attempt
-  for attempt in 1 2 3; do
+  for ((attempt = 1; attempt <= HDIUTIL_ATTEMPTS; attempt++)); do
     hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null 2>"$TMP/attach" &&
       return 0
     # A failed attach can still own devices. Release them before another
@@ -248,7 +258,7 @@ attach() { # DMG MOUNT — mounted read-only at MOUNT, or the extract refusal
     detach_image "$dmg" || die detach "$dmg"
     # A pause, so a refusal that lasts while the runner holds the image
     # has time to clear before the next attempt.
-    [ "$attempt" -eq 3 ] || sleep 2
+    [ "$attempt" -eq "$HDIUTIL_ATTEMPTS" ] || sleep "$HDIUTIL_PAUSE_SECONDS"
   done
   die extract "$dmg" "$(tr '\n' ' ' <"$TMP/attach")"
 }
