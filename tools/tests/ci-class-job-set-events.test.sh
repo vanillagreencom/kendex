@@ -75,6 +75,30 @@ ROWS
 check "this tree's selection passes the --event-parity call unchanged" \
   "$(selection micro false skills/orch/scripts/resolve-base-branch)" \
   "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/resolve-base-branch)"
+# That call says on stderr each step it starts, in order, with the reach's
+# own progress forwarded inside the reach step.
+progress_steps() { # STDERR_FILE — the steps and the reach's end, `|`-joined
+  sed -n 's/^ci-job-set: progress=\([a-z]*\) at=\([0-9]*\/[0-9]*\) elapsed=[0-9]*s\(.*\)$/\1 \2\3/p; s/^guard-progress: phase=done at=.*/guard done/p' \
+    "$1" | paste -sd '|' -
+}
+PROGRESS_STEPS="reach 1/4|guard done|select 2/4 event=pull_request|select 3/4 event=merge_group|emit 4/4"
+check "the --event-parity call reports each step in order, the reach's progress inside the reach" \
+  "$PROGRESS_STEPS" "$(progress_steps "$TMP/selection-err")"
+# Control: a copy that drops the reach's progress lines breaks the row.
+mkdir -p "$TMP/progress/tools"
+cp -R "$ROOT/tools/lib" "$TMP/progress/tools/lib"
+cp "$ROOT/tools/guard" "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" \
+  "$TMP/progress/tools/"
+ln -s "$ROOT/skills" "$TMP/progress/skills"
+sed "/^      'guard-progress: '\*) printf /d" "$JOB_SET" >"$TMP/progress/tools/ci-job-set"
+chmod +x "$TMP/progress/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/progress/tools/ci-job-set" || exit 1
+SELECT_WITH="$TMP/progress/tools/ci-job-set" SELECT_ARG=--event-parity selection micro false \
+  skills/orch/scripts/resolve-base-branch >/dev/null
+[ "$(progress_steps "$TMP/selection-err")" != "$PROGRESS_STEPS" ] &&
+  grep -q '^ci-job-set: progress=emit ' "$TMP/selection-err" &&
+  ok "control: a copy that drops the reach's progress breaks the progress row" ||
+  bad "control: a copy that drops the reach's progress breaks the progress row"
 
 # An Ubuntu lane that differs by event is refused too.
 sed 's/^  row="\$class"$/  row="$class"; linux_integration=true; [ "$event" != merge_group ] || linux_integration=false/; s/cargo_linux=true/cargo_linux=$linux_integration/g' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"

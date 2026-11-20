@@ -98,6 +98,20 @@ unrun() { # KEY VALUE: report the host cause without a code finding
 count_lines() { # TEXT — the non-empty lines in TEXT, a scan finding's value
   printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }'
 }
+# --suite-reach says where it is on stderr, at each phase and at least every
+# 30 seconds inside one, so the CI step that waits on it shows what it is
+# doing: `guard-progress: phase=<name> at=<done>/<total> elapsed=<s>s`, with
+# ` tree=<dir>` inside a tree. tools/ci-job-set forwards these lines as they
+# come.
+progress_at=0
+reach_progress() { # PHASE DONE TOTAL [TREE]
+  [ "$MODE" = suite-reach ] || return 0
+  progress_at=$SECONDS
+  printf 'guard-progress: phase=%s at=%s/%s elapsed=%ss%s\n' "$1" "$2" "$3" "$SECONDS" "${4:+ tree=$4}" >&2
+}
+reach_tick() { # PHASE DONE TOTAL [TREE] — reach_progress, 30 seconds after the last line
+  [ $((SECONDS - progress_at)) -lt 30 ] || reach_progress "$@"
+}
 finding_text() { # KEY VALUE — the English for one key, and the whole of it
   case "$1" in
     no-verdict)
@@ -2721,8 +2735,13 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       done <<<"$example_read"
     done <<<"$touched"
   fi
+  plan_total=$(count_lines "$touched")
+  plan_done=0
+  reach_progress plan 0 "$plan_total"
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    plan_done=$((plan_done + 1))
+    reach_tick plan "$plan_done" "$plan_total"
     # Suites construct their own install records; revisions are no suite input.
     [ "$f" != .kendex-lock.json ] || continue
     case "$f" in
@@ -2777,7 +2796,12 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   done <<<"$touched"
   # Publish only a complete plan. Pi launch probes and tests execute below,
   # after every later battery is available to cancellation reporting.
-  for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
+  reach_trees=$(cut -f1 <<<"$tree_paths" | sort -u)
+  trees_total=$(count_lines "$reach_trees")
+  trees_done=0
+  for d in $reach_trees; do
+    trees_done=$((trees_done + 1))
+    reach_progress trees "$trees_done" "$trees_total" "$d"
     suite_script=""
     if [ -n "$release_version" ]; then
       case "$d" in pi-extensions/*) continue ;; esac
@@ -2859,11 +2883,16 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           tree_ci=""
+          # The tree's own rows, in plan order, so no pass over them reads
+          # another tree's.
+          tree_rows=$(awk -F '\t' -v d="$d" '$1 == d' <<<"$tree_paths") || { say scan "$d"; continue; }
+          rows_total=$(count_lines "$tree_rows")
           # scan_load counts this tree's rows the same way.
           tree_row=-1
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
             tree_row=$((tree_row + 1))
+            reach_tick tree "$((tree_row + 1))" "$rows_total" "$d"
             if [ "$scoped_only" -eq 1 ]; then
               # mapped_suites' header states this set and why.
               if skill_markdown "$f" || [ "$f:$inventory_markdown_only" = .kendex-generated.json:1 ]; then
@@ -2892,7 +2921,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
             esac
             run="$run$sel
 "
-          done <<<"$tree_paths"
+          done <<<"$tree_rows"
           [ "$run" = all ] || run=$(sort -u <<<"$run") || run=all
         fi
         if [ "$run" = all ]; then
@@ -3050,6 +3079,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   fi
 fi
 if [ "$MODE" = suite-reach ]; then
+  reach_progress done "${trees_done:-0}" "${trees_total:-0}"
   {
     printf '%s' "$preview_suites" | LC_ALL=C sort -u | sed '/^$/d'
     printf '%s' "$REACH_TARGETS" | LC_ALL=C sort -u | sed '/^$/d; s/^/target /'

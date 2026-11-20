@@ -869,6 +869,33 @@ suite_reach "$GUARD" skills/reachdemo/scripts/tool
 $REACHDEMO/tool.test.sh" ] && [[ $REACH_ERR == *"guard-note: suites=2/3 reason=mapped tree=skills/reachdemo"* ]] \
   && ok "--suite-reach: a script selects its named suite and the suite whose note names its directory" \
   || bad "--suite-reach: a script selects its named suite and the suite whose note names its directory" "rc=$RC reach=$REACH err=$REACH_ERR"
+# The progress lines on stderr: the plan over PATHS paths first, then each
+# tree in turn, then the end. Prints `ordered`, or the first line out of it.
+progress_order() { # STDERR PATHS
+  awk -v paths="$2" '
+    !/^guard-progress: / { next }
+    { line = $0; sub(/ elapsed=[0-9]+s/, "") }
+    line !~ / elapsed=[0-9]+s/ || !/^guard-progress: phase=[a-z]+ at=[0-9]+\/[0-9]+( tree=[^ ]+)?$/ { print "shape: " line; bad = 1; exit }
+    { split($3, at, /[=\/]/) }
+    n++ == 0 { if ($2 != "phase=plan" || at[2] != 0 || at[3] != paths) { print "first: " line; bad = 1; exit } next }
+    $2 == "phase=trees" { if (ended || at[2] != ++trees || (total != "" && at[3] != total)) { print "trees: " line; bad = 1; exit } total = at[3]; next }
+    $2 == "phase=done" { if (at[2] != trees || at[3] != trees || trees != total) { print "done: " line; bad = 1; exit } ended = 1; next }
+    $2 == "phase=plan" || $2 == "phase=tree" { next }
+    { print "phase: " line; bad = 1; exit }
+    END { if (!bad) print (ended && trees > 0 ? "ordered" : "unfinished") }
+  ' <<<"$1"
+}
+[ "$(progress_order "$REACH_ERR" 1)" = ordered ] \
+  && ok "--suite-reach: stderr reports the plan, each tree in turn and the end" \
+  || bad "--suite-reach: stderr reports the plan, each tree in turn and the end" "$(progress_order "$REACH_ERR" 1) err=$REACH_ERR"
+if mutant_guard '/^    reach_progress trees /d'; then
+  suite_reach "$MUTANT_TOOLS/guard" skills/reachdemo/scripts/tool
+  [ "$(progress_order "$REACH_ERR" 1)" != ordered ] \
+    && ok "control: a reach that does not report each tree breaks the progress row" \
+    || bad "control: a reach that does not report each tree breaks the progress row" "err=$REACH_ERR"
+else
+  bad "control drops the per-tree progress line"
+fi
 suite_reach "$GUARD" skills/reachdemo/tests/fixtures/data
 [ "$RC" -eq 0 ] && [ "$REACH" = "$REACHDEMO/noted.test.sh
 $REACHDEMO/other.test.sh

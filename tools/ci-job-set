@@ -667,16 +667,26 @@ fi
 # Pi-package trees, one per line, and REACH_TARGETS its Rust targets as a
 # JSON list. REACH_READ stays false where the query failed: the selection
 # then runs every shard, suite and target. The query's notes that a tree ran
-# whole, and its findings, are forwarded on stderr.
+# whole, and its findings, are forwarded on stderr as reach-note lines, and
+# its progress lines as they are, each as it arrives.
 REACH_READ=false
 REACH_SUITES=""
 REACH_TARGETS='[]'
+reach_notes() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      'guard: '* | 'guard-note: suites=all '*) printf 'ci-job-set: reach-note: %s\n' "$line" >&2 ;;
+      'guard-progress: '*) printf '%s\n' "$line" >&2 ;;
+    esac
+  done
+}
 reach_read() {
-  local out err status=0 list="" target
-  err="$(mktemp)" || { printf 'ci-job-set: reach=unread cause=mktemp\n' >&2; return 0; }
-  out="$(printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach 2>"$err")" || status=$?
-  sed -n 's/^\(guard: .*\|guard-note: suites=all .*\)$/ci-job-set: reach-note: \1/p' "$err" >&2 || true
-  rm -f -- "$err"
+  local out status=0 list="" target
+  # The query's answer reaches the substitution on fd 3; its stderr streams
+  # through reach_notes.
+  out="$( { printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach 2>&1 >&3 3>&- | reach_notes 3>&-; } 3>&1)" ||
+    status=$?
   if [ "$status" -ne 0 ]; then
     printf 'ci-job-set: reach=unread status=%s\n' "$status" >&2
     return 0
@@ -968,11 +978,34 @@ if [ "${EVENT:-}" = push ]; then
   exit 0
 fi
 
+# The class route says on stderr which step it starts, so the CI step that
+# waits on it shows what it is doing: `ci-job-set: progress=<step>
+# at=<n>/<steps> elapsed=<s>s`, with ` event=<event>` for a selection. The
+# reach's own guard-progress lines come between.
+reach_steps=0
+case "$CHANGE_CLASS:$paths" in
+  micro:?* | small:?* | standard:?* | trivial:?*) reach_steps=1 ;;
+esac
+progress_steps=$((reach_steps + 2))
+if [ "$parity" = true ]; then
+  for event in $EVENTS; do
+    [ "$event" = "${EVENT:-}" ] || progress_steps=$((progress_steps + 1))
+  done
+fi
+progress_step=0
+progress() { # STEP [DETAIL]
+  progress_step=$((progress_step + 1))
+  printf 'ci-job-set: progress=%s at=%s/%s elapsed=%ss%s\n' "$1" "$progress_step" "$progress_steps" "$SECONDS" \
+    "${2:+ $2}" >&2
+}
+
 # The reach, read once for every event's selection, and for a class whose
 # row can run a shard: render and trivial run none.
-case "$CHANGE_CLASS:$paths" in
-  micro:?* | small:?* | standard:?* | trivial:?*) reach_read ;;
-esac
+if [ "$reach_steps" -eq 1 ]; then
+  progress reach
+  reach_read
+fi
+progress select "event=${EVENT:-}"
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
 
 # Event parity: pull requests and merge groups receive equal lane, shard and
@@ -984,12 +1017,14 @@ now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
 if [ "$parity" = true ]; then
   for event in $EVENTS; do
     [ "$event" != "$EVENT" ] || continue
+    progress select "event=$event"
     other="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$event")" || exit 2
     [ "$other" = "$now" ] || die "event-parity event=$event" \
       "$EVENT selects '$now' and $event selects '$other' for the same class, docs verdict and paths"
   done
 fi
 
+progress emit
 now_shards="$(sel_get "$now" shards)"
 # A plain assignment, so a row that omits the bit ends the step here: read
 # inside a test, the refusal would end only the substitution.
