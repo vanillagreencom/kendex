@@ -56,6 +56,8 @@ REQUEST = "C0123ABC:1793515695.587049"
 OUTCOME = "Check the vendor receipt"
 ACTION = "Jarvis reads the vendor's [receipt](https://example.org/receipt)."
 COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04248"
+OTHER_REQUEST = "C0123ABC:1793515695.587050"
+OTHER_COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04249"
 NAMED_READ = [("issues", "get"), ("comments", "list")]
 NAMED_CREATE = NAMED_READ + [("comments", "create")]
 NAMED_READBACK = NAMED_CREATE + [("comments", "list")]
@@ -213,12 +215,12 @@ class ProgressLog(MailWorld):
     def action_calls(self, full=False):
         return [tuple(call if full else call[:2]) for call in map(json.loads, self.action_trace.read_text().splitlines())]
 
-    def assert_action(self, item, action, state_change):
+    def assert_action(self, item, action, state_change, comment=COMMENT):
         row, = json.loads(self.action_store.read_text())["comments"][item]
-        self.assertEqual(row, {"id": COMMENT, "body": "Jarvis next action: " + action + "\n"})
+        self.assertEqual(row, {"id": comment, "body": "Jarvis next action: " + action + "\n"})
         saved = records(self.handoff.read_text())[-1]
         self.assertEqual(saved["State change"], state_change)
-        self.assertIn(item + " comment=" + COMMENT, saved["Observed result and source"])
+        self.assertIn(item + " comment=" + comment, saved["Observed result and source"])
 
     def test_next_action_named(self):
         for key in ("KEN-1", "KEN-1:", "`KEN-1`", "`" + REQUEST + ":`"):
@@ -244,7 +246,7 @@ class ProgressLog(MailWorld):
         self.action_world(issues={
             "KEN-1": self.issue(description="Jarvis request source: " + REQUEST + "\n\n"
                                             "Jarvis requested outcome: Send the invoice"),
-            "KEN-3": self.issue("KEN-3", description="Jarvis request source: C0123ABC:1793515695.587050\n\n"
+            "KEN-3": self.issue("KEN-3", description="Jarvis request source: " + OTHER_REQUEST + "\n\n"
                                                      "Jarvis requested outcome: " + OUTCOME),
         })
         first = self.next_action(discover=True, state_key=REQUEST)
@@ -266,6 +268,9 @@ class ProgressLog(MailWorld):
             (self.issue(title="Vendor follow-up", description=source), [{"id": "legacy", "body": "Outcome: " + OUTCOME}]),
             (self.issue(), [{"id": "legacy", "body": source}]),
             (self.issue(title="Vendor follow-up"), [{"id": "legacy", "body": source + "\nOutcome: " + OUTCOME}]),
+            (self.issue(title="Vendor follow-up", description="Original request: `" + OTHER_REQUEST +
+                                                              "`\nOutcome: Send the invoice"),
+             [{"id": "legacy", "body": source + "\nOutcome: " + OUTCOME}]),
         )
         for issue, comments in matches:
             with self.subTest(issue=issue, comments=comments):
@@ -281,6 +286,24 @@ class ProgressLog(MailWorld):
                 self.assertEqual(bulk[2:], ("--stdin", "--format=safe", "KEN-1", "KEN-3"))
                 self.assertEqual(json.loads(self.action_store.read_text())["comments"]["KEN-1"],
                                  comments + [{"id": COMMENT, "body": "Jarvis next action: " + ACTION + "\n"}])
+
+    def test_next_action_reference_does_not_bind_a_different_request(self):
+        self.handoff.write_text(state_handoff("- " + OTHER_REQUEST + ": retry\n- " + REQUEST + ": retry\n"))
+        self.action_world(issues={"KEN-1": self.issue(description="Original request: " + OTHER_REQUEST +
+                                                                  "\nOutcome: " + OUTCOME)})
+        other_action = "Read the reply to " + REQUEST + " before following up on the vendor receipt."
+        first = self.next_action(action=other_action, state_key=OTHER_REQUEST)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assert_action("KEN-1", other_action, "remove State " + OTHER_REQUEST)
+        world = json.loads(self.action_store.read_text())
+        other_comments = world["comments"]["KEN-1"]
+        world["comment"] = OTHER_COMMENT
+        self.action_store.write_text(json.dumps(world))
+
+        second = self.next_action(discover=True, state_key=REQUEST)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(json.loads(self.action_store.read_text())["comments"]["KEN-1"], other_comments)
+        self.assert_action("KEN-2", ACTION, "remove State " + REQUEST, comment=OTHER_COMMENT)
 
     def test_next_action_discovery_refusals(self):
         before = state_handoff("- " + REQUEST + ": retry\n").encode()
@@ -339,7 +362,11 @@ class ProgressLog(MailWorld):
         for issues, comments, discover, local, reason in (
             ({"KEN-1": self.issue(description=marker), "KEN-2": self.issue("KEN-2", description=marker)}, {}, True,
              before, "tracker-item-ambiguous=KEN-1,KEN-2"),
-            ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request " + REQUEST)}, {}, True,
+            ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request: " + REQUEST)}, {}, True,
+             before, "tracker-item-ambiguous=KEN-1"),
+            ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request: " + OTHER_REQUEST)},
+             {"KEN-1": [{"id": "source", "body": "Original request: " + REQUEST},
+                        {"id": "result", "body": "Outcome: " + OUTCOME}]}, True,
              before, "tracker-item-ambiguous=KEN-1"),
             (None, {"KEN-1": [{"id": key, "body": "Jarvis next action: existing\n"} for key in ("first", "second")]},
              False, before, "tracker-comment-ambiguous=KEN-1"),

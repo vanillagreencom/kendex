@@ -87,8 +87,12 @@ LINEAR = PACKAGE.parent / "linear/scripts/linear.sh"
 ACTION_PREFIX = "Jarvis next action: "
 SOURCE_PREFIX = "Jarvis request source: "
 OUTCOME_PREFIX = "Jarvis requested outcome: "
-LEGACY_OUTCOME = re.compile(r"^(?:- )?(?:\*\*)?(?:Requested outcome|Outcome)(?::\*\*|\*\*:|:) (.+)$",
+LEGACY_FIELD = r"^(?:[-*+] )?(?:\*\*)?(?:%s)(?::\*\*|\*\*:|:)[ \t]+(.+)$"
+LEGACY_SOURCE = re.compile(LEGACY_FIELD % r"Jarvis request source|Original request(?: reference)?|Request source|Source",
+                           re.MULTILINE | re.IGNORECASE)
+LEGACY_OUTCOME = re.compile(LEGACY_FIELD % r"Jarvis requested outcome|Requested outcome|Outcome",
                             re.MULTILINE | re.IGNORECASE)
+MARKDOWN_REF = re.compile(r"\[[^]\n]+\]\((\S+)\)|<([^<>\s]+)>|`([^`\s]+)`")
 # The clock stamps every record; a value that opens with a time was typed.
 TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}(?!\d))")
 
@@ -240,6 +244,33 @@ def marked(description, prefix):
     return [line[len(prefix):] for line in description.splitlines() if line.startswith(prefix)]
 
 
+def legacy_source(value):
+    value = value.strip()
+    match = MARKDOWN_REF.fullmatch(value)
+    return next(part for part in match.groups() if part is not None) if match else value
+
+
+def legacy_binding(title, bodies, source, outcome, source_token):
+    """True for an explicit binding, False for another request, None for unresolved evidence."""
+    evidence = [({legacy_source(value) for value in LEGACY_SOURCE.findall(body) if value.strip()},
+                 {value.strip() for value in LEGACY_OUTCOME.findall(body) if value.strip()})
+                for body in bodies if not body.startswith(ACTION_PREFIX)]
+    sources = set().union(*(declared for declared, _ in evidence))
+    if source not in sources:
+        # Text inside a source field can name the request without declaring it
+        # precisely. Prose and next-action comments supply no source evidence.
+        return None if any(source_token.search(value) for value in sources) else False
+    if sources != {source}:
+        # Other declared requests rule out combining sources and outcomes
+        # across records. A single paired outcome can still bind this request.
+        paired = set().union(*(outcomes for declared, outcomes in evidence if declared == {source}))
+        return True if paired == {outcome} else None
+    outcomes = set().union(*(declared for _, declared in evidence))
+    if len(outcomes) == 1:
+        return outcome in outcomes
+    return True if not outcomes and title == outcome else None
+
+
 def project_matches(home, project, source, outcome):
     rows = tracker_rows(linear_json(home, "issues", "list", "--project-id", project, "--include-archived", "--max",
                                     "--format=safe"), "issues list " + project, "id", "title", "description", "project_id")
@@ -261,12 +292,10 @@ def project_matches(home, project, source, outcome):
     retained = legacy_comments(home, legacy)
     for item, (title, description) in legacy.items():
         bodies = [description] + [row["body"] for row in retained[item]]
-        if not any(source_token.search(body) for body in bodies):
-            continue
-        declared = {value for body in bodies for value in LEGACY_OUTCOME.findall(body)}
-        if declared == {outcome} or (not declared and title == outcome):
+        bound = legacy_binding(title, bodies, source, outcome, source_token)
+        if bound is True:
             matches.append(item)
-        elif len(declared) != 1:
+        elif bound is None:
             uncertain.append(item)
     if uncertain or len(matches) > 1:
         raise Refusal("tracker-item-ambiguous", ",".join(matches + uncertain) + " (resolve with --item)")
