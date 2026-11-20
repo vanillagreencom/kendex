@@ -5,7 +5,7 @@
 # skills/jarvis/tests/progress_log_test.py, skills/jarvis/tests/mail_world.py,
 # skills/linear/scripts/lib/common.sh, skills/linear/scripts/lib/formatters.sh,
 # skills/linear/scripts/commands/comments.sh, skills/linear/scripts/commands/issues.sh,
-# skills/linear/scripts/lib/issue-validation.sh.
+# skills/linear/scripts/commands/auth-check.sh, skills/linear/scripts/lib/issue-validation.sh.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 export JARVIS_TEST_BASH="$BASH"

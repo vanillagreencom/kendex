@@ -81,6 +81,7 @@ import watch  # noqa: E402
 FIX = "fix=" + str(PACKAGE / "references/long-session.md") + "#progress-records"
 FIX_HANDOFF = "fix=" + str(PACKAGE / "references/long-session.md") + "#handoff"
 FIX_TASKS = "fix=" + str(PACKAGE / "workflows/tasks.md") + "#5-retain-the-next-action"
+FIX_LINEAR = "fix=" + str(PACKAGE / "workflows/setup-linear.md") + "#steps"
 # The sibling package's own CLI, located as watch.lane_mail locates the mailbox.
 LINEAR = PACKAGE.parent / "linear/scripts/linear.sh"
 ACTION_PREFIX = "Jarvis next action: "
@@ -175,18 +176,31 @@ def append(handoff, values, *, home=None, action=None):
     return identity, stamp
 
 
-def linear_call(home, *args):
+def linear_call(home, *args, data=None):
     operation = " ".join(args[:2])
     try:
-        return watch.checked([LINEAR, *args], home, operation=operation)
+        result = watch.run([LINEAR, *args], home, data, operation)
+        if result.returncode:
+            # auth-check --strict reports a working credential but no write
+            # target on stdout, then exits nonzero without a stderr diagnostic.
+            if args == ("auth-check", "--strict"):
+                try:
+                    receipt = json.loads(result.stdout)
+                except ValueError:
+                    receipt = None
+                if (isinstance(receipt, dict) and receipt.get("ok") is True
+                        and receipt.get("writes_enabled") is False and receipt.get("team_source") == "unset"):
+                    raise Refusal("tracker-team-missing", "LINEAR_TEAM")
+            raise watch.child_failure(operation, result)
+        return result.stdout
     except (watch.Failure, UnicodeError) as error:
         detail = str(error).splitlines()
         raise Refusal("tracker-unavailable", "%s (%s)" % (operation, detail[0] if detail else "unread")) from error
 
 
-def linear_json(home, *args):
+def linear_json(home, *args, data=None):
     try:
-        return json.loads(linear_call(home, *args))
+        return json.loads(linear_call(home, *args, data=data))
     except ValueError as error:
         raise Refusal("tracker-unread", " ".join(args[:2])) from error
 
@@ -212,6 +226,16 @@ def comments(home, item):
                         "id", "body")
 
 
+def legacy_comments(home, items):
+    if not items:
+        return {}
+    rows = linear_json(home, "comments", "bulk-list", "--stdin", "--format=safe",
+                       data="".join(item + "\n" for item in items))
+    if not isinstance(rows, dict) or rows.keys() != items.keys():
+        raise Refusal("tracker-unread", "comments bulk-list")
+    return {item: tracker_rows(rows[item], "comments bulk-list " + item, "id", "body") for item in items}
+
+
 def marked(description, prefix):
     return [line[len(prefix):] for line in description.splitlines() if line.startswith(prefix)]
 
@@ -222,7 +246,7 @@ def project_matches(home, project, source, outcome):
     if any(row["project_id"] != project or state_ids(row["id"])[0] != [row["id"]] for row in rows):
         raise Refusal("tracker-unread", "issues list " + project)
     source_token = re.compile(r"(?<![\w:/.-])" + re.escape(source) + r"(?![\w:/?#&=-]|\.[\w])")
-    matches, uncertain = [], []
+    matches, uncertain, legacy = [], [], {}
     for row in rows:
         item, title, description = row["id"], row["title"], row["description"]
         sources = marked(description, SOURCE_PREFIX)
@@ -230,13 +254,13 @@ def project_matches(home, project, source, outcome):
         if len(sources) == len(outcomes) == 1:
             if sources == [source] and outcomes == [outcome]:
                 matches.append(item)
-            continue
-        # Older bindings keep the request in prose or a filing field. A title
-        # alone never identifies the request, and unknown outcomes block create.
-        legacy_outcomes = LEGACY_OUTCOME.findall(description)
-        if not (source_token.search(description) or title == outcome or outcome in legacy_outcomes):
-            continue
-        bodies = [description] + [row["body"] for row in comments(home, item)]
+        else:
+            legacy[item] = (title, description)
+    # Older items can carry a later source and outcome entirely in comments.
+    # Read every legacy item's comments before treating a binding as absent.
+    retained = legacy_comments(home, legacy)
+    for item, (title, description) in legacy.items():
+        bodies = [description] + [row["body"] for row in retained[item]]
         if not any(source_token.search(body) for body in bodies):
             continue
         declared = {value for body in bodies for value in LEGACY_OUTCOME.findall(body)}
@@ -269,7 +293,7 @@ def resolve_item(home, action):
     )
     # issues create --format=ids emits the confirmed mutation's identifier alone.
     created = linear_call(home, "issues", "create", "--project", project, "--title", outcome, "--description",
-                          description, "--format=ids").rstrip("\n")
+                          description, "--no-agent-label", "--format=ids").rstrip("\n")
     if state_ids(created)[0] != [created]:
         raise Refusal("tracker-item-unconfirmed", project)
     row = read_issue(home, created)
@@ -705,8 +729,10 @@ def main():
             identity, stamp = append(handoff_path(home, args.handoff), values)
     except Refusal as refusal:
         key, detail = refusal.args
-        print("progress-log: %s=%s %s" % (key, detail, FIX_TASKS if key.startswith("tracker-") else FIX),
-              file=sys.stderr)
+        fix = FIX_TASKS if key.startswith("tracker-") else FIX
+        if key == "tracker-team-missing":
+            fix = FIX_LINEAR
+        print("progress-log: %s=%s %s" % (key, detail, fix), file=sys.stderr)
         return 2
     print("progress-log: recorded id=%s at=%s" % (identity, stamp))
     return 0
