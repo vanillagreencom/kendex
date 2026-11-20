@@ -1823,13 +1823,16 @@ PY
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or per example_areas key of a
 # changed settings example beside its path query, that key in SCAN_KEYS and
-# empty for every other query. One batch extracts file metadata and compares
+# empty for every other query. SCAN_ROW_QUERIES holds, for the Nth
+# tree_paths row of this tree counted from 0, the queries of its doc,
+# whichever row asked them, and SCAN_NOTED the files with an input note, so
+# mapped_suites reads neither list whole per changed path. One batch extracts file metadata and compares
 # the document-read lines, retaining source text inside that process.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
 # less any trailing dots, so `/kendex-env` is no name in `/kendex-env.sh` and
 # `/orch` none in `/orch-runtime`. Status 2 is a file it could not read.
 scan_load() { # DIR
-  local role f files tree rel path i q kind value record cache key key_tree
+  local role f files tree rel path i q kind value record cache key key_tree row
   local scan_input="" reader_patterns=() query_keys=() nl=$'\n'
   SCAN_DIR=""
   SCAN_PATH=()
@@ -1840,6 +1843,8 @@ scan_load() { # DIR
   SCAN_RELS=()
   SCAN_KEYS=()
   SCAN_READERS=()
+  SCAN_NOTED=()
+  SCAN_ROW_QUERIES=()
   files=$(skill_files "$1") || return 2
   while IFS=' ' read -r role f; do
     [ -n "$f" ] || continue
@@ -1851,8 +1856,10 @@ scan_load() { # DIR
     SCAN_INPUTS+=("")
     scan_input="${scan_input}F $i $role $f$nl"
   done <<<"$files"
+  row=-1
   while IFS=$'\t' read -r tree rel path; do
     [ "$tree" = "$1" ] || continue
+    row=$((row + 1))
     query_keys=("")
     case "$rel" in
       ../*) ;;
@@ -1876,7 +1883,7 @@ scan_load() { # DIR
       SCAN_KEYS+=("$key")
       SCAN_READERS+=("")
       doc_readers "$rel" "$key" || return 2
-      scan_input="${scan_input}Q $q$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl"
+      scan_input="${scan_input}Q $q $row$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl$rel$nl"
     done
   done <<<"$tree_paths"
   # File text stays inside the batch. Bash receives only reach metadata.
@@ -1975,7 +1982,10 @@ scan_load() { # DIR
       for (i = 1; i <= assignments; i++)
         if (read_names[assignment_names[i]]) keep[assignment_lines[i]] = 1
       for (i = 1; i <= count; i++)
-        if (keep[i]) reader_lines[reader, ++reader_counts[reader]] = code[i]
+        if (keep[i]) {
+          reader_lines[reader, ++reader_counts[reader]] = code[i]
+          reader_texts[reader] = reader_texts[reader] "\n" code[i]
+        }
       return 1
     }
     $1 == "F" {
@@ -1987,11 +1997,16 @@ scan_load() { # DIR
       next
     }
     $1 == "Q" {
-      q = $2; queries[q] = 1
-      for (p = 0; p < 4; p++) {
+      q = $2; row = $3; queries[q] = 1
+      for (p = 0; p < 5; p++) {
         if (getline <= 0) { failed = 1; exit 2 }
         query_patterns[q, p] = $0
       }
+      # Every query of a doc, whichever row asked it, answers for each row
+      # that names the doc.
+      if (getline <= 0) { failed = 1; exit 2 }
+      row_rels[row] = $0
+      rel_queries[$0] = ($0 in rel_queries ? rel_queries[$0] " " : "") q
       next
     }
     NF == 0 { next }
@@ -2000,18 +2015,31 @@ scan_load() { # DIR
       if (failed) exit 2
       for (i = 0; i < scan_count; i++)
         if (!scan_file(i)) exit 2
+      for (row in row_rels)
+        print "W\t" row "\t" rel_queries[row_rels[row]]
+      # Every changed path is a query in every tree, so the work per query
+      # stays off the reader lines where it can: a line holds a needle only
+      # where the whole text of its reader does, and the answer of a reader
+      # to one pattern is the same for every query that asks it.
       # GNU Awk caches the last dynamic regex at each match site.
       for (reader_phase = 0; reader_phase < 4; reader_phase++) {
         for (q in queries) {
           pattern = query_patterns[q, reader_phase]
           if (pattern == "-") continue
+          needle = reader_phase == 0 ? pattern : reader_phase == 1 ? query_patterns[q, 4] : "-"
           for (reader in reader_counts) {
-            for (line = 1; line <= reader_counts[reader]; line++) {
-              if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
-                print "R\t" q "\t" reader
-                break
+            if (needle != "-" && !index(reader_texts[reader], needle)) continue
+            hit_key = reader_phase SUBSEP pattern SUBSEP reader
+            if (!(hit_key in reader_hits)) {
+              reader_hits[hit_key] = 0
+              for (line = 1; line <= reader_counts[reader]; line++) {
+                if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
+                  reader_hits[hit_key] = 1
+                  break
+                }
               }
             }
+            if (reader_hits[hit_key]) print "R\t" q "\t" reader
           }
         }
       }
@@ -2026,9 +2054,13 @@ scan_load() { # DIR
       S) SCAN_SOURCED[i]+="$nl$value$nl" ;;
       I) SCAN_INPUTS[i]+="$value$nl" ;;
       R) [[ ${SCAN_READERS[i]} == *"$nl$value$nl"* ]] || SCAN_READERS[i]+="$nl$value$nl" ;;
+      W) SCAN_ROW_QUERIES[i]=$value ;;
       *) return 2 ;;
     esac
   done <<<"$cache"
+  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+    [ -z "${SCAN_INPUTS[i]}" ] || SCAN_NOTED+=("$i")
+  done
   SCAN_DIR=$1
 }
 # The comparison patterns for scanned files that read the doc REL, cached
@@ -2064,11 +2096,14 @@ doc_readers() { # REL [KEY]
   local rel="$1" dir token external=0 source_rel source_tree fixed
   local skill_root catalog_root walk_root walk
   if [ -n "${2-}" ]; then
-    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - -)
+    # A key the regex spells literally is also its needle.
+    fixed=-
+    [[ $2 =~ ^[[:alnum:]_]+$ ]] && fixed=$2
+    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - - "$fixed")
     return 0
   fi
   if [ "$rel:$settings_scope" = ../kendex.settings.toml:inert ]; then
-    reader_patterns=(- - - -)
+    reader_patterns=(- - - - -)
     return 0
   fi
   skill_root='\$\{?[A-Z_]*SKILL[A-Z_]*\}?'
@@ -2108,7 +2143,8 @@ doc_readers() { # REL [KEY]
   if [ "$external" -eq 1 ]; then
     case "$rel" in skills/*/*) fixed="/${rel#skills/}" ;; esac
   fi
-  reader_patterns=("$fixed" "$token" "$dir" "$walk")
+  # The token's escaped path, read literally, is a needle every match holds.
+  reader_patterns=("$fixed" "$token" "$dir" "$walk" "$rel")
 }
 # A changed runtime file of another tree, PATH, offers its programs' names
 # into the caller's next_any, as reach_runtime adds them: a program name is
@@ -2268,8 +2304,8 @@ reach_join() { # ROLE PATH [changed]
 # could not read or compare, status 3 a role reach_join does not know, a
 # broken guard, and status 4, scoped only, a path whose readers are
 # unidentified, which runs the tree's whole set.
-mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" role="" i n q hit names readers f t name base input input_path noted="" out="" folder="" tested nl=$'\n'
+mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
+  local dir="$1" rel="$2" row="$3" role="" i n q hit names readers f t name base input input_path noted="" out="" folder="" tested nl=$'\n'
   local runtime_reached="" targets_before=${#REACH_TARGETS} seeded_only=0
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
@@ -2284,10 +2320,16 @@ mapped_suites() { # DIR REL
   esac
   case "$role:$scoped_only" in test-module:0) return 1 ;; esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
-  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-    [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
-    input_path="$dir/$rel"
-    [[ $rel != ../* ]] || input_path=${rel#../}
+  # skill_files globs every scanned path under DIR, so none holds a `..`
+  # component and another tree's path names no scanned file.
+  if [[ $rel != ../* ]]; then
+    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+      [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
+    done
+  fi
+  input_path="$dir/$rel"
+  [[ $rel != ../* ]] || input_path=${rel#../}
+  for i in ${SCAN_NOTED[@]+"${SCAN_NOTED[@]}"}; do
     while IFS= read -r input; do
       [ -n "$input" ] || continue
       note_covers "$input" "$input_path" || continue
@@ -2304,8 +2346,7 @@ mapped_suites() { # DIR REL
     next_any+=("${name//\//.}")
   elif [ "$role" = doc ] || [ "$role" = settings-example ]; then
     readers=""
-    for ((q = 0; q < ${#SCAN_RELS[@]}; q++)); do
-      [ "${SCAN_RELS[q]}" = "$rel" ] || continue
+    for q in ${SCAN_ROW_QUERIES[row]-}; do
       # A settings-example key is one the tree's own example declares at an
       # endpoint.
       if [ -n "${SCAN_KEYS[q]}" ] && { [ "$role" = settings-example ] || [[ $settings_areas == *"$nl${SCAN_KEYS[q]} $dir$nl"* ]]; }; then
@@ -2720,17 +2761,19 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
 "
       continue
     fi
-    tree_paths="$tree_paths$tree	$rel	$f
+    # One append per path: each append copies the whole list.
+    path_rows="$tree	$rel	$f
 "
     if [ "$tree" != tools ]; then
-      tree_paths="${tree_paths}tools	../$f	$f
+      path_rows="${path_rows}tools	../$f	$f
 "
     fi
     for consumer in ${consumer_trees[@]+"${consumer_trees[@]}"}; do
       [ "$consumer" != "$tree" ] || continue
-      tree_paths="${tree_paths}$consumer	../$f	$f
+      path_rows="${path_rows}$consumer	../$f	$f
 "
     done
+    tree_paths="$tree_paths$path_rows"
   done <<<"$touched"
   # Publish only a complete plan. Pi launch probes and tests execute below,
   # after every later battery is available to cancellation reporting.
@@ -2780,17 +2823,16 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         # Another tree's path runs a Pi package's suites only where one of
         # its files names that path, whole or as `/<name>/<file>`.
         if ! awk -F '\t' -v d="$d" '$1 == d && $2 !~ /^\.\.\// { own = 1 } END { exit !own }' <<<"$tree_paths"; then
-          pi_read=0
+          # One search for every path's needles: a file names one of them
+          # exactly where it names some path's.
+          pi_needles=()
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
-            pi_needles=(-e "${rel#../}")
+            pi_needles+=(-e "${rel#../}")
             case "$rel" in ../skills/*/*) pi_needles+=(-e "/${rel#../skills/}") ;; esac
-            if git -c core.quotePath=false grep -q -F "${pi_needles[@]}" -- "$d"; then
-              pi_read=1
-              break
-            fi
           done <<<"$tree_paths"
-          [ "$pi_read" -eq 1 ] || continue
+          [ "${#pi_needles[@]}" -gt 0 ] || continue
+          git -c core.quotePath=false grep -q -F "${pi_needles[@]}" -- "$d" || continue
         fi
         suite_selection=all
         preview_unmeasured=1
@@ -2817,8 +2859,11 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           tree_ci=""
+          # scan_load counts this tree's rows the same way.
+          tree_row=-1
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
+            tree_row=$((tree_row + 1))
             if [ "$scoped_only" -eq 1 ]; then
               # mapped_suites' header states this set and why.
               if skill_markdown "$f" || [ "$f:$inventory_markdown_only" = .kendex-generated.json:1 ]; then
@@ -2832,7 +2877,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
               if [[ $rel != ../* ]] && [ "$(path_role "$d" "$rel")" = doc ]; then continue; fi
             fi
             map_status=0
-            mapped_suites "$d" "$rel" || map_status=$?
+            mapped_suites "$d" "$rel" "$tree_row" || map_status=$?
             sel=$MAPPED
             case "$map_status" in
               0) ;;
