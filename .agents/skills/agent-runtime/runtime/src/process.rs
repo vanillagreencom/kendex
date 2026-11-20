@@ -1509,14 +1509,25 @@ mod tests {
         assert_eq!(row.pgrp, child.pid(), "a new group led by the child");
     }
 
+    /// The parent resumes from a spawn once the child's new image replaces
+    /// its old one, which is before the kernel lays out that image's
+    /// arguments: a read in that window finds no words and leaves the child
+    /// out, so the row reads until the child carries words, bounded.
     #[test]
     fn the_command_lines_name_a_child_this_test_owns_by_its_words() {
         let child = Held::spawn(Command::new("sleep").arg("30"));
-        let lines = command_lines().expect("a readable table");
-        let words = lines
-            .iter()
-            .find(|(pid, _)| *pid == child.pid())
-            .map(|(_, words)| words.clone());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let words = loop {
+            let lines = command_lines().expect("a readable table");
+            let words = lines
+                .iter()
+                .find(|(pid, _)| *pid == child.pid())
+                .map(|(_, words)| words.clone());
+            if words.is_some() || Instant::now() >= deadline {
+                break words;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         assert_eq!(words, Some(vec!["sleep".to_owned(), "30".to_owned()]));
     }
 
