@@ -1,1 +1,0 @@
-- A consumer refresh whose committed settings scan fails now names the file it read, `refresh-error=settings-extraction value=<checkout>/kendex.settings.toml`, instead of the checkout's `.agents/skills/orch` folder.
