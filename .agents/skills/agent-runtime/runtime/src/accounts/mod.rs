@@ -1075,28 +1075,23 @@ fn window_hours(bucket: &str) -> f64 {
 /// `hours_to_reset` is the hours left to the window's reset, at least one
 /// and at most the window's length, one where no reset is known.
 ///
-/// On a seat each controller seated on it spends the window beside the
-/// lanes, one more spender at the sample each: what they will spend to the
-/// reset, each at its share of the measured rate (the setting where none
-/// was measured), the window's whole length where no reset is known, is
-/// `kept`, the room the seat keeps for them beyond their own trigger. A
-/// seated controller is never charged in `headroom`, which is the lanes' and
-/// the candidate's alone.
-/// `room` is the headroom the lanes may spend: on a seat, the headroom less
-/// `kept` and the headroom its limit holds back below the bound.
+/// On a seat each controller seated on it is one more spender at the
+/// sample, so the measured rate is shared with it. A seat holds nothing back
+/// from the lanes, so no worker sits idle beside a controller: a seated
+/// controller is never charged in `headroom`, which is the lanes' and the
+/// candidate's alone, and a worker on a seat is held to the bound as on any
+/// account. A controller whose own account reaches its mark is moved.
 ///
 /// The selection score (`with_lane_selection_score`, `agent-runtime
-/// accounts pick`) is no charge: it is `room` weighted by the reset bonus
-/// `1 + 1 / (1 + hours to the binding reset)`, bounded to twice the room,
-/// so among accounts with room the sooner reset is tried first and no
-/// reset time buys a launch past the bound.
+/// accounts pick`) is no charge: it is `headroom` weighted by the reset
+/// bonus `1 + 1 / (1 + hours to the binding reset)`, bounded to twice the
+/// headroom, so among accounts with room the sooner reset is tried first
+/// and no reset time buys a launch past the bound.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projection {
     pub headroom: f64,
     pub window: Binding,
     pub burn: f64,
-    pub kept: f64,
-    pub room: f64,
 }
 
 impl Projection {
@@ -1113,8 +1108,6 @@ impl Projection {
                 label: None,
             },
             burn: 0.0,
-            kept: 0.0,
-            room: 0.0,
         }
     }
 }
@@ -1151,14 +1144,12 @@ enum Candidate {
     Controller,
 }
 
-/// [`Projection`] of `row` on `binding`, `held` the headroom the row's
-/// limit holds back below the bound.
+/// [`Projection`] of `row` on `binding`.
 fn projection(
     row: &AccountRow,
     binding: &Binding,
     spenders: &Spenders,
     burn_default: f64,
-    held: f64,
     now: u64,
 ) -> Projection {
     let Spenders {
@@ -1191,14 +1182,10 @@ fn projection(
         Candidate::Lane => (claims + 1, 0.0),
         Candidate::Controller => (claims, to_reset.unwrap_or(1.0)),
     };
-    let headroom = 100.0 - binding.pct - (f64::from(lanes) + controller_hours) * burn;
-    let kept = f64::from(seats) * measured.unwrap_or(default) * to_reset.unwrap_or(window);
     Projection {
-        headroom,
+        headroom: 100.0 - binding.pct - (f64::from(lanes) + controller_hours) * burn,
         window: binding.clone(),
         burn,
-        kept,
-        room: headroom - kept - held,
     }
 }
 
@@ -1358,8 +1345,8 @@ fn grant(row: &AccountRow, floor: f64, now: u64) -> Option<Grant> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Judged {
     pub row: AccountRow,
-    /// `room`, `walled`, `unmeasured`, `seat-reserve`, `seated`,
-    /// `cloud-repo-unset`, `reserved`, `retired` or `plan-end-invalid`.
+    /// `room`, `walled`, `unmeasured`, `seated`, `cloud-repo-unset`,
+    /// `reserved`, `retired` or `plan-end-invalid`.
     pub verdict: String,
     /// The reading's wall: the binding window's percentage used.
     pub wall: Option<f64>,
@@ -1367,9 +1354,6 @@ pub struct Judged {
     pub claims: u32,
     pub projection: Option<Projection>,
     pub seat: bool,
-    /// The bound in percent used this account was held to: the request's,
-    /// and on a seat the overseer's trigger kept beside it.
-    pub limit: f64,
     pub credits: bool,
     pub grant: Option<Grant>,
     pub score: Option<f64>,
@@ -1381,9 +1365,8 @@ pub struct Judged {
 }
 
 /// A figure as the record spells it: an integral value as an integer, a
-/// fraction as it is. The shell callers read the record's `wall`,
-/// `effective_headroom_pct` and `need` by the pattern `^[0-9]{1,3}$`
-/// (the hook's seat line), the spelling
+/// fraction as it is. The shell callers read the record's `wall` and
+/// `effective_headroom_pct` by the pattern `^[0-9]{1,3}$`, the spelling
 /// `agent-runtime accounts pick` gives an integer percentage; `60.0` is unreadable
 /// to them.
 fn figure(n: f64) -> Value {
@@ -1400,8 +1383,7 @@ impl Judged {
     /// figure spelled as an integer ([`figure`]); the rate fields of the
     /// window `wall` names, which are the reader's where that window is
     /// its binding and `one-sample` otherwise (the reader rated no other
-    /// window); and on a seat `need`, the room the seat keeps, the figure
-    /// `pick-seat-omitted` names.
+    /// window).
     pub fn record(&self) -> Value {
         let mut record = match &self.row.raw {
             Value::Object(m) => m.clone(),
@@ -1484,17 +1466,7 @@ impl Judged {
             record.insert("qualifying_count".to_owned(), Value::from(qualifying));
         }
         record.insert("seat".to_owned(), Value::from(self.seat));
-        if self.seat {
-            record.insert("need".to_owned(), number(self.need()));
-        }
         Value::Object(record)
-    }
-
-    /// The room a seat keeps for its controllers, in percent of the window:
-    /// the headroom its limit leaves and what they spend to the reset,
-    /// rounded up to the whole percent the shell callers read.
-    fn need(&self) -> f64 {
-        (100.0 - self.limit + self.projection.as_ref().map_or(0.0, |p| p.kept)).ceil()
     }
 
     /// The earliest moment this walled account could have room: a grant
@@ -1513,8 +1485,7 @@ impl Judged {
     /// The order key of a room row (`lane_selection`, `agent-runtime
     /// accounts pick`): the tier, a grant first (the allowance that expires
     /// first), plan windows, Codex credits last; then the grant's end, the
-    /// higher score, fewer claims, more room after a seat's reserve, the
-    /// lower wall.
+    /// higher score, fewer claims, more projected headroom, the lower wall.
     fn tier(&self) -> u8 {
         if self.grant.is_some() {
             0
@@ -1535,15 +1506,13 @@ pub enum PickAnswer {
     None {
         walled: u32,
         unmeasured: u32,
-        seats: Vec<Judged>,
         walled_resets_at: Option<String>,
         /// Each candidate a grant refused, its directory and the grant's
         /// refusal: the read a caller repairs before a retry.
         refusals: Vec<(String, Value)>,
         exclusions: Vec<(String, String)>,
     },
-    /// Exit 3 of `--lane`: the named account is walled or on its seat's
-    /// reserve.
+    /// Exit 3 of `--lane`: the named account is walled.
     Walled(Judged),
     /// Exit 3 of `--lane`: the provider reserved the named account. Its
     /// word refuses it, whatever its room; a caller prints
@@ -1612,7 +1581,6 @@ impl PickAnswer {
             PickAnswer::None {
                 walled,
                 unmeasured,
-                seats,
                 walled_resets_at,
                 refusals,
                 exclusions,
@@ -1621,11 +1589,6 @@ impl PickAnswer {
                 json!({
                     "walled": walled,
                     "unmeasured": unmeasured,
-                    "seats": seats.iter().map(|s| json!({
-                        "config_dir": s.row.config_dir,
-                        "projected_headroom_pct": s.projection.as_ref().map_or(Value::Null, |p| figure(p.headroom)),
-                        "need": figure(s.need()),
-                    })).collect::<Vec<Value>>(),
                     "qualifying_count": 0,
                     "walled_resets_at": walled_resets_at,
                     "refusals": refusals.iter().map(|(d, r)| json!({"config_dir": d, "refusal": r})).collect::<Vec<Value>>(),
@@ -1705,14 +1668,11 @@ impl FleetFacts {
 const SEATED: &str = "seated";
 
 /// Judge one row for `req`: the one limit every pick, handoff mark and
-/// overseer mark is held to. The bound is the request's, or the
-/// setting; a seat, an account a controller sits on ([`FleetFacts::seat`]),
-/// keeps what its controllers need to the reset: the room left once their
-/// spend to the reset is charged beside the lanes ([`Projection`]'s `kept`)
-/// is held to `min(bound, 100 - AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT)`, so a
-/// worker never spends the room a controller runs on or hands off at. An
-/// overseer's own question reads no seat; its choice among accounts refuses
-/// one another controller sits on, `seated`, whatever its room.
+/// overseer mark is held to. The bound is the request's, or the setting,
+/// on every account: a seat, an account a controller sits on
+/// ([`FleetFacts::seat`]), holds nothing back from a worker. An overseer's
+/// own question reads no seat; its choice among accounts refuses one
+/// another controller sits on, `seated`, whatever its room.
 fn judge(
     row: &AccountRow,
     req: &PickRequest,
@@ -1746,11 +1706,6 @@ fn judge(
     let seat = seats > 0;
     let seated =
         req.for_overseer && req.lane.is_none() && !pool && facts.seated.contains(&row.canon);
-    let limit = if seat {
-        max.min(100.0 - f64::from(settings.controller_headroom_pct))
-    } else {
-        max
-    };
     let projection = binding.as_ref().map(|b| {
         projection(
             row,
@@ -1766,7 +1721,6 @@ fn judge(
                 seats,
             },
             f64::from(settings.burn_pct_per_hour),
-            max - limit,
             now,
         )
     });
@@ -1783,7 +1737,6 @@ fn judge(
     } else {
         wall
     };
-    let kept = projection.as_ref().map_or(0.0, |p| p.kept);
     let grant = grant(row, settings.cloud_credit_floor as f64, now);
     let reads = Reads::of(
         row,
@@ -1799,15 +1752,7 @@ fn judge(
         Standing::Retired { .. } => "retired",
         Standing::EndUnread { .. } => "plan-end-invalid",
         Standing::Open if seated => SEATED,
-        Standing::Open => match reads {
-            Reads::Wall(_) if seat && spent.is_none() => {
-                match wall_verdict(judged_wall.map(|w| w + kept), limit) {
-                    "walled" => "seat-reserve",
-                    plan => plan,
-                }
-            }
-            Reads::PlanEnded | Reads::Grant(_) | Reads::Credits | Reads::Wall(_) => reads.verdict(),
-        },
+        Standing::Open => reads.verdict(),
     };
     let verdict = match &facts.cloud_repo {
         Some(admitted) if !admitted.contains(&row.config_dir) => "cloud-repo-unset",
@@ -1826,7 +1771,7 @@ fn judge(
                 .as_ref()
                 .and_then(|b| reset_epoch(b.resets_at.as_deref()))
                 .map(|reset| (reset as f64 - now as f64).max(0.0) / 3600.0);
-            p.room * reset_bonus(hours)
+            p.headroom * reset_bonus(hours)
         })
     };
     Judged {
@@ -1837,7 +1782,6 @@ fn judge(
         claims,
         projection,
         seat,
-        limit,
         credits,
         grant,
         score,
@@ -1894,9 +1838,9 @@ pub fn judge_one(
 /// `--exclude-lane` names and the accounts `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names left
 /// out; each is judged on its projected wall; the room rows are ordered by
 /// tier (a grant first, plan windows, Codex credits last), the grant's end,
-/// the score, fewer claims, more room after a seat's reserve and the lower
-/// wall, a seat ranked by its room as any account is; the first is the
-/// lane. With `lane` named, that one
+/// the score, fewer claims, more projected headroom and the lower wall, a
+/// seat ranked as any account is; the first is the lane. With `lane` named,
+/// that one
 /// row is judged alone: one the exclusion covers is refused by its word,
 /// `excluded`, as a retired one is, whatever was read of it; a Pi root on
 /// a grant pool that no row holds is judged on the row nothing measured
@@ -1962,10 +1906,10 @@ pub fn pick(
             )
             .then(a.claims.cmp(&b.claims))
             .then(
-                neg(a.projection.as_ref().map(|p| p.room))
+                neg(a.projection.as_ref().map(|p| p.headroom))
                     .unwrap_or(f64::INFINITY)
                     .total_cmp(
-                        &neg(b.projection.as_ref().map(|p| p.room)).unwrap_or(f64::INFINITY),
+                        &neg(b.projection.as_ref().map(|p| p.headroom)).unwrap_or(f64::INFINITY),
                     ),
             )
             .then(
@@ -1990,11 +1934,6 @@ pub fn pick(
     PickAnswer::None {
         walled: walled.len() as u32,
         unmeasured,
-        seats: judged
-            .iter()
-            .filter(|j| j.verdict == "seat-reserve")
-            .cloned()
-            .collect(),
         walled_resets_at: walled.iter().filter_map(|j| j.retry_at()).min(),
         refusals: judged
             .iter()

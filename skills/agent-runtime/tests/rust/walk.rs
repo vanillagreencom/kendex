@@ -764,21 +764,15 @@ fn the_overseer_walk_judges_at_the_trigger_and_a_seat_as_an_ordinary_account() {
             )]
         );
     }
-    // A lane's walk holds the same seat to the overseer's reserve (the
-    // bound 50).
+    // A lane's walk holds the seat to the lane bound alone (95): the
+    // controller's headroom setting keeps nothing back from a worker.
     let result = world.answered(&["--source-harness", "claude", "--source-flags", BYPASS]);
     assert_eq!(
         result["chosen"]["entry"],
-        json!("codex:gpt-6.1-sol:high"),
+        json!("claude:fable:high"),
         "{result}"
     );
-    assert_eq!(
-        skipped(&result),
-        [format!(
-            "claude:fable:high seat-reserve {}",
-            world.dir("aclaude")
-        )]
-    );
+    assert_eq!(result["chosen"]["account"], json!(world.dir("aclaude")));
 }
 
 /// The owner's exclusion keeps an account from every walk, the controller
