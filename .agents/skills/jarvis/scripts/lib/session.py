@@ -4,7 +4,6 @@ import argparse
 from collections import namedtuple
 import errno
 from contextlib import contextmanager
-import hashlib
 import io
 import json
 import os
@@ -175,16 +174,10 @@ def home_module():
     return home
 
 
-def home_state(home):
-    """The private state directory of the resolved HOME: its session record and its forward outbox."""
-    key = hashlib.sha256(os.fsencode(home)).hexdigest()
-    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "kendex/jarvis" / key
-
-
 class Session:
     def __init__(self, home, env=None):
         self.home = str(Path(home).resolve(strict=True))
-        state = home_state(self.home)
+        state = home_module().home_state(self.home)
         self.path = state / "jarvis-session.json"
         # tmux places its socket in its own runtime root, whose pathname fits
         # Unix socket limits even when XDG_STATE_HOME is a deep directory.
@@ -1588,7 +1581,7 @@ def main():
     if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import forward
-        return forward.main(args, home_state)
+        return forward.main(args, home_module().home_state)
     try:
         session = Session(args.home)
     except OSError:
