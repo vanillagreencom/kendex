@@ -214,6 +214,26 @@ def state_entries(lines):
     return [(number, "".join(text)) for number, text in found]
 
 
+def state_key(token):
+    """The key a typed or written State key token names.
+
+    A trailing colon and enclosing backticks are spelling, so `KEY`, `KEY:`
+    and a backticked KEY name one entry, and so do the stored openings
+    `- KEY:: ` and `` - `KEY`: `` that homes already hold.
+    """
+    key = token.rstrip(":")
+    if len(key) > 2 and key[0] == key[-1] == "`":
+        key = key[1:-1].rstrip(":")
+    return key
+
+
+def named_entry(opening):
+    """(key, rest) for a State opening line `- KEY: rest`, or (None, opening) when it names no key."""
+    named = re.match(r"^- (\S+):(?: |$)", opening)
+    key = named and state_key(named[1])
+    return (key, opening[named.end():]) if key else (None, opening)
+
+
 def change_state(lines, change, identity):
     """Apply one progress record's replacement to State, using its shared entry reader.
 
@@ -224,19 +244,22 @@ def change_state(lines, change, identity):
     if change == "none":
         return lines
     match = re.fullmatch(r"(set|remove) State (\S+)(?: ([^\r\n]+))?", change)
-    if not match or (match[1] == "set") != bool(match[3] and match[3].strip()):
+    key = match and state_key(match[2])
+    if not key or (match[1] == "set") != bool(match[3] and match[3].strip()):
         raise ValueError("state-change-invalid", change)
-    action, key, next_action = match.groups()
+    action, _, next_action = match.groups()
     entries = state_entries(lines)
     token = re.compile(r"(?<![\w=:-])" + re.escape(key) + r"(?![\w=:-])")
     matches = []
     for number, text in entries:
         opening = text.splitlines()[0]
-        named = re.match(r"^- (\S+):(?: |$)", opening)
-        if (named and named[1] == key) or (not named and token.search(opening)):
+        named, _ = named_entry(opening)
+        if named == key or (named is None and token.search(opening)):
             matches.append((number, text))
     if len(matches) > 1:
         raise ValueError("state-entry-ambiguous", key)
+    if action == "remove" and not matches:
+        raise ValueError("state-entry-missing", key)
     replacement = ["- %s: %s (record=%s)\n" % (key, next_action.strip(), identity)] if action == "set" else []
     updated = list(lines)
     if matches:
@@ -248,7 +271,7 @@ def change_state(lines, change, identity):
             occupied -= bool(lines[end].strip())
             end += 1
         updated[number - 1:end] = replacement
-    elif replacement:
+    else:
         _, end = section(lines, "State")
         if end and not lines[end - 1].endswith("\n"):
             updated[end - 1] += "\n"

@@ -17,10 +17,13 @@ defaults to state/handoff.md. A refusal prints
 `progress-log: KEY=VALUE fix=PATH#ANCHOR` on stderr, exits 2 and
 writes nothing. Keys: field-empty, time-typed, clock-unreadable,
 handoff-missing, handoff-unwritable, handoff-unreadable, section-missing,
-section-ambiguous, state-change-invalid, state-entry-ambiguous.
+section-ambiguous, state-change-invalid, state-entry-ambiguous,
+state-entry-missing.
 --state-change takes `none`, `set State ID NEXT ACTION`, or `remove State ID`.
+ID, ID: and a backticked ID name the same entry.
 A set replaces the whole matching entry with ID, NEXT ACTION and this record id;
-a remove deletes it. Session entries use durable session, wake or ask ids.
+a remove deletes it, and a remove that matches no entry refuses.
+Session entries use durable session, wake or ask ids.
 Success prints `progress-log: recorded id=ID at=TIME`.
 
 --archived FILE, an absolute or home-relative path inside the archive beside
@@ -61,7 +64,8 @@ import sys
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "scripts/lib"))
 from progress import (DEFAULT_HANDOFF, FIELDS, INDEX, archive_dir, check_state, format_record,  # noqa: E402
-                      change_state, enrich_index, handoff_path, ids, index_line, record_id, state_entries, state_ids)
+                      change_state, enrich_index, handoff_path, ids, index_line, named_entry, record_id, state_entries,
+                      state_ids)
 from sections import headings, section  # noqa: E402
 import watch  # noqa: E402
 
@@ -346,7 +350,7 @@ def home_check(home, handoff):
                         target = (path if path.startswith("state/") else
                                   os.path.relpath(archive_dir(handoff) / path.removeprefix("archive/"), home))
                         if not tracked_archive(home, target, tracked):
-                            failures.append((name, number, "predecessor-archive", "workflows/session.md:102"))
+                            failures.append((name, number, "predecessor-archive", "workflows/session.md#handoff-replacement"))
             try:
                 entries = state_entries(lines)
             except LookupError:
@@ -359,19 +363,19 @@ def home_check(home, handoff):
                 # The writer also accepts named session, wake and ask ids;
                 # legacy entries bind tracker/mailbox/Slack ids anywhere.
                 opening = entry.splitlines()[0]
-                named = re.match(r"^- (\S+):(?: |$)", opening)
+                named, rest = named_entry(opening)
                 session = re.search(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
                 label = re.match(r"^- SESSION (\S+)", opening)
-                if not named and not session and not label and not any(state_ids(entry)):
+                if named is None and not session and not label and not any(state_ids(entry)):
                     failures.append((name, number, "state-id", "State entry requires a durable id"))
                 tokens = re.findall(r"(?<![\w-])(?:session|wake|ask)=\S+", opening)
                 durable = state_ids(opening)
-                key = named[1] if named else next(iter(tokens + durable[0] + durable[1]), None)
+                key = named if named is not None else next(iter(tokens + durable[0] + durable[1]), None)
                 if key is not None and key in seen:
-                    failures.append((name, number, "state-entry-ambiguous", "references/long-session.md:87"))
+                    failures.append((name, number, "state-entry-ambiguous", "references/long-session.md#progress-records"))
                 seen.add(key)
                 # change_state writes the named key followed by a colon delimiter.
-                session_text = named[1] + " " + opening[named.end():] if named else opening
+                session_text = opening if named is None else named + " " + rest
                 explicit = re.findall(r"(?<![\w-])session=(\S+)", session_text)
                 identities = set(explicit + ([label[1]] if label else []))
                 for identity in identities:
