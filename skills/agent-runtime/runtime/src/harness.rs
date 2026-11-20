@@ -123,8 +123,15 @@ impl Harness {
             ]),
             Harness::Copilot => HomeWrites::Folders(&["session-state"]),
             // Codex opens its state databases at the home's top level as it
-            // starts, and refuses to start where it cannot.
-            Harness::Codex => HomeWrites::Whole(&[]),
+            // starts, and refuses to start where it cannot. It only reads
+            // its hook registration and scripts, its instructions and its
+            // command rules. `plugins/` and `skills/` stay writable: Codex
+            // writes its plugin cache and install staging and stages
+            // `skills/.system` while it runs. A skill planted there instructs
+            // the next session whether or not an `AGENTS.md` stands, so an
+            // absent one is left unmade; a planted plugin runs only where
+            // the read-only `config.toml` enables it.
+            Harness::Codex => HomeWrites::Whole(&["hooks.json", "hooks", "AGENTS.md", "rules"]),
             // Pi takes a lock folder beside its top-level files as it starts
             // (`trust.json.lock`), and stops where it cannot.
             Harness::Pi => HomeWrites::Whole(&["extensions", "hooks", "packages"]),

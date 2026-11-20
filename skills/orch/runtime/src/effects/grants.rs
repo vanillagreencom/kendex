@@ -76,19 +76,20 @@ pub(crate) fn folder(mail_root: &Path, item: &str) -> PathBuf {
 pub(super) struct Granted {
     pub grants: Grants,
     pub answer: Answer,
-    /// The empty settings files a read-only carve-out needs where the seat
-    /// holds none: bwrap refuses a carve-out whose file is absent, and a
-    /// seat left writable there lets the lane write settings that run in
-    /// the operator's next session.
+    /// The empty settings files and hook registrations a read-only
+    /// carve-out needs where the seat holds none: bwrap refuses a carve-out
+    /// whose file is absent, and a seat left writable there lets the lane
+    /// write settings or hooks that run in the operator's next session.
     missing: Vec<(PathBuf, &'static str)>,
     usage: Option<PathBuf>,
     /// The item's own folder of the state directory, made before the window
     /// so its bind stands.
     item_dir: PathBuf,
     /// The folders made where absent so their binds stand: the read-only
-    /// ones a lane could otherwise plant (those under the cache folder and
-    /// the launch records' under the common git folder), and a read-only
-    /// seat's session folders, which the harness could not make there.
+    /// ones a lane could otherwise plant (those under the cache folder, the
+    /// launch records' under the common git folder and a Codex seat's
+    /// command rules), and a read-only seat's session folders, which the
+    /// harness could not make there.
     kept: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
@@ -109,6 +110,27 @@ fn settings_file(harness: Harness) -> (&'static str, &'static str) {
     match harness {
         Harness::Codex => ("config.toml", ""),
         Harness::Claude | Harness::Copilot | Harness::Pi => ("settings.json", "{}\n"),
+    }
+}
+
+/// What the launch makes for an absent code entry of a seat so its
+/// read-only bind stands.
+enum AbsentForm {
+    /// A file holding these bytes.
+    File(&'static str),
+    /// An empty folder.
+    Folder,
+}
+
+/// The empty form of an absent code entry of a `harness` seat: Codex's hook
+/// registration holding no hook, as kendex's hook writer serializes one
+/// (`crates/core/src/configedit/mod.rs` `ConfigEdit::apply`), and Codex's
+/// command rules folder holding no rule. `None` for an entry left absent.
+fn absent_form(harness: Harness, entry: &str) -> Option<AbsentForm> {
+    match (harness, entry) {
+        (Harness::Codex, "hooks.json") => Some(AbsentForm::File("{\n  \"hooks\": {}\n}\n")),
+        (Harness::Codex, "rules") => Some(AbsentForm::Folder),
+        _ => None,
     }
 }
 
@@ -209,7 +231,7 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 /// every configured account of a harness its second opinion can run on,
 /// what the seat's harness writes there ([`Harness::home_writes`]): a
 /// read-only seat's session folders, or a seat whole with its settings file
-/// and the code folders that stand read-only; the build caches under the home and
+/// and the code entries that stand, or that it writes empty, read-only; the build caches under the home and
 /// the folders `ORCH_LANE_WRITABLE` names, the shared runtime cache
 /// read-only wherever they would hold it; the user's runtime folder
 /// hidden; the display where the record holds `desktop`. A confined launch also
@@ -333,13 +355,20 @@ pub(super) fn of(
                     missing.push((file.clone(), empty));
                 }
                 read_only.push(file);
-                // A code folder binds read-only only where it stands: every
-                // bwrap mount over an absent one makes its mount point in
-                // the home on the host, and Pi stops at start over an empty
-                // `hooks/`. The lane can make one that is absent.
+                // A code entry binds read-only only where it stands, or
+                // where the launch writes its empty form: every bwrap mount
+                // over an absent one makes its mount point in the home on
+                // the host, and Pi stops at start over an empty `hooks/`.
+                // The lane can make any other that is absent.
                 for entry in code {
                     let path = seat.join(entry);
                     if std::fs::symlink_metadata(&path).is_ok() {
+                        read_only.push(path);
+                    } else if let Some(form) = absent_form(kind, entry) {
+                        match form {
+                            AbsentForm::File(empty) => missing.push((path.clone(), empty)),
+                            AbsentForm::Folder => kept.push(path.clone()),
+                        }
                         read_only.push(path);
                     }
                 }
@@ -469,7 +498,8 @@ pub(crate) fn writable_beside_checkout(settings: &Settings) -> Result<Vec<PathBu
 /// The configured Codex seats whose lanes run unconfined under
 /// `linked-seat`, judged as a launch judges its Codex home: against the
 /// folders [`writable_beside_checkout`] names, the seats among them, with
-/// the seat's settings file read-only. `orch-runtime ready` names them.
+/// the seat's settings file and code entries read-only. `orch-runtime
+/// ready` names them.
 pub(crate) fn linked_seats(settings: &Settings) -> Result<Vec<PathBuf>> {
     let writable = writable_beside_checkout(settings)?;
     let configured = agent_runtime::accounts::listing::configured(
@@ -479,14 +509,23 @@ pub(crate) fn linked_seats(settings: &Settings) -> Result<Vec<PathBuf>> {
     )
     .map_err(|cause| refused("grant-seats-unread", &[("cause", &cause)]))?;
     let (name, _) = settings_file(Harness::Codex);
+    let code: &[&str] = match Harness::Codex.home_writes() {
+        HomeWrites::Whole(code) => code,
+        HomeWrites::Folders(_) => &[],
+    };
     let mut linked = Vec::new();
     for (kind, dir) in configured {
         if kind != Harness::Codex {
             continue;
         }
-        if let Some(seat) = resolved(Path::new(&dir))
-            && linked_seat(&seat, &writable, &[seat.join(name)])?
-        {
+        let Some(seat) = resolved(Path::new(&dir)) else {
+            continue;
+        };
+        let read_only: Vec<PathBuf> = std::iter::once(name)
+            .chain(code.iter().copied())
+            .map(|entry| seat.join(entry))
+            .collect();
+        if linked_seat(&seat, &writable, &read_only)? {
             linked.push(seat);
         }
     }
@@ -496,8 +535,8 @@ pub(crate) fn linked_seats(settings: &Settings) -> Result<Vec<PathBuf>> {
 /// Whether the Codex home `seat` holds a link its harness writes through
 /// that leads outside `writable`, or into `read_only`: the kernel would
 /// refuse the harness's write, so its lane runs unconfined under
-/// [`Cause::LinkedSeat`]. A link `read_only` names, the settings file, is
-/// read through, never written. A link whose target does not stand
+/// [`Cause::LinkedSeat`]. A link `read_only` names, the settings file or a
+/// code entry, is read through, never written. A link whose target does not stand
 /// refuses `grant-link-unreadable` naming it, and a home that cannot be read
 /// `grant-seats-unread`.
 #[allow(
@@ -690,7 +729,7 @@ impl Granted {
 
     /// Write what the grants stand on before the window: the usage folder,
     /// the item's own folder, the read-only folders, each absent settings
-    /// file in its empty form, the lane's own runtime cache, and the token
+    /// file and hook registration in its empty form, the lane's own runtime cache, and the token
     /// at mode 0600 in the lane's private folder, which the marker made.
     #[allow(
         clippy::disallowed_methods,

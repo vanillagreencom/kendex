@@ -50,7 +50,7 @@ A launch intent that names `grants` runs the harness inside a kernel boundary. O
 
 Inside, `TMPDIR` and each harness's own temporary-folder variable name the private `/tmp`, whatever the pane inherited (`TEMP_VARS` in `runtime/src/confine.rs`).
 
-The account seat a confined lane runs on is read-only, except the session folders its harness writes. `Harness::home_writes` in `runtime/src/harness.rs` names those folders per harness. The runtime grants a folder that is a link where the link leads, and refuses the launch for a link that leads nowhere. A Codex home and a Pi root are granted whole, with the settings file read-only. Each of Pi's `extensions/`, `hooks/` and `packages/` stays read-only where it exists. The launch creates no absent folder, so the lane can create one.
+The account seat a confined lane runs on is read-only, except the session folders its harness writes. `Harness::home_writes` in `runtime/src/harness.rs` names those folders per harness. The runtime grants a folder that is a link where the link leads, and refuses the launch for a link that leads nowhere. A Codex home and a Pi root are granted whole, with the settings file read-only. Each of Pi's `extensions/`, `hooks/` and `packages/`, and each of Codex's `hooks.json`, `hooks/`, `AGENTS.md` and `rules/`, stays read-only where it exists. The launch writes an absent Codex `hooks.json` in its empty form and makes an absent `rules/` empty. It creates no other absent entry, so the lane can create one.
 
 - Copilot CLI runs unconfined on every host.
 - A launch whose grants name an `unconfined` cause runs unconfined under it.

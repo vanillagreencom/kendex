@@ -10958,7 +10958,11 @@ fn a_desktop_lane_reaches_the_display_its_relaunch_still_does_and_a_lane_without
 /// A lane's second opinion runs on the accounts its configured targets can
 /// pick: a Claude lane whose roster names Codex writes the configured Codex
 /// account's seat, and is refused a Copilot account's and another Claude
-/// account's, which no target of it can pick.
+/// account's, which no target of it can pick. In a Codex seat, written
+/// whole, the lane writes its state database and is refused the hook
+/// registration, the instructions and the command rules the operator's next
+/// session there runs: where they stand, and where the registration or the
+/// rules folder was absent, whose empty form the launch writes.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harness_s() {
@@ -10966,6 +10970,7 @@ fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harn
     let seats = world.dir.path().join("seats");
     let planted = [
         ("codex1", "auth.json"),
+        ("codex2", "auth.json"),
         ("copilot1", "config.json"),
         ("claude2", ".credentials.json"),
     ]
@@ -10975,6 +10980,10 @@ fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harn
         std::fs::write(seat.join(file), "{}").unwrap();
         seat.display().to_string()
     });
+    let operators_hooks = "{\"hooks\": {\"Stop\": []}}\n";
+    let standing = Path::new(&planted[1]);
+    std::fs::write(standing.join("hooks.json"), operators_hooks).unwrap();
+    std::fs::write(standing.join("AGENTS.md"), "operator\n").unwrap();
     world.runner.env.extend([
         ("AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(), planted.join(":")),
         (
@@ -10983,9 +10992,46 @@ fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harn
         ),
     ]);
     world.seat_env(&planted.join(" "));
+    let files = [
+        format!("{}/state_5.sqlite", planted[0]),
+        format!("{}/hooks.json", planted[0]),
+        format!("{}/hooks.json", planted[1]),
+        format!("{}/AGENTS.md", planted[1]),
+    ];
+    world.file_env(&files.join(" "));
+    let rules = Path::new(&planted[0]).join("rules");
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "mkdir -p '{r}' 2>/dev/null; (: > '{r}/default.rules') 2>/dev/null && echo rules=planted || echo rules=refused",
+            r = rules.display()
+        ),
+    );
     let report = world.launch(&launch_request("KEN-S", world.runner.state_dir()));
     let probe = world.probe("KEN-S", 1);
+    assert!(probe.contains("rules=refused"), "{probe}");
+    assert_eq!(
+        std::fs::read_dir(&rules).unwrap().count(),
+        0,
+        "the absent rules folder stands empty"
+    );
     assert!(probe.contains("seat=codex1 written"), "{probe}");
+    assert!(probe.contains("file=state_5.sqlite written"), "{probe}");
+    assert_eq!(
+        probe.matches("file=hooks.json refused").count(),
+        2,
+        "{probe}"
+    );
+    assert!(probe.contains("file=AGENTS.md refused"), "{probe}");
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&planted[0]).join("hooks.json")).unwrap(),
+        "{\n  \"hooks\": {}\n}\n",
+        "the absent registration stands in its empty form"
+    );
+    assert_eq!(
+        std::fs::read_to_string(standing.join("hooks.json")).unwrap(),
+        operators_hooks
+    );
     assert!(probe.contains("seat=copilot1 refused"), "{probe}");
     assert!(probe.contains("seat=claude2 refused"), "{probe}");
     let named: Vec<String> = report["intent"]["observation"]["seats"]
